@@ -1,29 +1,33 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- ===== 기본 설정 ===== -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
 
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- macOS SingleFile 지원 핵심 옵션 -->
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
-    <!-- AnyCPU 제거, x64 고정 -->
-    <Platforms>x64</Platforms>
+    <EnableSelfContained>true</EnableSelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <UseAppHost>true</UseAppHost>
 
-    <!-- 배포 기준 -->
-    <SelfContained>true</SelfContained>
+    <!-- Avalonia -->
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Windows 개발 환경 유지용 -->
+    <Platforms>x64</Platforms>
   </PropertyGroup>
 
-  <!-- ===== Avalonia 리소스 ===== -->
+  <!-- Avalonia 리소스 -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
-  <!-- ===== NuGet 패키지 ===== -->
+  <!-- NuGet -->
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.9" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.9" />
@@ -34,27 +38,21 @@
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.9" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
-  <!-- ===== FFmpeg DLLs : 개발(Debug) ===== -->
-  <!-- exe 바로 옆으로 강제 복사 -->
+  <!-- Debug FFmpeg DLLs -->
   <ItemGroup Condition="'$(Configuration)' == 'Debug' and '$(Platform)' == 'x64'">
     <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
-  <!-- ===== FFmpeg DLLs : 배포(Publish) ===== -->
-  <!-- publish 결과물의 exe 바로 옆으로 강제 복사 -->
+  <!-- Windows 배포 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
     <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
   </ItemGroup>
 
-  <!-- ===== macOS FFmpeg (배포용 자리만 확보) ===== -->
-  <ItemGroup>
-    <Folder Include="FFmpeg\osx-arm64\" />
-  </ItemGroup>
-
+  <!-- macOS FFmpeg -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
     <None Include="FFmpeg\osx-arm64\*.dylib" Link="%(Filename)%(Extension)">
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
