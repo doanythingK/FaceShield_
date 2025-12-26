@@ -1,0 +1,64 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore packages
+      run: dotnet restore FaceShield.sln
+
+    - name: Publish macOS app (self-contained)
+      run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true
+
+    - name: Prepare .app bundle
+      run: |
+        APP_NAME="FaceShield"
+        PUBLISH_DIR="FaceShield/bin/Release/net8.0/osx-arm64/publish"
+
+        mkdir -p "$APP_NAME.app/Contents/MacOS"
+        mkdir -p "$APP_NAME.app/Contents/Resources"
+
+        cp "$PUBLISH_DIR/$APP_NAME" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
+
+        cat > "$APP_NAME.app/Contents/Info.plist" <<EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
+         "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleName</key>
+          <string>FaceShield</string>
+          <key>CFBundleIdentifier</key>
+          <string>com.faceshield.app</string>
+          <key>CFBundleExecutable</key>
+          <string>FaceShield</string>
+          <key>CFBundleVersion</key>
+          <string>1.0.0</string>
+          <key>CFBundlePackageType</key>
+          <string>APPL</string>
+        </dict>
+        </plist>
+        EOF
+
+    - name: Zip app for release
+      run: zip -r FaceShield-macOS.zip FaceShield.app
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: FaceShield-macOS
+        path: FaceShield-macOS.zip
