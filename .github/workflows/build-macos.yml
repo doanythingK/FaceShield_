@@ -24,6 +24,13 @@ jobs:
     - name: Publish macOS app (self-contained)
       run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
 
+    - name: Debug publish output
+      run: |
+        echo "=== Current directory ==="
+        pwd
+        echo "=== List everything recursively ==="
+        ls -R .
+        
     - name: Prepare .app bundle
       run: |
         APP_NAME="FaceShield"
