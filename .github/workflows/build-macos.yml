@@ -34,17 +34,13 @@ jobs:
     - name: Prepare .app bundle
       run: |
         APP_NAME="FaceShield"
-        PUBLISH_DIR="FaceShield_/bin/x64/Release/net8.0/osx-arm64/publish"
+        PUBLISH_DIR="bin/Release/net8.0/osx-arm64/publish"
 
         mkdir -p "$APP_NAME.app/Contents/MacOS"
         mkdir -p "$APP_NAME.app/Contents/Resources"
 
-        # 실행 파일 찾기 (SingleFile 또는 dll fallback)
-        if [ -f "$PUBLISH_DIR/$APP_NAME" ]; then
-            cp "$PUBLISH_DIR/$APP_NAME" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
-        else
-            cp "$PUBLISH_DIR/$APP_NAME.dll" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
-        fi
+        # 실행 가능한 macOS 바이너리 복사
+        cp "$PUBLISH_DIR/$APP_NAME" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
 
         # Info.plist 생성
         cat > "$APP_NAME.app/Contents/Info.plist" <<EOF
