@@ -22,18 +22,24 @@ jobs:
       run: dotnet restore FaceShield.sln
 
     - name: Publish macOS app (self-contained)
-      run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true
+      run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
 
     - name: Prepare .app bundle
       run: |
         APP_NAME="FaceShield"
-        PUBLISH_DIR="FaceShield/bin/Release/net8.0/osx-arm64/publish"
+        PUBLISH_DIR="FaceShield_/bin/Release/net8.0/osx-arm64/publish"
 
         mkdir -p "$APP_NAME.app/Contents/MacOS"
         mkdir -p "$APP_NAME.app/Contents/Resources"
 
-        cp "$PUBLISH_DIR/$APP_NAME" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
+        # 실행 파일 찾기 (SingleFile 또는 dll fallback)
+        if [ -f "$PUBLISH_DIR/$APP_NAME" ]; then
+            cp "$PUBLISH_DIR/$APP_NAME" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
+        else
+            cp "$PUBLISH_DIR/$APP_NAME.dll" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
+        fi
 
+        # Info.plist 생성
         cat > "$APP_NAME.app/Contents/Info.plist" <<EOF
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
