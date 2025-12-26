@@ -1,0 +1,91 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Pages"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:DataType="vm:HomePageViewModel"
+             x:Class="FaceShield.Views.Pages.HomePageView">
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="2*,3*"
+        Margin="24" RowSpacing="16" ColumnSpacing="16">
+
+    <!-- Header -->
+    <Border Grid.Row="0" Grid.ColumnSpan="2"
+            Padding="18" CornerRadius="12"
+            Background="#1B1B1B">
+      <StackPanel>
+        <TextBlock Text="FaceShield" FontSize="28" FontWeight="Bold"/>
+        <TextBlock Text="전문가용 영상 보안/편집 툴 (로컬 오프라인) — 얼굴 검출 · 블러 · 사용자 검증 · 수동 보정"
+                   Opacity="0.75" Margin="0,6,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Left: Start -->
+    <Border Grid.Row="1" Grid.Column="0"
+            Padding="18" CornerRadius="12"
+            Background="#151515">
+      <StackPanel Spacing="12">
+
+        <TextBlock Text="시작" FontSize="18" FontWeight="SemiBold"/>
+
+          <Button Content="새 프로젝트 (영상 선택)"
+        Height="44"
+        Click="PickVideo_Click"/>
+
+        <!--<Button Content="새 프로젝트 (영상 선택)"
+                Command="{Binding PickVideoCommand}"
+                Height="44"/>-->
+
+        <Button Content="설정"
+                Command="{Binding OpenSettingsCommand}"
+                Height="40"/>
+
+        <Button Content="정보"
+                Command="{Binding OpenAboutCommand}"
+                Height="40"/>
+
+        <Separator Margin="0,12,0,12"/>
+
+        <TextBlock Text="선택된 영상" Opacity="0.75"/>
+        <TextBlock Text="{Binding SelectedVideoPath}"
+                   TextWrapping="Wrap"
+                   Opacity="0.9"/>
+
+        <Button Content="워크스페이스 열기"
+                Command="{Binding OpenWorkspaceCommand}"
+                IsEnabled="{Binding CanOpenWorkspace}"
+                Height="44"/>
+
+      </StackPanel>
+    </Border>
+
+    <!-- Right: Recent -->
+    <Border Grid.Row="1" Grid.Column="1"
+            Padding="18" CornerRadius="12"
+            Background="#151515">
+      <Grid RowDefinitions="Auto,*" ColumnDefinitions="*">
+        <TextBlock Text="최근"
+                   FontSize="18"
+                   FontWeight="SemiBold"/>
+
+        <ListBox Grid.Row="1"
+                 ItemsSource="{Binding Recents}"
+                 SelectedItem="{Binding SelectedRecent, Mode=TwoWay}"
+                 Margin="0,12,0,0">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Border Padding="12" CornerRadius="10" Background="#1E1E1E" Margin="0,0,0,10">
+                <StackPanel>
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding Path}" Opacity="0.75" TextWrapping="Wrap"/>
+                  <TextBlock Text="{Binding LastOpenedText}" Opacity="0.6" FontSize="12" Margin="0,6,0,0"/>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Border>
+
+  </Grid>
+</UserControl>

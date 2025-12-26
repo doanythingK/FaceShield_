@@ -1,0 +1,26 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:FaceShield.ViewModels.Workspace"
+    x:Class="FaceShield.Views.Workspace.FramePreviewView"
+    x:DataType="vm:FramePreviewViewModel">
+
+    <Grid Background="Black">
+
+        <!-- 🔹 블러 적용된 프리뷰 결과 -->
+        <Image
+             Name="FrameImage"
+             Source="{Binding PreviewBitmap}"
+             Stretch="Uniform"
+             HorizontalAlignment="Center"
+             VerticalAlignment="Center"/>
+
+
+        <!-- 🔹 입력 레이어 -->
+        <Canvas
+            Background="Transparent"
+            PointerPressed="OnPointerPressed"
+            PointerMoved="OnPointerMoved"
+            PointerReleased="OnPointerReleased"/>
+    </Grid>
+</UserControl>

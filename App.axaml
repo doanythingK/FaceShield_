@@ -1,0 +1,43 @@
+﻿<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FaceShield.App"
+             xmlns:local="using:FaceShield"
+             xmlns:converters="clr-namespace:FaceShield.Converters"
+             RequestedThemeVariant="Default">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <local:ViewLocator/>
+    </Application.DataTemplates>
+  
+     <Application.Resources>
+         <FontFamily x:Key="AppFont">
+            avares://FaceShield/Assets/Fonts/NanumGothic.otf
+        </FontFamily>
+
+        <converters:EnumEqualsConverter x:Key="EnumEqualsConverter"/>
+    </Application.Resources>
+
+     <Application.Styles>
+        <FluentTheme />
+           <!-- TextBlock 기본 -->
+        <Style Selector="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+
+        <!-- Button 계열 -->
+        <Style Selector="Button">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+
+        <!-- ToggleButton 본체 -->
+        <Style Selector="ToggleButton">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+
+        <!-- 🔥 핵심: ToggleButton 내부 ContentPresenter -->
+        <Style Selector="ToggleButton > ContentPresenter">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+    </Application.Styles>
+</Application>

@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:FaceShield.Controls"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Workspace"
+             x:Class="FaceShield.Views.Workspace.FrameListView"
+             x:DataType="vm:FrameListViewModel">
+
+   <!-- <Border Background="#121212">
+
+        <controls:TimelineFrameStrip
+        Grid.Row="1"
+        Height="140"
+        Items="{Binding Items}"
+        TotalFrames="{Binding TotalFrames}"
+        Fps="{Binding Fps}"
+        SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
+        SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
+        ViewStartSeconds="{Binding ViewStartSeconds, Mode=TwoWay}"
+        ThumbnailProvider="{Binding ThumbnailProvider}" />
+
+    </Border>
+
+-->
+    <Grid RowDefinitions="Auto,Auto,Auto" Focusable="True">
+
+        <!-- 🔹 프레임 위치 표시 -->
+        <TextBlock
+            Grid.Row="0"
+            Text="{Binding FramePositionText}"
+            HorizontalAlignment="Right"
+            Margin="0,4,8,4"
+            Opacity="0.8"
+            FontSize="12"/>
+
+        <!-- 🔹 Timeline -->
+        <controls:TimelineFrameStrip
+            Grid.Row="1"
+            Height="180"
+            Items="{Binding Items}"
+            TotalFrames="{Binding TotalFrames}"
+            Fps="{Binding Fps}"
+            SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
+            SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
+            ViewStartSeconds="{Binding ViewStartSeconds, Mode=TwoWay}"
+            ThumbnailProvider="{Binding ThumbnailProvider}" />
+
+        <!-- 🔹 ScrollBar -->
+        <ScrollBar
+            Grid.Row="2"
+            Orientation="Horizontal"
+            Height="16"
+            Minimum="0"
+            Maximum="{Binding TotalDurationSeconds}"
+            ViewportSize="{Binding SecondsPerScreen}"
+            Value="{Binding ViewStartSeconds, Mode=TwoWay}" />
+    </Grid>
+
+</UserControl>

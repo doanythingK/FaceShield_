@@ -1,0 +1,3939 @@
+﻿==================================================
+FILE: D:\WorkSpace\FaceShield\App.axaml
+==================================================
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FaceShield.App"
+             xmlns:local="using:FaceShield"
+             xmlns:converters="clr-namespace:FaceShield.Converters"
+             RequestedThemeVariant="Default">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <local:ViewLocator/>
+    </Application.DataTemplates>
+  
+     <Application.Resources>
+         <FontFamily x:Key="AppFont">
+            avares://FaceShield/Assets/Fonts/NanumGothic.otf
+        </FontFamily>
+
+        <converters:EnumEqualsConverter x:Key="EnumEqualsConverter"/>
+    </Application.Resources>
+
+     <Application.Styles>
+        <FluentTheme />
+           <!-- TextBlock 기본 -->
+        <Style Selector="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+
+        <!-- Button 계열 -->
+        <Style Selector="Button">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+
+        <!-- ToggleButton 본체 -->
+        <Style Selector="ToggleButton">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+
+        <!-- 🔥 핵심: ToggleButton 내부 ContentPresenter -->
+        <Style Selector="ToggleButton > ContentPresenter">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        </Style>
+    </Application.Styles>
+</Application>
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\App.axaml.cs
+==================================================
+using System.Linq;
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Data.Core;
+using Avalonia.Data.Core.Plugins;
+using Avalonia.Markup.Xaml;
+using FaceShield.ViewModels;
+using FaceShield.Views;
+
+namespace FaceShield
+{
+    public partial class App : Application
+    {
+        public override void Initialize()
+        {
+            AvaloniaXamlLoader.Load(this);
+        }
+
+        public override void OnFrameworkInitializationCompleted()
+        {
+            // ✅ FFmpeg는 UI/VM 생성 전에 초기화 (기능 불능 예방)
+            FaceShield.Services.Video.FFmpegBootstrap.Initialize();
+
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                // Avoid duplicate validations from both Avalonia and the CommunityToolkit. 
+                // More info: https://docs.avaloniaui.net/docs/guides/development-guides/data-validation#manage-validationplugins
+                DisableAvaloniaDataAnnotationValidation();
+                desktop.MainWindow = new MainWindow
+                {
+                    DataContext = new MainWindowViewModel(),
+                };
+            }
+
+            base.OnFrameworkInitializationCompleted();
+        }
+
+        private void DisableAvaloniaDataAnnotationValidation()
+        {
+            // Get an array of plugins to remove
+            var dataValidationPluginsToRemove =
+                BindingPlugins.DataValidators.OfType<DataAnnotationsValidationPlugin>().ToArray();
+
+            // remove each entry found
+            foreach (var plugin in dataValidationPluginsToRemove)
+            {
+                BindingPlugins.DataValidators.Remove(plugin);
+            }
+        }
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Program.cs
+==================================================
+using System;
+using Avalonia;
+
+namespace FaceShield
+{
+    internal sealed class Program
+    {
+        // Initialization code. Don't use any Avalonia, third-party APIs or any
+        // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
+        // yet and stuff might break.
+        [STAThread]
+        public static void Main(string[] args) => BuildAvaloniaApp()
+            .StartWithClassicDesktopLifetime(args);
+
+        // Avalonia configuration, don't remove; also used by visual designer.
+        public static AppBuilder BuildAvaloniaApp()
+            => AppBuilder.Configure<App>()
+                .UsePlatformDetect()
+                .WithInterFont()
+                .LogToTrace();
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewLocator.cs
+==================================================
+using System;
+using System.Diagnostics.CodeAnalysis;
+using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using FaceShield.ViewModels;
+
+namespace FaceShield
+{
+    /// <summary>
+    /// Given a view model, returns the corresponding view if possible.
+    /// </summary>
+    [RequiresUnreferencedCode(
+        "Default implementation of ViewLocator involves reflection which may be trimmed away.",
+        Url = "https://docs.avaloniaui.net/docs/concepts/view-locator")]
+    public class ViewLocator : IDataTemplate
+    {
+        public Control? Build(object? param)
+        {
+            if (param is null)
+                return null;
+
+            var name = param.GetType().FullName!.Replace("ViewModel", "View", StringComparison.Ordinal);
+            var type = Type.GetType(name);
+
+            if (type != null)
+            {
+                return (Control)Activator.CreateInstance(type)!;
+            }
+
+            return new TextBlock { Text = "Not Found: " + name };
+        }
+
+        public bool Match(object? data)
+        {
+            return data is ViewModelBase;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Controls\TimelineFrameStrip.cs
+==================================================
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using FaceShield.Services.Video;
+using FaceShield.ViewModels.Workspace;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+
+namespace FaceShield.Controls
+{
+    public class TimelineFrameStrip : Control
+    {
+        public static readonly StyledProperty<IReadOnlyList<FrameItemViewModel>?> ItemsProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, IReadOnlyList<FrameItemViewModel>?>(nameof(Items));
+
+        public IReadOnlyList<FrameItemViewModel>? Items
+        {
+            get => GetValue(ItemsProperty);
+            set => SetValue(ItemsProperty, value);
+        }
+
+        public static readonly StyledProperty<int> TotalFramesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, int>(nameof(TotalFrames), 0);
+
+        public int TotalFrames
+        {
+            get => GetValue(TotalFramesProperty);
+            set => SetValue(TotalFramesProperty, value);
+        }
+
+        public static readonly StyledProperty<double> FpsProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, double>(nameof(Fps), 30d);
+
+        public double Fps
+        {
+            get => GetValue(FpsProperty);
+            set => SetValue(FpsProperty, value);
+        }
+
+        public static readonly StyledProperty<int> SelectedFrameIndexProperty =
+    AvaloniaProperty.Register<TimelineFrameStrip, int>(
+        nameof(SelectedFrameIndex),
+        defaultValue: -1,
+        defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+
+        public int SelectedFrameIndex
+        {
+            get => GetValue(SelectedFrameIndexProperty);
+            set => SetCurrentValue(SelectedFrameIndexProperty, value);
+        }
+
+        public static readonly StyledProperty<double> SecondsPerScreenProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, double>(nameof(SecondsPerScreen), 300d);
+
+        public double SecondsPerScreen
+        {
+            get => GetValue(SecondsPerScreenProperty);
+            set => SetValue(SecondsPerScreenProperty, value);
+        }
+
+        public static readonly StyledProperty<double> ViewStartSecondsProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, double>(nameof(ViewStartSeconds), 0d);
+
+        public double ViewStartSeconds
+        {
+            get => GetValue(ViewStartSecondsProperty);
+            set => SetValue(ViewStartSecondsProperty, value);
+        }
+
+        public static readonly StyledProperty<TimelineThumbnailProvider?> ThumbnailProviderProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, TimelineThumbnailProvider?>(nameof(ThumbnailProvider));
+
+        public TimelineThumbnailProvider? ThumbnailProvider
+        {
+            get => GetValue(ThumbnailProviderProperty);
+            set => SetValue(ThumbnailProviderProperty, value);
+        }
+
+        private int _hoverIndex = -1;
+
+        static TimelineFrameStrip()
+        {
+            AffectsRender<TimelineFrameStrip>(
+                ItemsProperty,
+                TotalFramesProperty,
+                FpsProperty,
+                SelectedFrameIndexProperty,
+                SecondsPerScreenProperty,
+                ViewStartSecondsProperty,
+                ThumbnailProviderProperty);
+        }
+
+        protected override void OnPointerPressed(PointerPressedEventArgs e)
+        {
+            base.OnPointerPressed(e);
+
+            var pt = e.GetCurrentPoint(this);
+            if (!pt.Properties.IsLeftButtonPressed)
+                return;
+
+            int total = ResolveTotalFrames();
+            if (total <= 0)
+                return;
+
+            var pos = e.GetPosition(this);
+            double stripH = Math.Max(24, Bounds.Height - 22);
+            if (pos.Y < 0 || pos.Y > stripH)
+                return;
+
+            int idx = XToFrameIndex(pos.X, total);
+
+            // ✅ TwoWay 전파 확실히
+            SetCurrentValue(SelectedFrameIndexProperty, idx);
+
+            e.Handled = true;
+            InvalidateVisual();
+        }
+
+        protected override void OnPointerMoved(PointerEventArgs e)
+        {
+            base.OnPointerMoved(e);
+
+            int total = ResolveTotalFrames();
+            if (total <= 0) return;
+
+            int idx = XToFrameIndex(e.GetPosition(this).X, total);
+            if (idx != _hoverIndex)
+            {
+                _hoverIndex = idx;
+                InvalidateVisual();
+            }
+        }
+
+        protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+        {
+            base.OnPointerWheelChanged(e);
+
+            int total = ResolveTotalFrames();
+            if (total <= 0) return;
+
+            double totalSec = TotalDurationSec(total);
+            if (totalSec <= 0) return;
+
+            bool ctrlOrCmd =
+                e.KeyModifiers.HasFlag(KeyModifiers.Control) ||
+                e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+
+            double delta = e.Delta.Y;
+            if (Math.Abs(delta) < 0.01) return;
+
+            if (ctrlOrCmd)
+            {
+                // Zoom (마우스 위치 기준 앵커 줌)
+                double oldSpan = Math.Max(0.05, SecondsPerScreen);
+                double factor = delta > 0 ? 0.85 : 1.15;
+                double newSpan = Math.Clamp(oldSpan * factor, 0.05, totalSec);
+
+                double w = Math.Max(1, Bounds.Width);
+                double anchorT = Math.Clamp(e.GetPosition(this).X / w, 0.0, 1.0);
+                double anchorSec = ViewStartSeconds + oldSpan * anchorT;
+
+                double newStart = anchorSec - newSpan * anchorT;
+                newStart = ClampStart(newStart, newSpan, totalSec);
+
+                SetCurrentValue(SecondsPerScreenProperty, newSpan);
+                SetCurrentValue(ViewStartSecondsProperty, newStart);
+
+                e.Handled = true;
+                return;
+            }
+
+            // Pan (가로 스크롤)
+            double pan = -delta * (SecondsPerScreen / 10.0);
+            double s = ClampStart(ViewStartSeconds + pan, SecondsPerScreen, totalSec);
+            SetCurrentValue(ViewStartSecondsProperty, s);
+
+            e.Handled = true;
+        }
+
+        public override void Render(DrawingContext ctx)
+        {
+            base.Render(ctx);
+
+            double w = Bounds.Width;
+            double h = Bounds.Height;
+            if (w <= 1 || h <= 1) return;
+
+            int totalFrames = ResolveTotalFrames();
+            double fps = Math.Max(1, Fps);
+
+            double stripH = Math.Max(24, h - 22);
+
+            // background
+            ctx.FillRectangle(Brushes.Black, new Rect(0, 0, w, h));
+            ctx.FillRectangle(new SolidColorBrush(Color.FromRgb(20, 20, 20)),
+                new Rect(0, 0, w, stripH));
+
+            double startSec = ViewStartSeconds;
+            double spanSec = Math.Max(0.05, SecondsPerScreen);
+            double endSec = startSec + spanSec;
+
+            DrawGridLines(ctx, w, stripH, startSec, endSec);
+            DrawThumbnailsDense(ctx, w, stripH, startSec, endSec, fps, totalFrames);
+            DrawAxis(ctx, w, stripH, startSec, endSec);
+
+            // selected line
+            if (SelectedFrameIndex >= 0 && SelectedFrameIndex < totalFrames)
+            {
+                double selSec = SelectedFrameIndex / fps;
+                double x = (selSec - startSec) / Math.Max(0.0001, spanSec) * w;
+                ctx.DrawLine(new Pen(Brushes.Lime, 2), new Point(x, 0), new Point(x, stripH));
+            }
+
+            // hover line
+            if (_hoverIndex >= 0 && _hoverIndex < totalFrames)
+            {
+                double hovSec = _hoverIndex / fps;
+                double x = (hovSec - startSec) / Math.Max(0.0001, spanSec) * w;
+
+                var pen = new Pen(new SolidColorBrush(Color.FromRgb(255, 200, 0)), 2);
+                ctx.DrawLine(pen, new Point(x, 0), new Point(x, stripH));
+            }
+        }
+
+        // ✅ 썸네일을 "뜸"이 아니라 "촘촘하게"
+        // - spacingPx를 줄이고
+        // - 화면 폭 전체를 균등 샘플링
+        private void DrawThumbnailsDense(
+            DrawingContext ctx,
+            double w,
+            double stripH,
+            double startSec,
+            double endSec,
+            double fps,
+            int totalFrames)
+        {
+            var provider = ThumbnailProvider;
+            if (provider == null) return;
+
+            double range = Math.Max(0.0001, endSec - startSec);
+
+            // 화면에 보여줄 썸네일 개수 먼저 결정
+            int slots = (int)Math.Floor(w / 100); // 기준 폭(취향)
+            if (slots < 1) slots = 1;
+            if (slots > 300) slots = 300;
+
+            // ⬇️ 핵심: 화면 폭을 슬롯 수로 나눠서 썸네일 폭 계산
+            double thumbW = w / slots;
+
+            for (int i = 0; i < slots; i++)
+            {
+                double x = i * thumbW;
+
+                // 균등 샘플링
+                double t = Math.Clamp((x + thumbW * 0.5) / Math.Max(1, w), 0.0, 1.0);
+                double sec = startSec + range * t;
+
+                int frame = (int)Math.Floor(sec * fps);
+                frame = Math.Clamp(frame, 0, Math.Max(0, totalFrames - 1));
+
+                WriteableBitmap? bmp;
+                try { bmp = provider.GetThumbnail(frame); }
+                catch { continue; }
+
+                if (bmp == null) continue;
+
+                var src = new Rect(0, 0, bmp.PixelSize.Width, bmp.PixelSize.Height);
+                var dst = new Rect(x, 0, thumbW, stripH);
+
+                ctx.DrawImage(bmp, src, dst);
+            }
+        }
+
+        private static void DrawGridLines(DrawingContext ctx, double w, double stripH, double startSec, double endSec)
+        {
+            double range = Math.Max(0.0001, endSec - startSec);
+            double step = NiceStep(range / 12);
+
+            var pen = new Pen(new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)), 1);
+
+            double first = Math.Floor(startSec / step) * step;
+            for (double t = first; t <= endSec + step; t += step)
+            {
+                if (t < startSec) continue;
+                double x = (t - startSec) / range * w;
+                ctx.DrawLine(pen, new Point(x, 0), new Point(x, stripH));
+            }
+        }
+
+        private static double NiceStep(double raw)
+        {
+            double pow = Math.Pow(10, Math.Floor(Math.Log10(Math.Max(raw, 1e-9))));
+            double n = raw / pow;
+            if (n <= 1) return 1 * pow;
+            if (n <= 2) return 2 * pow;
+            if (n <= 5) return 5 * pow;
+            return 10 * pow;
+        }
+
+        private static void DrawAxis(DrawingContext ctx, double w, double stripH, double startSec, double endSec)
+        {
+            var axisBrush = Brushes.White;
+            var typeface = new Typeface("Segoe UI");
+            double y = stripH + 4;
+
+            DrawTimeLabel(ctx, startSec, 0, y, TextAlignment.Left, axisBrush, typeface);
+            DrawTimeLabel(ctx, (startSec + endSec) * 0.5, w * 0.5, y, TextAlignment.Center, axisBrush, typeface);
+            DrawTimeLabel(ctx, endSec, w, y, TextAlignment.Right, axisBrush, typeface);
+        }
+
+        private static void DrawTimeLabel(DrawingContext ctx, double sec, double x, double y, TextAlignment align, IBrush brush, Typeface typeface)
+        {
+            var ts = TimeSpan.FromSeconds(Math.Max(0, sec));
+            string label = ts.TotalHours >= 1 ? ts.ToString(@"hh\:mm\:ss") : ts.ToString(@"mm\:ss");
+
+            var formatted = new FormattedText(
+                label,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                11,
+                brush);
+
+            double tx = x;
+            if (align == TextAlignment.Right) tx -= formatted.Width;
+            else if (align == TextAlignment.Center) tx -= formatted.Width / 2;
+
+            ctx.DrawText(formatted, new Point(tx, y));
+        }
+
+        private int ResolveTotalFrames()
+        {
+            var items = Items;
+            if (items is { Count: > 0 })
+            {
+                int last = items[^1].Index;
+                return Math.Max(0, last + 1);
+            }
+            return Math.Max(0, TotalFrames);
+        }
+
+        private static double TotalDurationSec(int totalFrames, double fps)
+            => totalFrames <= 0 ? 0 : totalFrames / Math.Max(1, fps);
+
+        private double TotalDurationSec(int totalFrames)
+            => TotalDurationSec(totalFrames, Fps);
+
+        private static double ClampStart(double start, double span, double totalSec)
+        {
+            double maxStart = Math.Max(0, totalSec - span);
+            return Math.Clamp(start, 0, maxStart);
+        }
+
+        private int XToFrameIndex(double x, int totalFrames)
+        {
+            double w = Math.Max(1, Bounds.Width);
+            double t = Math.Clamp(x / w, 0.0, 1.0);
+
+            double sec = ViewStartSeconds + Math.Max(0.05, SecondsPerScreen) * t;
+            int idx = (int)Math.Floor(sec * Math.Max(1, Fps));
+
+            return Math.Clamp(idx, 0, Math.Max(0, totalFrames - 1));
+        }
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Converters\EnumEqualsConverter.cs
+==================================================
+using System;
+using Avalonia.Data;
+using Avalonia.Data.Converters;
+using System.Globalization;
+
+namespace FaceShield.Converters;
+
+public sealed class EnumEqualsConverter : IValueConverter
+{
+    // enum -> bool
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is null || parameter is null)
+            return false;
+
+        return value.Equals(parameter);
+    }
+
+    // bool -> enum
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is true && parameter is not null)
+            return parameter;
+
+        return BindingOperations.DoNothing;
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Models\RecentItem.cs
+==================================================
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.Models
+{
+    public sealed class RecentItem
+    {
+        public string Title { get; }
+        public string Path { get; }
+        public DateTimeOffset LastOpened { get; }
+
+        public string LastOpenedText => $"Last opened: {LastOpened:yyyy-MM-dd HH:mm}";
+
+        public RecentItem(string title, string path, DateTimeOffset lastOpened)
+        {
+            Title = title;
+            Path = path;
+            LastOpened = lastOpened;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\MainWindowViewModel.cs
+==================================================
+using CommunityToolkit.Mvvm.ComponentModel;
+using FaceShield.ViewModels.Pages;
+
+namespace FaceShield.ViewModels
+{
+    public partial class MainWindowViewModel : ViewModelBase
+    {
+        [ObservableProperty]
+        private object? currentPage;
+
+        public MainWindowViewModel()
+        {
+            // 앱 시작 시 첫 화면: Home
+            var home = new HomePageViewModel(
+                onStartWorkspace: vm => CurrentPage = vm
+            );
+
+            CurrentPage = home;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\ViewModelBase.cs
+==================================================
+using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace FaceShield.ViewModels
+{
+    public abstract class ViewModelBase : ObservableObject
+    {
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\MainWindow.axaml
+==================================================
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FaceShield.ViewModels"
+        xmlns:views="using:FaceShield.Views.Pages"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="FaceShield.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Width="1100" Height="720"
+        MinWidth="900" MinHeight="600"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="FaceShield">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+      <ContentControl Content="{Binding CurrentPage}" />
+      <!--<ContentControl>
+        <views:HomePageView/>
+    </ContentControl>-->
+</Window>
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\MainWindow.axaml.cs
+==================================================
+using Avalonia.Controls;
+using FaceShield.ViewModels;
+
+namespace FaceShield.Views
+{
+    public partial class MainWindow : Window
+    {
+        public MainWindow()
+        {
+            InitializeComponent();
+        }
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Enums\Workspace\EditMode.cs
+==================================================
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.Enums.Workspace
+{
+    public enum EditMode
+    {
+        None,
+        Auto,
+        Manual,
+        Brush,
+        Eraser
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Models\Analysis\FrameAnalysisResult.cs
+==================================================
+using Avalonia;
+
+namespace FaceShield.Models.Analysis
+{
+    public sealed class FrameAnalysisResult
+    {
+        public int FrameIndex { get; init; }
+        public double TimestampSec { get; init; }
+
+        public bool HasFace { get; init; }
+        public float Confidence { get; init; }
+
+        public Rect? FaceBounds { get; init; }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Analysis\FrameAnalyzer.cs
+==================================================
+using FaceShield.Models.Analysis;
+using FaceShield.Services.FaceDetection;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Analysis
+{
+    public sealed class FrameAnalyzer : IFrameAnalyzer
+    {
+        private readonly IFaceDetector _faceDetector;
+
+        public FrameAnalyzer(IFaceDetector faceDetector)
+        {
+            _faceDetector = faceDetector;
+        }
+
+        public async Task<IReadOnlyList<FrameAnalysisResult>> AnalyzeAsync(
+            string videoPath,
+            IProgress<int>? progress,
+            CancellationToken ct)
+        {
+            var results = new List<FrameAnalysisResult>();
+
+            int fps = 30;
+            int totalFrames = 300; // 더미
+
+            for (int i = 0; i < totalFrames; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var face = _faceDetector.Detect(null);
+
+                results.Add(new FrameAnalysisResult
+                {
+                    FrameIndex = i,
+                    TimestampSec = i / (double)fps,
+                    HasFace = face != null,
+                    Confidence = face?.Confidence ?? 0f,
+                    FaceBounds = face?.Bounds
+                });
+
+                progress?.Report(i);
+                await Task.Yield();
+            }
+
+            return results;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Analysis\IFrameAnalyzer.cs
+==================================================
+using FaceShield.Models.Analysis;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Analysis
+{
+    public interface IFrameAnalyzer
+    {
+        Task<IReadOnlyList<FrameAnalysisResult>> AnalyzeAsync(
+            string videoPath,
+            IProgress<int>? progress,
+            CancellationToken ct);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\FaceDetection\FaceDetectionResult.cs
+==================================================
+using Avalonia;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.FaceDetection
+{
+    public sealed class FaceDetectionResult
+    {
+        public Rect Bounds { get; init; }
+        public float Confidence { get; init; }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\FaceDetection\IFaceDetector.cs
+==================================================
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.FaceDetection
+{
+    public interface IFaceDetector
+    {
+        FaceDetectionResult? Detect(object? frame);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\FfFrameExtractor.cs
+==================================================
+using Avalonia;
+using Avalonia.Media.Imaging;
+using FFmpeg.AutoGen;
+using System;
+using System.Reflection.Metadata.Ecma335;
+
+namespace FaceShield.Services.Video
+{
+    public unsafe sealed class FfFrameExtractor : IDisposable
+    {
+        private readonly object _sync = new();
+
+        private AVFormatContext* _fmt;
+        private AVCodecContext* _dec;
+        private SwsContext* _sws;
+        private int _videoStreamIndex = -1;
+
+        private AVRational _timeBase;
+        private double _fps;
+
+        private bool _disposed;
+
+        public FfFrameExtractor(string videoPath)
+        {
+            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
+
+            // open input (AVFormatContext**)
+            fixed (AVFormatContext** pFmt = &_fmt)
+            {
+                int r = ffmpeg.avformat_open_input(pFmt, videoPath, null, null);
+                if (r < 0) throw new InvalidOperationException("avformat_open_input failed");
+            }
+
+            if (ffmpeg.avformat_find_stream_info(_fmt, null) < 0)
+                throw new InvalidOperationException("avformat_find_stream_info failed");
+
+            for (int i = 0; i < _fmt->nb_streams; i++)
+            {
+                if (_fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    _videoStreamIndex = i;
+                    break;
+                }
+            }
+            if (_videoStreamIndex < 0)
+                throw new InvalidOperationException("video stream not found");
+
+            AVStream* stream = _fmt->streams[_videoStreamIndex];
+
+            _timeBase = stream->time_base;
+
+            double fpsValue =
+                stream->avg_frame_rate.num != 0
+                    ? ffmpeg.av_q2d(stream->avg_frame_rate)
+                    : stream->r_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(stream->r_frame_rate)
+                        : 30.0;
+
+            _fps = Math.Max(1.0, fpsValue);
+
+            AVCodec* codec = ffmpeg.avcodec_find_decoder(stream->codecpar->codec_id);
+            if (codec == null)
+                throw new InvalidOperationException("decoder not found");
+
+            _dec = ffmpeg.avcodec_alloc_context3(codec);
+            if (_dec == null)
+                throw new InvalidOperationException("avcodec_alloc_context3 failed");
+
+            if (ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar) < 0)
+                throw new InvalidOperationException("avcodec_parameters_to_context failed");
+
+            if (ffmpeg.avcodec_open2(_dec, codec, null) < 0)
+                throw new InvalidOperationException("avcodec_open2 failed");
+
+            _sws = ffmpeg.sws_getContext(
+                _dec->width, _dec->height, _dec->pix_fmt,
+                _dec->width, _dec->height, AVPixelFormat.AV_PIX_FMT_BGRA,
+                (int)SwsFlags.SWS_BILINEAR,
+                null, null, null);
+
+            if (_sws == null)
+                throw new InvalidOperationException("sws_getContext failed");
+        }
+
+        /// <summary>
+        /// 지정 프레임 인덱스의 BGRA WriteableBitmap 반환.
+        /// 실패 시 null.
+        /// (FFmpeg 세션은 인스턴스 수명 동안 유지)
+        /// </summary>
+        public WriteableBitmap? GetFrameByIndex(int frameIndex)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
+            if (frameIndex < 0) return null;
+
+            lock (_sync)
+            {
+                // frameIndex -> seconds -> PTS
+                double tbSec = ffmpeg.av_q2d(_timeBase);
+                if (tbSec <= 0) return null;
+
+                double seconds = frameIndex / _fps;
+                long targetPts = (long)Math.Floor(seconds / tbSec);
+
+                // seek + flush
+                ffmpeg.av_seek_frame(_fmt, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                ffmpeg.avcodec_flush_buffers(_dec);
+
+                AVPacket* pkt = ffmpeg.av_packet_alloc();
+                AVFrame* src = ffmpeg.av_frame_alloc();
+                AVFrame* bgra = ffmpeg.av_frame_alloc();
+
+                if (pkt == null || src == null || bgra == null)
+                {
+                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
+                    if (src != null) ffmpeg.av_frame_free(&src);
+                    if (bgra != null) ffmpeg.av_frame_free(&bgra);
+                    return null;
+                }
+
+                try
+                {
+                    bgra->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
+                    bgra->width = _dec->width;
+                    bgra->height = _dec->height;
+
+                    if (ffmpeg.av_frame_get_buffer(bgra, 32) < 0)
+                        return null;
+
+                    long decodedIndex = (long)Math.Round(seconds * _fps);
+
+                    long currentIndex = -1;
+
+                    while (ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                    {
+                        if (pkt->stream_index != _videoStreamIndex)
+                        {
+                            ffmpeg.av_packet_unref(pkt);
+                            continue;
+                        }
+
+                        ffmpeg.avcodec_send_packet(_dec, pkt);
+                        ffmpeg.av_packet_unref(pkt);
+
+                        while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
+                        {
+                            currentIndex++;
+
+                            if (currentIndex < decodedIndex)
+                                continue; // ❗ 여기서 프레임 스킵
+
+                            ffmpeg.sws_scale(
+                                _sws,
+                                src->data, src->linesize,
+                                0, src->height,
+                                bgra->data, bgra->linesize);
+
+                            return ToBitmap(bgra);
+                        }
+                    }
+
+                    return null;
+                }
+                finally
+                {
+                    ffmpeg.av_packet_free(&pkt);
+                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_frame_free(&bgra);
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            lock (_sync)
+            {
+                if (_sws != null)
+                {
+                    ffmpeg.sws_freeContext(_sws);
+                    _sws = null;
+                }
+
+                if (_dec != null)
+                {
+                    fixed (AVCodecContext** pDec = &_dec)
+                    {
+                        ffmpeg.avcodec_free_context(pDec);
+                    }
+                    _dec = null;
+                }
+
+                if (_fmt != null)
+                {
+                    fixed (AVFormatContext** pFmt = &_fmt)
+                    {
+                        ffmpeg.avformat_close_input(pFmt);
+                    }
+                    _fmt = null;
+                }
+            }
+        }
+
+        private static WriteableBitmap ToBitmap(AVFrame* bgra)
+        {
+            int w = bgra->width;
+            int h = bgra->height;
+
+            var bmp = new WriteableBitmap(
+                new PixelSize(w, h),
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var fb = bmp.Lock();
+
+            byte* dst = (byte*)fb.Address;
+            byte* src = bgra->data[0];
+
+            int dstStride = fb.RowBytes;
+            int srcStride = bgra->linesize[0];
+            int copy = Math.Min(srcStride, dstStride);
+
+            for (int y = 0; y < h; y++)
+            {
+                Buffer.MemoryCopy(
+                    src + y * srcStride,
+                    dst + y * dstStride,
+                    dstStride,
+                    copy);
+            }
+
+            return bmp;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\FFmpegBootstrap.cs
+==================================================
+using FFmpeg.AutoGen;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Video
+{
+    public static class FFmpegBootstrap
+    {
+        public static void Initialize()
+        {
+            try
+            {
+                ffmpeg.avcodec_version();
+                Console.WriteLine("[FFmpeg] Native libraries loaded successfully.");
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "FFmpeg native libraries not loaded. Check DLL placement.",
+                    ex);
+            }
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\FrameImageProvider.cs
+==================================================
+// FILE: D:\WorkSpace\FaceShield\Services\Video\FrameImageProvider.cs
+using Avalonia.Media.Imaging;
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Video
+{
+    /// <summary>
+    /// 프레임 추출 Provider
+    /// - 동일 영상에 대해 Extractor 세션 재사용(매 클릭마다 open/close 금지)
+    /// - 연속 클릭 시 이전 요청 cancel -> OperationCanceledException은 정상 흐름으로 무시
+    /// - 끝 프레임(EOF)은 null 반환하고, 호출부에서 마지막 프레임/이전 프레임을 쓰도록 처리
+    /// </summary>
+    public sealed class FrameImageProvider : IDisposable
+    {
+        private readonly ConcurrentDictionary<string, FfFrameExtractor> _sessions = new(StringComparer.OrdinalIgnoreCase);
+
+        public Task<WriteableBitmap?> GetFrameAsync(string videoPath, int frameIndex, CancellationToken ct)
+        {
+            // UI를 막지 않도록 백그라운드
+            return Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var ex = _sessions.GetOrAdd(videoPath, p => new FfFrameExtractor(p));
+                return ex.GetFrameByIndex(frameIndex);
+
+            }, ct);
+        }
+
+        public void Dispose()
+        {
+            foreach (var kv in _sessions)
+            {
+                try { kv.Value.Dispose(); } catch { }
+            }
+            _sessions.Clear();
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\FrameMaskProvider.cs
+==================================================
+using Avalonia.Media.Imaging;
+using System.Collections.Concurrent;
+
+namespace FaceShield.Services.Video
+{
+    public sealed class FrameMaskProvider : IFrameMaskProvider
+    {
+        private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
+
+        public void SetMask(int frameIndex, WriteableBitmap mask)
+            => _masks[frameIndex] = mask;
+
+        public WriteableBitmap? GetFinalMask(int frameIndex)
+            => _masks.TryGetValue(frameIndex, out var m) ? m : null;
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\IFrameImageProvider.cs
+==================================================
+using Avalonia.Media.Imaging;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Video
+{
+    public interface IFrameImageProvider
+    {
+        //Task<Bitmap?> GetFrameAsync(
+        //    string videoPath,
+        //    int frameIndex,
+        //    CancellationToken ct);
+        Task<WriteableBitmap> GetFrameAsync(string videoPath, int frameIndex, CancellationToken ct);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\IFrameMaskProvider.cs
+==================================================
+using Avalonia.Media.Imaging;
+
+namespace FaceShield.Services.Video
+{
+    public interface IFrameMaskProvider
+    {
+        WriteableBitmap? GetFinalMask(int frameIndex);
+    }
+
+}
+
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\MaskedVideoExporter.cs
+==================================================
+using Avalonia.Media.Imaging;
+using FFmpeg.AutoGen;
+using System;
+
+namespace FaceShield.Services.Video;
+
+public unsafe sealed class MaskedVideoExporter
+{
+    public void ApplyMaskAndBlur(AVFrame* bgraFrame, WriteableBitmap mask, int blurRadius)
+    {
+        if (bgraFrame == null) throw new ArgumentNullException(nameof(bgraFrame));
+        if (blurRadius <= 0) return;
+
+        int w = bgraFrame->width;
+        int h = bgraFrame->height;
+
+        if (w <= 0 || h <= 0) return;
+        if (mask.PixelSize.Width != w || mask.PixelSize.Height != h) return;
+
+        using var fb = mask.Lock();
+
+        byte* data = bgraFrame->data[0];          // BGRA
+        int stride = bgraFrame->linesize[0];
+        uint* m = (uint*)fb.Address;
+
+        for (int y = 0; y < h; y++)
+        {
+            byte* row = data + y * stride;
+            int mi = y * w;
+
+            for (int x = 0; x < w; x++)
+            {
+                byte alpha = (byte)(m[mi + x] >> 24);
+                if (alpha == 0) continue;
+
+                BoxBlurPixel(data, stride, w, h, x, y, blurRadius);
+            }
+        }
+    }
+
+    private static void BoxBlurPixel(byte* data, int stride, int w, int h, int cx, int cy, int r)
+    {
+        int sumB = 0, sumG = 0, sumR = 0, sumA = 0, count = 0;
+
+        for (int yy = cy - r; yy <= cy + r; yy++)
+        {
+            if ((uint)yy >= (uint)h) continue;
+            byte* row = data + yy * stride;
+
+            for (int xx = cx - r; xx <= cx + r; xx++)
+            {
+                if ((uint)xx >= (uint)w) continue;
+
+                byte* p = row + xx * 4;
+                sumB += p[0];
+                sumG += p[1];
+                sumR += p[2];
+                sumA += p[3];
+                count++;
+            }
+        }
+
+        if (count == 0) return;
+
+        byte* dst = data + cy * stride + cx * 4;
+        dst[0] = (byte)(sumB / count);
+        dst[1] = (byte)(sumG / count);
+        dst[2] = (byte)(sumR / count);
+        dst[3] = (byte)(sumA / count);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\PreviewBlurProcessor.cs
+==================================================
+using Avalonia;
+using Avalonia.Media.Imaging;
+using System;
+
+namespace FaceShield.Services.Video
+{
+    // ✅ 마스크(알파>0) 영역에만 블러를 적용해 "프리뷰"용 비트맵을 생성
+    public static class PreviewBlurProcessor
+    {
+        // blurRadius: 1~20 정도 권장
+        public static WriteableBitmap CreateBlurPreview(WriteableBitmap src, WriteableBitmap mask, int blurRadius)
+        {
+            if (blurRadius < 1) blurRadius = 1;
+
+            var size = src.PixelSize;
+            if (mask.PixelSize.Width != size.Width || mask.PixelSize.Height != size.Height)
+                throw new InvalidOperationException("Mask size must match source size.");
+
+            var outBmp = new WriteableBitmap(
+                size,
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var sfb = src.Lock();
+            using var mfb = mask.Lock();
+            using var ofb = outBmp.Lock();
+
+            unsafe
+            {
+                int w = size.Width;
+                int h = size.Height;
+
+                int sStride = sfb.RowBytes;
+                int mStride = mfb.RowBytes;
+                int oStride = ofb.RowBytes;
+
+                byte* sBase = (byte*)sfb.Address;
+                byte* mBase = (byte*)mfb.Address;
+                byte* oBase = (byte*)ofb.Address;
+
+                // 우선 원본 복사
+                for (int y = 0; y < h; y++)
+                {
+                    Buffer.MemoryCopy(
+                        sBase + y * sStride,
+                        oBase + y * oStride,
+                        oStride,
+                        Math.Min(sStride, oStride));
+                }
+
+                // 마스크 영역만 블러로 덮어쓰기
+                int r = blurRadius;
+                for (int y = 0; y < h; y++)
+                {
+                    byte* mRow = mBase + y * mStride;
+                    byte* oRow = oBase + y * oStride;
+
+                    for (int x = 0; x < w; x++)
+                    {
+                        // mask는 BGRA. 알파만 보면 됨.
+                        byte a = mRow[x * 4 + 3];
+                        if (a == 0) continue;
+
+                        int x0 = Math.Max(0, x - r);
+                        int x1 = Math.Min(w - 1, x + r);
+                        int y0 = Math.Max(0, y - r);
+                        int y1 = Math.Min(h - 1, y + r);
+
+                        int count = 0;
+                        int sumB = 0, sumG = 0, sumR = 0;
+
+                        for (int yy = y0; yy <= y1; yy++)
+                        {
+                            byte* sRow = sBase + yy * sStride;
+                            for (int xx = x0; xx <= x1; xx++)
+                            {
+                                byte* p = sRow + xx * 4;
+                                sumB += p[0];
+                                sumG += p[1];
+                                sumR += p[2];
+                                count++;
+                            }
+                        }
+
+                        if (count <= 0) continue;
+
+                        byte b = (byte)(sumB / count);
+                        byte g = (byte)(sumG / count);
+                        byte rC = (byte)(sumR / count);
+
+                        // premul 기준: 알파는 원본 프레임 그대로(255) 유지
+                        byte* outP = oRow + x * 4;
+                        outP[0] = b;
+                        outP[1] = g;
+                        outP[2] = rC;
+                        outP[3] = 255;
+                    }
+                }
+            }
+
+            return outBmp;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\TimelineThumbnailProvider.cs
+==================================================
+using Avalonia;
+using Avalonia.Media.Imaging;
+using FFmpeg.AutoGen;
+using System;
+using System.Collections.Concurrent;
+
+namespace FaceShield.Services.Video
+{
+    public unsafe sealed class TimelineThumbnailProvider : IDisposable
+    {
+        private readonly string _videoPath;
+        private readonly int _thumbWidth;
+        private readonly int _thumbHeight;
+
+        private AVFormatContext* _fmt;
+        private AVCodecContext* _dec;
+        private SwsContext* _sws;
+        private int _videoStreamIndex = -1;
+
+        // ✅ seek 계산용 메타
+        private AVRational _timeBase;
+        private double _fps;
+
+        private readonly ConcurrentDictionary<int, WriteableBitmap> _cache = new();
+
+        public TimelineThumbnailProvider(string videoPath, int thumbWidth = 160, int thumbHeight = 90)
+        {
+            _videoPath = videoPath;
+            _thumbWidth = thumbWidth;
+            _thumbHeight = thumbHeight;
+
+            Open();
+        }
+
+        private void Open()
+        {
+            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
+
+            fixed (AVFormatContext** pFmt = &_fmt)
+            {
+                if (ffmpeg.avformat_open_input(pFmt, _videoPath, null, null) < 0)
+                    throw new InvalidOperationException("avformat_open_input failed.");
+
+                if (ffmpeg.avformat_find_stream_info(_fmt, null) < 0)
+                    throw new InvalidOperationException("avformat_find_stream_info failed.");
+            }
+
+            for (int i = 0; i < _fmt->nb_streams; i++)
+            {
+                if (_fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    _videoStreamIndex = i;
+                    break;
+                }
+            }
+
+            if (_videoStreamIndex < 0)
+                throw new InvalidOperationException("Video stream not found.");
+
+            AVStream* stream = _fmt->streams[_videoStreamIndex];
+
+            // ✅ time_base / fps 저장 (seek 계산에 사용)
+            _timeBase = stream->time_base;
+
+            double fpsValue =
+                stream->avg_frame_rate.num != 0
+                    ? ffmpeg.av_q2d(stream->avg_frame_rate)
+                    : stream->r_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(stream->r_frame_rate)
+                        : 30.0;
+
+            _fps = Math.Max(1.0, fpsValue);
+
+            AVCodec* codec = ffmpeg.avcodec_find_decoder(stream->codecpar->codec_id);
+            if (codec == null)
+                throw new InvalidOperationException("Decoder not found.");
+
+            _dec = ffmpeg.avcodec_alloc_context3(codec);
+            if (_dec == null)
+                throw new InvalidOperationException("avcodec_alloc_context3 failed.");
+
+            if (ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar) < 0)
+                throw new InvalidOperationException("avcodec_parameters_to_context failed.");
+
+            if (ffmpeg.avcodec_open2(_dec, codec, null) < 0)
+                throw new InvalidOperationException("avcodec_open2 failed.");
+
+            _sws = ffmpeg.sws_getContext(
+                _dec->width,
+                _dec->height,
+                _dec->pix_fmt,
+                _thumbWidth,
+                _thumbHeight,
+                AVPixelFormat.AV_PIX_FMT_BGRA,
+                (int)SwsFlags.SWS_BILINEAR,
+                null, null, null);
+
+            if (_sws == null)
+                throw new InvalidOperationException("sws_getContext failed.");
+        }
+
+        public WriteableBitmap? GetThumbnail(int frameIndex)
+        {
+            if (frameIndex < 0) return null;
+
+            if (_cache.TryGetValue(frameIndex, out var cached))
+                return cached;
+
+            var bmp = DecodeFrame(frameIndex);
+            if (bmp != null)
+                _cache.TryAdd(frameIndex, bmp);
+
+            return bmp;
+        }
+
+        private WriteableBitmap? DecodeFrame(int frameIndex)
+        {
+            if (_fmt == null || _dec == null || _videoStreamIndex < 0 || _sws == null)
+                return null;
+
+            // ✅ frameIndex -> seconds -> stream time_base 기준 PTS로 변환
+            // time_base 초 단위 = av_q2d(time_base)
+            double tbSec = ffmpeg.av_q2d(_timeBase);
+            if (tbSec <= 0) tbSec = 1.0 / 90000.0; // (확실하지 않음) 매우 드문 방어
+
+            double seconds = frameIndex / _fps;
+            long targetPts = (long)Math.Floor(seconds / tbSec);
+
+            ffmpeg.av_seek_frame(_fmt, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+            ffmpeg.avcodec_flush_buffers(_dec);
+
+            AVPacket* pkt = ffmpeg.av_packet_alloc();
+            AVFrame* src = ffmpeg.av_frame_alloc();
+            AVFrame* dst = ffmpeg.av_frame_alloc();
+
+            try
+            {
+                if (pkt == null || src == null || dst == null)
+                    return null;
+
+                dst->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
+                dst->width = _thumbWidth;
+                dst->height = _thumbHeight;
+
+                if (ffmpeg.av_frame_get_buffer(dst, 32) < 0)
+                    return null;
+
+                while (ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                {
+                    if (pkt->stream_index != _videoStreamIndex)
+                    {
+                        ffmpeg.av_packet_unref(pkt);
+                        continue;
+                    }
+
+                    ffmpeg.avcodec_send_packet(_dec, pkt);
+                    ffmpeg.av_packet_unref(pkt);
+
+                    if (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
+                    {
+                        ffmpeg.sws_scale(
+                            _sws,
+                            src->data,
+                            src->linesize,
+                            0,
+                            src->height,
+                            dst->data,
+                            dst->linesize);
+
+                        var bmp = new WriteableBitmap(
+                            new PixelSize(_thumbWidth, _thumbHeight),
+                            new Vector(96, 96),
+                            Avalonia.Platform.PixelFormat.Bgra8888,
+                            Avalonia.Platform.AlphaFormat.Premul);
+
+                        using (var fb = bmp.Lock())
+                        {
+                            byte* dstPtr = (byte*)fb.Address;
+                            byte* srcPtr = dst->data[0];
+
+                            int srcStride = dst->linesize[0];
+                            int dstStride = fb.RowBytes;
+
+                            int copyBytesPerRow = Math.Min(srcStride, dstStride);
+
+                            for (int y = 0; y < _thumbHeight; y++)
+                            {
+                                Buffer.MemoryCopy(
+                                    srcPtr + y * srcStride,
+                                    dstPtr + y * dstStride,
+                                    dstStride,
+                                    copyBytesPerRow);
+                            }
+                        }
+
+                        return bmp;
+                    }
+                }
+            }
+            finally
+            {
+                if (pkt != null) ffmpeg.av_packet_free(&pkt);
+                if (src != null) ffmpeg.av_frame_free(&src);
+                if (dst != null) ffmpeg.av_frame_free(&dst);
+            }
+
+            return null;
+        }
+
+        public void Dispose()
+        {
+            foreach (var kv in _cache)
+                kv.Value.Dispose();
+            _cache.Clear();
+
+            if (_sws != null)
+            {
+                ffmpeg.sws_freeContext(_sws);
+                _sws = null;
+            }
+
+            if (_dec != null)
+            {
+                fixed (AVCodecContext** pDec = &_dec)
+                {
+                    ffmpeg.avcodec_free_context(pDec);
+                }
+            }
+
+            if (_fmt != null)
+            {
+                fixed (AVFormatContext** pFmt = &_fmt)
+                {
+                    ffmpeg.avformat_close_input(pFmt);
+                }
+            }
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\VideoExportService.cs
+==================================================
+using Avalonia.Media.Imaging;
+using FFmpeg.AutoGen;
+using System;
+
+namespace FaceShield.Services.Video;
+
+public unsafe sealed class VideoExportService
+{
+    private readonly IFrameMaskProvider _maskProvider;
+    private readonly MaskedVideoExporter _masked = new();
+
+    public VideoExportService(IFrameMaskProvider maskProvider)
+    {
+        _maskProvider = maskProvider;
+    }
+
+    public void Export(string inputPath, string outputPath, int blurRadius)
+    {
+        ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
+
+        AVFormatContext* inFmt = null;
+        AVFormatContext* outFmt = null;
+        AVCodecContext* dec = null;
+        AVCodecContext* enc = null;
+        SwsContext* swsDecToBgra = null;
+        SwsContext* swsBgraToEnc = null;
+
+        AVPacket* pkt = ffmpeg.av_packet_alloc();
+        AVPacket* outPkt = ffmpeg.av_packet_alloc();
+        AVFrame* frame = ffmpeg.av_frame_alloc();
+        AVFrame* bgra = ffmpeg.av_frame_alloc();
+        AVFrame* encFrame = ffmpeg.av_frame_alloc();
+
+        int videoStreamIndex = -1;
+        int frameIndex = 0;
+
+        try
+        {
+            // ───────── input ─────────
+            Throw(ffmpeg.avformat_open_input(&inFmt, inputPath, null, null));
+            Throw(ffmpeg.avformat_find_stream_info(inFmt, null));
+
+            for (int i = 0; i < inFmt->nb_streams; i++)
+            {
+                if (inFmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    videoStreamIndex = i;
+                    break;
+                }
+            }
+            if (videoStreamIndex < 0)
+                throw new InvalidOperationException("Video stream not found.");
+
+            AVStream* inStream = inFmt->streams[videoStreamIndex];
+
+            AVCodec* decoder = ffmpeg.avcodec_find_decoder(inStream->codecpar->codec_id);
+            dec = ffmpeg.avcodec_alloc_context3(decoder);
+            Throw(ffmpeg.avcodec_parameters_to_context(dec, inStream->codecpar));
+            Throw(ffmpeg.avcodec_open2(dec, decoder, null));
+
+            // ───────── output ─────────
+            Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
+
+            AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
+            enc = ffmpeg.avcodec_alloc_context3(encoder);
+
+            enc->width = dec->width;
+            enc->height = dec->height;
+            enc->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
+            enc->time_base = inStream->time_base;
+            enc->framerate = inStream->r_frame_rate;
+
+            if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
+                enc->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
+
+            Throw(ffmpeg.avcodec_open2(enc, encoder, null));
+
+            AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, encoder);
+            Throw(ffmpeg.avcodec_parameters_from_context(outStream->codecpar, enc));
+            outStream->time_base = enc->time_base;
+
+            if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
+                Throw(ffmpeg.avio_open(&outFmt->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE));
+
+            Throw(ffmpeg.avformat_write_header(outFmt, null));
+
+            // ───────── frames ─────────
+            bgra->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
+            bgra->width = dec->width;
+            bgra->height = dec->height;
+            Throw(ffmpeg.av_frame_get_buffer(bgra, 32));
+
+            encFrame->format = (int)enc->pix_fmt;
+            encFrame->width = enc->width;
+            encFrame->height = enc->height;
+            Throw(ffmpeg.av_frame_get_buffer(encFrame, 32));
+
+            // ✅ sws context (정정)
+            swsDecToBgra = ffmpeg.sws_getContext(
+                dec->width, dec->height, dec->pix_fmt,
+                dec->width, dec->height, AVPixelFormat.AV_PIX_FMT_BGRA,
+                (int)SwsFlags.SWS_BILINEAR,
+                null, null, null);
+
+            swsBgraToEnc = ffmpeg.sws_getContext(
+                enc->width, enc->height, AVPixelFormat.AV_PIX_FMT_BGRA,
+                enc->width, enc->height, enc->pix_fmt,
+                (int)SwsFlags.SWS_BILINEAR,
+                null, null, null);
+
+            // ───────── main loop ─────────
+            while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
+            {
+                if (pkt->stream_index != videoStreamIndex)
+                {
+                    ffmpeg.av_packet_unref(pkt);
+                    continue;
+                }
+
+                Throw(ffmpeg.avcodec_send_packet(dec, pkt));
+                ffmpeg.av_packet_unref(pkt);
+
+                while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
+                {
+                    Throw(ffmpeg.sws_scale(
+                        swsDecToBgra,
+                        frame->data,
+                        frame->linesize,
+                        0,
+                        frame->height,
+                        bgra->data,
+                        bgra->linesize));
+
+                    var mask = _maskProvider.GetFinalMask(frameIndex);
+                    if (mask != null)
+                        _masked.ApplyMaskAndBlur(bgra, mask, blurRadius);
+
+                    Throw(ffmpeg.sws_scale(
+                        swsBgraToEnc,
+                        bgra->data,
+                        bgra->linesize,
+                        0,
+                        bgra->height,
+                        encFrame->data,
+                        encFrame->linesize));
+
+                    encFrame->pts = frame->pts;
+
+                    Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
+                    while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
+                    {
+                        outPkt->stream_index = outStream->index;
+                        Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+                        ffmpeg.av_packet_unref(outPkt);
+                    }
+
+                    frameIndex++;
+                }
+            }
+
+            Throw(ffmpeg.av_write_trailer(outFmt));
+        }
+        finally
+        {
+            if (swsDecToBgra != null) ffmpeg.sws_freeContext(swsDecToBgra);
+            if (swsBgraToEnc != null) ffmpeg.sws_freeContext(swsBgraToEnc);
+
+            ffmpeg.av_frame_free(&frame);
+            ffmpeg.av_frame_free(&bgra);
+            ffmpeg.av_frame_free(&encFrame);
+            ffmpeg.av_packet_free(&pkt);
+            ffmpeg.av_packet_free(&outPkt);
+
+            ffmpeg.avcodec_free_context(&dec);
+            ffmpeg.avcodec_free_context(&enc);
+
+            if (outFmt != null)
+            {
+                if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
+                    ffmpeg.avio_closep(&outFmt->pb);
+                ffmpeg.avformat_free_context(outFmt);
+            }
+
+            if (inFmt != null)
+                ffmpeg.avformat_close_input(&inFmt);
+        }
+    }
+
+    private static void Throw(int err)
+    {
+        if (err >= 0) return;
+
+        byte* buf = stackalloc byte[1024];
+        ffmpeg.av_strerror(err, buf, 1024);
+        throw new InvalidOperationException(
+            System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buf, 1024)).TrimEnd('\0'));
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\VideoFrameReader.cs
+==================================================
+using Avalonia;
+using Avalonia.Media.Imaging;
+using FFmpeg.AutoGen;
+using System;
+
+namespace FaceShield.Services.Video
+{
+    public unsafe sealed class VideoFrameReader : IDisposable
+    {
+        private AVFormatContext* _format;
+        private AVCodecContext* _codec;
+        private AVFrame* _frame;
+        private AVPacket* _packet;
+        private SwsContext* _sws;
+        private int _videoStreamIndex = -1;
+
+        // BGRA 출력
+        private byte* _bgraBuffer;
+        private byte_ptrArray4 _bgraData;
+        private int_array4 _bgraLinesize;
+
+        public VideoFrameReader(string path)
+        {
+            ffmpeg.avformat_network_init();
+
+            // AVFormatContext** 시그니처 대응
+            fixed (AVFormatContext** pFmt = &_format)
+            {
+                int r = ffmpeg.avformat_open_input(pFmt, path, null, null);
+                if (r < 0) throw new InvalidOperationException("FFmpeg native libraries not loaded. Check DLL placement.");
+            }
+
+            if (ffmpeg.avformat_find_stream_info(_format, null) < 0)
+                throw new InvalidOperationException("avformat_find_stream_info failed");
+
+            for (int i = 0; i < _format->nb_streams; i++)
+            {
+                if (_format->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    _videoStreamIndex = i;
+                    break;
+                }
+            }
+            if (_videoStreamIndex < 0)
+                throw new InvalidOperationException("No video stream found");
+
+            AVCodecParameters* codecPar = _format->streams[_videoStreamIndex]->codecpar;
+            AVCodec* decoder = ffmpeg.avcodec_find_decoder(codecPar->codec_id);
+            if (decoder == null)
+                throw new InvalidOperationException("Decoder not found");
+
+            _codec = ffmpeg.avcodec_alloc_context3(decoder);
+            if (_codec == null)
+                throw new InvalidOperationException("avcodec_alloc_context3 failed");
+
+            if (ffmpeg.avcodec_parameters_to_context(_codec, codecPar) < 0)
+                throw new InvalidOperationException("avcodec_parameters_to_context failed");
+
+            if (ffmpeg.avcodec_open2(_codec, decoder, null) < 0)
+                throw new InvalidOperationException("avcodec_open2 failed");
+
+            _frame = ffmpeg.av_frame_alloc();
+            _packet = ffmpeg.av_packet_alloc();
+            if (_frame == null || _packet == null)
+                throw new InvalidOperationException("av_frame_alloc/av_packet_alloc failed");
+
+            _sws = ffmpeg.sws_getContext(
+                _codec->width, _codec->height, _codec->pix_fmt,
+                _codec->width, _codec->height, AVPixelFormat.AV_PIX_FMT_BGRA,
+                (int)SwsFlags.SWS_BILINEAR,
+                null, null, null);
+
+            if (_sws == null)
+                throw new InvalidOperationException("sws_getContext failed");
+
+            int bufSize = ffmpeg.av_image_get_buffer_size(
+                AVPixelFormat.AV_PIX_FMT_BGRA, _codec->width, _codec->height, 1);
+
+            _bgraBuffer = (byte*)ffmpeg.av_malloc((ulong)bufSize);
+            if (_bgraBuffer == null)
+                throw new InvalidOperationException("av_malloc failed");
+
+            if (ffmpeg.av_image_fill_arrays(
+                    ref _bgraData,
+                    ref _bgraLinesize,
+                    _bgraBuffer,
+                    AVPixelFormat.AV_PIX_FMT_BGRA,
+                    _codec->width,
+                    _codec->height,
+                    1) < 0)
+            {
+                throw new InvalidOperationException("av_image_fill_arrays failed");
+            }
+        }
+
+        public WriteableBitmap ReadFrame(int targetFrame)
+        {
+            int current = 0;
+
+            while (ffmpeg.av_read_frame(_format, _packet) >= 0)
+            {
+                if (_packet->stream_index != _videoStreamIndex)
+                {
+                    ffmpeg.av_packet_unref(_packet);
+                    continue;
+                }
+
+                int send = ffmpeg.avcodec_send_packet(_codec, _packet);
+                ffmpeg.av_packet_unref(_packet);
+                if (send < 0) continue;
+
+                while (ffmpeg.avcodec_receive_frame(_codec, _frame) == 0)
+                {
+                    if (current++ == targetFrame)
+                    {
+                        ffmpeg.sws_scale(
+                            _sws,
+                            _frame->data,
+                            _frame->linesize,
+                            0,
+                            _codec->height,
+                            _bgraData,
+                            _bgraLinesize);
+
+                        return CreateBitmapFromBGRA();
+                    }
+                }
+            }
+
+            throw new InvalidOperationException("Frame not found");
+        }
+
+        private WriteableBitmap CreateBitmapFromBGRA()
+        {
+            int w = _codec->width;
+            int h = _codec->height;
+
+            var bmp = new WriteableBitmap(
+                new PixelSize(w, h),
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var fb = bmp.Lock();
+
+            byte* src = _bgraData[0];
+            byte* dst = (byte*)fb.Address;
+
+            int srcStride = _bgraLinesize[0];
+            int dstStride = w * 4;
+
+            for (int y = 0; y < h; y++)
+            {
+                Buffer.MemoryCopy(
+                    src + y * srcStride,
+                    dst + y * dstStride,
+                    dstStride,
+                    dstStride);
+            }
+
+            return bmp;
+        }
+
+        public void Dispose()
+        {
+            if (_sws != null)
+            {
+                ffmpeg.sws_freeContext(_sws);
+                _sws = null;
+            }
+
+            if (_packet != null)
+            {
+                fixed (AVPacket** p = &_packet) ffmpeg.av_packet_free(p);
+            }
+
+            if (_frame != null)
+            {
+                fixed (AVFrame** p = &_frame) ffmpeg.av_frame_free(p);
+            }
+
+            if (_codec != null)
+            {
+                fixed (AVCodecContext** p = &_codec) ffmpeg.avcodec_free_context(p);
+            }
+
+            if (_format != null)
+            {
+                fixed (AVFormatContext** p = &_format) ffmpeg.avformat_close_input(p);
+            }
+
+            if (_bgraBuffer != null)
+            {
+                ffmpeg.av_free(_bgraBuffer);
+                _bgraBuffer = null;
+            }
+        }
+    }
+}
+
+//public unsafe sealed class VideoFrameReader : IDisposable
+//{
+//    private AVFormatContext* _format;
+//    private AVCodecContext* _codec;
+//    private AVFrame* _frame;
+//    private AVPacket* _packet;
+//    private SwsContext* _sws;
+
+//    private int _videoStreamIndex = -1;
+
+//    // BGRA 출력용
+//    private byte* _bgraBuffer;
+//    private byte_ptrArray4 _bgraData;
+//    private int_array4 _bgraLinesize;
+
+//    public VideoFrameReader(string path)
+//    {
+//        ffmpeg.avformat_network_init();
+
+//        // --- open input (AVFormatContext**) ---
+//        fixed (AVFormatContext** pFmt = &_format)
+//        {
+//            int r = ffmpeg.avformat_open_input(pFmt, path, null, null);
+//            if (r < 0)
+//                throw new InvalidOperationException("avformat_open_input failed");
+//        }
+
+//        if (ffmpeg.avformat_find_stream_info(_format, null) < 0)
+//            throw new InvalidOperationException("avformat_find_stream_info failed");
+
+//        // --- find video stream ---
+//        for (int i = 0; i < _format->nb_streams; i++)
+//        {
+//            if (_format->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+//            {
+//                _videoStreamIndex = i;
+//                break;
+//            }
+//        }
+
+//        if (_videoStreamIndex < 0)
+//            throw new InvalidOperationException("No video stream found");
+
+//        // --- codec ---
+//        AVCodecParameters* codecPar = _format->streams[_videoStreamIndex]->codecpar;
+//        AVCodec* decoder = ffmpeg.avcodec_find_decoder(codecPar->codec_id);
+//        if (decoder == null)
+//            throw new InvalidOperationException("Decoder not found");
+
+//        _codec = ffmpeg.avcodec_alloc_context3(decoder);
+//        if (_codec == null)
+//            throw new InvalidOperationException("avcodec_alloc_context3 failed");
+
+//        if (ffmpeg.avcodec_parameters_to_context(_codec, codecPar) < 0)
+//            throw new InvalidOperationException("avcodec_parameters_to_context failed");
+
+//        if (ffmpeg.avcodec_open2(_codec, decoder, null) < 0)
+//            throw new InvalidOperationException("avcodec_open2 failed");
+
+//        _frame = ffmpeg.av_frame_alloc();
+//        _packet = ffmpeg.av_packet_alloc();
+
+//        if (_frame == null || _packet == null)
+//            throw new InvalidOperationException("av_frame_alloc / av_packet_alloc failed");
+
+//        // --- swscale ---
+//        _sws = ffmpeg.sws_getContext(
+//            _codec->width,
+//            _codec->height,
+//            _codec->pix_fmt,
+//            _codec->width,
+//            _codec->height,
+//            AVPixelFormat.AV_PIX_FMT_BGRA,
+//            (int)SwsFlags.SWS_BILINEAR,
+//            null,
+//            null,
+//            null);
+
+//        if (_sws == null)
+//            throw new InvalidOperationException("sws_getContext failed");
+
+//        // --- BGRA buffer ---
+//        int bufSize = ffmpeg.av_image_get_buffer_size(
+//            AVPixelFormat.AV_PIX_FMT_BGRA,
+//            _codec->width,
+//            _codec->height,
+//            1);
+
+//        _bgraBuffer = (byte*)ffmpeg.av_malloc((ulong)bufSize);
+//        if (_bgraBuffer == null)
+//            throw new InvalidOperationException("av_malloc failed");
+
+//        // 중요: AVFrame.data 사용 ❌
+//        // av_image_fill_arrays는 byte_ptrArray4 / int_array4만 받는다
+//        if (ffmpeg.av_image_fill_arrays(
+//                ref _bgraData,
+//                ref _bgraLinesize,
+//                _bgraBuffer,
+//                AVPixelFormat.AV_PIX_FMT_BGRA,
+//                _codec->width,
+//                _codec->height,
+//                1) < 0)
+//        {
+//            throw new InvalidOperationException("av_image_fill_arrays failed");
+//        }
+//    }
+
+//    public WriteableBitmap ReadFrame(int targetFrame)
+//    {
+//        int current = 0;
+
+//        while (ffmpeg.av_read_frame(_format, _packet) >= 0)
+//        {
+//            if (_packet->stream_index != _videoStreamIndex)
+//            {
+//                ffmpeg.av_packet_unref(_packet);
+//                continue;
+//            }
+
+//            int send = ffmpeg.avcodec_send_packet(_codec, _packet);
+//            ffmpeg.av_packet_unref(_packet);
+//            if (send < 0)
+//                continue;
+
+//            while (ffmpeg.avcodec_receive_frame(_codec, _frame) == 0)
+//            {
+//                if (current++ == targetFrame)
+//                {
+//                    // YUV → BGRA
+//                    ffmpeg.sws_scale(
+//                        _sws,
+//                        _frame->data,
+//                        _frame->linesize,
+//                        0,
+//                        _codec->height,
+//                        _bgraData,
+//                        _bgraLinesize);
+
+//                    return CreateBitmapFromBGRA();
+//                }
+//            }
+//        }
+
+//        throw new InvalidOperationException("Frame not found");
+//    }
+
+//    private WriteableBitmap CreateBitmapFromBGRA()
+//    {
+//        int w = _codec->width;
+//        int h = _codec->height;
+
+//        var bmp = new WriteableBitmap(
+//            new PixelSize(w, h),
+//            new Vector(96, 96),
+//            Avalonia.Platform.PixelFormat.Bgra8888,
+//            Avalonia.Platform.AlphaFormat.Premul);
+
+//        using var fb = bmp.Lock();
+
+//        byte* src = _bgraData[0];
+//        byte* dst = (byte*)fb.Address;
+
+//        int srcStride = _bgraLinesize[0];
+//        int dstStride = w * 4;
+
+//        for (int y = 0; y < h; y++)
+//        {
+//            Buffer.MemoryCopy(
+//                src + y * srcStride,
+//                dst + y * dstStride,
+//                dstStride,
+//                dstStride);
+//        }
+
+//        return bmp;
+//    }
+
+//    public void Dispose()
+//    {
+//        if (_sws != null)
+//            ffmpeg.sws_freeContext(_sws);
+
+//        if (_packet != null)
+//        {
+//            fixed (AVPacket** p = &_packet)
+//                ffmpeg.av_packet_free(p);
+//        }
+
+//        if (_frame != null)
+//        {
+//            fixed (AVFrame** p = &_frame)
+//                ffmpeg.av_frame_free(p);
+//        }
+
+//        if (_codec != null)
+//        {
+//            fixed (AVCodecContext** p = &_codec)
+//                ffmpeg.avcodec_free_context(p);
+//        }
+
+//        if (_format != null)
+//        {
+//            fixed (AVFormatContext** p = &_format)
+//                ffmpeg.avformat_close_input(p);
+//        }
+
+//        if (_bgraBuffer != null)
+//        {
+//            ffmpeg.av_free(_bgraBuffer);
+//            _bgraBuffer = null;
+//        }
+//    }
+//}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\Pages\HomePageViewModel.cs
+==================================================
+using Avalonia.Platform.Storage;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using FaceShield.Models;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.ViewModels.Pages
+{
+    public partial class HomePageViewModel : ViewModelBase
+    {
+        private readonly Action<WorkspaceViewModel> _onStartWorkspace;
+
+        [ObservableProperty]
+        private string? selectedVideoPath;
+
+        [ObservableProperty]
+        private RecentItem? selectedRecent;
+
+        public ObservableCollection<RecentItem> Recents { get; } = new();
+
+        public HomePageViewModel(Action<WorkspaceViewModel> onStartWorkspace)
+        {
+            _onStartWorkspace = onStartWorkspace;
+
+            // 샘플: 실제로는 추후 로컬 설정 파일에서 로딩
+            Recents.Add(new RecentItem("샘플 프로젝트", @"C:\Temp\sample.mp4", DateTimeOffset.Now.AddDays(-1)));
+            Recents.Add(new RecentItem("테스트 영상", @"D:\Videos\test_4k.mp4", DateTimeOffset.Now.AddDays(-3)));
+        }
+
+        public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
+
+        partial void OnSelectedVideoPathChanged(string? value)
+        {
+            OnPropertyChanged(nameof(CanOpenWorkspace));
+        }
+
+        partial void OnSelectedRecentChanged(RecentItem? value)
+        {
+            if (value is not null)
+            {
+                SelectedVideoPath = value.Path;
+            }
+        }
+
+        /// <summary>
+        /// View에서 StorageProvider를 넘겨받아 호출합니다.
+        /// </summary>
+        public async Task PickVideoAsync(IStorageProvider storageProvider)
+        {
+            var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "영상 파일 선택",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("Video")
+                {
+                    Patterns = ["*.mp4", "*.mov", "*.mkv", "*.avi", "*.wmv", "*.webm"]
+                }
+                ]
+            });
+
+            var file = files.Count > 0 ? files[0] : null;
+            if (file is null)
+                return;
+
+            var localPath = file.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(localPath))
+                return;
+
+            SelectedVideoPath = localPath;
+
+            // 최근 목록 업데이트(최소)
+            var title = Path.GetFileName(localPath);
+            Recents.Insert(0, new RecentItem(title, localPath, DateTimeOffset.Now));
+        }
+
+        [RelayCommand]
+        private void OpenWorkspace()
+        {
+            if (string.IsNullOrWhiteSpace(SelectedVideoPath))
+                return;
+
+            var vm = new WorkspaceViewModel(SelectedVideoPath);
+            _onStartWorkspace(vm);
+        }
+
+        [RelayCommand]
+        private void OpenSettings()
+        {
+            // 다음 단계에서 SettingsPageViewModel로 교체하면 됩니다.
+            // 지금은 "첫 화면부터 실행" 목표이므로 자리만 둡니다.
+        }
+
+        [RelayCommand]
+        private void OpenAbout()
+        {
+            // 다음 단계에서 AboutDialog/페이지로 교체
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\Pages\WorkspaceViewModel.cs
+==================================================
+using FaceShield.Services.Video;
+using FaceShield.Services.Video.Session;
+using FaceShield.ViewModels.Workspace;
+using System;
+using System.ComponentModel;
+using System.Threading.Tasks;
+
+namespace FaceShield.ViewModels.Pages
+{
+    public partial class WorkspaceViewModel : ViewModelBase
+    {
+        public ToolPanelViewModel ToolPanel { get; } = new();
+        public FramePreviewViewModel FramePreview { get; }
+        public FrameListViewModel FrameList { get; }
+
+        // ✅ 프레임별 최종 마스크 저장소
+        private readonly FrameMaskProvider _maskProvider = new();
+
+        public WorkspaceViewModel(string videoPath)
+        {
+            FrameList = new FrameListViewModel(videoPath);
+            FramePreview = new FramePreviewViewModel(ToolPanel);
+
+            // 🔹 VideoSession 생성
+            var session = new VideoSession(videoPath);
+            FramePreview.InitializeSession(session);
+
+            // 타임라인 선택 → 프레임 로드
+            FrameList.PropertyChanged += FrameListOnPropertyChanged;
+
+            FrameList.SelectedFrameIndexChanged += index =>
+            {
+                FramePreview.OnFrameIndexChanged(index);
+            };
+
+            // ToolPanel 명령 연결
+            ToolPanel.UndoRequested += () => FramePreview.Undo();
+
+            ToolPanel.SaveRequested += async () =>
+            {
+                // 현재 프레임 마스크를 provider에 저장(최소 동작)
+                if (FrameList.SelectedFrameIndex >= 0 && FramePreview.MaskBitmap != null)
+                    _maskProvider.SetMask(FrameList.SelectedFrameIndex, FramePreview.MaskBitmap);
+
+                // TODO: 실제 앱에서는 "편집된 모든 프레임"을 provider에 넣어둬야 합니다.
+                // 지금 구조상 최소로는 "사용자가 편집한 프레임"이 선택될 때마다 저장하면 됩니다.
+
+                await SaveVideoAsync();
+            };
+        }
+
+        private async void FrameListOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(FrameListViewModel.SelectedFrameIndex))
+            {
+                await FramePreview.LoadFrameAsync(FrameList.VideoPath, FrameList.SelectedFrameIndex);
+
+                // 선택될 때마다 현재 프레임의 최종 마스크를 provider에 저장(편집 유지)
+                if (FrameList.SelectedFrameIndex >= 0 && FramePreview.MaskBitmap != null)
+                    _maskProvider.SetMask(FrameList.SelectedFrameIndex, FramePreview.MaskBitmap);
+            }
+        }
+
+        private Task SaveVideoAsync()
+        {
+            // 출력 경로는 일단 입력 옆에 _blur.mp4 (더미 아님: 실제 저장)
+            string input = FrameList.VideoPath;
+            string output = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(input)!,
+                System.IO.Path.GetFileNameWithoutExtension(input) + "_blur.mp4");
+
+            var exporter = new VideoExportService(_maskProvider);
+
+            return Task.Run(() =>
+            {
+                // blurRadius는 일단 6 (추후 UI 연동 가능)
+                exporter.Export(input, output, blurRadius: 6);
+            });
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FrameItemViewModel.cs
+==================================================
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FaceShield.ViewModels.Workspace
+{
+    public sealed class FrameItemViewModel : ViewModelBase
+    {
+        public int Index { get; }
+        public bool HasFace { get; }
+
+        public TimeSpan Time { get; }
+
+        public FrameItemViewModel(int index, bool hasFace, TimeSpan time)
+        {
+            Index = index;
+            HasFace = hasFace;
+            Time = time;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FrameListViewModel.cs
+==================================================
+using CommunityToolkit.Mvvm.ComponentModel;
+using FaceShield.Services.Video;
+using FFmpeg.AutoGen;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace FaceShield.ViewModels.Workspace;
+
+public partial class FrameListViewModel : ViewModelBase, IDisposable
+{
+    public string VideoPath { get; }
+
+    // ─────────────────────────────
+    // Timeline bind targets
+    // ─────────────────────────────
+    [ObservableProperty]
+    private IReadOnlyList<FrameItemViewModel> items = Array.Empty<FrameItemViewModel>();
+
+    [ObservableProperty]
+    private int totalFrames;
+
+    [ObservableProperty]
+    private double fps;
+
+    [ObservableProperty]
+    private int selectedFrameIndex = -1;
+
+    [ObservableProperty]
+    private double secondsPerScreen = 10.0;
+
+    [ObservableProperty]
+    private double viewStartSeconds = 0.0;
+
+    // ─────────────────────────────
+    // Thumbnail Provider
+    // ─────────────────────────────
+    [ObservableProperty]
+    private TimelineThumbnailProvider? thumbnailProvider;
+
+    private bool _disposed;
+
+    // ─────────────────────────────
+    // ScrollBar 파생 프로퍼티
+    // ─────────────────────────────
+    public double TotalDurationSeconds
+    {
+        get
+        {
+            if (Fps <= 0 || TotalFrames <= 0)
+                return 0;
+
+            return TotalFrames / Fps;
+        }
+    }
+
+    // ─────────────────────────────
+    // ctor
+    // ─────────────────────────────
+    public FrameListViewModel(string videoPath)
+    {
+        VideoPath = videoPath;
+
+        LoadVideoInfo(videoPath);
+
+        Items = Enumerable
+            .Range(0, TotalFrames)
+            .Select(i =>
+                new FrameItemViewModel(
+                    index: i,
+                    hasFace: true,
+                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
+            .ToArray();
+
+        ThumbnailProvider = new TimelineThumbnailProvider(
+            videoPath,
+            thumbWidth: 160,
+            thumbHeight: 90);
+    }
+
+    // ─────────────────────────────
+    // FFmpeg metadata load
+    // ─────────────────────────────
+    private unsafe void LoadVideoInfo(string path)
+    {
+        AVFormatContext* fmt = null;
+
+        try
+        {
+            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
+
+            if (ffmpeg.avformat_open_input(&fmt, path, null, null) < 0)
+                throw new InvalidOperationException("Failed to open video.");
+
+            if (ffmpeg.avformat_find_stream_info(fmt, null) < 0)
+                throw new InvalidOperationException("Failed to read stream info.");
+
+            AVStream* videoStream = null;
+
+            for (int i = 0; i < fmt->nb_streams; i++)
+            {
+                if (fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    videoStream = fmt->streams[i];
+                    break;
+                }
+            }
+
+            if (videoStream == null)
+                throw new InvalidOperationException("Video stream not found.");
+
+            double fpsValue =
+                videoStream->avg_frame_rate.num != 0
+                    ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
+                    : videoStream->r_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(videoStream->r_frame_rate)
+                        : 30.0;
+
+            Fps = fpsValue;
+
+            double durationSeconds;
+
+            if (videoStream->duration > 0)
+            {
+                durationSeconds =
+                    videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
+            }
+            else if (fmt->duration > 0)
+            {
+                durationSeconds =
+                    fmt->duration / (double)ffmpeg.AV_TIME_BASE;
+            }
+            else
+            {
+                durationSeconds = 0;
+            }
+
+            int frames = (int)Math.Floor(durationSeconds * fpsValue);
+            TotalFrames = Math.Max(frames, 0);
+
+            // 전체 영상 길이(초)
+            double totalDurationSec =
+                Fps > 0 && TotalFrames > 0
+                    ? TotalFrames / Fps
+                    : 0;
+
+            // 🔑 초기에는 전체 영상이 한 화면에 보이도록
+            SecondsPerScreen = Math.Max(0.1, TotalDurationSeconds);
+
+            // 시작은 항상 0초
+            ViewStartSeconds = 0;
+
+            // 첫 프레임 선택
+            SelectedFrameIndex = TotalFrames > 0 ? 0 : -1;
+        }
+        finally
+        {
+            if (fmt != null)
+                ffmpeg.avformat_close_input(&fmt);
+        }
+    }
+
+    // ─────────────────────────────
+    // Timeline helper
+    // ─────────────────────────────
+    public double FrameIndexToSeconds(int frameIndex)
+        => frameIndex < 0 ? 0 : frameIndex / Fps;
+
+    private void ClampView()
+    {
+        if (SecondsPerScreen <= 0) return;
+
+        double maxStart =
+            Math.Max(0, FrameIndexToSeconds(TotalFrames) - SecondsPerScreen);
+
+        if (ViewStartSeconds < 0)
+            ViewStartSeconds = 0;
+        else if (ViewStartSeconds > maxStart)
+            ViewStartSeconds = maxStart;
+    }
+
+    public string FramePositionText
+    {
+        get
+        {
+            if (TotalFrames <= 0 || SelectedFrameIndex < 0)
+                return "- / -";
+
+            // 사용자 표시용이므로 1-based
+            return $"{SelectedFrameIndex + 1} / {TotalFrames}";
+        }
+    }
+
+    // ─────────────────────────────
+    // 🔑 **여기가 핵심**
+    // Zoom / 메타 변경 시 자동 보정
+    // ─────────────────────────────
+    partial void OnSecondsPerScreenChanged(double value)
+    {
+        ClampView();
+    }
+
+    partial void OnFpsChanged(double value)
+    {
+        ClampView();
+        OnPropertyChanged(nameof(TotalDurationSeconds));
+    }
+
+    partial void OnSelectedFrameIndexChanged(int value)
+    {
+        SelectedFrameIndexChanged?.Invoke(value);
+        OnPropertyChanged(nameof(FramePositionText));
+    }
+
+    public event Action<int>? SelectedFrameIndexChanged;
+    partial void OnTotalFramesChanged(int value)
+    {
+        ClampView();
+        OnPropertyChanged(nameof(TotalDurationSeconds));
+        OnPropertyChanged(nameof(FramePositionText));
+    }
+
+    // ─────────────────────────────
+    // Dispose
+    // ─────────────────────────────
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        if (ThumbnailProvider != null)
+        {
+            try { ThumbnailProvider.Dispose(); }
+            catch { }
+            ThumbnailProvider = null;
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FramePreviewViewModel.cs
+==================================================
+// FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FramePreviewViewModel.cs
+using Avalonia;
+using Avalonia.Input;
+using Avalonia.Media.Imaging;
+using FaceShield.Enums.Workspace;
+using FaceShield.Services.Video;
+using FaceShield.Services.Video.Session;
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.ViewModels.Workspace;
+
+public partial class FramePreviewViewModel : ViewModelBase
+{
+    private readonly ToolPanelViewModel _toolPanel;
+    private readonly FrameImageProvider _frameProvider = new();
+
+    private CancellationTokenSource? _cts;
+
+    private WriteableBitmap? _frameBitmap;
+    private WriteableBitmap? _maskBitmap;
+    private WriteableBitmap? _previewBitmap;
+
+    private VideoSession? _session;
+
+    private bool _isDrawing;
+    private readonly Stack<byte[]> _maskUndo = new();
+
+    public WriteableBitmap? FrameBitmap
+    {
+        get => _frameBitmap;
+        private set { _frameBitmap = value; OnPropertyChanged(nameof(FrameBitmap)); }
+    }
+
+    public WriteableBitmap? MaskBitmap
+    {
+        get => _maskBitmap;
+        private set { _maskBitmap = value; OnPropertyChanged(nameof(MaskBitmap)); }
+    }
+
+    public WriteableBitmap? PreviewBitmap
+    {
+        get => _previewBitmap;
+        private set { _previewBitmap = value; OnPropertyChanged(nameof(PreviewBitmap)); }
+    }
+
+    public EditMode CurrentMode => _toolPanel.CurrentMode;
+
+    public Cursor CurrentCursor =>
+        CurrentMode switch
+        {
+            EditMode.Brush => Cursor.Parse("Cross"),
+            EditMode.Eraser => Cursor.Parse("No"),
+            EditMode.Auto => Cursor.Parse("Hand"),
+            _ => Cursor.Default
+        };
+
+    public int PreviewBlurRadius { get; set; } = 6;
+
+    public FramePreviewViewModel(ToolPanelViewModel toolPanel)
+    {
+        _toolPanel = toolPanel;
+        _toolPanel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ToolPanelViewModel.CurrentMode))
+                OnPropertyChanged(nameof(CurrentCursor));
+        };
+    }
+
+    public async Task LoadFrameAsync(string videoPath, int frameIndex)
+    {
+        if (frameIndex < 0) return;
+
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        try
+        {
+            // ✅ 핵심: 정확 프레임 반환. EOF면 null.
+            var bmp = await _frameProvider.GetFrameAsync(videoPath, frameIndex, ct);
+
+            // EOF 방어: 끝 프레임에서 null이면 "이전 프레임"으로 fallback
+            if (bmp == null && frameIndex > 0)
+                bmp = await _frameProvider.GetFrameAsync(videoPath, frameIndex - 1, ct);
+
+            if (bmp == null)
+                return; // 영상이 비었거나 문제: 여기서 더 진행 불가
+
+            FrameBitmap = bmp;
+            MaskBitmap = CreateEmptyMask(bmp.PixelSize.Width, bmp.PixelSize.Height);
+            _maskUndo.Clear();
+
+            PreviewBitmap = CloneBitmap(bmp);
+        }
+        catch (OperationCanceledException)
+        {
+            // ✅ 연속 클릭/재생 중 취소는 정상 흐름: UI 크래시 금지
+            return;
+        }
+    }
+
+    public void Undo()
+    {
+        if (_maskBitmap == null) return;
+        if (_maskUndo.Count == 0) return;
+
+        var bytes = _maskUndo.Pop();
+        RestoreMaskBytes(_maskBitmap, bytes);
+
+        RefreshPreview();
+    }
+
+    public void OnPointerPressed(Point point)
+    {
+        if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
+        if (_maskBitmap == null) return;
+
+        PushUndoSnapshot(_maskBitmap);
+        _isDrawing = true;
+        DrawPoint(point);
+    }
+
+    public void OnPointerMoved(Point point)
+    {
+        if (!_isDrawing) return;
+        if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
+        DrawPoint(point);
+    }
+
+    public void OnPointerReleased(Point point)
+    {
+        if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
+        _isDrawing = false;
+    }
+
+    private void DrawPoint(Point point)
+    {
+        if (_maskBitmap is null) return;
+
+        using var fb = _maskBitmap.Lock();
+        unsafe
+        {
+            int x = (int)point.X;
+            int y = (int)point.Y;
+
+            if (x < 0 || y < 0 || x >= fb.Size.Width || y >= fb.Size.Height)
+                return;
+
+            int radius = 8;
+
+            byte* basePtr = (byte*)fb.Address;
+            int stride = fb.RowBytes;
+
+            int x0 = Math.Max(0, x - radius);
+            int x1 = Math.Min(fb.Size.Width - 1, x + radius);
+            int y0 = Math.Max(0, y - radius);
+            int y1 = Math.Min(fb.Size.Height - 1, y + radius);
+
+            for (int yy = y0; yy <= y1; yy++)
+            {
+                byte* row = basePtr + yy * stride;
+                for (int xx = x0; xx <= x1; xx++)
+                {
+                    int dx = xx - x;
+                    int dy = yy - y;
+                    if (dx * dx + dy * dy > radius * radius) continue;
+
+                    byte* p = row + xx * 4;
+
+                    if (CurrentMode == EditMode.Brush)
+                    {
+                        p[0] = 255; p[1] = 255; p[2] = 255; p[3] = 255;
+                    }
+                    else
+                    {
+                        p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+                    }
+                }
+            }
+        }
+
+        OnPropertyChanged(nameof(MaskBitmap));
+        RefreshPreview();
+    }
+
+    private void RefreshPreview()
+    {
+        if (_frameBitmap == null || _maskBitmap == null) return;
+        PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius);
+    }
+
+    private static WriteableBitmap CreateEmptyMask(int w, int h)
+    {
+        return new WriteableBitmap(
+            new PixelSize(w, h),
+            new Vector(96, 96),
+            Avalonia.Platform.PixelFormat.Bgra8888,
+            Avalonia.Platform.AlphaFormat.Premul);
+    }
+
+    private static WriteableBitmap CloneBitmap(WriteableBitmap src)
+    {
+        var dst = new WriteableBitmap(
+            src.PixelSize,
+            new Vector(96, 96),
+            Avalonia.Platform.PixelFormat.Bgra8888,
+            Avalonia.Platform.AlphaFormat.Premul);
+
+        using var sfb = src.Lock();
+        using var dfb = dst.Lock();
+
+        unsafe
+        {
+            int h = src.PixelSize.Height;
+            int copy = Math.Min(sfb.RowBytes, dfb.RowBytes);
+
+            byte* s = (byte*)sfb.Address;
+            byte* d = (byte*)dfb.Address;
+
+            for (int y = 0; y < h; y++)
+                Buffer.MemoryCopy(s + y * sfb.RowBytes, d + y * dfb.RowBytes, dfb.RowBytes, copy);
+        }
+
+        return dst;
+    }
+
+    private static void PushUndoSnapshot(WriteableBitmap mask, Stack<byte[]> stack)
+    {
+        using var fb = mask.Lock();
+        unsafe
+        {
+            int bytes = fb.RowBytes * fb.Size.Height;
+            var arr = new byte[bytes];
+            MarshalCopyToArray((byte*)fb.Address, arr);
+            stack.Push(arr);
+        }
+    }
+
+    private void PushUndoSnapshot(WriteableBitmap mask)
+        => PushUndoSnapshot(mask, _maskUndo);
+
+    private static void RestoreMaskBytes(WriteableBitmap mask, byte[] bytes)
+    {
+        using var fb = mask.Lock();
+        unsafe
+        {
+            int len = Math.Min(bytes.Length, fb.RowBytes * fb.Size.Height);
+            MarshalCopyFromArray(bytes, (byte*)fb.Address, len);
+        }
+    }
+
+    private static unsafe void MarshalCopyToArray(byte* src, byte[] dst)
+    {
+        for (int i = 0; i < dst.Length; i++) dst[i] = src[i];
+    }
+
+    private static unsafe void MarshalCopyFromArray(byte[] src, byte* dst, int len)
+    {
+        for (int i = 0; i < len; i++) dst[i] = src[i];
+    }
+
+    // WorkspaceViewModel에서 FramePreview 초기화 시 세션 주입 필요
+    public void InitializeSession(VideoSession session)
+    {
+        _session = session;
+    }
+
+    public async void OnFrameIndexChanged(int index)
+    {
+        if (_session == null)
+            return;
+
+        // 캐시 표시
+        PreviewBitmap = _session.Timeline.OnFrameChanging(index);
+
+        // 정확 프레임 요청
+        var exact = await _session.Timeline.OnFrameChangedAsync(index);
+        if (exact != null)
+            PreviewBitmap = exact;
+    }
+
+
+    private async Task UpdateExactAsync(int index)
+    {
+        if (_session == null)
+            return;
+
+        var exact = await _session.Timeline.OnFrameChangedAsync(index);
+        if (exact != null)
+            PreviewBitmap = exact;
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\ToolPanelViewModel.cs
+==================================================
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using FaceShield.Enums.Workspace;
+using System;
+
+namespace FaceShield.ViewModels.Workspace
+{
+    public partial class ToolPanelViewModel : ViewModelBase
+    {
+        [ObservableProperty]
+        private EditMode currentMode = EditMode.None;
+
+        public event Action? UndoRequested;
+        public event Action? SaveRequested;
+
+        [RelayCommand]
+        private void SetAuto() => CurrentMode = EditMode.Auto;
+
+        [RelayCommand]
+        private void SetManual() => CurrentMode = EditMode.Manual;
+
+        [RelayCommand]
+        private void SetBrush() => CurrentMode = EditMode.Brush;
+
+        [RelayCommand]
+        private void SetEraser() => CurrentMode = EditMode.Eraser;
+
+        [RelayCommand]
+        private void Undo() => UndoRequested?.Invoke();
+
+        [RelayCommand]
+        private void Save() => SaveRequested?.Invoke();
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Pages\HomePageView.axaml
+==================================================
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Pages"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:DataType="vm:HomePageViewModel"
+             x:Class="FaceShield.Views.Pages.HomePageView">
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="2*,3*"
+        Margin="24" RowSpacing="16" ColumnSpacing="16">
+
+    <!-- Header -->
+    <Border Grid.Row="0" Grid.ColumnSpan="2"
+            Padding="18" CornerRadius="12"
+            Background="#1B1B1B">
+      <StackPanel>
+        <TextBlock Text="FaceShield" FontSize="28" FontWeight="Bold"/>
+        <TextBlock Text="전문가용 영상 보안/편집 툴 (로컬 오프라인) — 얼굴 검출 · 블러 · 사용자 검증 · 수동 보정"
+                   Opacity="0.75" Margin="0,6,0,0"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Left: Start -->
+    <Border Grid.Row="1" Grid.Column="0"
+            Padding="18" CornerRadius="12"
+            Background="#151515">
+      <StackPanel Spacing="12">
+
+        <TextBlock Text="시작" FontSize="18" FontWeight="SemiBold"/>
+
+          <Button Content="새 프로젝트 (영상 선택)"
+        Height="44"
+        Click="PickVideo_Click"/>
+
+        <!--<Button Content="새 프로젝트 (영상 선택)"
+                Command="{Binding PickVideoCommand}"
+                Height="44"/>-->
+
+        <Button Content="설정"
+                Command="{Binding OpenSettingsCommand}"
+                Height="40"/>
+
+        <Button Content="정보"
+                Command="{Binding OpenAboutCommand}"
+                Height="40"/>
+
+        <Separator Margin="0,12,0,12"/>
+
+        <TextBlock Text="선택된 영상" Opacity="0.75"/>
+        <TextBlock Text="{Binding SelectedVideoPath}"
+                   TextWrapping="Wrap"
+                   Opacity="0.9"/>
+
+        <Button Content="워크스페이스 열기"
+                Command="{Binding OpenWorkspaceCommand}"
+                IsEnabled="{Binding CanOpenWorkspace}"
+                Height="44"/>
+
+      </StackPanel>
+    </Border>
+
+    <!-- Right: Recent -->
+    <Border Grid.Row="1" Grid.Column="1"
+            Padding="18" CornerRadius="12"
+            Background="#151515">
+      <Grid RowDefinitions="Auto,*" ColumnDefinitions="*">
+        <TextBlock Text="최근"
+                   FontSize="18"
+                   FontWeight="SemiBold"/>
+
+        <ListBox Grid.Row="1"
+                 ItemsSource="{Binding Recents}"
+                 SelectedItem="{Binding SelectedRecent, Mode=TwoWay}"
+                 Margin="0,12,0,0">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Border Padding="12" CornerRadius="10" Background="#1E1E1E" Margin="0,0,0,10">
+                <StackPanel>
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding Path}" Opacity="0.75" TextWrapping="Wrap"/>
+                  <TextBlock Text="{Binding LastOpenedText}" Opacity="0.6" FontSize="12" Margin="0,6,0,0"/>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Border>
+
+  </Grid>
+</UserControl>
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Pages\HomePageView.axaml.cs
+==================================================
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Markup.Xaml;
+using FaceShield.ViewModels.Pages;
+
+namespace FaceShield.Views.Pages;
+
+public partial class HomePageView : UserControl
+{
+    public HomePageView()
+    {
+        InitializeComponent();
+    }
+
+    private async void PickVideo_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not HomePageViewModel vm)
+            return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        var storageProvider = topLevel?.StorageProvider;
+        if (storageProvider is null)
+            return;
+
+        await vm.PickVideoAsync(storageProvider);
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Pages\WorkspaceView.axaml
+==================================================
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:FaceShield.Views.Workspace"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Pages"
+             x:Class="FaceShield.Views.Pages.WorkspaceView"
+             x:DataType="vm:WorkspaceViewModel">
+
+    <Grid RowDefinitions="*,140,96">
+
+        <!-- Preview -->
+        <views:FramePreviewView
+            Grid.Row="0"
+            DataContext="{Binding FramePreview}" />
+
+        <!-- Timeline -->
+        <views:FrameListView
+            Grid.Row="1"
+            DataContext="{Binding FrameList}" />
+
+        <!-- Tool panel -->
+        <views:ToolPanelView
+            Grid.Row="2"
+            DataContext="{Binding ToolPanel}" />
+
+    </Grid>
+</UserControl>
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Pages\WorkspaceView.axaml.cs
+==================================================
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
+
+namespace FaceShield.Views.Pages;
+
+public partial class WorkspaceView : UserControl
+{
+    public WorkspaceView()
+    {
+        InitializeComponent();
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Workspace\FrameListView.axaml
+==================================================
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:FaceShield.Controls"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Workspace"
+             x:Class="FaceShield.Views.Workspace.FrameListView"
+             x:DataType="vm:FrameListViewModel">
+
+   <!-- <Border Background="#121212">
+
+        <controls:TimelineFrameStrip
+        Grid.Row="1"
+        Height="140"
+        Items="{Binding Items}"
+        TotalFrames="{Binding TotalFrames}"
+        Fps="{Binding Fps}"
+        SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
+        SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
+        ViewStartSeconds="{Binding ViewStartSeconds, Mode=TwoWay}"
+        ThumbnailProvider="{Binding ThumbnailProvider}" />
+
+    </Border>
+
+-->
+    <Grid RowDefinitions="Auto,Auto,Auto" Focusable="True">
+
+        <!-- 🔹 프레임 위치 표시 -->
+        <TextBlock
+            Grid.Row="0"
+            Text="{Binding FramePositionText}"
+            HorizontalAlignment="Right"
+            Margin="0,4,8,4"
+            Opacity="0.8"
+            FontSize="12"/>
+
+        <!-- 🔹 Timeline -->
+        <controls:TimelineFrameStrip
+            Grid.Row="1"
+            Height="180"
+            Items="{Binding Items}"
+            TotalFrames="{Binding TotalFrames}"
+            Fps="{Binding Fps}"
+            SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
+            SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
+            ViewStartSeconds="{Binding ViewStartSeconds, Mode=TwoWay}"
+            ThumbnailProvider="{Binding ThumbnailProvider}" />
+
+        <!-- 🔹 ScrollBar -->
+        <ScrollBar
+            Grid.Row="2"
+            Orientation="Horizontal"
+            Height="16"
+            Minimum="0"
+            Maximum="{Binding TotalDurationSeconds}"
+            ViewportSize="{Binding SecondsPerScreen}"
+            Value="{Binding ViewStartSeconds, Mode=TwoWay}" />
+    </Grid>
+
+</UserControl>
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Workspace\FrameListView.axaml.cs
+==================================================
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Threading;
+using FaceShield.ViewModels.Workspace;
+using System;
+
+namespace FaceShield.Views.Workspace;
+
+public partial class FrameListView : UserControl
+{
+    private DispatcherTimer? _playTimer;
+
+    public FrameListView()
+    {
+        InitializeComponent();
+
+        // 워크스페이스 열리면 포커스 확보
+        AttachedToVisualTree += (_, _) => Focus();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (DataContext is not FrameListViewModel vm)
+            return;
+
+        if (vm.TotalFrames <= 0)
+            return;
+
+        switch (e.Key)
+        {
+            // ─────────────────────────
+            // 프레임 단위 이동
+            // ─────────────────────────
+            case Key.Left:
+            case Key.Right:
+                MoveFrame(vm, e.Key == Key.Right, e.KeyModifiers);
+                e.Handled = true;
+                break;
+
+            // ─────────────────────────
+            // 키프레임 단위 이동
+            // (현 구조상: 1초 단위로 대체)
+            // ─────────────────────────
+            case Key.Up:
+                MoveBySeconds(vm, +1);
+                e.Handled = true;
+                break;
+
+            case Key.Down:
+                MoveBySeconds(vm, -1);
+                e.Handled = true;
+                break;
+
+            // ─────────────────────────
+            // 처음 / 끝
+            // ─────────────────────────
+            case Key.Home:
+                vm.SelectedFrameIndex = 0;
+                e.Handled = true;
+                break;
+
+            case Key.End:
+                vm.SelectedFrameIndex = vm.TotalFrames - 1;
+                e.Handled = true;
+                break;
+
+            // ─────────────────────────
+            // 재생 / 정지
+            // ─────────────────────────
+            case Key.Space:
+                TogglePlay(vm);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    // ─────────────────────────────
+    // helpers
+    // ─────────────────────────────
+
+    private static void MoveFrame(FrameListViewModel vm, bool forward, KeyModifiers mods)
+    {
+        int step = mods.HasFlag(KeyModifiers.Shift) ? 10 : 1;
+        int delta = forward ? step : -step;
+
+        int next = Math.Clamp(
+            vm.SelectedFrameIndex + delta,
+            0,
+            vm.TotalFrames - 1);
+
+        vm.SelectedFrameIndex = next;
+    }
+
+    private static void MoveBySeconds(FrameListViewModel vm, int seconds)
+    {
+        if (vm.Fps <= 0) return;
+
+        int deltaFrames = (int)Math.Round(seconds * vm.Fps);
+
+        int next = Math.Clamp(
+            vm.SelectedFrameIndex + deltaFrames,
+            0,
+            vm.TotalFrames - 1);
+
+        vm.SelectedFrameIndex = next;
+    }
+
+    private void TogglePlay(FrameListViewModel vm)
+    {
+        if (_playTimer == null)
+        {
+            _playTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(1000.0 / Math.Max(1, vm.Fps))
+            };
+
+            _playTimer.Tick += (_, _) =>
+            {
+                if (vm.SelectedFrameIndex >= vm.TotalFrames - 1)
+                {
+                    StopPlay();
+                    return;
+                }
+
+                vm.SelectedFrameIndex++;
+            };
+        }
+
+        if (_playTimer.IsEnabled)
+            StopPlay();
+        else
+            _playTimer.Start();
+    }
+
+    private void StopPlay()
+    {
+        if (_playTimer != null)
+            _playTimer.Stop();
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Workspace\FramePreviewView.axaml
+==================================================
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:FaceShield.ViewModels.Workspace"
+    x:Class="FaceShield.Views.Workspace.FramePreviewView"
+    x:DataType="vm:FramePreviewViewModel">
+
+    <Grid Background="Black">
+
+        <!-- 🔹 블러 적용된 프리뷰 결과 -->
+        <Image
+             Name="FrameImage"
+             Source="{Binding PreviewBitmap}"
+             Stretch="Uniform"
+             HorizontalAlignment="Center"
+             VerticalAlignment="Center"/>
+
+
+        <!-- 🔹 입력 레이어 -->
+        <Canvas
+            Background="Transparent"
+            PointerPressed="OnPointerPressed"
+            PointerMoved="OnPointerMoved"
+            PointerReleased="OnPointerReleased"/>
+    </Grid>
+</UserControl>
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Workspace\FramePreviewView.axaml.cs
+==================================================
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using FaceShield.ViewModels.Workspace;
+using System;
+
+namespace FaceShield.Views.Workspace;
+
+public partial class FramePreviewView : UserControl
+{
+    public FramePreviewView()
+    {
+        InitializeComponent();
+    }
+
+    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+        => Forward(e, isPressed: true);
+
+    private void OnPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            Forward(e, isPressed: false);
+    }
+
+    private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
+        => Forward(e, isReleased: true);
+
+    private void Forward(PointerEventArgs e, bool isPressed = false, bool isReleased = false)
+    {
+        if (DataContext is not FramePreviewViewModel vm)
+            return;
+
+        if (vm.FrameBitmap is null)
+            return;
+
+        // ✅ Image 컨트롤을 기준 좌표계로 사용해야 함
+        var img = this.FindControl<Image>("FrameImage");
+        if (img is null)
+            return;
+
+        // 레이아웃 완료 전이면 Bounds가 0일 수 있음
+        if (img.Bounds.Width <= 0 || img.Bounds.Height <= 0)
+            return;
+
+        // ✅ 포인터 위치도 Image 기준으로 받는다 (기존 코드의 핵심 문제)
+        var imagePoint = e.GetPosition(img);
+
+        double imgW = vm.FrameBitmap.PixelSize.Width;
+        double imgH = vm.FrameBitmap.PixelSize.Height;
+
+        if (imgW <= 0 || imgH <= 0)
+            return;
+
+        double scale = Math.Min(
+            img.Bounds.Width / imgW,
+            img.Bounds.Height / imgH);
+
+        double renderW = imgW * scale;
+        double renderH = imgH * scale;
+
+        double offsetX = (img.Bounds.Width - renderW) / 2;
+        double offsetY = (img.Bounds.Height - renderH) / 2;
+
+        double x = (imagePoint.X - offsetX) / scale;
+        double y = (imagePoint.Y - offsetY) / scale;
+
+        if (x < 0 || y < 0 || x >= imgW || y >= imgH)
+            return;
+
+        var p = new Point(x, y);
+
+        if (isPressed)
+            vm.OnPointerPressed(p);
+        else if (isReleased)
+            vm.OnPointerReleased(p);
+        else
+            vm.OnPointerMoved(p);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Workspace\ToolPanelView.axaml
+==================================================
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Workspace"
+             xmlns:enums="clr-namespace:FaceShield.Enums.Workspace"
+             x:Class="FaceShield.Views.Workspace.ToolPanelView"
+             x:DataType="vm:ToolPanelViewModel">
+
+  <Border Background="#151515" Padding="12">
+    <StackPanel Orientation="Horizontal" Spacing="12">
+
+      <ToggleButton IsChecked="{Binding CurrentMode,
+                      Converter={StaticResource EnumEqualsConverter},
+                      ConverterParameter={x:Static enums:EditMode.Auto}}"
+                    Command="{Binding SetAutoCommand}">
+          <TextBlock Text="자동"/>
+      </ToggleButton>
+
+      <ToggleButton IsChecked="{Binding CurrentMode,
+                      Converter={StaticResource EnumEqualsConverter},
+                      ConverterParameter={x:Static enums:EditMode.Manual}}"
+                    Command="{Binding SetManualCommand}" >
+        <TextBlock Text="수동"/>
+      </ToggleButton>
+
+      <ToggleButton IsChecked="{Binding CurrentMode,
+                    Converter={StaticResource EnumEqualsConverter},
+                    ConverterParameter={x:Static enums:EditMode.Brush}}"
+                    Command="{Binding SetBrushCommand}">
+        <TextBlock Text="브러시"/>
+    </ToggleButton>
+
+      <ToggleButton IsChecked="{Binding CurrentMode,
+                      Converter={StaticResource EnumEqualsConverter},
+                      ConverterParameter={x:Static enums:EditMode.Eraser}}"
+                    Command="{Binding SetEraserCommand}">
+          <TextBlock Text="지우개"/>
+      </ToggleButton>
+
+      <Button Content="되돌리기" Command="{Binding UndoCommand}" />
+      <Button Content="저장" Command="{Binding SaveCommand}" />
+
+    </StackPanel>
+  </Border>
+</UserControl>
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Views\Workspace\ToolPanelView.axaml.cs
+==================================================
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
+
+namespace FaceShield.Views.Workspace;
+
+public partial class ToolPanelView : UserControl
+{
+    public ToolPanelView()
+    {
+        InitializeComponent();
+    }
+}
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\obj\Debug\net8.0\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+==================================================
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\obj\Debug\net8.0\FaceShield.AssemblyInfo.cs
+==================================================
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     이 코드는 도구를 사용하여 생성되었습니다.
+//     런타임 버전:4.0.30319.42000
+//
+//     파일 내용을 변경하면 잘못된 동작이 발생할 수 있으며, 코드를 다시 생성하면
+//     이러한 변경 내용이 손실됩니다.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment 클래스에서 생성되었습니다.
+
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\Session\ExactFrameProvider.cs
+==================================================
+// FILE: Services/Video/Session/ExactFrameProvider.cs
+using Avalonia.Media.Imaging;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Video.Session;
+
+public sealed class ExactFrameProvider
+{
+    private readonly FfFrameExtractor _extractor;
+
+    public ExactFrameProvider(FfFrameExtractor extractor)
+    {
+        _extractor = extractor;
+    }
+
+    public Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
+    {
+        return Task.Run(() => _extractor.GetFrameByIndex(frameIndex), ct);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\Session\ThumbnailCache.cs
+==================================================
+// FILE: Services/Video/Session/ThumbnailCache.cs
+using Avalonia.Media.Imaging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace FaceShield.Services.Video.Session;
+
+public sealed class ThumbnailCache
+{
+    private readonly Dictionary<int, WriteableBitmap> _cache;
+    private readonly int _step;
+
+    public ThumbnailCache(Dictionary<int, WriteableBitmap> cache, int step)
+    {
+        _cache = cache;
+        _step = step;
+    }
+
+    public WriteableBitmap GetNearest(int frameIndex)
+    {
+        if (_cache.Count == 0)
+            throw new InvalidOperationException("Thumbnail cache is empty.");
+
+        int key = frameIndex / _step * _step;
+        return _cache.TryGetValue(key, out var bmp)
+            ? bmp
+            : _cache.Values.First();
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\Session\TimelineController.cs
+==================================================
+// FILE: Services/Video/Session/TimelineController.cs
+using Avalonia.Media.Imaging;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Video.Session;
+
+public sealed class TimelineController
+{
+    private readonly ThumbnailCache _thumbs;
+    private readonly ExactFrameProvider _exact;
+
+    private CancellationTokenSource? _cts;
+    private readonly int _debounceMs = 120;
+
+    public TimelineController(ThumbnailCache thumbs, ExactFrameProvider exact)
+    {
+        _thumbs = thumbs;
+        _exact = exact;
+    }
+
+    // 드래그 중 이벤트: 즉시 썸네일 반환
+    public WriteableBitmap OnFrameChanging(int frameIndex)
+    {
+        return _thumbs.GetNearest(frameIndex);
+    }
+
+    // 드래그 종료 판단: 디바운스 120ms
+    public async Task<WriteableBitmap?> OnFrameChangedAsync(int frameIndex)
+    {
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(_debounceMs, _cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return null;
+        }
+
+        return await _exact.GetExactAsync(frameIndex, _cts.Token);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\Services\Video\Session\VideoSession.cs
+==================================================
+// FILE: Services/Video/Session/VideoSession.cs
+using Avalonia.Media.Imaging;
+using System.Collections.Generic;
+using FaceShield.Services.Video;
+
+namespace FaceShield.Services.Video.Session;
+
+public sealed class VideoSession
+{
+    public readonly ThumbnailCache ThumbnailCache;
+    public readonly ExactFrameProvider ExactProvider;
+    public readonly TimelineController Timeline;
+
+    public VideoSession(
+        string videoPath,
+        int thumbStep = 5,
+        int thumbWidth = 320,
+        int thumbHeight = 180)
+    {
+        // 1) Extractor (정확 프레임용)
+        var extractor = new FfFrameExtractor(videoPath);
+        ExactProvider = new ExactFrameProvider(extractor);
+
+        // 2) 썸네일 캐시 생성
+        var thumbsProvider = new TimelineThumbnailProvider(videoPath, thumbWidth, thumbHeight);
+
+        var map = new Dictionary<int, WriteableBitmap>();
+        int totalFrames = GetTotalFrames(videoPath);
+
+        for (int i = 0; i < totalFrames; i += thumbStep)
+        {
+            var bmp = thumbsProvider.GetThumbnail(i);
+            if (bmp != null)
+                map[i] = bmp;
+        }
+
+        ThumbnailCache = new ThumbnailCache(map, thumbStep);
+
+        // 3) UX 컨트롤러
+        Timeline = new TimelineController(ThumbnailCache, ExactProvider);
+    }
+
+    private int GetTotalFrames(string videoPath)
+    {
+        // 이미 프로젝트에 존재하는 방식 그대로 재사용
+        using var reader = new VideoFrameReader(videoPath);
+
+        // reader는 연속 디코딩 방식이라서, 전체 프레임을 계산하기 어려움.
+        // 그러나 FrameListViewModel에서 이미 TotalFrames 계산함.
+        // VideoSession은 외부에서 TotalFrames를 주입받아도 가능.
+
+        // 필요하면 FrameListViewModel에서 전달하게 변경 가능.
+        return 300; // (임시) ----> 당신 프로젝트에서는 FrameListViewModel.TotalFrames 사용 가능.
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+==================================================
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\FaceShield.AssemblyInfo.cs
+==================================================
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     이 코드는 도구를 사용하여 생성되었습니다.
+//     런타임 버전:4.0.30319.42000
+//
+//     파일 내용을 변경하면 잘못된 동작이 발생할 수 있으며, 코드를 다시 생성하면
+//     이러한 변경 내용이 손실됩니다.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment 클래스에서 생성되었습니다.
+
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\win-x64\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+==================================================
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\win-x64\FaceShield.AssemblyInfo.cs
+==================================================
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     이 코드는 도구를 사용하여 생성되었습니다.
+//     런타임 버전:4.0.30319.42000
+//
+//     파일 내용을 변경하면 잘못된 동작이 발생할 수 있으며, 코드를 다시 생성하면
+//     이러한 변경 내용이 손실됩니다.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment 클래스에서 생성되었습니다.
+
+
+

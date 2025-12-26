@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:FaceShield.Views.Workspace"
+             xmlns:vm="clr-namespace:FaceShield.ViewModels.Pages"
+             x:Class="FaceShield.Views.Pages.WorkspaceView"
+             x:DataType="vm:WorkspaceViewModel">
+
+    <Grid RowDefinitions="*,140,96">
+
+        <!-- Preview -->
+        <views:FramePreviewView
+            Grid.Row="0"
+            DataContext="{Binding FramePreview}" />
+
+        <!-- Timeline -->
+        <views:FrameListView
+            Grid.Row="1"
+            DataContext="{Binding FrameList}" />
+
+        <!-- Tool panel -->
+        <views:ToolPanelView
+            Grid.Row="2"
+            DataContext="{Binding ToolPanel}" />
+
+    </Grid>
+</UserControl>

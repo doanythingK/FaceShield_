@@ -1,0 +1,63 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ===== 기본 설정 ===== -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- AnyCPU 제거, x64 고정 -->
+    <Platforms>x64</Platforms>
+
+    <!-- 배포 기준 -->
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <!-- ===== Avalonia 리소스 ===== -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <!-- ===== NuGet 패키지 ===== -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.9" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.9" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.9" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.9" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.1" />
+    <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.9" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <!-- ===== FFmpeg DLLs : 개발(Debug) ===== -->
+  <!-- exe 바로 옆으로 강제 복사 -->
+  <ItemGroup Condition="'$(Configuration)' == 'Debug' and '$(Platform)' == 'x64'">
+    <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- ===== FFmpeg DLLs : 배포(Publish) ===== -->
+  <!-- publish 결과물의 exe 바로 옆으로 강제 복사 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- ===== macOS FFmpeg (배포용 자리만 확보) ===== -->
+  <ItemGroup>
+    <Folder Include="FFmpeg\osx-arm64\" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
+    <None Include="FFmpeg\osx-arm64\*.dylib" Link="%(Filename)%(Extension)">
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
