@@ -25,6 +25,7 @@ namespace FaceShield.ViewModels.Pages
         private int[] _autoAnomalies = Array.Empty<int>();
         private int _autoResumeIndex;
         private bool _autoCompleted;
+        private bool _sessionInitialized;
 
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
@@ -64,7 +65,8 @@ namespace FaceShield.ViewModels.Pages
             Action? onBack,
             AutoMaskOptions? autoOptions = null,
             FaceOnnxDetectorOptions? detectorOptions = null,
-            WorkspaceStateStore? stateStore = null)
+            WorkspaceStateStore? stateStore = null,
+            bool deferSessionInit = false)
         {
             Mode = mode;
             _onBack = onBack;
@@ -73,9 +75,8 @@ namespace FaceShield.ViewModels.Pages
             _stateStore = stateStore;
             FrameList = new FrameListViewModel(videoPath);
             FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);
-
-            var session = new VideoSession(videoPath, progress: loadProgress);
-            FramePreview.InitializeSession(session);
+            if (!deferSessionInit)
+                InitializeSession(loadProgress);
 
             // 🔹 자동/최종 마스크 provider 주입
             FramePreview.SetMaskProvider(_maskProvider);
@@ -107,6 +108,26 @@ namespace FaceShield.ViewModels.Pages
             // 🔹 자동 모드 버튼 → 자동 마스크 생성 연결
             ToolPanel.AutoRequested += OnAutoRequested;
             ToolPanel.AutoCancelRequested += OnAutoCancelRequested;
+        }
+
+        public async Task EnsureSessionInitializedAsync(IProgress<int>? loadProgress)
+        {
+            if (_sessionInitialized)
+                return;
+
+            var session = await Task.Run(() => new VideoSession(FrameList.VideoPath, progress: loadProgress));
+            FramePreview.InitializeSession(session);
+            _sessionInitialized = true;
+
+            if (FrameList.SelectedFrameIndex >= 0)
+                FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+        }
+
+        private void InitializeSession(IProgress<int>? loadProgress)
+        {
+            var session = new VideoSession(FrameList.VideoPath, progress: loadProgress);
+            FramePreview.InitializeSession(session);
+            _sessionInitialized = true;
         }
 
 
@@ -161,16 +182,24 @@ namespace FaceShield.ViewModels.Pages
                     progress?.Report(p);
                     ToolPanel.AutoProgress = p;
                 });
+                var token = _autoCts?.Token ?? CancellationToken.None;
                 await generator.GenerateAsync(
                     FrameList.VideoPath,
                     effectiveProgress,
-                    _autoCts.Token,
+                    token,
                     startFrameIndex: lastProcessed,
                     onFrameProcessed: idx =>
                     {
                         lastProcessed = idx;
                         _autoResumeIndex = idx;
                     });
+
+                if (token.IsCancellationRequested)
+                {
+                    _autoCompleted = false;
+                    PersistWorkspaceState();
+                    return false;
+                }
 
                 // 자동 마스크 생성 후, 현재 프레임 다시 렌더링 (마스크 반영)
                 if (FrameList.SelectedFrameIndex >= 0)
@@ -260,7 +289,13 @@ namespace FaceShield.ViewModels.Pages
                     ToolPanel.AutoProgress = p;
                 });
 
-                await generator.GenerateFrameAsync(FrameList.VideoPath, frameIndex, effectiveProgress, _autoCts.Token);
+                var token = _autoCts?.Token ?? CancellationToken.None;
+                bool generated = await generator.GenerateFrameAsync(FrameList.VideoPath, frameIndex, effectiveProgress, token);
+                if (!generated || token.IsCancellationRequested)
+                {
+                    PersistWorkspaceState();
+                    return false;
+                }
 
                 FramePreview.OnFrameIndexChanged(frameIndex);
                 PersistWorkspaceState();
@@ -348,6 +383,9 @@ namespace FaceShield.ViewModels.Pages
                 return;
 
             if (!store.TryLoadWorkspace(FrameList.VideoPath, Mode, _maskProvider, out var snapshot))
+                return;
+
+            if (snapshot == null)
                 return;
 
             ApplySnapshot(snapshot);

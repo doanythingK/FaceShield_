@@ -61,7 +61,7 @@ jobs:
         EOF
 
     - name: Zip app for release
-      run: zip -r FaceShield-macOS.zip FaceShield.app
+      run: zip -r FaceShield-macOS.zip FaceShield.app README.md
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

@@ -16,12 +16,13 @@
           <TextBlock Text="자동"/>
       </ToggleButton>
 
-      <ToggleButton IsChecked="{Binding CurrentMode,
+      <!-- TODO: 기능 구현 전까지 숨김 -->
+      <!--<ToggleButton IsChecked="{Binding CurrentMode,
                       Converter={StaticResource EnumEqualsConverter},
                       ConverterParameter={x:Static enums:EditMode.Manual}}"
                     Command="{Binding SetManualCommand}" >
         <TextBlock Text="수동"/>
-      </ToggleButton>
+      </ToggleButton>-->
 
       <ToggleButton IsChecked="{Binding CurrentMode,
                     Converter={StaticResource EnumEqualsConverter},
@@ -48,6 +49,21 @@
         <TextBlock Text="{Binding AutoProgress, StringFormat={}{0}%}" />
         <Button Content="취소" Command="{Binding CancelAutoCommand}" />
       </StackPanel>
+
+      <Border Background="#1E1E1E" CornerRadius="6" Padding="8,6"
+              IsVisible="{Binding ShowBrushSize}">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <TextBlock Text="브러시 크기" VerticalAlignment="Center"/>
+          <Slider Width="200"
+                  MinHeight="24"
+                  Minimum="{Binding MinBrushDiameter}"
+                  Maximum="{Binding MaxBrushDiameter}"
+                  Value="{Binding BrushDiameter, Mode=TwoWay}"
+                  TickFrequency="4"
+                  IsSnapToTickEnabled="True"/>
+          <TextBlock Text="{Binding BrushDiameter}" Width="32" HorizontalAlignment="Right"/>
+        </StackPanel>
+      </Border>
     </StackPanel>
   </Border>
 </UserControl>

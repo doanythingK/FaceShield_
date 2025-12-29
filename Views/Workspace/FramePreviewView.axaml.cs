@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Controls.Shapes;
 using FaceShield.ViewModels.Workspace;
 using System;
 
@@ -14,16 +15,28 @@ public partial class FramePreviewView : UserControl
     }
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
-        => Forward(e, isPressed: true);
+    {
+        UpdateBrushCursor(e);
+        Forward(e, isPressed: true);
+    }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
+        UpdateBrushCursor(e);
         if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             Forward(e, isPressed: false);
     }
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
-        => Forward(e, isReleased: true);
+    {
+        UpdateBrushCursor(e);
+        Forward(e, isReleased: true);
+    }
+
+    private void OnPointerExited(object? sender, PointerEventArgs e)
+    {
+        SetBrushCursorVisible(false);
+    }
 
     private void Forward(PointerEventArgs e, bool isPressed = false, bool isReleased = false)
     {
@@ -75,5 +88,79 @@ public partial class FramePreviewView : UserControl
             vm.OnPointerReleased(p);
         else
             vm.OnPointerMoved(p);
+    }
+
+    private void UpdateBrushCursor(PointerEventArgs e)
+    {
+        if (DataContext is not FramePreviewViewModel vm)
+        {
+            SetBrushCursorVisible(false);
+            return;
+        }
+
+        if (!vm.ShowBrushCursor || vm.FrameBitmap is null)
+        {
+            SetBrushCursorVisible(false);
+            return;
+        }
+
+        var img = this.FindControl<Image>("FrameImage");
+        if (img is null)
+        {
+            SetBrushCursorVisible(false);
+            return;
+        }
+
+        if (img.Bounds.Width <= 0 || img.Bounds.Height <= 0)
+        {
+            SetBrushCursorVisible(false);
+            return;
+        }
+
+        double imgW = vm.FrameBitmap.PixelSize.Width;
+        double imgH = vm.FrameBitmap.PixelSize.Height;
+        if (imgW <= 0 || imgH <= 0)
+        {
+            SetBrushCursorVisible(false);
+            return;
+        }
+
+        var imagePoint = e.GetPosition(img);
+        double scale = Math.Min(
+            img.Bounds.Width / imgW,
+            img.Bounds.Height / imgH);
+
+        double renderW = imgW * scale;
+        double renderH = imgH * scale;
+
+        double offsetX = (img.Bounds.Width - renderW) / 2;
+        double offsetY = (img.Bounds.Height - renderH) / 2;
+
+        double x = (imagePoint.X - offsetX);
+        double y = (imagePoint.Y - offsetY);
+
+        if (x < 0 || y < 0 || x >= renderW || y >= renderH)
+        {
+            SetBrushCursorVisible(false);
+            return;
+        }
+
+        var controlPoint = e.GetPosition(this);
+        double diameter = Math.Max(1, vm.BrushDiameter * scale);
+
+        if (this.FindControl<Ellipse>("BrushCursor") is { } cursor)
+        {
+            cursor.Width = diameter;
+            cursor.Height = diameter;
+            Canvas.SetLeft(cursor, controlPoint.X - diameter / 2);
+            Canvas.SetTop(cursor, controlPoint.Y - diameter / 2);
+            cursor.IsVisible = true;
+        }
+    }
+
+    private void SetBrushCursorVisible(bool isVisible)
+    {
+        if (this.FindControl<Ellipse>("BrushCursor") is { } cursor)
+            cursor.IsVisible = isVisible;
     }
 }

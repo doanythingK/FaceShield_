@@ -21,6 +21,13 @@
             Background="Transparent"
             PointerPressed="OnPointerPressed"
             PointerMoved="OnPointerMoved"
-            PointerReleased="OnPointerReleased"/>
+            PointerReleased="OnPointerReleased"
+            PointerExited="OnPointerExited">
+            <Ellipse Name="BrushCursor"
+                     Stroke="#FF64D2FF"
+                     StrokeThickness="1.5"
+                     Fill="Transparent"
+                     IsVisible="False"/>
+        </Canvas>
     </Grid>
 </UserControl>

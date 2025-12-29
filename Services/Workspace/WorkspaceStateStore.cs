@@ -68,7 +68,7 @@ namespace FaceShield.Services.Workspace
             string videoPath,
             WorkspaceMode mode,
             FrameMaskProvider maskProvider,
-            out WorkspaceSnapshot snapshot)
+            out WorkspaceSnapshot? snapshot)
         {
             snapshot = null;
             var state = _state.Workspaces.FirstOrDefault(w =>

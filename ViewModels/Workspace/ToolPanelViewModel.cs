@@ -7,6 +7,9 @@ namespace FaceShield.ViewModels.Workspace
 {
     public partial class ToolPanelViewModel : ViewModelBase
     {
+        private const int DefaultBrushDiameter = 16;
+        private const int MaxBrushDiameterValue = DefaultBrushDiameter * 5;
+
         [ObservableProperty]
         private EditMode currentMode = EditMode.None;
 
@@ -15,6 +18,20 @@ namespace FaceShield.ViewModels.Workspace
 
         [ObservableProperty]
         private bool isAutoRunning;
+
+        [ObservableProperty]
+        private int brushDiameter = DefaultBrushDiameter;
+
+        public int MinBrushDiameter => DefaultBrushDiameter;
+        public int MaxBrushDiameter => MaxBrushDiameterValue;
+
+        public bool ShowBrushSize =>
+            CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
+
+        partial void OnCurrentModeChanged(EditMode value)
+        {
+            OnPropertyChanged(nameof(ShowBrushSize));
+        }
 
         public event Action? UndoRequested;
         public event Action? SaveRequested;

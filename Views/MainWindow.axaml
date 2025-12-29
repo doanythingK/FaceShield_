@@ -10,7 +10,8 @@
         Width="1100" Height="720"
         MinWidth="900" MinHeight="600"
         Icon="/Assets/avalonia-logo.ico"
-        Title="FaceShield">
+        Title="FaceShield"
+        KeyDown="OnKeyDown">
 
     <Design.DataContext>
         <!-- This only sets the DataContext for the previewer in an IDE,

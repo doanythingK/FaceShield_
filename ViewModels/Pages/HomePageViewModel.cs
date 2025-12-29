@@ -222,9 +222,9 @@ namespace FaceShield.ViewModels.Pages
 
         // 기존과 호환: "워크스페이스 열기"는 Manual로 동작
         [RelayCommand]
-        private void OpenWorkspace()
+        private async Task OpenWorkspace()
         {
-            OpenManualWorkspace();
+            await OpenManualWorkspace();
         }
 
         [RelayCommand]
@@ -277,9 +277,6 @@ namespace FaceShield.ViewModels.Pages
             WorkspaceViewModel vm;
             try
             {
-                var loadProgress = new Progress<int>(p =>
-                    Dispatcher.UIThread.Post(() => WorkspaceLoadingProgress = p));
-
                 var autoOptions = BuildAutoOptions();
                 var detectorOptions = BuildDetectorOptions();
                 TouchRecent(SelectedVideoPath);
@@ -287,7 +284,7 @@ namespace FaceShield.ViewModels.Pages
                 vm = await Task.Run(
                     () => GetOrCreateWorkspace(
                         WorkspaceMode.Auto,
-                        loadProgress,
+                        loadProgress: null,
                         autoOptions,
                         detectorOptions));
             }
@@ -301,6 +298,7 @@ namespace FaceShield.ViewModels.Pages
                 bool resume = await ShowResumeAutoDialogAsync();
                 if (!resume)
                 {
+                    await EnsureWorkspaceReadyAsync(vm);
                     _onStartWorkspace(vm);
                     return;
                 }
@@ -330,7 +328,10 @@ namespace FaceShield.ViewModels.Pages
             }
 
             if (completed)
+            {
+                await EnsureWorkspaceReadyAsync(vm);
                 _onStartWorkspace(vm);
+            }
         }
 
         [RelayCommand]
@@ -377,6 +378,25 @@ namespace FaceShield.ViewModels.Pages
             };
         }
 
+        private async Task EnsureWorkspaceReadyAsync(WorkspaceViewModel vm)
+        {
+            IsWorkspaceLoading = true;
+            WorkspaceLoadingMessage = "워크스페이스 준비 중...";
+            WorkspaceLoadingProgress = 0;
+            IsWorkspaceLoadingIndeterminate = false;
+
+            try
+            {
+                var loadProgress = new Progress<int>(p =>
+                    Dispatcher.UIThread.Post(() => WorkspaceLoadingProgress = p));
+                await vm.EnsureSessionInitializedAsync(loadProgress);
+            }
+            finally
+            {
+                IsWorkspaceLoading = false;
+            }
+        }
+
         private async Task<bool> ShowResumeAutoDialogAsync()
         {
             var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
@@ -390,7 +410,7 @@ namespace FaceShield.ViewModels.Pages
 
         private WorkspaceViewModel GetOrCreateWorkspace(
             WorkspaceMode mode,
-            IProgress<int> loadProgress,
+            IProgress<int>? loadProgress,
             AutoMaskOptions autoOptions,
             FaceOnnxDetectorOptions detectorOptions)
         {
@@ -408,7 +428,8 @@ namespace FaceShield.ViewModels.Pages
                 _onBackHome,
                 autoOptions,
                 detectorOptions,
-                _stateStore);
+                _stateStore,
+                deferSessionInit: mode == WorkspaceMode.Auto);
 
             vm.RestoreFromStore(_stateStore);
 

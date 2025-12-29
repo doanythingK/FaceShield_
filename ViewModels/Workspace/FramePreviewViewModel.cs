@@ -62,6 +62,10 @@ public partial class FramePreviewViewModel : ViewModelBase
 
     public EditMode CurrentMode => _toolPanel.CurrentMode;
 
+    public int BrushDiameter => _toolPanel.BrushDiameter;
+
+    public bool ShowBrushCursor => _toolPanel.ShowBrushSize;
+
     public Cursor CurrentCursor =>
         CurrentMode switch
         {
@@ -81,7 +85,14 @@ public partial class FramePreviewViewModel : ViewModelBase
         _toolPanel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(ToolPanelViewModel.CurrentMode))
+            {
                 OnPropertyChanged(nameof(CurrentCursor));
+                OnPropertyChanged(nameof(ShowBrushCursor));
+            }
+            else if (e.PropertyName == nameof(ToolPanelViewModel.BrushDiameter))
+            {
+                OnPropertyChanged(nameof(BrushDiameter));
+            }
         };
     }
 
@@ -134,7 +145,7 @@ public partial class FramePreviewViewModel : ViewModelBase
             if (x < 0 || y < 0 || x >= fb.Size.Width || y >= fb.Size.Height)
                 return;
 
-            int radius = 8;
+            int radius = Math.Max(1, _toolPanel.BrushDiameter / 2);
 
             byte* basePtr = (byte*)fb.Address;
             int stride = fb.RowBytes;

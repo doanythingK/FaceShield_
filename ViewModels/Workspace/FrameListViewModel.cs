@@ -1,3 +1,5 @@
+using Avalonia.Input;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
@@ -42,6 +44,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private TimelineThumbnailProvider? thumbnailProvider;
 
     private bool _disposed;
+    private DispatcherTimer? _playTimer;
 
     // ─────────────────────────────
     // ScrollBar 파생 프로퍼티
@@ -267,6 +270,113 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         IsPlaying = true;
         PlaybackStateChanged?.Invoke(true);
     }
+
+    public bool HandleKey(Key key, KeyModifiers modifiers)
+    {
+        if (TotalFrames <= 0)
+            return false;
+
+        switch (key)
+        {
+            case Key.Left:
+            case Key.Right:
+                MoveFrame(forward: key == Key.Right, modifiers);
+                return true;
+
+            case Key.Up:
+                MoveBySeconds(+1);
+                return true;
+
+            case Key.Down:
+                MoveBySeconds(-1);
+                return true;
+
+            case Key.Home:
+                SelectedFrameIndex = 0;
+                return true;
+
+            case Key.End:
+                SelectedFrameIndex = TotalFrames - 1;
+                return true;
+
+            case Key.Space:
+                TogglePlay();
+                return true;
+        }
+
+        return false;
+    }
+
+    private void MoveFrame(bool forward, KeyModifiers mods)
+    {
+        int step = mods.HasFlag(KeyModifiers.Shift) ? 10 : 1;
+        int delta = forward ? step : -step;
+
+        int next = Math.Clamp(
+            SelectedFrameIndex + delta,
+            0,
+            TotalFrames - 1);
+
+        SelectedFrameIndex = next;
+    }
+
+    private void MoveBySeconds(int seconds)
+    {
+        if (Fps <= 0) return;
+
+        int deltaFrames = (int)Math.Round(seconds * Fps);
+
+        int next = Math.Clamp(
+            SelectedFrameIndex + deltaFrames,
+            0,
+            TotalFrames - 1);
+
+        SelectedFrameIndex = next;
+    }
+
+    private void TogglePlay()
+    {
+        EnsurePlayTimer();
+
+        if (_playTimer != null && _playTimer.IsEnabled)
+        {
+            StopPlay();
+            return;
+        }
+
+        _playTimer?.Start();
+        NotifyPlaybackStarted();
+    }
+
+    private void StopPlay()
+    {
+        if (_playTimer != null)
+            _playTimer.Stop();
+
+        NotifyPlaybackStopped();
+    }
+
+    private void EnsurePlayTimer()
+    {
+        if (_playTimer != null)
+            return;
+
+        _playTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(1000.0 / Math.Max(1, Fps))
+        };
+
+        _playTimer.Tick += (_, _) =>
+        {
+            if (SelectedFrameIndex >= TotalFrames - 1)
+            {
+                StopPlay();
+                return;
+            }
+
+            SelectedFrameIndex++;
+        };
+    }
     // ─────────────────────────────
     // Dispose
     // ─────────────────────────────
@@ -274,6 +384,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
+        if (_playTimer != null)
+        {
+            try { _playTimer.Stop(); }
+            catch { }
+            _playTimer = null;
+        }
 
         if (ThumbnailProvider != null)
         {

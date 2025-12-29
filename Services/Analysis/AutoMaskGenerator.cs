@@ -63,7 +63,8 @@ namespace FaceShield.Services.Analysis
 
                     for (int idx = start; idx < totalFrames; idx++)
                     {
-                        ct.ThrowIfCancellationRequested();
+                        if (ct.IsCancellationRequested)
+                            return;
                         onFrameProcessed?.Invoke(idx);
 
                         if (_maskProvider.GetFinalMask(idx) != null)
@@ -140,7 +141,8 @@ namespace FaceShield.Services.Analysis
             {
                 return await Task.Run(() =>
                 {
-                    ct.ThrowIfCancellationRequested();
+                    if (ct.IsCancellationRequested)
+                        return false;
 
                     using var extractor = new FfFrameExtractor(videoPath);
                     var frame = extractor.GetFrameByIndex(frameIndex);
