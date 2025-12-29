@@ -132,12 +132,18 @@ public partial class FrameListView : UserControl
         if (_playTimer.IsEnabled)
             StopPlay();
         else
+        {
             _playTimer.Start();
+            vm.NotifyPlaybackStarted();
+        }
     }
 
     private void StopPlay()
     {
         if (_playTimer != null)
             _playTimer.Stop();
+
+        if (DataContext is FrameListViewModel vm)
+            vm.NotifyPlaybackStopped();
     }
 }

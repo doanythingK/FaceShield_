@@ -11,6 +11,7 @@ namespace FaceShield.Services.Video
         private readonly string _videoPath;
         private readonly int _thumbWidth;
         private readonly int _thumbHeight;
+        private readonly object _sync = new();
 
         private AVFormatContext* _fmt;
         private AVCodecContext* _dec;
@@ -22,6 +23,7 @@ namespace FaceShield.Services.Video
         private double _fps;
 
         private readonly ConcurrentDictionary<int, WriteableBitmap> _cache = new();
+        private bool _disposed;
 
         public TimelineThumbnailProvider(string videoPath, int thumbWidth = 160, int thumbHeight = 90)
         {
@@ -106,11 +108,20 @@ namespace FaceShield.Services.Video
             if (_cache.TryGetValue(frameIndex, out var cached))
                 return cached;
 
-            var bmp = DecodeFrame(frameIndex);
-            if (bmp != null)
-                _cache.TryAdd(frameIndex, bmp);
+            lock (_sync)
+            {
+                if (_disposed)
+                    return null;
 
-            return bmp;
+                if (_cache.TryGetValue(frameIndex, out cached))
+                    return cached;
+
+                var bmp = DecodeFrame(frameIndex);
+                if (bmp != null)
+                    _cache.TryAdd(frameIndex, bmp);
+
+                return bmp;
+            }
         }
 
         private WriteableBitmap? DecodeFrame(int frameIndex)
@@ -158,6 +169,13 @@ namespace FaceShield.Services.Video
 
                     if (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
                     {
+                        long pts = src->best_effort_timestamp;
+                        if (pts == ffmpeg.AV_NOPTS_VALUE)
+                            pts = src->pts;
+
+                        if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
+                            continue;
+
                         ffmpeg.sws_scale(
                             _sws,
                             src->data,
@@ -209,29 +227,36 @@ namespace FaceShield.Services.Video
 
         public void Dispose()
         {
-            foreach (var kv in _cache)
-                kv.Value.Dispose();
-            _cache.Clear();
-
-            if (_sws != null)
+            lock (_sync)
             {
-                ffmpeg.sws_freeContext(_sws);
-                _sws = null;
-            }
+                if (_disposed)
+                    return;
+                _disposed = true;
 
-            if (_dec != null)
-            {
-                fixed (AVCodecContext** pDec = &_dec)
+                foreach (var kv in _cache)
+                    kv.Value.Dispose();
+                _cache.Clear();
+
+                if (_sws != null)
                 {
-                    ffmpeg.avcodec_free_context(pDec);
+                    ffmpeg.sws_freeContext(_sws);
+                    _sws = null;
                 }
-            }
 
-            if (_fmt != null)
-            {
-                fixed (AVFormatContext** pFmt = &_fmt)
+                if (_dec != null)
                 {
-                    ffmpeg.avformat_close_input(pFmt);
+                    fixed (AVCodecContext** pDec = &_dec)
+                    {
+                        ffmpeg.avcodec_free_context(pDec);
+                    }
+                }
+
+                if (_fmt != null)
+                {
+                    fixed (AVFormatContext** pFmt = &_fmt)
+                    {
+                        ffmpeg.avformat_close_input(pFmt);
+                    }
                 }
             }
         }

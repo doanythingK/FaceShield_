@@ -126,10 +126,6 @@ namespace FaceShield.Services.Video
                     if (ffmpeg.av_frame_get_buffer(bgra, 32) < 0)
                         return null;
 
-                    long decodedIndex = (long)Math.Round(seconds * _fps);
-
-                    long currentIndex = -1;
-
                     while (ffmpeg.av_read_frame(_fmt, pkt) >= 0)
                     {
                         if (pkt->stream_index != _videoStreamIndex)
@@ -143,10 +139,12 @@ namespace FaceShield.Services.Video
 
                         while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
                         {
-                            currentIndex++;
+                            long pts = src->best_effort_timestamp;
+                            if (pts == ffmpeg.AV_NOPTS_VALUE)
+                                pts = src->pts;
 
-                            if (currentIndex < decodedIndex)
-                                continue; // ❗ 여기서 프레임 스킵
+                            if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
+                                continue;
 
                             ffmpeg.sws_scale(
                                 _sws,

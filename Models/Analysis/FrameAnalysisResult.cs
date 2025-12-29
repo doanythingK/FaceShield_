@@ -1,4 +1,6 @@
 using Avalonia;
+using System;
+using System.Collections.Generic;
 
 namespace FaceShield.Models.Analysis
 {
@@ -11,5 +13,6 @@ namespace FaceShield.Models.Analysis
         public float Confidence { get; init; }
 
         public Rect? FaceBounds { get; init; }
+        public IReadOnlyList<Rect> FaceBoundsList { get; init; } = Array.Empty<Rect>();
     }
 }

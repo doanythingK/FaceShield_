@@ -6,7 +6,8 @@
              x:DataType="vm:ToolPanelViewModel">
 
   <Border Background="#151515" Padding="12">
-    <StackPanel Orientation="Horizontal" Spacing="12">
+    <StackPanel Spacing="8">
+      <StackPanel Orientation="Horizontal" Spacing="12">
 
       <ToggleButton IsChecked="{Binding CurrentMode,
                       Converter={StaticResource EnumEqualsConverter},
@@ -39,6 +40,14 @@
       <Button Content="되돌리기" Command="{Binding UndoCommand}" />
       <Button Content="저장" Command="{Binding SaveCommand}" />
 
+      </StackPanel>
+
+      <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsAutoRunning}">
+        <ProgressBar Width="180" Height="8" Minimum="0" Maximum="100"
+                     Value="{Binding AutoProgress}" />
+        <TextBlock Text="{Binding AutoProgress, StringFormat={}{0}%}" />
+        <Button Content="취소" Command="{Binding CancelAutoCommand}" />
+      </StackPanel>
     </StackPanel>
   </Border>
 </UserControl>

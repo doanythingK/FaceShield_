@@ -1,5 +1,5 @@
 ﻿==================================================
-FILE: D:\WorkSpace\FaceShield\App.axaml
+FILE: D:\WorkSpace\FaceShield_\App.axaml
 ==================================================
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -46,7 +46,7 @@ FILE: D:\WorkSpace\FaceShield\App.axaml
 </Application>
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\App.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\App.axaml.cs
 ==================================================
 using System.Linq;
 using Avalonia;
@@ -101,7 +101,7 @@ namespace FaceShield
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Program.cs
+FILE: D:\WorkSpace\FaceShield_\Program.cs
 ==================================================
 using System;
 using Avalonia;
@@ -128,7 +128,7 @@ namespace FaceShield
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewLocator.cs
+FILE: D:\WorkSpace\FaceShield_\ViewLocator.cs
 ==================================================
 using System;
 using System.Diagnostics.CodeAnalysis;
@@ -171,7 +171,7 @@ namespace FaceShield
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Controls\TimelineFrameStrip.cs
+FILE: D:\WorkSpace\FaceShield_\Controls\TimelineFrameStrip.cs
 ==================================================
 using Avalonia;
 using Avalonia.Controls;
@@ -543,7 +543,7 @@ namespace FaceShield.Controls
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Converters\EnumEqualsConverter.cs
+FILE: D:\WorkSpace\FaceShield_\Converters\EnumEqualsConverter.cs
 ==================================================
 using System;
 using Avalonia.Data;
@@ -574,7 +574,7 @@ public sealed class EnumEqualsConverter : IValueConverter
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Models\RecentItem.cs
+FILE: D:\WorkSpace\FaceShield_\Models\RecentItem.cs
 ==================================================
 using System;
 using System.Collections.Generic;
@@ -603,7 +603,7 @@ namespace FaceShield.Models
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\MainWindowViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\MainWindowViewModel.cs
 ==================================================
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.ViewModels.Pages;
@@ -629,7 +629,7 @@ namespace FaceShield.ViewModels
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\ViewModelBase.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\ViewModelBase.cs
 ==================================================
 using CommunityToolkit.Mvvm.ComponentModel;
 
@@ -642,7 +642,7 @@ namespace FaceShield.ViewModels
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\MainWindow.axaml
+FILE: D:\WorkSpace\FaceShield_\Views\MainWindow.axaml
 ==================================================
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -672,7 +672,7 @@ FILE: D:\WorkSpace\FaceShield\Views\MainWindow.axaml
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\MainWindow.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\Views\MainWindow.axaml.cs
 ==================================================
 using Avalonia.Controls;
 using FaceShield.ViewModels;
@@ -689,7 +689,7 @@ namespace FaceShield.Views
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Enums\Workspace\EditMode.cs
+FILE: D:\WorkSpace\FaceShield_\Enums\Workspace\EditMode.cs
 ==================================================
 using System;
 using System.Collections.Generic;
@@ -711,9 +711,24 @@ namespace FaceShield.Enums.Workspace
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Models\Analysis\FrameAnalysisResult.cs
+FILE: D:\WorkSpace\FaceShield_\Enums\Workspace\WorkspaceMode.cs
+==================================================
+namespace FaceShield.Enums.Workspace
+{
+    public enum WorkspaceMode
+    {
+        Auto,
+        Manual
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield_\Models\Analysis\FrameAnalysisResult.cs
 ==================================================
 using Avalonia;
+using System;
+using System.Collections.Generic;
 
 namespace FaceShield.Models.Analysis
 {
@@ -726,19 +741,216 @@ namespace FaceShield.Models.Analysis
         public float Confidence { get; init; }
 
         public Rect? FaceBounds { get; init; }
+        public IReadOnlyList<Rect> FaceBoundsList { get; init; } = Array.Empty<Rect>();
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Analysis\FrameAnalyzer.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Analysis\AutoMaskGenerator.cs
 ==================================================
+using Avalonia;
+using Avalonia.Media.Imaging;
+using FaceShield.Services.FaceDetection;
+using FaceShield.Services.Video;
+using FFmpeg.AutoGen;
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.Services.Analysis
+{
+    /// <summary>
+    /// 영상 전체 프레임을 돌면서
+    /// - 얼굴 검출(IFaceDetector)
+    /// - 얼굴 bbox 기반 마스크(WriteableBitmap) 작성
+    /// - FrameMaskProvider에 저장
+    /// 까지 한 번에 수행하는 서비스.
+    /// </summary>
+    public sealed class AutoMaskGenerator
+    {
+        private readonly IFaceDetector _detector;
+        private readonly FrameMaskProvider _maskProvider;
+
+        public AutoMaskGenerator(IFaceDetector detector, FrameMaskProvider maskProvider)
+        {
+            _detector = detector ?? throw new ArgumentNullException(nameof(detector));
+            _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
+        }
+
+        public async Task GenerateAsync(
+            string videoPath,
+            IProgress<int>? progress,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(videoPath))
+                throw new ArgumentException("videoPath is null or empty.", nameof(videoPath));
+
+            var (fps, totalFrames, _) = ReadVideoInfo(videoPath);
+
+            if (fps <= 0 || totalFrames <= 0)
+                return;
+
+            await Task.Run(() =>
+            {
+                using var extractor = new FfFrameExtractor(videoPath);
+
+                for (int idx = 0; idx < totalFrames; idx++)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    var frame = extractor.GetFrameByIndex(idx);
+                    if (frame == null)
+                        continue;
+
+                    var faces = _detector.DetectFaces(frame);
+                    if (faces == null || faces.Count == 0)
+                        continue;
+
+                    var mask = CreateMaskFromFaces(frame, faces);
+                    _maskProvider.SetMask(idx, mask);
+
+                    if (progress != null)
+                    {
+                        int percent = (int)Math.Round(idx * 100.0 / Math.Max(1, totalFrames - 1));
+                        if (percent > 100) percent = 100;
+                        progress.Report(percent);
+                    }
+                }
+
+                progress?.Report(100);
+
+            }, ct);
+        }
+
+        private static WriteableBitmap CreateMaskFromFaces(
+            WriteableBitmap frame,
+            IReadOnlyList<FaceDetectionResult> faces)
+        {
+            var size = frame.PixelSize;
+            var mask = new WriteableBitmap(
+                size,
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var fb = mask.Lock();
+
+            unsafe
+            {
+                byte* basePtr = (byte*)fb.Address;
+                int stride = fb.RowBytes;
+                int w = size.Width;
+                int h = size.Height;
+
+                foreach (var face in faces)
+                {
+                    var r = face.Bounds;
+
+                    int x0 = Math.Clamp((int)Math.Floor(r.X), 0, Math.Max(0, w - 1));
+                    int y0 = Math.Clamp((int)Math.Floor(r.Y), 0, Math.Max(0, h - 1));
+                    int x1 = Math.Clamp((int)Math.Ceiling(r.X + r.Width), 0, w);
+                    int y1 = Math.Clamp((int)Math.Ceiling(r.Y + r.Height), 0, h);
+
+                    for (int y = y0; y < y1; y++)
+                    {
+                        byte* row = basePtr + y * stride;
+                        for (int x = x0; x < x1; x++)
+                        {
+                            byte* p = row + x * 4;
+                            p[0] = 255;
+                            p[1] = 255;
+                            p[2] = 255;
+                            p[3] = 255;
+                        }
+                    }
+                }
+            }
+
+            return mask;
+        }
+
+        private unsafe static (double fps, int totalFrames, double durationSeconds) ReadVideoInfo(string path)
+        {
+            AVFormatContext* fmt = null;
+
+            try
+            {
+                ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
+
+                if (ffmpeg.avformat_open_input(&fmt, path, null, null) < 0)
+                    throw new InvalidOperationException("Failed to open video.");
+
+                if (ffmpeg.avformat_find_stream_info(fmt, null) < 0)
+                    throw new InvalidOperationException("Failed to read stream info.");
+
+                AVStream* videoStream = null;
+
+                for (int i = 0; i < fmt->nb_streams; i++)
+                {
+                    if (fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                    {
+                        videoStream = fmt->streams[i];
+                        break;
+                    }
+                }
+
+                if (videoStream == null)
+                    throw new InvalidOperationException("Video stream not found.");
+
+                double fpsValue =
+                    videoStream->avg_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
+                        : videoStream->r_frame_rate.num != 0
+                            ? ffmpeg.av_q2d(videoStream->r_frame_rate)
+                            : 30.0;
+
+                double durationSeconds;
+
+                if (videoStream->duration > 0)
+                {
+                    durationSeconds =
+                        videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
+                }
+                else if (fmt->duration > 0)
+                {
+                    durationSeconds =
+                        fmt->duration / (double)ffmpeg.AV_TIME_BASE;
+                }
+                else
+                {
+                    durationSeconds = 0;
+                }
+
+                int frames = (int)Math.Floor(durationSeconds * fpsValue);
+
+                return (
+                    fps: fpsValue,
+                    totalFrames: Math.Max(frames, 0),
+                    durationSeconds: Math.Max(durationSeconds, 0));
+            }
+            finally
+            {
+                if (fmt != null)
+                    ffmpeg.avformat_close_input(&fmt);
+            }
+        }
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield_\Services\Analysis\FrameAnalyzer.cs
+==================================================
+using Avalonia;
+using Avalonia.Media.Imaging;
 using FaceShield.Models.Analysis;
 using FaceShield.Services.FaceDetection;
+using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -746,11 +958,11 @@ namespace FaceShield.Services.Analysis
 {
     public sealed class FrameAnalyzer : IFrameAnalyzer
     {
-        private readonly IFaceDetector _faceDetector;
+        private readonly IFaceDetector _detector;
 
-        public FrameAnalyzer(IFaceDetector faceDetector)
+        public FrameAnalyzer(IFaceDetector detector)
         {
-            _faceDetector = faceDetector;
+            _detector = detector;
         }
 
         public async Task<IReadOnlyList<FrameAnalysisResult>> AnalyzeAsync(
@@ -758,38 +970,123 @@ namespace FaceShield.Services.Analysis
             IProgress<int>? progress,
             CancellationToken ct)
         {
-            var results = new List<FrameAnalysisResult>();
+            // (확실) FfFrameExtractor 안에 이미 FPS 계산 로직이 있어서
+            // 여기서는 전체 프레임 수만 추정해도 충분합니다.
+            var (fps, totalFrames, _) = ReadVideoInfo(videoPath);
 
-            int fps = 30;
-            int totalFrames = 300; // 더미
+            if (fps <= 0 || totalFrames <= 0)
+                return Array.Empty<FrameAnalysisResult>();
 
-            for (int i = 0; i < totalFrames; i++)
+            var list = new List<FrameAnalysisResult>();
+
+            using var extractor = new FfFrameExtractor(videoPath);
+
+            await Task.Run(() =>
             {
-                ct.ThrowIfCancellationRequested();
-
-                var face = _faceDetector.Detect(null);
-
-                results.Add(new FrameAnalysisResult
+                for (int idx = 0; idx < totalFrames; idx++)
                 {
-                    FrameIndex = i,
-                    TimestampSec = i / (double)fps,
-                    HasFace = face != null,
-                    Confidence = face?.Confidence ?? 0f,
-                    FaceBounds = face?.Bounds
-                });
+                    ct.ThrowIfCancellationRequested();
 
-                progress?.Report(i);
-                await Task.Yield();
+                    var bmp = extractor.GetFrameByIndex(idx);
+                    if (bmp == null) continue;
+
+                    var faces = _detector.DetectFaces(bmp);
+                    bool hasFace = faces.Count > 0;
+
+                    Rect? first = hasFace ? faces[0].Bounds : null;
+
+                    list.Add(new FrameAnalysisResult
+                    {
+                        FrameIndex = idx,
+                        TimestampSec = idx / fps,
+                        HasFace = hasFace,
+                        Confidence = hasFace ? 1.0f : 0.0f, // 점수는 실제 detector에서 추출 가능하면 교체
+                        FaceBounds = first
+                        // 필요하면 FrameAnalysisResult에 리스트 필드 추가해서 전체 bounds 보내도 됨
+                    });
+
+                    progress?.Report((int)(idx * 100.0 / Math.Max(1, totalFrames - 1)));
+                }
+
+                progress?.Report(100);
+            }, ct);
+
+            return list;
+        }
+
+        // ↓ 아래 ReadVideoInfo는 AutoMaskGenerator에서도 쓸 거라면,
+        // util 클래스로 빼는 게 좋지만 지금은 여기 안에 둡니다.
+        private unsafe static (double fps, int totalFrames, double durationSeconds) ReadVideoInfo(string path)
+        {
+            FFmpeg.AutoGen.AVFormatContext* fmt = null;
+
+            try
+            {
+                FFmpeg.AutoGen.ffmpeg.av_log_set_level(FFmpeg.AutoGen.ffmpeg.AV_LOG_QUIET);
+
+                if (FFmpeg.AutoGen.ffmpeg.avformat_open_input(&fmt, path, null, null) < 0)
+                    throw new InvalidOperationException("Failed to open video.");
+
+                if (FFmpeg.AutoGen.ffmpeg.avformat_find_stream_info(fmt, null) < 0)
+                    throw new InvalidOperationException("Failed to read stream info.");
+
+                FFmpeg.AutoGen.AVStream* videoStream = null;
+
+                for (int i = 0; i < fmt->nb_streams; i++)
+                {
+                    if (fmt->streams[i]->codecpar->codec_type == FFmpeg.AutoGen.AVMediaType.AVMEDIA_TYPE_VIDEO)
+                    {
+                        videoStream = fmt->streams[i];
+                        break;
+                    }
+                }
+
+                if (videoStream == null)
+                    throw new InvalidOperationException("Video stream not found.");
+
+                double fpsValue =
+                    videoStream->avg_frame_rate.num != 0
+                        ? FFmpeg.AutoGen.ffmpeg.av_q2d(videoStream->avg_frame_rate)
+                        : videoStream->r_frame_rate.num != 0
+                            ? FFmpeg.AutoGen.ffmpeg.av_q2d(videoStream->r_frame_rate)
+                            : 30.0;
+
+                double durationSeconds;
+
+                if (videoStream->duration > 0)
+                {
+                    durationSeconds =
+                        videoStream->duration * FFmpeg.AutoGen.ffmpeg.av_q2d(videoStream->time_base);
+                }
+                else if (fmt->duration > 0)
+                {
+                    durationSeconds =
+                        fmt->duration / (double)FFmpeg.AutoGen.ffmpeg.AV_TIME_BASE;
+                }
+                else
+                {
+                    durationSeconds = 0;
+                }
+
+                int frames = (int)Math.Floor(durationSeconds * fpsValue);
+
+                return (
+                    fps: fpsValue,
+                    totalFrames: Math.Max(frames, 0),
+                    durationSeconds: Math.Max(durationSeconds, 0));
             }
-
-            return results;
+            finally
+            {
+                if (fmt != null)
+                    FFmpeg.AutoGen.ffmpeg.avformat_close_input(&fmt);
+            }
         }
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Analysis\IFrameAnalyzer.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Analysis\IFrameAnalyzer.cs
 ==================================================
 using FaceShield.Models.Analysis;
 using System;
@@ -812,7 +1109,7 @@ namespace FaceShield.Services.Analysis
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\FaceDetection\FaceDetectionResult.cs
+FILE: D:\WorkSpace\FaceShield_\Services\FaceDetection\FaceDetectionResult.cs
 ==================================================
 using Avalonia;
 using System;
@@ -832,25 +1129,155 @@ namespace FaceShield.Services.FaceDetection
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\FaceDetection\IFaceDetector.cs
+FILE: D:\WorkSpace\FaceShield_\Services\FaceDetection\FaceOnnxDetector.cs
 ==================================================
+// FILE: Services/FaceDetection/FaceOnnxDetector.cs
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Media.Imaging;
+using FaceONNX;
+using FaceShield.Models.Analysis;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace FaceShield.Services.FaceDetection
 {
-    public interface IFaceDetector
+    public sealed class FaceOnnxDetector : IFaceDetector
     {
-        FaceDetectionResult? Detect(object? frame);
+        private readonly FaceDetector _detector;
+
+        public FaceOnnxDetector()
+        {
+            _detector = new FaceDetector(); // 확실함
+        }
+
+        public IReadOnlyList<FaceDetectionResult> DetectFaces(WriteableBitmap frame)
+        {
+            if (frame is null)
+                return Array.Empty<FaceDetectionResult>();
+
+            using var img = ConvertToImageSharp(frame);
+            var input = ConvertToImageArray(img);
+
+            // FaceONNX의 Forward는 확실히 존재함
+            var rects = _detector.Forward(input);
+
+            var results = new List<FaceDetectionResult>();
+
+            foreach (var r in rects)
+            {
+                // r.Box 존재는 예제 근거로 '확실함'
+                var b = r.Box; // System.Drawing.Rectangle 형태
+
+                var rect = new Rect(b.X, b.Y, b.Width, b.Height);
+
+                // confidence 필드는 문서에서 확인 불가 → 추측입니다
+                float conf = 1.0f;
+
+                results.Add(new FaceDetectionResult
+                {
+                    Bounds = rect,
+                    Confidence = conf
+                });
+            }
+
+            return results;
+        }
+
+        private static Image<Rgb24> ConvertToImageSharp(WriteableBitmap bmp)
+        {
+            var w = bmp.PixelSize.Width;
+            var h = bmp.PixelSize.Height;
+            var img = new Image<Rgb24>(w, h);
+
+            using var fb = bmp.Lock();
+
+            unsafe
+            {
+                byte* src = (byte*)fb.Address;
+                int stride = fb.RowBytes;
+
+                img.ProcessPixelRows(rows =>
+                {
+                    for (int y = 0; y < h; y++)
+                    {
+                        var row = rows.GetRowSpan(y);
+                        byte* srcRow = src + y * stride;
+
+                        for (int x = 0; x < w; x++)
+                        {
+                            byte b = srcRow[x * 4 + 0];
+                            byte g = srcRow[x * 4 + 1];
+                            byte r = srcRow[x * 4 + 2];
+                            row[x] = new Rgb24(r, g, b);
+                        }
+                    }
+                });
+            }
+
+            return img;
+        }
+
+        private static float[][,] ConvertToImageArray(Image<Rgb24> img)
+        {
+            int w = img.Width;
+            int h = img.Height;
+
+            float[][,] data = new float[3][,]
+            {
+                new float[h, w],
+                new float[h, w],
+                new float[h, w]
+            };
+
+            img.ProcessPixelRows(rows =>
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    var row = rows.GetRowSpan(y);
+
+                    for (int x = 0; x < w; x++)
+                    {
+                        var p = row[x];
+                        data[0][y, x] = p.R / 255f;
+                        data[1][y, x] = p.G / 255f;
+                        data[2][y, x] = p.B / 255f;
+                    }
+                }
+            });
+
+            return data;
+        }
+
+        public void Dispose()
+        {
+            _detector?.Dispose();
+        }
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\FfFrameExtractor.cs
+FILE: D:\WorkSpace\FaceShield_\Services\FaceDetection\IFaceDetector.cs
+==================================================
+// FILE: Services/FaceDetection/IFaceDetector.cs
+using System;
+using System.Collections.Generic;
+using Avalonia.Media.Imaging;
+using FaceShield.Models.Analysis;
+
+namespace FaceShield.Services.FaceDetection
+{
+    public interface IFaceDetector : IDisposable
+    {
+        IReadOnlyList<FaceDetectionResult> DetectFaces(WriteableBitmap frame);
+    }
+}
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield_\Services\Video\FfFrameExtractor.cs
 ==================================================
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -1092,7 +1519,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\FFmpegBootstrap.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\FFmpegBootstrap.cs
 ==================================================
 using FFmpeg.AutoGen;
 using System;
@@ -1124,7 +1551,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\FrameImageProvider.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\FrameImageProvider.cs
 ==================================================
 // FILE: D:\WorkSpace\FaceShield\Services\Video\FrameImageProvider.cs
 using Avalonia.Media.Imaging;
@@ -1171,7 +1598,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\FrameMaskProvider.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\FrameMaskProvider.cs
 ==================================================
 using Avalonia.Media.Imaging;
 using System.Collections.Concurrent;
@@ -1192,7 +1619,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\IFrameImageProvider.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\IFrameImageProvider.cs
 ==================================================
 using Avalonia.Media.Imaging;
 using System.Threading;
@@ -1212,7 +1639,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\IFrameMaskProvider.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\IFrameMaskProvider.cs
 ==================================================
 using Avalonia.Media.Imaging;
 
@@ -1220,15 +1647,23 @@ namespace FaceShield.Services.Video
 {
     public interface IFrameMaskProvider
     {
+        /// <summary>
+        /// Export 시 사용할 최종 마스크.
+        /// 프레임마다 없을 수도 있음(null).
+        /// </summary>
         WriteableBitmap? GetFinalMask(int frameIndex);
-    }
 
+        /// <summary>
+        /// 프레임별 마스크 저장/갱신.
+        /// (프리뷰에서 만든 마스크, 추후 자동 분석에서 생성한 마스크 등)
+        /// </summary>
+        void SetMask(int frameIndex, WriteableBitmap mask);
+    }
 }
 
 
-
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\MaskedVideoExporter.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\MaskedVideoExporter.cs
 ==================================================
 using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
@@ -1304,7 +1739,7 @@ public unsafe sealed class MaskedVideoExporter
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\PreviewBlurProcessor.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\PreviewBlurProcessor.cs
 ==================================================
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -1414,7 +1849,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\TimelineThumbnailProvider.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\TimelineThumbnailProvider.cs
 ==================================================
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -1658,7 +2093,7 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\VideoExportService.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\VideoExportService.cs
 ==================================================
 using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
@@ -1861,7 +2296,7 @@ public unsafe sealed class VideoExportService
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\VideoFrameReader.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\VideoFrameReader.cs
 ==================================================
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -2279,18 +2714,16 @@ namespace FaceShield.Services.Video
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\Pages\HomePageViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\Pages\HomePageViewModel.cs
 ==================================================
 using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FaceShield.Enums.Workspace; // 🔹 추가
 using FaceShield.Models;
 using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Pages
@@ -2311,7 +2744,7 @@ namespace FaceShield.ViewModels.Pages
         {
             _onStartWorkspace = onStartWorkspace;
 
-            // 샘플: 실제로는 추후 로컬 설정 파일에서 로딩
+            // TODO: 실제로는 설정 파일에서 로딩
             Recents.Add(new RecentItem("샘플 프로젝트", @"C:\Temp\sample.mp4", DateTimeOffset.Now.AddDays(-1)));
             Recents.Add(new RecentItem("테스트 영상", @"D:\Videos\test_4k.mp4", DateTimeOffset.Now.AddDays(-3)));
         }
@@ -2331,9 +2764,6 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        /// <summary>
-        /// View에서 StorageProvider를 넘겨받아 호출합니다.
-        /// </summary>
         public async Task PickVideoAsync(IStorageProvider storageProvider)
         {
             var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -2343,9 +2773,9 @@ namespace FaceShield.ViewModels.Pages
                 FileTypeFilter =
                 [
                     new FilePickerFileType("Video")
-                {
-                    Patterns = ["*.mp4", "*.mov", "*.mkv", "*.avi", "*.wmv", "*.webm"]
-                }
+                    {
+                        Patterns = ["*.mp4", "*.mov", "*.mkv", "*.avi", "*.wmv", "*.webm"]
+                    }
                 ]
             });
 
@@ -2359,45 +2789,56 @@ namespace FaceShield.ViewModels.Pages
 
             SelectedVideoPath = localPath;
 
-            // 최근 목록 업데이트(최소)
             var title = Path.GetFileName(localPath);
             Recents.Insert(0, new RecentItem(title, localPath, DateTimeOffset.Now));
         }
 
+        // 기존과 호환: "워크스페이스 열기"는 Manual로 동작
         [RelayCommand]
         private void OpenWorkspace()
+        {
+            OpenManualWorkspace();
+        }
+
+        [RelayCommand]
+        private void OpenManualWorkspace()
         {
             if (string.IsNullOrWhiteSpace(SelectedVideoPath))
                 return;
 
-            var vm = new WorkspaceViewModel(SelectedVideoPath);
+            var vm = new WorkspaceViewModel(SelectedVideoPath, WorkspaceMode.Manual);
             _onStartWorkspace(vm);
         }
 
         [RelayCommand]
-        private void OpenSettings()
+        private void OpenAutoWorkspace()
         {
-            // 다음 단계에서 SettingsPageViewModel로 교체하면 됩니다.
-            // 지금은 "첫 화면부터 실행" 목표이므로 자리만 둡니다.
+            if (string.IsNullOrWhiteSpace(SelectedVideoPath))
+                return;
+
+            var vm = new WorkspaceViewModel(SelectedVideoPath, WorkspaceMode.Auto);
+            _onStartWorkspace(vm);
         }
 
         [RelayCommand]
-        private void OpenAbout()
-        {
-            // 다음 단계에서 AboutDialog/페이지로 교체
-        }
+        private void OpenSettings() { }
+
+        [RelayCommand]
+        private void OpenAbout() { }
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\Pages\WorkspaceViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\Pages\WorkspaceViewModel.cs
 ==================================================
+using FaceShield.Enums.Workspace; // 🔹 추가
+using FaceShield.Services.Analysis;
 using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
 using FaceShield.ViewModels.Workspace;
 using System;
-using System.ComponentModel;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Pages
@@ -2408,57 +2849,49 @@ namespace FaceShield.ViewModels.Pages
         public FramePreviewViewModel FramePreview { get; }
         public FrameListViewModel FrameList { get; }
 
-        // ✅ 프레임별 최종 마스크 저장소
+        // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
+
+        // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
+        private bool _isAutoRunning;
+        private CancellationTokenSource? _autoCts;
+
+        // 🔹 현재 워크스페이스 모드 (Auto / Manual)
+        public WorkspaceMode Mode { get; }
 
         public WorkspaceViewModel(string videoPath)
         {
             FrameList = new FrameListViewModel(videoPath);
             FramePreview = new FramePreviewViewModel(ToolPanel);
 
-            // 🔹 VideoSession 생성
             var session = new VideoSession(videoPath);
             FramePreview.InitializeSession(session);
 
-            // 타임라인 선택 → 프레임 로드
-            FrameList.PropertyChanged += FrameListOnPropertyChanged;
+            // 🔹 자동/최종 마스크 provider 주입
+            FramePreview.SetMaskProvider(_maskProvider);
 
             FrameList.SelectedFrameIndexChanged += index =>
             {
                 FramePreview.OnFrameIndexChanged(index);
             };
 
-            // ToolPanel 명령 연결
             ToolPanel.UndoRequested += () => FramePreview.Undo();
 
             ToolPanel.SaveRequested += async () =>
             {
-                // 현재 프레임 마스크를 provider에 저장(최소 동작)
                 if (FrameList.SelectedFrameIndex >= 0 && FramePreview.MaskBitmap != null)
                     _maskProvider.SetMask(FrameList.SelectedFrameIndex, FramePreview.MaskBitmap);
-
-                // TODO: 실제 앱에서는 "편집된 모든 프레임"을 provider에 넣어둬야 합니다.
-                // 지금 구조상 최소로는 "사용자가 편집한 프레임"이 선택될 때마다 저장하면 됩니다.
 
                 await SaveVideoAsync();
             };
+
+            // 🔹 자동 모드 버튼 → 자동 마스크 생성 연결
+            ToolPanel.AutoRequested += OnAutoRequested;
         }
 
-        private async void FrameListOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName == nameof(FrameListViewModel.SelectedFrameIndex))
-            {
-                await FramePreview.LoadFrameAsync(FrameList.VideoPath, FrameList.SelectedFrameIndex);
-
-                // 선택될 때마다 현재 프레임의 최종 마스크를 provider에 저장(편집 유지)
-                if (FrameList.SelectedFrameIndex >= 0 && FramePreview.MaskBitmap != null)
-                    _maskProvider.SetMask(FrameList.SelectedFrameIndex, FramePreview.MaskBitmap);
-            }
-        }
 
         private Task SaveVideoAsync()
         {
-            // 출력 경로는 일단 입력 옆에 _blur.mp4 (더미 아님: 실제 저장)
             string input = FrameList.VideoPath;
             string output = System.IO.Path.Combine(
                 System.IO.Path.GetDirectoryName(input)!,
@@ -2468,16 +2901,57 @@ namespace FaceShield.ViewModels.Pages
 
             return Task.Run(() =>
             {
-                // blurRadius는 일단 6 (추후 UI 연동 가능)
                 exporter.Export(input, output, blurRadius: 6);
             });
+        }
+
+        private async void OnAutoRequested()
+        {
+            if (_isAutoRunning)
+                return;
+
+            _isAutoRunning = true;
+            _autoCts = new CancellationTokenSource();
+
+            try
+            {
+                // ⚠️ 이 부분은 실제 구현하신 IFaceDetector 클래스로 교체해야 합니다.
+                // 예를 들면:
+                //   var detector = new FaceOnnxDetector(...);
+                // 저는 지금 사용자님 프로젝트에 어떤 이름으로 구현되어 있는지 알 수 없어서
+                // 아래는 "예시 + 강제 예외" 형태로 둡니다.
+                IFaceDetector detector = throw new NotImplementedException(
+                    "여기에 IFaceDetector 구현 인스턴스를 생성해서 넣어 주세요 (예: new FaceOnnxDetector(...)).");
+
+                var generator = new AutoMaskGenerator(detector, _maskProvider);
+
+                // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
+                //       진행률 UI를 그릴 수 있습니다.
+                await generator.GenerateAsync(FrameList.VideoPath, progress: null, _autoCts.Token);
+
+                // 자동 마스크 생성 후, 현재 프레임 다시 렌더링 (마스크 반영)
+                if (FrameList.SelectedFrameIndex >= 0)
+                {
+                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // 추후 취소 버튼을 만들면 여기로 들어옴
+            }
+            finally
+            {
+                _autoCts?.Dispose();
+                _autoCts = null;
+                _isAutoRunning = false;
+            }
         }
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FrameItemViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\Workspace\FrameItemViewModel.cs
 ==================================================
 using System;
 using System.Collections.Generic;
@@ -2505,7 +2979,7 @@ namespace FaceShield.ViewModels.Workspace
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FrameListViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\Workspace\FrameListViewModel.cs
 ==================================================
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
@@ -2727,8 +3201,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         ClampView();
         OnPropertyChanged(nameof(TotalDurationSeconds));
         OnPropertyChanged(nameof(FramePositionText));
+
     }
 
+    public void SetPropertyChanged(string propertyName)
+    {
+        OnPropertyChanged(propertyName);
+    }
     // ─────────────────────────────
     // Dispose
     // ─────────────────────────────
@@ -2748,7 +3227,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FramePreviewViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\Workspace\FramePreviewViewModel.cs
 ==================================================
 // FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\FramePreviewViewModel.cs
 using Avalonia;
@@ -2759,7 +3238,6 @@ using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Workspace;
@@ -2767,9 +3245,7 @@ namespace FaceShield.ViewModels.Workspace;
 public partial class FramePreviewViewModel : ViewModelBase
 {
     private readonly ToolPanelViewModel _toolPanel;
-    private readonly FrameImageProvider _frameProvider = new();
-
-    private CancellationTokenSource? _cts;
+    private IFrameMaskProvider? _maskProvider;
 
     private WriteableBitmap? _frameBitmap;
     private WriteableBitmap? _maskBitmap;
@@ -2783,19 +3259,31 @@ public partial class FramePreviewViewModel : ViewModelBase
     public WriteableBitmap? FrameBitmap
     {
         get => _frameBitmap;
-        private set { _frameBitmap = value; OnPropertyChanged(nameof(FrameBitmap)); }
+        private set
+        {
+            _frameBitmap = value;
+            OnPropertyChanged(nameof(FrameBitmap));
+        }
     }
 
     public WriteableBitmap? MaskBitmap
     {
         get => _maskBitmap;
-        private set { _maskBitmap = value; OnPropertyChanged(nameof(MaskBitmap)); }
+        private set
+        {
+            _maskBitmap = value;
+            OnPropertyChanged(nameof(MaskBitmap));
+        }
     }
 
     public WriteableBitmap? PreviewBitmap
     {
         get => _previewBitmap;
-        private set { _previewBitmap = value; OnPropertyChanged(nameof(PreviewBitmap)); }
+        private set
+        {
+            _previewBitmap = value;
+            OnPropertyChanged(nameof(PreviewBitmap));
+        }
     }
 
     public EditMode CurrentMode => _toolPanel.CurrentMode;
@@ -2811,48 +3299,16 @@ public partial class FramePreviewViewModel : ViewModelBase
 
     public int PreviewBlurRadius { get; set; } = 6;
 
-    public FramePreviewViewModel(ToolPanelViewModel toolPanel)
+    public FramePreviewViewModel(ToolPanelViewModel toolPanel, IFrameMaskProvider maskProvider)
     {
         _toolPanel = toolPanel;
+        _maskProvider = maskProvider;
+
         _toolPanel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(ToolPanelViewModel.CurrentMode))
                 OnPropertyChanged(nameof(CurrentCursor));
         };
-    }
-
-    public async Task LoadFrameAsync(string videoPath, int frameIndex)
-    {
-        if (frameIndex < 0) return;
-
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _cts = new CancellationTokenSource();
-        var ct = _cts.Token;
-
-        try
-        {
-            // ✅ 핵심: 정확 프레임 반환. EOF면 null.
-            var bmp = await _frameProvider.GetFrameAsync(videoPath, frameIndex, ct);
-
-            // EOF 방어: 끝 프레임에서 null이면 "이전 프레임"으로 fallback
-            if (bmp == null && frameIndex > 0)
-                bmp = await _frameProvider.GetFrameAsync(videoPath, frameIndex - 1, ct);
-
-            if (bmp == null)
-                return; // 영상이 비었거나 문제: 여기서 더 진행 불가
-
-            FrameBitmap = bmp;
-            MaskBitmap = CreateEmptyMask(bmp.PixelSize.Width, bmp.PixelSize.Height);
-            _maskUndo.Clear();
-
-            PreviewBitmap = CloneBitmap(bmp);
-        }
-        catch (OperationCanceledException)
-        {
-            // ✅ 연속 클릭/재생 중 취소는 정상 흐름: UI 크래시 금지
-            return;
-        }
     }
 
     public void Undo()
@@ -2869,8 +3325,9 @@ public partial class FramePreviewViewModel : ViewModelBase
     public void OnPointerPressed(Point point)
     {
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
-        if (_maskBitmap == null) return;
+        if (_maskBitmap == null || _frameBitmap == null) return;
 
+        // ✅ 인스턴스 오버로드 사용 (인수 1개)
         PushUndoSnapshot(_maskBitmap);
         _isDrawing = true;
         DrawPoint(point);
@@ -2945,6 +3402,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius);
     }
 
+
     private static WriteableBitmap CreateEmptyMask(int w, int h)
     {
         return new WriteableBitmap(
@@ -2974,7 +3432,13 @@ public partial class FramePreviewViewModel : ViewModelBase
             byte* d = (byte*)dfb.Address;
 
             for (int y = 0; y < h; y++)
-                Buffer.MemoryCopy(s + y * sfb.RowBytes, d + y * dfb.RowBytes, dfb.RowBytes, copy);
+            {
+                Buffer.MemoryCopy(
+                    s + y * sfb.RowBytes,
+                    d + y * dfb.RowBytes,
+                    dfb.RowBytes,
+                    copy);
+            }
         }
 
         return dst;
@@ -2992,6 +3456,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
     }
 
+    // ✅ 인스턴스용 오버로드: 호출부는 이 메서드 사용
     private void PushUndoSnapshot(WriteableBitmap mask)
         => PushUndoSnapshot(mask, _maskUndo);
 
@@ -3007,49 +3472,92 @@ public partial class FramePreviewViewModel : ViewModelBase
 
     private static unsafe void MarshalCopyToArray(byte* src, byte[] dst)
     {
-        for (int i = 0; i < dst.Length; i++) dst[i] = src[i];
+        for (int i = 0; i < dst.Length; i++)
+            dst[i] = src[i];
     }
 
     private static unsafe void MarshalCopyFromArray(byte[] src, byte* dst, int len)
     {
-        for (int i = 0; i < len; i++) dst[i] = src[i];
+        for (int i = 0; i < len; i++)
+            dst[i] = src[i];
     }
 
-    // WorkspaceViewModel에서 FramePreview 초기화 시 세션 주입 필요
+    // WorkspaceViewModel에서 FramePreview 초기화 시 세션 주입
     public void InitializeSession(VideoSession session)
     {
         _session = session;
     }
-
+    public void SetMaskProvider(IFrameMaskProvider maskProvider)
+    {
+        _maskProvider = maskProvider;
+    }
+    /// <summary>
+    /// 타임라인 / 재생 / 키 이동으로 프레임 인덱스가 바뀔 때 호출.
+    /// - 즉시: 썸네일 기반 저화질 프리뷰
+    /// - 디바운스 후: 고화질 프레임 + 프레임 인덱스에 맞는 마스크 적용
+    /// </summary>
     public async void OnFrameIndexChanged(int index)
     {
         if (_session == null)
             return;
-
-        // 캐시 표시
-        PreviewBitmap = _session.Timeline.OnFrameChanging(index);
-
-        // 정확 프레임 요청
-        var exact = await _session.Timeline.OnFrameChangedAsync(index);
-        if (exact != null)
-            PreviewBitmap = exact;
-    }
-
-
-    private async Task UpdateExactAsync(int index)
-    {
-        if (_session == null)
+        if (index < 0)
             return;
 
+        // 1) 저화질 썸네일
+        try
+        {
+            var low = _session.Timeline.OnFrameChanging(index);
+            if (low != null)
+                PreviewBitmap = low;
+        }
+        catch
+        {
+            // 썸네일 없으면 무시
+        }
+
+        // 2) 고화질 프레임
         var exact = await _session.Timeline.OnFrameChangedAsync(index);
-        if (exact != null)
-            PreviewBitmap = exact;
+        if (exact == null)
+            return;
+
+        FrameBitmap = exact;
+
+        // 🔹 2-1) 자동/최종 마스크가 이미 있는지 provider에서 먼저 조회
+        WriteableBitmap? providerMask = null;
+        if (_maskProvider != null)
+        {
+            providerMask = _maskProvider.GetFinalMask(index);
+        }
+
+        if (providerMask != null &&
+            providerMask.PixelSize.Width == exact.PixelSize.Width &&
+            providerMask.PixelSize.Height == exact.PixelSize.Height)
+        {
+            // provider 마스크를 직접 수정하면 안 되니 복제해서 사용
+            MaskBitmap = CloneBitmap(providerMask);
+            _maskUndo.Clear();
+        }
+        else
+        {
+            // 없거나 사이즈가 안 맞으면 새 빈 마스크
+            if (_maskBitmap == null ||
+                _maskBitmap.PixelSize.Width != exact.PixelSize.Width ||
+                _maskBitmap.PixelSize.Height != exact.PixelSize.Height)
+            {
+                MaskBitmap = CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
+                _maskUndo.Clear();
+            }
+        }
+
+        // 3) 프리뷰 갱신
+        RefreshPreview();
     }
+
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\ViewModels\Workspace\ToolPanelViewModel.cs
+FILE: D:\WorkSpace\FaceShield_\ViewModels\Workspace\ToolPanelViewModel.cs
 ==================================================
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -3066,8 +3574,15 @@ namespace FaceShield.ViewModels.Workspace
         public event Action? UndoRequested;
         public event Action? SaveRequested;
 
+        // 🔹 새 이벤트: 자동 분석 요청
+        public event Action? AutoRequested;
+
         [RelayCommand]
-        private void SetAuto() => CurrentMode = EditMode.Auto;
+        private void SetAuto()
+        {
+            CurrentMode = EditMode.Auto;
+            AutoRequested?.Invoke();
+        }
 
         [RelayCommand]
         private void SetManual() => CurrentMode = EditMode.Manual;
@@ -3088,7 +3603,7 @@ namespace FaceShield.ViewModels.Workspace
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Pages\HomePageView.axaml
+FILE: D:\WorkSpace\FaceShield_\Views\Pages\HomePageView.axaml
 ==================================================
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -3143,10 +3658,19 @@ FILE: D:\WorkSpace\FaceShield\Views\Pages\HomePageView.axaml
                    TextWrapping="Wrap"
                    Opacity="0.9"/>
 
-        <Button Content="워크스페이스 열기"
-                Command="{Binding OpenWorkspaceCommand}"
-                IsEnabled="{Binding CanOpenWorkspace}"
-                Height="44"/>
+        <TextBlock Text="모드 선택" Margin="0,12,0,4" Opacity="0.8"/>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="자동 모자이크 하기"
+                  Command="{Binding OpenAutoWorkspaceCommand}"
+                  IsEnabled="{Binding CanOpenWorkspace}"
+                  Height="44"/>
+
+          <Button Content="수동 모자이크 하기"
+                  Command="{Binding OpenManualWorkspaceCommand}"
+                  IsEnabled="{Binding CanOpenWorkspace}"
+                  Height="44"/>
+        </StackPanel>
 
       </StackPanel>
     </Border>
@@ -3184,7 +3708,7 @@ FILE: D:\WorkSpace\FaceShield\Views\Pages\HomePageView.axaml
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Pages\HomePageView.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\Views\Pages\HomePageView.axaml.cs
 ==================================================
 using Avalonia;
 using Avalonia.Controls;
@@ -3216,7 +3740,7 @@ public partial class HomePageView : UserControl
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Pages\WorkspaceView.axaml
+FILE: D:\WorkSpace\FaceShield_\Views\Pages\WorkspaceView.axaml
 ==================================================
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -3225,21 +3749,31 @@ FILE: D:\WorkSpace\FaceShield\Views\Pages\WorkspaceView.axaml
              x:Class="FaceShield.Views.Pages.WorkspaceView"
              x:DataType="vm:WorkspaceViewModel">
 
-    <Grid RowDefinitions="*,140,96">
+    <Grid RowDefinitions="Auto,*,140,96">
+
+        <!-- 상단 상태 영역 -->
+        <Border Grid.Row="0" Background="#101010" Padding="8">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock>
+                    <Run Text="모드: "/>
+                    <Run Text="{Binding Mode}"/>
+                </TextBlock>
+            </StackPanel>
+        </Border>
 
         <!-- Preview -->
         <views:FramePreviewView
-            Grid.Row="0"
+            Grid.Row="1"
             DataContext="{Binding FramePreview}" />
 
         <!-- Timeline -->
         <views:FrameListView
-            Grid.Row="1"
+            Grid.Row="2"
             DataContext="{Binding FrameList}" />
 
         <!-- Tool panel -->
         <views:ToolPanelView
-            Grid.Row="2"
+            Grid.Row="3"
             DataContext="{Binding ToolPanel}" />
 
     </Grid>
@@ -3247,7 +3781,7 @@ FILE: D:\WorkSpace\FaceShield\Views\Pages\WorkspaceView.axaml
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Pages\WorkspaceView.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\Views\Pages\WorkspaceView.axaml.cs
 ==================================================
 using Avalonia;
 using Avalonia.Controls;
@@ -3264,7 +3798,7 @@ public partial class WorkspaceView : UserControl
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Workspace\FrameListView.axaml
+FILE: D:\WorkSpace\FaceShield_\Views\Workspace\FrameListView.axaml
 ==================================================
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -3327,8 +3861,9 @@ FILE: D:\WorkSpace\FaceShield\Views\Workspace\FrameListView.axaml
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Workspace\FrameListView.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\Views\Workspace\FrameListView.axaml.cs
 ==================================================
+// FILE: D:\WorkSpace\FaceShield\Views\Workspace\FrameListView.axaml.cs
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -3474,7 +4009,7 @@ public partial class FrameListView : UserControl
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Workspace\FramePreviewView.axaml
+FILE: D:\WorkSpace\FaceShield_\Views\Workspace\FramePreviewView.axaml
 ==================================================
 <UserControl
     xmlns="https://github.com/avaloniaui"
@@ -3505,7 +4040,7 @@ FILE: D:\WorkSpace\FaceShield\Views\Workspace\FramePreviewView.axaml
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Workspace\FramePreviewView.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\Views\Workspace\FramePreviewView.axaml.cs
 ==================================================
 using Avalonia;
 using Avalonia.Controls;
@@ -3589,7 +4124,7 @@ public partial class FramePreviewView : UserControl
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Workspace\ToolPanelView.axaml
+FILE: D:\WorkSpace\FaceShield_\Views\Workspace\ToolPanelView.axaml
 ==================================================
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -3638,7 +4173,7 @@ FILE: D:\WorkSpace\FaceShield\Views\Workspace\ToolPanelView.axaml
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Views\Workspace\ToolPanelView.axaml.cs
+FILE: D:\WorkSpace\FaceShield_\Views\Workspace\ToolPanelView.axaml.cs
 ==================================================
 using Avalonia;
 using Avalonia.Controls;
@@ -3655,44 +4190,7 @@ public partial class ToolPanelView : UserControl
 }
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\obj\Debug\net8.0\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
-==================================================
-// <autogenerated />
-using System;
-using System.Reflection;
-[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
-
-
-==================================================
-FILE: D:\WorkSpace\FaceShield\obj\Debug\net8.0\FaceShield.AssemblyInfo.cs
-==================================================
-//------------------------------------------------------------------------------
-// <auto-generated>
-//     이 코드는 도구를 사용하여 생성되었습니다.
-//     런타임 버전:4.0.30319.42000
-//
-//     파일 내용을 변경하면 잘못된 동작이 발생할 수 있으며, 코드를 다시 생성하면
-//     이러한 변경 내용이 손실됩니다.
-// </auto-generated>
-//------------------------------------------------------------------------------
-
-using System;
-using System.Reflection;
-
-[assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
-[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
-[assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
-[assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
-
-// MSBuild WriteCodeFragment 클래스에서 생성되었습니다.
-
-
-
-==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\Session\ExactFrameProvider.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\Session\ExactFrameProvider.cs
 ==================================================
 // FILE: Services/Video/Session/ExactFrameProvider.cs
 using Avalonia.Media.Imaging;
@@ -3718,9 +4216,8 @@ public sealed class ExactFrameProvider
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\Session\ThumbnailCache.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\Session\ThumbnailCache.cs
 ==================================================
-// FILE: Services/Video/Session/ThumbnailCache.cs
 using Avalonia.Media.Imaging;
 using System;
 using System.Collections.Generic;
@@ -3744,20 +4241,23 @@ public sealed class ThumbnailCache
         if (_cache.Count == 0)
             throw new InvalidOperationException("Thumbnail cache is empty.");
 
-        int key = frameIndex / _step * _step;
-        return _cache.TryGetValue(key, out var bmp)
-            ? bmp
-            : _cache.Values.First();
+        // 🔥 핵심: 반올림 기반 매칭으로 잘못된 프레임 표시 방지
+        int key = (int)Math.Round(frameIndex / (double)_step) * _step;
+
+        if (_cache.TryGetValue(key, out var bmp))
+            return bmp;
+
+        // 🔥 가장 가까운 키 찾기 (보정)
+        var nearestKey = _cache.Keys.OrderBy(k => Math.Abs(k - frameIndex)).First();
+        return _cache[nearestKey];
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\Session\TimelineController.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\Session\TimelineController.cs
 ==================================================
-// FILE: Services/Video/Session/TimelineController.cs
 using Avalonia.Media.Imaging;
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -3769,7 +4269,7 @@ public sealed class TimelineController
     private readonly ExactFrameProvider _exact;
 
     private CancellationTokenSource? _cts;
-    private readonly int _debounceMs = 120;
+    private readonly int _debounceMs = 140; // 조금 더 안정적
 
     public TimelineController(ThumbnailCache thumbs, ExactFrameProvider exact)
     {
@@ -3777,39 +4277,44 @@ public sealed class TimelineController
         _exact = exact;
     }
 
-    // 드래그 중 이벤트: 즉시 썸네일 반환
+    // 🔹 드래그 중 즉시 썸네일 표시
     public WriteableBitmap OnFrameChanging(int frameIndex)
     {
         return _thumbs.GetNearest(frameIndex);
     }
 
-    // 드래그 종료 판단: 디바운스 120ms
+    // 🔹 드래그 종료 판단 → 고화질 로드
     public async Task<WriteableBitmap?> OnFrameChangedAsync(int frameIndex)
     {
         _cts?.Cancel();
         _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
 
         try
         {
-            await Task.Delay(_debounceMs, _cts.Token);
+            // 사용자가 손을 떼었다고 판단하는 지연
+            await Task.Delay(_debounceMs, ct);
         }
-        catch (TaskCanceledException)
+        catch
         {
-            return null;
+            return null; // 드래그 계속 중
         }
 
-        return await _exact.GetExactAsync(frameIndex, _cts.Token);
+        // 🔥 선택한 프레임에 대해 정확히 고화질 1장 로딩
+        return await _exact.GetExactAsync(frameIndex, ct);
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\Services\Video\Session\VideoSession.cs
+FILE: D:\WorkSpace\FaceShield_\Services\Video\Session\VideoSession.cs
 ==================================================
 // FILE: Services/Video/Session/VideoSession.cs
 using Avalonia.Media.Imaging;
 using System.Collections.Generic;
 using FaceShield.Services.Video;
+using FFmpeg.AutoGen;
+using System;
 
 namespace FaceShield.Services.Video.Session;
 
@@ -3821,11 +4326,11 @@ public sealed class VideoSession
 
     public VideoSession(
         string videoPath,
-        int thumbStep = 5,
-        int thumbWidth = 320,
-        int thumbHeight = 180)
+        int thumbStep = 20,          // 4K 20분 기준: 20프레임마다 썸네일 하나 (메모리 부담 줄이기)
+        int thumbWidth = 240,
+        int thumbHeight = 135)
     {
-        // 1) Extractor (정확 프레임용)
+        // 1) 고화질 정확 프레임용 Extractor
         var extractor = new FfFrameExtractor(videoPath);
         ExactProvider = new ExactFrameProvider(extractor);
 
@@ -3834,6 +4339,9 @@ public sealed class VideoSession
 
         var map = new Dictionary<int, WriteableBitmap>();
         int totalFrames = GetTotalFrames(videoPath);
+
+        if (totalFrames <= 0)
+            totalFrames = 300; // 방어용 최소값
 
         for (int i = 0; i < totalFrames; i += thumbStep)
         {
@@ -3844,27 +4352,80 @@ public sealed class VideoSession
 
         ThumbnailCache = new ThumbnailCache(map, thumbStep);
 
-        // 3) UX 컨트롤러
+        // 3) UX 컨트롤러 (드래그 중/멈췄을 때 분리)
         Timeline = new TimelineController(ThumbnailCache, ExactProvider);
     }
 
-    private int GetTotalFrames(string videoPath)
+    /// <summary>
+    /// FFmpeg 메타데이터 기반으로 총 프레임 수 추정
+    /// FrameListViewModel.LoadVideoInfo와 같은 로직
+    /// </summary>
+    private unsafe int GetTotalFrames(string videoPath)
     {
-        // 이미 프로젝트에 존재하는 방식 그대로 재사용
-        using var reader = new VideoFrameReader(videoPath);
+        AVFormatContext* fmt = null;
 
-        // reader는 연속 디코딩 방식이라서, 전체 프레임을 계산하기 어려움.
-        // 그러나 FrameListViewModel에서 이미 TotalFrames 계산함.
-        // VideoSession은 외부에서 TotalFrames를 주입받아도 가능.
+        try
+        {
+            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
 
-        // 필요하면 FrameListViewModel에서 전달하게 변경 가능.
-        return 300; // (임시) ----> 당신 프로젝트에서는 FrameListViewModel.TotalFrames 사용 가능.
+            if (ffmpeg.avformat_open_input(&fmt, videoPath, null, null) < 0)
+                return 0;
+
+            if (ffmpeg.avformat_find_stream_info(fmt, null) < 0)
+                return 0;
+
+            AVStream* videoStream = null;
+
+            for (int i = 0; i < fmt->nb_streams; i++)
+            {
+                if (fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    videoStream = fmt->streams[i];
+                    break;
+                }
+            }
+
+            if (videoStream == null)
+                return 0;
+
+            double fpsValue =
+                videoStream->avg_frame_rate.num != 0
+                    ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
+                    : videoStream->r_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(videoStream->r_frame_rate)
+                        : 30.0;
+
+            double durationSeconds;
+
+            if (videoStream->duration > 0)
+            {
+                durationSeconds =
+                    videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
+            }
+            else if (fmt->duration > 0)
+            {
+                durationSeconds =
+                    fmt->duration / (double)ffmpeg.AV_TIME_BASE;
+            }
+            else
+            {
+                return 0;
+            }
+
+            int frames = (int)Math.Floor(durationSeconds * fpsValue);
+            return Math.Max(frames, 0);
+        }
+        finally
+        {
+            if (fmt != null)
+                ffmpeg.avformat_close_input(&fmt);
+        }
     }
 }
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+FILE: D:\WorkSpace\FaceShield_\obj\x64\Debug\net8.0\osx-arm64\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
 ==================================================
 // <autogenerated />
 using System;
@@ -3873,7 +4434,7 @@ using System.Reflection;
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\FaceShield.AssemblyInfo.cs
+FILE: D:\WorkSpace\FaceShield_\obj\x64\Debug\net8.0\osx-arm64\FaceShield.AssemblyInfo.cs
 ==================================================
 //------------------------------------------------------------------------------
 // <auto-generated>
@@ -3891,7 +4452,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0f08ad7a6f9e89c871b7f19a41f6caad4f8b0bf2")]
 [assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -3901,7 +4462,7 @@ using System.Reflection;
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\win-x64\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+FILE: D:\WorkSpace\FaceShield_\obj\x64\Debug\net8.0\win-x64\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
 ==================================================
 // <autogenerated />
 using System;
@@ -3910,7 +4471,7 @@ using System.Reflection;
 
 
 ==================================================
-FILE: D:\WorkSpace\FaceShield\obj\x64\Debug\net8.0\win-x64\FaceShield.AssemblyInfo.cs
+FILE: D:\WorkSpace\FaceShield_\obj\x64\Debug\net8.0\win-x64\FaceShield.AssemblyInfo.cs
 ==================================================
 //------------------------------------------------------------------------------
 // <auto-generated>
@@ -3928,7 +4489,44 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0f08ad7a6f9e89c871b7f19a41f6caad4f8b0bf2")]
+[assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment 클래스에서 생성되었습니다.
+
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield_\obj\x64\Release\net8.0\osx-arm64\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+==================================================
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
+
+
+==================================================
+FILE: D:\WorkSpace\FaceShield_\obj\x64\Release\net8.0\osx-arm64\FaceShield.AssemblyInfo.cs
+==================================================
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     이 코드는 도구를 사용하여 생성되었습니다.
+//     런타임 버전:4.0.30319.42000
+//
+//     파일 내용을 변경하면 잘못된 동작이 발생할 수 있으며, 코드를 다시 생성하면
+//     이러한 변경 내용이 손실됩니다.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: System.Reflection.AssemblyCompanyAttribute("FaceShield")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0f08ad7a6f9e89c871b7f19a41f6caad4f8b0bf2")]
 [assembly: System.Reflection.AssemblyProductAttribute("FaceShield")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FaceShield")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

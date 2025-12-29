@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="FaceShield.Views.Dialogs.ResumeAutoDialog"
+        Title="자동 재개"
+        SizeToContent="Height"
+        Width="420"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+  <Border Padding="16" Background="#151515">
+    <StackPanel Spacing="12">
+      <TextBlock Text="이전 자동 모자이크가 중단되었습니다. 이어서 실행할까요?"
+                 TextWrapping="Wrap"
+                 FontSize="14" />
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+        <Button Content="아니오" Click="OnNoClick" />
+        <Button Content="예" Click="OnYesClick" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

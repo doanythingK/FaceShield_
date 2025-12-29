@@ -1,13 +1,13 @@
+// FILE: Services/FaceDetection/IFaceDetector.cs
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
+using FaceShield.Models.Analysis;
 
 namespace FaceShield.Services.FaceDetection
 {
-    public interface IFaceDetector
+    public interface IFaceDetector : IDisposable
     {
-        FaceDetectionResult? Detect(object? frame);
+        IReadOnlyList<FaceDetectionResult> DetectFaces(WriteableBitmap frame);
     }
 }

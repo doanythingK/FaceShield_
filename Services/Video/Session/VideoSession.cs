@@ -17,7 +17,8 @@ public sealed class VideoSession
         string videoPath,
         int thumbStep = 20,          // 4K 20분 기준: 20프레임마다 썸네일 하나 (메모리 부담 줄이기)
         int thumbWidth = 240,
-        int thumbHeight = 135)
+        int thumbHeight = 135,
+        IProgress<int>? progress = null)
     {
         // 1) 고화질 정확 프레임용 Extractor
         var extractor = new FfFrameExtractor(videoPath);
@@ -32,17 +33,30 @@ public sealed class VideoSession
         if (totalFrames <= 0)
             totalFrames = 300; // 방어용 최소값
 
+        int totalThumbs = (int)Math.Ceiling(totalFrames / (double)Math.Max(1, thumbStep));
+        int done = 0;
+
         for (int i = 0; i < totalFrames; i += thumbStep)
         {
             var bmp = thumbsProvider.GetThumbnail(i);
             if (bmp != null)
                 map[i] = bmp;
+
+            done++;
+            if (progress != null)
+            {
+                int percent = (int)Math.Round(done * 100.0 / Math.Max(1, totalThumbs));
+                if (percent > 100) percent = 100;
+                progress.Report(percent);
+            }
         }
+
+        progress?.Report(100);
 
         ThumbnailCache = new ThumbnailCache(map, thumbStep);
 
         // 3) UX 컨트롤러 (드래그 중/멈췄을 때 분리)
-        Timeline = new TimelineController(ThumbnailCache, ExactProvider);
+        Timeline = new TimelineController(ThumbnailCache, ExactProvider, thumbsProvider);
     }
 
     /// <summary>

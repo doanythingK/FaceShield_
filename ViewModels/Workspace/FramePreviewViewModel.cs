@@ -7,6 +7,7 @@ using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Workspace;
@@ -14,6 +15,7 @@ namespace FaceShield.ViewModels.Workspace;
 public partial class FramePreviewViewModel : ViewModelBase
 {
     private readonly ToolPanelViewModel _toolPanel;
+    private IFrameMaskProvider? _maskProvider;
 
     private WriteableBitmap? _frameBitmap;
     private WriteableBitmap? _maskBitmap;
@@ -23,6 +25,10 @@ public partial class FramePreviewViewModel : ViewModelBase
 
     private bool _isDrawing;
     private readonly Stack<byte[]> _maskUndo = new();
+    private int _changeStamp;
+    private bool _isPlaying;
+    private int _currentFrameIndex = -1;
+    private bool _maskDirty;
 
     public WriteableBitmap? FrameBitmap
     {
@@ -67,9 +73,11 @@ public partial class FramePreviewViewModel : ViewModelBase
 
     public int PreviewBlurRadius { get; set; } = 6;
 
-    public FramePreviewViewModel(ToolPanelViewModel toolPanel)
+    public FramePreviewViewModel(ToolPanelViewModel toolPanel, IFrameMaskProvider maskProvider)
     {
         _toolPanel = toolPanel;
+        _maskProvider = maskProvider;
+
         _toolPanel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(ToolPanelViewModel.CurrentMode))
@@ -84,6 +92,7 @@ public partial class FramePreviewViewModel : ViewModelBase
 
         var bytes = _maskUndo.Pop();
         RestoreMaskBytes(_maskBitmap, bytes);
+        _maskDirty = true;
 
         RefreshPreview();
     }
@@ -160,6 +169,7 @@ public partial class FramePreviewViewModel : ViewModelBase
 
         OnPropertyChanged(nameof(MaskBitmap));
         RefreshPreview();
+        _maskDirty = true;
     }
 
     private void RefreshPreview()
@@ -167,6 +177,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         if (_frameBitmap == null || _maskBitmap == null) return;
         PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius);
     }
+
 
     private static WriteableBitmap CreateEmptyMask(int w, int h)
     {
@@ -252,11 +263,14 @@ public partial class FramePreviewViewModel : ViewModelBase
     {
         _session = session;
     }
-
+    public void SetMaskProvider(IFrameMaskProvider maskProvider)
+    {
+        _maskProvider = maskProvider;
+    }
     /// <summary>
     /// 타임라인 / 재생 / 키 이동으로 프레임 인덱스가 바뀔 때 호출.
-    /// - 즉시: 썸네일 캐시에서 저화질 프레임 표시
-    /// - 디바운스 후: 고화질 정확 프레임 1장만 디코딩
+    /// - 즉시: 썸네일 기반 저화질 프리뷰
+    /// - 디바운스 후: 고화질 프레임 + 프레임 인덱스에 맞는 마스크 적용
     /// </summary>
     public async void OnFrameIndexChanged(int index)
     {
@@ -265,11 +279,16 @@ public partial class FramePreviewViewModel : ViewModelBase
         if (index < 0)
             return;
 
-        // 1) 항상 저화질 썸네일 즉시 표시 (재생 중에도 매 프레임 갱신)
+        PersistCurrentMask();
+        _currentFrameIndex = index;
+
+        int stamp = Interlocked.Increment(ref _changeStamp);
+
+        // 1) 저화질 썸네일
         try
         {
             var low = _session.Timeline.OnFrameChanging(index);
-            if (low != null)
+            if (low != null && stamp == _changeStamp)
                 PreviewBitmap = low;
         }
         catch
@@ -277,24 +296,101 @@ public partial class FramePreviewViewModel : ViewModelBase
             // 썸네일 없으면 무시
         }
 
-        // 2) 입력이 멈췄다고 판단되는 시점에만 고화질 프레임 1장 로딩
+        // 1-1) 선택 프레임과 동일한 저화질 썸네일 (정확도 우선)
+        var exactThumb = await _session.Timeline.OnFrameChangingExactAsync(index);
+        if (exactThumb != null && stamp == _changeStamp)
+            PreviewBitmap = exactThumb;
+
+        // 2) 고화질 프레임
         var exact = await _session.Timeline.OnFrameChangedAsync(index);
-        if (exact == null)
-            return;
-
-        // 고화질 원본 보관 (마스크 기반 블러용)
-        FrameBitmap = exact;
-
-        // 마스크 크기 맞추기 (없거나 사이즈 다르면 리셋)
-        if (_maskBitmap == null ||
-            _maskBitmap.PixelSize.Width != exact.PixelSize.Width ||
-            _maskBitmap.PixelSize.Height != exact.PixelSize.Height)
+        if (exact == null || stamp != _changeStamp)
         {
-            MaskBitmap = CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
-            _maskUndo.Clear();
+            if (!_isPlaying && stamp == _changeStamp)
+                await TryLoadExactFallbackAsync(index, stamp);
+            return;
         }
 
-        // 고화질 + 마스크로 프리뷰 생성
+        ApplyExactFrame(exact, index);
+    }
+
+    public async void OnPlaybackStopped(int index)
+    {
+        if (_session == null)
+            return;
+        if (index < 0)
+            return;
+
+        int stamp = Interlocked.Increment(ref _changeStamp);
+
+        await TryLoadExactFallbackAsync(index, stamp);
+    }
+
+    public void SetPlaying(bool isPlaying)
+    {
+        _isPlaying = isPlaying;
+    }
+
+    private void ApplyExactFrame(WriteableBitmap exact, int index)
+    {
+        FrameBitmap = exact;
+
+        // 🔹 2-1) 자동/최종 마스크가 이미 있는지 provider에서 먼저 조회
+        WriteableBitmap? providerMask = null;
+        if (_maskProvider != null)
+        {
+            providerMask = _maskProvider.GetFinalMask(index);
+        }
+
+        if (providerMask != null &&
+            providerMask.PixelSize.Width == exact.PixelSize.Width &&
+            providerMask.PixelSize.Height == exact.PixelSize.Height)
+        {
+            // provider 마스크를 직접 수정하면 안 되니 복제해서 사용
+            MaskBitmap = CloneBitmap(providerMask);
+            _maskUndo.Clear();
+            _maskDirty = false;
+        }
+        else
+        {
+            // 없으면 프레임별로 새 빈 마스크 생성
+            MaskBitmap = CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
+            _maskUndo.Clear();
+            _maskDirty = false;
+        }
+
+        // 3) 프리뷰 갱신
         RefreshPreview();
     }
+
+    public void PersistCurrentMask()
+    {
+        if (!_maskDirty)
+            return;
+        if (_maskProvider == null || _currentFrameIndex < 0 || _maskBitmap == null)
+            return;
+
+        _maskProvider.SetMask(_currentFrameIndex, CloneBitmap(_maskBitmap));
+        _maskDirty = false;
+    }
+
+    private async Task TryLoadExactFallbackAsync(int index, int stamp)
+    {
+        if (_session == null)
+            return;
+
+        var exact = await _session.Timeline.GetExactNowAsync(index);
+        if (exact == null || stamp != _changeStamp)
+        {
+            await Task.Delay(120);
+            if (stamp != _changeStamp)
+                return;
+            exact = await _session.Timeline.GetExactNowAsync(index);
+        }
+
+        if (exact == null || stamp != _changeStamp)
+            return;
+
+        ApplyExactFrame(exact, index);
+    }
+
 }

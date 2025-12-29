@@ -5,21 +5,41 @@
              x:Class="FaceShield.Views.Pages.WorkspaceView"
              x:DataType="vm:WorkspaceViewModel">
 
-    <Grid RowDefinitions="*,140,96">
+    <Grid RowDefinitions="Auto,*,160,96">
+
+        <!-- 상단 상태 영역 -->
+        <Border Grid.Row="0" Background="#101010" Padding="8">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button Content="뒤로가기" Command="{Binding GoBackCommand}" />
+                <TextBlock>
+                    <Run Text="모드: "/>
+                    <Run Text="{Binding Mode}"/>
+                </TextBlock>
+                <TextBlock Text="{Binding AutoAnomalyCount, StringFormat=이상 프레임: {0}}"
+                           Opacity="0.8"
+                           VerticalAlignment="Center"/>
+                <Button Content="이전 이상 프레임"
+                        Command="{Binding PrevAutoAnomalyCommand}"
+                        IsEnabled="{Binding HasAutoAnomalies}"/>
+                <Button Content="다음 이상 프레임"
+                        Command="{Binding NextAutoAnomalyCommand}"
+                        IsEnabled="{Binding HasAutoAnomalies}"/>
+            </StackPanel>
+        </Border>
 
         <!-- Preview -->
         <views:FramePreviewView
-            Grid.Row="0"
+            Grid.Row="1"
             DataContext="{Binding FramePreview}" />
 
         <!-- Timeline -->
         <views:FrameListView
-            Grid.Row="1"
+            Grid.Row="2"
             DataContext="{Binding FrameList}" />
 
         <!-- Tool panel -->
         <views:ToolPanelView
-            Grid.Row="2"
+            Grid.Row="3"
             DataContext="{Binding ToolPanel}" />
 
     </Grid>

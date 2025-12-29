@@ -32,6 +32,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private double viewStartSeconds = 0.0;
 
+    [ObservableProperty]
+    private bool isPlaying;
+
     // ─────────────────────────────
     // Thumbnail Provider
     // ─────────────────────────────
@@ -191,6 +194,27 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         }
     }
 
+    public string TimelineTimeText
+    {
+        get
+        {
+            if (Fps <= 0 || TotalFrames <= 0 || SelectedFrameIndex < 0)
+                return "--:-- / --:--";
+
+            var current = TimeSpan.FromSeconds(SelectedFrameIndex / Fps);
+            var total = TimeSpan.FromSeconds(TotalFrames / Fps);
+            return $"{FormatTime(current)} / {FormatTime(total)}";
+        }
+    }
+
+    private static string FormatTime(TimeSpan time)
+    {
+        if (time.TotalHours >= 1)
+            return time.ToString(@"hh\:mm\:ss");
+
+        return time.ToString(@"mm\:ss");
+    }
+
     // ─────────────────────────────
     // 🔑 **여기가 핵심**
     // Zoom / 메타 변경 시 자동 보정
@@ -204,26 +228,44 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         ClampView();
         OnPropertyChanged(nameof(TotalDurationSeconds));
+        OnPropertyChanged(nameof(TimelineTimeText));
     }
 
     partial void OnSelectedFrameIndexChanged(int value)
     {
         SelectedFrameIndexChanged?.Invoke(value);
         OnPropertyChanged(nameof(FramePositionText));
+        OnPropertyChanged(nameof(TimelineTimeText));
     }
 
     public event Action<int>? SelectedFrameIndexChanged;
+    public event Action? PlaybackStopped;
+    public event Action<bool>? PlaybackStateChanged;
     partial void OnTotalFramesChanged(int value)
     {
         ClampView();
         OnPropertyChanged(nameof(TotalDurationSeconds));
         OnPropertyChanged(nameof(FramePositionText));
+        OnPropertyChanged(nameof(TimelineTimeText));
 
     }
 
     public void SetPropertyChanged(string propertyName)
     {
         OnPropertyChanged(propertyName);
+    }
+
+    public void NotifyPlaybackStopped()
+    {
+        IsPlaying = false;
+        PlaybackStopped?.Invoke();
+        PlaybackStateChanged?.Invoke(false);
+    }
+
+    public void NotifyPlaybackStarted()
+    {
+        IsPlaying = true;
+        PlaybackStateChanged?.Invoke(true);
     }
     // ─────────────────────────────
     // Dispose

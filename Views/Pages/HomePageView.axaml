@@ -1,4 +1,4 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -24,9 +24,14 @@
     <Border Grid.Row="1" Grid.Column="0"
             Padding="18" CornerRadius="12"
             Background="#151515">
-      <StackPanel Spacing="12">
+      <ScrollViewer VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="12">
 
         <TextBlock Text="시작" FontSize="18" FontWeight="SemiBold"/>
+        <TextBlock Text="최근 워크스페이스는 최대 5개까지 저장되며, 종료 후에도 자동 복원됩니다."
+                   Opacity="0.7"
+                   TextWrapping="Wrap"/>
 
           <Button Content="새 프로젝트 (영상 선택)"
         Height="44"
@@ -51,12 +56,52 @@
                    TextWrapping="Wrap"
                    Opacity="0.9"/>
 
-        <Button Content="워크스페이스 열기"
-                Command="{Binding OpenWorkspaceCommand}"
-                IsEnabled="{Binding CanOpenWorkspace}"
-                Height="44"/>
+        <TextBlock Text="모드 선택" Margin="0,12,0,4" Opacity="0.8"/>
 
-      </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="자동 모자이크 하기"
+                  Command="{Binding OpenAutoWorkspaceCommand}"
+                  IsEnabled="{Binding CanStartWorkspace}"
+                  Height="44"/>
+
+          <Button Content="수동 모자이크 하기"
+                  Command="{Binding OpenManualWorkspaceCommand}"
+                  IsEnabled="{Binding CanStartWorkspace}"
+                  Height="44"/>
+        </StackPanel>
+
+        <TextBlock Text="자동 옵션" Margin="0,12,0,4" Opacity="0.8"/>
+
+        <StackPanel Spacing="6">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="해상도 축소" Width="90" VerticalAlignment="Center"/>
+            <ComboBox Width="140"
+                      ItemsSource="{Binding DownscaleOptions}"
+                      SelectedItem="{Binding SelectedDownscaleOption}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <CheckBox Content="추적 사용" IsChecked="{Binding AutoTrackingEnabled}"/>
+            <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
+            <ComboBox Width="80"
+                      ItemsSource="{Binding DetectEveryOptions}"
+                      SelectedItem="{Binding AutoDetectEveryNFrames}"
+                      IsEnabled="{Binding IsTrackingOptionsEnabled}"/>
+            <TextBlock Text="프레임" VerticalAlignment="Center"/>
+          </StackPanel>
+
+          <CheckBox Content="가속(ONNX Runtime 최적화)"
+                    IsChecked="{Binding AutoUseOrtOptimization}"/>
+        </StackPanel>
+
+        </StackPanel>
+      </ScrollViewer>
     </Border>
 
     <!-- Right: Recent -->
@@ -85,6 +130,29 @@
           </ListBox.ItemTemplate>
         </ListBox>
       </Grid>
+    </Border>
+
+    <!-- Loading overlay -->
+    <Border Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
+            Background="#AA000000"
+            IsVisible="{Binding IsBusy}">
+      <Border Background="#1B1B1B" CornerRadius="12" Padding="16"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="8" Width="280">
+          <TextBlock Text="{Binding BusyMessage}" FontSize="14"/>
+          <ProgressBar Height="10" Minimum="0" Maximum="100"
+                       IsIndeterminate="{Binding IsBusyIndeterminate}"
+                       Value="{Binding BusyProgress}" />
+          <TextBlock Text="{Binding BusyProgress, StringFormat={}{0}%}"
+                     Opacity="0.8" FontSize="12" />
+          <TextBlock Text="{Binding AutoEtaText}"
+                     IsVisible="{Binding IsAutoRunning}"
+                     Opacity="0.8" FontSize="12" />
+          <Button Content="취소"
+                  IsVisible="{Binding IsAutoRunning}"
+                  Command="{Binding CancelAutoCommand}" />
+        </StackPanel>
+      </Border>
     </Border>
 
   </Grid>
