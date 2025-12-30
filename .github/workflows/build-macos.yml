@@ -29,6 +29,9 @@ jobs:
         APP_NAME="FaceShield"
         PUBLISH_DIR="bin/Release/net8.0/osx-arm64/publish"
 
+        # FFmpeg dylib을 publish 디렉터리에 강제로 포함
+        cp -R "FFmpeg/osx-arm64/." "$PUBLISH_DIR/"
+
         mkdir -p "$APP_NAME.app/Contents/MacOS"
         mkdir -p "$APP_NAME.app/Contents/Resources"
 
