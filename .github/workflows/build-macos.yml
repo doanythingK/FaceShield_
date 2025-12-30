@@ -32,11 +32,12 @@ jobs:
         mkdir -p "$APP_NAME.app/Contents/MacOS"
         mkdir -p "$APP_NAME.app/Contents/Resources"
 
-        # 실행 파일 찾기 (SingleFile 또는 dll fallback)
-        if [ -f "$PUBLISH_DIR/$APP_NAME" ]; then
-            cp "$PUBLISH_DIR/$APP_NAME" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
-        else
-            cp "$PUBLISH_DIR/$APP_NAME.dll" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
+        # publish 결과물 전체를 Contents/MacOS로 복사 (FFmpeg dylib 포함)
+        cp -R "$PUBLISH_DIR/." "$APP_NAME.app/Contents/MacOS/"
+
+        # 실행 파일이 없으면 dll을 실행 파일 이름으로 복사
+        if [ ! -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" ] && [ -f "$APP_NAME.app/Contents/MacOS/$APP_NAME.dll" ]; then
+            cp "$APP_NAME.app/Contents/MacOS/$APP_NAME.dll" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
         fi
 
         # Info.plist 생성

@@ -62,6 +62,7 @@
   <!-- 🔹 macOS 배포: osx-arm64 publish 시 FFmpeg dylib 포함 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
     <None Include="FFmpeg\osx-arm64\*.dylib" Link="%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
   </ItemGroup>
