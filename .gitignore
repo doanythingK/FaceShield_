@@ -403,6 +403,10 @@ FodyWeavers.xsd
 FFmpeg/
 FFmpeg/**
 
+# allow macOS FFmpeg dylibs in repo
+!FFmpeg/osx-arm64/
+!FFmpeg/osx-arm64/*.dylib
+
 # build outputs
 bin/
 obj/
