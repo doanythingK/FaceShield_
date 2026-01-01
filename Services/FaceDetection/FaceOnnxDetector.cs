@@ -298,31 +298,8 @@ namespace FaceShield.Services.FaceDetection
             TryLoadAssembly(assemblyName);
             TryLoadAssemblyFromBaseDir(assemblyName);
 
-            var instanceMethod = typeof(SessionOptions).GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance);
-            if (instanceMethod != null)
-            {
-                try
-                {
-                    var parameters = instanceMethod.GetParameters();
-                    if (parameters.Length == 0)
-                    {
-                        instanceMethod.Invoke(options, null);
-                        return true;
-                    }
-
-                    if (parameters.Length == 1)
-                    {
-                        var arg = parameters[0].ParameterType == typeof(uint) ? (object)0u : 0;
-                        instanceMethod.Invoke(options, new[] { arg });
-                        return true;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
-                    return false;
-                }
-            }
+            if (TryInvokeSessionOptionsMethod(options, methodName))
+                return true;
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -342,29 +319,36 @@ namespace FaceShield.Services.FaceDetection
 
                 foreach (var type in types)
                 {
-                    var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static);
-                    if (method == null)
+                    var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .Where(m => m.Name == methodName)
+                        .ToArray();
+
+                    if (methods.Length == 0)
                         continue;
 
-                    var parameters = method.GetParameters();
-                    try
+                    foreach (var method in methods)
                     {
-                        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(SessionOptions))
+                        var parameters = method.GetParameters();
+                        try
                         {
-                            method.Invoke(null, new object?[] { options });
-                            return true;
-                        }
+                            if (parameters.Length == 1 && parameters[0].ParameterType == typeof(SessionOptions))
+                            {
+                                method.Invoke(null, new object?[] { options });
+                                return true;
+                            }
 
-                        if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SessionOptions))
-                        {
-                            method.Invoke(null, new object?[] { options, 0 });
-                            return true;
+                            if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SessionOptions))
+                            {
+                                object arg = parameters[1].ParameterType == typeof(uint) ? 0u : 0;
+                                method.Invoke(null, new object?[] { options, arg });
+                                return true;
+                            }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
-                        return false;
+                        catch (Exception ex)
+                        {
+                            UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
+                            return false;
+                        }
                     }
                 }
             }
@@ -401,6 +385,44 @@ namespace FaceShield.Services.FaceDetection
             {
                 // Optional dependency not available.
             }
+        }
+
+        private static bool TryInvokeSessionOptionsMethod(SessionOptions options, string methodName)
+        {
+            var methods = typeof(SessionOptions)
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Where(m => m.Name == methodName)
+                .ToArray();
+
+            if (methods.Length == 0)
+                return false;
+
+            foreach (var method in methods)
+            {
+                var parameters = method.GetParameters();
+                try
+                {
+                    if (parameters.Length == 0)
+                    {
+                        method.Invoke(options, null);
+                        return true;
+                    }
+
+                    if (parameters.Length == 1)
+                    {
+                        object arg = parameters[0].ParameterType == typeof(uint) ? 0u : 0;
+                        method.Invoke(options, new[] { arg });
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
+                    return false;
+                }
+            }
+
+            return false;
         }
 
         private static string BuildDirectMlDiagnostics()
