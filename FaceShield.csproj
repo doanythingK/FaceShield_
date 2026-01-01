@@ -9,6 +9,7 @@
 
     <!-- ✅ 지원할 런타임 목록 (실제 선택은 publish/run 시점에 -r 로 지정) -->
     <RuntimeIdentifiers>win-x64;osx-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition="'$(OS)' == 'Windows_NT'">win-x64</RuntimeIdentifier>
 
     <!-- 단일 파일 / self-contained 관련 옵션 -->
     <SelfContained>true</SelfContained>
@@ -17,6 +18,7 @@
     <EnableSelfContained>true</EnableSelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <UseAppHost>true</UseAppHost>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 
     <!-- Avalonia -->
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
@@ -41,9 +43,22 @@
     <PackageReference Include="FaceONNX" Version="4.1.1.3" />
     <PackageReference Include="FaceONNX.Addons" Version="4.1.1.3" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" Condition="'$(OS)' == 'Windows_NT'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'win-x64'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.CoreML" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.9" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
+
+  <!-- Windows: DirectML 네이티브 DLL을 출력/퍼블리시 디렉터리로 복사 -->
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
 
   <!-- 🔹 Windows 개발 환경 (디버그 실행용 FFmpeg DLL 복사) -->
   <ItemGroup Condition="'$(Configuration)' == 'Debug' and '$(Platform)' == 'x64'">
@@ -62,6 +77,30 @@
   <!-- 🔹 macOS 배포: osx-arm64 publish 시 FFmpeg dylib 포함 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
     <None Include="FFmpeg\osx-arm64\*.dylib" Link="%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+
+    <!-- ONNX Runtime 네이티브 라이브러리 포함 -->
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime.dylib')" Link="libonnxruntime.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_shared.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_shared.dylib')" Link="libonnxruntime_providers_shared.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.coreml\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.coreml\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib')" Link="libonnxruntime_providers_coreml.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+
+    <!-- Homebrew libomp가 설치된 빌드 머신에서 자동으로 번들링 -->
+    <None Include="/opt/homebrew/opt/libomp/lib/libomp.dylib" Condition="Exists('/opt/homebrew/opt/libomp/lib/libomp.dylib')" Link="libomp.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="/usr/local/opt/libomp/lib/libomp.dylib" Condition="Exists('/usr/local/opt/libomp/lib/libomp.dylib') and !Exists('/opt/homebrew/opt/libomp/lib/libomp.dylib')" Link="libomp.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>

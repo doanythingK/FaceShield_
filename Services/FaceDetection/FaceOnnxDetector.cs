@@ -1,6 +1,10 @@
 // FILE: Services/FaceDetection/FaceOnnxDetector.cs
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using FaceONNX;
@@ -14,6 +18,9 @@ namespace FaceShield.Services.FaceDetection
     public sealed class FaceOnnxDetector : IFaceDetector
     {
         private readonly FaceDetector _detector;
+        private static readonly object _statusLock = new();
+        private static string _lastExecutionProviderLabel = "CPU";
+        private static string? _lastExecutionProviderError;
 
         public FaceOnnxDetector()
         {
@@ -22,9 +29,11 @@ namespace FaceShield.Services.FaceDetection
 
         public FaceOnnxDetector(FaceOnnxDetectorOptions? options)
         {
-            if (options == null || !options.UseOrtOptimization)
+            if (options == null || (!options.UseOrtOptimization && !options.UseGpu))
             {
                 _detector = new FaceDetector();
+                UpdateExecutionProviderLabel("CPU");
+                UpdateExecutionProviderError(null);
                 return;
             }
 
@@ -36,15 +45,39 @@ namespace FaceShield.Services.FaceDetection
 
             var so = new SessionOptions
             {
-                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
+                GraphOptimizationLevel = options.UseOrtOptimization
+                    ? GraphOptimizationLevel.ORT_ENABLE_ALL
+                    : GraphOptimizationLevel.ORT_DISABLE_ALL
             };
+
+            string? gpuProvider = null;
+            if (options.UseGpu)
+                gpuProvider = TryAppendGpuExecutionProvider(so);
+
+            if (options.UseGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
+                UpdateExecutionProviderError("GPU 실행 공급자 로드 실패(패키지/의존성 확인)");
 
             if (options.IntraOpNumThreads.HasValue)
                 so.IntraOpNumThreads = options.IntraOpNumThreads.Value;
             if (options.InterOpNumThreads.HasValue)
                 so.InterOpNumThreads = options.InterOpNumThreads.Value;
 
-            _detector = new FaceDetector(so, detection, confidence, nms);
+            try
+            {
+                _detector = new FaceDetector(so, detection, confidence, nms);
+                UpdateExecutionProviderLabel(gpuProvider != null
+                    ? $"GPU:{gpuProvider}"
+                    : options.UseGpu ? "CPU(가속 실패)" : "CPU");
+                if (gpuProvider != null)
+                    UpdateExecutionProviderError(null);
+            }
+            catch (Exception ex)
+            {
+                // Fallback to CPU if GPU/provider initialization fails.
+                _detector = new FaceDetector(detection, confidence, nms);
+                UpdateExecutionProviderLabel("CPU(가속 실패)");
+                UpdateExecutionProviderError(ex.Message);
+            }
         }
 
         public IReadOnlyList<FaceDetectionResult> DetectFaces(WriteableBitmap frame)
@@ -152,6 +185,195 @@ namespace FaceShield.Services.FaceDetection
         public void Dispose()
         {
             _detector?.Dispose();
+        }
+
+        public static string GetLastExecutionProviderLabel()
+        {
+            lock (_statusLock)
+            {
+                return _lastExecutionProviderLabel;
+            }
+        }
+
+        public static string? GetLastExecutionProviderError()
+        {
+            lock (_statusLock)
+            {
+                return _lastExecutionProviderError;
+            }
+        }
+
+        private static void UpdateExecutionProviderLabel(string label)
+        {
+            lock (_statusLock)
+            {
+                _lastExecutionProviderLabel = label;
+            }
+        }
+
+        private static void UpdateExecutionProviderError(string? error)
+        {
+            lock (_statusLock)
+            {
+                _lastExecutionProviderError = error;
+            }
+        }
+
+        private static string? TryAppendGpuExecutionProvider(SessionOptions options)
+        {
+            // Use OS-appropriate providers when available; fall back silently.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime.CoreML"))
+                    return "CoreML";
+            }
+
+            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
+                return "DirectML";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                UpdateExecutionProviderError(BuildDirectMlDiagnostics());
+
+            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
+                return "CUDA";
+
+            return null;
+        }
+
+        public static void EnsureRuntimeAvailable()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return;
+
+            string baseDir = AppContext.BaseDirectory;
+
+            EnsureNativeLibrary(
+                "ONNX Runtime(libonnxruntime.dylib)",
+                Path.Combine(baseDir, "libonnxruntime.dylib"),
+                Path.Combine(baseDir, "libonnxruntime.1.23.2.dylib"),
+                "libonnxruntime.dylib");
+
+            EnsureNativeLibrary(
+                "OpenMP(libomp.dylib)",
+                Path.Combine(baseDir, "libomp.dylib"),
+                "/opt/homebrew/opt/libomp/lib/libomp.dylib",
+                "/usr/local/opt/libomp/lib/libomp.dylib",
+                "libomp.dylib");
+        }
+
+        private static void EnsureNativeLibrary(string label, params string[] candidates)
+        {
+            foreach (var path in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    continue;
+
+                try
+                {
+                    if (NativeLibrary.TryLoad(path, out var handle))
+                    {
+                        NativeLibrary.Free(handle);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"{label} 로드 실패: {ex.Message}", ex);
+                }
+            }
+
+            throw new DllNotFoundException(
+                $"{label}을(를) 찾을 수 없습니다. macOS에서는 Homebrew로 'brew install libomp' 실행 후 다시 시도하고, 앱 폴더(.app/Contents/MacOS)에 onnxruntime 관련 dylib가 포함되어 있는지 확인하세요.");
+        }
+
+        private static bool TryAppendExecutionProvider(SessionOptions options, string methodName, string assemblyName)
+        {
+            TryLoadAssembly(assemblyName);
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(t => t != null).Cast<Type>().ToArray();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static);
+                    if (method == null)
+                        continue;
+
+                    var parameters = method.GetParameters();
+                    try
+                    {
+                        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(SessionOptions))
+                        {
+                            method.Invoke(null, new object?[] { options });
+                            return true;
+                        }
+
+                        if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SessionOptions))
+                        {
+                            method.Invoke(null, new object?[] { options, 0 });
+                            return true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
+                        return false;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static void TryLoadAssembly(string assemblyName)
+        {
+            if (AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == assemblyName))
+                return;
+
+            try
+            {
+                Assembly.Load(assemblyName);
+            }
+            catch
+            {
+                // Optional dependency not available.
+            }
+        }
+
+        private static string BuildDirectMlDiagnostics()
+        {
+            string baseDir = AppContext.BaseDirectory;
+            string onnxRuntime = System.IO.Path.Combine(baseDir, "onnxruntime.dll");
+            string dmlProvider = System.IO.Path.Combine(baseDir, "onnxruntime_providers_directml.dll");
+            string managed = System.IO.Path.Combine(baseDir, "Microsoft.ML.OnnxRuntime.dll");
+
+            bool hasManaged = System.IO.File.Exists(managed);
+            bool hasOnnx = System.IO.File.Exists(onnxRuntime);
+            bool hasProvider = System.IO.File.Exists(dmlProvider);
+
+            if (!hasManaged && !hasOnnx && !hasProvider)
+                return "DirectML 파일 누락(Microsoft.ML.OnnxRuntime.dll/onnxruntime.dll/onnxruntime_providers_directml.dll)";
+
+            if (!hasProvider)
+                return "onnxruntime_providers_directml.dll 누락";
+            if (!hasOnnx)
+                return "onnxruntime.dll 누락";
+            if (!hasManaged)
+                return "Microsoft.ML.OnnxRuntime.dll 누락";
+
+            return "DirectML 초기화 실패(드라이버/권한/런타임 확인)";
         }
     }
 }

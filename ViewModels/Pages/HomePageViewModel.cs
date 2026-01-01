@@ -14,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -28,6 +29,10 @@ namespace FaceShield.ViewModels.Pages
         private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(StringComparer.OrdinalIgnoreCase);
         private CancellationTokenSource? _autoCts;
         private DateTime _autoStartTimeUtc;
+        private DateTime _autoLastProgressAtUtc;
+        private WorkspaceViewModel? _activeAutoWorkspace;
+        private DispatcherTimer? _autoStatusTimer;
+        private bool _autoRestartRequested;
 
         [ObservableProperty]
         private string? selectedVideoPath;
@@ -55,6 +60,12 @@ namespace FaceShield.ViewModels.Pages
 
         [ObservableProperty]
         private string? autoEtaText;
+
+        [ObservableProperty]
+        private string? autoStatusText;
+
+        [ObservableProperty]
+        private string? autoAccelStatus;
 
         public sealed class DownscaleOption
         {
@@ -89,6 +100,9 @@ namespace FaceShield.ViewModels.Pages
 
         [ObservableProperty]
         private bool autoUseOrtOptimization = true;
+
+        [ObservableProperty]
+        private bool autoUseGpu = false;
 
         public ObservableCollection<RecentItem> Recents { get; } = new();
 
@@ -188,6 +202,28 @@ namespace FaceShield.ViewModels.Pages
             OnPropertyChanged(nameof(IsBusyIndeterminate));
         }
 
+        partial void OnAutoUseGpuChanged(bool value)
+        {
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = "GPU 옵션 변경 감지 · 재시작 준비 중...";
+            _autoCts?.Cancel();
+        }
+
+        partial void OnAutoUseOrtOptimizationChanged(bool value)
+        {
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = "가속 옵션 변경 감지 · 재시작 준비 중...";
+            _autoCts?.Cancel();
+        }
+
         partial void OnAutoTrackingEnabledChanged(bool value)
         {
             OnPropertyChanged(nameof(IsTrackingOptionsEnabled));
@@ -269,6 +305,16 @@ namespace FaceShield.ViewModels.Pages
             if (!CanStartWorkspace)
                 return;
 
+            try
+            {
+                FaceOnnxDetector.EnsureRuntimeAvailable();
+            }
+            catch (Exception ex)
+            {
+                await ShowAutoErrorAsync(ex, isDuringRun: false);
+                return;
+            }
+
             IsWorkspaceLoading = true;
             WorkspaceLoadingMessage = "워크스페이스 준비 중...";
             WorkspaceLoadingProgress = 0;
@@ -309,22 +355,46 @@ namespace FaceShield.ViewModels.Pages
 
             IsAutoRunning = true;
             AutoProgress = 0;
-            _autoCts = new CancellationTokenSource();
-            _autoStartTimeUtc = DateTime.UtcNow;
+            _activeAutoWorkspace = vm;
+            AutoStatusText = "진행 상태 확인 중...";
+            AutoAccelStatus = "가속 상태: 확인 중...";
+            StartAutoStatusTimer();
             AutoEtaText = "예상 남은 시간 계산 중...";
 
             bool completed = false;
             try
             {
-                var progress = new Progress<int>(p =>
-                    Dispatcher.UIThread.Post(() => AutoProgress = p));
-                completed = await vm.RunAutoAsync(exportAfter: true, progress, _autoCts.Token);
+                do
+                {
+                    _autoRestartRequested = false;
+                    _autoCts?.Dispose();
+                    _autoCts = new CancellationTokenSource();
+                    _autoStartTimeUtc = DateTime.UtcNow;
+                    _autoLastProgressAtUtc = _autoStartTimeUtc;
+
+                    var progress = new Progress<int>(p =>
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            AutoProgress = p;
+                            _autoLastProgressAtUtc = DateTime.UtcNow;
+                        }));
+
+                    completed = await vm.RunAutoAsync(exportAfter: true, progress, _autoCts.Token);
+                }
+                while (_autoRestartRequested);
+            }
+            catch (Exception ex)
+            {
+                await ShowAutoErrorAsync(ex, isDuringRun: true);
+                return;
             }
             finally
             {
                 _autoCts?.Dispose();
                 _autoCts = null;
                 IsAutoRunning = false;
+                StopAutoStatusTimer();
+                _activeAutoWorkspace = null;
             }
 
             if (completed)
@@ -354,6 +424,65 @@ namespace FaceShield.ViewModels.Pages
             return remaining.ToString(@"mm\:ss");
         }
 
+        private static string FormatAge(TimeSpan age)
+        {
+            if (age.TotalMinutes >= 1)
+                return $"{(int)age.TotalMinutes}분 {Math.Max(0, age.Seconds)}초";
+
+            return $"{Math.Max(0, age.Seconds)}초";
+        }
+
+        private void StartAutoStatusTimer()
+        {
+            if (_autoStatusTimer == null)
+            {
+                _autoStatusTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(1)
+                };
+                _autoStatusTimer.Tick += (_, _) => UpdateAutoStatusText();
+            }
+
+            _autoStatusTimer.Start();
+        }
+
+        private void StopAutoStatusTimer()
+        {
+            if (_autoStatusTimer == null)
+                return;
+
+            _autoStatusTimer.Stop();
+            UpdateAutoStatusText(clear: true);
+        }
+
+        private void UpdateAutoStatusText(bool clear = false)
+        {
+            if (clear)
+            {
+                AutoStatusText = null;
+                AutoAccelStatus = null;
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var vm = _activeAutoWorkspace;
+            int total = vm?.FrameList.TotalFrames ?? 0;
+            int lastFrame = vm?.AutoLastProcessedFrame ?? -1;
+            DateTime lastAt = vm?.AutoLastProcessedAtUtc ?? _autoLastProgressAtUtc;
+
+            string frameInfo = (lastFrame >= 0 && total > 0)
+                ? $"{lastFrame + 1}/{total}"
+                : "정보 없음";
+
+            var since = now - lastAt;
+            AutoStatusText = $"마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
+            var accel = FaceOnnxDetector.GetLastExecutionProviderLabel();
+            var accelError = FaceOnnxDetector.GetLastExecutionProviderError();
+            AutoAccelStatus = accelError == null
+                ? $"가속 상태: {accel}"
+                : $"가속 상태: {accel} · 오류: {accelError}";
+        }
+
         private AutoMaskOptions BuildAutoOptions()
         {
             double ratio = SelectedDownscaleOption?.Ratio ?? 1.0;
@@ -373,6 +502,7 @@ namespace FaceShield.ViewModels.Pages
             return new FaceOnnxDetectorOptions
             {
                 UseOrtOptimization = AutoUseOrtOptimization,
+                UseGpu = AutoUseGpu,
                 IntraOpNumThreads = null,
                 InterOpNumThreads = null
             };
@@ -406,6 +536,34 @@ namespace FaceShield.ViewModels.Pages
 
             var dialog = new ResumeAutoDialog();
             return await dialog.ShowDialog<bool>(owner);
+        }
+
+        private Task ShowErrorDialogAsync(string title, string message)
+        {
+            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var owner = lifetime?.MainWindow;
+            if (owner == null)
+                return Task.CompletedTask;
+
+            var dialog = new ErrorDialog(title, message);
+            return dialog.ShowDialog(owner);
+        }
+
+        private Task ShowAutoErrorAsync(Exception ex, bool isDuringRun)
+        {
+            string title = isDuringRun ? "자동 모드 실행 중 오류" : "자동 모드 준비 실패";
+            string message = BuildAutoErrorMessage(ex);
+            return ShowErrorDialogAsync(title, message);
+        }
+
+        private string BuildAutoErrorMessage(Exception ex)
+        {
+            string hint =
+                RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    ? "\n\nmacOS에서는 ONNX Runtime이 OpenMP(libomp.dylib)에 의존합니다. Homebrew로 'brew install libomp' 실행 후 다시 시도하고, 앱(.app/Contents/MacOS) 안에 onnxruntime 관련 dylib가 있는지 확인하세요."
+                    : string.Empty;
+
+            return $"{ex.Message}{hint}";
         }
 
         private WorkspaceViewModel GetOrCreateWorkspace(

@@ -13,6 +13,9 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Install dependencies (libomp for ONNX Runtime)
+      run: brew install libomp
+
     - name: Install .NET
       uses: actions/setup-dotnet@v4
       with:
