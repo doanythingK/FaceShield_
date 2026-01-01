@@ -356,20 +356,20 @@ namespace FaceShield.Services.FaceDetection
         {
             string baseDir = AppContext.BaseDirectory;
             string onnxRuntime = System.IO.Path.Combine(baseDir, "onnxruntime.dll");
-            string dmlProvider = System.IO.Path.Combine(baseDir, "onnxruntime_providers_directml.dll");
             string managed = System.IO.Path.Combine(baseDir, "Microsoft.ML.OnnxRuntime.dll");
+            string sharedProvider = System.IO.Path.Combine(baseDir, "onnxruntime_providers_shared.dll");
 
             bool hasManaged = System.IO.File.Exists(managed);
             bool hasOnnx = System.IO.File.Exists(onnxRuntime);
-            bool hasProvider = System.IO.File.Exists(dmlProvider);
+            bool hasShared = System.IO.File.Exists(sharedProvider);
 
-            if (!hasManaged && !hasOnnx && !hasProvider)
-                return "DirectML 파일 누락(Microsoft.ML.OnnxRuntime.dll/onnxruntime.dll/onnxruntime_providers_directml.dll)";
+            if (!hasManaged && !hasOnnx && !hasShared)
+                return "DirectML 파일 누락(Microsoft.ML.OnnxRuntime.dll/onnxruntime.dll/onnxruntime_providers_shared.dll)";
 
-            if (!hasProvider)
-                return "onnxruntime_providers_directml.dll 누락";
             if (!hasOnnx)
                 return "onnxruntime.dll 누락";
+            if (!hasShared)
+                return "onnxruntime_providers_shared.dll 누락";
             if (!hasManaged)
                 return "Microsoft.ML.OnnxRuntime.dll 누락";
 
