@@ -229,9 +229,17 @@ namespace FaceShield.Services.FaceDetection
             }
 
             if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
+            {
+                UpdateExecutionProviderLabel("GPU:DirectML");
+                UpdateExecutionProviderError(null);
                 return "DirectML";
+            }
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                UpdateExecutionProviderError(BuildDirectMlDiagnostics());
+            {
+                UpdateExecutionProviderLabel("CPU(DirectML 미지원)");
+                UpdateExecutionProviderError(null);
+            }
 
             if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
                 return "CUDA";
