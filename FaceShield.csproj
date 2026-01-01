@@ -43,8 +43,11 @@
     <PackageReference Include="FaceONNX" Version="4.1.1.3" />
     <PackageReference Include="FaceONNX.Addons" Version="4.1.1.3" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" />
+    <!-- macOS/기타: CPU/CoreML용 -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" Condition="'$(OS)' != 'Windows_NT'" />
+    <!-- Windows: DirectML 빌드 사용 -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" Condition="'$(OS)' == 'Windows_NT'" />
+    <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.4" Condition="'$(OS)' == 'Windows_NT'" />
     <!-- GPU 패키지를 Windows 빌드에서 항상 복원해 DLL을 확보 -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.23.2" Condition="'$(OS)' == 'Windows_NT'" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.CoreML" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
@@ -66,16 +69,28 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
+    <!-- NuGet에 존재할 경우 우선 복사 -->
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime_providers_shared.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime_providers_shared.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)microsoft.ai.directml\1.15.4\bin\x64-win\DirectML.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ai.directml\1.15.4\bin\x64-win\DirectML.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <!-- Windows: DirectML 네이티브 DLL을 출력/퍼블리시 디렉터리로 복사 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native')">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
-    <!-- 일부 환경에서 DirectML DLL이 OnnxRuntime.Gpu 패키지에만 존재할 수 있으므로 보조 경로 추가 -->
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll')" Link="onnxruntime_providers_directml.dll">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime_providers_shared.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime_providers_shared.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
