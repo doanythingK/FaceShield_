@@ -64,6 +64,16 @@
     </None>
   </ItemGroup>
 
+  <!-- Visual Studio 기본 빌드( RID 미지정 )에서도 DirectML DLL 포함 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT'">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll')" Link="onnxruntime_providers_directml.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 
   <!-- 🔹 Windows 개발 환경 (디버그 실행용 FFmpeg DLL 복사) -->
   <ItemGroup Condition="'$(Configuration)' == 'Debug' and '$(Platform)' == 'x64'">
