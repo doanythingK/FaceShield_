@@ -74,6 +74,18 @@
     </None>
   </ItemGroup>
 
+  <!-- 안전망: 환경/RID 관계없이 DirectML 네이티브 DLL을 복사 (경로가 존재할 때만) -->
+  <ItemGroup>
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll')" Link="onnxruntime_providers_directml.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
 
   <!-- 🔹 Windows 개발 환경 (디버그 실행용 FFmpeg DLL 복사) -->
   <ItemGroup Condition="'$(Configuration)' == 'Debug' and '$(Platform)' == 'x64'">
