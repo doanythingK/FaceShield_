@@ -20,19 +20,42 @@
 
      <Application.Styles>
         <FluentTheme />
-           <!-- TextBlock 기본 -->
+        <!-- TextBlock 기본 -->
         <Style Selector="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+            <Setter Property="Foreground" Value="#EDEDED"/>
         </Style>
 
         <!-- Button 계열 -->
         <Style Selector="Button">
             <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+            <Setter Property="Foreground" Value="#F2F2F2"/>
         </Style>
 
         <!-- ToggleButton 본체 -->
         <Style Selector="ToggleButton">
             <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+            <Setter Property="Foreground" Value="#F2F2F2"/>
+        </Style>
+
+        <Style Selector="CheckBox">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+            <Setter Property="Foreground" Value="#F2F2F2"/>
+        </Style>
+
+        <Style Selector="ComboBox">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+            <Setter Property="Foreground" Value="#F2F2F2"/>
+        </Style>
+
+        <Style Selector="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+            <Setter Property="Foreground" Value="#F2F2F2"/>
+            <Setter Property="CaretBrush" Value="#F2F2F2"/>
+        </Style>
+
+        <Style Selector="ListBoxItem">
+            <Setter Property="Foreground" Value="#EDEDED"/>
         </Style>
 
         <!-- 🔥 핵심: ToggleButton 내부 ContentPresenter -->

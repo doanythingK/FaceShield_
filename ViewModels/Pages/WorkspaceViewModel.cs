@@ -20,11 +20,13 @@ namespace FaceShield.ViewModels.Pages
         public FrameListViewModel FrameList { get; }
         private readonly Action? _onBack;
         private readonly AutoMaskOptions _autoOptions;
-        private readonly FaceOnnxDetectorOptions _detectorOptions;
+        private FaceOnnxDetectorOptions _detectorOptions;
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
         private int _autoResumeIndex;
         private bool _autoCompleted;
+        private int _autoLastProcessedFrame = -1;
+        private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private bool _sessionInitialized;
 
         // 프레임별 최종 마스크 저장소
@@ -47,6 +49,9 @@ namespace FaceShield.ViewModels.Pages
             Mode == WorkspaceMode.Auto &&
             !_autoCompleted &&
             _autoResumeIndex > 0;
+
+        public int AutoLastProcessedFrame => _autoLastProcessedFrame;
+        public DateTime AutoLastProcessedAtUtc => _autoLastProcessedAtUtc;
 
         public WorkspaceViewModel(string videoPath)
             : this(videoPath, WorkspaceMode.Manual, null, null)
@@ -192,6 +197,8 @@ namespace FaceShield.ViewModels.Pages
                     {
                         lastProcessed = idx;
                         _autoResumeIndex = idx;
+                        _autoLastProcessedFrame = idx;
+                        _autoLastProcessedAtUtc = DateTime.UtcNow;
                     });
 
                 if (token.IsCancellationRequested)
@@ -298,6 +305,8 @@ namespace FaceShield.ViewModels.Pages
                 }
 
                 FramePreview.OnFrameIndexChanged(frameIndex);
+                _autoLastProcessedFrame = frameIndex;
+                _autoLastProcessedAtUtc = DateTime.UtcNow;
                 PersistWorkspaceState();
                 return true;
             }
@@ -389,6 +398,11 @@ namespace FaceShield.ViewModels.Pages
                 return;
 
             ApplySnapshot(snapshot);
+        }
+
+        public void UpdateDetectorOptions(FaceOnnxDetectorOptions options)
+        {
+            _detectorOptions = options ?? new FaceOnnxDetectorOptions();
         }
 
         public void PersistWorkspaceState()

@@ -8,6 +8,11 @@ namespace FaceShield.Services.FaceDetection
         public bool UseOrtOptimization { get; init; } = false;
 
         /// <summary>
+        /// GPU 실행 공급자 사용 시도 (가능한 경우).
+        /// </summary>
+        public bool UseGpu { get; init; } = false;
+
+        /// <summary>
         /// Intra-op 스레드 수 (null이면 기본값).
         /// </summary>
         public int? IntraOpNumThreads { get; init; }

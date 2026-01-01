@@ -131,9 +131,32 @@ public unsafe sealed class VideoExportService
                         bgra->data,
                         bgra->linesize));
 
-                    var mask = _maskProvider.GetFinalMask(frameIndex);
+                    WriteableBitmap? mask = null;
+                    bool disposeMask = false;
+
+                    if (_maskProvider is FrameMaskProvider provider)
+                    {
+                        if (provider.TryGetStoredMask(frameIndex, out var stored))
+                        {
+                            mask = stored;
+                        }
+                        else if (provider.TryGetFaceMaskData(frameIndex, out var faces))
+                        {
+                            mask = FrameMaskProvider.CreateMaskFromFaceRects(faces.Size, faces.Faces);
+                            disposeMask = true;
+                        }
+                    }
+                    else
+                    {
+                        mask = _maskProvider.GetFinalMask(frameIndex);
+                    }
+
                     if (mask != null)
+                    {
                         _masked.ApplyMaskAndBlur(bgra, mask, blurRadius);
+                        if (disposeMask)
+                            mask.Dispose();
+                    }
 
                     Throw(ffmpeg.sws_scale(
                         swsBgraToEnc,

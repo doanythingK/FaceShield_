@@ -164,20 +164,39 @@ namespace FaceShield.Services.Workspace
 
         private static WriteableBitmap? LoadMask(string path)
         {
-            using var bitmap = new Bitmap(path);
-            var wb = new WriteableBitmap(
-                bitmap.PixelSize,
-                bitmap.Dpi,
-                Avalonia.Platform.PixelFormat.Bgra8888,
-                Avalonia.Platform.AlphaFormat.Premul);
+            try
+            {
+                var info = new FileInfo(path);
+                if (!info.Exists || info.Length == 0)
+                    return null;
 
-            using var fb = wb.Lock();
-            int stride = fb.RowBytes;
-            int size = stride * fb.Size.Height;
-            bitmap.CopyPixels(new PixelRect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height),
-                fb.Address, size, stride);
+                using var bitmap = new Bitmap(path);
+                var wb = new WriteableBitmap(
+                    bitmap.PixelSize,
+                    bitmap.Dpi,
+                    Avalonia.Platform.PixelFormat.Bgra8888,
+                    Avalonia.Platform.AlphaFormat.Premul);
 
-            return wb;
+                using var fb = wb.Lock();
+                int stride = fb.RowBytes;
+                int size = stride * fb.Size.Height;
+                bitmap.CopyPixels(new PixelRect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height),
+                    fb.Address, size, stride);
+
+                return wb;
+            }
+            catch
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch
+                {
+                    // ignore cleanup failures
+                }
+                return null;
+            }
         }
 
         private AppState LoadState()

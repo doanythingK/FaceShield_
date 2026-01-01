@@ -100,6 +100,8 @@
 
           <CheckBox Content="가속(ONNX Runtime 최적화)"
                     IsChecked="{Binding AutoUseOrtOptimization}"/>
+          <CheckBox Content="GPU 가속(가능한 경우, OS별)"
+                    IsChecked="{Binding AutoUseGpu}"/>
         </StackPanel>
 
         </StackPanel>
@@ -138,18 +140,24 @@
     <Border Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
             Background="#AA000000"
             IsVisible="{Binding IsBusy}">
-      <Border Background="#1B1B1B" CornerRadius="12" Padding="16"
+      <Border Background="#1B1B1B" CornerRadius="12" Padding="18"
               HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel Spacing="8" Width="280">
-          <TextBlock Text="{Binding BusyMessage}" FontSize="14"/>
+        <StackPanel Spacing="10" Width="420">
+          <TextBlock Text="{Binding BusyMessage}" FontSize="15" TextWrapping="Wrap"/>
           <ProgressBar Height="10" Minimum="0" Maximum="100"
                        IsIndeterminate="{Binding IsBusyIndeterminate}"
                        Value="{Binding BusyProgress}" />
           <TextBlock Text="{Binding BusyProgress, StringFormat={}{0}%}"
-                     Opacity="0.8" FontSize="12" />
+                     Opacity="0.8" FontSize="13" />
           <TextBlock Text="{Binding AutoEtaText}"
                      IsVisible="{Binding IsAutoRunning}"
-                     Opacity="0.8" FontSize="12" />
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding AutoStatusText}"
+                     IsVisible="{Binding IsAutoRunning}"
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding AutoAccelStatus}"
+                     IsVisible="{Binding IsAutoRunning}"
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
           <Button Content="취소"
                   IsVisible="{Binding IsAutoRunning}"
                   Command="{Binding CancelAutoCommand}" />
