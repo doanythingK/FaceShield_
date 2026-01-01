@@ -52,6 +52,18 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 
+  <!-- DirectML 네이티브 파일이 NuGet에서 복사되지 못하는 환경을 위한 백업(로컬 포함) -->
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <None Include="Native/win-x64/onnxruntime.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="Native/win-x64/onnxruntime_providers_shared.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- Windows: DirectML 네이티브 DLL을 출력/퍼블리시 디렉터리로 복사 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
     <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native')">
