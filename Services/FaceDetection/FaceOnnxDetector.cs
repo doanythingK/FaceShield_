@@ -339,7 +339,16 @@ namespace FaceShield.Services.FaceDetection
 
                             if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SessionOptions))
                             {
-                                object arg = parameters[1].ParameterType == typeof(uint) ? 0u : 0;
+                                var pType = parameters[1].ParameterType;
+                                object? arg = pType == typeof(uint)
+                                    ? 0u
+                                    : pType == typeof(int)
+                                        ? 0
+                                        : null;
+
+                                if (arg == null)
+                                    continue;
+
                                 method.Invoke(null, new object?[] { options, arg });
                                 return true;
                             }
@@ -410,7 +419,16 @@ namespace FaceShield.Services.FaceDetection
 
                     if (parameters.Length == 1)
                     {
-                        object arg = parameters[0].ParameterType == typeof(uint) ? 0u : 0;
+                        var pType = parameters[0].ParameterType;
+                        object? arg = pType == typeof(uint)
+                            ? 0u
+                            : pType == typeof(int)
+                                ? 0
+                                : null;
+
+                        if (arg == null)
+                            continue;
+
                         method.Invoke(options, new[] { arg });
                         return true;
                     }
