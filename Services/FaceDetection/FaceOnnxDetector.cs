@@ -296,6 +296,33 @@ namespace FaceShield.Services.FaceDetection
         private static bool TryAppendExecutionProvider(SessionOptions options, string methodName, string assemblyName)
         {
             TryLoadAssembly(assemblyName);
+            TryLoadAssemblyFromBaseDir(assemblyName);
+
+            var instanceMethod = typeof(SessionOptions).GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance);
+            if (instanceMethod != null)
+            {
+                try
+                {
+                    var parameters = instanceMethod.GetParameters();
+                    if (parameters.Length == 0)
+                    {
+                        instanceMethod.Invoke(options, null);
+                        return true;
+                    }
+
+                    if (parameters.Length == 1)
+                    {
+                        var arg = parameters[0].ParameterType == typeof(uint) ? (object)0u : 0;
+                        instanceMethod.Invoke(options, new[] { arg });
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
+                    return false;
+                }
+            }
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -353,6 +380,22 @@ namespace FaceShield.Services.FaceDetection
             try
             {
                 Assembly.Load(assemblyName);
+            }
+            catch
+            {
+                // Optional dependency not available.
+            }
+        }
+
+        private static void TryLoadAssemblyFromBaseDir(string assemblyName)
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, $"{assemblyName}.dll");
+            if (!File.Exists(path))
+                return;
+
+            try
+            {
+                Assembly.LoadFrom(path);
             }
             catch
             {
