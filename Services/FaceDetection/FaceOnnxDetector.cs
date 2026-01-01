@@ -239,6 +239,8 @@ namespace FaceShield.Services.FaceDetection
             {
                 UpdateExecutionProviderLabel("CPU(DirectML 미지원)");
                 UpdateExecutionProviderError(null);
+                // Windows 기본 경로는 DirectML만 사용. CUDA는 별도 런타임 필요.
+                return null;
             }
 
             if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
