@@ -57,6 +57,10 @@
 
   <!-- DirectML 네이티브 파일이 NuGet에서 복사되지 못하는 환경을 위한 백업(로컬 포함) -->
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\lib\netstandard2.1\Microsoft.ML.OnnxRuntime.DirectML.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\lib\netstandard2.1\Microsoft.ML.OnnxRuntime.DirectML.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
     <None Include="Native/win-x64/onnxruntime.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
