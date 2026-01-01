@@ -52,8 +52,13 @@
   </ItemGroup>
 
   <!-- Windows: DirectML 네이티브 DLL을 출력/퍼블리시 디렉터리로 복사 -->
-  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll">
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\*.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <!-- 일부 환경에서 DirectML DLL이 OnnxRuntime.Gpu 패키지에만 존재할 수 있으므로 보조 경로 추가 -->
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.gpu\1.23.2\runtimes\win-x64\native\onnxruntime_providers_directml.dll')" Link="onnxruntime_providers_directml.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
