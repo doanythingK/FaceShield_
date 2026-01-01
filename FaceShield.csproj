@@ -44,8 +44,9 @@
     <PackageReference Include="FaceONNX.Addons" Version="4.1.1.3" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" Condition="'$(OS)' == 'Windows_NT'" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'win-x64'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" />
+    <!-- GPU 패키지를 Windows 빌드에서 항상 복원해 DLL을 확보 -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.23.2" Condition="'$(OS)' == 'Windows_NT'" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.CoreML" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.9" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
