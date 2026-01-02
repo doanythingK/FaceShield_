@@ -160,7 +160,6 @@ namespace FaceShield.ViewModels.Pages
 
             OrtThreadOptions = BuildOrtThreadOptions();
             selectedOrtThreadOption = OrtThreadOptions[0];
-
             foreach (var recent in _stateStore.GetRecents())
                 Recents.Add(recent);
 
@@ -565,7 +564,8 @@ namespace FaceShield.ViewModels.Pages
             string decodeText = decodeError == null ? decode : $"{decode} · 오류: {decodeError}";
             if (!string.IsNullOrWhiteSpace(decodeDiag))
                 decodeText += $" · {decodeDiag}";
-            string threadText = $"threads={SelectedOrtThreadOption?.Label ?? "자동"}, cores={Environment.ProcessorCount}";
+            string threadText =
+                $"onnx={SelectedOrtThreadOption?.Label ?? "자동"}, cores={Environment.ProcessorCount}";
 
             AutoAccelStatus = accelError == null
                 ? $"가속 상태: {accel} · {decodeText} · {threadText}"

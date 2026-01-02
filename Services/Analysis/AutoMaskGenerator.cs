@@ -89,7 +89,6 @@ namespace FaceShield.Services.Analysis
             PixelSize? frameSize = null;
             bool useRaw = _detector is FaceOnnxDetector;
             FaceOnnxDetector? onnx = _detector as FaceOnnxDetector;
-
             while (!ct.IsCancellationRequested)
             {
                 bool shouldDetect = _options.DetectEveryNFrames <= 1
@@ -329,7 +328,7 @@ namespace FaceShield.Services.Analysis
                     if (ct.IsCancellationRequested)
                         return false;
 
-                    using var extractor = new FfFrameExtractor(videoPath);
+            using var extractor = new FfFrameExtractor(videoPath);
                     var frame = extractor.GetFrameByIndex(frameIndex);
                     if (frame == null)
                     {

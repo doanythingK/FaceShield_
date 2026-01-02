@@ -522,6 +522,7 @@ namespace FaceShield.Services.Video
             return true;
         }
 
+
         private WriteableBitmap? ConvertDecodedFrameToBitmap(AVFrame* src, AVFrame* bgra)
         {
             if (!ConvertDecodedFrameToBgra(src, bgra))
