@@ -5,10 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using FaceONNX;
 using FaceShield.Models.Analysis;
+using FaceShield.Services.Analysis;
 using Microsoft.ML.OnnxRuntime;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -18,6 +20,11 @@ namespace FaceShield.Services.FaceDetection
     public sealed class FaceOnnxDetector : IFaceDetector
     {
         private readonly FaceDetector _detector;
+        private readonly bool _enablePreprocessOptimizations = true;
+        private float[][,]? _reusableBuffer;
+        private int _bufferWidth;
+        private int _bufferHeight;
+        private const int ParallelMinPixels = 300_000;
         private static readonly object _statusLock = new();
         private static string _lastExecutionProviderLabel = "CPU";
         private static string? _lastExecutionProviderError;
@@ -85,14 +92,61 @@ namespace FaceShield.Services.FaceDetection
             if (frame is null)
                 return Array.Empty<FaceDetectionResult>();
 
-            using var img = ConvertToImageSharp(frame);
-            return DetectFaces(img);
+            var input = ConvertToImageArray(frame);
+            return DetectFaces(input);
+        }
+
+        internal IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(WriteableBitmap frame, double ratio)
+        {
+            return DetectFacesDownscaled(frame, ratio, DownscaleQuality.BalancedBilinear);
+        }
+
+        internal IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(
+            WriteableBitmap frame,
+            double ratio,
+            DownscaleQuality quality)
+        {
+            if (frame is null)
+                return Array.Empty<FaceDetectionResult>();
+
+            if (ratio >= 1.0 || ratio <= 0)
+                return DetectFaces(frame);
+
+            bool useBilinear = quality == DownscaleQuality.BalancedBilinear;
+            var input = ConvertToImageArrayDownscaled(frame, ratio, useBilinear);
+            return DetectFaces(input);
+        }
+
+        internal IReadOnlyList<FaceDetectionResult> DetectFacesBgra(
+            IntPtr data,
+            int stride,
+            int width,
+            int height,
+            double ratio,
+            DownscaleQuality quality)
+        {
+            if (data == IntPtr.Zero || width <= 0 || height <= 0)
+                return Array.Empty<FaceDetectionResult>();
+
+            if (ratio >= 1.0 || ratio <= 0)
+            {
+                var inputFull = ConvertToImageArrayFromBgra(data, stride, width, height);
+                return DetectFaces(inputFull);
+            }
+
+            bool useBilinear = quality == DownscaleQuality.BalancedBilinear;
+            var input = ConvertToImageArrayFromBgraDownscaled(data, stride, width, height, ratio, useBilinear);
+            return DetectFaces(input);
         }
 
         public IReadOnlyList<FaceDetectionResult> DetectFaces(Image<Rgb24> img)
         {
             var input = ConvertToImageArray(img);
+            return DetectFaces(input);
+        }
 
+        private IReadOnlyList<FaceDetectionResult> DetectFaces(float[][,] input)
+        {
             // FaceONNX의 Forward는 확실히 존재함
             var rects = _detector.Forward(input);
 
@@ -114,6 +168,486 @@ namespace FaceShield.Services.FaceDetection
             }
 
             return results;
+        }
+
+        private float[][,] ConvertToImageArray(WriteableBitmap bmp)
+        {
+            int w = bmp.PixelSize.Width;
+            int h = bmp.PixelSize.Height;
+
+            if (_reusableBuffer == null || _bufferWidth != w || _bufferHeight != h)
+            {
+                _reusableBuffer = new float[3][,]
+                {
+                    new float[h, w],
+                    new float[h, w],
+                    new float[h, w]
+                };
+                _bufferWidth = w;
+                _bufferHeight = h;
+            }
+
+            var data = _reusableBuffer;
+
+            using var fb = bmp.Lock();
+            unsafe
+            {
+                byte* src = (byte*)fb.Address;
+                int stride = fb.RowBytes;
+                const float inv = 1f / 255f;
+
+                bool useParallel = _enablePreprocessOptimizations && (w * h) >= ParallelMinPixels;
+                if (useParallel)
+                {
+                    Parallel.For(0, h, y =>
+                    {
+                        byte* srcRow = src + y * stride;
+                        for (int x = 0; x < w; x++)
+                        {
+                            int idx = x * 4;
+                            data[0][y, x] = srcRow[idx + 0] * inv; // B
+                            data[1][y, x] = srcRow[idx + 1] * inv; // G
+                            data[2][y, x] = srcRow[idx + 2] * inv; // R
+                        }
+                    });
+                }
+                else
+                {
+                    for (int y = 0; y < h; y++)
+                    {
+                        byte* srcRow = src + y * stride;
+                        for (int x = 0; x < w; x++)
+                        {
+                            int idx = x * 4;
+                            data[0][y, x] = srcRow[idx + 0] * inv; // B
+                            data[1][y, x] = srcRow[idx + 1] * inv; // G
+                            data[2][y, x] = srcRow[idx + 2] * inv; // R
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+
+        private float[][,] ConvertToImageArrayFromBgra(IntPtr dataPtr, int stride, int width, int height)
+        {
+            if (_reusableBuffer == null || _bufferWidth != width || _bufferHeight != height)
+            {
+                _reusableBuffer = new float[3][,]
+                {
+                    new float[height, width],
+                    new float[height, width],
+                    new float[height, width]
+                };
+                _bufferWidth = width;
+                _bufferHeight = height;
+            }
+
+            var data = _reusableBuffer;
+
+            unsafe
+            {
+                byte* src = (byte*)dataPtr;
+                const float inv = 1f / 255f;
+
+                bool useParallel = _enablePreprocessOptimizations && (width * height) >= ParallelMinPixels;
+                if (useParallel)
+                {
+                    Parallel.For(0, height, y =>
+                    {
+                        byte* srcRow = src + y * stride;
+                        for (int x = 0; x < width; x++)
+                        {
+                            int idx = x * 4;
+                            data[0][y, x] = srcRow[idx + 0] * inv; // B
+                            data[1][y, x] = srcRow[idx + 1] * inv; // G
+                            data[2][y, x] = srcRow[idx + 2] * inv; // R
+                        }
+                    });
+                }
+                else
+                {
+                    for (int y = 0; y < height; y++)
+                    {
+                        byte* srcRow = src + y * stride;
+                        for (int x = 0; x < width; x++)
+                        {
+                            int idx = x * 4;
+                            data[0][y, x] = srcRow[idx + 0] * inv; // B
+                            data[1][y, x] = srcRow[idx + 1] * inv; // G
+                            data[2][y, x] = srcRow[idx + 2] * inv; // R
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+
+        private float[][,] ConvertToImageArrayDownscaled(WriteableBitmap bmp, double ratio, bool useBilinear)
+        {
+            int srcW = bmp.PixelSize.Width;
+            int srcH = bmp.PixelSize.Height;
+
+            int w = Math.Max(1, (int)Math.Round(srcW * ratio));
+            int h = Math.Max(1, (int)Math.Round(srcH * ratio));
+
+            if (_reusableBuffer == null || _bufferWidth != w || _bufferHeight != h)
+            {
+                _reusableBuffer = new float[3][,]
+                {
+                    new float[h, w],
+                    new float[h, w],
+                    new float[h, w]
+                };
+                _bufferWidth = w;
+                _bufferHeight = h;
+            }
+
+            var data = _reusableBuffer;
+
+            using var fb = bmp.Lock();
+            unsafe
+            {
+                byte* src = (byte*)fb.Address;
+                int stride = fb.RowBytes;
+                const float inv = 1f / 255f;
+                double invRatio = 1.0 / ratio;
+
+                bool useParallel = _enablePreprocessOptimizations && (w * h) >= ParallelMinPixels;
+                if (useParallel)
+                {
+                    Parallel.For(0, h, y =>
+                    {
+                        if (!useBilinear)
+                        {
+                            int srcYInt = (int)(y * invRatio);
+                            if (srcYInt < 0) srcYInt = 0;
+                            if (srcYInt >= srcH) srcYInt = srcH - 1;
+
+                            byte* srcRow = src + srcYInt * stride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                int srcX = (int)(x * invRatio);
+                                if (srcX < 0) srcX = 0;
+                                if (srcX >= srcW) srcX = srcW - 1;
+
+                                int idx = srcX * 4;
+                                data[0][y, x] = srcRow[idx + 0] * inv; // B
+                                data[1][y, x] = srcRow[idx + 1] * inv; // G
+                                data[2][y, x] = srcRow[idx + 2] * inv; // R
+                            }
+                            return;
+                        }
+
+                        double srcYPos = y * invRatio;
+                        int y0 = (int)Math.Floor(srcYPos);
+                        if (y0 < 0) y0 = 0;
+                        if (y0 >= srcH) y0 = srcH - 1;
+                        int y1 = Math.Min(y0 + 1, srcH - 1);
+                        double fy = srcYPos - y0;
+                        double wy0 = 1.0 - fy;
+                        double wy1 = fy;
+
+                        byte* row0 = src + y0 * stride;
+                        byte* row1 = src + y1 * stride;
+
+                        for (int x = 0; x < w; x++)
+                        {
+                            double srcX = x * invRatio;
+                            int x0 = (int)Math.Floor(srcX);
+                            if (x0 < 0) x0 = 0;
+                            if (x0 >= srcW) x0 = srcW - 1;
+                            int x1 = Math.Min(x0 + 1, srcW - 1);
+                            double fx = srcX - x0;
+                            double wx0 = 1.0 - fx;
+                            double wx1 = fx;
+
+                            int idx00 = x0 * 4;
+                            int idx10 = x1 * 4;
+
+                            double b =
+                                row0[idx00 + 0] * wx0 * wy0 +
+                                row0[idx10 + 0] * wx1 * wy0 +
+                                row1[idx00 + 0] * wx0 * wy1 +
+                                row1[idx10 + 0] * wx1 * wy1;
+                            double g =
+                                row0[idx00 + 1] * wx0 * wy0 +
+                                row0[idx10 + 1] * wx1 * wy0 +
+                                row1[idx00 + 1] * wx0 * wy1 +
+                                row1[idx10 + 1] * wx1 * wy1;
+                            double r =
+                                row0[idx00 + 2] * wx0 * wy0 +
+                                row0[idx10 + 2] * wx1 * wy0 +
+                                row1[idx00 + 2] * wx0 * wy1 +
+                                row1[idx10 + 2] * wx1 * wy1;
+
+                            data[0][y, x] = (float)(b * inv); // B
+                            data[1][y, x] = (float)(g * inv); // G
+                            data[2][y, x] = (float)(r * inv); // R
+                        }
+                    });
+                }
+                else
+                {
+                    for (int y = 0; y < h; y++)
+                    {
+                        if (!useBilinear)
+                        {
+                            int srcYInt = (int)(y * invRatio);
+                            if (srcYInt < 0) srcYInt = 0;
+                            if (srcYInt >= srcH) srcYInt = srcH - 1;
+
+                            byte* srcRow = src + srcYInt * stride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                int srcX = (int)(x * invRatio);
+                                if (srcX < 0) srcX = 0;
+                                if (srcX >= srcW) srcX = srcW - 1;
+
+                                int idx = srcX * 4;
+                                data[0][y, x] = srcRow[idx + 0] * inv; // B
+                                data[1][y, x] = srcRow[idx + 1] * inv; // G
+                                data[2][y, x] = srcRow[idx + 2] * inv; // R
+                            }
+                            continue;
+                        }
+
+                        double srcYPos = y * invRatio;
+                        int y0 = (int)Math.Floor(srcYPos);
+                        if (y0 < 0) y0 = 0;
+                        if (y0 >= srcH) y0 = srcH - 1;
+                        int y1 = Math.Min(y0 + 1, srcH - 1);
+                        double fy = srcYPos - y0;
+                        double wy0 = 1.0 - fy;
+                        double wy1 = fy;
+
+                        byte* row0 = src + y0 * stride;
+                        byte* row1 = src + y1 * stride;
+
+                        for (int x = 0; x < w; x++)
+                        {
+                            double srcX = x * invRatio;
+                            int x0 = (int)Math.Floor(srcX);
+                            if (x0 < 0) x0 = 0;
+                            if (x0 >= srcW) x0 = srcW - 1;
+                            int x1 = Math.Min(x0 + 1, srcW - 1);
+                            double fx = srcX - x0;
+                            double wx0 = 1.0 - fx;
+                            double wx1 = fx;
+
+                            int idx00 = x0 * 4;
+                            int idx10 = x1 * 4;
+
+                            double b =
+                                row0[idx00 + 0] * wx0 * wy0 +
+                                row0[idx10 + 0] * wx1 * wy0 +
+                                row1[idx00 + 0] * wx0 * wy1 +
+                                row1[idx10 + 0] * wx1 * wy1;
+                            double g =
+                                row0[idx00 + 1] * wx0 * wy0 +
+                                row0[idx10 + 1] * wx1 * wy0 +
+                                row1[idx00 + 1] * wx0 * wy1 +
+                                row1[idx10 + 1] * wx1 * wy1;
+                            double r =
+                                row0[idx00 + 2] * wx0 * wy0 +
+                                row0[idx10 + 2] * wx1 * wy0 +
+                                row1[idx00 + 2] * wx0 * wy1 +
+                                row1[idx10 + 2] * wx1 * wy1;
+
+                            data[0][y, x] = (float)(b * inv); // B
+                            data[1][y, x] = (float)(g * inv); // G
+                            data[2][y, x] = (float)(r * inv); // R
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+
+        private float[][,] ConvertToImageArrayFromBgraDownscaled(
+            IntPtr dataPtr,
+            int stride,
+            int srcW,
+            int srcH,
+            double ratio,
+            bool useBilinear)
+        {
+            int w = Math.Max(1, (int)Math.Round(srcW * ratio));
+            int h = Math.Max(1, (int)Math.Round(srcH * ratio));
+
+            if (_reusableBuffer == null || _bufferWidth != w || _bufferHeight != h)
+            {
+                _reusableBuffer = new float[3][,]
+                {
+                    new float[h, w],
+                    new float[h, w],
+                    new float[h, w]
+                };
+                _bufferWidth = w;
+                _bufferHeight = h;
+            }
+
+            var data = _reusableBuffer;
+
+            unsafe
+            {
+                byte* src = (byte*)dataPtr;
+                const float inv = 1f / 255f;
+                double invRatio = 1.0 / ratio;
+
+                bool useParallel = _enablePreprocessOptimizations && (w * h) >= ParallelMinPixels;
+                if (useParallel)
+                {
+                    Parallel.For(0, h, y =>
+                    {
+                        if (!useBilinear)
+                        {
+                            int srcYInt = (int)(y * invRatio);
+                            if (srcYInt < 0) srcYInt = 0;
+                            if (srcYInt >= srcH) srcYInt = srcH - 1;
+
+                            byte* srcRow = src + srcYInt * stride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                int srcX = (int)(x * invRatio);
+                                if (srcX < 0) srcX = 0;
+                                if (srcX >= srcW) srcX = srcW - 1;
+
+                                int idx = srcX * 4;
+                                data[0][y, x] = srcRow[idx + 0] * inv; // B
+                                data[1][y, x] = srcRow[idx + 1] * inv; // G
+                                data[2][y, x] = srcRow[idx + 2] * inv; // R
+                            }
+                            return;
+                        }
+
+                        double srcYPos = y * invRatio;
+                        int y0 = (int)Math.Floor(srcYPos);
+                        if (y0 < 0) y0 = 0;
+                        if (y0 >= srcH) y0 = srcH - 1;
+                        int y1 = Math.Min(y0 + 1, srcH - 1);
+                        double fy = srcYPos - y0;
+                        double wy0 = 1.0 - fy;
+                        double wy1 = fy;
+
+                        byte* row0 = src + y0 * stride;
+                        byte* row1 = src + y1 * stride;
+
+                        for (int x = 0; x < w; x++)
+                        {
+                            double srcXPos = x * invRatio;
+                            int x0 = (int)Math.Floor(srcXPos);
+                            if (x0 < 0) x0 = 0;
+                            if (x0 >= srcW) x0 = srcW - 1;
+                            int x1 = Math.Min(x0 + 1, srcW - 1);
+                            double fx = srcXPos - x0;
+                            double wx0 = 1.0 - fx;
+                            double wx1 = fx;
+
+                            int idx00 = x0 * 4;
+                            int idx10 = x1 * 4;
+
+                            double b =
+                                row0[idx00 + 0] * wx0 * wy0 +
+                                row0[idx10 + 0] * wx1 * wy0 +
+                                row1[idx00 + 0] * wx0 * wy1 +
+                                row1[idx10 + 0] * wx1 * wy1;
+                            double g =
+                                row0[idx00 + 1] * wx0 * wy0 +
+                                row0[idx10 + 1] * wx1 * wy0 +
+                                row1[idx00 + 1] * wx0 * wy1 +
+                                row1[idx10 + 1] * wx1 * wy1;
+                            double r =
+                                row0[idx00 + 2] * wx0 * wy0 +
+                                row0[idx10 + 2] * wx1 * wy0 +
+                                row1[idx00 + 2] * wx0 * wy1 +
+                                row1[idx10 + 2] * wx1 * wy1;
+
+                            data[0][y, x] = (float)(b * inv); // B
+                            data[1][y, x] = (float)(g * inv); // G
+                            data[2][y, x] = (float)(r * inv); // R
+                        }
+                    });
+                }
+                else
+                {
+                    for (int y = 0; y < h; y++)
+                    {
+                        if (!useBilinear)
+                        {
+                            int srcYInt = (int)(y * invRatio);
+                            if (srcYInt < 0) srcYInt = 0;
+                            if (srcYInt >= srcH) srcYInt = srcH - 1;
+
+                            byte* srcRow = src + srcYInt * stride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                int srcX = (int)(x * invRatio);
+                                if (srcX < 0) srcX = 0;
+                                if (srcX >= srcW) srcX = srcW - 1;
+
+                                int idx = srcX * 4;
+                                data[0][y, x] = srcRow[idx + 0] * inv; // B
+                                data[1][y, x] = srcRow[idx + 1] * inv; // G
+                                data[2][y, x] = srcRow[idx + 2] * inv; // R
+                            }
+                            continue;
+                        }
+
+                        double srcYPos = y * invRatio;
+                        int y0 = (int)Math.Floor(srcYPos);
+                        if (y0 < 0) y0 = 0;
+                        if (y0 >= srcH) y0 = srcH - 1;
+                        int y1 = Math.Min(y0 + 1, srcH - 1);
+                        double fy = srcYPos - y0;
+                        double wy0 = 1.0 - fy;
+                        double wy1 = fy;
+
+                        byte* row0 = src + y0 * stride;
+                        byte* row1 = src + y1 * stride;
+
+                        for (int x = 0; x < w; x++)
+                        {
+                            double srcXPos = x * invRatio;
+                            int x0 = (int)Math.Floor(srcXPos);
+                            if (x0 < 0) x0 = 0;
+                            if (x0 >= srcW) x0 = srcW - 1;
+                            int x1 = Math.Min(x0 + 1, srcW - 1);
+                            double fx = srcXPos - x0;
+                            double wx0 = 1.0 - fx;
+                            double wx1 = fx;
+
+                            int idx00 = x0 * 4;
+                            int idx10 = x1 * 4;
+
+                            double b =
+                                row0[idx00 + 0] * wx0 * wy0 +
+                                row0[idx10 + 0] * wx1 * wy0 +
+                                row1[idx00 + 0] * wx0 * wy1 +
+                                row1[idx10 + 0] * wx1 * wy1;
+                            double g =
+                                row0[idx00 + 1] * wx0 * wy0 +
+                                row0[idx10 + 1] * wx1 * wy0 +
+                                row1[idx00 + 1] * wx0 * wy1 +
+                                row1[idx10 + 1] * wx1 * wy1;
+                            double r =
+                                row0[idx00 + 2] * wx0 * wy0 +
+                                row0[idx10 + 2] * wx1 * wy0 +
+                                row1[idx00 + 2] * wx0 * wy1 +
+                                row1[idx10 + 2] * wx1 * wy1;
+
+                            data[0][y, x] = (float)(b * inv); // B
+                            data[1][y, x] = (float)(g * inv); // G
+                            data[2][y, x] = (float)(r * inv); // R
+                        }
+                    }
+                }
+            }
+
+            return data;
         }
 
         internal static Image<Rgb24> ConvertToImageSharp(WriteableBitmap bmp)
@@ -150,17 +684,24 @@ namespace FaceShield.Services.FaceDetection
             return img;
         }
 
-        private static float[][,] ConvertToImageArray(Image<Rgb24> img)
+        private float[][,] ConvertToImageArray(Image<Rgb24> img)
         {
             int w = img.Width;
             int h = img.Height;
 
-            float[][,] data = new float[3][,]
+            if (_reusableBuffer == null || _bufferWidth != w || _bufferHeight != h)
             {
-                new float[h, w],
-                new float[h, w],
-                new float[h, w]
-            };
+                _reusableBuffer = new float[3][,]
+                {
+                    new float[h, w],
+                    new float[h, w],
+                    new float[h, w]
+                };
+                _bufferWidth = w;
+                _bufferHeight = h;
+            }
+
+            var data = _reusableBuffer;
 
             img.ProcessPixelRows(rows =>
             {
@@ -237,8 +778,9 @@ namespace FaceShield.Services.FaceDetection
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                UpdateExecutionProviderLabel("CPU(DirectML 미지원)");
-                UpdateExecutionProviderError(null);
+                UpdateExecutionProviderLabel("CPU(DirectML 로드 실패)");
+                if (GetLastExecutionProviderError() == null)
+                    UpdateExecutionProviderError(BuildDirectMlDiagnostics());
                 // Windows 기본 경로는 DirectML만 사용. CUDA는 별도 런타임 필요.
                 return null;
             }

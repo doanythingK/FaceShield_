@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FaceShield.Enums.Workspace; // 🔹 추가
@@ -7,6 +9,7 @@ using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
 using FaceShield.Services.Workspace;
 using FaceShield.ViewModels.Workspace;
+using FaceShield.Views.Dialogs;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,7 +22,7 @@ namespace FaceShield.ViewModels.Pages
         public FramePreviewViewModel FramePreview { get; }
         public FrameListViewModel FrameList { get; }
         private readonly Action? _onBack;
-        private readonly AutoMaskOptions _autoOptions;
+        private AutoMaskOptions _autoOptions;
         private FaceOnnxDetectorOptions _detectorOptions;
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
@@ -243,19 +246,52 @@ namespace FaceShield.ViewModels.Pages
 
         private async void OnAutoRequested()
         {
-            if (Mode == WorkspaceMode.Manual)
+            try
             {
-                await RunAutoSingleFrameAsync();
-                ToolPanel.CurrentMode = EditMode.Manual;
-                return;
-            }
+                if (Mode == WorkspaceMode.Manual)
+                {
+                    await RunAutoSingleFrameAsync();
+                    ToolPanel.CurrentMode = EditMode.Manual;
+                    return;
+                }
 
-            await RunAutoAsync(exportAfter: false);
+                await RunAutoAsync(exportAfter: false);
+            }
+            catch (Exception ex)
+            {
+                await ShowAutoErrorAsync(ex, isDuringRun: true);
+            }
         }
 
         private void OnAutoCancelRequested()
         {
             _autoCts?.Cancel();
+        }
+
+        private Task ShowAutoErrorAsync(Exception ex, bool isDuringRun)
+        {
+            string title = isDuringRun ? "자동 모드 실행 중 오류" : "자동 모드 준비 실패";
+            string message = BuildAutoErrorMessage(ex);
+            return ShowErrorDialogAsync(title, message);
+        }
+
+        private Task ShowErrorDialogAsync(string title, string message)
+        {
+            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var owner = lifetime?.MainWindow;
+            if (owner == null)
+                return Task.CompletedTask;
+
+            var dialog = new ErrorDialog(title, message);
+            return dialog.ShowDialog(owner);
+        }
+
+        private static string BuildAutoErrorMessage(Exception ex)
+        {
+            if (ex is System.IO.FileNotFoundException fnf && !string.IsNullOrWhiteSpace(fnf.FileName))
+                return $"{fnf.Message}\n누락 파일: {fnf.FileName}";
+
+            return ex.Message;
         }
 
         [RelayCommand]
@@ -403,6 +439,11 @@ namespace FaceShield.ViewModels.Pages
         public void UpdateDetectorOptions(FaceOnnxDetectorOptions options)
         {
             _detectorOptions = options ?? new FaceOnnxDetectorOptions();
+        }
+
+        public void UpdateAutoOptions(AutoMaskOptions options)
+        {
+            _autoOptions = options ?? new AutoMaskOptions();
         }
 
         public void PersistWorkspaceState()

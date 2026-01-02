@@ -1,0 +1,63 @@
+name: macOS build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install FFmpeg and libomp
+        run: brew install ffmpeg libomp
+
+      - name: Prepare FFmpeg dylibs
+        run: bash scripts/prepare-ffmpeg-osx.sh
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish (osx-arm64)
+        run: dotnet publish FaceShield.csproj -c Release -r osx-arm64
+
+      - name: Ad-hoc codesign (test)
+        run: |
+          APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
+          if [ -d "$APP_PATH" ]; then
+            codesign --force --deep --sign - "$APP_PATH"
+          else
+            echo "App bundle not found at $APP_PATH"
+            exit 1
+          fi
+
+      - name: Package zip
+        run: |
+          OUT_DIR="bin/Release/net8.0/osx-arm64/publish"
+          APP_PATH="$OUT_DIR/FaceShield.app"
+          if [ -d "$APP_PATH" ]; then
+            SHORT_SHA="${GITHUB_SHA::7}"
+            BUILD_VER="${GITHUB_RUN_NUMBER}"
+            ZIP_NAME="FaceShield-osx-arm64-v${BUILD_VER}-${SHORT_SHA}.zip"
+            (cd "$OUT_DIR" && ditto -c -k --sequesterRsrc --keepParent "FaceShield.app" "$ZIP_NAME")
+          else
+            echo "App bundle not found at $APP_PATH"
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceShield-osx-arm64
+          path: |
+            bin/Release/net8.0/osx-arm64/publish/FaceShield-osx-arm64-v*-*.zip

@@ -8,12 +8,14 @@ using FaceShield.Enums.Workspace; // 🔹 추가
 using FaceShield.Models;
 using FaceShield.Services.Analysis;
 using FaceShield.Services.FaceDetection;
+using FaceShield.Services.Video;
 using FaceShield.Services.Workspace;
 using FaceShield.Views.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,6 +35,8 @@ namespace FaceShield.ViewModels.Pages
         private WorkspaceViewModel? _activeAutoWorkspace;
         private DispatcherTimer? _autoStatusTimer;
         private bool _autoRestartRequested;
+        private readonly Queue<(DateTime Timestamp, int FrameIndex)> _etaFrameSamples = new();
+        private (DateTime Timestamp, int FrameIndex) _etaLastFrameSample;
 
         [ObservableProperty]
         private string? selectedVideoPath;
@@ -90,6 +94,43 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private DownscaleOption selectedDownscaleOption;
 
+        public sealed class DownscaleQualityOption
+        {
+            public string Label { get; }
+            public DownscaleQuality Quality { get; }
+
+            public DownscaleQualityOption(string label, DownscaleQuality quality)
+            {
+                Label = label;
+                Quality = quality;
+            }
+        }
+
+        public IReadOnlyList<DownscaleQualityOption> DownscaleQualityOptions { get; } = new[]
+        {
+            new DownscaleQualityOption("빠름(최근접)", DownscaleQuality.FastNearest),
+            new DownscaleQualityOption("균형(보간)", DownscaleQuality.BalancedBilinear)
+        };
+
+        [ObservableProperty]
+        private DownscaleQualityOption selectedDownscaleQualityOption;
+
+        public sealed class OrtThreadOption
+        {
+            public string Label { get; }
+            public int? Threads { get; }
+
+            public OrtThreadOption(string label, int? threads)
+            {
+                Label = label;
+                Threads = threads;
+            }
+        }
+
+        public IReadOnlyList<OrtThreadOption> OrtThreadOptions { get; }
+        [ObservableProperty]
+        private OrtThreadOption selectedOrtThreadOption;
+
         public IReadOnlyList<int> DetectEveryOptions { get; } = new[] { 1, 2, 3, 5 };
 
         [ObservableProperty]
@@ -115,6 +156,10 @@ namespace FaceShield.ViewModels.Pages
             _onBackHome = onBackHome;
             _stateStore = stateStore;
             selectedDownscaleOption = DownscaleOptions[0];
+            selectedDownscaleQualityOption = DownscaleQualityOptions[1];
+
+            OrtThreadOptions = BuildOrtThreadOptions();
+            selectedOrtThreadOption = OrtThreadOptions[0];
 
             foreach (var recent in _stateStore.GetRecents())
                 Recents.Add(recent);
@@ -156,7 +201,10 @@ namespace FaceShield.ViewModels.Pages
             OnPropertyChanged(nameof(IsBusyIndeterminate));
 
             if (!value)
+            {
                 AutoEtaText = null;
+                _etaFrameSamples.Clear();
+            }
         }
 
         partial void OnIsWorkspaceLoadingChanged(bool value)
@@ -174,17 +222,6 @@ namespace FaceShield.ViewModels.Pages
 
             if (!IsAutoRunning || value <= 0)
                 return;
-
-            var elapsed = DateTime.UtcNow - _autoStartTimeUtc;
-            if (elapsed.TotalSeconds < 1)
-                return;
-
-            double remainingRatio = (100.0 - value) / value;
-            if (remainingRatio < 0)
-                remainingRatio = 0;
-
-            var remaining = TimeSpan.FromSeconds(elapsed.TotalSeconds * remainingRatio);
-            AutoEtaText = $"예상 남은 시간: {FormatEta(remaining)}";
         }
 
         partial void OnWorkspaceLoadingProgressChanged(int value)
@@ -227,6 +264,44 @@ namespace FaceShield.ViewModels.Pages
         partial void OnAutoTrackingEnabledChanged(bool value)
         {
             OnPropertyChanged(nameof(IsTrackingOptionsEnabled));
+            RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoDetectEveryNFramesChanged(int value)
+        {
+            RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnSelectedDownscaleOptionChanged(DownscaleOption value)
+        {
+            RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnSelectedDownscaleQualityOptionChanged(DownscaleQualityOption value)
+        {
+            RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnSelectedOrtThreadOptionChanged(OrtThreadOption value)
+        {
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = "가속 옵션 변경 감지 · 재시작 준비 중...";
+            _autoCts?.Cancel();
+        }
+
+        private void RequestAutoRestartForOptions(string statusText)
+        {
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateAutoOptions(BuildAutoOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = statusText;
+            _autoCts?.Cancel();
         }
 
         public async Task PickVideoAsync(IStorageProvider storageProvider)
@@ -419,9 +494,14 @@ namespace FaceShield.ViewModels.Pages
         private static string FormatEta(TimeSpan remaining)
         {
             if (remaining.TotalHours >= 1)
-                return remaining.ToString(@"hh\:mm\:ss");
+            {
+                return $"{(int)remaining.TotalHours}시간 {Math.Max(0, remaining.Minutes)}분 {Math.Max(0, remaining.Seconds)}초";
+            }
 
-            return remaining.ToString(@"mm\:ss");
+            if (remaining.TotalMinutes >= 1)
+                return $"{(int)remaining.TotalMinutes}분 {Math.Max(0, remaining.Seconds)}초";
+
+            return $"{Math.Max(0, remaining.Seconds)}초";
         }
 
         private static string FormatAge(TimeSpan age)
@@ -453,6 +533,7 @@ namespace FaceShield.ViewModels.Pages
 
             _autoStatusTimer.Stop();
             UpdateAutoStatusText(clear: true);
+            _etaFrameSamples.Clear();
         }
 
         private void UpdateAutoStatusText(bool clear = false)
@@ -478,9 +559,61 @@ namespace FaceShield.ViewModels.Pages
             AutoStatusText = $"마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
             var accel = FaceOnnxDetector.GetLastExecutionProviderLabel();
             var accelError = FaceOnnxDetector.GetLastExecutionProviderError();
+            var decode = FfFrameExtractor.GetLastDecodeStatus();
+            var decodeError = FfFrameExtractor.GetLastDecodeError();
+            var decodeDiag = FfFrameExtractor.GetLastDecodeDiagnostics();
+            string decodeText = decodeError == null ? decode : $"{decode} · 오류: {decodeError}";
+            if (!string.IsNullOrWhiteSpace(decodeDiag))
+                decodeText += $" · {decodeDiag}";
+            string threadText = $"threads={SelectedOrtThreadOption?.Label ?? "자동"}, cores={Environment.ProcessorCount}";
+
             AutoAccelStatus = accelError == null
-                ? $"가속 상태: {accel}"
-                : $"가속 상태: {accel} · 오류: {accelError}";
+                ? $"가속 상태: {accel} · {decodeText} · {threadText}"
+                : $"가속 상태: {accel} · 오류: {accelError} · {decodeText} · {threadText}";
+
+            if (lastFrame >= 0 && total > 0)
+            {
+                UpdateEtaFrameSamples(lastAt, lastFrame);
+                var remaining = EstimateRemainingByFrames(total, lastFrame);
+                if (remaining != null)
+                    AutoEtaText = $"예상 남은 시간: {FormatEta(remaining.Value)}";
+            }
+        }
+
+        private void UpdateEtaFrameSamples(DateTime timestamp, int frameIndex)
+        {
+            if (frameIndex < 0)
+                return;
+
+            if (_etaFrameSamples.Count > 0 && frameIndex <= _etaLastFrameSample.FrameIndex)
+                return;
+
+            _etaFrameSamples.Enqueue((timestamp, frameIndex));
+            _etaLastFrameSample = (timestamp, frameIndex);
+
+            while (_etaFrameSamples.Count > 0 && (timestamp - _etaFrameSamples.Peek().Timestamp).TotalSeconds > 10)
+                _etaFrameSamples.Dequeue();
+
+            if (_etaFrameSamples.Count == 0)
+                _etaFrameSamples.Enqueue(_etaLastFrameSample);
+        }
+
+        private TimeSpan? EstimateRemainingByFrames(int totalFrames, int currentFrameIndex)
+        {
+            if (_etaFrameSamples.Count < 2)
+                return null;
+
+            var first = _etaFrameSamples.Peek();
+            var last = _etaLastFrameSample;
+            var elapsedSeconds = (last.Timestamp - first.Timestamp).TotalSeconds;
+            var progressed = last.FrameIndex - first.FrameIndex;
+
+            if (elapsedSeconds <= 0 || progressed <= 0)
+                return null;
+
+            double ratePerSecond = progressed / elapsedSeconds;
+            int remainingFrames = Math.Max(0, (totalFrames - 1) - currentFrameIndex);
+            return TimeSpan.FromSeconds(remainingFrames / ratePerSecond);
         }
 
         private AutoMaskOptions BuildAutoOptions()
@@ -488,10 +621,12 @@ namespace FaceShield.ViewModels.Pages
             double ratio = SelectedDownscaleOption?.Ratio ?? 1.0;
             bool useTracking = AutoTrackingEnabled;
             int detectEvery = useTracking ? Math.Max(1, AutoDetectEveryNFrames) : 1;
+            var quality = SelectedDownscaleQualityOption?.Quality ?? DownscaleQuality.BalancedBilinear;
 
             return new AutoMaskOptions
             {
                 DownscaleRatio = ratio,
+                DownscaleQuality = quality,
                 UseTracking = useTracking,
                 DetectEveryNFrames = detectEvery
             };
@@ -503,9 +638,30 @@ namespace FaceShield.ViewModels.Pages
             {
                 UseOrtOptimization = AutoUseOrtOptimization,
                 UseGpu = AutoUseGpu,
-                IntraOpNumThreads = null,
+                IntraOpNumThreads = SelectedOrtThreadOption?.Threads,
                 InterOpNumThreads = null
             };
+        }
+
+        private static IReadOnlyList<OrtThreadOption> BuildOrtThreadOptions()
+        {
+            int max = Math.Max(1, Environment.ProcessorCount);
+            var list = new List<OrtThreadOption>
+            {
+                new OrtThreadOption("자동", null)
+            };
+
+            int[] candidates = { 1, 2, 4, 6, 8, 12, 16, 24, 32 };
+            foreach (var c in candidates)
+            {
+                if (c <= max)
+                    list.Add(new OrtThreadOption($"{c} 스레드", c));
+            }
+
+            if (!list.Any(o => o.Threads == max))
+                list.Add(new OrtThreadOption($"{max} 스레드", max));
+
+            return list;
         }
 
         private async Task EnsureWorkspaceReadyAsync(WorkspaceViewModel vm)
@@ -549,6 +705,20 @@ namespace FaceShield.ViewModels.Pages
             return dialog.ShowDialog(owner);
         }
 
+        [RelayCommand]
+        private async Task CopyAccelStatusAsync()
+        {
+            if (string.IsNullOrWhiteSpace(AutoAccelStatus))
+                return;
+
+            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var clipboard = lifetime?.MainWindow?.Clipboard;
+            if (clipboard == null)
+                return;
+
+            await clipboard.SetTextAsync(AutoAccelStatus);
+        }
+
         private Task ShowAutoErrorAsync(Exception ex, bool isDuringRun)
         {
             string title = isDuringRun ? "자동 모드 실행 중 오류" : "자동 모드 준비 실패";
@@ -577,7 +747,11 @@ namespace FaceShield.ViewModels.Pages
 
             string key = $"{mode}:{SelectedVideoPath}";
             if (_workspaceCache.TryGetValue(key, out var cached))
+            {
+                cached.UpdateAutoOptions(autoOptions);
+                cached.UpdateDetectorOptions(detectorOptions);
                 return cached;
+            }
 
             var vm = new WorkspaceViewModel(
                 SelectedVideoPath,

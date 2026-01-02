@@ -413,5 +413,8 @@ obj/
 *.so
 *.dylib
 
+# allow tracked macOS FFmpeg dylibs
+!/FFmpeg/osx-arm64/*.dylib
+
 # End of https://www.toptal.com/developers/gitignore/api/csharp
 /FFmpeg/osx-arm64/README.txt

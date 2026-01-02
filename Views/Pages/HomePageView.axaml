@@ -89,6 +89,19 @@
           </StackPanel>
 
           <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="축소 품질" Width="90" VerticalAlignment="Center"/>
+            <ComboBox Width="140"
+                      ItemsSource="{Binding DownscaleQualityOptions}"
+                      SelectedItem="{Binding SelectedDownscaleQualityOption}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox Content="추적 사용" IsChecked="{Binding AutoTrackingEnabled}"/>
             <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
             <ComboBox Width="80"
@@ -102,6 +115,19 @@
                     IsChecked="{Binding AutoUseOrtOptimization}"/>
           <CheckBox Content="GPU 가속(가능한 경우, OS별)"
                     IsChecked="{Binding AutoUseGpu}"/>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="ONNX 스레드" Width="90" VerticalAlignment="Center"/>
+            <ComboBox Width="140"
+                      ItemsSource="{Binding OrtThreadOptions}"
+                      SelectedItem="{Binding SelectedOrtThreadOption}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
         </StackPanel>
 
         </StackPanel>
@@ -155,9 +181,15 @@
           <TextBlock Text="{Binding AutoStatusText}"
                      IsVisible="{Binding IsAutoRunning}"
                      Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
-          <TextBlock Text="{Binding AutoAccelStatus}"
-                     IsVisible="{Binding IsAutoRunning}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+          <StackPanel Orientation="Horizontal" Spacing="8"
+                      IsVisible="{Binding IsAutoRunning}">
+            <TextBlock Text="{Binding AutoAccelStatus}"
+                       Opacity="0.85" FontSize="13" TextWrapping="Wrap" Width="360"/>
+            <Button Content="복사"
+                    Command="{Binding CopyAccelStatusCommand}"
+                    VerticalAlignment="Center"
+                    Padding="8,2"/>
+          </StackPanel>
           <Button Content="취소"
                   IsVisible="{Binding IsAutoRunning}"
                   Command="{Binding CancelAutoCommand}" />

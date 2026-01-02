@@ -29,6 +29,17 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks[frameIndex] = new FaceMaskData(size, faces.ToArray());
     }
 
+    public void SetFaceRects(int frameIndex, Rect[] faces, PixelSize size)
+    {
+        if (faces == null || faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
+        {
+            _faceMasks.TryRemove(frameIndex, out _);
+            return;
+        }
+
+        _faceMasks[frameIndex] = new FaceMaskData(size, faces);
+    }
+
     public WriteableBitmap? GetFinalMask(int frameIndex)
     {
         if (_masks.TryGetValue(frameIndex, out var m))
