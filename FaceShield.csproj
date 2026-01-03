@@ -58,7 +58,6 @@
     <!-- Windows: DirectML 빌드 사용 -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" Condition="'$(OS)' == 'Windows_NT'" />
     <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.4" Condition="'$(OS)' == 'Windows_NT'" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.CoreML" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.9" Condition="'$(Configuration)' == 'Debug'" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
