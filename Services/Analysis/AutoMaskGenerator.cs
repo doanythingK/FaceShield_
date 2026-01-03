@@ -350,14 +350,22 @@ namespace FaceShield.Services.Analysis
                             }
                         }
 
-                        queue.Add(new BgraBuffer
+                        try
                         {
-                            Index = idx,
-                            Data = buffer,
-                            Stride = bgra.Stride,
-                            Width = bgra.Width,
-                            Height = bgra.Height
-                        }, ct);
+                            queue.Add(new BgraBuffer
+                            {
+                                Index = idx,
+                                Data = buffer,
+                                Stride = bgra.Stride,
+                                Width = bgra.Width,
+                                Height = bgra.Height
+                            }, ct);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            pool.Return(buffer);
+                            break;
+                        }
                     }
                 }
                 finally
@@ -581,14 +589,22 @@ namespace FaceShield.Services.Analysis
                             }
                         }
 
-                        queue.Add(new BgraBuffer
+                        try
                         {
-                            Index = idx,
-                            Data = buffer,
-                            Stride = bgra.Stride,
-                            Width = bgra.Width,
-                            Height = bgra.Height
-                        }, ct);
+                            queue.Add(new BgraBuffer
+                            {
+                                Index = idx,
+                                Data = buffer,
+                                Stride = bgra.Stride,
+                                Width = bgra.Width,
+                                Height = bgra.Height
+                            }, ct);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            pool.Return(buffer);
+                            break;
+                        }
                     }
                 }
                 finally
