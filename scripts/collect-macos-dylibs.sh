@@ -57,7 +57,7 @@ queue=()
 seen_contains() {
   local f="$1"
   local s
-  for s in "${seen_files[@]}"; do
+  for s in "${seen_files[@]-}"; do
     if [[ "$s" == "$f" ]]; then
       return 0
     fi
