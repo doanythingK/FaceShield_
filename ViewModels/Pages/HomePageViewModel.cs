@@ -108,7 +108,7 @@ namespace FaceShield.ViewModels.Pages
         };
 
         [ObservableProperty]
-        private DownscaleOption selectedDownscaleOption = null!;
+        private DownscaleOption? selectedDownscaleOption;
 
         public sealed class DownscaleQualityOption
         {
@@ -129,7 +129,7 @@ namespace FaceShield.ViewModels.Pages
         };
 
         [ObservableProperty]
-        private DownscaleQualityOption selectedDownscaleQualityOption = null!;
+        private DownscaleQualityOption? selectedDownscaleQualityOption;
 
         public sealed class OrtThreadOption
         {
@@ -145,7 +145,7 @@ namespace FaceShield.ViewModels.Pages
 
         public IReadOnlyList<OrtThreadOption> OrtThreadOptions { get; }
         [ObservableProperty]
-        private OrtThreadOption selectedOrtThreadOption = null!;
+        private OrtThreadOption? selectedOrtThreadOption;
 
         public IReadOnlyList<int> DetectEveryOptions { get; } = new[] { 1, 2, 3, 5 };
 
