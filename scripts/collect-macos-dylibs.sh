@@ -51,14 +51,25 @@ deps_for() {
   otool -L "$1" | tail -n +2 | awk '{print $1}'
 }
 
-declare -A seen_files
+seen_files=()
 queue=()
+
+seen_contains() {
+  local f="$1"
+  local s
+  for s in "${seen_files[@]}"; do
+    if [[ "$s" == "$f" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 add_file() {
   local f="$1"
   [[ -f "$f" ]] || return
-  if [[ -z "${seen_files[$f]+x}" ]]; then
-    seen_files["$f"]=1
+  if ! seen_contains "$f"; then
+    seen_files+=("$f")
     queue+=("$f")
   fi
 }
