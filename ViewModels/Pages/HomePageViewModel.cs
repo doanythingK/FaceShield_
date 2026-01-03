@@ -336,19 +336,19 @@ namespace FaceShield.ViewModels.Pages
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
-        partial void OnSelectedDownscaleOptionChanged(DownscaleOption value)
+        partial void OnSelectedDownscaleOptionChanged(DownscaleOption? value)
         {
             PersistAutoSettings();
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
-        partial void OnSelectedDownscaleQualityOptionChanged(DownscaleQualityOption value)
+        partial void OnSelectedDownscaleQualityOptionChanged(DownscaleQualityOption? value)
         {
             PersistAutoSettings();
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
-        partial void OnSelectedOrtThreadOptionChanged(OrtThreadOption value)
+        partial void OnSelectedOrtThreadOptionChanged(OrtThreadOption? value)
         {
             PersistAutoSettings();
             if (!IsAutoRunning || _activeAutoWorkspace == null)
@@ -384,15 +384,15 @@ namespace FaceShield.ViewModels.Pages
 
             var downscale = DownscaleOptions.FirstOrDefault(o => Math.Abs(o.Ratio - saved.DownscaleRatio) < 0.0001);
             if (downscale != null)
-                selectedDownscaleOption = downscale;
+                SelectedDownscaleOption = downscale;
 
             var quality = DownscaleQualityOptions.FirstOrDefault(o => (int)o.Quality == saved.DownscaleQuality);
             if (quality != null)
-                selectedDownscaleQualityOption = quality;
+                SelectedDownscaleQualityOption = quality;
 
             var ort = OrtThreadOptions.FirstOrDefault(o => o.Threads == saved.OrtThreads);
             if (ort != null)
-                selectedOrtThreadOption = ort;
+                SelectedOrtThreadOption = ort;
 
             AutoTrackingEnabled = saved.AutoTrackingEnabled;
             AutoDetectEveryNFrames = Math.Max(1, saved.AutoDetectEveryNFrames);

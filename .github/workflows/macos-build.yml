@@ -41,7 +41,7 @@ jobs:
             mkdir -p "$APP_PATH/Contents/MacOS"
             mkdir -p "$APP_PATH/Contents/Resources"
 
-            cp -R "$OUT_DIR/." "$APP_PATH/Contents/MacOS/"
+            rsync -a --exclude '*.app' "$OUT_DIR/" "$APP_PATH/Contents/MacOS/"
 
             if [ ! -f "$APP_PATH/Contents/MacOS/$APP_NAME" ] && [ -f "$APP_PATH/Contents/MacOS/$APP_NAME.dll" ]; then
               cp "$APP_PATH/Contents/MacOS/$APP_NAME.dll" "$APP_PATH/Contents/MacOS/$APP_NAME"
