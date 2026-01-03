@@ -20,6 +20,15 @@ namespace FaceShield.ViewModels.Workspace
         private bool isAutoRunning;
 
         [ObservableProperty]
+        private bool isExportRunning;
+
+        [ObservableProperty]
+        private int exportProgress;
+
+        [ObservableProperty]
+        private string? exportEtaText;
+
+        [ObservableProperty]
         private int brushDiameter = DefaultBrushDiameter;
 
         public int MinBrushDiameter => DefaultBrushDiameter;
@@ -39,6 +48,7 @@ namespace FaceShield.ViewModels.Workspace
         // 🔹 새 이벤트: 자동 분석 요청
         public event Action? AutoRequested;
         public event Action? AutoCancelRequested;
+        public event Action? ExportCancelRequested;
 
         [RelayCommand]
         private void SetAuto()
@@ -64,5 +74,8 @@ namespace FaceShield.ViewModels.Workspace
 
         [RelayCommand]
         private void CancelAuto() => AutoCancelRequested?.Invoke();
+
+        [RelayCommand]
+        private void CancelExport() => ExportCancelRequested?.Invoke();
     }
 }

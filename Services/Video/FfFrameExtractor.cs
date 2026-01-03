@@ -80,6 +80,7 @@ namespace FaceShield.Services.Video
         private AVFormatContext* _fmt;
         private AVCodecContext* _dec;
         private SwsContext* _sws;
+        private SwsContext* _swsScaled;
         private int _videoStreamIndex = -1;
         private AVBufferRef* _hwDeviceCtx;
         private AVPixelFormat _hwPixelFormat = AVPixelFormat.AV_PIX_FMT_NONE;
@@ -98,6 +99,9 @@ namespace FaceShield.Services.Video
         private AVFrame* _bgraReusable;
         private int _bgraReusableWidth;
         private int _bgraReusableHeight;
+        private AVFrame* _bgraScaledReusable;
+        private int _bgraScaledWidth;
+        private int _bgraScaledHeight;
 
         public FfFrameExtractor(string videoPath)
         {
@@ -153,6 +157,8 @@ namespace FaceShield.Services.Video
             if (ffmpeg.avcodec_open2(_dec, codec, null) < 0)
                 throw new InvalidOperationException("avcodec_open2 failed");
         }
+
+        public PixelSize FrameSize => new(_dec->width, _dec->height);
 
         /// <summary>
         /// 지정 프레임 인덱스의 BGRA WriteableBitmap 반환.
@@ -423,6 +429,94 @@ namespace FaceShield.Services.Video
             }
         }
 
+        public bool TryGetNextFrameRawScaled(
+            CancellationToken ct,
+            bool requireBgra,
+            int targetWidth,
+            int targetHeight,
+            bool useBilinear,
+            out BgraFrame frame,
+            out int frameIndex)
+        {
+            frame = default;
+            frameIndex = -1;
+
+            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
+
+            lock (_sync)
+            {
+                if (!_sequentialActive)
+                    throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawScaled.");
+
+                AVPacket* pkt = ffmpeg.av_packet_alloc();
+                AVFrame* src = ffmpeg.av_frame_alloc();
+
+                if (pkt == null || src == null)
+                {
+                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
+                    if (src != null) ffmpeg.av_frame_free(&src);
+                    return false;
+                }
+
+                try
+                {
+                    if (requireBgra)
+                    {
+                        if (!EnsureReusableScaledBgraFrame(targetWidth, targetHeight))
+                            return false;
+                        if (ffmpeg.av_frame_make_writable(_bgraScaledReusable) < 0)
+                            return false;
+                    }
+
+                    while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                    {
+                        if (pkt->stream_index != _videoStreamIndex)
+                        {
+                            ffmpeg.av_packet_unref(pkt);
+                            continue;
+                        }
+
+                        ffmpeg.avcodec_send_packet(_dec, pkt);
+                        ffmpeg.av_packet_unref(pkt);
+
+                        while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
+                        {
+                            long pts = src->best_effort_timestamp;
+                            if (pts == ffmpeg.AV_NOPTS_VALUE)
+                                pts = src->pts;
+
+                            if (!_sequentialStarted && pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
+                                continue;
+
+                            _sequentialStarted = true;
+                            frameIndex = _sequentialIndex++;
+
+                            if (!requireBgra)
+                                return true;
+
+                            var flags = useBilinear ? SwsFlags.SWS_BILINEAR : SwsFlags.SWS_POINT;
+                            if (ConvertDecodedFrameToBgraScaled(src, _bgraScaledReusable, targetWidth, targetHeight, flags))
+                            {
+                                frame = new BgraFrame(
+                                    (IntPtr)_bgraScaledReusable->data[0],
+                                    _bgraScaledReusable->linesize[0],
+                                    _bgraScaledReusable->width,
+                                    _bgraScaledReusable->height);
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                }
+                finally
+                {
+                    ffmpeg.av_packet_free(&pkt);
+                    ffmpeg.av_frame_free(&src);
+                }
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -434,6 +528,11 @@ namespace FaceShield.Services.Video
                 {
                     ffmpeg.sws_freeContext(_sws);
                     _sws = null;
+                }
+                if (_swsScaled != null)
+                {
+                    ffmpeg.sws_freeContext(_swsScaled);
+                    _swsScaled = null;
                 }
 
                 if (_hwDeviceCtx != null)
@@ -462,6 +561,14 @@ namespace FaceShield.Services.Video
                         ffmpeg.av_frame_free(pBgra);
                     }
                     _bgraReusable = null;
+                }
+                if (_bgraScaledReusable != null)
+                {
+                    fixed (AVFrame** pBgra = &_bgraScaledReusable)
+                    {
+                        ffmpeg.av_frame_free(pBgra);
+                    }
+                    _bgraScaledReusable = null;
                 }
 
                 if (_fmt != null)
@@ -533,6 +640,39 @@ namespace FaceShield.Services.Video
 
         private bool ConvertDecodedFrameToBgra(AVFrame* src, AVFrame* bgra)
         {
+            return ConvertDecodedFrameToBgraInternal(
+                src,
+                bgra,
+                _dec->width,
+                _dec->height,
+                SwsFlags.SWS_BILINEAR,
+                ref _sws);
+        }
+
+        private bool ConvertDecodedFrameToBgraScaled(
+            AVFrame* src,
+            AVFrame* bgra,
+            int dstW,
+            int dstH,
+            SwsFlags flags)
+        {
+            return ConvertDecodedFrameToBgraInternal(
+                src,
+                bgra,
+                dstW,
+                dstH,
+                flags,
+                ref _swsScaled);
+        }
+
+        private bool ConvertDecodedFrameToBgraInternal(
+            AVFrame* src,
+            AVFrame* bgra,
+            int dstW,
+            int dstH,
+            SwsFlags flags,
+            ref SwsContext* sws)
+        {
             AVFrame* swFrame = src;
             AVFrame* temp = null;
 
@@ -586,14 +726,14 @@ namespace FaceShield.Services.Video
             int srcW = swFrame->width;
             int srcH = swFrame->height;
 
-            _sws = ffmpeg.sws_getCachedContext(
-                _sws,
+            sws = ffmpeg.sws_getCachedContext(
+                sws,
                 srcW, srcH, srcFmt,
-                _dec->width, _dec->height, AVPixelFormat.AV_PIX_FMT_BGRA,
-                (int)SwsFlags.SWS_BILINEAR,
+                dstW, dstH, AVPixelFormat.AV_PIX_FMT_BGRA,
+                (int)flags,
                 null, null, null);
 
-            if (_sws == null)
+            if (sws == null)
             {
                 if (temp != null)
                     ffmpeg.av_frame_free(&temp);
@@ -601,7 +741,7 @@ namespace FaceShield.Services.Video
             }
 
             ffmpeg.sws_scale(
-                _sws,
+                sws,
                 swFrame->data, swFrame->linesize,
                 0, srcH,
                 bgra->data, bgra->linesize);
@@ -649,6 +789,43 @@ namespace FaceShield.Services.Video
 
             _bgraReusableWidth = w;
             _bgraReusableHeight = h;
+            return true;
+        }
+
+        private bool EnsureReusableScaledBgraFrame(int w, int h)
+        {
+            if (_bgraScaledReusable != null && _bgraScaledWidth == w && _bgraScaledHeight == h)
+                return true;
+
+            if (_bgraScaledReusable != null)
+            {
+                fixed (AVFrame** pBgra = &_bgraScaledReusable)
+                {
+                    ffmpeg.av_frame_free(pBgra);
+                }
+                _bgraScaledReusable = null;
+            }
+
+            _bgraScaledReusable = ffmpeg.av_frame_alloc();
+            if (_bgraScaledReusable == null)
+                return false;
+
+            _bgraScaledReusable->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
+            _bgraScaledReusable->width = w;
+            _bgraScaledReusable->height = h;
+
+            if (ffmpeg.av_frame_get_buffer(_bgraScaledReusable, 32) < 0)
+            {
+                fixed (AVFrame** pBgra = &_bgraScaledReusable)
+                {
+                    ffmpeg.av_frame_free(pBgra);
+                }
+                _bgraScaledReusable = null;
+                return false;
+            }
+
+            _bgraScaledWidth = w;
+            _bgraScaledHeight = h;
             return true;
         }
 

@@ -11,6 +11,7 @@ using FaceShield.Services.Workspace;
 using FaceShield.ViewModels.Workspace;
 using FaceShield.Views.Dialogs;
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,6 +32,8 @@ namespace FaceShield.ViewModels.Pages
         private int _autoLastProcessedFrame = -1;
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private bool _sessionInitialized;
+        private readonly Queue<(DateTime Timestamp, int Progress)> _exportEtaSamples = new();
+        private (DateTime Timestamp, int Progress) _exportLastSample;
 
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
@@ -38,6 +41,7 @@ namespace FaceShield.ViewModels.Pages
         // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
         private bool _isAutoRunning;
         private CancellationTokenSource? _autoCts;
+        private CancellationTokenSource? _exportCts;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -116,6 +120,7 @@ namespace FaceShield.ViewModels.Pages
             // 🔹 자동 모드 버튼 → 자동 마스크 생성 연결
             ToolPanel.AutoRequested += OnAutoRequested;
             ToolPanel.AutoCancelRequested += OnAutoCancelRequested;
+            ToolPanel.ExportCancelRequested += OnExportCancelRequested;
         }
 
         public async Task EnsureSessionInitializedAsync(IProgress<int>? loadProgress)
@@ -139,7 +144,9 @@ namespace FaceShield.ViewModels.Pages
         }
 
 
-        private Task SaveVideoAsync()
+        private async Task SaveVideoAsync(
+            IProgress<ExportProgress>? exportProgress = null,
+            CancellationToken cancellationToken = default)
         {
             string input = FrameList.VideoPath;
             string output = System.IO.Path.Combine(
@@ -148,16 +155,50 @@ namespace FaceShield.ViewModels.Pages
 
             var exporter = new VideoExportService(_maskProvider);
 
-            return Task.Run(() =>
+            ToolPanel.IsExportRunning = true;
+            ToolPanel.ExportProgress = 0;
+            ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
+            _exportEtaSamples.Clear();
+
+            var progress = new Progress<ExportProgress>(p =>
             {
-                exporter.Export(input, output, blurRadius: 6);
+                exportProgress?.Report(p);
+                int percent = Math.Clamp(p.Percent, 0, 100);
+                ToolPanel.ExportProgress = percent;
+                UpdateExportEta(DateTime.UtcNow, percent);
             });
+
+            try
+            {
+                _exportCts?.Dispose();
+                _exportCts = cancellationToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                    : new CancellationTokenSource();
+
+                await Task.Run(() =>
+                {
+                    exporter.Export(input, output, blurRadius: 6, progress, _exportCts.Token);
+                }, _exportCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // 사용자 취소는 정상 흐름
+            }
+            finally
+            {
+                ToolPanel.IsExportRunning = false;
+                ToolPanel.ExportProgress = 0;
+                ToolPanel.ExportEtaText = null;
+                _exportCts?.Dispose();
+                _exportCts = null;
+            }
         }
 
         public Task<bool> RunAutoAsync(
             bool exportAfter,
             IProgress<int>? progress = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IProgress<ExportProgress>? exportProgress = null)
         {
             if (_isAutoRunning)
                 return Task.FromResult(false);
@@ -170,16 +211,23 @@ namespace FaceShield.ViewModels.Pages
             ToolPanel.IsAutoRunning = true;
             ToolPanel.AutoProgress = 0;
 
-            return RunAutoCoreAsync(exportAfter, progress);
+            return RunAutoCoreAsync(exportAfter, progress, exportProgress);
         }
 
-        private async Task<bool> RunAutoCoreAsync(bool exportAfter, IProgress<int>? progress)
+        private async Task<bool> RunAutoCoreAsync(
+            bool exportAfter,
+            IProgress<int>? progress,
+            IProgress<ExportProgress>? exportProgress)
         {
             try
             {
                 using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
 
-                var generator = new AutoMaskGenerator(detector, _maskProvider, _autoOptions);
+                var generator = new AutoMaskGenerator(
+                    detector,
+                    _maskProvider,
+                    _autoOptions,
+                    detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
 
@@ -220,7 +268,7 @@ namespace FaceShield.ViewModels.Pages
                 await BuildAutoAnomaliesAsync();
 
                 if (exportAfter)
-                    await SaveVideoAsync();
+                    await SaveVideoAsync(exportProgress, _autoCts?.Token ?? CancellationToken.None);
 
                 _autoCompleted = true;
                 _autoResumeIndex = 0;
@@ -268,6 +316,11 @@ namespace FaceShield.ViewModels.Pages
             _autoCts?.Cancel();
         }
 
+        private void OnExportCancelRequested()
+        {
+            _exportCts?.Cancel();
+        }
+
         private Task ShowAutoErrorAsync(Exception ex, bool isDuringRun)
         {
             string title = isDuringRun ? "자동 모드 실행 중 오류" : "자동 모드 준비 실패";
@@ -292,6 +345,52 @@ namespace FaceShield.ViewModels.Pages
                 return $"{fnf.Message}\n누락 파일: {fnf.FileName}";
 
             return ex.Message;
+        }
+
+        private void UpdateExportEta(DateTime timestamp, int progress)
+        {
+            if (progress <= 0 || progress >= 100)
+            {
+                ToolPanel.ExportEtaText = null;
+                return;
+            }
+
+            if (_exportEtaSamples.Count > 0 && progress <= _exportLastSample.Progress)
+                return;
+
+            _exportEtaSamples.Enqueue((timestamp, progress));
+            _exportLastSample = (timestamp, progress);
+
+            while (_exportEtaSamples.Count > 0 &&
+                   (timestamp - _exportEtaSamples.Peek().Timestamp).TotalSeconds > 10)
+                _exportEtaSamples.Dequeue();
+
+            if (_exportEtaSamples.Count < 2)
+                return;
+
+            var first = _exportEtaSamples.Peek();
+            var last = _exportLastSample;
+            var elapsedSeconds = (last.Timestamp - first.Timestamp).TotalSeconds;
+            var progressed = last.Progress - first.Progress;
+
+            if (elapsedSeconds <= 0 || progressed <= 0)
+                return;
+
+            double ratePerSecond = progressed / elapsedSeconds;
+            double remaining = (100 - progress) / ratePerSecond;
+            if (remaining < 0)
+                return;
+
+            ToolPanel.ExportEtaText = $"예상 남은 시간: {FormatEta(TimeSpan.FromSeconds(remaining))}";
+        }
+
+        private static string FormatEta(TimeSpan remaining)
+        {
+            if (remaining.TotalHours >= 1)
+                return $"{(int)remaining.TotalHours}시간 {Math.Max(0, remaining.Minutes)}분 {Math.Max(0, remaining.Seconds)}초";
+            if (remaining.TotalMinutes >= 1)
+                return $"{(int)remaining.TotalMinutes}분 {Math.Max(0, remaining.Seconds)}초";
+            return $"{Math.Max(0, (int)remaining.TotalSeconds)}초";
         }
 
         [RelayCommand]
@@ -325,7 +424,11 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
-                var generator = new AutoMaskGenerator(detector, _maskProvider, _autoOptions);
+                var generator = new AutoMaskGenerator(
+                    detector,
+                    _maskProvider,
+                    _autoOptions,
+                    detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
 
                 var effectiveProgress = new Progress<int>(p =>
                 {

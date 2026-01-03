@@ -1,6 +1,7 @@
 using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
 using System;
+using System.Diagnostics;
 
 namespace FaceShield.Services.Video;
 
@@ -14,7 +15,12 @@ public unsafe sealed class VideoExportService
         _maskProvider = maskProvider;
     }
 
-    public void Export(string inputPath, string outputPath, int blurRadius)
+    public void Export(
+        string inputPath,
+        string outputPath,
+        int blurRadius,
+        IProgress<ExportProgress>? progress = null,
+        System.Threading.CancellationToken cancellationToken = default)
     {
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
 
@@ -33,6 +39,12 @@ public unsafe sealed class VideoExportService
 
         int videoStreamIndex = -1;
         int frameIndex = 0;
+        int totalFrames = 0;
+        long swsToBgraMs = 0;
+        long maskMs = 0;
+        long swsToEncMs = 0;
+        long encodeMs = 0;
+        var swTotal = Stopwatch.StartNew();
 
         try
         {
@@ -52,6 +64,25 @@ public unsafe sealed class VideoExportService
                 throw new InvalidOperationException("Video stream not found.");
 
             AVStream* inStream = inFmt->streams[videoStreamIndex];
+            totalFrames = (int)inStream->nb_frames;
+            if (totalFrames <= 0)
+            {
+                double fps =
+                    inStream->avg_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(inStream->avg_frame_rate)
+                        : inStream->r_frame_rate.num != 0
+                            ? ffmpeg.av_q2d(inStream->r_frame_rate)
+                            : 0.0;
+
+                double durationSeconds = inStream->duration != 0
+                    ? inStream->duration * ffmpeg.av_q2d(inStream->time_base)
+                    : inFmt->duration > 0
+                        ? inFmt->duration / (double)ffmpeg.AV_TIME_BASE
+                        : 0.0;
+
+                if (fps > 0 && durationSeconds > 0)
+                    totalFrames = (int)Math.Round(durationSeconds * fps);
+            }
 
             AVCodec* decoder = ffmpeg.avcodec_find_decoder(inStream->codecpar->codec_id);
             dec = ffmpeg.avcodec_alloc_context3(decoder);
@@ -66,12 +97,15 @@ public unsafe sealed class VideoExportService
 
             enc->width = dec->width;
             enc->height = dec->height;
-            enc->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
+            enc->pix_fmt = dec->pix_fmt;
             enc->time_base = inStream->time_base;
             enc->framerate = inStream->r_frame_rate;
 
             if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
                 enc->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
+
+            if (!IsPixFmtSupported(encoder, enc->pix_fmt))
+                enc->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
 
             Throw(ffmpeg.avcodec_open2(enc, encoder, null));
 
@@ -122,6 +156,10 @@ public unsafe sealed class VideoExportService
 
                 while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                        throw new OperationCanceledException(cancellationToken);
+
+                    var tBgra = Stopwatch.StartNew();
                     Throw(ffmpeg.sws_scale(
                         swsDecToBgra,
                         frame->data,
@@ -130,6 +168,8 @@ public unsafe sealed class VideoExportService
                         frame->height,
                         bgra->data,
                         bgra->linesize));
+                    tBgra.Stop();
+                    swsToBgraMs += tBgra.ElapsedMilliseconds;
 
                     WriteableBitmap? mask = null;
                     bool disposeMask = false;
@@ -153,11 +193,15 @@ public unsafe sealed class VideoExportService
 
                     if (mask != null)
                     {
+                        var tMask = Stopwatch.StartNew();
                         _masked.ApplyMaskAndBlur(bgra, mask, blurRadius);
+                        tMask.Stop();
+                        maskMs += tMask.ElapsedMilliseconds;
                         if (disposeMask)
                             mask.Dispose();
                     }
 
+                    var tEncSws = Stopwatch.StartNew();
                     Throw(ffmpeg.sws_scale(
                         swsBgraToEnc,
                         bgra->data,
@@ -166,9 +210,12 @@ public unsafe sealed class VideoExportService
                         bgra->height,
                         encFrame->data,
                         encFrame->linesize));
+                    tEncSws.Stop();
+                    swsToEncMs += tEncSws.ElapsedMilliseconds;
 
                     encFrame->pts = frame->pts;
 
+                    var tEncode = Stopwatch.StartNew();
                     Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
                     while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
                     {
@@ -176,12 +223,23 @@ public unsafe sealed class VideoExportService
                         Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
                         ffmpeg.av_packet_unref(outPkt);
                     }
+                    tEncode.Stop();
+                    encodeMs += tEncode.ElapsedMilliseconds;
 
                     frameIndex++;
+                    if (progress != null && (frameIndex % 15 == 0 || frameIndex == totalFrames))
+                        progress.Report(new ExportProgress(frameIndex, totalFrames));
+                    if (frameIndex % 60 == 0)
+                    {
+                        Debug.WriteLine(
+                            $"[Export] frames={frameIndex}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                    }
                 }
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
+            Debug.WriteLine(
+                $"[Export] done frames={frameIndex}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
         }
         finally
         {
@@ -207,6 +265,20 @@ public unsafe sealed class VideoExportService
             if (inFmt != null)
                 ffmpeg.avformat_close_input(&inFmt);
         }
+    }
+
+    private static unsafe bool IsPixFmtSupported(AVCodec* encoder, AVPixelFormat fmt)
+    {
+        if (encoder == null || encoder->pix_fmts == null)
+            return true;
+
+        for (AVPixelFormat* p = encoder->pix_fmts; *p != AVPixelFormat.AV_PIX_FMT_NONE; p++)
+        {
+            if (*p == fmt)
+                return true;
+        }
+
+        return false;
     }
 
     private static void Throw(int err)

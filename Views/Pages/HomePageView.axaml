@@ -115,6 +115,8 @@
                     IsChecked="{Binding AutoUseOrtOptimization}"/>
           <CheckBox Content="GPU 가속(가능한 경우, OS별)"
                     IsChecked="{Binding AutoUseGpu}"/>
+          <CheckBox Content="자동 완료 후 파일 저장"
+                    IsChecked="{Binding AutoExportAfter}"/>
 
           <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="ONNX 스레드" Width="90" VerticalAlignment="Center"/>
@@ -127,6 +129,13 @@
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="병렬 세션" Width="90" VerticalAlignment="Center"/>
+            <ComboBox Width="140"
+                      ItemsSource="{Binding ParallelSessionOptions}"
+                      SelectedItem="{Binding SelectedParallelSessionCount}"/>
           </StackPanel>
 
         </StackPanel>
@@ -176,6 +185,18 @@
                        Value="{Binding BusyProgress}" />
           <TextBlock Text="{Binding BusyProgress, StringFormat={}{0}%}"
                      Opacity="0.8" FontSize="13" />
+          <TextBlock Text="{Binding ExportProgress, StringFormat=내보내기 {0}%}"
+                     IsVisible="{Binding IsExportRunning}"
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding ExportEtaText}"
+                     IsVisible="{Binding IsExportRunning}"
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+          <Button Content="내보내기 취소"
+                  IsVisible="{Binding IsExportRunning}"
+                  Command="{Binding CancelExportCommand}" />
+          <TextBlock Text="{Binding WorkspaceEtaText}"
+                     IsVisible="{Binding IsWorkspaceLoading}"
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
           <TextBlock Text="{Binding AutoEtaText}"
                      IsVisible="{Binding IsAutoRunning}"
                      Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>

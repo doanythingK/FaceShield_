@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
@@ -28,6 +29,11 @@ namespace FaceShield.Services.FaceDetection
         private static readonly object _statusLock = new();
         private static string _lastExecutionProviderLabel = "CPU";
         private static string? _lastExecutionProviderError;
+        private static readonly object _perfLock = new();
+        private static long _perfCalls;
+        private static long _perfPreMs;
+        private static long _perfInferMs;
+        private static long _perfTotalMs;
 
         public FaceOnnxDetector()
         {
@@ -92,8 +98,7 @@ namespace FaceShield.Services.FaceDetection
             if (frame is null)
                 return Array.Empty<FaceDetectionResult>();
 
-            var input = ConvertToImageArray(frame);
-            return DetectFaces(input);
+            return DetectFacesWithTiming(() => ConvertToImageArray(frame));
         }
 
         internal IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(WriteableBitmap frame, double ratio)
@@ -113,8 +118,7 @@ namespace FaceShield.Services.FaceDetection
                 return DetectFaces(frame);
 
             bool useBilinear = quality == DownscaleQuality.BalancedBilinear;
-            var input = ConvertToImageArrayDownscaled(frame, ratio, useBilinear);
-            return DetectFaces(input);
+            return DetectFacesWithTiming(() => ConvertToImageArrayDownscaled(frame, ratio, useBilinear));
         }
 
         internal IReadOnlyList<FaceDetectionResult> DetectFacesBgra(
@@ -130,25 +134,34 @@ namespace FaceShield.Services.FaceDetection
 
             if (ratio >= 1.0 || ratio <= 0)
             {
-                var inputFull = ConvertToImageArrayFromBgra(data, stride, width, height);
-                return DetectFaces(inputFull);
+                return DetectFacesWithTiming(() => ConvertToImageArrayFromBgra(data, stride, width, height));
             }
 
             bool useBilinear = quality == DownscaleQuality.BalancedBilinear;
-            var input = ConvertToImageArrayFromBgraDownscaled(data, stride, width, height, ratio, useBilinear);
-            return DetectFaces(input);
+            return DetectFacesWithTiming(() => ConvertToImageArrayFromBgraDownscaled(data, stride, width, height, ratio, useBilinear));
         }
 
         public IReadOnlyList<FaceDetectionResult> DetectFaces(Image<Rgb24> img)
         {
-            var input = ConvertToImageArray(img);
-            return DetectFaces(input);
+            return DetectFacesWithTiming(() => ConvertToImageArray(img));
         }
 
-        private IReadOnlyList<FaceDetectionResult> DetectFaces(float[][,] input)
+        private IReadOnlyList<FaceDetectionResult> DetectFacesWithTiming(Func<float[][,]> buildInput)
+        {
+            var pre = Stopwatch.StartNew();
+            var input = buildInput();
+            pre.Stop();
+            return DetectFaces(input, pre.ElapsedMilliseconds);
+        }
+
+        private IReadOnlyList<FaceDetectionResult> DetectFaces(float[][,] input, long preMs)
         {
             // FaceONNX의 Forward는 확실히 존재함
+            var infer = Stopwatch.StartNew();
             var rects = _detector.Forward(input);
+            infer.Stop();
+
+            RecordPerf(preMs, infer.ElapsedMilliseconds);
 
             var results = new List<FaceDetectionResult>();
 
@@ -168,6 +181,23 @@ namespace FaceShield.Services.FaceDetection
             }
 
             return results;
+        }
+
+        private static void RecordPerf(long preMs, long inferMs)
+        {
+            lock (_perfLock)
+            {
+                _perfCalls++;
+                _perfPreMs += preMs;
+                _perfInferMs += inferMs;
+                _perfTotalMs += preMs + inferMs;
+
+                if (_perfCalls % 60 == 0)
+                {
+                    Debug.WriteLine(
+                        $"[OnnxPerf] calls={_perfCalls}, preMs={_perfPreMs}, inferMs={_perfInferMs}, totalMs={_perfTotalMs}");
+                }
+            }
         }
 
         private float[][,] ConvertToImageArray(WriteableBitmap bmp)

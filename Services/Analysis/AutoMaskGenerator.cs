@@ -5,6 +5,7 @@ using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,15 +24,18 @@ namespace FaceShield.Services.Analysis
         private readonly IFaceDetector _detector;
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
+        private readonly Func<IFaceDetector>? _detectorFactory;
 
         public AutoMaskGenerator(
             IFaceDetector detector,
             FrameMaskProvider maskProvider,
-            AutoMaskOptions? options = null)
+            AutoMaskOptions? options = null,
+            Func<IFaceDetector>? detectorFactory = null)
         {
             _detector = detector ?? throw new ArgumentNullException(nameof(detector));
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
             _options = options ?? new AutoMaskOptions();
+            _detectorFactory = detectorFactory;
         }
 
         public async Task GenerateAsync(
@@ -57,10 +61,44 @@ namespace FaceShield.Services.Analysis
 
                     if (canPipeline && _detector is FaceOnnxDetector onnx)
                     {
+                        if (_detectorFactory != null && _options.ParallelDetectorCount > 1)
+                        {
+                            Debug.WriteLine($"[AutoMask] mode=pipe-parallel({_options.ParallelDetectorCount})");
+                            var detectors = new List<FaceOnnxDetector> { onnx };
+                            try
+                            {
+                                int toCreate = Math.Max(1, _options.ParallelDetectorCount) - 1;
+                                for (int i = 0; i < toCreate; i++)
+                                {
+                                    var created = _detectorFactory();
+                                    if (created is FaceOnnxDetector extra)
+                                        detectors.Add(extra);
+                                    else
+                                    {
+                                        created.Dispose();
+                                        break;
+                                    }
+                                }
+
+                                if (detectors.Count > 1)
+                                {
+                                    GeneratePipelinedDetectAllParallel(videoPath, detectors, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                                    return;
+                                }
+                            }
+                            finally
+                            {
+                                for (int i = 1; i < detectors.Count; i++)
+                                    detectors[i].Dispose();
+                            }
+                        }
+
+                        Debug.WriteLine("[AutoMask] mode=pipe-single");
                         GeneratePipelinedDetectAll(videoPath, onnx, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
                         return;
                     }
 
+                    Debug.WriteLine("[AutoMask] mode=sequential");
                     GenerateSequential(videoPath, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
                 }, ct);
             }
@@ -87,8 +125,21 @@ namespace FaceShield.Services.Analysis
 
             int nextIndex = start;
             PixelSize? frameSize = null;
+            PixelSize fullSize = extractor.FrameSize;
             bool useRaw = _detector is FaceOnnxDetector;
             FaceOnnxDetector? onnx = _detector as FaceOnnxDetector;
+            bool useProxy = useRaw && _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
+            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
+            int proxyWidth = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio)) : fullSize.Width;
+            int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
+            double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
+            double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var swTotal = Stopwatch.StartNew();
+            long readMs = 0;
+            long detectMs = 0;
+            long maskMs = 0;
+            int processed = 0;
+            var roiStats = new RoiDetectStats();
             while (!ct.IsCancellationRequested)
             {
                 bool shouldDetect = _options.DetectEveryNFrames <= 1
@@ -99,16 +150,27 @@ namespace FaceShield.Services.Analysis
                 WriteableBitmap? frame = null;
                 FfFrameExtractor.BgraFrame bgra = default;
 
+                var tRead = Stopwatch.StartNew();
                 if (useRaw)
                 {
-                    if (!extractor.TryGetNextFrameRaw(ct, shouldDetect, out bgra, out idx))
-                        break;
+                    if (useProxy)
+                    {
+                        if (!extractor.TryGetNextFrameRawScaled(ct, shouldDetect, proxyWidth, proxyHeight, useBilinear, out bgra, out idx))
+                            break;
+                    }
+                    else
+                    {
+                        if (!extractor.TryGetNextFrameRaw(ct, shouldDetect, out bgra, out idx))
+                            break;
+                    }
                 }
                 else
                 {
                     if (!extractor.TryGetNextFrame(ct, shouldDetect, out frame, out idx))
                         break;
                 }
+                tRead.Stop();
+                readMs += tRead.ElapsedMilliseconds;
 
                 nextIndex = idx + 1;
 
@@ -127,27 +189,39 @@ namespace FaceShield.Services.Analysis
 
                 if (shouldDetect)
                 {
+                    var tDetect = Stopwatch.StartNew();
                     if (useRaw)
                     {
                         if (bgra.Data == IntPtr.Zero || onnx == null)
                         {
+                            tDetect.Stop();
+                            detectMs += tDetect.ElapsedMilliseconds;
                             ReportProgress(progress, idx, totalFrames);
                             continue;
                         }
 
-                        frameSize = new PixelSize(bgra.Width, bgra.Height);
-                        faces = onnx.DetectFacesBgra(
+                        frameSize = fullSize;
+                        faces = DetectFacesBgraSmart(
+                            onnx,
                             bgra.Data,
                             bgra.Stride,
                             bgra.Width,
                             bgra.Height,
+                            useProxy,
                             _options.DownscaleRatio,
-                            _options.DownscaleQuality);
+                            _options.DownscaleQuality,
+                            lastFaces,
+                            fullSize,
+                            scaleX,
+                            scaleY,
+                            roiStats);
                     }
                     else
                     {
                         if (frame == null)
                         {
+                            tDetect.Stop();
+                            detectMs += tDetect.ElapsedMilliseconds;
                             ReportProgress(progress, idx, totalFrames);
                             continue;
                         }
@@ -155,6 +229,8 @@ namespace FaceShield.Services.Analysis
                         frameSize = frame.PixelSize;
                         faces = DetectFacesWithOptions(frame);
                     }
+                    tDetect.Stop();
+                    detectMs += tDetect.ElapsedMilliseconds;
 
                     lastFaces = faces.Count > 0 ? faces : null;
                 }
@@ -175,13 +251,25 @@ namespace FaceShield.Services.Analysis
 
                 if (frameSize.HasValue)
                 {
+                    var tMask = Stopwatch.StartNew();
                     _maskProvider.SetFaceRects(idx, ExtractBounds(faces), frameSize.Value);
+                    tMask.Stop();
+                    maskMs += tMask.ElapsedMilliseconds;
                 }
 
                 ReportProgress(progress, idx, totalFrames);
+                processed++;
+
+                if (processed % 60 == 0)
+                {
+                    Debug.WriteLine(
+                        $"[AutoMask] frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                }
             }
 
             progress?.Report(100);
+            Debug.WriteLine(
+                $"[AutoMask] done frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
         }
 
         private sealed class BgraBuffer
@@ -206,8 +294,22 @@ namespace FaceShield.Services.Analysis
             int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
             extractor.StartSequentialRead(start);
 
+            PixelSize fullSize = extractor.FrameSize;
+            bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
+            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
+            int proxyWidth = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio)) : fullSize.Width;
+            int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
+            double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
+            double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+
             using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(2);
             var pool = System.Buffers.ArrayPool<byte>.Shared;
+            long decodeMs = 0;
+            long detectMs = 0;
+            int processed = 0;
+            var swTotal = Stopwatch.StartNew();
+            IReadOnlyList<FaceDetectionResult>? lastFaces = null;
+            var roiStats = new RoiDetectStats();
 
             var producer = Task.Run(() =>
             {
@@ -215,7 +317,13 @@ namespace FaceShield.Services.Analysis
                 {
                     while (!ct.IsCancellationRequested)
                     {
-                        if (!extractor.TryGetNextFrameRaw(ct, requireBgra: true, out var bgra, out var idx))
+                        var tDecode = Stopwatch.StartNew();
+                        bool ok = useProxy
+                            ? extractor.TryGetNextFrameRawScaled(ct, requireBgra: true, proxyWidth, proxyHeight, useBilinear, out var bgra, out var idx)
+                            : extractor.TryGetNextFrameRaw(ct, requireBgra: true, out bgra, out idx);
+                        tDecode.Stop();
+                        decodeMs += tDecode.ElapsedMilliseconds;
+                        if (!ok)
                             break;
 
                         if (idx >= totalFrames)
@@ -275,26 +383,43 @@ namespace FaceShield.Services.Analysis
                             {
                                 fixed (byte* src = item.Data)
                                 {
-                                    var faces = onnx.DetectFacesBgra(
+                                    var tDetect = Stopwatch.StartNew();
+                                    var faces = DetectFacesBgraSmart(
+                                        onnx,
                                         (IntPtr)src,
                                         item.Stride,
                                         item.Width,
                                         item.Height,
+                                        useProxy,
                                         _options.DownscaleRatio,
-                                        _options.DownscaleQuality);
+                                        _options.DownscaleQuality,
+                                        lastFaces,
+                                        fullSize,
+                                        scaleX,
+                                        scaleY,
+                                        roiStats);
+                                    tDetect.Stop();
+                                    detectMs += tDetect.ElapsedMilliseconds;
 
                                     if (faces.Count > 0)
                                     {
                                         _maskProvider.SetFaceRects(
                                             item.Index,
                                             ExtractBounds(faces),
-                                            new PixelSize(item.Width, item.Height));
+                                            useProxy ? fullSize : new PixelSize(item.Width, item.Height));
+                                        lastFaces = faces;
                                     }
                                 }
                             }
                         }
 
                         ReportProgress(progress, item.Index, totalFrames);
+                        processed++;
+                        if (processed % 60 == 0)
+                        {
+                            Debug.WriteLine(
+                                $"[AutoMaskPipe] frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                        }
                     }
                     finally
                     {
@@ -308,6 +433,8 @@ namespace FaceShield.Services.Analysis
             }
 
             progress?.Report(100);
+            Debug.WriteLine(
+                $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
         }
 
         public async Task<bool> GenerateFrameAsync(
@@ -384,6 +511,391 @@ namespace FaceShield.Services.Analysis
                 });
             }
 
+            return scaled;
+        }
+
+        private void GeneratePipelinedDetectAllParallel(
+            string videoPath,
+            IReadOnlyList<FaceOnnxDetector> detectors,
+            IProgress<int>? progress,
+            CancellationToken ct,
+            int startFrameIndex,
+            int totalFrames,
+            Action<int>? onFrameProcessed)
+        {
+            using var extractor = new FfFrameExtractor(videoPath);
+            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            extractor.StartSequentialRead(start);
+
+            PixelSize fullSize = extractor.FrameSize;
+            bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
+            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
+            int proxyWidth = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio)) : fullSize.Width;
+            int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
+            double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
+            double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+
+            using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(Math.Max(2, detectors.Count * 2));
+            var pool = System.Buffers.ArrayPool<byte>.Shared;
+            long decodeMs = 0;
+            long detectMs = 0;
+            int processed = 0;
+            var swTotal = Stopwatch.StartNew();
+
+            var producer = Task.Run(() =>
+            {
+                try
+                {
+                    while (!ct.IsCancellationRequested)
+                    {
+                        var tDecode = Stopwatch.StartNew();
+                        bool ok = useProxy
+                            ? extractor.TryGetNextFrameRawScaled(ct, requireBgra: true, proxyWidth, proxyHeight, useBilinear, out var bgra, out var idx)
+                            : extractor.TryGetNextFrameRaw(ct, requireBgra: true, out bgra, out idx);
+                        tDecode.Stop();
+                        Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
+                        if (!ok)
+                            break;
+
+                        if (idx >= totalFrames)
+                            break;
+
+                        int size = bgra.Stride * bgra.Height;
+                        var buffer = pool.Rent(size);
+
+                        unsafe
+                        {
+                            fixed (byte* dst = buffer)
+                            {
+                                byte* src = (byte*)bgra.Data;
+                                int srcStride = bgra.Stride;
+                                int rowBytes = bgra.Stride;
+                                for (int y = 0; y < bgra.Height; y++)
+                                {
+                                    Buffer.MemoryCopy(
+                                        src + y * srcStride,
+                                        dst + y * srcStride,
+                                        rowBytes,
+                                        rowBytes);
+                                }
+                            }
+                        }
+
+                        queue.Add(new BgraBuffer
+                        {
+                            Index = idx,
+                            Data = buffer,
+                            Stride = bgra.Stride,
+                            Width = bgra.Width,
+                            Height = bgra.Height
+                        }, ct);
+                    }
+                }
+                finally
+                {
+                    queue.CompleteAdding();
+                }
+            }, ct);
+
+            var consumers = new List<Task>(detectors.Count);
+            foreach (var detector in detectors)
+            {
+                consumers.Add(Task.Run(() =>
+                {
+                    foreach (var item in queue.GetConsumingEnumerable(ct))
+                    {
+                        if (ct.IsCancellationRequested)
+                            break;
+
+                        try
+                        {
+                            onFrameProcessed?.Invoke(item.Index);
+
+                            if (!_maskProvider.HasEntry(item.Index))
+                            {
+                                unsafe
+                                {
+                                    fixed (byte* src = item.Data)
+                                    {
+                                        var tDetect = Stopwatch.StartNew();
+                                        var faces = DetectFacesBgraSmart(
+                                            detector,
+                                            (IntPtr)src,
+                                            item.Stride,
+                                            item.Width,
+                                            item.Height,
+                                            useProxy,
+                                            _options.DownscaleRatio,
+                                            _options.DownscaleQuality,
+                                            lastFacesFull: null,
+                                            fullSize,
+                                            scaleX,
+                                            scaleY,
+                                            stats: null);
+                                        tDetect.Stop();
+                                        Interlocked.Add(ref detectMs, tDetect.ElapsedMilliseconds);
+
+                                        if (faces.Count > 0)
+                                        {
+                                            _maskProvider.SetFaceRects(
+                                                item.Index,
+                                                ExtractBounds(faces),
+                                                useProxy ? fullSize : new PixelSize(item.Width, item.Height));
+                                        }
+                                    }
+                                }
+                            }
+
+                            ReportProgress(progress, item.Index, totalFrames);
+                            int done = Interlocked.Increment(ref processed);
+                            if (done % 60 == 0)
+                            {
+                                Debug.WriteLine(
+                                    $"[AutoMaskPipe] frames={done}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                            }
+                        }
+                        finally
+                        {
+                            pool.Return(item.Data);
+                        }
+                    }
+                }, ct));
+            }
+
+            try
+            {
+                Task.WaitAll(consumers.ToArray());
+            }
+            catch
+            {
+                // ignore cancellation
+            }
+            finally
+            {
+                try { producer.Wait(ct); } catch { }
+            }
+
+            progress?.Report(100);
+            Debug.WriteLine(
+                $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+        }
+
+        private static IReadOnlyList<FaceDetectionResult> DetectFacesBgraSmart(
+            FaceOnnxDetector onnx,
+            IntPtr data,
+            int stride,
+            int width,
+            int height,
+            bool useProxy,
+            double downscaleRatio,
+            DownscaleQuality quality,
+            IReadOnlyList<FaceDetectionResult>? lastFacesFull,
+            PixelSize fullSize,
+            double scaleX,
+            double scaleY,
+            RoiDetectStats? stats)
+        {
+            if (data == IntPtr.Zero || width <= 0 || height <= 0)
+                return Array.Empty<FaceDetectionResult>();
+
+            if (lastFacesFull != null && lastFacesFull.Count > 0)
+            {
+                var roiFull = BuildRoiFromFaces(lastFacesFull, fullSize);
+                var roi = useProxy
+                    ? new Rect(roiFull.X / scaleX, roiFull.Y / scaleY, roiFull.Width / scaleX, roiFull.Height / scaleY)
+                    : roiFull;
+                roi = ClampRectToSize(roi, width, height);
+
+                if (roi.Width >= 64 && roi.Height >= 64 &&
+                    !(roi.Width >= width * 0.9 && roi.Height >= height * 0.9))
+                {
+                    stats?.AddAttempt(roi.Width * roi.Height);
+                    int rx = (int)Math.Floor(roi.X);
+                    int ry = (int)Math.Floor(roi.Y);
+                    int rw = (int)Math.Ceiling(roi.Width);
+                    int rh = (int)Math.Ceiling(roi.Height);
+                    if (rx < 0) rx = 0;
+                    if (ry < 0) ry = 0;
+                    if (rx + rw > width) rw = width - rx;
+                    if (ry + rh > height) rh = height - ry;
+
+                    if (rw > 0 && rh > 0)
+                    {
+                        IntPtr roiPtr = IntPtr.Add(data, ry * stride + rx * 4);
+                        var faces = onnx.DetectFacesBgra(
+                            roiPtr,
+                            stride,
+                            rw,
+                            rh,
+                            useProxy ? 1.0 : downscaleRatio,
+                            quality);
+
+                        if (faces.Count > 0)
+                        {
+                            stats?.AddHit();
+                            faces = OffsetFaces(faces, rx, ry);
+                            if (useProxy)
+                                faces = ScaleFaces(faces, scaleX, scaleY);
+                            return faces;
+                        }
+                    }
+                }
+            }
+
+            stats?.AddFallback();
+            var fullFaces = onnx.DetectFacesBgra(
+                data,
+                stride,
+                width,
+                height,
+                useProxy ? 1.0 : downscaleRatio,
+                quality);
+
+            if (useProxy)
+                fullFaces = ScaleFaces(fullFaces, scaleX, scaleY);
+
+            return fullFaces;
+        }
+
+        private static Rect BuildRoiFromFaces(IReadOnlyList<FaceDetectionResult> faces, PixelSize fullSize)
+        {
+            double minX = double.MaxValue;
+            double minY = double.MaxValue;
+            double maxX = double.MinValue;
+            double maxY = double.MinValue;
+
+            foreach (var f in faces)
+            {
+                var b = f.Bounds;
+                minX = Math.Min(minX, b.X);
+                minY = Math.Min(minY, b.Y);
+                maxX = Math.Max(maxX, b.X + b.Width);
+                maxY = Math.Max(maxY, b.Y + b.Height);
+            }
+
+            if (minX == double.MaxValue || minY == double.MaxValue)
+                return new Rect(0, 0, fullSize.Width, fullSize.Height);
+
+            double w = Math.Max(1, maxX - minX);
+            double h = Math.Max(1, maxY - minY);
+            double padX = Math.Max(w * 0.35, 32);
+            double padY = Math.Max(h * 0.35, 32);
+
+            double x = Math.Max(0, minX - padX);
+            double y = Math.Max(0, minY - padY);
+            double right = Math.Min(fullSize.Width, maxX + padX);
+            double bottom = Math.Min(fullSize.Height, maxY + padY);
+
+            double roiW = right - x;
+            double roiH = bottom - y;
+
+            const double minSize = 64;
+            if (roiW < minSize)
+            {
+                double half = (minSize - roiW) / 2;
+                x = Math.Max(0, x - half);
+                right = Math.Min(fullSize.Width, x + minSize);
+                x = Math.Max(0, right - minSize);
+                roiW = right - x;
+            }
+            if (roiH < minSize)
+            {
+                double half = (minSize - roiH) / 2;
+                y = Math.Max(0, y - half);
+                bottom = Math.Min(fullSize.Height, y + minSize);
+                y = Math.Max(0, bottom - minSize);
+                roiH = bottom - y;
+            }
+
+            return new Rect(x, y, roiW, roiH);
+        }
+
+        private static Rect ClampRectToSize(Rect rect, int width, int height)
+        {
+            double x = Math.Max(0, rect.X);
+            double y = Math.Max(0, rect.Y);
+            double right = Math.Min(width, rect.X + rect.Width);
+            double bottom = Math.Min(height, rect.Y + rect.Height);
+            double w = Math.Max(0, right - x);
+            double h = Math.Max(0, bottom - y);
+            return new Rect(x, y, w, h);
+        }
+
+        private static IReadOnlyList<FaceDetectionResult> OffsetFaces(
+            IReadOnlyList<FaceDetectionResult> faces,
+            double offsetX,
+            double offsetY)
+        {
+            if (faces.Count == 0)
+                return faces;
+
+            var shifted = new List<FaceDetectionResult>(faces.Count);
+            foreach (var f in faces)
+            {
+                var b = f.Bounds;
+                shifted.Add(new FaceDetectionResult
+                {
+                    Bounds = new Rect(b.X + offsetX, b.Y + offsetY, b.Width, b.Height),
+                    Confidence = f.Confidence
+                });
+            }
+            return shifted;
+        }
+
+        private sealed class RoiDetectStats
+        {
+            private long _attempts;
+            private long _hits;
+            private long _fallbacks;
+            private long _areaSum;
+
+            public void AddAttempt(double area)
+            {
+                Interlocked.Increment(ref _attempts);
+                Interlocked.Add(ref _areaSum, (long)Math.Round(area));
+            }
+
+            public void AddHit()
+            {
+                Interlocked.Increment(ref _hits);
+            }
+
+            public void AddFallback()
+            {
+                Interlocked.Increment(ref _fallbacks);
+            }
+
+            public string BuildSummary()
+            {
+                long attempts = Interlocked.Read(ref _attempts);
+                long hits = Interlocked.Read(ref _hits);
+                long fallbacks = Interlocked.Read(ref _fallbacks);
+                long areaSum = Interlocked.Read(ref _areaSum);
+                double avgArea = attempts > 0 ? (double)areaSum / attempts : 0;
+                return $"attempts={attempts}, hits={hits}, fallbacks={fallbacks}, avgArea={avgArea:F0}";
+            }
+        }
+
+        private static IReadOnlyList<FaceDetectionResult> ScaleFaces(
+            IReadOnlyList<FaceDetectionResult> faces,
+            double scaleX,
+            double scaleY)
+        {
+            if (faces.Count == 0)
+                return faces;
+            if (Math.Abs(scaleX - 1.0) < 0.0001 && Math.Abs(scaleY - 1.0) < 0.0001)
+                return faces;
+
+            var scaled = new List<FaceDetectionResult>(faces.Count);
+            foreach (var f in faces)
+            {
+                var b = f.Bounds;
+                scaled.Add(new FaceDetectionResult
+                {
+                    Bounds = new Rect(b.X * scaleX, b.Y * scaleY, b.Width * scaleX, b.Height * scaleY),
+                    Confidence = f.Confidence
+                });
+            }
             return scaled;
         }
 

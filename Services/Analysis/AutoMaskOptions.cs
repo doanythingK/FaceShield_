@@ -27,5 +27,10 @@ namespace FaceShield.Services.Analysis
         /// 검출 간격 (1이면 모든 프레임 검출)
         /// </summary>
         public int DetectEveryNFrames { get; init; } = 1;
+
+        /// <summary>
+        /// 병렬 ONNX 세션 수 (파이프라인 모드에서만 적용).
+        /// </summary>
+        public int ParallelDetectorCount { get; init; } = 2;
     }
 }

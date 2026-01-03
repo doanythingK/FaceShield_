@@ -35,6 +35,17 @@ namespace FaceShield.Services.Workspace
                 .ToList();
         }
 
+        public AutoSettingsState? GetAutoSettings()
+        {
+            return _state.AutoSettings;
+        }
+
+        public void SaveAutoSettings(AutoSettingsState settings)
+        {
+            _state.AutoSettings = settings;
+            SaveState();
+        }
+
         public void SaveRecents(IEnumerable<RecentItem> recents)
         {
             _state.Recents = recents
@@ -237,6 +248,7 @@ namespace FaceShield.Services.Workspace
         {
             public List<RecentItemState> Recents { get; set; } = new();
             public List<WorkspaceState> Workspaces { get; set; } = new();
+            public AutoSettingsState? AutoSettings { get; set; }
         }
 
         private sealed class RecentItemState
@@ -258,6 +270,19 @@ namespace FaceShield.Services.Workspace
             public int AutoResumeIndex { get; set; }
             public bool AutoCompleted { get; set; }
         }
+    }
+
+    public sealed class AutoSettingsState
+    {
+        public double DownscaleRatio { get; set; } = 1.0;
+        public int DownscaleQuality { get; set; }
+        public bool AutoTrackingEnabled { get; set; }
+        public int AutoDetectEveryNFrames { get; set; } = 1;
+        public int ParallelSessionCount { get; set; } = 2;
+        public bool AutoUseOrtOptimization { get; set; } = true;
+        public bool AutoUseGpu { get; set; }
+        public int? OrtThreads { get; set; }
+        public bool AutoExportAfter { get; set; } = true;
     }
 
     public sealed class WorkspaceSnapshot
