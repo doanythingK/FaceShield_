@@ -1,4 +1,4 @@
-name: macOS build
+name: Build macOS App
 
 on:
   workflow_dispatch:
@@ -6,10 +6,12 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +21,7 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Install FFmpeg and libomp
+      - name: Install dependencies (FFmpeg, libomp)
         run: brew install ffmpeg libomp
 
       - name: Prepare FFmpeg dylibs
@@ -28,8 +30,8 @@ jobs:
       - name: Restore
         run: dotnet restore
 
-      - name: Publish (osx-arm64)
-        run: dotnet publish FaceShield.csproj -c Release -r osx-arm64
+      - name: Publish macOS app (self-contained)
+        run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false
 
       - name: Collect dylibs into app bundle
         run: |
@@ -59,7 +61,7 @@ jobs:
             SHORT_SHA="${GITHUB_SHA::7}"
             BUILD_VER="${GITHUB_RUN_NUMBER}"
             ZIP_NAME="FaceShield-osx-arm64-v${BUILD_VER}-${SHORT_SHA}.zip"
-            (cd "$OUT_DIR" && ditto -c -k --sequesterRsrc --keepParent "FaceShield.app" "$ZIP_NAME")
+            (cd "$OUT_DIR" && zip -r "$ZIP_NAME" "FaceShield.app")
           else
             echo "App bundle not found at $APP_PATH"
             exit 1
