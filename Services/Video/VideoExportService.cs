@@ -269,6 +269,7 @@ public unsafe sealed class VideoExportService
 
     private static unsafe bool IsPixFmtSupported(AVCodec* encoder, AVPixelFormat fmt)
     {
+#pragma warning disable CS0618 // AVCodec.pix_fmts obsolete in ffmpeg headers
         if (encoder == null || encoder->pix_fmts == null)
             return true;
 
@@ -279,6 +280,7 @@ public unsafe sealed class VideoExportService
         }
 
         return false;
+#pragma warning restore CS0618
     }
 
     private static void Throw(int err)

@@ -31,6 +31,43 @@ jobs:
       - name: Publish macOS app (self-contained)
         run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false
 
+      - name: Prepare .app bundle
+        run: |
+          APP_NAME="FaceShield"
+          OUT_DIR="bin/Release/net8.0/osx-arm64/publish"
+          APP_PATH="$OUT_DIR/$APP_NAME.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            mkdir -p "$APP_PATH/Contents/MacOS"
+            mkdir -p "$APP_PATH/Contents/Resources"
+
+            cp -R "$OUT_DIR/." "$APP_PATH/Contents/MacOS/"
+
+            if [ ! -f "$APP_PATH/Contents/MacOS/$APP_NAME" ] && [ -f "$APP_PATH/Contents/MacOS/$APP_NAME.dll" ]; then
+              cp "$APP_PATH/Contents/MacOS/$APP_NAME.dll" "$APP_PATH/Contents/MacOS/$APP_NAME"
+            fi
+
+            cat > "$APP_PATH/Contents/Info.plist" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+             "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>CFBundleName</key>
+              <string>FaceShield</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.faceshield.app</string>
+              <key>CFBundleExecutable</key>
+              <string>FaceShield</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+            </dict>
+            </plist>
+            EOF
+          fi
+
       - name: Collect dylibs into app bundle
         run: |
           APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
