@@ -31,6 +31,16 @@ jobs:
       - name: Publish (osx-arm64)
         run: dotnet publish FaceShield.csproj -c Release -r osx-arm64
 
+      - name: Collect dylibs into app bundle
+        run: |
+          APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
+          if [ -d "$APP_PATH" ]; then
+            bash scripts/collect-macos-dylibs.sh "$APP_PATH"
+          else
+            echo "App bundle not found at $APP_PATH"
+            exit 1
+          fi
+
       - name: Ad-hoc codesign (test)
         run: |
           APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
