@@ -99,6 +99,11 @@ jobs:
             '</plist>' > "$APP_PATH/Contents/Info.plist"
           fi
 
+      - name: Debug collect script version
+        run: |
+          echo "Showing scripts/collect-macos-dylibs.sh"
+          nl -ba scripts/collect-macos-dylibs.sh | sed -n '1,200p'
+
       - name: Collect dylibs into app bundle
         run: |
           APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
