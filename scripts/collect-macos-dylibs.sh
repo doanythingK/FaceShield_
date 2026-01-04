@@ -56,6 +56,7 @@ deps_for() {
 
 seen_files=()
 queue=()
+missing_deps=0
 
 seen_contains() {
   local f="$1"
@@ -101,6 +102,11 @@ while ((${#queue[@]})); do
     if should_copy_dep "$dep"; then
       name="$(basename "$dep")"
       dest="$frameworks_dir/$name"
+      if [[ ! -f "$dep" ]]; then
+        echo "Missing dependency on runner: $dep" >&2
+        missing_deps=1
+        continue
+      fi
       if [[ ! -f "$dest" ]]; then
         cp -a "$dep" "$dest"
         chmod u+w "$dest" || true
@@ -112,5 +118,10 @@ while ((${#queue[@]})); do
     fi
   done < <(deps_for "$file")
 done
+
+if [[ "$missing_deps" -ne 0 ]]; then
+  echo "Failed due to missing dylib dependencies on the runner." >&2
+  exit 1
+fi
 
 echo "Collected dylibs into $frameworks_dir"

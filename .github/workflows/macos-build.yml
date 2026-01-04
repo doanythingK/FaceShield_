@@ -19,8 +19,8 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Install dependencies (FFmpeg, libomp)
-        run: brew install ffmpeg libomp
+      - name: Install dependencies (FFmpeg, libomp, srt)
+        run: brew install ffmpeg libomp srt
 
       - name: Prepare FFmpeg dylibs
         run: bash scripts/prepare-ffmpeg-osx.sh
@@ -45,17 +45,17 @@ jobs:
             missing=0
             while IFS= read -r dep; do
               case "$dep" in
-                *libsrt*.dylib)
-                  if [ ! -f "$dep" ]; then
-                    echo "Missing dependency: $dep"
-                    missing=1
-                  fi
-                  ;;
+                /usr/lib/*|/System/Library/*) continue ;;
+                "") continue ;;
               esac
+              if [ ! -f "$dep" ]; then
+                echo "Missing dependency: $dep"
+                missing=1
+              fi
             done < <(otool -L "$FFMPEG_DIR/libavformat.dylib" | tail -n +2 | awk '{print $1}')
 
             if [ "$missing" -ne 0 ]; then
-              echo "FFmpeg depends on libsrt, but it is not present on the runner."
+              echo "FFmpeg has missing non-system dylib dependencies on the runner."
               exit 1
             fi
           else
