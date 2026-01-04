@@ -67,6 +67,19 @@ resolve_dep_source() {
     echo "$candidate"
     return 0
   fi
+  local nuget_root="${NUGET_PACKAGES:-$HOME/.nuget/packages}"
+  if [[ -d "$nuget_root" ]]; then
+    candidate="$(find "$nuget_root" -path "*/runtimes/osx-arm64/native/$name" -print -quit 2>/dev/null || true)"
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+    candidate="$(find "$nuget_root" -path "*/runtimes/osx/native/$name" -print -quit 2>/dev/null || true)"
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  fi
   return 1
 }
 
