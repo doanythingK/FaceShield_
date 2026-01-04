@@ -31,6 +31,38 @@ jobs:
       - name: Publish macOS app (self-contained)
         run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false
 
+      - name: Verify FFmpeg dylib dependencies (otool)
+        run: |
+          FFMPEG_DIR="FFmpeg/osx-arm64"
+          if [ -d "$FFMPEG_DIR" ]; then
+            for lib in "$FFMPEG_DIR"/libavformat.dylib "$FFMPEG_DIR"/libavcodec.dylib "$FFMPEG_DIR"/libavutil.dylib; do
+              if [ -f "$lib" ]; then
+                echo "Deps for $lib"
+                otool -L "$lib"
+              fi
+            done
+
+            missing=0
+            while IFS= read -r dep; do
+              case "$dep" in
+                *libsrt*.dylib)
+                  if [ ! -f "$dep" ]; then
+                    echo "Missing dependency: $dep"
+                    missing=1
+                  fi
+                  ;;
+              esac
+            done < <(otool -L "$FFMPEG_DIR/libavformat.dylib" | tail -n +2 | awk '{print $1}')
+
+            if [ "$missing" -ne 0 ]; then
+              echo "FFmpeg depends on libsrt, but it is not present on the runner."
+              exit 1
+            fi
+          else
+            echo "FFmpeg dylib directory not found: $FFMPEG_DIR"
+            exit 1
+          fi
+
       - name: Prepare .app bundle
         run: |
           APP_NAME="FaceShield"

@@ -18,7 +18,10 @@ copy_if_exists() {
   local src="$1"
   if [[ -f "$src" ]]; then
     cp -a "$src" "$frameworks_dir/"
-    chmod u+w "$frameworks_dir/$(basename "$src")" || true
+    local dest="$frameworks_dir/$(basename "$src")"
+    if [[ -f "$dest" ]]; then
+      chmod u+w "$dest" || true
+    fi
   fi
 }
 
