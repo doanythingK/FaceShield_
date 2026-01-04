@@ -17,7 +17,7 @@ mkdir -p "$frameworks_dir"
 copy_if_exists() {
   local src="$1"
   if [[ -f "$src" ]]; then
-    cp -a "$src" "$frameworks_dir/"
+    cp -aL "$src" "$frameworks_dir/"
     local dest="$frameworks_dir/$(basename "$src")"
     if [[ -f "$dest" ]]; then
       chmod u+w "$dest" || true
@@ -108,8 +108,10 @@ while ((${#queue[@]})); do
         continue
       fi
       if [[ ! -f "$dest" ]]; then
-        cp -a "$dep" "$dest"
-        chmod u+w "$dest" || true
+        cp -aL "$dep" "$dest"
+        if [[ -f "$dest" ]]; then
+          chmod u+w "$dest" || true
+        fi
         install_name_tool -id "@rpath/$name" "$dest" 2>/dev/null || true
         add_file "$dest"
       fi
