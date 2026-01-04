@@ -149,6 +149,16 @@
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
 
+    <!-- Avalonia native dylib (macOS) -->
+    <None Include="$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\osx-arm64\native\libAvaloniaNative.dylib" Condition="Exists('$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\osx-arm64\native\libAvaloniaNative.dylib')" Link="libAvalonia.Native.OSX.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+    <None Include="$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\osx\native\libAvaloniaNative.dylib" Condition="Exists('$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\osx\native\libAvaloniaNative.dylib')" Link="libAvalonia.Native.OSX.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
+
     <!-- ONNX Runtime 네이티브 라이브러리 포함 -->
     <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime.dylib')" Link="libonnxruntime.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
