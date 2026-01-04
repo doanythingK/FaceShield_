@@ -158,6 +158,7 @@ namespace FaceShield.ViewModels.Pages
             ToolPanel.IsExportRunning = true;
             ToolPanel.ExportProgress = 0;
             ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
+            ToolPanel.ExportStatusText = null;
             _exportEtaSamples.Clear();
 
             var progress = new Progress<ExportProgress>(p =>
@@ -166,6 +167,8 @@ namespace FaceShield.ViewModels.Pages
                 int percent = Math.Clamp(p.Percent, 0, 100);
                 ToolPanel.ExportProgress = percent;
                 UpdateExportEta(DateTime.UtcNow, percent);
+                if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    ToolPanel.ExportStatusText = p.StatusMessage;
             });
 
             try
@@ -189,6 +192,7 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.IsExportRunning = false;
                 ToolPanel.ExportProgress = 0;
                 ToolPanel.ExportEtaText = null;
+                ToolPanel.ExportStatusText = null;
                 _exportCts?.Dispose();
                 _exportCts = null;
             }

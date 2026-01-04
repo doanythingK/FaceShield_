@@ -79,6 +79,8 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             Avalonia.Platform.PixelFormat.Bgra8888,
             Avalonia.Platform.AlphaFormat.Premul);
 
+        const double SoftEdgeRatio = 0.2;
+
         using var fb = mask.Lock();
 
         unsafe
@@ -101,6 +103,11 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
                 double ry = Math.Max(1.0, (y1 - y0) / 2.0);
                 double rx2 = rx * rx;
                 double ry2 = ry * ry;
+                double inner = 1.0 - SoftEdgeRatio;
+                if (inner < 0.0)
+                    inner = 0.0;
+                double inner2 = inner * inner;
+                bool softEdge = SoftEdgeRatio > 0.0 && inner2 < 0.999;
 
                 for (int y = y0; y < y1; y++)
                 {
@@ -110,14 +117,32 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
                     for (int x = x0; x < x1; x++)
                     {
                         double dx = x - cx;
-                        if ((dx * dx) / rx2 + dy2 / ry2 > 1.0)
+                        double d2 = (dx * dx) / rx2 + dy2 / ry2;
+                        if (d2 > 1.0)
                             continue;
 
                         byte* p = row + x * 4;
-                        p[0] = 255;
-                        p[1] = 255;
-                        p[2] = 255;
-                        p[3] = 255;
+                        byte alpha;
+                        if (!softEdge || d2 <= inner2)
+                        {
+                            alpha = 255;
+                        }
+                        else
+                        {
+                            double t = (d2 - inner2) / (1.0 - inner2);
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            t = t * t * (3.0 - 2.0 * t);
+                            alpha = (byte)Math.Round((1.0 - t) * 255.0);
+                        }
+
+                        if (alpha <= p[3])
+                            continue;
+
+                        p[0] = alpha;
+                        p[1] = alpha;
+                        p[2] = alpha;
+                        p[3] = alpha;
                     }
                 }
             }

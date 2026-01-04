@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection.Metadata.Ecma335;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -103,7 +104,7 @@ namespace FaceShield.Services.Video
         private int _bgraScaledWidth;
         private int _bgraScaledHeight;
 
-        public FfFrameExtractor(string videoPath)
+        public FfFrameExtractor(string videoPath, bool enableHardware = true)
         {
             ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
 
@@ -152,7 +153,10 @@ namespace FaceShield.Services.Video
             if (ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar) < 0)
                 throw new InvalidOperationException("avcodec_parameters_to_context failed");
 
-            TryInitializeHardwareDevice();
+            if (enableHardware)
+                TryInitializeHardwareDevice();
+            else
+                UpdateDecodeStatus("디코딩: HW 비활성화");
 
             if (ffmpeg.avcodec_open2(_dec, codec, null) < 0)
                 throw new InvalidOperationException("avcodec_open2 failed");
@@ -174,13 +178,21 @@ namespace FaceShield.Services.Video
             {
                 // frameIndex -> seconds -> PTS
                 double tbSec = ffmpeg.av_q2d(_timeBase);
-                if (tbSec <= 0) return null;
+                if (tbSec <= 0)
+                {
+                    Debug.WriteLine("[FfFrameExtractor] time_base invalid; using fallback 1/90000.");
+                    tbSec = 1.0 / 90000.0; // Fallback for invalid time_base
+                }
 
                 double seconds = frameIndex / _fps;
                 long targetPts = (long)Math.Floor(seconds / tbSec);
 
                 // seek + flush
-                ffmpeg.av_seek_frame(_fmt, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                int seekResult = ffmpeg.av_seek_frame(_fmt, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                if (seekResult < 0)
+                {
+                    Debug.WriteLine($"[FfFrameExtractor] av_seek_frame failed (frame={frameIndex}, pts={targetPts}, err={seekResult}).");
+                }
                 ffmpeg.avcodec_flush_buffers(_dec);
 
                 AVPacket* pkt = ffmpeg.av_packet_alloc();
@@ -204,6 +216,7 @@ namespace FaceShield.Services.Video
                     if (ffmpeg.av_frame_get_buffer(bgra, 32) < 0)
                         return null;
 
+                    bool decoded = false;
                     while (ffmpeg.av_read_frame(_fmt, pkt) >= 0)
                     {
                         if (pkt->stream_index != _videoStreamIndex)
@@ -212,7 +225,11 @@ namespace FaceShield.Services.Video
                             continue;
                         }
 
-                        ffmpeg.avcodec_send_packet(_dec, pkt);
+                        int sendResult = ffmpeg.avcodec_send_packet(_dec, pkt);
+                        if (sendResult < 0)
+                        {
+                            Debug.WriteLine($"[FfFrameExtractor] avcodec_send_packet failed (frame={frameIndex}, err={sendResult}).");
+                        }
                         ffmpeg.av_packet_unref(pkt);
 
                         while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
@@ -226,9 +243,16 @@ namespace FaceShield.Services.Video
 
                             var bmp = ConvertDecodedFrameToBitmap(src, bgra);
                             if (bmp != null)
+                            {
+                                decoded = true;
                                 return bmp;
+                            }
+                            Debug.WriteLine($"[FfFrameExtractor] ConvertDecodedFrameToBitmap failed (frame={frameIndex}, pts={pts}).");
                         }
                     }
+
+                    if (!decoded)
+                        Debug.WriteLine($"[FfFrameExtractor] no frame decoded (frame={frameIndex}, pts={targetPts}).");
 
                     return null;
                 }
@@ -250,7 +274,7 @@ namespace FaceShield.Services.Video
             {
                 double tbSec = ffmpeg.av_q2d(_timeBase);
                 if (tbSec <= 0)
-                    throw new InvalidOperationException("time_base is invalid");
+                    tbSec = 1.0 / 90000.0; // Fallback for invalid time_base
 
                 double seconds = startFrameIndex / _fps;
                 _sequentialTargetPts = (long)Math.Floor(seconds / tbSec);

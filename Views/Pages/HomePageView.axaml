@@ -191,6 +191,9 @@
           <TextBlock Text="{Binding ExportEtaText}"
                      IsVisible="{Binding IsExportRunning}"
                      Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding ExportStatusText}"
+                     IsVisible="{Binding IsExportRunning}"
+                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
           <Button Content="내보내기 취소"
                   IsVisible="{Binding IsExportRunning}"
                   Command="{Binding CancelExportCommand}" />
@@ -198,13 +201,13 @@
                      IsVisible="{Binding IsWorkspaceLoading}"
                      Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
           <TextBlock Text="{Binding AutoEtaText}"
-                     IsVisible="{Binding IsAutoRunning}"
+                     IsVisible="{Binding IsAutoStatusVisible}"
                      Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
           <TextBlock Text="{Binding AutoStatusText}"
-                     IsVisible="{Binding IsAutoRunning}"
+                     IsVisible="{Binding IsAutoStatusVisible}"
                      Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
           <StackPanel Orientation="Horizontal" Spacing="8"
-                      IsVisible="{Binding IsAutoRunning}">
+                      IsVisible="{Binding IsAutoStatusVisible}">
             <TextBlock Text="{Binding AutoAccelStatus}"
                        Opacity="0.85" FontSize="13" TextWrapping="Wrap" Width="360"/>
             <Button Content="복사"
@@ -213,7 +216,7 @@
                     Padding="8,2"/>
           </StackPanel>
           <Button Content="취소"
-                  IsVisible="{Binding IsAutoRunning}"
+                  IsVisible="{Binding IsAutoStatusVisible}"
                   Command="{Binding CancelAutoCommand}" />
         </StackPanel>
       </Border>

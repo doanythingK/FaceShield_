@@ -21,7 +21,7 @@ public sealed class VideoSession
         IProgress<int>? progress = null)
     {
         // 1) 고화질 정확 프레임용 Extractor
-        var extractor = new FfFrameExtractor(videoPath);
+        var extractor = new FfFrameExtractor(videoPath, enableHardware: false);
         ExactProvider = new ExactFrameProvider(extractor);
 
         // 2) 썸네일 캐시 생성

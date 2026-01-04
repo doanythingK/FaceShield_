@@ -87,6 +87,9 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private string? exportEtaText;
 
+        [ObservableProperty]
+        private string? exportStatusText;
+
         public sealed class DownscaleOption
         {
             public string Label { get; }
@@ -193,9 +196,13 @@ namespace FaceShield.ViewModels.Pages
 
         public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
         public bool CanStartWorkspace => CanOpenWorkspace && !IsAutoRunning && !IsWorkspaceLoading;
-        public bool IsBusy => IsWorkspaceLoading || IsAutoRunning;
-        public int BusyProgress => IsAutoRunning ? AutoProgress : WorkspaceLoadingProgress;
-        public bool IsBusyIndeterminate => IsAutoRunning ? false : IsWorkspaceLoadingIndeterminate;
+        public bool IsBusy => IsWorkspaceLoading || IsAutoRunning || IsExportRunning;
+        public int BusyProgress => IsExportRunning
+            ? ExportProgress
+            : IsAutoRunning ? AutoProgress : WorkspaceLoadingProgress;
+        public bool IsBusyIndeterminate => IsExportRunning
+            ? false
+            : IsAutoRunning ? false : IsWorkspaceLoadingIndeterminate;
         public string BusyMessage =>
             IsExportRunning
                 ? "파일 저장 중..."
@@ -203,6 +210,7 @@ namespace FaceShield.ViewModels.Pages
                     ? "자동 모자이크 진행 중..."
                     : (WorkspaceLoadingMessage ?? "로딩 중...");
         public bool IsTrackingOptionsEnabled => AutoTrackingEnabled;
+        public bool IsAutoStatusVisible => IsAutoRunning && !IsExportRunning;
 
         partial void OnSelectedVideoPathChanged(string? value)
         {
@@ -225,6 +233,7 @@ namespace FaceShield.ViewModels.Pages
             OnPropertyChanged(nameof(BusyProgress));
             OnPropertyChanged(nameof(BusyMessage));
             OnPropertyChanged(nameof(IsBusyIndeterminate));
+            OnPropertyChanged(nameof(IsAutoStatusVisible));
 
             if (!value)
             {
@@ -235,13 +244,24 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnIsExportRunningChanged(bool value)
         {
+            OnPropertyChanged(nameof(IsBusy));
+            OnPropertyChanged(nameof(BusyProgress));
             OnPropertyChanged(nameof(BusyMessage));
+            OnPropertyChanged(nameof(IsBusyIndeterminate));
+            OnPropertyChanged(nameof(IsAutoStatusVisible));
             if (!value)
             {
                 ExportProgress = 0;
                 ExportEtaText = null;
+                ExportStatusText = null;
                 _exportEtaSamples.Clear();
             }
+        }
+
+        partial void OnExportProgressChanged(int value)
+        {
+            if (IsExportRunning)
+                OnPropertyChanged(nameof(BusyProgress));
         }
 
         partial void OnIsWorkspaceLoadingChanged(bool value)
@@ -574,6 +594,10 @@ namespace FaceShield.ViewModels.Pages
                             IsExportRunning = true;
                             ExportProgress = Math.Clamp(p.Percent, 0, 100);
                             UpdateExportEta(DateTime.UtcNow, ExportProgress);
+                            if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                                ExportStatusText = p.StatusMessage;
+                            if (ExportProgress == 0 && string.IsNullOrWhiteSpace(ExportEtaText))
+                                ExportEtaText = "예상 남은 시간 계산 중...";
                         }));
 
                     completed = await vm.RunAutoAsync(

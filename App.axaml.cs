@@ -23,8 +23,18 @@ namespace FaceShield
 
         public override void OnFrameworkInitializationCompleted()
         {
+            RegisterGlobalExceptionHandlers();
+
             // ✅ FFmpeg는 UI/VM 생성 전에 초기화 (기능 불능 예방)
-            FaceShield.Services.Video.FFmpegBootstrap.Initialize();
+            try
+            {
+                FaceShield.Services.Video.FFmpegBootstrap.Initialize();
+            }
+            catch (Exception ex)
+            {
+                ShowStartupErrorAndExit(ex);
+                return;
+            }
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
@@ -39,8 +49,6 @@ namespace FaceShield
 
                 desktop.Exit += (_, _) => mainVm.PersistAppState();
             }
-
-            RegisterGlobalExceptionHandlers();
 
             base.OnFrameworkInitializationCompleted();
         }
@@ -110,11 +118,28 @@ namespace FaceShield
                 return;
 
             var owner = desktop.MainWindow;
-            if (owner == null)
-                return;
-
             var dialog = new ErrorDialog("예기치 않은 오류", message);
+            if (owner == null)
+            {
+                dialog.Show();
+                return;
+            }
             _ = dialog.ShowDialog(owner);
+        }
+
+        private void ShowStartupErrorAndExit(Exception ex)
+        {
+            string message = BuildExceptionMessage(ex);
+            WriteCrashLog(message, ex);
+            Console.Error.WriteLine(message);
+
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                var dialog = new ErrorDialog("시작 실패", message);
+                dialog.Closed += (_, _) => desktop.Shutdown(-1);
+                desktop.MainWindow = dialog;
+                dialog.Show();
+            }
         }
 
         private static void WriteCrashLog(string message, Exception ex)

@@ -4,11 +4,13 @@ namespace FaceShield.Services.Video
     {
         public int FrameIndex { get; }
         public int TotalFrames { get; }
+        public string? StatusMessage { get; }
 
-        public ExportProgress(int frameIndex, int totalFrames)
+        public ExportProgress(int frameIndex, int totalFrames, string? statusMessage = null)
         {
             FrameIndex = frameIndex;
             TotalFrames = totalFrames;
+            StatusMessage = statusMessage;
         }
 
         public int Percent =>

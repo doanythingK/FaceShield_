@@ -376,7 +376,7 @@ namespace FaceShield.Services.Analysis
 
             try
             {
-                foreach (var item in queue.GetConsumingEnumerable(ct))
+                foreach (var item in queue.GetConsumingEnumerable())
                 {
                     if (ct.IsCancellationRequested)
                         break;
@@ -618,7 +618,7 @@ namespace FaceShield.Services.Analysis
             {
                 consumers.Add(Task.Run(() =>
                 {
-                    foreach (var item in queue.GetConsumingEnumerable(ct))
+                    foreach (var item in queue.GetConsumingEnumerable())
                     {
                         if (ct.IsCancellationRequested)
                             break;

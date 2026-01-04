@@ -7,6 +7,7 @@ using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -318,6 +319,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         {
             if (!_isPlaying && stamp == _changeStamp)
                 await TryLoadExactFallbackAsync(index, stamp);
+            Debug.WriteLine($"[FramePreview] exact frame not available (frame={index}, stamp={stamp}).");
             return;
         }
 

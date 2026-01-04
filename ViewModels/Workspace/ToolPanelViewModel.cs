@@ -29,6 +29,9 @@ namespace FaceShield.ViewModels.Workspace
         private string? exportEtaText;
 
         [ObservableProperty]
+        private string? exportStatusText;
+
+        [ObservableProperty]
         private int brushDiameter = DefaultBrushDiameter;
 
         public int MinBrushDiameter => DefaultBrushDiameter;
@@ -37,9 +40,21 @@ namespace FaceShield.ViewModels.Workspace
         public bool ShowBrushSize =>
             CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
 
+        public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
+
         partial void OnCurrentModeChanged(EditMode value)
         {
             OnPropertyChanged(nameof(ShowBrushSize));
+        }
+
+        partial void OnIsAutoRunningChanged(bool value)
+        {
+            OnPropertyChanged(nameof(ShowAutoProgress));
+        }
+
+        partial void OnIsExportRunningChanged(bool value)
+        {
+            OnPropertyChanged(nameof(ShowAutoProgress));
         }
 
         public event Action? UndoRequested;

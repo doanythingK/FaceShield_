@@ -89,12 +89,22 @@ namespace FaceShield.Services.Video
                         byte g = (byte)(sumG / count);
                         byte rC = (byte)(sumR / count);
 
-                        // premul 기준: 알파는 원본 프레임 그대로(255) 유지
                         byte* outP = oRow + x * 4;
-                        outP[0] = b;
-                        outP[1] = g;
-                        outP[2] = rC;
-                        outP[3] = 255;
+                        if (a == 255)
+                        {
+                            outP[0] = b;
+                            outP[1] = g;
+                            outP[2] = rC;
+                            outP[3] = 255;
+                        }
+                        else
+                        {
+                            int inv = 255 - a;
+                            outP[0] = (byte)((b * a + outP[0] * inv + 127) / 255);
+                            outP[1] = (byte)((g * a + outP[1] * inv + 127) / 255);
+                            outP[2] = (byte)((rC * a + outP[2] * inv + 127) / 255);
+                            outP[3] = 255;
+                        }
                     }
                 }
             }
