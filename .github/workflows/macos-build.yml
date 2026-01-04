@@ -29,7 +29,7 @@ jobs:
         run: dotnet restore
 
       - name: Publish macOS app (self-contained)
-        run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false
+        run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true
 
       - name: Verify FFmpeg dylib dependencies (otool)
         run: |
@@ -46,6 +46,7 @@ jobs:
             while IFS= read -r dep; do
               case "$dep" in
                 /usr/lib/*|/System/Library/*) continue ;;
+                @rpath/*|@loader_path/*|@executable_path/*) continue ;;
                 "") continue ;;
               esac
               if [ ! -f "$dep" ]; then
@@ -75,9 +76,11 @@ jobs:
 
             rsync -a --exclude '*.app' "$OUT_DIR/" "$APP_PATH/Contents/MacOS/"
 
-            if [ ! -f "$APP_PATH/Contents/MacOS/$APP_NAME" ] && [ -f "$APP_PATH/Contents/MacOS/$APP_NAME.dll" ]; then
-              cp "$APP_PATH/Contents/MacOS/$APP_NAME.dll" "$APP_PATH/Contents/MacOS/$APP_NAME"
+            if [ ! -f "$APP_PATH/Contents/MacOS/$APP_NAME" ]; then
+              echo "App executable not found: $APP_PATH/Contents/MacOS/$APP_NAME"
+              exit 1
             fi
+            chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME" || true
 
             printf '%s\n' \
             '<?xml version="1.0" encoding="UTF-8"?>' \

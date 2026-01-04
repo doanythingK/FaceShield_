@@ -38,6 +38,11 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(PublishDir)' != '' and '$(RuntimeIdentifier)' == 'osx-arm64'">
+    <PublishSingleFile>false</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
   <!-- Avalonia 리소스 -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />

@@ -36,7 +36,7 @@ fi
 # Copy ONNX Runtime dylibs from publish output (if present).
 while IFS= read -r -d '' lib; do
   copy_if_exists "$lib"
-done < <(find "$publish_dir" -maxdepth 1 -name "onnxruntime*.dylib" -print0 2>/dev/null || true)
+done < <(find "$publish_dir" -maxdepth 1 -name "*onnxruntime*.dylib" -print0 2>/dev/null || true)
 
 add_rpath() {
   local file="$1"
