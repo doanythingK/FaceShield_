@@ -54,6 +54,22 @@ deps_for() {
   otool -L "$1" | tail -n +2 | awk '{print $1}'
 }
 
+resolve_dep_source() {
+  local dep="$1"
+  local name="$2"
+  if [[ -f "$dep" ]]; then
+    echo "$dep"
+    return 0
+  fi
+  local candidate
+  candidate="$(find "$publish_dir" -name "$name" -print -quit 2>/dev/null || true)"
+  if [[ -n "$candidate" && -f "$candidate" ]]; then
+    echo "$candidate"
+    return 0
+  fi
+  return 1
+}
+
 seen_files=()
 queue=()
 missing_deps=0
@@ -102,13 +118,14 @@ while ((${#queue[@]})); do
     if should_copy_dep "$dep"; then
       name="$(basename "$dep")"
       dest="$frameworks_dir/$name"
-      if [[ ! -f "$dep" ]]; then
+      src="$(resolve_dep_source "$dep" "$name" || true)"
+      if [[ -z "$src" ]]; then
         echo "Missing dependency on runner: $dep" >&2
         missing_deps=1
         continue
       fi
       if [[ ! -f "$dest" ]]; then
-        cp -aL "$dep" "$dest"
+        cp -aL "$src" "$dest"
         if [[ -f "$dest" ]]; then
           chmod u+w "$dest" || true
         fi
