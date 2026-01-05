@@ -50,10 +50,15 @@ jobs:
           if (Test-Path $packDir) { Remove-Item $packDir -Recurse -Force }
           New-Item -ItemType Directory -Path $packDir | Out-Null
 
-          Copy-Item "$extractDir\lib\netstandard2.1\Microsoft.ML.OnnxRuntime.Gpu.dll" $packDir -Force
-          Copy-Item "$extractDir\runtimes\win-x64\native\onnxruntime.dll" $packDir -Force
-          Copy-Item "$extractDir\runtimes\win-x64\native\onnxruntime_providers_shared.dll" $packDir -Force
-          Copy-Item "$extractDir\runtimes\win-x64\native\onnxruntime_providers_cuda.dll" $packDir -Force
+          $gpuDll = Get-ChildItem -Path $extractDir -Recurse -Filter "Microsoft.ML.OnnxRuntime.Gpu.dll" | Select-Object -First 1
+          if (-not $gpuDll) { throw "Microsoft.ML.OnnxRuntime.Gpu.dll not found in package." }
+          Copy-Item $gpuDll.FullName $packDir -Force
+
+          $nativeDir = Join-Path $extractDir "runtimes\win-x64\native"
+          if (!(Test-Path $nativeDir)) { throw "Native runtime folder not found: $nativeDir" }
+          Copy-Item (Join-Path $nativeDir "onnxruntime.dll") $packDir -Force
+          Copy-Item (Join-Path $nativeDir "onnxruntime_providers_shared.dll") $packDir -Force
+          Copy-Item (Join-Path $nativeDir "onnxruntime_providers_cuda.dll") $packDir -Force
 
           $readme = @(
             "FaceShield CUDA Optional Pack",
