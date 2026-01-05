@@ -40,18 +40,25 @@ jobs:
         run: |
           $version = "1.23.2"
           $pkg = "Microsoft.ML.OnnxRuntime.Gpu"
-          $uri = "https://www.nuget.org/api/v2/package/$pkg/$version"
-          $tempPkg = Join-Path $env:RUNNER_TEMP "onnxruntime-gpu.nupkg"
-          $extractDir = Join-Path $env:RUNNER_TEMP "onnxruntime-gpu"
+          $tempProj = Join-Path $env:RUNNER_TEMP "cuda-pack-temp"
           $packDir = Join-Path $env:RUNNER_TEMP "faceshield-cuda-pack"
-          Invoke-WebRequest -Uri $uri -OutFile $tempPkg
-          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
-          Expand-Archive -Path $tempPkg -DestinationPath $extractDir -Force
+          if (Test-Path $tempProj) { Remove-Item $tempProj -Recurse -Force }
+          dotnet new classlib -o $tempProj --no-restore
+          dotnet add "$tempProj" package $pkg -v $version
+          dotnet restore "$tempProj"
           if (Test-Path $packDir) { Remove-Item $packDir -Recurse -Force }
           New-Item -ItemType Directory -Path $packDir | Out-Null
 
-          $runtimeDll = Get-ChildItem -Path $extractDir -Recurse -Filter "onnxruntime_providers_cuda.dll" | Select-Object -First 1
-          if (-not $runtimeDll) { throw "onnxruntime_providers_cuda.dll not found in package." }
+          $globalPackages = (& dotnet nuget locals global-packages -l).Split(":")[-1].Trim()
+          $pkgRoot = Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu\$version"
+          if (!(Test-Path $pkgRoot)) { throw "NuGet cache not found: $pkgRoot" }
+
+          $runtimeDll = Get-ChildItem -Path $pkgRoot -Recurse -Filter "onnxruntime_providers_cuda.dll" | Select-Object -First 1
+          if (-not $runtimeDll)
+          {
+            Get-ChildItem -Path $pkgRoot -Recurse -Filter "onnxruntime*.dll" | Select-Object FullName
+            throw "onnxruntime_providers_cuda.dll not found in GPU package."
+          }
           $nativeDir = $runtimeDll.Directory
 
           Copy-Item (Join-Path $nativeDir.FullName "onnxruntime.dll") $packDir -Force
