@@ -102,19 +102,61 @@
           </StackPanel>
 
           <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox Content="추적 사용" IsChecked="{Binding AutoTrackingEnabled}"/>
-            <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
-            <ComboBox Width="80"
-                      ItemsSource="{Binding DetectEveryOptions}"
-                      SelectedItem="{Binding AutoDetectEveryNFrames}"
-                      IsEnabled="{Binding IsTrackingOptionsEnabled}"/>
-            <TextBlock Text="프레임" VerticalAlignment="Center"/>
-          </StackPanel>
+          <CheckBox Content="추적 사용" IsChecked="{Binding AutoTrackingEnabled}"/>
+          <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
+          <ComboBox Width="80"
+                    ItemsSource="{Binding DetectEveryOptions}"
+                    SelectedItem="{Binding AutoDetectEveryNFrames}"
+                    IsEnabled="{Binding IsTrackingOptionsEnabled}"/>
+          <TextBlock Text="프레임" VerticalAlignment="Center"/>
+        </StackPanel>
 
-          <CheckBox Content="가속(ONNX Runtime 최적화)"
-                    IsChecked="{Binding AutoUseOrtOptimization}"/>
-          <CheckBox Content="GPU 가속(가능한 경우, OS별)"
-                    IsChecked="{Binding AutoUseGpu}"/>
+        <StackPanel Spacing="4">
+          <TextBlock Text="Detection Threshold (얼굴 후보 기준)"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Width="220" Minimum="0.05" Maximum="0.95"
+                    Value="{Binding AutoDetectionThreshold, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding AutoDetectionThreshold, StringFormat={}{0:0.00}}"
+                       Width="48" VerticalAlignment="Center"/>
+          </StackPanel>
+          <TextBlock Text="값을 낮추면: 얼굴 후보를 더 많이 잡아 작은 얼굴도 잘 탐지되지만 오탐이 늘 수 있습니다."
+                     Opacity="0.7" TextWrapping="Wrap"/>
+          <TextBlock Text="값을 높이면: 오탐은 줄 수 있지만, 작은 얼굴을 놓칠 수 있습니다."
+                     Opacity="0.7" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="Confidence Threshold (최종 확정 기준)"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Width="220" Minimum="0.05" Maximum="0.95"
+                    Value="{Binding AutoConfidenceThreshold, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding AutoConfidenceThreshold, StringFormat={}{0:0.00}}"
+                       Width="48" VerticalAlignment="Center"/>
+          </StackPanel>
+          <TextBlock Text="값을 낮추면: 얼굴로 확정되는 결과가 늘 수 있지만, 오탐이 늘 수 있습니다."
+                     Opacity="0.7" TextWrapping="Wrap"/>
+          <TextBlock Text="값을 높이면: 확정이 엄격해져 오탐은 줄 수 있지만, 미탐이 늘 수 있습니다."
+                     Opacity="0.7" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="NMS Threshold (겹친 결과 정리)"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Width="220" Minimum="0.05" Maximum="0.95"
+                    Value="{Binding AutoNmsThreshold, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding AutoNmsThreshold, StringFormat={}{0:0.00}}"
+                       Width="48" VerticalAlignment="Center"/>
+          </StackPanel>
+          <TextBlock Text="값을 낮추면: 겹친 박스를 더 강하게 제거해 중복은 줄지만, 가까운 얼굴이 하나로 합쳐질 수 있습니다."
+                     Opacity="0.7" TextWrapping="Wrap"/>
+          <TextBlock Text="값을 높이면: 덜 제거되어 가까운 얼굴은 분리될 수 있지만, 중복 박스가 남을 수 있습니다."
+                     Opacity="0.7" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <CheckBox Content="가속(ONNX Runtime 최적화)"
+                  IsChecked="{Binding AutoUseOrtOptimization}"/>
+        <CheckBox Content="GPU 가속(가능한 경우, OS별)"
+                  IsChecked="{Binding AutoUseGpu}"/>
           <CheckBox Content="자동 완료 후 파일 저장"
                     IsChecked="{Binding AutoExportAfter}"/>
 

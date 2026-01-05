@@ -12,6 +12,7 @@ using FaceShield.ViewModels.Workspace;
 using FaceShield.Views.Dialogs;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -153,6 +154,10 @@ namespace FaceShield.ViewModels.Pages
                 System.IO.Path.GetDirectoryName(input)!,
                 System.IO.Path.GetFileNameWithoutExtension(input) + "_blur.mp4");
 
+            output = await ResolveExportOutputPathAsync(output);
+            if (string.IsNullOrWhiteSpace(output))
+                return;
+
             var exporter = new VideoExportService(_maskProvider);
 
             ToolPanel.IsExportRunning = true;
@@ -196,6 +201,37 @@ namespace FaceShield.ViewModels.Pages
                 _exportCts?.Dispose();
                 _exportCts = null;
             }
+        }
+
+        private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
+        {
+            if (!File.Exists(outputPath))
+                return outputPath;
+
+            var result = await ShowExportConflictDialogAsync(outputPath);
+            if (result == ExportConflictResult.Overwrite)
+                return outputPath;
+
+            if (result == ExportConflictResult.SaveAs)
+                return GetUniqueExportPath(outputPath);
+
+            return null;
+        }
+
+        private static string GetUniqueExportPath(string outputPath)
+        {
+            string dir = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            string ext = Path.GetExtension(outputPath);
+            string baseName = Path.GetFileNameWithoutExtension(outputPath);
+
+            for (int i = 1; i < 10000; i++)
+            {
+                string candidate = Path.Combine(dir, $"{baseName} ({i}){ext}");
+                if (!File.Exists(candidate))
+                    return candidate;
+            }
+
+            return outputPath;
         }
 
         public Task<bool> RunAutoAsync(
@@ -341,6 +377,17 @@ namespace FaceShield.ViewModels.Pages
 
             var dialog = new ErrorDialog(title, message);
             return dialog.ShowDialog(owner);
+        }
+
+        private async Task<ExportConflictResult> ShowExportConflictDialogAsync(string outputPath)
+        {
+            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var owner = lifetime?.MainWindow;
+            if (owner == null)
+                return ExportConflictResult.Cancel;
+
+            var dialog = new ExportConflictDialog(outputPath);
+            return await dialog.ShowDialog<ExportConflictResult>(owner);
         }
 
         private static string BuildAutoErrorMessage(Exception ex)

@@ -21,5 +21,20 @@ namespace FaceShield.Services.FaceDetection
         /// Inter-op 스레드 수 (null이면 기본값).
         /// </summary>
         public int? InterOpNumThreads { get; init; }
+
+        /// <summary>
+        /// 검출 임계값 (null이면 기본값).
+        /// </summary>
+        public float? DetectionThreshold { get; init; }
+
+        /// <summary>
+        /// 신뢰도 임계값 (null이면 기본값).
+        /// </summary>
+        public float? ConfidenceThreshold { get; init; }
+
+        /// <summary>
+        /// NMS 임계값 (null이면 기본값).
+        /// </summary>
+        public float? NmsThreshold { get; init; }
     }
 }

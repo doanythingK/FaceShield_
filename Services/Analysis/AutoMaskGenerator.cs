@@ -21,6 +21,50 @@ namespace FaceShield.Services.Analysis
     /// </summary>
     public sealed class AutoMaskGenerator
     {
+        private static bool IsHardwareTransferFailure()
+        {
+            string status = FfFrameExtractor.GetLastDecodeStatus();
+            string? error = FfFrameExtractor.GetLastDecodeError();
+
+            if (!string.IsNullOrWhiteSpace(error) && error.Contains("av_hwframe_transfer_data 실패", StringComparison.Ordinal))
+                return true;
+
+            return !string.IsNullOrWhiteSpace(status) &&
+                status.Contains("HW 프레임 전송 실패", StringComparison.Ordinal);
+        }
+
+        private static FfFrameExtractor CreateExtractorWithFallback(
+            string videoPath,
+            int startFrameIndex,
+            bool useRaw,
+            CancellationToken ct)
+        {
+            var extractor = new FfFrameExtractor(videoPath, enableHardware: true);
+
+            try
+            {
+                extractor.StartSequentialRead(startFrameIndex);
+
+                bool ok = useRaw
+                    ? extractor.TryGetNextFrameRaw(ct, requireBgra: true, out _, out _)
+                    : extractor.TryGetNextFrame(ct, requireBitmap: true, out _, out _);
+
+                if (!ok && !ct.IsCancellationRequested && IsHardwareTransferFailure())
+                {
+                    Debug.WriteLine("[AutoMask] HW decode failed; falling back to SW.");
+                    extractor.Dispose();
+                    extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+                }
+            }
+            catch
+            {
+                extractor.Dispose();
+                throw;
+            }
+
+            extractor.StartSequentialRead(startFrameIndex);
+            return extractor;
+        }
         private readonly IFaceDetector _detector;
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
@@ -116,17 +160,15 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            using var extractor = new FfFrameExtractor(videoPath);
+            bool useRaw = _detector is FaceOnnxDetector;
+            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw, ct);
 
             IReadOnlyList<FaceDetectionResult>? lastFaces = null;
-
-            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
-            extractor.StartSequentialRead(start);
 
             int nextIndex = start;
             PixelSize? frameSize = null;
             PixelSize fullSize = extractor.FrameSize;
-            bool useRaw = _detector is FaceOnnxDetector;
             FaceOnnxDetector? onnx = _detector as FaceOnnxDetector;
             bool useProxy = useRaw && _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
             bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
@@ -290,9 +332,8 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            using var extractor = new FfFrameExtractor(videoPath);
             int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
-            extractor.StartSequentialRead(start);
+            using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
             PixelSize fullSize = extractor.FrameSize;
             bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
@@ -531,9 +572,8 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            using var extractor = new FfFrameExtractor(videoPath);
             int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
-            extractor.StartSequentialRead(start);
+            using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
             PixelSize fullSize = extractor.FrameSize;
             bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;

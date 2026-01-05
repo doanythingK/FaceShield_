@@ -172,6 +172,15 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private bool autoExportAfter = true;
 
+        [ObservableProperty]
+        private double autoDetectionThreshold;
+
+        [ObservableProperty]
+        private double autoConfidenceThreshold;
+
+        [ObservableProperty]
+        private double autoNmsThreshold;
+
         public ObservableCollection<RecentItem> Recents { get; } = new();
 
         public HomePageViewModel(
@@ -187,6 +196,10 @@ namespace FaceShield.ViewModels.Pages
 
             OrtThreadOptions = BuildOrtThreadOptions();
             selectedOrtThreadOption = OrtThreadOptions[0];
+            var defaults = FaceOnnxDetector.GetDefaultThresholds();
+            autoDetectionThreshold = defaults.Detection;
+            autoConfidenceThreshold = defaults.Confidence;
+            autoNmsThreshold = defaults.Nms;
             ApplySavedAutoSettings();
             foreach (var recent in _stateStore.GetRecents())
                 Recents.Add(recent);
@@ -350,6 +363,24 @@ namespace FaceShield.ViewModels.Pages
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
+        partial void OnAutoDetectionThresholdChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorOptions("검출 임계값 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoConfidenceThresholdChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorOptions("신뢰도 임계값 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoNmsThresholdChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorOptions("NMS 임계값 변경 감지 · 재시작 준비 중...");
+        }
+
         partial void OnSelectedParallelSessionCountChanged(int value)
         {
             PersistAutoSettings();
@@ -396,6 +427,17 @@ namespace FaceShield.ViewModels.Pages
             _autoCts?.Cancel();
         }
 
+        private void RequestAutoRestartForDetectorOptions(string statusText)
+        {
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = statusText;
+            _autoCts?.Cancel();
+        }
+
         private void ApplySavedAutoSettings()
         {
             var saved = _stateStore.GetAutoSettings();
@@ -420,6 +462,12 @@ namespace FaceShield.ViewModels.Pages
             AutoUseOrtOptimization = saved.AutoUseOrtOptimization;
             AutoUseGpu = saved.AutoUseGpu;
             AutoExportAfter = saved.AutoExportAfter;
+            if (saved.DetectionThreshold.HasValue)
+                AutoDetectionThreshold = saved.DetectionThreshold.Value;
+            if (saved.ConfidenceThreshold.HasValue)
+                AutoConfidenceThreshold = saved.ConfidenceThreshold.Value;
+            if (saved.NmsThreshold.HasValue)
+                AutoNmsThreshold = saved.NmsThreshold.Value;
         }
 
         private void PersistAutoSettings()
@@ -434,7 +482,10 @@ namespace FaceShield.ViewModels.Pages
                 AutoUseOrtOptimization = AutoUseOrtOptimization,
                 AutoUseGpu = AutoUseGpu,
                 OrtThreads = SelectedOrtThreadOption?.Threads,
-                AutoExportAfter = AutoExportAfter
+                AutoExportAfter = AutoExportAfter,
+                DetectionThreshold = AutoDetectionThreshold,
+                ConfidenceThreshold = AutoConfidenceThreshold,
+                NmsThreshold = AutoNmsThreshold
             });
         }
 
@@ -872,7 +923,10 @@ namespace FaceShield.ViewModels.Pages
                 UseOrtOptimization = AutoUseOrtOptimization,
                 UseGpu = AutoUseGpu,
                 IntraOpNumThreads = SelectedOrtThreadOption?.Threads,
-                InterOpNumThreads = null
+                InterOpNumThreads = null,
+                DetectionThreshold = (float)Math.Clamp(AutoDetectionThreshold, 0.01, 0.99),
+                ConfidenceThreshold = (float)Math.Clamp(AutoConfidenceThreshold, 0.01, 0.99),
+                NmsThreshold = (float)Math.Clamp(AutoNmsThreshold, 0.01, 0.99)
             };
         }
 

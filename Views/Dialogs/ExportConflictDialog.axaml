@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dialogs="clr-namespace:FaceShield.Views.Dialogs"
+        x:Class="FaceShield.Views.Dialogs.ExportConflictDialog"
+        x:DataType="dialogs:ExportConflictDialog"
+        Title="내보내기"
+        SizeToContent="Height"
+        Width="460"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+  <Border Padding="16" Background="#151515">
+    <StackPanel Spacing="12">
+      <TextBlock Text="같은 이름의 파일이 이미 있습니다."
+                 TextWrapping="Wrap"
+                 FontSize="14" />
+      <TextBlock Text="{Binding OutputPath}"
+                 Opacity="0.8"
+                 TextWrapping="Wrap" />
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+        <Button Content="취소" Click="OnCancelClick" />
+        <Button Content="다른 이름으로 저장" Click="OnSaveAsClick" />
+        <Button Content="덮어쓰기" Click="OnOverwriteClick" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

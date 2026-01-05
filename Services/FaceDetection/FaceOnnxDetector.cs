@@ -40,6 +40,12 @@ namespace FaceShield.Services.FaceDetection
             _detector = new FaceDetector(); // 확실함
         }
 
+        public static (float Detection, float Confidence, float Nms) GetDefaultThresholds()
+        {
+            using var temp = new FaceDetector();
+            return (temp.DetectionThreshold, temp.ConfidenceThreshold, temp.NmsThreshold);
+        }
+
         public FaceOnnxDetector(FaceOnnxDetectorOptions? options)
         {
             if (options == null || (!options.UseOrtOptimization && !options.UseGpu))
@@ -51,10 +57,10 @@ namespace FaceShield.Services.FaceDetection
             }
 
             // 기본 임계값을 유지하기 위해 1회 생성 후 값 재사용
-            using var temp = new FaceDetector();
-            float detection = temp.DetectionThreshold;
-            float confidence = temp.ConfidenceThreshold;
-            float nms = temp.NmsThreshold;
+            var defaults = GetDefaultThresholds();
+            float detection = options.DetectionThreshold ?? defaults.Detection;
+            float confidence = options.ConfidenceThreshold ?? defaults.Confidence;
+            float nms = options.NmsThreshold ?? defaults.Nms;
 
             var so = new SessionOptions
             {

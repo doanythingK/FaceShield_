@@ -283,6 +283,9 @@ namespace FaceShield.Services.Workspace
         public bool AutoUseGpu { get; set; }
         public int? OrtThreads { get; set; }
         public bool AutoExportAfter { get; set; } = true;
+        public double? DetectionThreshold { get; set; }
+        public double? ConfidenceThreshold { get; set; }
+        public double? NmsThreshold { get; set; }
     }
 
     public sealed class WorkspaceSnapshot
