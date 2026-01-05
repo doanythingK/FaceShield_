@@ -386,16 +386,8 @@ namespace FaceShield.Services.Analysis
                             fixed (byte* dst = buffer)
                             {
                                 byte* src = (byte*)bgra.Data;
-                                int srcStride = bgra.Stride;
-                                int rowBytes = bgra.Stride;
-                                for (int y = 0; y < bgra.Height; y++)
-                                {
-                                    Buffer.MemoryCopy(
-                                        src + y * srcStride,
-                                        dst + y * srcStride,
-                                        rowBytes,
-                                        rowBytes);
-                                }
+                                int bytes = bgra.Stride * bgra.Height;
+                                Buffer.MemoryCopy(src, dst, bytes, bytes);
                             }
                         }
 
@@ -653,16 +645,8 @@ namespace FaceShield.Services.Analysis
                             fixed (byte* dst = buffer)
                             {
                                 byte* src = (byte*)bgra.Data;
-                                int srcStride = bgra.Stride;
-                                int rowBytes = bgra.Stride;
-                                for (int y = 0; y < bgra.Height; y++)
-                                {
-                                    Buffer.MemoryCopy(
-                                        src + y * srcStride,
-                                        dst + y * srcStride,
-                                        rowBytes,
-                                        rowBytes);
-                                }
+                                int bytes = bgra.Stride * bgra.Height;
+                                Buffer.MemoryCopy(src, dst, bytes, bytes);
                             }
                         }
 
