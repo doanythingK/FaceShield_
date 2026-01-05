@@ -323,6 +323,13 @@ namespace FaceShield.Services.Analysis
             public int Height { get; init; }
         }
 
+        private sealed class DetectionResult
+        {
+            public int Index { get; init; }
+            public Rect[] Bounds { get; init; } = Array.Empty<Rect>();
+            public PixelSize Size { get; init; }
+        }
+
         private void GeneratePipelinedDetectAll(
             string videoPath,
             FaceOnnxDetector onnx,
@@ -343,7 +350,8 @@ namespace FaceShield.Services.Analysis
             double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
             double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
 
-            using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(2);
+            using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(4);
+            using var results = new System.Collections.Concurrent.BlockingCollection<DetectionResult>(8);
             var pool = System.Buffers.ArrayPool<byte>.Shared;
             long decodeMs = 0;
             long detectMs = 0;
@@ -415,6 +423,27 @@ namespace FaceShield.Services.Analysis
                 }
             }, ct);
 
+            var writer = Task.Run(() =>
+            {
+                foreach (var result in results.GetConsumingEnumerable())
+                {
+                    if (ct.IsCancellationRequested)
+                        break;
+
+                    onFrameProcessed?.Invoke(result.Index);
+                    if (result.Bounds.Length > 0)
+                        _maskProvider.SetFaceRects(result.Index, result.Bounds, result.Size);
+
+                    ReportProgress(progress, result.Index, totalFrames);
+                    processed++;
+                    if (processed % 60 == 0)
+                    {
+                        Debug.WriteLine(
+                            $"[AutoMaskPipe] frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                    }
+                }
+            }, ct);
+
             try
             {
                 foreach (var item in queue.GetConsumingEnumerable())
@@ -424,7 +453,8 @@ namespace FaceShield.Services.Analysis
 
                     try
                     {
-                        onFrameProcessed?.Invoke(item.Index);
+                        Rect[] bounds = Array.Empty<Rect>();
+                        PixelSize resultSize = useProxy ? fullSize : new PixelSize(item.Width, item.Height);
 
                         if (!_maskProvider.HasEntry(item.Index))
                         {
@@ -452,22 +482,25 @@ namespace FaceShield.Services.Analysis
 
                                     if (faces.Count > 0)
                                     {
-                                        _maskProvider.SetFaceRects(
-                                            item.Index,
-                                            ExtractBounds(faces),
-                                            useProxy ? fullSize : new PixelSize(item.Width, item.Height));
+                                        bounds = ExtractBounds(faces);
                                         lastFaces = faces;
                                     }
                                 }
                             }
                         }
 
-                        ReportProgress(progress, item.Index, totalFrames);
-                        processed++;
-                        if (processed % 60 == 0)
+                        try
                         {
-                            Debug.WriteLine(
-                                $"[AutoMaskPipe] frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                            results.Add(new DetectionResult
+                            {
+                                Index = item.Index,
+                                Bounds = bounds,
+                                Size = resultSize
+                            }, ct);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
                         }
                     }
                     finally
@@ -478,7 +511,9 @@ namespace FaceShield.Services.Analysis
             }
             finally
             {
+                results.CompleteAdding();
                 try { producer.Wait(ct); } catch { }
+                try { writer.Wait(ct); } catch { }
             }
 
             progress?.Report(100);
@@ -583,7 +618,9 @@ namespace FaceShield.Services.Analysis
             double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
             double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
 
-            using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(Math.Max(2, detectors.Count * 2));
+            int queueDepth = Math.Max(4, detectors.Count * 3);
+            using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(queueDepth);
+            using var results = new System.Collections.Concurrent.BlockingCollection<DetectionResult>(queueDepth * 2);
             var pool = System.Buffers.ArrayPool<byte>.Shared;
             long decodeMs = 0;
             long detectMs = 0;
@@ -665,7 +702,8 @@ namespace FaceShield.Services.Analysis
 
                         try
                         {
-                            onFrameProcessed?.Invoke(item.Index);
+                            Rect[] bounds = Array.Empty<Rect>();
+                            PixelSize resultSize = useProxy ? fullSize : new PixelSize(item.Width, item.Height);
 
                             if (!_maskProvider.HasEntry(item.Index))
                             {
@@ -692,22 +730,23 @@ namespace FaceShield.Services.Analysis
                                         Interlocked.Add(ref detectMs, tDetect.ElapsedMilliseconds);
 
                                         if (faces.Count > 0)
-                                        {
-                                            _maskProvider.SetFaceRects(
-                                                item.Index,
-                                                ExtractBounds(faces),
-                                                useProxy ? fullSize : new PixelSize(item.Width, item.Height));
-                                        }
+                                            bounds = ExtractBounds(faces);
                                     }
                                 }
                             }
 
-                            ReportProgress(progress, item.Index, totalFrames);
-                            int done = Interlocked.Increment(ref processed);
-                            if (done % 60 == 0)
+                            try
                             {
-                                Debug.WriteLine(
-                                    $"[AutoMaskPipe] frames={done}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                                results.Add(new DetectionResult
+                                {
+                                    Index = item.Index,
+                                    Bounds = bounds,
+                                    Size = resultSize
+                                }, ct);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                break;
                             }
                         }
                         finally
@@ -717,6 +756,27 @@ namespace FaceShield.Services.Analysis
                     }
                 }, ct));
             }
+
+            var writer = Task.Run(() =>
+            {
+                foreach (var result in results.GetConsumingEnumerable())
+                {
+                    if (ct.IsCancellationRequested)
+                        break;
+
+                    onFrameProcessed?.Invoke(result.Index);
+                    if (result.Bounds.Length > 0)
+                        _maskProvider.SetFaceRects(result.Index, result.Bounds, result.Size);
+
+                    ReportProgress(progress, result.Index, totalFrames);
+                    int done = Interlocked.Increment(ref processed);
+                    if (done % 60 == 0)
+                    {
+                        Debug.WriteLine(
+                            $"[AutoMaskPipe] frames={done}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                    }
+                }
+            }, ct);
 
             try
             {
@@ -728,7 +788,9 @@ namespace FaceShield.Services.Analysis
             }
             finally
             {
+                results.CompleteAdding();
                 try { producer.Wait(ct); } catch { }
+                try { writer.Wait(ct); } catch { }
             }
 
             progress?.Report(100);
