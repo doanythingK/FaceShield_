@@ -50,10 +50,10 @@ jobs:
           if (Test-Path $packDir) { Remove-Item $packDir -Recurse -Force }
           New-Item -ItemType Directory -Path $packDir | Out-Null
 
-          $nativeDir = Get-ChildItem -Path $extractDir -Recurse -Directory |
-            Where-Object { $_.FullName -match "runtimes\\\\win-x64\\\\native$" } |
-            Select-Object -First 1
-          if (-not $nativeDir) { throw "Native runtime folder not found in package." }
+          $runtimeDll = Get-ChildItem -Path $extractDir -Recurse -Filter "onnxruntime_providers_cuda.dll" | Select-Object -First 1
+          if (-not $runtimeDll) { throw "onnxruntime_providers_cuda.dll not found in package." }
+          $nativeDir = $runtimeDll.Directory
+
           Copy-Item (Join-Path $nativeDir.FullName "onnxruntime.dll") $packDir -Force
           Copy-Item (Join-Path $nativeDir.FullName "onnxruntime_providers_shared.dll") $packDir -Force
           Copy-Item (Join-Path $nativeDir.FullName "onnxruntime_providers_cuda.dll") $packDir -Force
