@@ -64,6 +64,13 @@ jobs:
 
           if ($pkgRoots.Count -eq 0) { throw "NuGet cache not found under: $globalPackages" }
 
+          $gpuManaged = Get-ChildItem -Path $pkgRoots -Recurse -Filter "Microsoft.ML.OnnxRuntime.Gpu.dll" | Select-Object -First 1
+          if (-not $gpuManaged)
+          {
+            throw "Microsoft.ML.OnnxRuntime.Gpu.dll not found in GPU packages."
+          }
+          Copy-Item $gpuManaged.FullName $packDir -Force
+
           $runtimeDll = Get-ChildItem -Path $pkgRoots -Recurse -Filter "onnxruntime_providers_cuda.dll" | Select-Object -First 1
           if (-not $runtimeDll)
           {
