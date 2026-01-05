@@ -1,0 +1,94 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish Windows app (self-contained)
+        run: dotnet publish FaceShield.csproj -c Release -r win-x64 --self-contained true
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $outDir = "bin/Release/net8.0/win-x64/publish"
+          if (!(Test-Path $outDir)) { throw "Publish directory not found: $outDir" }
+          $shortSha = $env:GITHUB_SHA.Substring(0,7)
+          $buildVer = $env:GITHUB_RUN_NUMBER
+          $zipName = "FaceShield-win-x64-v$buildVer-$shortSha.zip"
+          Compress-Archive -Path "$outDir\*" -DestinationPath "$outDir\$zipName" -Force
+
+      - name: Build CUDA optional pack
+        shell: pwsh
+        run: |
+          $version = "1.23.2"
+          $pkg = "Microsoft.ML.OnnxRuntime.Gpu"
+          $uri = "https://www.nuget.org/api/v2/package/$pkg/$version"
+          $tempPkg = Join-Path $env:RUNNER_TEMP "onnxruntime-gpu.nupkg"
+          $extractDir = Join-Path $env:RUNNER_TEMP "onnxruntime-gpu"
+          $packDir = Join-Path $env:RUNNER_TEMP "faceshield-cuda-pack"
+          Invoke-WebRequest -Uri $uri -OutFile $tempPkg
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Expand-Archive -Path $tempPkg -DestinationPath $extractDir -Force
+          if (Test-Path $packDir) { Remove-Item $packDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $packDir | Out-Null
+
+          Copy-Item "$extractDir\lib\netstandard2.1\Microsoft.ML.OnnxRuntime.Gpu.dll" $packDir -Force
+          Copy-Item "$extractDir\runtimes\win-x64\native\onnxruntime.dll" $packDir -Force
+          Copy-Item "$extractDir\runtimes\win-x64\native\onnxruntime_providers_shared.dll" $packDir -Force
+          Copy-Item "$extractDir\runtimes\win-x64\native\onnxruntime_providers_cuda.dll" $packDir -Force
+
+          $readme = @(
+            "FaceShield CUDA Optional Pack",
+            "",
+            "Use this only if you want CUDA acceleration on Windows.",
+            "Requirements:",
+            "  - NVIDIA driver + CUDA Toolkit + cuDNN (matching ONNX Runtime 1.23.2)",
+            "",
+            "Install:",
+            "  1) Close the app.",
+            "  2) Copy all DLLs in this folder into the app's publish directory",
+            "     (next to FaceShield.exe).",
+            "  3) Launch the app and check acceleration status shows GPU:CUDA.",
+            "",
+            "Note:",
+            "  This pack replaces onnxruntime.dll with the CUDA build.",
+            "  If you want to revert, restore the original DLLs from the base package."
+          )
+          $readme | Set-Content (Join-Path $packDir "CUDA_README.txt") -Encoding ASCII
+
+          $shortSha = $env:GITHUB_SHA.Substring(0,7)
+          $buildVer = $env:GITHUB_RUN_NUMBER
+          $zipName = "FaceShield-cuda-pack-win-x64-v$buildVer-$shortSha.zip"
+          Compress-Archive -Path "$packDir\*" -DestinationPath "$packDir\$zipName" -Force
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceShield-win-x64
+          path: |
+            bin/Release/net8.0/win-x64/publish/FaceShield-win-x64-v*-*.zip
+
+      - name: Upload CUDA pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceShield-cuda-pack-win-x64
+          path: |
+            ${{ runner.temp }}/faceshield-cuda-pack/FaceShield-cuda-pack-win-x64-v*-*.zip

@@ -541,6 +541,112 @@ namespace FaceShield.Services.Video
             }
         }
 
+        public bool TryGetNextFrameRawToBuffer(
+            CancellationToken ct,
+            int targetWidth,
+            int targetHeight,
+            bool useBilinear,
+            byte[] buffer,
+            out int frameIndex,
+            out int stride)
+        {
+            frameIndex = -1;
+            stride = 0;
+
+            if (buffer == null)
+                throw new ArgumentNullException(nameof(buffer));
+            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
+
+            int dstW = targetWidth > 0 ? targetWidth : _dec->width;
+            int dstH = targetHeight > 0 ? targetHeight : _dec->height;
+            stride = dstW * 4;
+            int bytes = stride * dstH;
+            if (buffer.Length < bytes)
+                return false;
+
+            lock (_sync)
+            {
+                if (!_sequentialActive)
+                    throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawToBuffer.");
+
+                AVPacket* pkt = ffmpeg.av_packet_alloc();
+                AVFrame* src = ffmpeg.av_frame_alloc();
+
+                if (pkt == null || src == null)
+                {
+                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
+                    if (src != null) ffmpeg.av_frame_free(&src);
+                    return false;
+                }
+
+                try
+                {
+                    fixed (byte* dst = buffer)
+                    {
+                        byte_ptrArray4 dstData = default;
+                        int_array4 dstLinesize = default;
+                        dstData[0] = dst;
+                        dstLinesize[0] = stride;
+
+                        bool scaled = dstW != _dec->width || dstH != _dec->height;
+                        SwsFlags flags = useBilinear ? SwsFlags.SWS_BILINEAR : SwsFlags.SWS_POINT;
+
+                        while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                        {
+                            if (pkt->stream_index != _videoStreamIndex)
+                            {
+                                ffmpeg.av_packet_unref(pkt);
+                                continue;
+                            }
+
+                            ffmpeg.avcodec_send_packet(_dec, pkt);
+                            ffmpeg.av_packet_unref(pkt);
+
+                            while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
+                            {
+                                long pts = src->best_effort_timestamp;
+                                if (pts == ffmpeg.AV_NOPTS_VALUE)
+                                    pts = src->pts;
+
+                                if (!_sequentialStarted && pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
+                                    continue;
+
+                                _sequentialStarted = true;
+                                frameIndex = _sequentialIndex++;
+
+                                bool ok = scaled
+                                    ? ConvertDecodedFrameToBgraToBuffer(
+                                        src,
+                                        dstData,
+                                        dstLinesize,
+                                        dstW,
+                                        dstH,
+                                        flags,
+                                        ref _swsScaled)
+                                    : ConvertDecodedFrameToBgraToBuffer(
+                                        src,
+                                        dstData,
+                                        dstLinesize,
+                                        dstW,
+                                        dstH,
+                                        SwsFlags.SWS_BILINEAR,
+                                        ref _sws);
+                                if (ok)
+                                    return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                }
+                finally
+                {
+                    ffmpeg.av_packet_free(&pkt);
+                    ffmpeg.av_frame_free(&src);
+                }
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -769,6 +875,94 @@ namespace FaceShield.Services.Video
                 swFrame->data, swFrame->linesize,
                 0, srcH,
                 bgra->data, bgra->linesize);
+
+            if (temp != null)
+                ffmpeg.av_frame_free(&temp);
+
+            return true;
+        }
+
+        private bool ConvertDecodedFrameToBgraToBuffer(
+            AVFrame* src,
+            byte_ptrArray4 dstData,
+            int_array4 dstLinesize,
+            int dstW,
+            int dstH,
+            SwsFlags flags,
+            ref SwsContext* sws)
+        {
+            AVFrame* swFrame = src;
+            AVFrame* temp = null;
+
+            if (_hwDeviceCtx != null && IsHardwareFrame(src))
+            {
+                if (_dec->sw_pix_fmt == AVPixelFormat.AV_PIX_FMT_NONE)
+                {
+                    UpdateDecodeStatus("디코딩: HW 프레임 전송 실패", "sw_pix_fmt 미설정");
+                    return false;
+                }
+
+                temp = ffmpeg.av_frame_alloc();
+                if (temp != null)
+                {
+                    temp->format = (int)_dec->sw_pix_fmt;
+                    temp->width = src->width;
+                    temp->height = src->height;
+
+                    if (ffmpeg.av_frame_get_buffer(temp, 32) < 0)
+                    {
+                        UpdateDecodeStatus("디코딩: HW 프레임 전송 실패", "av_frame_get_buffer 실패");
+                        ffmpeg.av_frame_free(&temp);
+                        temp = null;
+                        return false;
+                    }
+
+                    if (ffmpeg.av_hwframe_transfer_data(temp, src, 0) == 0)
+                    {
+                        swFrame = temp;
+                        UpdateDecodeStatus("디코딩: HW 프레임 전송 성공");
+                    }
+                    else
+                    {
+                        UpdateDecodeStatus("디코딩: HW 프레임 전송 실패", "av_hwframe_transfer_data 실패");
+                        ffmpeg.av_frame_free(&temp);
+                        temp = null;
+                        return false;
+                    }
+                }
+            }
+            else if (_hwDeviceCtx != null)
+            {
+                UpdateDecodeStatus("디코딩: SW 디코더 사용");
+            }
+            else
+            {
+                UpdateDecodeStatus("디코딩: SW 디코더 사용");
+            }
+
+            AVPixelFormat srcFmt = (AVPixelFormat)swFrame->format;
+            int srcW = swFrame->width;
+            int srcH = swFrame->height;
+
+            sws = ffmpeg.sws_getCachedContext(
+                sws,
+                srcW, srcH, srcFmt,
+                dstW, dstH, AVPixelFormat.AV_PIX_FMT_BGRA,
+                (int)flags,
+                null, null, null);
+
+            if (sws == null)
+            {
+                if (temp != null)
+                    ffmpeg.av_frame_free(&temp);
+                return false;
+            }
+
+            ffmpeg.sws_scale(
+                sws,
+                swFrame->data, swFrame->linesize,
+                0, srcH,
+                dstData, dstLinesize);
 
             if (temp != null)
                 ffmpeg.av_frame_free(&temp);

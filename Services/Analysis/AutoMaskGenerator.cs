@@ -367,28 +367,33 @@ namespace FaceShield.Services.Analysis
                     while (!ct.IsCancellationRequested)
                     {
                         var tDecode = Stopwatch.StartNew();
-                        bool ok = useProxy
-                            ? extractor.TryGetNextFrameRawScaled(ct, requireBgra: true, proxyWidth, proxyHeight, useBilinear, out var bgra, out var idx)
-                            : extractor.TryGetNextFrameRaw(ct, requireBgra: true, out bgra, out idx);
+                        int targetW = useProxy ? proxyWidth : fullSize.Width;
+                        int targetH = useProxy ? proxyHeight : fullSize.Height;
+                        int stride;
+                        int idx;
+                        int size = targetW * 4 * targetH;
+                        var buffer = pool.Rent(size);
+
+                        bool ok = extractor.TryGetNextFrameRawToBuffer(
+                            ct,
+                            targetW,
+                            targetH,
+                            useBilinear,
+                            buffer,
+                            out idx,
+                            out stride);
                         tDecode.Stop();
                         decodeMs += tDecode.ElapsedMilliseconds;
                         if (!ok)
+                        {
+                            pool.Return(buffer);
                             break;
+                        }
 
                         if (idx >= totalFrames)
-                            break;
-
-                        int size = bgra.Stride * bgra.Height;
-                        var buffer = pool.Rent(size);
-
-                        unsafe
                         {
-                            fixed (byte* dst = buffer)
-                            {
-                                byte* src = (byte*)bgra.Data;
-                                int bytes = bgra.Stride * bgra.Height;
-                                Buffer.MemoryCopy(src, dst, bytes, bytes);
-                            }
+                            pool.Return(buffer);
+                            break;
                         }
 
                         try
@@ -397,9 +402,9 @@ namespace FaceShield.Services.Analysis
                             {
                                 Index = idx,
                                 Data = buffer,
-                                Stride = bgra.Stride,
-                                Width = bgra.Width,
-                                Height = bgra.Height
+                                Stride = stride,
+                                Width = targetW,
+                                Height = targetH
                             }, ct);
                         }
                         catch (OperationCanceledException)
@@ -626,28 +631,33 @@ namespace FaceShield.Services.Analysis
                     while (!ct.IsCancellationRequested)
                     {
                         var tDecode = Stopwatch.StartNew();
-                        bool ok = useProxy
-                            ? extractor.TryGetNextFrameRawScaled(ct, requireBgra: true, proxyWidth, proxyHeight, useBilinear, out var bgra, out var idx)
-                            : extractor.TryGetNextFrameRaw(ct, requireBgra: true, out bgra, out idx);
+                        int targetW = useProxy ? proxyWidth : fullSize.Width;
+                        int targetH = useProxy ? proxyHeight : fullSize.Height;
+                        int stride;
+                        int idx;
+                        int size = targetW * 4 * targetH;
+                        var buffer = pool.Rent(size);
+
+                        bool ok = extractor.TryGetNextFrameRawToBuffer(
+                            ct,
+                            targetW,
+                            targetH,
+                            useBilinear,
+                            buffer,
+                            out idx,
+                            out stride);
                         tDecode.Stop();
                         Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
                         if (!ok)
+                        {
+                            pool.Return(buffer);
                             break;
+                        }
 
                         if (idx >= totalFrames)
-                            break;
-
-                        int size = bgra.Stride * bgra.Height;
-                        var buffer = pool.Rent(size);
-
-                        unsafe
                         {
-                            fixed (byte* dst = buffer)
-                            {
-                                byte* src = (byte*)bgra.Data;
-                                int bytes = bgra.Stride * bgra.Height;
-                                Buffer.MemoryCopy(src, dst, bytes, bytes);
-                            }
+                            pool.Return(buffer);
+                            break;
                         }
 
                         try
@@ -656,9 +666,9 @@ namespace FaceShield.Services.Analysis
                             {
                                 Index = idx,
                                 Data = buffer,
-                                Stride = bgra.Stride,
-                                Width = bgra.Width,
-                                Height = bgra.Height
+                                Stride = stride,
+                                Width = targetW,
+                                Height = targetH
                             }, ct);
                         }
                         catch (OperationCanceledException)

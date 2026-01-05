@@ -805,6 +805,28 @@ namespace FaceShield.Services.FaceDetection
                     return "CoreML";
             }
 
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
+                {
+                    UpdateExecutionProviderLabel("GPU:CUDA");
+                    UpdateExecutionProviderError(null);
+                    return "CUDA";
+                }
+
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
+                {
+                    UpdateExecutionProviderLabel("GPU:DirectML");
+                    UpdateExecutionProviderError(null);
+                    return "DirectML";
+                }
+
+                UpdateExecutionProviderLabel("CPU(DirectML 로드 실패)");
+                if (GetLastExecutionProviderError() == null)
+                    UpdateExecutionProviderError(BuildDirectMlDiagnostics());
+                return null;
+            }
+
             if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
             {
                 UpdateExecutionProviderLabel("GPU:DirectML");
@@ -812,17 +834,12 @@ namespace FaceShield.Services.FaceDetection
                 return "DirectML";
             }
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                UpdateExecutionProviderLabel("CPU(DirectML 로드 실패)");
-                if (GetLastExecutionProviderError() == null)
-                    UpdateExecutionProviderError(BuildDirectMlDiagnostics());
-                // Windows 기본 경로는 DirectML만 사용. CUDA는 별도 런타임 필요.
-                return null;
-            }
-
             if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
+            {
+                UpdateExecutionProviderLabel("GPU:CUDA");
+                UpdateExecutionProviderError(null);
                 return "CUDA";
+            }
 
             return null;
         }
