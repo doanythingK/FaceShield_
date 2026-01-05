@@ -50,10 +50,6 @@ jobs:
           if (Test-Path $packDir) { Remove-Item $packDir -Recurse -Force }
           New-Item -ItemType Directory -Path $packDir | Out-Null
 
-          $gpuDll = Get-ChildItem -Path $extractDir -Recurse -Filter "Microsoft.ML.OnnxRuntime.Gpu.dll" | Select-Object -First 1
-          if (-not $gpuDll) { throw "Microsoft.ML.OnnxRuntime.Gpu.dll not found in package." }
-          Copy-Item $gpuDll.FullName $packDir -Force
-
           $nativeDir = Join-Path $extractDir "runtimes\win-x64\native"
           if (!(Test-Path $nativeDir)) { throw "Native runtime folder not found: $nativeDir" }
           Copy-Item (Join-Path $nativeDir "onnxruntime.dll") $packDir -Force
