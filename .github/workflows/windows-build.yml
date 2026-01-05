@@ -57,9 +57,9 @@ jobs:
           }
 
           $pkgRoots = @(
-            Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu\$version",
-            Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu.windows\$version",
-            Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu.linux\$version"
+            (Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu\$version"),
+            (Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu.windows\$version"),
+            (Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu.linux\$version")
           ) | Where-Object { Test-Path $_ }
 
           if ($pkgRoots.Count -eq 0) { throw "NuGet cache not found under: $globalPackages" }
