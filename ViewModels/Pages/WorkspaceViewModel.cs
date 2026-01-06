@@ -33,8 +33,8 @@ namespace FaceShield.ViewModels.Pages
         private int _autoLastProcessedFrame = -1;
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private bool _sessionInitialized;
-        private readonly Queue<(DateTime Timestamp, int Progress)> _exportEtaSamples = new();
-        private (DateTime Timestamp, int Progress) _exportLastSample;
+        private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();
+        private (DateTime Timestamp, int FrameIndex) _exportLastSample;
 
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
@@ -171,7 +171,7 @@ namespace FaceShield.ViewModels.Pages
                 exportProgress?.Report(p);
                 int percent = Math.Clamp(p.Percent, 0, 100);
                 ToolPanel.ExportProgress = percent;
-                UpdateExportEta(DateTime.UtcNow, percent);
+                UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
                 if (!string.IsNullOrWhiteSpace(p.StatusMessage))
                     ToolPanel.ExportStatusText = p.StatusMessage;
             });
@@ -398,37 +398,47 @@ namespace FaceShield.ViewModels.Pages
             return ex.Message;
         }
 
-        private void UpdateExportEta(DateTime timestamp, int progress)
+        private void UpdateExportEta(DateTime timestamp, int frameIndex, int totalFrames)
         {
-            if (progress <= 0 || progress >= 100)
+            if (totalFrames <= 0 || frameIndex <= 0)
+            {
+                if (string.IsNullOrWhiteSpace(ToolPanel.ExportEtaText))
+                    ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
+                return;
+            }
+            if (frameIndex >= totalFrames)
             {
                 ToolPanel.ExportEtaText = null;
                 return;
             }
 
-            if (_exportEtaSamples.Count > 0 && progress <= _exportLastSample.Progress)
+            if (_exportEtaSamples.Count > 0 && frameIndex <= _exportLastSample.FrameIndex)
                 return;
 
-            _exportEtaSamples.Enqueue((timestamp, progress));
-            _exportLastSample = (timestamp, progress);
+            _exportEtaSamples.Enqueue((timestamp, frameIndex));
+            _exportLastSample = (timestamp, frameIndex);
 
             while (_exportEtaSamples.Count > 0 &&
                    (timestamp - _exportEtaSamples.Peek().Timestamp).TotalSeconds > 10)
                 _exportEtaSamples.Dequeue();
 
             if (_exportEtaSamples.Count < 2)
+            {
+                ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
                 return;
+            }
 
             var first = _exportEtaSamples.Peek();
             var last = _exportLastSample;
             var elapsedSeconds = (last.Timestamp - first.Timestamp).TotalSeconds;
-            var progressed = last.Progress - first.Progress;
+            var progressed = last.FrameIndex - first.FrameIndex;
 
             if (elapsedSeconds <= 0 || progressed <= 0)
                 return;
 
             double ratePerSecond = progressed / elapsedSeconds;
-            double remaining = (100 - progress) / ratePerSecond;
+            double remainingFrames = (totalFrames - frameIndex);
+            double remaining = remainingFrames / ratePerSecond;
             if (remaining < 0)
                 return;
 

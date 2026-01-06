@@ -33,6 +33,7 @@ public unsafe sealed class VideoExportService
         AVCodecContext* audioEnc = null;
         SwsContext* swsDecToBgra = null;
         SwsContext* swsBgraToEnc = null;
+        SwsContext* swsDecToEnc = null;
         SwrContext* swr = null;
         AVAudioFifo* audioFifo = null;
 
@@ -205,13 +206,13 @@ public unsafe sealed class VideoExportService
             swsDecToBgra = ffmpeg.sws_getContext(
                 dec->width, dec->height, dec->pix_fmt,
                 dec->width, dec->height, AVPixelFormat.AV_PIX_FMT_BGRA,
-                (int)SwsFlags.SWS_BILINEAR,
+                (int)SwsFlags.SWS_FAST_BILINEAR,
                 null, null, null);
 
             swsBgraToEnc = ffmpeg.sws_getContext(
                 enc->width, enc->height, AVPixelFormat.AV_PIX_FMT_BGRA,
                 enc->width, enc->height, enc->pix_fmt,
-                (int)SwsFlags.SWS_BILINEAR,
+                (int)SwsFlags.SWS_FAST_BILINEAR,
                 null, null, null);
 
             // ───────── main loop ─────────
@@ -262,18 +263,6 @@ public unsafe sealed class VideoExportService
                     if (cancellationToken.IsCancellationRequested)
                         throw new OperationCanceledException(cancellationToken);
 
-                    var tBgra = Stopwatch.StartNew();
-                    Throw(ffmpeg.sws_scale(
-                        swsDecToBgra,
-                        frame->data,
-                        frame->linesize,
-                        0,
-                        frame->height,
-                        bgra->data,
-                        bgra->linesize));
-                    tBgra.Stop();
-                    swsToBgraMs += tBgra.ElapsedMilliseconds;
-
                     WriteableBitmap? mask = null;
                     bool disposeMask = false;
 
@@ -296,38 +285,106 @@ public unsafe sealed class VideoExportService
 
                     if (mask != null)
                     {
+                        var tBgra = Stopwatch.StartNew();
+                        Throw(ffmpeg.sws_scale(
+                            swsDecToBgra,
+                            frame->data,
+                            frame->linesize,
+                            0,
+                            frame->height,
+                            bgra->data,
+                            bgra->linesize));
+                        tBgra.Stop();
+                        swsToBgraMs += tBgra.ElapsedMilliseconds;
+
                         var tMask = Stopwatch.StartNew();
                         _masked.ApplyMaskAndBlur(bgra, mask, blurRadius);
                         tMask.Stop();
                         maskMs += tMask.ElapsedMilliseconds;
                         if (disposeMask)
                             mask.Dispose();
+
+                        var tEncSws = Stopwatch.StartNew();
+                        Throw(ffmpeg.sws_scale(
+                            swsBgraToEnc,
+                            bgra->data,
+                            bgra->linesize,
+                            0,
+                            bgra->height,
+                            encFrame->data,
+                            encFrame->linesize));
+                        tEncSws.Stop();
+                        swsToEncMs += tEncSws.ElapsedMilliseconds;
+
+                        encFrame->pts = frame->pts;
+
+                        var tEncode = Stopwatch.StartNew();
+                        Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
+                        while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
+                        {
+                            outPkt->stream_index = outStream->index;
+                            Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+                            ffmpeg.av_packet_unref(outPkt);
+                        }
+                        tEncode.Stop();
+                        encodeMs += tEncode.ElapsedMilliseconds;
                     }
-
-                    var tEncSws = Stopwatch.StartNew();
-                    Throw(ffmpeg.sws_scale(
-                        swsBgraToEnc,
-                        bgra->data,
-                        bgra->linesize,
-                        0,
-                        bgra->height,
-                        encFrame->data,
-                        encFrame->linesize));
-                    tEncSws.Stop();
-                    swsToEncMs += tEncSws.ElapsedMilliseconds;
-
-                    encFrame->pts = frame->pts;
-
-                    var tEncode = Stopwatch.StartNew();
-                    Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
-                    while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
+                    else
                     {
-                        outPkt->stream_index = outStream->index;
-                        Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
-                        ffmpeg.av_packet_unref(outPkt);
+                        bool direct = frame->format == (int)enc->pix_fmt
+                            && frame->width == enc->width
+                            && frame->height == enc->height;
+
+                        if (!direct)
+                        {
+                            if (swsDecToEnc == null)
+                            {
+                                swsDecToEnc = ffmpeg.sws_getContext(
+                                    dec->width, dec->height, dec->pix_fmt,
+                                    enc->width, enc->height, enc->pix_fmt,
+                                    (int)SwsFlags.SWS_FAST_BILINEAR,
+                                    null, null, null);
+                            }
+
+                            var tEncSws = Stopwatch.StartNew();
+                            Throw(ffmpeg.sws_scale(
+                                swsDecToEnc,
+                                frame->data,
+                                frame->linesize,
+                                0,
+                                frame->height,
+                                encFrame->data,
+                                encFrame->linesize));
+                            tEncSws.Stop();
+                            swsToEncMs += tEncSws.ElapsedMilliseconds;
+
+                            encFrame->pts = frame->pts;
+
+                            var tEncode = Stopwatch.StartNew();
+                            Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
+                            while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
+                            {
+                                outPkt->stream_index = outStream->index;
+                                Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+                                ffmpeg.av_packet_unref(outPkt);
+                            }
+                            tEncode.Stop();
+                            encodeMs += tEncode.ElapsedMilliseconds;
+                        }
+                        else
+                        {
+                            var tEncode = Stopwatch.StartNew();
+                            Throw(ffmpeg.avcodec_send_frame(enc, frame));
+                            while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
+                            {
+                                outPkt->stream_index = outStream->index;
+                                Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+                                ffmpeg.av_packet_unref(outPkt);
+                            }
+                            tEncode.Stop();
+                            encodeMs += tEncode.ElapsedMilliseconds;
+                        }
                     }
-                    tEncode.Stop();
-                    encodeMs += tEncode.ElapsedMilliseconds;
 
                     frameIndex++;
                     if (progress != null && (frameIndex % 15 == 0 || frameIndex == totalFrames))
@@ -375,6 +432,7 @@ public unsafe sealed class VideoExportService
         {
             if (swsDecToBgra != null) ffmpeg.sws_freeContext(swsDecToBgra);
             if (swsBgraToEnc != null) ffmpeg.sws_freeContext(swsBgraToEnc);
+            if (swsDecToEnc != null) ffmpeg.sws_freeContext(swsDecToEnc);
 
             ffmpeg.av_frame_free(&frame);
             ffmpeg.av_frame_free(&bgra);
@@ -479,6 +537,17 @@ public unsafe sealed class VideoExportService
 
         if (!IsPixFmtSupported(encoder, ctx->pix_fmt))
             ctx->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
+
+        ctx->thread_count = Math.Max(1, Environment.ProcessorCount - 2);
+
+        if (encoder->name != null)
+        {
+            string name = Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? string.Empty;
+            if (name.Contains("x264", StringComparison.OrdinalIgnoreCase))
+            {
+                ffmpeg.av_opt_set(ctx->priv_data, "preset", "veryfast", 0);
+            }
+        }
 
         int openErr = ffmpeg.avcodec_open2(ctx, encoder, null);
         if (openErr < 0)

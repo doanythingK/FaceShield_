@@ -95,19 +95,19 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
 
             foreach (var r in faces)
             {
-                int x0 = Math.Clamp((int)Math.Floor(r.X), 0, Math.Max(0, w - 1));
-                int y0 = Math.Clamp((int)Math.Floor(r.Y), 0, Math.Max(0, h - 1));
-                int x1 = Math.Clamp((int)Math.Ceiling(r.X + r.Width), 0, w);
-                int y1 = Math.Clamp((int)Math.Ceiling(r.Y + r.Height), 0, h);
+                double padX = Math.Max(6.0, r.Width * 0.15);
+                double padY = Math.Max(6.0, r.Height * 0.25);
+                double rx0 = r.X - padX;
+                double ry0 = r.Y - padY;
+                double rx1 = r.X + r.Width + padX;
+                double ry1 = r.Y + r.Height + padY;
 
-                double faceArea = Math.Max(0.0, r.Width) * Math.Max(0.0, r.Height);
-                double frameArea = Math.Max(1.0, w) * Math.Max(1.0, h);
-                double ratio = faceArea / frameArea;
-                double strength;
-                if (ratio <= R1) strength = 0.3;       // 6 / 20
-                else if (ratio <= R2) strength = 0.4;  // 8 / 20
-                else if (ratio <= R3) strength = 0.6;  // 12 / 20
-                else strength = 1.0;                   // 20 / 20
+                int x0 = Math.Clamp((int)Math.Floor(rx0), 0, Math.Max(0, w - 1));
+                int y0 = Math.Clamp((int)Math.Floor(ry0), 0, Math.Max(0, h - 1));
+                int x1 = Math.Clamp((int)Math.Ceiling(rx1), 0, w);
+                int y1 = Math.Clamp((int)Math.Ceiling(ry1), 0, h);
+
+                double strength = 1.0;
 
                 double cx = (x0 + x1 - 1) / 2.0;
                 double cy = (y0 + y1 - 1) / 2.0;

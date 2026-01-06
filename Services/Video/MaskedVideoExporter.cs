@@ -8,6 +8,12 @@ public unsafe sealed class MaskedVideoExporter
 {
     private byte[]? _temp;
     private byte[]? _blurred;
+    private int[]? _integralB;
+    private int[]? _integralG;
+    private int[]? _integralR;
+    private int[]? _integralA;
+    private int _integralW;
+    private int _integralH;
     private byte[]? _prevMaskAlpha;
     private int _prevMaskW;
     private int _prevMaskH;
@@ -29,143 +35,64 @@ public unsafe sealed class MaskedVideoExporter
         int stride = bgraFrame->linesize[0];
         uint* m = (uint*)fb.Address;
 
-        int downscale = blurRadius >= 8 ? 2 : 1;
-        int sw = Math.Max(1, w / downscale);
-        int sh = Math.Max(1, h / downscale);
-        int sStride = sw * 4;
-        int sSize = sStride * sh;
-
-        EnsureBuffers(stride, h, sSize);
         EnsureMaskHistory(w, h);
 
-        int r = Math.Max(1, blurRadius / downscale);
-        int kernel = r * 2 + 1;
+        int r = Math.Max(1, blurRadius);
 
-        fixed (byte* tempPtr = _temp)
-        fixed (byte* blurPtr = _blurred)
+        fixed (byte* _ = _temp)
+        fixed (byte* __ = _blurred)
         {
-            byte* srcSmall = blurPtr;
-            byte* tmpSmall = tempPtr;
+            var (rx0, ry0, rx1, ry1) = GetMaskBounds(m, w, h);
+            if (rx1 <= rx0 || ry1 <= ry0)
+                return;
 
-            if (downscale > 1)
-            {
-                // Downscale BGRA to small buffer (nearest).
-                for (int y = 0; y < sh; y++)
-                {
-                    int sy = Math.Min(h - 1, y * downscale);
-                    byte* srcRow = data + sy * stride;
-                    byte* dstRow = srcSmall + y * sStride;
-                    for (int x = 0; x < sw; x++)
-                    {
-                        int sx = Math.Min(w - 1, x * downscale);
-                        byte* src = srcRow + sx * 4;
-                        byte* dst = dstRow + x * 4;
-                        dst[0] = src[0];
-                        dst[1] = src[1];
-                        dst[2] = src[2];
-                        dst[3] = src[3];
-                    }
-                }
-            }
-            else
-            {
-                Buffer.MemoryCopy(data, srcSmall, sSize, sSize);
-            }
+            int px0 = Math.Max(0, rx0 - r);
+            int py0 = Math.Max(0, ry0 - r);
+            int px1 = Math.Min(w, rx1 + r);
+            int py1 = Math.Min(h, ry1 + r);
+            int pw = Math.Max(1, px1 - px0);
+            int ph = Math.Max(1, py1 - py0);
 
-            // Horizontal blur.
-            for (int y = 0; y < sh; y++)
+            EnsureIntegralBuffers(pw, ph);
+
+            int rowStride = pw + 1;
+            for (int y = 1; y <= ph; y++)
             {
-                byte* srcRow = srcSmall + y * sStride;
-                byte* tempRow = tmpSmall + y * sStride;
+                int sy = py0 + y - 1;
+                byte* srcRow = data + sy * stride + px0 * 4;
+                int rowIndex = y * rowStride;
+                int prevIndex = (y - 1) * rowStride;
 
                 int sumB = 0, sumG = 0, sumR = 0, sumA = 0;
-                for (int x = -r; x <= r; x++)
+                for (int x = 1; x <= pw; x++)
                 {
-                    int cx = x < 0 ? 0 : (x >= sw ? sw - 1 : x);
-                    byte* p = srcRow + cx * 4;
+                    byte* p = srcRow + (x - 1) * 4;
                     sumB += p[0];
                     sumG += p[1];
                     sumR += p[2];
                     sumA += p[3];
-                }
 
-                byte* dst = tempRow;
-                dst[0] = (byte)(sumB / kernel);
-                dst[1] = (byte)(sumG / kernel);
-                dst[2] = (byte)(sumR / kernel);
-                dst[3] = (byte)(sumA / kernel);
-
-                for (int x = 1; x < sw; x++)
-                {
-                    int addX = x + r;
-                    if (addX >= sw) addX = sw - 1;
-                    int subX = x - r - 1;
-                    if (subX < 0) subX = 0;
-
-                    byte* pAdd = srcRow + addX * 4;
-                    byte* pSub = srcRow + subX * 4;
-                    sumB += pAdd[0] - pSub[0];
-                    sumG += pAdd[1] - pSub[1];
-                    sumR += pAdd[2] - pSub[2];
-                    sumA += pAdd[3] - pSub[3];
-
-                    dst = tempRow + x * 4;
-                    dst[0] = (byte)(sumB / kernel);
-                    dst[1] = (byte)(sumG / kernel);
-                    dst[2] = (byte)(sumR / kernel);
-                    dst[3] = (byte)(sumA / kernel);
-                }
-            }
-
-            // Vertical blur.
-            for (int x = 0; x < sw; x++)
-            {
-                int sumB = 0, sumG = 0, sumR = 0, sumA = 0;
-                for (int y = -r; y <= r; y++)
-                {
-                    int cy = y < 0 ? 0 : (y >= sh ? sh - 1 : y);
-                    byte* p = tmpSmall + cy * sStride + x * 4;
-                    sumB += p[0];
-                    sumG += p[1];
-                    sumR += p[2];
-                    sumA += p[3];
-                }
-
-                byte* dst = srcSmall + x * 4;
-                dst[0] = (byte)(sumB / kernel);
-                dst[1] = (byte)(sumG / kernel);
-                dst[2] = (byte)(sumR / kernel);
-                dst[3] = (byte)(sumA / kernel);
-
-                for (int y = 1; y < sh; y++)
-                {
-                    int addY = y + r;
-                    if (addY >= sh) addY = sh - 1;
-                    int subY = y - r - 1;
-                    if (subY < 0) subY = 0;
-
-                    byte* pAdd = tmpSmall + addY * sStride + x * 4;
-                    byte* pSub = tmpSmall + subY * sStride + x * 4;
-                    sumB += pAdd[0] - pSub[0];
-                    sumG += pAdd[1] - pSub[1];
-                    sumR += pAdd[2] - pSub[2];
-                    sumA += pAdd[3] - pSub[3];
-
-                    dst = srcSmall + y * sStride + x * 4;
-                    dst[0] = (byte)(sumB / kernel);
-                    dst[1] = (byte)(sumG / kernel);
-                    dst[2] = (byte)(sumR / kernel);
-                    dst[3] = (byte)(sumA / kernel);
+                    int idx = rowIndex + x;
+                    _integralB![idx] = _integralB[prevIndex + x] + sumB;
+                    _integralG![idx] = _integralG[prevIndex + x] + sumG;
+                    _integralR![idx] = _integralR[prevIndex + x] + sumR;
+                    _integralA![idx] = _integralA[prevIndex + x] + sumA;
                 }
             }
 
             // Apply blurred pixels where mask alpha is set.
-            for (int y = 0; y < h; y++)
+            int maxWorkers = Math.Max(1, Environment.ProcessorCount - 2);
+            var parallelOptions = new System.Threading.Tasks.ParallelOptions
+            {
+                MaxDegreeOfParallelism = maxWorkers
+            };
+
+            System.Threading.Tasks.Parallel.For(ry0, ry1, parallelOptions, y =>
             {
                 byte* srcRow = data + y * stride;
                 int mi = y * w;
 
-                for (int x = 0; x < w; x++)
+                for (int x = rx0; x < rx1; x++)
                 {
                     int maskIndex = mi + x;
                     byte alpha = (byte)(m[maskIndex] >> 24);
@@ -180,27 +107,49 @@ public unsafe sealed class MaskedVideoExporter
                     if (smooth == 0) continue;
 
                     byte* dst = srcRow + x * 4;
-                    int sx = downscale > 1 ? Math.Min(sw - 1, x / downscale) : x;
-                    int sy = downscale > 1 ? Math.Min(sh - 1, y / downscale) : y;
-                    byte* blur = srcSmall + sy * sStride + sx * 4;
+                    int x0 = Math.Max(px0, x - r);
+                    int x1 = Math.Min(px1 - 1, x + r);
+                    int y0 = Math.Max(py0, y - r);
+                    int y1 = Math.Min(py1 - 1, y + r);
+
+                    int ix0 = x0 - px0;
+                    int ix1 = x1 - px0;
+                    int iy0 = y0 - py0;
+                    int iy1 = y1 - py0;
+
+                    int idxA = (iy1 + 1) * rowStride + (ix1 + 1);
+                    int idxB = iy0 * rowStride + (ix1 + 1);
+                    int idxC = (iy1 + 1) * rowStride + ix0;
+                    int idxD = iy0 * rowStride + ix0;
+
+                    int area = (ix1 - ix0 + 1) * (iy1 - iy0 + 1);
+                    int sumB = _integralB![idxA] - _integralB[idxB] - _integralB[idxC] + _integralB[idxD];
+                    int sumG = _integralG![idxA] - _integralG[idxB] - _integralG[idxC] + _integralG[idxD];
+                    int sumR = _integralR![idxA] - _integralR[idxB] - _integralR[idxC] + _integralR[idxD];
+                    int sumA = _integralA![idxA] - _integralA[idxB] - _integralA[idxC] + _integralA[idxD];
+
+                    byte blurB = (byte)(sumB / area);
+                    byte blurG = (byte)(sumG / area);
+                    byte blurR = (byte)(sumR / area);
+                    byte blurA = (byte)(sumA / area);
 
                     if (smooth == 255)
                     {
-                        dst[0] = blur[0];
-                        dst[1] = blur[1];
-                        dst[2] = blur[2];
-                        dst[3] = blur[3];
+                        dst[0] = blurB;
+                        dst[1] = blurG;
+                        dst[2] = blurR;
+                        dst[3] = blurA;
                     }
                     else
                     {
                         int inv = 255 - smooth;
-                        dst[0] = (byte)((blur[0] * smooth + dst[0] * inv + 127) / 255);
-                        dst[1] = (byte)((blur[1] * smooth + dst[1] * inv + 127) / 255);
-                        dst[2] = (byte)((blur[2] * smooth + dst[2] * inv + 127) / 255);
+                        dst[0] = (byte)((blurB * smooth + dst[0] * inv + 127) / 255);
+                        dst[1] = (byte)((blurG * smooth + dst[1] * inv + 127) / 255);
+                        dst[2] = (byte)((blurR * smooth + dst[2] * inv + 127) / 255);
                         dst[3] = 255;
                     }
                 }
-            }
+            });
         }
     }
 
@@ -214,6 +163,27 @@ public unsafe sealed class MaskedVideoExporter
             _blurred = new byte[required];
     }
 
+    private void EnsureIntegralBuffers(int width, int height)
+    {
+        int size = (width + 1) * (height + 1);
+        if (_integralB == null || _integralB.Length < size || _integralW != width || _integralH != height)
+        {
+            _integralB = new int[size];
+            _integralG = new int[size];
+            _integralR = new int[size];
+            _integralA = new int[size];
+            _integralW = width;
+            _integralH = height;
+        }
+        else
+        {
+            Array.Clear(_integralB, 0, size);
+            Array.Clear(_integralG, 0, size);
+            Array.Clear(_integralR, 0, size);
+            Array.Clear(_integralA, 0, size);
+        }
+    }
+
     private void EnsureMaskHistory(int width, int height)
     {
         int size = width * height;
@@ -223,5 +193,28 @@ public unsafe sealed class MaskedVideoExporter
             _prevMaskW = width;
             _prevMaskH = height;
         }
+    }
+
+    private static (int x0, int y0, int x1, int y1) GetMaskBounds(uint* mask, int w, int h)
+    {
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        for (int y = 0; y < h; y++)
+        {
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                if (((mask[row + x] >> 24) & 0xFF) == 0)
+                    continue;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+
+        if (maxX < minX || maxY < minY)
+            return (0, 0, 0, 0);
+
+        return (minX, minY, maxX + 1, maxY + 1);
     }
 }
