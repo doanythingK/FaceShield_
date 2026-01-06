@@ -76,7 +76,7 @@ public partial class FramePreviewViewModel : ViewModelBase
             _ => Cursor.Default
         };
 
-    public int PreviewBlurRadius { get; set; } = 6;
+    public int PreviewBlurRadius { get; set; } = 20;
 
     public FramePreviewViewModel(ToolPanelViewModel toolPanel, IFrameMaskProvider maskProvider)
     {

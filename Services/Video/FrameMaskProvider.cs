@@ -79,7 +79,10 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             Avalonia.Platform.PixelFormat.Bgra8888,
             Avalonia.Platform.AlphaFormat.Premul);
 
-        const double SoftEdgeRatio = 0.2;
+        const double SoftEdgeRatio = 0.35;
+        const double R1 = 0.01;
+        const double R2 = 0.03;
+        const double R3 = 0.05;
 
         using var fb = mask.Lock();
 
@@ -96,6 +99,15 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
                 int y0 = Math.Clamp((int)Math.Floor(r.Y), 0, Math.Max(0, h - 1));
                 int x1 = Math.Clamp((int)Math.Ceiling(r.X + r.Width), 0, w);
                 int y1 = Math.Clamp((int)Math.Ceiling(r.Y + r.Height), 0, h);
+
+                double faceArea = Math.Max(0.0, r.Width) * Math.Max(0.0, r.Height);
+                double frameArea = Math.Max(1.0, w) * Math.Max(1.0, h);
+                double ratio = faceArea / frameArea;
+                double strength;
+                if (ratio <= R1) strength = 0.3;       // 6 / 20
+                else if (ratio <= R2) strength = 0.4;  // 8 / 20
+                else if (ratio <= R3) strength = 0.6;  // 12 / 20
+                else strength = 1.0;                   // 20 / 20
 
                 double cx = (x0 + x1 - 1) / 2.0;
                 double cy = (y0 + y1 - 1) / 2.0;
@@ -136,13 +148,15 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
                             alpha = (byte)Math.Round((1.0 - t) * 255.0);
                         }
 
-                        if (alpha <= p[3])
+                        int scaled = (int)Math.Round(alpha * strength);
+                        if (scaled <= p[3])
                             continue;
 
-                        p[0] = alpha;
-                        p[1] = alpha;
-                        p[2] = alpha;
-                        p[3] = alpha;
+                        byte outA = (byte)Math.Clamp(scaled, 0, 255);
+                        p[0] = outA;
+                        p[1] = outA;
+                        p[2] = outA;
+                        p[3] = outA;
                     }
                 }
             }

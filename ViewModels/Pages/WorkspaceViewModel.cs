@@ -185,7 +185,7 @@ namespace FaceShield.ViewModels.Pages
 
                 await Task.Run(() =>
                 {
-                    exporter.Export(input, output, blurRadius: 6, progress, _exportCts.Token);
+                    exporter.Export(input, output, blurRadius: 20, progress, _exportCts.Token);
                 }, _exportCts.Token);
             }
             catch (OperationCanceledException)
