@@ -19,12 +19,16 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 
 namespace FaceShield.ViewModels.Pages
 {
     public partial class HomePageViewModel : ViewModelBase
     {
         private const int MaxRecents = 5;
+        private const int DefaultBlurRadius = 28;
+        private const int MinBlurRadiusValue = 6;
+        private const int MaxBlurRadiusValue = 40;
         private readonly Action<WorkspaceViewModel> _onStartWorkspace;
         private readonly Action _onBackHome;
         private readonly WorkspaceStateStore _stateStore;
@@ -181,6 +185,37 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private double autoNmsThreshold;
 
+        [ObservableProperty]
+        private int blurRadius = DefaultBlurRadius;
+
+        [ObservableProperty]
+        private IReadOnlyList<BlurExampleItem> blurExamples = Array.Empty<BlurExampleItem>();
+
+        public sealed class ResolutionOption
+        {
+            public string Label { get; }
+            public int Width { get; }
+            public int Height { get; }
+
+            public ResolutionOption(string label, int width, int height)
+            {
+                Label = label;
+                Width = width;
+                Height = height;
+            }
+        }
+
+        public IReadOnlyList<ResolutionOption> ResolutionOptions { get; } = new[]
+        {
+            new ResolutionOption("1920x1080 (FHD)", 1920, 1080),
+            new ResolutionOption("1280x720 (HD)", 1280, 720),
+            new ResolutionOption("854x480", 854, 480),
+            new ResolutionOption("640x360", 640, 360)
+        };
+
+        [ObservableProperty]
+        private ResolutionOption? selectedResolutionOption;
+
         public ObservableCollection<RecentItem> Recents { get; } = new();
 
         public HomePageViewModel(
@@ -196,10 +231,12 @@ namespace FaceShield.ViewModels.Pages
 
             OrtThreadOptions = BuildOrtThreadOptions();
             selectedOrtThreadOption = OrtThreadOptions[0];
+            selectedResolutionOption = ResolutionOptions[0];
             var defaults = FaceOnnxDetector.GetDefaultThresholds();
             autoDetectionThreshold = defaults.Detection;
             autoConfidenceThreshold = defaults.Confidence;
             autoNmsThreshold = defaults.Nms;
+            RegenerateBlurExamples();
             ApplySavedAutoSettings();
             foreach (var recent in _stateStore.GetRecents())
                 Recents.Add(recent);
@@ -224,6 +261,8 @@ namespace FaceShield.ViewModels.Pages
                     : (WorkspaceLoadingMessage ?? "로딩 중...");
         public bool IsTrackingOptionsEnabled => AutoTrackingEnabled;
         public bool IsAutoStatusVisible => IsAutoRunning && !IsExportRunning;
+        public int MinBlurRadius => MinBlurRadiusValue;
+        public int MaxBlurRadius => MaxBlurRadiusValue;
 
         partial void OnSelectedVideoPathChanged(string? value)
         {
@@ -381,6 +420,19 @@ namespace FaceShield.ViewModels.Pages
             RequestAutoRestartForDetectorOptions("NMS 임계값 변경 감지 · 재시작 준비 중...");
         }
 
+        partial void OnBlurRadiusChanged(int value)
+        {
+            RegenerateBlurExamples();
+            PersistAutoSettings();
+            if (_activeAutoWorkspace != null)
+                _activeAutoWorkspace.ToolPanel.BlurRadius = value;
+        }
+
+        partial void OnSelectedResolutionOptionChanged(ResolutionOption? value)
+        {
+            RegenerateBlurExamples();
+        }
+
         partial void OnSelectedParallelSessionCountChanged(int value)
         {
             PersistAutoSettings();
@@ -468,6 +520,8 @@ namespace FaceShield.ViewModels.Pages
                 AutoConfidenceThreshold = saved.ConfidenceThreshold.Value;
             if (saved.NmsThreshold.HasValue)
                 AutoNmsThreshold = saved.NmsThreshold.Value;
+            if (saved.BlurRadius.HasValue)
+                BlurRadius = Math.Clamp(saved.BlurRadius.Value, MinBlurRadiusValue, MaxBlurRadiusValue);
         }
 
         private void PersistAutoSettings()
@@ -485,8 +539,118 @@ namespace FaceShield.ViewModels.Pages
                 AutoExportAfter = AutoExportAfter,
                 DetectionThreshold = AutoDetectionThreshold,
                 ConfidenceThreshold = AutoConfidenceThreshold,
-                NmsThreshold = AutoNmsThreshold
+                NmsThreshold = AutoNmsThreshold,
+                BlurRadius = BlurRadius
             });
+        }
+
+        private void RegenerateBlurExamples()
+        {
+            const int w = 120;
+            const int h = 90;
+            var percents = new[] { 1.0, 3.0, 5.0, 12.0 };
+            var resolution = SelectedResolutionOption ?? ResolutionOptions[0];
+
+            var list = new List<BlurExampleItem>(percents.Length);
+            foreach (var p in percents)
+            {
+                var face = BuildCenteredFaceRect(w, h, p);
+                var src = CreatePatternImage(w, h);
+                var mask = FrameMaskProvider.CreateMaskFromFaceRects(new PixelSize(w, h), new[] { face });
+                var preview = PreviewBlurProcessor.CreateBlurPreview(src, mask, BlurRadius, new[] { face });
+                string label = BuildBlurLabel(p, resolution.Width, resolution.Height);
+                list.Add(new BlurExampleItem(p, label, preview));
+
+                src.Dispose();
+                mask.Dispose();
+            }
+
+            if (BlurExamples != null)
+            {
+                foreach (var item in BlurExamples)
+                    item.Image.Dispose();
+            }
+
+            BlurExamples = list;
+        }
+
+        private static string BuildBlurLabel(double percent, int width, int height)
+        {
+            double ratio = Math.Sqrt(Math.Max(0.1, percent) / 100.0);
+            int faceW = Math.Max(1, (int)Math.Round(width * ratio));
+            int faceH = Math.Max(1, (int)Math.Round(height * ratio));
+            return $"얼굴 {percent:0.#}% ({faceW}x{faceH}px)";
+        }
+
+        public BlurPreviewPayload? BuildBlurPreview(double percent)
+        {
+            var resolution = SelectedResolutionOption ?? ResolutionOptions[0];
+            int w = resolution.Width;
+            int h = resolution.Height;
+
+            var face = BuildCenteredFaceRect(w, h, percent);
+            var src = CreatePatternImage(w, h);
+            var mask = FrameMaskProvider.CreateMaskFromFaceRects(new PixelSize(w, h), new[] { face });
+            var preview = PreviewBlurProcessor.CreateBlurPreview(src, mask, BlurRadius, new[] { face });
+
+            src.Dispose();
+            mask.Dispose();
+            int faceW = (int)Math.Round(face.Width);
+            int faceH = (int)Math.Round(face.Height);
+            string label = $"{resolution.Label} / 얼굴 {percent:0.#}% ({faceW}x{faceH}px)";
+            return new BlurPreviewPayload(preview, label);
+        }
+
+        private static Rect BuildCenteredFaceRect(int width, int height, double areaPercent)
+        {
+            double ratio = Math.Sqrt(Math.Max(0.1, areaPercent) / 100.0);
+            double size = Math.Max(10, Math.Min(width, height) * ratio);
+            double x = (width - size) * 0.5;
+            double y = (height - size) * 0.5;
+            return new Rect(x, y, size, size);
+        }
+
+        private static WriteableBitmap CreatePatternImage(int width, int height)
+        {
+            var bmp = new WriteableBitmap(
+                new PixelSize(width, height),
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var fb = bmp.Lock();
+            unsafe
+            {
+                byte* basePtr = (byte*)fb.Address;
+                int stride = fb.RowBytes;
+
+                for (int y = 0; y < height; y++)
+                {
+                    byte* row = basePtr + y * stride;
+                    for (int x = 0; x < width; x++)
+                    {
+                        bool checker = ((x / 6) + (y / 6)) % 2 == 0;
+                        byte r = checker ? (byte)210 : (byte)160;
+                        byte g = checker ? (byte)190 : (byte)140;
+                        byte b = checker ? (byte)120 : (byte)90;
+
+                        if (x % 12 == 0 || y % 12 == 0)
+                        {
+                            r = 240;
+                            g = 220;
+                            b = 140;
+                        }
+
+                        int idx = x * 4;
+                        row[idx + 0] = b;
+                        row[idx + 1] = g;
+                        row[idx + 2] = r;
+                        row[idx + 3] = 255;
+                    }
+                }
+            }
+
+            return bmp;
         }
 
         public async Task PickVideoAsync(IStorageProvider storageProvider)
@@ -697,6 +861,18 @@ namespace FaceShield.ViewModels.Pages
         private void CancelExport()
         {
             _autoCts?.Cancel();
+        }
+
+        [RelayCommand]
+        private async Task ShowBlurPreviewAsync()
+        {
+            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var owner = lifetime?.MainWindow;
+            if (owner == null)
+                return;
+
+            var dialog = new BlurPreviewDialog(this);
+            await dialog.ShowDialog(owner);
         }
 
         private static string FormatEta(TimeSpan remaining)
@@ -1047,6 +1223,7 @@ namespace FaceShield.ViewModels.Pages
             {
                 cached.UpdateAutoOptions(autoOptions);
                 cached.UpdateDetectorOptions(detectorOptions);
+                cached.ToolPanel.BlurRadius = BlurRadius;
                 return cached;
             }
 
@@ -1061,6 +1238,7 @@ namespace FaceShield.ViewModels.Pages
                 deferSessionInit: mode == WorkspaceMode.Auto);
 
             vm.RestoreFromStore(_stateStore);
+            vm.ToolPanel.BlurRadius = BlurRadius;
 
             _workspaceCache[key] = vm;
             return vm;
@@ -1123,5 +1301,6 @@ namespace FaceShield.ViewModels.Pages
             foreach (var key in keys)
                 _workspaceCache.Remove(key);
         }
+
     }
 }

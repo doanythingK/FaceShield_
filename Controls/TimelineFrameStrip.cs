@@ -79,6 +79,42 @@ namespace FaceShield.Controls
             set => SetValue(ThumbnailProviderProperty, value);
         }
 
+        public static readonly StyledProperty<IReadOnlyList<int>?> NoFaceIssueFramesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, IReadOnlyList<int>?>(nameof(NoFaceIssueFrames));
+
+        public IReadOnlyList<int>? NoFaceIssueFrames
+        {
+            get => GetValue(NoFaceIssueFramesProperty);
+            set => SetValue(NoFaceIssueFramesProperty, value);
+        }
+
+        public static readonly StyledProperty<IReadOnlyList<int>?> LowConfidenceIssueFramesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, IReadOnlyList<int>?>(nameof(LowConfidenceIssueFrames));
+
+        public IReadOnlyList<int>? LowConfidenceIssueFrames
+        {
+            get => GetValue(LowConfidenceIssueFramesProperty);
+            set => SetValue(LowConfidenceIssueFramesProperty, value);
+        }
+
+        public static readonly StyledProperty<bool> ShowNoFaceIssuesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, bool>(nameof(ShowNoFaceIssues), true);
+
+        public bool ShowNoFaceIssues
+        {
+            get => GetValue(ShowNoFaceIssuesProperty);
+            set => SetValue(ShowNoFaceIssuesProperty, value);
+        }
+
+        public static readonly StyledProperty<bool> ShowLowConfidenceIssuesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, bool>(nameof(ShowLowConfidenceIssues), true);
+
+        public bool ShowLowConfidenceIssues
+        {
+            get => GetValue(ShowLowConfidenceIssuesProperty);
+            set => SetValue(ShowLowConfidenceIssuesProperty, value);
+        }
+
         private int _hoverIndex = -1;
 
         static TimelineFrameStrip()
@@ -90,7 +126,11 @@ namespace FaceShield.Controls
                 SelectedFrameIndexProperty,
                 SecondsPerScreenProperty,
                 ViewStartSecondsProperty,
-                ThumbnailProviderProperty);
+                ThumbnailProviderProperty,
+                NoFaceIssueFramesProperty,
+                LowConfidenceIssueFramesProperty,
+                ShowNoFaceIssuesProperty,
+                ShowLowConfidenceIssuesProperty);
         }
 
         protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -204,6 +244,7 @@ namespace FaceShield.Controls
 
             DrawGridLines(ctx, w, stripH, startSec, endSec);
             DrawThumbnailsDense(ctx, w, stripH, startSec, endSec, fps, totalFrames);
+            DrawIssueMarkers(ctx, w, stripH, startSec, endSec, fps, totalFrames);
             DrawAxis(ctx, w, stripH, startSec, endSec);
 
             // selected line
@@ -288,6 +329,113 @@ namespace FaceShield.Controls
                 double x = (t - startSec) / range * w;
                 ctx.DrawLine(pen, new Point(x, 0), new Point(x, stripH));
             }
+        }
+
+        private void DrawIssueMarkers(
+            DrawingContext ctx,
+            double w,
+            double stripH,
+            double startSec,
+            double endSec,
+            double fps,
+            int totalFrames)
+        {
+            double range = Math.Max(0.0001, endSec - startSec);
+            int startFrame = (int)Math.Floor(startSec * fps);
+            int endFrame = (int)Math.Ceiling(endSec * fps);
+            startFrame = Math.Max(0, startFrame);
+            endFrame = Math.Min(totalFrames - 1, endFrame);
+            if (endFrame < startFrame)
+                return;
+
+            const double markerH = 6;
+            double yNoFace = Math.Max(0, stripH - markerH);
+            double yLowConf = Math.Max(0, stripH - markerH * 2);
+
+            if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
+            {
+                DrawIssueMarkerSeries(
+                    ctx,
+                    NoFaceIssueFrames,
+                    startSec,
+                    range,
+                    fps,
+                    w,
+                    startFrame,
+                    endFrame,
+                    yNoFace,
+                    markerH,
+                    new SolidColorBrush(Color.FromRgb(220, 60, 60)));
+            }
+
+            if (ShowLowConfidenceIssues && LowConfidenceIssueFrames is { Count: > 0 })
+            {
+                DrawIssueMarkerSeries(
+                    ctx,
+                    LowConfidenceIssueFrames,
+                    startSec,
+                    range,
+                    fps,
+                    w,
+                    startFrame,
+                    endFrame,
+                    yLowConf,
+                    markerH,
+                    new SolidColorBrush(Color.FromRgb(255, 160, 60)));
+            }
+        }
+
+        private static void DrawIssueMarkerSeries(
+            DrawingContext ctx,
+            IReadOnlyList<int> frames,
+            double startSec,
+            double range,
+            double fps,
+            double width,
+            int startFrame,
+            int endFrame,
+            double y,
+            double h,
+            IBrush brush)
+        {
+            int startIndex = FindFirstIndexAtOrAfter(frames, startFrame);
+            for (int i = startIndex; i < frames.Count; i++)
+            {
+                int frame = frames[i];
+                if (frame > endFrame)
+                    break;
+
+                double sec = frame / Math.Max(1, fps);
+                double x = (sec - startSec) / range * width;
+                if (x < -1 || x > width + 1)
+                    continue;
+
+                ctx.FillRectangle(brush, new Rect(x, y, 2, h));
+            }
+        }
+
+        private static int FindFirstIndexAtOrAfter(IReadOnlyList<int> frames, int target)
+        {
+            int lo = 0;
+            int hi = frames.Count - 1;
+            int ans = frames.Count;
+
+            while (lo <= hi)
+            {
+                int mid = lo + (hi - lo) / 2;
+                int value = frames[mid];
+                if (value >= target)
+                {
+                    ans = mid;
+                    hi = mid - 1;
+                }
+                else
+                {
+                    lo = mid + 1;
+                }
+            }
+
+            return ans;
         }
 
         private static double NiceStep(double raw)

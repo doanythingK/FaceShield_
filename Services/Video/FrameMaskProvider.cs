@@ -18,7 +18,7 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks.TryRemove(frameIndex, out _);
     }
 
-    public void SetFaceRects(int frameIndex, IReadOnlyList<Rect> faces, PixelSize size)
+    public void SetFaceRects(int frameIndex, IReadOnlyList<Rect> faces, PixelSize size, float? minConfidence = null)
     {
         if (faces == null || faces.Count == 0 || size.Width <= 0 || size.Height <= 0)
         {
@@ -26,10 +26,10 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             return;
         }
 
-        _faceMasks[frameIndex] = new FaceMaskData(size, faces.ToArray());
+        _faceMasks[frameIndex] = new FaceMaskData(size, faces.ToArray(), minConfidence);
     }
 
-    public void SetFaceRects(int frameIndex, Rect[] faces, PixelSize size)
+    public void SetFaceRects(int frameIndex, Rect[] faces, PixelSize size, float? minConfidence = null)
     {
         if (faces == null || faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
         {
@@ -37,7 +37,7 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             return;
         }
 
-        _faceMasks[frameIndex] = new FaceMaskData(size, faces);
+        _faceMasks[frameIndex] = new FaceMaskData(size, faces, minConfidence);
     }
 
     public WriteableBitmap? GetFinalMask(int frameIndex)
@@ -69,7 +69,7 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks.Clear();
     }
 
-    public readonly record struct FaceMaskData(PixelSize Size, IReadOnlyList<Rect> Faces);
+    public readonly record struct FaceMaskData(PixelSize Size, IReadOnlyList<Rect> Faces, float? MinConfidence);
 
     public static WriteableBitmap CreateMaskFromFaceRects(PixelSize size, IReadOnlyList<Rect> faces)
     {

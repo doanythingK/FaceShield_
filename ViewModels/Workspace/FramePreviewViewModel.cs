@@ -30,6 +30,9 @@ public partial class FramePreviewViewModel : ViewModelBase
     private bool _isPlaying;
     private int _currentFrameIndex = -1;
     private bool _maskDirty;
+    private Point? _lastDrawPoint;
+    private long _lastPreviewTick;
+    private const int PreviewThrottleMs = 40;
 
     public WriteableBitmap? FrameBitmap
     {
@@ -76,12 +79,13 @@ public partial class FramePreviewViewModel : ViewModelBase
             _ => Cursor.Default
         };
 
-    public int PreviewBlurRadius { get; set; } = 20;
+    public int PreviewBlurRadius { get; set; } = 28;
 
     public FramePreviewViewModel(ToolPanelViewModel toolPanel, IFrameMaskProvider maskProvider)
     {
         _toolPanel = toolPanel;
         _maskProvider = maskProvider;
+        PreviewBlurRadius = toolPanel.BlurRadius;
 
         _toolPanel.PropertyChanged += (_, e) =>
         {
@@ -93,6 +97,11 @@ public partial class FramePreviewViewModel : ViewModelBase
             else if (e.PropertyName == nameof(ToolPanelViewModel.BrushDiameter))
             {
                 OnPropertyChanged(nameof(BrushDiameter));
+            }
+            else if (e.PropertyName == nameof(ToolPanelViewModel.BlurRadius))
+            {
+                PreviewBlurRadius = _toolPanel.BlurRadius;
+                RefreshPreview(force: true);
             }
         };
     }
@@ -106,7 +115,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         RestoreMaskBytes(_maskBitmap, bytes);
         _maskDirty = true;
 
-        RefreshPreview();
+        RefreshPreview(force: true);
     }
 
     public void OnPointerPressed(Point point)
@@ -117,64 +126,99 @@ public partial class FramePreviewViewModel : ViewModelBase
         // ✅ 인스턴스 오버로드 사용 (인수 1개)
         PushUndoSnapshot(_maskBitmap);
         _isDrawing = true;
-        DrawPoint(point);
+        _lastDrawPoint = point;
+        DrawStroke(point, point);
     }
 
     public void OnPointerMoved(Point point)
     {
         if (!_isDrawing) return;
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
-        DrawPoint(point);
+        if (_lastDrawPoint == null)
+        {
+            _lastDrawPoint = point;
+            DrawStroke(point, point);
+            return;
+        }
+
+        DrawStroke(_lastDrawPoint.Value, point);
+        _lastDrawPoint = point;
     }
 
     public void OnPointerReleased(Point point)
     {
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
         _isDrawing = false;
+        _lastDrawPoint = null;
+        RefreshPreview(force: true);
     }
 
-    private void DrawPoint(Point point)
+    private void DrawStroke(Point from, Point to)
     {
         if (_maskBitmap is null) return;
 
         using var fb = _maskBitmap.Lock();
         unsafe
         {
-            int x = (int)point.X;
-            int y = (int)point.Y;
-
-            if (x < 0 || y < 0 || x >= fb.Size.Width || y >= fb.Size.Height)
-                return;
-
             int radius = Math.Max(1, _toolPanel.BrushDiameter / 2);
 
             byte* basePtr = (byte*)fb.Address;
             int stride = fb.RowBytes;
 
-            int x0 = Math.Max(0, x - radius);
-            int x1 = Math.Min(fb.Size.Width - 1, x + radius);
-            int y0 = Math.Max(0, y - radius);
-            int y1 = Math.Min(fb.Size.Height - 1, y + radius);
-
-            for (int yy = y0; yy <= y1; yy++)
+            void DrawCircleAt(int x, int y)
             {
-                byte* row = basePtr + yy * stride;
-                for (int xx = x0; xx <= x1; xx++)
+                if (x < 0 || y < 0 || x >= fb.Size.Width || y >= fb.Size.Height)
+                    return;
+
+                int x0 = Math.Max(0, x - radius);
+                int x1 = Math.Min(fb.Size.Width - 1, x + radius);
+                int y0 = Math.Max(0, y - radius);
+                int y1 = Math.Min(fb.Size.Height - 1, y + radius);
+
+                for (int yy = y0; yy <= y1; yy++)
                 {
-                    int dx = xx - x;
-                    int dy = yy - y;
-                    if (dx * dx + dy * dy > radius * radius) continue;
-
-                    byte* p = row + xx * 4;
-
-                    if (CurrentMode == EditMode.Brush)
+                    byte* row = basePtr + yy * stride;
+                    for (int xx = x0; xx <= x1; xx++)
                     {
-                        p[0] = 255; p[1] = 255; p[2] = 255; p[3] = 255;
+                        int dx = xx - x;
+                        int dy = yy - y;
+                        if (dx * dx + dy * dy > radius * radius) continue;
+
+                        byte* p = row + xx * 4;
+
+                        if (CurrentMode == EditMode.Brush)
+                        {
+                            p[0] = 255; p[1] = 255; p[2] = 255; p[3] = 255;
+                        }
+                        else
+                        {
+                            p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+                        }
                     }
-                    else
-                    {
-                        p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
-                    }
+                }
+            }
+
+            double dxLine = to.X - from.X;
+            double dyLine = to.Y - from.Y;
+            double dist = Math.Sqrt(dxLine * dxLine + dyLine * dyLine);
+            if (dist < 0.001)
+            {
+                DrawCircleAt((int)Math.Round(to.X), (int)Math.Round(to.Y));
+            }
+            else
+            {
+                double step = Math.Max(1.0, radius * 0.5);
+                int steps = Math.Max(1, (int)Math.Ceiling(dist / step));
+                double stepX = dxLine / steps;
+                double stepY = dyLine / steps;
+
+                double x = from.X;
+                double y = from.Y;
+                for (int i = 0; i <= steps; i++)
+                {
+                    DrawCircleAt((int)Math.Round(x), (int)Math.Round(y));
+                    x += stepX;
+                    y += stepY;
                 }
             }
         }
@@ -184,10 +228,29 @@ public partial class FramePreviewViewModel : ViewModelBase
         _maskDirty = true;
     }
 
-    private void RefreshPreview()
+    private void RefreshPreview(bool force = false)
     {
         if (_frameBitmap == null || _maskBitmap == null) return;
-        PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius);
+        if (!force)
+        {
+            long now = Environment.TickCount64;
+            if (now - _lastPreviewTick < PreviewThrottleMs)
+                return;
+            _lastPreviewTick = now;
+        }
+        else
+        {
+            _lastPreviewTick = Environment.TickCount64;
+        }
+        IReadOnlyList<Rect>? faces = null;
+        if (_maskProvider is FrameMaskProvider provider &&
+            _currentFrameIndex >= 0 &&
+            provider.TryGetFaceMaskData(_currentFrameIndex, out var data))
+        {
+            faces = data.Faces;
+        }
+
+        PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius, faces);
     }
 
 
@@ -372,7 +435,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
 
         // 3) 프리뷰 갱신
-        RefreshPreview();
+        RefreshPreview(force: true);
     }
 
     public void PersistCurrentMask()

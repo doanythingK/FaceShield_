@@ -37,6 +37,24 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool isPlaying;
 
+    [ObservableProperty]
+    private bool showNoFaceIssues = true;
+
+    [ObservableProperty]
+    private bool showLowConfidenceIssues = true;
+
+    [ObservableProperty]
+    private IReadOnlyList<int> noFaceIssueFrames = Array.Empty<int>();
+
+    [ObservableProperty]
+    private IReadOnlyList<int> lowConfidenceIssueFrames = Array.Empty<int>();
+
+    [ObservableProperty]
+    private int noFaceIssueCount;
+
+    [ObservableProperty]
+    private int lowConfidenceIssueCount;
+
     // ─────────────────────────────
     // Thumbnail Provider
     // ─────────────────────────────
@@ -239,6 +257,16 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         SelectedFrameIndexChanged?.Invoke(value);
         OnPropertyChanged(nameof(FramePositionText));
         OnPropertyChanged(nameof(TimelineTimeText));
+    }
+
+    partial void OnNoFaceIssueFramesChanged(IReadOnlyList<int> value)
+    {
+        NoFaceIssueCount = value?.Count ?? 0;
+    }
+
+    partial void OnLowConfidenceIssueFramesChanged(IReadOnlyList<int> value)
+    {
+        LowConfidenceIssueCount = value?.Count ?? 0;
     }
 
     public event Action<int>? SelectedFrameIndexChanged;

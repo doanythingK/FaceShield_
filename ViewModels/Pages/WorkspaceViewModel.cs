@@ -28,6 +28,7 @@ namespace FaceShield.ViewModels.Pages
         private FaceOnnxDetectorOptions _detectorOptions;
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
+        private const float LowConfidenceMargin = 0.05f;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private int _autoLastProcessedFrame = -1;
@@ -185,7 +186,7 @@ namespace FaceShield.ViewModels.Pages
 
                 await Task.Run(() =>
                 {
-                    exporter.Export(input, output, blurRadius: 20, progress, _exportCts.Token);
+                    exporter.Export(input, output, blurRadius: ToolPanel.BlurRadius, progress, _exportCts.Token);
                 }, _exportCts.Token);
             }
             catch (OperationCanceledException)
@@ -567,23 +568,109 @@ namespace FaceShield.ViewModels.Pages
                 _autoAnomalies = Array.Empty<int>();
                 AutoAnomalyCount = 0;
                 HasAutoAnomalies = false;
+                FrameList.NoFaceIssueFrames = Array.Empty<int>();
+                FrameList.LowConfidenceIssueFrames = Array.Empty<int>();
                 return;
             }
 
-            var anomalies = await Task.Run(() =>
+            float lowConfidenceCutoff = GetLowConfidenceCutoff();
+
+            var (noFaceFrames, lowConfidenceFrames) = await Task.Run(() =>
             {
-                var list = new System.Collections.Generic.List<int>();
+                var noFace = new System.Collections.Generic.List<int>();
+                var lowConfidence = new System.Collections.Generic.List<int>();
                 for (int i = 0; i < total; i++)
                 {
-                    if (_maskProvider.GetFinalMask(i) == null)
-                        list.Add(i);
+                    if (!_maskProvider.HasEntry(i))
+                    {
+                        noFace.Add(i);
+                        continue;
+                    }
+
+                    if (_maskProvider.TryGetFaceMaskData(i, out var data) &&
+                        data.MinConfidence.HasValue &&
+                        data.MinConfidence.Value < lowConfidenceCutoff)
+                    {
+                        lowConfidence.Add(i);
+                    }
                 }
-                return list.ToArray();
+
+                return (noFace.ToArray(), lowConfidence.ToArray());
             });
 
+            FrameList.NoFaceIssueFrames = noFaceFrames;
+            FrameList.LowConfidenceIssueFrames = lowConfidenceFrames;
+
+            var anomalies = MergeSortedFrames(noFaceFrames, lowConfidenceFrames);
             _autoAnomalies = anomalies;
             AutoAnomalyCount = anomalies.Length;
             HasAutoAnomalies = anomalies.Length > 0;
+        }
+
+        private float GetLowConfidenceCutoff()
+        {
+            var defaults = FaceOnnxDetector.GetDefaultThresholds();
+            float baseThreshold = _detectorOptions.ConfidenceThreshold ?? defaults.Confidence;
+            return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);
+        }
+
+        private static int[] MergeSortedFrames(IReadOnlyList<int> first, IReadOnlyList<int> second)
+        {
+            if (first.Count == 0)
+                return CopyFrames(second);
+            if (second.Count == 0)
+                return CopyFrames(first);
+
+            var merged = new int[first.Count + second.Count];
+            int i = 0;
+            int j = 0;
+            int k = 0;
+
+            while (i < first.Count && j < second.Count)
+            {
+                int a = first[i];
+                int b = second[j];
+
+                if (a == b)
+                {
+                    merged[k++] = a;
+                    i++;
+                    j++;
+                }
+                else if (a < b)
+                {
+                    merged[k++] = a;
+                    i++;
+                }
+                else
+                {
+                    merged[k++] = b;
+                    j++;
+                }
+            }
+
+            while (i < first.Count)
+                merged[k++] = first[i++];
+            while (j < second.Count)
+                merged[k++] = second[j++];
+
+            if (k == merged.Length)
+                return merged;
+
+            var trimmed = new int[k];
+            Array.Copy(merged, trimmed, k);
+            return trimmed;
+        }
+
+        private static int[] CopyFrames(IReadOnlyList<int> source)
+        {
+            if (source is int[] arr)
+                return (int[])arr.Clone();
+
+            var copy = new int[source.Count];
+            for (int i = 0; i < source.Count; i++)
+                copy[i] = source[i];
+            return copy;
         }
 
         public void RestoreFromStore(WorkspaceStateStore store)

@@ -294,7 +294,7 @@ namespace FaceShield.Services.Analysis
                 if (frameSize.HasValue)
                 {
                     var tMask = Stopwatch.StartNew();
-                    _maskProvider.SetFaceRects(idx, ExtractBounds(faces), frameSize.Value);
+                    _maskProvider.SetFaceRects(idx, ExtractBounds(faces), frameSize.Value, GetMinConfidence(faces));
                     tMask.Stop();
                     maskMs += tMask.ElapsedMilliseconds;
                 }
@@ -328,6 +328,7 @@ namespace FaceShield.Services.Analysis
             public int Index { get; init; }
             public Rect[] Bounds { get; init; } = Array.Empty<Rect>();
             public PixelSize Size { get; init; }
+            public float? MinConfidence { get; init; }
         }
 
         private void GeneratePipelinedDetectAll(
@@ -429,7 +430,7 @@ namespace FaceShield.Services.Analysis
 
                     onFrameProcessed?.Invoke(result.Index);
                     if (result.Bounds.Length > 0)
-                        _maskProvider.SetFaceRects(result.Index, result.Bounds, result.Size);
+                        _maskProvider.SetFaceRects(result.Index, result.Bounds, result.Size, result.MinConfidence);
 
                     ReportProgress(progress, result.Index, totalFrames);
                     processed++;
@@ -452,6 +453,7 @@ namespace FaceShield.Services.Analysis
                     {
                         Rect[] bounds = Array.Empty<Rect>();
                         PixelSize resultSize = useProxy ? fullSize : new PixelSize(item.Width, item.Height);
+                        float? minConfidence = null;
 
                         if (!_maskProvider.HasEntry(item.Index))
                         {
@@ -480,6 +482,7 @@ namespace FaceShield.Services.Analysis
                                     if (faces.Count > 0)
                                     {
                                         bounds = ExtractBounds(faces);
+                                        minConfidence = GetMinConfidence(faces);
                                         lastFaces = faces;
                                     }
                                 }
@@ -492,7 +495,8 @@ namespace FaceShield.Services.Analysis
                             {
                                 Index = item.Index,
                                 Bounds = bounds,
-                                Size = resultSize
+                                Size = resultSize,
+                                MinConfidence = minConfidence
                             }, ct);
                         }
                         catch (OperationCanceledException)
@@ -547,7 +551,7 @@ namespace FaceShield.Services.Analysis
                     var faces = DetectFacesWithOptions(frame);
                     if (faces != null && faces.Count > 0)
                     {
-                        _maskProvider.SetFaceRects(frameIndex, ExtractBounds(faces), frame.PixelSize);
+                        _maskProvider.SetFaceRects(frameIndex, ExtractBounds(faces), frame.PixelSize, GetMinConfidence(faces));
                         progress?.Report(100);
                         return true;
                     }
@@ -698,6 +702,7 @@ namespace FaceShield.Services.Analysis
                         {
                             Rect[] bounds = Array.Empty<Rect>();
                             PixelSize resultSize = useProxy ? fullSize : new PixelSize(item.Width, item.Height);
+                            float? minConfidence = null;
 
                             if (!_maskProvider.HasEntry(item.Index))
                             {
@@ -724,7 +729,10 @@ namespace FaceShield.Services.Analysis
                                         Interlocked.Add(ref detectMs, tDetect.ElapsedMilliseconds);
 
                                         if (faces.Count > 0)
+                                        {
                                             bounds = ExtractBounds(faces);
+                                            minConfidence = GetMinConfidence(faces);
+                                        }
                                     }
                                 }
                             }
@@ -735,7 +743,8 @@ namespace FaceShield.Services.Analysis
                                 {
                                     Index = item.Index,
                                     Bounds = bounds,
-                                    Size = resultSize
+                                    Size = resultSize,
+                                    MinConfidence = minConfidence
                                 }, ct);
                             }
                             catch (OperationCanceledException)
@@ -760,7 +769,7 @@ namespace FaceShield.Services.Analysis
 
                     onFrameProcessed?.Invoke(result.Index);
                     if (result.Bounds.Length > 0)
-                        _maskProvider.SetFaceRects(result.Index, result.Bounds, result.Size);
+                        _maskProvider.SetFaceRects(result.Index, result.Bounds, result.Size, result.MinConfidence);
 
                     ReportProgress(progress, result.Index, totalFrames);
                     int done = Interlocked.Increment(ref processed);
@@ -1031,6 +1040,22 @@ namespace FaceShield.Services.Analysis
             for (int i = 0; i < count; i++)
                 bounds[i] = faces[i].Bounds;
             return bounds;
+        }
+
+        private static float? GetMinConfidence(IReadOnlyList<FaceDetectionResult> faces)
+        {
+            if (faces == null || faces.Count == 0)
+                return null;
+
+            float min = float.MaxValue;
+            for (int i = 0; i < faces.Count; i++)
+            {
+                float conf = faces[i].Confidence;
+                if (conf < min)
+                    min = conf;
+            }
+
+            return min == float.MaxValue ? null : min;
         }
 
         private unsafe static (double fps, int totalFrames, double durationSeconds) ReadVideoInfo(string path)

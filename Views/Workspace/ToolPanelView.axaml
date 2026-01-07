@@ -75,6 +75,7 @@
           <TextBlock Text="{Binding BrushDiameter}" Width="32" HorizontalAlignment="Right"/>
         </StackPanel>
       </Border>
+
     </StackPanel>
   </Border>
 </UserControl>

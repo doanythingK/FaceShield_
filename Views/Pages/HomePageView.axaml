@@ -153,6 +153,16 @@
                      Opacity="0.7" TextWrapping="Wrap"/>
         </StackPanel>
 
+        <StackPanel Spacing="6">
+          <TextBlock Text="블러 강도" Margin="0,6,0,0"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="{Binding BlurRadius, StringFormat=현재 {0}}"
+                       Width="120"
+                       VerticalAlignment="Center"/>
+            <Button Content="예시 보기" Command="{Binding ShowBlurPreviewCommand}"/>
+          </StackPanel>
+        </StackPanel>
+
         <CheckBox Content="가속(ONNX Runtime 최적화)"
                   IsChecked="{Binding AutoUseOrtOptimization}"/>
         <CheckBox Content="GPU 가속(가능한 경우, OS별)"

@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
 using System;
+using System.Collections.Generic;
 
 namespace FaceShield.Services.Video;
 
@@ -17,8 +19,15 @@ public unsafe sealed class MaskedVideoExporter
     private byte[]? _prevMaskAlpha;
     private int _prevMaskW;
     private int _prevMaskH;
+    private byte[]? _radiusMap;
+    private int _radiusMapW;
+    private int _radiusMapH;
 
-    public void ApplyMaskAndBlur(AVFrame* bgraFrame, WriteableBitmap mask, int blurRadius)
+    public void ApplyMaskAndBlur(
+        AVFrame* bgraFrame,
+        WriteableBitmap mask,
+        int blurRadius,
+        IReadOnlyList<Rect>? faces = null)
     {
         if (bgraFrame == null) throw new ArgumentNullException(nameof(bgraFrame));
         if (blurRadius <= 0) return;
@@ -54,6 +63,8 @@ public unsafe sealed class MaskedVideoExporter
             int ph = Math.Max(1, py1 - py0);
 
             EnsureIntegralBuffers(pw, ph);
+            byte[]? radiusMap = null;
+            int maxRadius = r;
 
             int rowStride = pw + 1;
             for (int y = 1; y <= ph; y++)
@@ -77,6 +88,37 @@ public unsafe sealed class MaskedVideoExporter
                     _integralG![idx] = _integralG[prevIndex + x] + sumG;
                     _integralR![idx] = _integralR[prevIndex + x] + sumR;
                     _integralA![idx] = _integralA[prevIndex + x] + sumA;
+                }
+            }
+
+            if (faces != null && faces.Count > 0)
+            {
+                maxRadius = r;
+                radiusMap = EnsureRadiusMap(pw, ph);
+                Array.Clear(radiusMap, 0, pw * ph);
+
+                foreach (var face in faces)
+                {
+                    int faceRadius = GetFaceBlurRadius(face, w, h, r);
+                    if (faceRadius <= 0)
+                        continue;
+
+                    var rect = GetPaddedRect(face, w, h);
+                    int fx0 = Math.Max(px0, (int)Math.Floor(rect.X));
+                    int fy0 = Math.Max(py0, (int)Math.Floor(rect.Y));
+                    int fx1 = Math.Min(px1 - 1, (int)Math.Ceiling(rect.Right) - 1);
+                    int fy1 = Math.Min(py1 - 1, (int)Math.Ceiling(rect.Bottom) - 1);
+
+                    for (int y = fy0; y <= fy1; y++)
+                    {
+                        int row = (y - py0) * pw;
+                        for (int x = fx0; x <= fx1; x++)
+                        {
+                            int idx = row + (x - px0);
+                            if (faceRadius > radiusMap[idx])
+                                radiusMap[idx] = (byte)faceRadius;
+                        }
+                    }
                 }
             }
 
@@ -107,10 +149,19 @@ public unsafe sealed class MaskedVideoExporter
                     if (smooth == 0) continue;
 
                     byte* dst = srcRow + x * 4;
-                    int x0 = Math.Max(px0, x - r);
-                    int x1 = Math.Min(px1 - 1, x + r);
-                    int y0 = Math.Max(py0, y - r);
-                    int y1 = Math.Min(py1 - 1, y + r);
+                    int localR = r;
+                    if (radiusMap != null)
+                    {
+                        int idx = (y - py0) * pw + (x - px0);
+                        byte mapped = radiusMap[idx];
+                        if (mapped > 0)
+                            localR = mapped;
+                    }
+
+                    int x0 = Math.Max(px0, x - localR);
+                    int x1 = Math.Min(px1 - 1, x + localR);
+                    int y0 = Math.Max(py0, y - localR);
+                    int y1 = Math.Min(py1 - 1, y + localR);
 
                     int ix0 = x0 - px0;
                     int ix1 = x1 - px0;
@@ -193,6 +244,47 @@ public unsafe sealed class MaskedVideoExporter
             _prevMaskW = width;
             _prevMaskH = height;
         }
+    }
+
+    private byte[] EnsureRadiusMap(int width, int height)
+    {
+        int size = width * height;
+        if (_radiusMap == null || _radiusMap.Length < size || _radiusMapW != width || _radiusMapH != height)
+        {
+            _radiusMap = new byte[size];
+            _radiusMapW = width;
+            _radiusMapH = height;
+        }
+        return _radiusMap;
+    }
+
+    private static int GetFaceBlurRadius(Rect face, int frameW, int frameH, int baseRadius)
+    {
+        if (baseRadius <= 1)
+            return Math.Max(1, baseRadius);
+
+        double area = Math.Max(1.0, face.Width * face.Height);
+        double frameArea = Math.Max(1.0, frameW * (double)frameH);
+        double percent = area / frameArea * 100.0;
+
+        double scale = percent <= 1.0 ? 0.4
+            : percent <= 3.0 ? 0.55
+            : percent <= 5.0 ? 0.7
+            : 1.0;
+
+        int r = (int)Math.Round(baseRadius * scale);
+        return Math.Clamp(r, 1, baseRadius);
+    }
+
+    private static Rect GetPaddedRect(Rect face, int width, int height)
+    {
+        double padX = Math.Max(6.0, face.Width * 0.15);
+        double padY = Math.Max(6.0, face.Height * 0.25);
+        double x = Math.Max(0, face.X - padX);
+        double y = Math.Max(0, face.Y - padY);
+        double right = Math.Min(width, face.X + face.Width + padX);
+        double bottom = Math.Min(height, face.Y + face.Height + padY);
+        return new Rect(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
     }
 
     private static (int x0, int y0, int x1, int y1) GetMaskBounds(uint* mask, int w, int h)

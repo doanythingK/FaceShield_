@@ -21,7 +21,7 @@
     </Border>
 
 -->
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto" Focusable="True">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" Focusable="True">
 
         <!-- 🔹 프레임 위치 표시 -->
         <TextBlock
@@ -42,11 +42,29 @@
             SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
             SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
             ViewStartSeconds="{Binding ViewStartSeconds, Mode=TwoWay}"
-            ThumbnailProvider="{Binding ThumbnailProvider}" />
+            ThumbnailProvider="{Binding ThumbnailProvider}"
+            NoFaceIssueFrames="{Binding NoFaceIssueFrames}"
+            LowConfidenceIssueFrames="{Binding LowConfidenceIssueFrames}"
+            ShowNoFaceIssues="{Binding ShowNoFaceIssues}"
+            ShowLowConfidenceIssues="{Binding ShowLowConfidenceIssues}" />
+
+        <!-- 🔹 문제 프레임 표시 -->
+        <StackPanel
+            Grid.Row="2"
+            Orientation="Horizontal"
+            Spacing="12"
+            Margin="8,2,8,2">
+            <CheckBox
+                IsChecked="{Binding ShowNoFaceIssues, Mode=TwoWay}"
+                Content="{Binding NoFaceIssueCount, StringFormat=얼굴 없음 ({0})}" />
+            <CheckBox
+                IsChecked="{Binding ShowLowConfidenceIssues, Mode=TwoWay}"
+                Content="{Binding LowConfidenceIssueCount, StringFormat=신뢰도 낮음 ({0})}" />
+        </StackPanel>
 
         <!-- 🔹 현재 시간 / 전체 시간 -->
         <TextBlock
-            Grid.Row="2"
+            Grid.Row="3"
             Text="{Binding TimelineTimeText}"
             HorizontalAlignment="Right"
             Margin="0,4,8,4"
@@ -55,7 +73,7 @@
 
         <!-- 🔹 ScrollBar -->
         <ScrollBar
-            Grid.Row="3"
+            Grid.Row="4"
             Orientation="Horizontal"
             Height="16"
             Minimum="0"

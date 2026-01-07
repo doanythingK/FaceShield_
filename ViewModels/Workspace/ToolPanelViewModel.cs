@@ -9,6 +9,9 @@ namespace FaceShield.ViewModels.Workspace
     {
         private const int DefaultBrushDiameter = 16;
         private const int MaxBrushDiameterValue = DefaultBrushDiameter * 5;
+        private const int DefaultBlurRadius = 28;
+        private const int MinBlurRadiusValue = 6;
+        private const int MaxBlurRadiusValue = 40;
 
         [ObservableProperty]
         private EditMode currentMode = EditMode.None;
@@ -34,13 +37,19 @@ namespace FaceShield.ViewModels.Workspace
         [ObservableProperty]
         private int brushDiameter = DefaultBrushDiameter;
 
+        [ObservableProperty]
+        private int blurRadius = DefaultBlurRadius;
+
         public int MinBrushDiameter => DefaultBrushDiameter;
         public int MaxBrushDiameter => MaxBrushDiameterValue;
+        public int MinBlurRadius => MinBlurRadiusValue;
+        public int MaxBlurRadius => MaxBlurRadiusValue;
 
         public bool ShowBrushSize =>
             CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
 
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
+
 
         partial void OnCurrentModeChanged(EditMode value)
         {
@@ -56,6 +65,7 @@ namespace FaceShield.ViewModels.Workspace
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
         }
+
 
         public event Action? UndoRequested;
         public event Action? SaveRequested;
@@ -92,5 +102,6 @@ namespace FaceShield.ViewModels.Workspace
 
         [RelayCommand]
         private void CancelExport() => ExportCancelRequested?.Invoke();
+
     }
 }

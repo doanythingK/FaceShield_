@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
@@ -265,6 +267,7 @@ public unsafe sealed class VideoExportService
 
                     WriteableBitmap? mask = null;
                     bool disposeMask = false;
+                    IReadOnlyList<Rect>? faceRects = null;
 
                     if (_maskProvider is FrameMaskProvider provider)
                     {
@@ -276,6 +279,7 @@ public unsafe sealed class VideoExportService
                         {
                             mask = FrameMaskProvider.CreateMaskFromFaceRects(faces.Size, faces.Faces);
                             disposeMask = true;
+                            faceRects = faces.Faces;
                         }
                     }
                     else
@@ -298,7 +302,7 @@ public unsafe sealed class VideoExportService
                         swsToBgraMs += tBgra.ElapsedMilliseconds;
 
                         var tMask = Stopwatch.StartNew();
-                        _masked.ApplyMaskAndBlur(bgra, mask, blurRadius);
+                        _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
                         tMask.Stop();
                         maskMs += tMask.ElapsedMilliseconds;
                         if (disposeMask)
