@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FaceShield.Enums.Workspace; // 🔹 추가
@@ -42,6 +43,7 @@ namespace FaceShield.ViewModels.Pages
 
         // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
         private bool _isAutoRunning;
+        private long _autoLastPreviewTick;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
 
@@ -291,6 +293,7 @@ namespace FaceShield.ViewModels.Pages
                         _autoResumeIndex = idx;
                         _autoLastProcessedFrame = idx;
                         _autoLastProcessedAtUtc = DateTime.UtcNow;
+                        TryUpdateAutoPreview(idx);
                     });
 
                 if (token.IsCancellationRequested)
@@ -305,6 +308,8 @@ namespace FaceShield.ViewModels.Pages
                 {
                     FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
                 }
+
+                PruneIsolatedAutoFaces();
 
                 await BuildAutoAnomaliesAsync();
 
@@ -330,6 +335,52 @@ namespace FaceShield.ViewModels.Pages
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
                 PersistWorkspaceState();
+            }
+        }
+
+        private void TryUpdateAutoPreview(int frameIndex)
+        {
+            if (Mode != WorkspaceMode.Auto)
+                return;
+
+            long now = Environment.TickCount64;
+            if (now - _autoLastPreviewTick < 200)
+                return;
+            _autoLastPreviewTick = now;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_isAutoRunning)
+                    return;
+                if (FrameList.SelectedFrameIndex == frameIndex)
+                    return;
+
+                FrameList.SelectedFrameIndex = frameIndex;
+            });
+        }
+
+        private void PruneIsolatedAutoFaces()
+        {
+            if (_autoOptions.DetectEveryNFrames > 1 && !_autoOptions.UseTracking)
+                return;
+
+            int total = FrameList.TotalFrames;
+            if (total < 3)
+                return;
+
+            for (int i = 1; i < total - 1; i++)
+            {
+                if (_maskProvider.TryGetStoredMask(i, out _))
+                    continue;
+
+                if (!_maskProvider.TryGetFaceMaskData(i, out var current) || current.Faces.Count == 0)
+                    continue;
+
+                bool prevHasFace = _maskProvider.TryGetFaceMaskData(i - 1, out var prev) && prev.Faces.Count > 0;
+                bool nextHasFace = _maskProvider.TryGetFaceMaskData(i + 1, out var next) && next.Faces.Count > 0;
+
+                if (!prevHasFace && !nextHasFace)
+                    _maskProvider.RemoveFaceMask(i);
             }
         }
 
@@ -570,38 +621,49 @@ namespace FaceShield.ViewModels.Pages
                 HasAutoAnomalies = false;
                 FrameList.NoFaceIssueFrames = Array.Empty<int>();
                 FrameList.LowConfidenceIssueFrames = Array.Empty<int>();
+                FrameList.FlickerIssueFrames = Array.Empty<int>();
                 return;
             }
 
             float lowConfidenceCutoff = GetLowConfidenceCutoff();
 
-            var (noFaceFrames, lowConfidenceFrames) = await Task.Run(() =>
+            var (noFaceFrames, lowConfidenceFrames, flickerFrames) = await Task.Run(() =>
             {
                 var noFace = new System.Collections.Generic.List<int>();
                 var lowConfidence = new System.Collections.Generic.List<int>();
+                var flicker = new System.Collections.Generic.List<int>();
+                var hasFace = new bool[total];
                 for (int i = 0; i < total; i++)
                 {
-                    if (!_maskProvider.HasEntry(i))
+                    if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
                     {
-                        noFace.Add(i);
+                        hasFace[i] = true;
+                        if (data.MinConfidence.HasValue &&
+                            data.MinConfidence.Value < lowConfidenceCutoff)
+                        {
+                            lowConfidence.Add(i);
+                        }
                         continue;
                     }
 
-                    if (_maskProvider.TryGetFaceMaskData(i, out var data) &&
-                        data.MinConfidence.HasValue &&
-                        data.MinConfidence.Value < lowConfidenceCutoff)
-                    {
-                        lowConfidence.Add(i);
-                    }
+                    noFace.Add(i);
                 }
 
-                return (noFace.ToArray(), lowConfidence.ToArray());
+                for (int i = 1; i < total - 1; i++)
+                {
+                    if (!hasFace[i] && hasFace[i - 1] && hasFace[i + 1])
+                        flicker.Add(i);
+                }
+
+                return (noFace.ToArray(), lowConfidence.ToArray(), flicker.ToArray());
             });
 
             FrameList.NoFaceIssueFrames = noFaceFrames;
             FrameList.LowConfidenceIssueFrames = lowConfidenceFrames;
+            FrameList.FlickerIssueFrames = flickerFrames;
 
             var anomalies = MergeSortedFrames(noFaceFrames, lowConfidenceFrames);
+            anomalies = MergeSortedFrames(anomalies, flickerFrames);
             _autoAnomalies = anomalies;
             AutoAnomalyCount = anomalies.Length;
             HasAutoAnomalies = anomalies.Length > 0;

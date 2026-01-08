@@ -60,6 +60,11 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
     public bool TryGetFaceMaskData(int frameIndex, out FaceMaskData data)
         => _faceMasks.TryGetValue(frameIndex, out data);
 
+    public void RemoveFaceMask(int frameIndex)
+    {
+        _faceMasks.TryRemove(frameIndex, out _);
+    }
+
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
         => _masks.ToArray();
 

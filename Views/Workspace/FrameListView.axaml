@@ -45,8 +45,10 @@
             ThumbnailProvider="{Binding ThumbnailProvider}"
             NoFaceIssueFrames="{Binding NoFaceIssueFrames}"
             LowConfidenceIssueFrames="{Binding LowConfidenceIssueFrames}"
+            FlickerIssueFrames="{Binding FlickerIssueFrames}"
             ShowNoFaceIssues="{Binding ShowNoFaceIssues}"
-            ShowLowConfidenceIssues="{Binding ShowLowConfidenceIssues}" />
+            ShowLowConfidenceIssues="{Binding ShowLowConfidenceIssues}"
+            ShowFlickerIssues="{Binding ShowFlickerIssues}" />
 
         <!-- 🔹 문제 프레임 표시 -->
         <StackPanel
@@ -60,6 +62,9 @@
             <CheckBox
                 IsChecked="{Binding ShowLowConfidenceIssues, Mode=TwoWay}"
                 Content="{Binding LowConfidenceIssueCount, StringFormat=신뢰도 낮음 ({0})}" />
+            <CheckBox
+                IsChecked="{Binding ShowFlickerIssues, Mode=TwoWay}"
+                Content="{Binding FlickerIssueCount, StringFormat=연속 끊김 ({0})}" />
         </StackPanel>
 
         <!-- 🔹 현재 시간 / 전체 시간 -->

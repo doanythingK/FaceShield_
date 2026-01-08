@@ -21,6 +21,10 @@ namespace FaceShield.Services.Analysis
     /// </summary>
     public sealed class AutoMaskGenerator
     {
+        private const double MinFaceAreaRatio = 0.001;
+        private const double MinFaceAspectRatio = 0.5;
+        private const double MaxFaceAspectRatio = 2.0;
+
         private static bool IsHardwareTransferFailure()
         {
             string status = FfFrameExtractor.GetLastDecodeStatus();
@@ -274,6 +278,9 @@ namespace FaceShield.Services.Analysis
                     tDetect.Stop();
                     detectMs += tDetect.ElapsedMilliseconds;
 
+                    if (faces.Count > 0)
+                        faces = FilterFacesByArea(faces, fullSize);
+
                     lastFaces = faces.Count > 0 ? faces : null;
                 }
                 else if (_options.UseTracking && lastFaces != null)
@@ -481,6 +488,7 @@ namespace FaceShield.Services.Analysis
 
                                     if (faces.Count > 0)
                                     {
+                                        faces = FilterFacesByArea(faces, resultSize);
                                         bounds = ExtractBounds(faces);
                                         minConfidence = GetMinConfidence(faces);
                                         lastFaces = faces;
@@ -549,6 +557,9 @@ namespace FaceShield.Services.Analysis
                     }
 
                     var faces = DetectFacesWithOptions(frame);
+                    if (faces.Count > 0)
+                        faces = FilterFacesByArea(faces, frame.PixelSize);
+
                     if (faces != null && faces.Count > 0)
                     {
                         _maskProvider.SetFaceRects(frameIndex, ExtractBounds(faces), frame.PixelSize, GetMinConfidence(faces));
@@ -730,6 +741,7 @@ namespace FaceShield.Services.Analysis
 
                                         if (faces.Count > 0)
                                         {
+                                            faces = FilterFacesByArea(faces, resultSize);
                                             bounds = ExtractBounds(faces);
                                             minConfidence = GetMinConfidence(faces);
                                         }
@@ -1040,6 +1052,45 @@ namespace FaceShield.Services.Analysis
             for (int i = 0; i < count; i++)
                 bounds[i] = faces[i].Bounds;
             return bounds;
+        }
+
+        private static IReadOnlyList<FaceDetectionResult> FilterFacesByArea(
+            IReadOnlyList<FaceDetectionResult> faces,
+            PixelSize size)
+        {
+            if (faces.Count == 0)
+                return faces;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double minArea = frameArea * MinFaceAreaRatio;
+            if (minArea <= 1.0)
+                return faces;
+
+            List<FaceDetectionResult>? kept = null;
+            bool filtered = false;
+
+            for (int i = 0; i < faces.Count; i++)
+            {
+                var rect = faces[i].Bounds;
+                double area = Math.Max(0.0, rect.Width * rect.Height);
+                double ratio = rect.Height > 0 ? rect.Width / rect.Height : 0.0;
+                if (area >= minArea && ratio >= MinFaceAspectRatio && ratio <= MaxFaceAspectRatio)
+                {
+                    kept ??= new List<FaceDetectionResult>(faces.Count);
+                    kept.Add(faces[i]);
+                }
+                else
+                {
+                    filtered = true;
+                }
+            }
+
+            if (!filtered)
+                return faces;
+
+            if (kept != null)
+                return kept;
+            return Array.Empty<FaceDetectionResult>();
         }
 
         private static float? GetMinConfidence(IReadOnlyList<FaceDetectionResult> faces)

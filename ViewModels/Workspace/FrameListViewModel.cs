@@ -44,16 +44,25 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private bool showLowConfidenceIssues = true;
 
     [ObservableProperty]
+    private bool showFlickerIssues = true;
+
+    [ObservableProperty]
     private IReadOnlyList<int> noFaceIssueFrames = Array.Empty<int>();
 
     [ObservableProperty]
     private IReadOnlyList<int> lowConfidenceIssueFrames = Array.Empty<int>();
 
     [ObservableProperty]
+    private IReadOnlyList<int> flickerIssueFrames = Array.Empty<int>();
+
+    [ObservableProperty]
     private int noFaceIssueCount;
 
     [ObservableProperty]
     private int lowConfidenceIssueCount;
+
+    [ObservableProperty]
+    private int flickerIssueCount;
 
     // ─────────────────────────────
     // Thumbnail Provider
@@ -267,6 +276,11 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     partial void OnLowConfidenceIssueFramesChanged(IReadOnlyList<int> value)
     {
         LowConfidenceIssueCount = value?.Count ?? 0;
+    }
+
+    partial void OnFlickerIssueFramesChanged(IReadOnlyList<int> value)
+    {
+        FlickerIssueCount = value?.Count ?? 0;
     }
 
     public event Action<int>? SelectedFrameIndexChanged;

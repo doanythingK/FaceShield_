@@ -21,6 +21,9 @@ public partial class FramePreviewViewModel : ViewModelBase
     private WriteableBitmap? _frameBitmap;
     private WriteableBitmap? _maskBitmap;
     private WriteableBitmap? _previewBitmap;
+    private WriteableBitmap? _blurredFrame;
+    private WriteableBitmap? _blurredSource;
+    private int _blurredRadius;
 
     private VideoSession? _session;
 
@@ -33,6 +36,11 @@ public partial class FramePreviewViewModel : ViewModelBase
     private Point? _lastDrawPoint;
     private long _lastPreviewTick;
     private const int PreviewThrottleMs = 40;
+    private bool _hasDirtyRegion;
+    private int _dirtyX0;
+    private int _dirtyY0;
+    private int _dirtyX1;
+    private int _dirtyY1;
 
     public WriteableBitmap? FrameBitmap
     {
@@ -101,6 +109,8 @@ public partial class FramePreviewViewModel : ViewModelBase
             else if (e.PropertyName == nameof(ToolPanelViewModel.BlurRadius))
             {
                 PreviewBlurRadius = _toolPanel.BlurRadius;
+                _blurredFrame = null;
+                _blurredSource = null;
                 RefreshPreview(force: true);
             }
         };
@@ -161,6 +171,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         unsafe
         {
             int radius = Math.Max(1, _toolPanel.BrushDiameter / 2);
+            MarkDirty(from, to, radius, fb.Size.Width, fb.Size.Height);
 
             byte* basePtr = (byte*)fb.Address;
             int stride = fb.RowBytes;
@@ -250,7 +261,47 @@ public partial class FramePreviewViewModel : ViewModelBase
             faces = data.Faces;
         }
 
-        PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius, faces);
+        if (faces == null || faces.Count == 0 || _isDrawing)
+        {
+            EnsureBlurredFrame();
+            Rect? dirtyRect = null;
+            if (!force && _hasDirtyRegion)
+            {
+                dirtyRect = new Rect(
+                    _dirtyX0,
+                    _dirtyY0,
+                    Math.Max(0, _dirtyX1 - _dirtyX0 + 1),
+                    Math.Max(0, _dirtyY1 - _dirtyY0 + 1));
+            }
+
+            PreviewBitmap = PreviewBlurProcessor.ComposeMaskedPreview(
+                _frameBitmap,
+                _blurredFrame!,
+                _maskBitmap,
+                PreviewBitmap,
+                dirtyRect);
+        }
+        else
+        {
+            PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius, faces);
+        }
+
+        _hasDirtyRegion = false;
+    }
+
+    private void EnsureBlurredFrame()
+    {
+        if (_frameBitmap == null)
+            return;
+
+        if (_blurredFrame == null ||
+            _blurredRadius != PreviewBlurRadius ||
+            !ReferenceEquals(_blurredSource, _frameBitmap))
+        {
+            _blurredFrame = PreviewBlurProcessor.CreateBlurredFrame(_frameBitmap, PreviewBlurRadius);
+            _blurredRadius = PreviewBlurRadius;
+            _blurredSource = _frameBitmap;
+        }
     }
 
 
@@ -409,6 +460,8 @@ public partial class FramePreviewViewModel : ViewModelBase
     private void ApplyExactFrame(WriteableBitmap exact, int index)
     {
         FrameBitmap = exact;
+        _blurredFrame = null;
+        _blurredSource = null;
 
         // 🔹 2-1) 자동/최종 마스크가 이미 있는지 provider에서 먼저 조회
         WriteableBitmap? providerMask = null;
@@ -467,6 +520,34 @@ public partial class FramePreviewViewModel : ViewModelBase
             return;
 
         ApplyExactFrame(exact, index);
+    }
+
+    private void MarkDirty(Point from, Point to, int radius, int width, int height)
+    {
+        int x0 = (int)Math.Floor(Math.Min(from.X, to.X) - radius);
+        int y0 = (int)Math.Floor(Math.Min(from.Y, to.Y) - radius);
+        int x1 = (int)Math.Ceiling(Math.Max(from.X, to.X) + radius);
+        int y1 = (int)Math.Ceiling(Math.Max(from.Y, to.Y) + radius);
+
+        x0 = Math.Clamp(x0, 0, Math.Max(0, width - 1));
+        y0 = Math.Clamp(y0, 0, Math.Max(0, height - 1));
+        x1 = Math.Clamp(x1, 0, Math.Max(0, width - 1));
+        y1 = Math.Clamp(y1, 0, Math.Max(0, height - 1));
+
+        if (!_hasDirtyRegion)
+        {
+            _dirtyX0 = x0;
+            _dirtyY0 = y0;
+            _dirtyX1 = x1;
+            _dirtyY1 = y1;
+            _hasDirtyRegion = true;
+            return;
+        }
+
+        _dirtyX0 = Math.Min(_dirtyX0, x0);
+        _dirtyY0 = Math.Min(_dirtyY0, y0);
+        _dirtyX1 = Math.Max(_dirtyX1, x1);
+        _dirtyY1 = Math.Max(_dirtyY1, y1);
     }
 
 }

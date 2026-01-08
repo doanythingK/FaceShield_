@@ -97,6 +97,15 @@ namespace FaceShield.Controls
             set => SetValue(LowConfidenceIssueFramesProperty, value);
         }
 
+        public static readonly StyledProperty<IReadOnlyList<int>?> FlickerIssueFramesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, IReadOnlyList<int>?>(nameof(FlickerIssueFrames));
+
+        public IReadOnlyList<int>? FlickerIssueFrames
+        {
+            get => GetValue(FlickerIssueFramesProperty);
+            set => SetValue(FlickerIssueFramesProperty, value);
+        }
+
         public static readonly StyledProperty<bool> ShowNoFaceIssuesProperty =
             AvaloniaProperty.Register<TimelineFrameStrip, bool>(nameof(ShowNoFaceIssues), true);
 
@@ -115,6 +124,15 @@ namespace FaceShield.Controls
             set => SetValue(ShowLowConfidenceIssuesProperty, value);
         }
 
+        public static readonly StyledProperty<bool> ShowFlickerIssuesProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, bool>(nameof(ShowFlickerIssues), true);
+
+        public bool ShowFlickerIssues
+        {
+            get => GetValue(ShowFlickerIssuesProperty);
+            set => SetValue(ShowFlickerIssuesProperty, value);
+        }
+
         private int _hoverIndex = -1;
 
         static TimelineFrameStrip()
@@ -129,8 +147,10 @@ namespace FaceShield.Controls
                 ThumbnailProviderProperty,
                 NoFaceIssueFramesProperty,
                 LowConfidenceIssueFramesProperty,
+                FlickerIssueFramesProperty,
                 ShowNoFaceIssuesProperty,
-                ShowLowConfidenceIssuesProperty);
+                ShowLowConfidenceIssuesProperty,
+                ShowFlickerIssuesProperty);
         }
 
         protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -351,6 +371,7 @@ namespace FaceShield.Controls
             const double markerH = 6;
             double yNoFace = Math.Max(0, stripH - markerH);
             double yLowConf = Math.Max(0, stripH - markerH * 2);
+            double yFlicker = Math.Max(0, stripH - markerH * 3);
 
             if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
             {
@@ -382,6 +403,22 @@ namespace FaceShield.Controls
                     yLowConf,
                     markerH,
                     new SolidColorBrush(Color.FromRgb(255, 160, 60)));
+            }
+
+            if (ShowFlickerIssues && FlickerIssueFrames is { Count: > 0 })
+            {
+                DrawIssueMarkerSeries(
+                    ctx,
+                    FlickerIssueFrames,
+                    startSec,
+                    range,
+                    fps,
+                    w,
+                    startFrame,
+                    endFrame,
+                    yFlicker,
+                    markerH,
+                    new SolidColorBrush(Color.FromRgb(80, 180, 255)));
             }
         }
 
