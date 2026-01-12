@@ -365,18 +365,6 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        partial void OnAutoUseGpuChanged(bool value)
-        {
-            PersistAutoSettings();
-            if (!IsAutoRunning || _activeAutoWorkspace == null)
-                return;
-
-            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
-            _autoRestartRequested = true;
-            AutoStatusText = "GPU 옵션 변경 감지 · 재시작 준비 중...";
-            _autoCts?.Cancel();
-        }
-
         partial void OnAutoUseOrtOptimizationChanged(bool value)
         {
             PersistAutoSettings();
@@ -386,6 +374,18 @@ namespace FaceShield.ViewModels.Pages
             _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
             _autoRestartRequested = true;
             AutoStatusText = "가속 옵션 변경 감지 · 재시작 준비 중...";
+            _autoCts?.Cancel();
+        }
+
+        partial void OnAutoUseGpuChanged(bool value)
+        {
+            PersistAutoSettings();
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = "GPU 옵션 변경 감지 · 재시작 준비 중...";
             _autoCts?.Cancel();
         }
 

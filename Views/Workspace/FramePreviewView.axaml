@@ -15,6 +15,12 @@
              HorizontalAlignment="Center"
              VerticalAlignment="Center"/>
 
+        <!-- 🔹 검출 오버레이 -->
+        <Canvas
+            Name="OverlayCanvas"
+            Background="Transparent"
+            IsHitTestVisible="False"
+            IsVisible="{Binding ShowDetectionOverlay}"/>
 
         <!-- 🔹 입력 레이어 -->
         <Canvas

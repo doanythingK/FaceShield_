@@ -92,7 +92,6 @@ namespace FaceShield.Services.FaceDetection
             }
             catch (Exception ex)
             {
-                // Fallback to CPU if GPU/provider initialization fails.
                 _detector = new FaceDetector(detection, confidence, nms);
                 UpdateExecutionProviderLabel("CPU(가속 실패)");
                 UpdateExecutionProviderError(ex.Message);
@@ -807,13 +806,6 @@ namespace FaceShield.Services.FaceDetection
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
-                {
-                    UpdateExecutionProviderLabel("GPU:CUDA");
-                    UpdateExecutionProviderError(null);
-                    return "CUDA";
-                }
-
                 if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
                 {
                     UpdateExecutionProviderLabel("GPU:DirectML");
@@ -832,13 +824,6 @@ namespace FaceShield.Services.FaceDetection
                 UpdateExecutionProviderLabel("GPU:DirectML");
                 UpdateExecutionProviderError(null);
                 return "DirectML";
-            }
-
-            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CUDA", "Microsoft.ML.OnnxRuntime.Gpu"))
-            {
-                UpdateExecutionProviderLabel("GPU:CUDA");
-                UpdateExecutionProviderError(null);
-                return "CUDA";
             }
 
             return null;

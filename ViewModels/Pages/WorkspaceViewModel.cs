@@ -14,6 +14,8 @@ using FaceShield.Views.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -43,6 +45,12 @@ namespace FaceShield.ViewModels.Pages
         private bool _sessionInitialized;
         private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();
         private (DateTime Timestamp, int FrameIndex) _exportLastSample;
+        private readonly ObservableCollection<IssueEntryViewModel> _noFaceIssueEntries = new();
+        private readonly ObservableCollection<IssueEntryViewModel> _lowConfidenceIssueEntries = new();
+        private readonly ObservableCollection<IssueEntryViewModel> _flickerIssueEntries = new();
+        private HashSet<int> _noFaceIssueSet = new();
+        private HashSet<int> _lowConfidenceIssueSet = new();
+        private HashSet<int> _flickerIssueSet = new();
 
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
@@ -61,6 +69,16 @@ namespace FaceShield.ViewModels.Pages
 
         [ObservableProperty]
         private bool hasAutoAnomalies;
+
+        public ObservableCollection<IssueEntryViewModel> NoFaceIssueEntries => _noFaceIssueEntries;
+        public ObservableCollection<IssueEntryViewModel> LowConfidenceIssueEntries => _lowConfidenceIssueEntries;
+        public ObservableCollection<IssueEntryViewModel> FlickerIssueEntries => _flickerIssueEntries;
+
+        public bool AutoSummaryVisible => AutoAnomalyCount > 0;
+        public string AutoSummaryText => $"문제 프레임 {AutoAnomalyCount}개";
+
+        [ObservableProperty]
+        private bool hideResolvedIssues = true;
 
         public bool NeedsAutoResumePrompt =>
             Mode == WorkspaceMode.Auto &&
@@ -118,6 +136,7 @@ namespace FaceShield.ViewModels.Pages
             };
 
             ToolPanel.UndoRequested += () => FramePreview.Undo();
+            FramePreview.MaskEdited += OnMaskEdited;
 
             ToolPanel.SaveRequested += async () =>
             {
@@ -342,6 +361,17 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.IsAutoRunning = false;
                 PersistWorkspaceState();
             }
+        }
+
+        partial void OnAutoAnomalyCountChanged(int value)
+        {
+            OnPropertyChanged(nameof(AutoSummaryVisible));
+            OnPropertyChanged(nameof(AutoSummaryText));
+        }
+
+        partial void OnHideResolvedIssuesChanged(bool value)
+        {
+            UpdateIssueVisibility(value);
         }
 
         private void TryUpdateAutoPreview(int frameIndex)
@@ -811,6 +841,20 @@ namespace FaceShield.ViewModels.Pages
             FrameList.SelectedFrameIndex = _autoAnomalies[idx];
         }
 
+        [RelayCommand]
+        private void JumpToIssue(int frameIndex)
+        {
+            FrameList.SelectedFrameIndex = Math.Clamp(frameIndex, 0, FrameList.TotalFrames - 1);
+        }
+
+        [RelayCommand]
+        private void ReviewAutoAnomalies()
+        {
+            if (_autoAnomalies.Length == 0)
+                return;
+            FrameList.SelectedFrameIndex = _autoAnomalies[0];
+        }
+
         private async Task BuildAutoAnomaliesAsync()
         {
             int total = FrameList.TotalFrames;
@@ -822,6 +866,9 @@ namespace FaceShield.ViewModels.Pages
                 FrameList.NoFaceIssueFrames = Array.Empty<int>();
                 FrameList.LowConfidenceIssueFrames = Array.Empty<int>();
                 FrameList.FlickerIssueFrames = Array.Empty<int>();
+                ResetIssueList(_noFaceIssueEntries, Array.Empty<int>(), "얼굴 없음");
+                ResetIssueList(_lowConfidenceIssueEntries, Array.Empty<int>(), "신뢰도 낮음");
+                ResetIssueList(_flickerIssueEntries, Array.Empty<int>(), "연속 끊김");
                 return;
             }
 
@@ -867,6 +914,13 @@ namespace FaceShield.ViewModels.Pages
             _autoAnomalies = anomalies;
             AutoAnomalyCount = anomalies.Length;
             HasAutoAnomalies = anomalies.Length > 0;
+
+            _noFaceIssueSet = new HashSet<int>(noFaceFrames);
+            _lowConfidenceIssueSet = new HashSet<int>(lowConfidenceFrames);
+            _flickerIssueSet = new HashSet<int>(flickerFrames);
+            ResetIssueList(_noFaceIssueEntries, noFaceFrames, "얼굴 없음");
+            ResetIssueList(_lowConfidenceIssueEntries, lowConfidenceFrames, "신뢰도 낮음");
+            ResetIssueList(_flickerIssueEntries, flickerFrames, "연속 끊김");
         }
 
         private float GetLowConfidenceCutoff()
@@ -933,6 +987,105 @@ namespace FaceShield.ViewModels.Pages
             for (int i = 0; i < source.Count; i++)
                 copy[i] = source[i];
             return copy;
+        }
+
+        private void ResetIssueList(
+            ObservableCollection<IssueEntryViewModel> target,
+            IReadOnlyList<int> frames,
+            string label)
+        {
+            target.Clear();
+            for (int i = 0; i < frames.Count; i++)
+            {
+                var entry = new IssueEntryViewModel(frames[i], label, FormatFrameTime(frames[i], FrameList.Fps))
+                {
+                    HideResolved = HideResolvedIssues
+                };
+                entry.Resolved += OnIssueResolved;
+                target.Add(entry);
+            }
+        }
+
+        private void OnIssueResolved(IssueEntryViewModel entry)
+        {
+            ResolveIssueForFrame(entry.FrameIndex);
+        }
+
+        private void OnMaskEdited(int frameIndex)
+        {
+            ResolveIssueForFrame(frameIndex);
+        }
+
+        private void ResolveIssueForFrame(int frameIndex)
+        {
+            bool changed = false;
+            if (_noFaceIssueSet.Remove(frameIndex))
+                changed = true;
+            if (_lowConfidenceIssueSet.Remove(frameIndex))
+                changed = true;
+            if (_flickerIssueSet.Remove(frameIndex))
+                changed = true;
+
+            if (!changed)
+                return;
+
+            RemoveIssueEntry(_noFaceIssueEntries, frameIndex);
+            RemoveIssueEntry(_lowConfidenceIssueEntries, frameIndex);
+            RemoveIssueEntry(_flickerIssueEntries, frameIndex);
+
+            FrameList.NoFaceIssueFrames = _noFaceIssueSet.OrderBy(x => x).ToArray();
+            FrameList.LowConfidenceIssueFrames = _lowConfidenceIssueSet.OrderBy(x => x).ToArray();
+            FrameList.FlickerIssueFrames = _flickerIssueSet.OrderBy(x => x).ToArray();
+
+            var anomalies = MergeSortedFrames(FrameList.NoFaceIssueFrames, FrameList.LowConfidenceIssueFrames);
+            anomalies = MergeSortedFrames(anomalies, FrameList.FlickerIssueFrames);
+            _autoAnomalies = anomalies;
+            AutoAnomalyCount = anomalies.Length;
+            HasAutoAnomalies = anomalies.Length > 0;
+        }
+
+        private static void RemoveIssueEntry(ObservableCollection<IssueEntryViewModel> target, int frameIndex)
+        {
+            for (int i = target.Count - 1; i >= 0; i--)
+            {
+                if (target[i].FrameIndex == frameIndex)
+                    target.RemoveAt(i);
+            }
+        }
+
+        private void UpdateIssueVisibility(bool hideResolved)
+        {
+            SetIssueVisibility(_noFaceIssueEntries, hideResolved);
+            SetIssueVisibility(_lowConfidenceIssueEntries, hideResolved);
+            SetIssueVisibility(_flickerIssueEntries, hideResolved);
+        }
+
+        private static void SetIssueVisibility(
+            ObservableCollection<IssueEntryViewModel> entries,
+            bool hideResolved)
+        {
+            for (int i = 0; i < entries.Count; i++)
+                entries[i].HideResolved = hideResolved;
+        }
+
+        private static string FormatFrameTime(int frameIndex, double fps)
+        {
+            if (fps <= 0)
+                return "00:00.00";
+
+            double framesPerSecond = fps;
+            int wholeSeconds = (int)Math.Floor(frameIndex / framesPerSecond);
+            int frameRemainder = (int)Math.Round(frameIndex - wholeSeconds * framesPerSecond);
+            int fpsInt = (int)Math.Round(framesPerSecond);
+            if (fpsInt > 0 && frameRemainder >= fpsInt)
+            {
+                wholeSeconds += frameRemainder / fpsInt;
+                frameRemainder %= fpsInt;
+            }
+
+            int minutes = wholeSeconds / 60;
+            int seconds = wholeSeconds % 60;
+            return $"{minutes:D2}:{seconds:D2}.{frameRemainder:D2}";
         }
 
         public void RestoreFromStore(WorkspaceStateStore store)

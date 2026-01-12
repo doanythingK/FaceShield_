@@ -35,88 +35,9 @@ jobs:
           $zipName = "FaceShield-win-x64-v$buildVer-$shortSha.zip"
           Compress-Archive -Path "$outDir\*" -DestinationPath "$outDir\$zipName" -Force
 
-      - name: Build CUDA optional pack
-        shell: pwsh
-        run: |
-          $version = "1.23.2"
-          $pkg = "Microsoft.ML.OnnxRuntime.Gpu"
-          $tempProj = Join-Path $env:RUNNER_TEMP "cuda-pack-temp"
-          $packDir = Join-Path $env:RUNNER_TEMP "faceshield-cuda-pack"
-          if (Test-Path $tempProj) { Remove-Item $tempProj -Recurse -Force }
-          dotnet new classlib -o $tempProj --no-restore
-          dotnet add "$tempProj" package $pkg -v $version
-          dotnet restore "$tempProj"
-          if (Test-Path $packDir) { Remove-Item $packDir -Recurse -Force }
-          New-Item -ItemType Directory -Path $packDir | Out-Null
-
-          $locals = & dotnet nuget locals global-packages -l
-          if ($locals -match "global-packages:\s*(.+)$") {
-            $globalPackages = $Matches[1].Trim()
-          } else {
-            throw "Unable to resolve NuGet global-packages path."
-          }
-
-          $pkgRoots = @(
-            (Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu\$version"),
-            (Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu.windows\$version"),
-            (Join-Path $globalPackages "microsoft.ml.onnxruntime.gpu.linux\$version")
-          ) | Where-Object { Test-Path $_ }
-
-          if ($pkgRoots.Count -eq 0) { throw "NuGet cache not found under: $globalPackages" }
-
-          $gpuManaged = Get-ChildItem -Path $pkgRoots -Recurse -Filter "Microsoft.ML.OnnxRuntime.Gpu.dll" | Select-Object -First 1
-          if (-not $gpuManaged)
-          {
-            throw "Microsoft.ML.OnnxRuntime.Gpu.dll not found in GPU packages."
-          }
-          Copy-Item $gpuManaged.FullName $packDir -Force
-
-          $runtimeDll = Get-ChildItem -Path $pkgRoots -Recurse -Filter "onnxruntime_providers_cuda.dll" | Select-Object -First 1
-          if (-not $runtimeDll)
-          {
-            Get-ChildItem -Path $pkgRoots -Recurse -Filter "onnxruntime*.dll" | Select-Object FullName
-            throw "onnxruntime_providers_cuda.dll not found in GPU package."
-          }
-          $nativeDir = $runtimeDll.Directory
-
-          Copy-Item (Join-Path $nativeDir.FullName "onnxruntime.dll") $packDir -Force
-          Copy-Item (Join-Path $nativeDir.FullName "onnxruntime_providers_shared.dll") $packDir -Force
-          Copy-Item (Join-Path $nativeDir.FullName "onnxruntime_providers_cuda.dll") $packDir -Force
-
-          $readme = @(
-            "FaceShield CUDA Optional Pack",
-            "",
-            "Use this only if you want CUDA acceleration on Windows.",
-            "Requirements:",
-            "  - NVIDIA driver + CUDA Toolkit + cuDNN (matching ONNX Runtime 1.23.2)",
-            "",
-            "Install:",
-            "  1) Close the app.",
-            "  2) Copy all DLLs in this folder into the app's publish directory",
-            "     (next to FaceShield.exe).",
-            "  3) Launch the app and check acceleration status shows GPU:CUDA.",
-            "",
-            "Note:",
-            "  This pack replaces onnxruntime.dll with the CUDA build.",
-            "  If you want to revert, restore the original DLLs from the base package."
-          )
-          $readme | Set-Content (Join-Path $packDir "CUDA_README.txt") -Encoding ASCII
-
-          $shortSha = $env:GITHUB_SHA.Substring(0,7)
-          $buildVer = $env:GITHUB_RUN_NUMBER
-          $zipName = "FaceShield-cuda-pack-win-x64-v$buildVer-$shortSha.zip"
-          Compress-Archive -Path "$packDir\*" -DestinationPath "$packDir\$zipName" -Force
-
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
           name: FaceShield-win-x64
           path: |
             bin/Release/net8.0/win-x64/publish/FaceShield-win-x64-v*-*.zip
-
-      - name: Upload CUDA pack artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: FaceShield-cuda-pack-win-x64
-          path: |
-            ${{ runner.temp }}/faceshield-cuda-pack/FaceShield-cuda-pack-win-x64-v*-*.zip

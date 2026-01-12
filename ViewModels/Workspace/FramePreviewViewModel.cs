@@ -41,6 +41,8 @@ public partial class FramePreviewViewModel : ViewModelBase
     private int _dirtyY0;
     private int _dirtyX1;
     private int _dirtyY1;
+    private IReadOnlyList<Rect> _detectionRects = Array.Empty<Rect>();
+    private bool _showDetectionOverlay;
 
     public WriteableBitmap? FrameBitmap
     {
@@ -77,6 +79,30 @@ public partial class FramePreviewViewModel : ViewModelBase
     public int BrushDiameter => _toolPanel.BrushDiameter;
 
     public bool ShowBrushCursor => _toolPanel.ShowBrushSize;
+
+    public IReadOnlyList<Rect> DetectionRects
+    {
+        get => _detectionRects;
+        private set
+        {
+            _detectionRects = value ?? Array.Empty<Rect>();
+            OnPropertyChanged(nameof(DetectionRects));
+        }
+    }
+
+    public bool ShowDetectionOverlay
+    {
+        get => _showDetectionOverlay;
+        set
+        {
+            if (_showDetectionOverlay == value)
+                return;
+            _showDetectionOverlay = value;
+            OnPropertyChanged(nameof(ShowDetectionOverlay));
+        }
+    }
+
+    public event Action<int>? MaskEdited;
 
     public Cursor CurrentCursor =>
         CurrentMode switch
@@ -161,6 +187,8 @@ public partial class FramePreviewViewModel : ViewModelBase
         _isDrawing = false;
         _lastDrawPoint = null;
         RefreshPreview(force: true);
+        if (_maskDirty && _currentFrameIndex >= 0)
+            MaskEdited?.Invoke(_currentFrameIndex);
     }
 
     private void DrawStroke(Point from, Point to)
@@ -485,6 +513,16 @@ public partial class FramePreviewViewModel : ViewModelBase
             MaskBitmap = CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
             _maskUndo.Clear();
             _maskDirty = false;
+        }
+
+        if (_maskProvider is FrameMaskProvider faceProvider &&
+            faceProvider.TryGetFaceMaskData(index, out var faceData))
+        {
+            DetectionRects = faceData.Faces;
+        }
+        else
+        {
+            DetectionRects = Array.Empty<Rect>();
         }
 
         // 3) 프리뷰 갱신

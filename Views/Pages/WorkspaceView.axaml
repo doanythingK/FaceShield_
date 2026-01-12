@@ -3,18 +3,23 @@
              xmlns:views="clr-namespace:FaceShield.Views.Workspace"
              xmlns:vm="clr-namespace:FaceShield.ViewModels.Pages"
              x:Class="FaceShield.Views.Pages.WorkspaceView"
+             x:Name="Root"
              x:DataType="vm:WorkspaceViewModel">
 
-    <Grid RowDefinitions="Auto,*,160,96">
+    <Grid RowDefinitions="Auto,*,160,96"
+          ColumnDefinitions="*,320">
 
         <!-- 상단 상태 영역 -->
-        <Border Grid.Row="0" Background="#101010" Padding="8">
+        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#101010" Padding="8">
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <Button Content="뒤로가기" Command="{Binding GoBackCommand}" />
                 <TextBlock>
                     <Run Text="모드: "/>
                     <Run Text="{Binding Mode}"/>
                 </TextBlock>
+                <CheckBox Content="검출 표시"
+                          IsChecked="{Binding FramePreview.ShowDetectionOverlay, Mode=TwoWay}"
+                          VerticalAlignment="Center"/>
                 <TextBlock Text="{Binding AutoAnomalyCount, StringFormat=이상 프레임: {0}}"
                            Opacity="0.8"
                            VerticalAlignment="Center"/>
@@ -24,22 +29,110 @@
                 <Button Content="다음 이상 프레임"
                         Command="{Binding NextAutoAnomalyCommand}"
                         IsEnabled="{Binding HasAutoAnomalies}"/>
+                <Border Background="#1C2A1C"
+                        CornerRadius="6"
+                        Padding="6,2"
+                        IsVisible="{Binding AutoSummaryVisible}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="{Binding AutoSummaryText}"
+                                   VerticalAlignment="Center"/>
+                        <Button Content="바로 검토하기"
+                                Command="{Binding ReviewAutoAnomaliesCommand}"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
 
         <!-- Preview -->
         <views:FramePreviewView
             Grid.Row="1"
+            Grid.Column="0"
             DataContext="{Binding FramePreview}" />
 
         <!-- Timeline -->
         <views:FrameListView
             Grid.Row="2"
+            Grid.Column="0"
             DataContext="{Binding FrameList}" />
+
+        <!-- Issues -->
+        <Border Grid.Row="1"
+                Grid.Column="1"
+                Grid.RowSpan="2"
+                Background="#151515"
+                Padding="12">
+            <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="문제 프레임"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"/>
+                    <CheckBox Content="완료 숨기기"
+                              IsChecked="{Binding HideResolvedIssues, Mode=TwoWay}"
+                              VerticalAlignment="Center"/>
+                </StackPanel>
+                <TabControl>
+                    <TabItem Header="얼굴 없음">
+                        <ListBox ItemsSource="{Binding NoFaceIssueEntries}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                                IsVisible="{Binding IsVisible}">
+                                        <CheckBox IsChecked="{Binding IsResolved, Mode=TwoWay}"/>
+                                        <Button Content="{Binding FrameIndex, StringFormat=프레임 {0}}"
+                                                Command="{Binding #Root.DataContext.JumpToIssueCommand}"
+                                                CommandParameter="{Binding FrameIndex}"/>
+                                        <TextBlock Text="{Binding TimeText}"
+                                                   Opacity="0.7"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </TabItem>
+                    <TabItem Header="신뢰도 낮음">
+                        <ListBox ItemsSource="{Binding LowConfidenceIssueEntries}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                                IsVisible="{Binding IsVisible}">
+                                        <CheckBox IsChecked="{Binding IsResolved, Mode=TwoWay}"/>
+                                        <Button Content="{Binding FrameIndex, StringFormat=프레임 {0}}"
+                                                Command="{Binding #Root.DataContext.JumpToIssueCommand}"
+                                                CommandParameter="{Binding FrameIndex}"/>
+                                        <TextBlock Text="{Binding TimeText}"
+                                                   Opacity="0.7"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </TabItem>
+                    <TabItem Header="연속 끊김">
+                        <ListBox ItemsSource="{Binding FlickerIssueEntries}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8"
+                                                IsVisible="{Binding IsVisible}">
+                                        <CheckBox IsChecked="{Binding IsResolved, Mode=TwoWay}"/>
+                                        <Button Content="{Binding FrameIndex, StringFormat=프레임 {0}}"
+                                                Command="{Binding #Root.DataContext.JumpToIssueCommand}"
+                                                CommandParameter="{Binding FrameIndex}"/>
+                                        <TextBlock Text="{Binding TimeText}"
+                                                   Opacity="0.7"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </TabItem>
+                </TabControl>
+            </StackPanel>
+        </Border>
 
         <!-- Tool panel -->
         <views:ToolPanelView
             Grid.Row="3"
+            Grid.ColumnSpan="2"
             DataContext="{Binding ToolPanel}" />
 
     </Grid>

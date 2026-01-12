@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Controls.Shapes;
+using Avalonia.Media;
 using FaceShield.ViewModels.Workspace;
 using System;
 
@@ -9,9 +10,13 @@ namespace FaceShield.Views.Workspace;
 
 public partial class FramePreviewView : UserControl
 {
+    private FramePreviewViewModel? _vm;
+
     public FramePreviewView()
     {
         InitializeComponent();
+        DataContextChanged += OnDataContextChanged;
+        LayoutUpdated += (_, __) => UpdateOverlay();
     }
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -162,5 +167,89 @@ public partial class FramePreviewView : UserControl
     {
         if (this.FindControl<Ellipse>("BrushCursor") is { } cursor)
             cursor.IsVisible = isVisible;
+    }
+
+    private void OnDataContextChanged(object? sender, EventArgs e)
+    {
+        if (_vm != null)
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+
+        _vm = DataContext as FramePreviewViewModel;
+        if (_vm != null)
+            _vm.PropertyChanged += OnViewModelPropertyChanged;
+
+        UpdateOverlay();
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FramePreviewViewModel.DetectionRects) ||
+            e.PropertyName == nameof(FramePreviewViewModel.ShowDetectionOverlay) ||
+            e.PropertyName == nameof(FramePreviewViewModel.FrameBitmap))
+        {
+            UpdateOverlay();
+        }
+    }
+
+    private void UpdateOverlay()
+    {
+        if (this.FindControl<Canvas>("OverlayCanvas") is not { } canvas)
+            return;
+
+        if (DataContext is not FramePreviewViewModel vm ||
+            vm.FrameBitmap is null ||
+            !vm.ShowDetectionOverlay ||
+            vm.DetectionRects.Count == 0)
+        {
+            canvas.Children.Clear();
+            canvas.IsVisible = false;
+            return;
+        }
+
+        var img = this.FindControl<Image>("FrameImage");
+        if (img is null || img.Bounds.Width <= 0 || img.Bounds.Height <= 0)
+        {
+            canvas.Children.Clear();
+            canvas.IsVisible = false;
+            return;
+        }
+
+        double imgW = vm.FrameBitmap.PixelSize.Width;
+        double imgH = vm.FrameBitmap.PixelSize.Height;
+        if (imgW <= 0 || imgH <= 0)
+        {
+            canvas.Children.Clear();
+            canvas.IsVisible = false;
+            return;
+        }
+
+        double scale = Math.Min(
+            img.Bounds.Width / imgW,
+            img.Bounds.Height / imgH);
+
+        double renderW = imgW * scale;
+        double renderH = imgH * scale;
+
+        double offsetX = (img.Bounds.Width - renderW) / 2;
+        double offsetY = (img.Bounds.Height - renderH) / 2;
+
+        canvas.Children.Clear();
+        canvas.IsVisible = true;
+
+        foreach (var rect in vm.DetectionRects)
+        {
+            var overlay = new Rectangle
+            {
+                Width = rect.Width * scale,
+                Height = rect.Height * scale,
+                Stroke = Brushes.Lime,
+                StrokeThickness = 1.5,
+                Fill = Brushes.Transparent
+            };
+
+            Canvas.SetLeft(overlay, offsetX + rect.X * scale);
+            Canvas.SetTop(overlay, offsetY + rect.Y * scale);
+            canvas.Children.Add(overlay);
+        }
     }
 }
