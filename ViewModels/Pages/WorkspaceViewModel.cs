@@ -30,6 +30,12 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
         private const float LowConfidenceMargin = 0.05f;
+        private const float TemporalConfidenceStrong = 0.7f;
+        private const float TemporalConfidenceWeak = 0.5f;
+        private const double TemporalIouMin = 0.2;
+        private const double TemporalMaxCenterShiftRatio = 0.5;
+        private const double TemporalMaxAreaChangeRatio = 3.0;
+        private const int TemporalMinRunLength = 2;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private int _autoLastProcessedFrame = -1;
@@ -309,7 +315,7 @@ namespace FaceShield.ViewModels.Pages
                     FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
                 }
 
-                PruneIsolatedAutoFaces();
+                ApplyAutoTemporalFixes();
 
                 await BuildAutoAnomaliesAsync();
 
@@ -359,7 +365,7 @@ namespace FaceShield.ViewModels.Pages
             });
         }
 
-        private void PruneIsolatedAutoFaces()
+        private void ApplyAutoTemporalFixes()
         {
             if (_autoOptions.DetectEveryNFrames > 1 && !_autoOptions.UseTracking)
                 return;
@@ -368,20 +374,214 @@ namespace FaceShield.ViewModels.Pages
             if (total < 3)
                 return;
 
+            var facesByFrame = new List<Rect>?[total];
+            var confByFrame = new List<float>?[total];
+            var sizeByFrame = new PixelSize[total];
+            var hasStored = new bool[total];
+
+            for (int i = 0; i < total; i++)
+            {
+                hasStored[i] = _maskProvider.TryGetStoredMask(i, out _);
+                if (hasStored[i])
+                    continue;
+
+                if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
+                {
+                    facesByFrame[i] = new List<Rect>(data.Faces);
+                    confByFrame[i] = new List<float>(data.Confidences);
+                    sizeByFrame[i] = data.Size;
+                }
+            }
+
             for (int i = 1; i < total - 1; i++)
             {
-                if (_maskProvider.TryGetStoredMask(i, out _))
+                if (hasStored[i] || facesByFrame[i] != null)
+                    continue;
+                if (facesByFrame[i - 1] == null || facesByFrame[i + 1] == null)
                     continue;
 
-                if (!_maskProvider.TryGetFaceMaskData(i, out var current) || current.Faces.Count == 0)
-                    continue;
-
-                bool prevHasFace = _maskProvider.TryGetFaceMaskData(i - 1, out var prev) && prev.Faces.Count > 0;
-                bool nextHasFace = _maskProvider.TryGetFaceMaskData(i + 1, out var next) && next.Faces.Count > 0;
-
-                if (!prevHasFace && !nextHasFace)
-                    _maskProvider.RemoveFaceMask(i);
+                facesByFrame[i] = new List<Rect>(facesByFrame[i - 1]!);
+                confByFrame[i] = new List<float>(confByFrame[i - 1]!);
+                sizeByFrame[i] = sizeByFrame[i - 1];
             }
+
+            for (int i = 0; i < total; i++)
+            {
+                if (hasStored[i] || facesByFrame[i] == null)
+                    continue;
+
+                var faces = facesByFrame[i]!;
+                var confs = confByFrame[i] ?? new List<float>(faces.Count);
+                if (confs.Count != faces.Count)
+                {
+                    confs = new List<float>(faces.Count);
+                    for (int j = 0; j < faces.Count; j++)
+                        confs.Add(1.0f);
+                    confByFrame[i] = confs;
+                }
+
+                var keptFaces = new List<Rect>(faces.Count);
+                var keptConfs = new List<float>(faces.Count);
+                var prevFaces = i > 0 ? facesByFrame[i - 1] : null;
+                var nextFaces = i + 1 < total ? facesByFrame[i + 1] : null;
+
+                for (int j = 0; j < faces.Count; j++)
+                {
+                    var face = faces[j];
+                    float conf = confs[j];
+                    if (conf < TemporalConfidenceWeak)
+                        continue;
+
+                    double prevIou = GetMaxIoU(face, prevFaces, out var prevMatch);
+                    double nextIou = GetMaxIoU(face, nextFaces, out var nextMatch);
+                    bool hasContinuity = prevIou >= TemporalIouMin || nextIou >= TemporalIouMin;
+
+                    if (conf < TemporalConfidenceStrong && !hasContinuity)
+                        continue;
+
+                    if (hasContinuity)
+                    {
+                        var match = prevIou >= nextIou ? prevMatch : nextMatch;
+                        if (match.Width > 0 && match.Height > 0)
+                        {
+                            double area = Math.Max(1.0, face.Width * face.Height);
+                            double matchArea = Math.Max(1.0, match.Width * match.Height);
+                            double ratio = area / matchArea;
+                            if ((ratio > TemporalMaxAreaChangeRatio || ratio < 1.0 / TemporalMaxAreaChangeRatio) &&
+                                conf < TemporalConfidenceStrong)
+                                continue;
+
+                            double cx = face.X + face.Width * 0.5;
+                            double cy = face.Y + face.Height * 0.5;
+                            double mx = match.X + match.Width * 0.5;
+                            double my = match.Y + match.Height * 0.5;
+                            double shift = Math.Sqrt((cx - mx) * (cx - mx) + (cy - my) * (cy - my));
+                            double maxDim = Math.Max(1.0, Math.Max(match.Width, match.Height));
+                            if (shift / maxDim > TemporalMaxCenterShiftRatio &&
+                                conf < TemporalConfidenceStrong)
+                                continue;
+                        }
+                    }
+
+                    keptFaces.Add(face);
+                    keptConfs.Add(conf);
+                }
+
+                if (keptFaces.Count == 0)
+                {
+                    facesByFrame[i] = null;
+                    confByFrame[i] = null;
+                }
+                else
+                {
+                    facesByFrame[i] = keptFaces;
+                    confByFrame[i] = keptConfs;
+                }
+            }
+
+            for (int i = 0; i < total; i++)
+            {
+                if (facesByFrame[i] == null)
+                    continue;
+
+                int start = i;
+                while (i < total && facesByFrame[i] != null)
+                    i++;
+
+                int length = i - start;
+                if (length < TemporalMinRunLength)
+                {
+                    for (int j = start; j < i; j++)
+                    {
+                        if (hasStored[j])
+                            continue;
+                        facesByFrame[j] = null;
+                        confByFrame[j] = null;
+                    }
+                }
+            }
+
+            for (int i = 0; i < total; i++)
+            {
+                if (hasStored[i])
+                    continue;
+
+                if (facesByFrame[i] == null || facesByFrame[i]!.Count == 0)
+                {
+                    _maskProvider.RemoveFaceMask(i);
+                    continue;
+                }
+
+                var faces = facesByFrame[i]!;
+                var confs = confByFrame[i] ?? new List<float>(faces.Count);
+                if (confs.Count != faces.Count)
+                {
+                    confs = new List<float>(faces.Count);
+                    for (int j = 0; j < faces.Count; j++)
+                        confs.Add(1.0f);
+                }
+
+                float minConf = float.MaxValue;
+                for (int j = 0; j < confs.Count; j++)
+                    minConf = Math.Min(minConf, confs[j]);
+
+                _maskProvider.SetFaceRects(
+                    i,
+                    faces,
+                    sizeByFrame[i],
+                    minConf == float.MaxValue ? null : minConf,
+                    confs);
+            }
+        }
+
+        private static double GetMaxIoU(Rect rect, IReadOnlyList<Rect>? others, out Rect match)
+        {
+            match = default;
+            if (others == null || others.Count == 0)
+                return 0.0;
+
+            double best = 0.0;
+            for (int i = 0; i < others.Count; i++)
+            {
+                var other = others[i];
+                double iou = IoU(rect, other);
+                if (iou > best)
+                {
+                    best = iou;
+                    match = other;
+                }
+            }
+
+            return best;
+        }
+
+        private static double IoU(Rect a, Rect b)
+        {
+            double ax1 = a.X;
+            double ay1 = a.Y;
+            double ax2 = a.X + a.Width;
+            double ay2 = a.Y + a.Height;
+
+            double bx1 = b.X;
+            double by1 = b.Y;
+            double bx2 = b.X + b.Width;
+            double by2 = b.Y + b.Height;
+
+            double ix1 = Math.Max(ax1, bx1);
+            double iy1 = Math.Max(ay1, by1);
+            double ix2 = Math.Min(ax2, bx2);
+            double iy2 = Math.Min(ay2, by2);
+
+            double iw = Math.Max(0.0, ix2 - ix1);
+            double ih = Math.Max(0.0, iy2 - iy1);
+            double inter = iw * ih;
+            if (inter <= 0.0)
+                return 0.0;
+
+            double union = a.Width * a.Height + b.Width * b.Height - inter;
+            if (union <= 0.0)
+                return 0.0;
+            return inter / union;
         }
 
         private async void OnAutoRequested()

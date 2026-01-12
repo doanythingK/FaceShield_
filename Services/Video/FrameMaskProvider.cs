@@ -18,7 +18,12 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks.TryRemove(frameIndex, out _);
     }
 
-    public void SetFaceRects(int frameIndex, IReadOnlyList<Rect> faces, PixelSize size, float? minConfidence = null)
+    public void SetFaceRects(
+        int frameIndex,
+        IReadOnlyList<Rect> faces,
+        PixelSize size,
+        float? minConfidence = null,
+        IReadOnlyList<float>? confidences = null)
     {
         if (faces == null || faces.Count == 0 || size.Width <= 0 || size.Height <= 0)
         {
@@ -26,10 +31,17 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             return;
         }
 
-        _faceMasks[frameIndex] = new FaceMaskData(size, faces.ToArray(), minConfidence);
+        var faceArray = faces as Rect[] ?? faces.ToArray();
+        var confArray = NormalizeConfidences(faceArray.Length, minConfidence, confidences);
+        _faceMasks[frameIndex] = new FaceMaskData(size, faceArray, minConfidence, confArray);
     }
 
-    public void SetFaceRects(int frameIndex, Rect[] faces, PixelSize size, float? minConfidence = null)
+    public void SetFaceRects(
+        int frameIndex,
+        Rect[] faces,
+        PixelSize size,
+        float? minConfidence = null,
+        IReadOnlyList<float>? confidences = null)
     {
         if (faces == null || faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
         {
@@ -37,7 +49,8 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             return;
         }
 
-        _faceMasks[frameIndex] = new FaceMaskData(size, faces, minConfidence);
+        var confArray = NormalizeConfidences(faces.Length, minConfidence, confidences);
+        _faceMasks[frameIndex] = new FaceMaskData(size, faces, minConfidence, confArray);
     }
 
     public WriteableBitmap? GetFinalMask(int frameIndex)
@@ -74,7 +87,29 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks.Clear();
     }
 
-    public readonly record struct FaceMaskData(PixelSize Size, IReadOnlyList<Rect> Faces, float? MinConfidence);
+    public readonly record struct FaceMaskData(
+        PixelSize Size,
+        IReadOnlyList<Rect> Faces,
+        float? MinConfidence,
+        IReadOnlyList<float> Confidences);
+
+    private static IReadOnlyList<float> NormalizeConfidences(
+        int faceCount,
+        float? minConfidence,
+        IReadOnlyList<float>? confidences)
+    {
+        if (faceCount <= 0)
+            return Array.Empty<float>();
+
+        if (confidences != null && confidences.Count == faceCount)
+            return confidences is float[] arr ? arr : confidences.ToArray();
+
+        float fill = minConfidence ?? 1.0f;
+        var fallback = new float[faceCount];
+        for (int i = 0; i < faceCount; i++)
+            fallback[i] = fill;
+        return fallback;
+    }
 
     public static WriteableBitmap CreateMaskFromFaceRects(PixelSize size, IReadOnlyList<Rect> faces)
     {

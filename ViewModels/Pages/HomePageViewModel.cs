@@ -840,8 +840,11 @@ namespace FaceShield.ViewModels.Pages
 
             if (completed)
             {
-                await EnsureWorkspaceReadyAsync(vm);
-                _onStartWorkspace(vm);
+                if (!AutoExportAfter)
+                {
+                    await EnsureWorkspaceReadyAsync(vm);
+                    _onStartWorkspace(vm);
+                }
             }
         }
 
