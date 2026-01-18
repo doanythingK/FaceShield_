@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   build-macos:
     runs-on: macos-latest
@@ -18,6 +22,15 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+          key: ${{ runner.os }}-homebrew-${{ hashFiles('scripts/prepare-ffmpeg-osx.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-homebrew-
 
       - name: Install dependencies (FFmpeg, libomp, srt)
         run: brew install ffmpeg libomp srt
@@ -149,9 +162,34 @@ jobs:
             exit 1
           fi
 
+      - name: Cleanup old artifacts
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner, repo, per_page: 100 }
+            );
+            const keep = 1;
+            const targets = artifacts
+              .filter(artifact => artifact.name.startsWith("FaceShield-"))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            for (const artifact of targets.slice(keep)) {
+              core.info(`Deleting artifact ${artifact.name} (${artifact.id})`);
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id,
+              });
+            }
+
       - name: Upload artifact
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v4
         with:
           name: FaceShield-osx-arm64
           path: |
             bin/Release/net8.0/osx-arm64/publish/FaceShield-osx-arm64-v*-*.zip
+          retention-days: 1
