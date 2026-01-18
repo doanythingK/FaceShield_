@@ -112,11 +112,11 @@ namespace FaceShield.Services.Video
             fixed (AVFormatContext** pFmt = &_fmt)
             {
                 int r = ffmpeg.avformat_open_input(pFmt, videoPath, null, null);
-                if (r < 0) throw new InvalidOperationException("avformat_open_input failed");
+                FFmpegErrorHelper.ThrowIfError(r, $"Failed to open video: {videoPath}");
             }
 
-            if (ffmpeg.avformat_find_stream_info(_fmt, null) < 0)
-                throw new InvalidOperationException("avformat_find_stream_info failed");
+            int streamInfo = ffmpeg.avformat_find_stream_info(_fmt, null);
+            FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {videoPath}");
 
             for (int i = 0; i < _fmt->nb_streams; i++)
             {
@@ -150,16 +150,16 @@ namespace FaceShield.Services.Video
             if (_dec == null)
                 throw new InvalidOperationException("avcodec_alloc_context3 failed");
 
-            if (ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar) < 0)
-                throw new InvalidOperationException("avcodec_parameters_to_context failed");
+            int parResult = ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar);
+            FFmpegErrorHelper.ThrowIfError(parResult, "Failed to apply codec parameters");
 
             if (enableHardware)
                 TryInitializeHardwareDevice();
             else
                 UpdateDecodeStatus("디코딩: HW 비활성화");
 
-            if (ffmpeg.avcodec_open2(_dec, codec, null) < 0)
-                throw new InvalidOperationException("avcodec_open2 failed");
+            int openResult = ffmpeg.avcodec_open2(_dec, codec, null);
+            FFmpegErrorHelper.ThrowIfError(openResult, "Failed to open decoder");
         }
 
         public PixelSize FrameSize => new(_dec->width, _dec->height);

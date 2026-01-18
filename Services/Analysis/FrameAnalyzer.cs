@@ -79,11 +79,11 @@ namespace FaceShield.Services.Analysis
             {
                 FFmpeg.AutoGen.ffmpeg.av_log_set_level(FFmpeg.AutoGen.ffmpeg.AV_LOG_QUIET);
 
-                if (FFmpeg.AutoGen.ffmpeg.avformat_open_input(&fmt, path, null, null) < 0)
-                    throw new InvalidOperationException("Failed to open video.");
+                int openResult = FFmpeg.AutoGen.ffmpeg.avformat_open_input(&fmt, path, null, null);
+                FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
 
-                if (FFmpeg.AutoGen.ffmpeg.avformat_find_stream_info(fmt, null) < 0)
-                    throw new InvalidOperationException("Failed to read stream info.");
+                int streamInfo = FFmpeg.AutoGen.ffmpeg.avformat_find_stream_info(fmt, null);
+                FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
 
                 FFmpeg.AutoGen.AVStream* videoStream = null;
 

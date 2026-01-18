@@ -20,9 +20,10 @@ namespace FaceShield.Services.Video
             if (Interlocked.Exchange(ref _initialized, 1) != 0)
                 return;
 
+            var searchPaths = GetCandidateLibraryPaths();
+
             try
             {
-                var searchPaths = GetCandidateLibraryPaths();
                 ConfigureDllImportResolver(searchPaths);
                 PreloadLibraries(searchPaths);
                 ConfigureRootPath(searchPaths);
@@ -32,8 +33,12 @@ namespace FaceShield.Services.Video
             }
             catch (Exception ex)
             {
+                string pathInfo = searchPaths.Count > 0
+                    ? string.Join(", ", searchPaths)
+                    : "(none)";
+                string probeInfo = ProbeDylibLoad("avcodec", searchPaths);
                 throw new InvalidOperationException(
-                    "FFmpeg native libraries not loaded. Check DLL placement.",
+                    $"FFmpeg native libraries not loaded. SearchPaths: {pathInfo}. Probe: {probeInfo}",
                     ex);
             }
         }
@@ -204,6 +209,55 @@ namespace FaceShield.Services.Video
                 return "libavcodec*.so*";
             return string.Empty;
         }
+
+        private static string ProbeDylibLoad(string libraryName, List<string> searchPaths)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return "unsupported platform";
+
+            string normalized = NormalizeLibraryName(libraryName);
+            string lastError = string.Empty;
+
+            foreach (var dir in searchPaths)
+            {
+                foreach (var candidate in EnumerateLibraryCandidates(dir, normalized))
+                {
+                    IntPtr handle = dlopen(candidate, RTLD_NOW | RTLD_LOCAL);
+                    if (handle != IntPtr.Zero)
+                    {
+                        dlclose(handle);
+                        return $"loaded {candidate}";
+                    }
+
+                    string error = GetDlError();
+                    if (!string.IsNullOrWhiteSpace(error))
+                        lastError = error;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(lastError))
+                return lastError;
+
+            return "no matching dylib found";
+        }
+
+        private static string GetDlError()
+        {
+            IntPtr ptr = dlerror();
+            return ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringAnsi(ptr) ?? string.Empty;
+        }
+
+        private const int RTLD_NOW = 2;
+        private const int RTLD_LOCAL = 4;
+
+        [DllImport("libSystem.dylib")]
+        private static extern IntPtr dlopen(string path, int mode);
+
+        [DllImport("libSystem.dylib")]
+        private static extern int dlclose(IntPtr handle);
+
+        [DllImport("libSystem.dylib")]
+        private static extern IntPtr dlerror();
 
         private static readonly string[] KnownLibraries =
         {

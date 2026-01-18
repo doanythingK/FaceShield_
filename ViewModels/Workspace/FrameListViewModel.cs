@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
+using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -122,11 +123,11 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         {
             ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
 
-            if (ffmpeg.avformat_open_input(&fmt, path, null, null) < 0)
-                throw new InvalidOperationException("Failed to open video.");
+            int openResult = ffmpeg.avformat_open_input(&fmt, path, null, null);
+            FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
 
-            if (ffmpeg.avformat_find_stream_info(fmt, null) < 0)
-                throw new InvalidOperationException("Failed to read stream info.");
+            int streamInfo = ffmpeg.avformat_find_stream_info(fmt, null);
+            FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
 
             AVStream* videoStream = null;
 

@@ -27,11 +27,11 @@ namespace FaceShield.Services.Video
             fixed (AVFormatContext** pFmt = &_format)
             {
                 int r = ffmpeg.avformat_open_input(pFmt, path, null, null);
-                if (r < 0) throw new InvalidOperationException("FFmpeg native libraries not loaded. Check DLL placement.");
+                FFmpegErrorHelper.ThrowIfError(r, $"Failed to open video: {path}");
             }
 
-            if (ffmpeg.avformat_find_stream_info(_format, null) < 0)
-                throw new InvalidOperationException("avformat_find_stream_info failed");
+            int streamInfo = ffmpeg.avformat_find_stream_info(_format, null);
+            FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
 
             for (int i = 0; i < _format->nb_streams; i++)
             {
@@ -53,11 +53,11 @@ namespace FaceShield.Services.Video
             if (_codec == null)
                 throw new InvalidOperationException("avcodec_alloc_context3 failed");
 
-            if (ffmpeg.avcodec_parameters_to_context(_codec, codecPar) < 0)
-                throw new InvalidOperationException("avcodec_parameters_to_context failed");
+            int parResult = ffmpeg.avcodec_parameters_to_context(_codec, codecPar);
+            FFmpegErrorHelper.ThrowIfError(parResult, "Failed to apply codec parameters");
 
-            if (ffmpeg.avcodec_open2(_codec, decoder, null) < 0)
-                throw new InvalidOperationException("avcodec_open2 failed");
+            int openResult = ffmpeg.avcodec_open2(_codec, decoder, null);
+            FFmpegErrorHelper.ThrowIfError(openResult, "Failed to open decoder");
 
             _frame = ffmpeg.av_frame_alloc();
             _packet = ffmpeg.av_packet_alloc();
@@ -89,7 +89,7 @@ namespace FaceShield.Services.Video
                     _codec->height,
                     1) < 0)
             {
-                throw new InvalidOperationException("av_image_fill_arrays failed");
+                throw new InvalidOperationException("Failed to initialize frame buffer.");
             }
         }
 

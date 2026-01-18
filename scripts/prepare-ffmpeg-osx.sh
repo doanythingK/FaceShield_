@@ -25,7 +25,7 @@ mkdir -p "$out_dir"
 
 rm -f "$out_dir"/libav*.dylib "$out_dir"/libsw*.dylib
 
-for lib_name in libavcodec libavformat libavutil libswscale libswresample libavfilter; do
+for lib_name in libavcodec libavformat libavutil libswscale libswresample libavfilter libavdevice libpostproc; do
   if ls "$lib_dir/$lib_name"*.dylib >/dev/null 2>&1; then
     cp -a "$lib_dir/$lib_name"*.dylib "$out_dir/"
   fi
