@@ -1299,13 +1299,26 @@ namespace FaceShield.Services.Analysis
             if (x1 <= x0 || y1 <= y0)
                 return false;
 
+            int boxW = x1 - x0 + 1;
+            int boxH = y1 - y0 + 1;
             int step = StatsSampleStep;
+            int baseStep = (int)Math.Floor(Math.Sqrt((boxW * (double)boxH) / Math.Max(1, MinStatsSamples)));
+            step = Math.Clamp(baseStep, 1, StatsSampleStep);
             int sampleCount = 0;
             int skinCount = 0;
             int edgeCount = 0;
             int edgeSamples = 0;
             double mean = 0;
             double m2 = 0;
+
+            int samplesX = (boxW - 1) / step + 1;
+            int samplesY = (boxH - 1) / step + 1;
+            int totalSamples = samplesX * samplesY;
+            int totalEdgeSamples = samplesY * Math.Max(0, samplesX - 1) +
+                Math.Max(0, samplesY - 1) * samplesX;
+            int edgeProcessed = 0;
+            double minSkinNeeded = MinSkinRatio * totalSamples;
+            double minEdgeNeeded = MinEdgeRatio * totalEdgeSamples;
 
             for (int y = y0; y <= y1; y += step)
             {
@@ -1336,6 +1349,7 @@ namespace FaceShield.Services.Analysis
                         if (Math.Abs(luma - l2) > 20)
                             edgeCount++;
                         edgeSamples++;
+                        edgeProcessed++;
                     }
 
                     if (y + step <= y1)
@@ -1345,7 +1359,15 @@ namespace FaceShield.Services.Analysis
                         if (Math.Abs(luma - l2) > 20)
                             edgeCount++;
                         edgeSamples++;
+                        edgeProcessed++;
                     }
+
+                    int remainingSamples = totalSamples - sampleCount;
+                    if (skinCount + remainingSamples < minSkinNeeded)
+                        return false;
+                    int remainingEdges = totalEdgeSamples - edgeProcessed;
+                    if (edgeCount + remainingEdges < minEdgeNeeded)
+                        return false;
                 }
             }
 

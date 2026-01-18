@@ -132,10 +132,18 @@ jobs:
           OUT_DIR="bin/Release/net8.0/osx-arm64/publish"
           APP_PATH="$OUT_DIR/FaceShield.app"
           if [ -d "$APP_PATH" ]; then
+            if [ -f "macos-sign-local.command" ]; then
+              cp "macos-sign-local.command" "$OUT_DIR/"
+              chmod +x "$OUT_DIR/macos-sign-local.command" || true
+            fi
+            if [ -f "macos-run-log.command" ]; then
+              cp "macos-run-log.command" "$OUT_DIR/"
+              chmod +x "$OUT_DIR/macos-run-log.command" || true
+            fi
             SHORT_SHA="${GITHUB_SHA::7}"
             BUILD_VER="${GITHUB_RUN_NUMBER}"
             ZIP_NAME="FaceShield-osx-arm64-v${BUILD_VER}-${SHORT_SHA}.zip"
-            (cd "$OUT_DIR" && zip -r "$ZIP_NAME" "FaceShield.app")
+            (cd "$OUT_DIR" && zip -r "$ZIP_NAME" "FaceShield.app" "macos-sign-local.command" "macos-run-log.command")
           else
             echo "App bundle not found at $APP_PATH"
             exit 1
