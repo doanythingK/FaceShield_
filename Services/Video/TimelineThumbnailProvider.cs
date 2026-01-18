@@ -84,8 +84,8 @@ namespace FaceShield.Services.Video
             int parResult = ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar);
             FFmpegErrorHelper.ThrowIfError(parResult, "Failed to apply codec parameters.");
 
-            int openResult = ffmpeg.avcodec_open2(_dec, codec, null);
-            FFmpegErrorHelper.ThrowIfError(openResult, "Failed to open decoder.");
+            int decoderOpenResult = ffmpeg.avcodec_open2(_dec, codec, null);
+            FFmpegErrorHelper.ThrowIfError(decoderOpenResult, "Failed to open decoder.");
 
             _sws = ffmpeg.sws_getContext(
                 _dec->width,
