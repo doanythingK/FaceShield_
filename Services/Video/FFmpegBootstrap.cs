@@ -22,8 +22,11 @@ namespace FaceShield.Services.Video
 
             try
             {
-                ConfigureRootPath();
-                ConfigureDllImportResolver();
+                var searchPaths = GetCandidateLibraryPaths();
+                ConfigureDllImportResolver(searchPaths);
+                PreloadLibraries(searchPaths);
+                ConfigureRootPath(searchPaths);
+
                 ffmpeg.avcodec_version();
                 Console.WriteLine("[FFmpeg] Native libraries loaded successfully.");
             }
@@ -35,64 +38,43 @@ namespace FaceShield.Services.Video
             }
         }
 
-        private static void ConfigureRootPath()
+        private static void ConfigureRootPath(List<string> searchPaths)
         {
-            var baseDir = AppContext.BaseDirectory;
-            var macFrameworks = Path.GetFullPath(Path.Combine(baseDir, "..", "Frameworks"));
-            if (Directory.Exists(macFrameworks))
-            {
-                ffmpeg.RootPath = macFrameworks;
-                return;
-            }
-
-            var ffmpegDir = Path.Combine(baseDir, "FFmpeg");
-            if (Directory.Exists(ffmpegDir))
-            {
-                ffmpeg.RootPath = ffmpegDir;
-            }
+            string rootPath = FindFfmpegRootPath(searchPaths);
+            if (!string.IsNullOrWhiteSpace(rootPath))
+                ffmpeg.RootPath = rootPath;
         }
 
-        private static void ConfigureDllImportResolver()
+        private static void ConfigureDllImportResolver(List<string> searchPaths)
         {
             if (_resolverConfigured || !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 return;
 
-            var searchPaths = GetCandidateLibraryPaths();
             if (searchPaths.Count == 0)
                 return;
 
             _resolverConfigured = true;
-            ffmpeg.RootPath = searchPaths[0];
-
             NativeLibrary.SetDllImportResolver(typeof(ffmpeg).Assembly, (name, assembly, path) =>
             {
-                if (!IsFfmpegLibrary(name))
+                string normalized = NormalizeLibraryName(name);
+                if (!IsFfmpegLibrary(normalized))
                     return IntPtr.Zero;
 
-                string fileName = BuildLibraryFileName(name);
                 foreach (var dir in searchPaths)
                 {
-                    string candidate = Path.Combine(dir, fileName);
-                    if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
+                    string direct = Path.Combine(dir, BuildLibraryFileName(normalized));
+                    if (File.Exists(direct) && NativeLibrary.TryLoad(direct, out var handle))
                         return handle;
+
+                    foreach (var candidate in EnumerateLibraryCandidates(dir, normalized))
+                    {
+                        if (NativeLibrary.TryLoad(candidate, out handle))
+                            return handle;
+                    }
                 }
 
                 return IntPtr.Zero;
             });
-
-            foreach (var lib in KnownLibraries)
-            {
-                string fileName = BuildLibraryFileName(lib);
-                foreach (var dir in searchPaths)
-                {
-                    string candidate = Path.Combine(dir, fileName);
-                    if (File.Exists(candidate))
-                    {
-                        _ = NativeLibrary.TryLoad(candidate, out _);
-                        break;
-                    }
-                }
-            }
         }
 
         private static List<string> GetCandidateLibraryPaths()
@@ -126,10 +108,9 @@ namespace FaceShield.Services.Video
 
         private static bool IsFfmpegLibrary(string libraryName)
         {
-            string normalized = NormalizeLibraryName(libraryName);
             foreach (var lib in KnownLibraries)
             {
-                if (string.Equals(lib, normalized, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(lib, libraryName, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
             return false;
@@ -146,6 +127,82 @@ namespace FaceShield.Services.Video
             if (versionIndex > 0)
                 name = name.Substring(0, versionIndex);
             return name;
+        }
+
+        private static void PreloadLibraries(List<string> searchPaths)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || searchPaths.Count == 0)
+                return;
+
+            foreach (var lib in KnownLibraries)
+            {
+                foreach (var dir in searchPaths)
+                {
+                    foreach (var candidate in EnumerateLibraryCandidates(dir, lib))
+                    {
+                        if (NativeLibrary.TryLoad(candidate, out _))
+                            goto NextLib;
+                    }
+                }
+            NextLib:
+                continue;
+            }
+        }
+
+        private static IEnumerable<string> EnumerateLibraryCandidates(string dir, string normalized)
+        {
+            string baseName = $"lib{normalized}";
+            string direct = Path.Combine(dir, $"{baseName}.dylib");
+            if (File.Exists(direct))
+                yield return direct;
+
+            IEnumerable<string> matches;
+            try
+            {
+                matches = Directory.EnumerateFiles(dir, $"{baseName}*.dylib");
+            }
+            catch
+            {
+                yield break;
+            }
+
+            foreach (var match in matches.OrderBy(path => path.Length))
+            {
+                if (!string.Equals(match, direct, StringComparison.OrdinalIgnoreCase))
+                    yield return match;
+            }
+        }
+
+        private static string FindFfmpegRootPath(List<string> searchPaths)
+        {
+            string pattern = GetNativeLibrarySearchPattern();
+            if (string.IsNullOrWhiteSpace(pattern))
+                return string.Empty;
+
+            foreach (var dir in searchPaths)
+            {
+                try
+                {
+                    if (Directory.EnumerateFiles(dir, pattern).Any())
+                        return dir;
+                }
+                catch
+                {
+                    // Ignore unreadable paths.
+                }
+            }
+            return string.Empty;
+        }
+
+        private static string GetNativeLibrarySearchPattern()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return "libavcodec*.dylib";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return "avcodec*.dll";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return "libavcodec*.so*";
+            return string.Empty;
         }
 
         private static readonly string[] KnownLibraries =
