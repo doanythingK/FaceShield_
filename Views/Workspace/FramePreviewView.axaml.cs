@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Controls.Shapes;
 using Avalonia.Media;
+using Avalonia.Threading;
 using FaceShield.ViewModels.Workspace;
 using System;
 
@@ -193,6 +194,12 @@ public partial class FramePreviewView : UserControl
 
     private void UpdateOverlay()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateOverlay);
+            return;
+        }
+
         if (this.FindControl<Canvas>("OverlayCanvas") is not { } canvas)
             return;
 
