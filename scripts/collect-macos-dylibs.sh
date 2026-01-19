@@ -50,6 +50,13 @@ should_copy_dep() {
   esac
 }
 
+is_rpath_dep() {
+  case "$1" in
+    @rpath/*|@loader_path/*|@executable_path/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 deps_for() {
   otool -L "$1" | tail -n +2 | awk '{print $1}'
 }
@@ -80,6 +87,23 @@ resolve_dep_source() {
       return 0
     fi
   fi
+  return 1
+}
+
+resolve_brew_dep() {
+  local name="$1"
+  local candidate
+  for prefix in /opt/homebrew/opt /usr/local/opt; do
+    if [[ -d "$prefix" ]]; then
+      candidate="$prefix"/*/lib/"$name"
+      for path in $candidate; do
+        if [[ -f "$path" ]]; then
+          echo "$path"
+          return 0
+        fi
+      done
+    fi
+  done
   return 1
 }
 
@@ -147,6 +171,26 @@ while ((${#queue[@]})); do
       fi
 
       install_name_tool -change "$dep" "@rpath/$name" "$file" 2>/dev/null || true
+    elif is_rpath_dep "$dep"; then
+      name="$(basename "$dep")"
+      dest="$frameworks_dir/$name"
+      if [[ ! -f "$dest" ]]; then
+        src="$(resolve_dep_source "$dep" "$name" || true)"
+        if [[ -z "$src" ]]; then
+          src="$(resolve_brew_dep "$name" || true)"
+        fi
+        if [[ -z "$src" ]]; then
+          echo "Missing dependency on runner: $dep" >&2
+          missing_deps=1
+          continue
+        fi
+        cp -aL "$src" "$dest"
+        if [[ -f "$dest" ]]; then
+          chmod u+w "$dest" || true
+        fi
+        install_name_tool -id "@rpath/$name" "$dest" 2>/dev/null || true
+        add_file "$dest"
+      fi
     fi
   done < <(deps_for "$file")
 done
