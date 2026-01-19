@@ -802,6 +802,8 @@ namespace FaceShield.Services.FaceDetection
             {
                 if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime.CoreML"))
                     return "CoreML";
+
+                return null;
             }
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -817,13 +819,6 @@ namespace FaceShield.Services.FaceDetection
                 if (GetLastExecutionProviderError() == null)
                     UpdateExecutionProviderError(BuildDirectMlDiagnostics());
                 return null;
-            }
-
-            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
-            {
-                UpdateExecutionProviderLabel("GPU:DirectML");
-                UpdateExecutionProviderError(null);
-                return "DirectML";
             }
 
             return null;
