@@ -8,7 +8,10 @@ log_path="$script_dir/macos-run.log"
 exec > >(tee -a "$log_path") 2>&1
 
 if [[ -z "$app_path" ]]; then
-  mapfile -t apps < <(find "$script_dir" -maxdepth 1 -name "*.app" -print)
+  apps=()
+  while IFS= read -r app; do
+    apps+=("$app")
+  done < <(find "$script_dir" -maxdepth 1 -name "*.app" -print)
   if (( ${#apps[@]} == 0 )); then
     echo "No .app found in: $script_dir"
     echo "Usage: $(basename "$0") /path/to/App.app"
