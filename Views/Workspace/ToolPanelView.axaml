@@ -9,13 +9,6 @@
     <StackPanel Spacing="8">
       <StackPanel Orientation="Horizontal" Spacing="12">
 
-      <ToggleButton IsChecked="{Binding CurrentMode,
-                      Converter={StaticResource EnumEqualsConverter},
-                      ConverterParameter={x:Static enums:EditMode.Auto}}"
-                    Command="{Binding SetAutoCommand}">
-          <TextBlock Text="자동"/>
-      </ToggleButton>
-
       <!-- TODO: 기능 구현 전까지 숨김 -->
       <!--<ToggleButton IsChecked="{Binding CurrentMode,
                       Converter={StaticResource EnumEqualsConverter},

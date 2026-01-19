@@ -104,6 +104,29 @@ namespace FaceShield.Services.Video
         private int _bgraScaledWidth;
         private int _bgraScaledHeight;
 
+        private static bool IsVideoToolboxCompatible(AVPixelFormat format)
+        {
+            if (format == AVPixelFormat.AV_PIX_FMT_NONE)
+                return true;
+
+            return format == AVPixelFormat.AV_PIX_FMT_YUV420P ||
+                   format == AVPixelFormat.AV_PIX_FMT_YUVJ420P ||
+                   format == AVPixelFormat.AV_PIX_FMT_NV12;
+        }
+
+        private static string DescribePixelFormat(AVPixelFormat format)
+        {
+            if (format == AVPixelFormat.AV_PIX_FMT_NONE)
+                return "unknown";
+
+            var namePtr = ffmpeg.av_get_pix_fmt_name(format);
+            if (namePtr == null)
+                return format.ToString();
+
+            var name = Marshal.PtrToStringAnsi((IntPtr)namePtr);
+            return string.IsNullOrWhiteSpace(name) ? format.ToString() : name;
+        }
+
         public FfFrameExtractor(string videoPath, bool enableHardware = true)
         {
             ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
@@ -153,10 +176,23 @@ namespace FaceShield.Services.Video
             int parResult = ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar);
             FFmpegErrorHelper.ThrowIfError(parResult, "Failed to apply codec parameters");
 
+            string? hwDisableReason = null;
+            if (enableHardware && RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                var sourceFormat = (AVPixelFormat)stream->codecpar->format;
+                if (!IsVideoToolboxCompatible(sourceFormat))
+                {
+                    string label = DescribePixelFormat(sourceFormat);
+                    hwDisableReason = $"디코딩: HW 비활성화(픽셀 포맷 {label})";
+                    UpdateDecodeDiagnostics($"videotoolbox disabled (source={label})");
+                    enableHardware = false;
+                }
+            }
+
             if (enableHardware)
                 TryInitializeHardwareDevice();
             else
-                UpdateDecodeStatus("디코딩: HW 비활성화");
+                UpdateDecodeStatus(hwDisableReason ?? "디코딩: HW 비활성화");
 
             int openResult = ffmpeg.avcodec_open2(_dec, codec, null);
             FFmpegErrorHelper.ThrowIfError(openResult, "Failed to open decoder");

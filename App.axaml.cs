@@ -7,6 +7,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using FaceShield.ViewModels;
 using FaceShield.Views;
@@ -19,6 +20,8 @@ namespace FaceShield
         public override void Initialize()
         {
             AvaloniaXamlLoader.Load(this);
+            if (OperatingSystem.IsMacOS())
+                RequestedThemeVariant = ThemeVariant.Dark;
         }
 
         public override void OnFrameworkInitializationCompleted()
