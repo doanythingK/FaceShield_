@@ -119,11 +119,7 @@ namespace FaceShield.Services.Video
             if (format == AVPixelFormat.AV_PIX_FMT_NONE)
                 return "unknown";
 
-            var namePtr = ffmpeg.av_get_pix_fmt_name(format);
-            if (namePtr == null)
-                return format.ToString();
-
-            var name = Marshal.PtrToStringAnsi((IntPtr)namePtr);
+            var name = ffmpeg.av_get_pix_fmt_name(format);
             return string.IsNullOrWhiteSpace(name) ? format.ToString() : name;
         }
 
