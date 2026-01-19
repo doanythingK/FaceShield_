@@ -492,22 +492,46 @@ public partial class FramePreviewViewModel : ViewModelBase
         _blurredSource = null;
 
         // 🔹 2-1) 자동/최종 마스크가 이미 있는지 provider에서 먼저 조회
-        WriteableBitmap? providerMask = null;
-        if (_maskProvider != null)
-        {
-            providerMask = _maskProvider.GetFinalMask(index);
-        }
+        var faceProvider = _maskProvider as FrameMaskProvider;
+        FrameMaskProvider.FaceMaskData faceData = default;
+        bool hasFaceData = faceProvider != null && faceProvider.TryGetFaceMaskData(index, out faceData);
 
-        if (providerMask != null &&
-            providerMask.PixelSize.Width == exact.PixelSize.Width &&
-            providerMask.PixelSize.Height == exact.PixelSize.Height)
+        bool maskSet = false;
+        if (faceProvider != null &&
+            faceProvider.TryGetStoredMask(index, out var storedMask) &&
+            storedMask.PixelSize.Width == exact.PixelSize.Width &&
+            storedMask.PixelSize.Height == exact.PixelSize.Height)
         {
             // provider 마스크를 직접 수정하면 안 되니 복제해서 사용
-            MaskBitmap = CloneBitmap(providerMask);
+            MaskBitmap = CloneBitmap(storedMask);
             _maskUndo.Clear();
             _maskDirty = false;
+            maskSet = true;
         }
-        else
+        else if (hasFaceData &&
+                 faceData.Size.Width == exact.PixelSize.Width &&
+                 faceData.Size.Height == exact.PixelSize.Height)
+        {
+            MaskBitmap = FrameMaskProvider.CreateMaskFromFaceRects(faceData.Size, faceData.Faces);
+            _maskUndo.Clear();
+            _maskDirty = false;
+            maskSet = true;
+        }
+        else if (faceProvider == null && _maskProvider != null)
+        {
+            var providerMask = _maskProvider.GetFinalMask(index);
+            if (providerMask != null &&
+                providerMask.PixelSize.Width == exact.PixelSize.Width &&
+                providerMask.PixelSize.Height == exact.PixelSize.Height)
+            {
+                MaskBitmap = CloneBitmap(providerMask);
+                _maskUndo.Clear();
+                _maskDirty = false;
+                maskSet = true;
+            }
+        }
+
+        if (!maskSet)
         {
             // 없으면 프레임별로 새 빈 마스크 생성
             MaskBitmap = CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
@@ -515,15 +539,7 @@ public partial class FramePreviewViewModel : ViewModelBase
             _maskDirty = false;
         }
 
-        if (_maskProvider is FrameMaskProvider faceProvider &&
-            faceProvider.TryGetFaceMaskData(index, out var faceData))
-        {
-            DetectionRects = faceData.Faces;
-        }
-        else
-        {
-            DetectionRects = Array.Empty<Rect>();
-        }
+        DetectionRects = hasFaceData ? faceData.Faces : Array.Empty<Rect>();
 
         // 3) 프리뷰 갱신
         RefreshPreview(force: true);

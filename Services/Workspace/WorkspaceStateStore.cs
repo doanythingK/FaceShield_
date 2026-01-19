@@ -15,6 +15,8 @@ namespace FaceShield.Services.Workspace
 {
     public sealed class WorkspaceStateStore
     {
+        private const string FaceMaskFileName = "face_masks.bin";
+        private const int FaceMaskFileVersion = 1;
         private readonly string _rootDir;
         private readonly string _stateFile;
         private AppState _state;
@@ -103,6 +105,8 @@ namespace FaceShield.Services.Workspace
                     maskProvider.SetMask(index, mask);
             }
 
+            LoadFaceMasks(dir, maskProvider);
+
             snapshot = new WorkspaceSnapshot(
                 state.VideoPath,
                 mode,
@@ -122,8 +126,6 @@ namespace FaceShield.Services.Workspace
                 return;
 
             string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode);
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
             Directory.CreateDirectory(dir);
 
             var entries = maskProvider.GetMaskEntries();
@@ -135,6 +137,9 @@ namespace FaceShield.Services.Workspace
                 string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
                 SaveMask(filePath, entry.Value);
             }
+
+            SaveFaceMasks(dir, maskProvider);
+            DeleteStaleMasks(dir, indices);
 
             _state.Workspaces.RemoveAll(w =>
                 string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
@@ -169,8 +174,217 @@ namespace FaceShield.Services.Workspace
 
         private static void SaveMask(string path, WriteableBitmap mask)
         {
-            using var stream = File.Open(path, FileMode.Create, FileAccess.Write, FileShare.None);
-            mask.Save(stream);
+            string tempPath = path + ".tmp";
+            try
+            {
+                using (var stream = File.Open(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    mask.Save(stream);
+                    stream.Flush(true);
+                }
+
+                File.Move(tempPath, path, true);
+            }
+            catch
+            {
+                TryDeleteFile(tempPath);
+            }
+        }
+
+        private static void SaveFaceMasks(string dir, FrameMaskProvider maskProvider)
+        {
+            string path = Path.Combine(dir, FaceMaskFileName);
+            var entries = maskProvider.GetFaceEntries();
+            if (entries.Count == 0)
+            {
+                TryDeleteFile(path);
+                return;
+            }
+
+            string tempPath = path + ".tmp";
+            try
+            {
+                using (var stream = File.Open(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (var writer = new BinaryWriter(stream))
+                {
+                    writer.Write(FaceMaskFileVersion);
+                    writer.Write(entries.Count);
+
+                    foreach (var entry in entries)
+                    {
+                        var data = entry.Value;
+                        writer.Write(entry.Key);
+                        writer.Write(data.Size.Width);
+                        writer.Write(data.Size.Height);
+
+                        int faceCount = data.Faces?.Count ?? 0;
+                        writer.Write(faceCount);
+                        for (int i = 0; i < faceCount; i++)
+                        {
+                            var rect = data.Faces[i];
+                            writer.Write(rect.X);
+                            writer.Write(rect.Y);
+                            writer.Write(rect.Width);
+                            writer.Write(rect.Height);
+                        }
+
+                        if (data.MinConfidence.HasValue)
+                        {
+                            writer.Write(true);
+                            writer.Write(data.MinConfidence.Value);
+                        }
+                        else
+                        {
+                            writer.Write(false);
+                        }
+
+                        int confCount = data.Confidences?.Count ?? 0;
+                        writer.Write(confCount);
+                        for (int i = 0; i < confCount; i++)
+                            writer.Write(data.Confidences[i]);
+                    }
+
+                    writer.Flush();
+                    stream.Flush(true);
+                }
+
+                File.Move(tempPath, path, true);
+            }
+            catch
+            {
+                TryDeleteFile(tempPath);
+            }
+        }
+
+        private static void LoadFaceMasks(string dir, FrameMaskProvider maskProvider)
+        {
+            string path = Path.Combine(dir, FaceMaskFileName);
+            if (!File.Exists(path))
+                return;
+
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var reader = new BinaryReader(stream);
+
+                int version = reader.ReadInt32();
+                if (version != FaceMaskFileVersion)
+                    return;
+
+                int entryCount = reader.ReadInt32();
+                for (int i = 0; i < entryCount; i++)
+                {
+                    int frameIndex = reader.ReadInt32();
+                    int width = reader.ReadInt32();
+                    int height = reader.ReadInt32();
+                    int faceCount = reader.ReadInt32();
+                    if (faceCount <= 0 || width <= 0 || height <= 0)
+                    {
+                        SkipFaceData(reader, faceCount);
+                        continue;
+                    }
+
+                    var faces = new Rect[faceCount];
+                    for (int j = 0; j < faceCount; j++)
+                    {
+                        double x = reader.ReadDouble();
+                        double y = reader.ReadDouble();
+                        double w = reader.ReadDouble();
+                        double h = reader.ReadDouble();
+                        faces[j] = new Rect(x, y, w, h);
+                    }
+
+                    bool hasMin = reader.ReadBoolean();
+                    float? minConfidence = hasMin ? reader.ReadSingle() : null;
+
+                    int confCount = reader.ReadInt32();
+                    float[]? confs = null;
+                    if (confCount > 0)
+                    {
+                        confs = new float[confCount];
+                        for (int j = 0; j < confCount; j++)
+                            confs[j] = reader.ReadSingle();
+                    }
+
+                    if (!maskProvider.TryGetStoredMask(frameIndex, out _))
+                    {
+                        maskProvider.SetFaceRects(
+                            frameIndex,
+                            faces,
+                            new PixelSize(width, height),
+                            minConfidence,
+                            confs);
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore invalid face data.
+            }
+        }
+
+        private static void SkipFaceData(BinaryReader reader, int faceCount)
+        {
+            for (int j = 0; j < Math.Max(0, faceCount); j++)
+            {
+                reader.ReadDouble();
+                reader.ReadDouble();
+                reader.ReadDouble();
+                reader.ReadDouble();
+            }
+
+            bool hasMin = reader.ReadBoolean();
+            if (hasMin)
+                reader.ReadSingle();
+
+            int confCount = reader.ReadInt32();
+            for (int j = 0; j < Math.Max(0, confCount); j++)
+                reader.ReadSingle();
+        }
+
+        private static void DeleteStaleMasks(string dir, IReadOnlyCollection<int> activeIndices)
+        {
+            if (!Directory.Exists(dir))
+                return;
+
+            var keep = new HashSet<int>(activeIndices);
+            IEnumerable<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(dir, "mask_*.png");
+            }
+            catch
+            {
+                return;
+            }
+
+            foreach (var file in files)
+            {
+                string name = Path.GetFileNameWithoutExtension(file);
+                if (!name.StartsWith("mask_", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!int.TryParse(name.Substring(5), out int index))
+                    continue;
+
+                if (keep.Contains(index))
+                    continue;
+
+                TryDeleteFile(file);
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch
+            {
+                // ignore cleanup failures
+            }
         }
 
         private static WriteableBitmap? LoadMask(string path)

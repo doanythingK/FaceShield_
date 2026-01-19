@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using FFmpeg.AutoGen;
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 
 namespace FaceShield.Services.Video
 {
@@ -12,6 +12,7 @@ namespace FaceShield.Services.Video
         private readonly int _thumbWidth;
         private readonly int _thumbHeight;
         private readonly object _sync = new();
+        private const int MaxCacheEntries = 600;
 
         private AVFormatContext* _fmt;
         private AVCodecContext* _dec;
@@ -22,7 +23,9 @@ namespace FaceShield.Services.Video
         private AVRational _timeBase;
         private double _fps;
 
-        private readonly ConcurrentDictionary<int, WriteableBitmap> _cache = new();
+        private readonly Dictionary<int, WriteableBitmap> _cache = new();
+        private readonly LinkedList<int> _lru = new();
+        private readonly Dictionary<int, LinkedListNode<int>> _lruNodes = new();
         private bool _disposed;
 
         public TimelineThumbnailProvider(string videoPath, int thumbWidth = 160, int thumbHeight = 90)
@@ -105,22 +108,54 @@ namespace FaceShield.Services.Video
         {
             if (frameIndex < 0) return null;
 
-            if (_cache.TryGetValue(frameIndex, out var cached))
-                return cached;
-
             lock (_sync)
             {
                 if (_disposed)
                     return null;
 
-                if (_cache.TryGetValue(frameIndex, out cached))
+                if (_cache.TryGetValue(frameIndex, out var cached))
+                {
+                    TouchCache(frameIndex);
                     return cached;
+                }
 
                 var bmp = DecodeFrame(frameIndex);
                 if (bmp != null)
-                    _cache.TryAdd(frameIndex, bmp);
+                {
+                    _cache[frameIndex] = bmp;
+                    TouchCache(frameIndex);
+                }
 
                 return bmp;
+            }
+        }
+
+        private void TouchCache(int frameIndex)
+        {
+            if (_lruNodes.TryGetValue(frameIndex, out var node))
+            {
+                _lru.Remove(node);
+                _lru.AddLast(node);
+                return;
+            }
+
+            var newNode = _lru.AddLast(frameIndex);
+            _lruNodes[frameIndex] = newNode;
+
+            if (_lru.Count <= MaxCacheEntries)
+                return;
+
+            var oldest = _lru.First;
+            if (oldest == null)
+                return;
+
+            int oldIndex = oldest.Value;
+            _lru.RemoveFirst();
+            _lruNodes.Remove(oldIndex);
+            if (_cache.TryGetValue(oldIndex, out var bmp))
+            {
+                _cache.Remove(oldIndex);
+                bmp.Dispose();
             }
         }
 
@@ -236,6 +271,8 @@ namespace FaceShield.Services.Video
                 foreach (var kv in _cache)
                     kv.Value.Dispose();
                 _cache.Clear();
+                _lru.Clear();
+                _lruNodes.Clear();
 
                 if (_sws != null)
                 {

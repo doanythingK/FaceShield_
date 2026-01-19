@@ -12,6 +12,7 @@ namespace FaceShield.ViewModels.Workspace;
 
 public partial class FrameListViewModel : ViewModelBase, IDisposable
 {
+    private const int MaxFrameItems = 5000;
     public string VideoPath { get; }
 
     // ─────────────────────────────
@@ -97,14 +98,21 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
         LoadVideoInfo(videoPath);
 
-        Items = Enumerable
-            .Range(0, TotalFrames)
-            .Select(i =>
-                new FrameItemViewModel(
-                    index: i,
-                    hasFace: true,
-                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
-            .ToArray();
+        if (TotalFrames > 0 && TotalFrames <= MaxFrameItems)
+        {
+            Items = Enumerable
+                .Range(0, TotalFrames)
+                .Select(i =>
+                    new FrameItemViewModel(
+                        index: i,
+                        hasFace: true,
+                        time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
+                .ToArray();
+        }
+        else
+        {
+            Items = Array.Empty<FrameItemViewModel>();
+        }
 
         ThumbnailProvider = new TimelineThumbnailProvider(
             videoPath,

@@ -226,9 +226,6 @@ namespace FaceShield.Services.Analysis
 
                 nextIndex = idx + 1;
 
-                if (idx >= totalFrames)
-                    break;
-
                 onFrameProcessed?.Invoke(idx);
 
                 if (_maskProvider.HasEntry(idx))
@@ -443,12 +440,6 @@ namespace FaceShield.Services.Analysis
                         tDecode.Stop();
                         decodeMs += tDecode.ElapsedMilliseconds;
                         if (!ok)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        if (idx >= totalFrames)
                         {
                             pool.Return(buffer);
                             break;
@@ -750,12 +741,6 @@ namespace FaceShield.Services.Analysis
                         tDecode.Stop();
                         Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
                         if (!ok)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        if (idx >= totalFrames)
                         {
                             pool.Return(buffer);
                             break;
@@ -1450,7 +1435,10 @@ namespace FaceShield.Services.Analysis
                     durationSeconds = 0;
                 }
 
+                long nbFrames = videoStream->nb_frames;
                 int frames = (int)Math.Floor(durationSeconds * fpsValue);
+                if (nbFrames > frames && nbFrames < int.MaxValue)
+                    frames = (int)nbFrames;
 
                 return (
                     fps: fpsValue,
