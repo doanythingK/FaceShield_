@@ -68,6 +68,14 @@ resolve_dep_source() {
     echo "$dep"
     return 0
   fi
+  if [[ -f "$frameworks_dir/$name" ]]; then
+    echo "$frameworks_dir/$name"
+    return 0
+  fi
+  if [[ -f "$macos_dir/$name" ]]; then
+    echo "$macos_dir/$name"
+    return 0
+  fi
   local candidate
   candidate="$(find "$publish_dir" -name "$name" -print -quit 2>/dev/null || true)"
   if [[ -n "$candidate" && -f "$candidate" ]]; then
@@ -104,6 +112,35 @@ resolve_brew_dep() {
       done
     fi
   done
+  return 1
+}
+
+versionless_candidates() {
+  local name="$1"
+  [[ "$name" == *.dylib ]] || return 0
+  local base="${name%.dylib}"
+  while [[ "$base" == *.[0-9]* ]]; do
+    base="${base%.*}"
+    echo "${base}.dylib"
+  done
+}
+
+resolve_versioned_fallback() {
+  local dep="$1"
+  local name="$2"
+  local candidate
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    local src
+    src="$(resolve_dep_source "$dep" "$candidate" || true)"
+    if [[ -z "$src" ]]; then
+      src="$(resolve_brew_dep "$candidate" || true)"
+    fi
+    if [[ -n "$src" ]]; then
+      echo "$src"
+      return 0
+    fi
+  done < <(versionless_candidates "$name")
   return 1
 }
 
@@ -157,6 +194,12 @@ while ((${#queue[@]})); do
       dest="$frameworks_dir/$name"
       src="$(resolve_dep_source "$dep" "$name" || true)"
       if [[ -z "$src" ]]; then
+        src="$(resolve_brew_dep "$name" || true)"
+      fi
+      if [[ -z "$src" ]]; then
+        src="$(resolve_versioned_fallback "$dep" "$name" || true)"
+      fi
+      if [[ -z "$src" ]]; then
         echo "Missing dependency on runner: $dep" >&2
         missing_deps=1
         continue
@@ -178,6 +221,9 @@ while ((${#queue[@]})); do
         src="$(resolve_dep_source "$dep" "$name" || true)"
         if [[ -z "$src" ]]; then
           src="$(resolve_brew_dep "$name" || true)"
+        fi
+        if [[ -z "$src" ]]; then
+          src="$(resolve_versioned_fallback "$dep" "$name" || true)"
         fi
         if [[ -z "$src" ]]; then
           echo "Missing dependency on runner: $dep" >&2
