@@ -21,7 +21,7 @@ using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Pages
 {
-    public partial class WorkspaceViewModel : ViewModelBase
+    public partial class WorkspaceViewModel : ViewModelBase, IDisposable
     {
         public ToolPanelViewModel ToolPanel { get; } = new();
         public FramePreviewViewModel FramePreview { get; }
@@ -38,10 +38,15 @@ namespace FaceShield.ViewModels.Pages
         private const double TemporalMaxCenterShiftRatio = 0.5;
         private const double TemporalMaxAreaChangeRatio = 3.0;
         private const int TemporalMinRunLength = 2;
+        private const int AutoCheckpointFrameInterval = 120;
+        private static readonly TimeSpan AutoCheckpointInterval = TimeSpan.FromSeconds(5);
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private int _autoLastProcessedFrame = -1;
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
+        private int _autoLastCheckpointFrame = -1;
+        private DateTime _autoLastCheckpointAtUtc = DateTime.MinValue;
+        private int _autoCheckpointRunning;
         private bool _sessionInitialized;
         private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();
         private (DateTime Timestamp, int FrameIndex) _exportLastSample;
@@ -51,6 +56,7 @@ namespace FaceShield.ViewModels.Pages
         private HashSet<int> _noFaceIssueSet = new();
         private HashSet<int> _lowConfidenceIssueSet = new();
         private HashSet<int> _flickerIssueSet = new();
+        private bool _disposed;
 
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
@@ -298,6 +304,9 @@ namespace FaceShield.ViewModels.Pages
                     detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
+                _autoLastCheckpointFrame = _autoResumeIndex;
+                _autoLastCheckpointAtUtc = DateTime.UtcNow;
+                Interlocked.Exchange(ref _autoCheckpointRunning, 0);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
                 //       진행률 UI를 그릴 수 있습니다.
@@ -319,6 +328,7 @@ namespace FaceShield.ViewModels.Pages
                         _autoLastProcessedFrame = idx;
                         _autoLastProcessedAtUtc = DateTime.UtcNow;
                         TryUpdateAutoPreview(idx);
+                        MaybeCheckpointAuto(idx);
                     });
 
                 if (token.IsCancellationRequested)
@@ -335,6 +345,10 @@ namespace FaceShield.ViewModels.Pages
                 }
 
                 ApplyAutoTemporalFixes();
+
+                bool refined = await RefineAutoAnomaliesAsync(_autoCts?.Token ?? CancellationToken.None);
+                if (refined)
+                    ApplyAutoTemporalFixes();
 
                 await BuildAutoAnomaliesAsync();
 
@@ -393,6 +407,35 @@ namespace FaceShield.ViewModels.Pages
 
                 FrameList.SelectedFrameIndex = frameIndex;
             });
+        }
+
+        private void MaybeCheckpointAuto(int frameIndex)
+        {
+            if (_stateStore == null)
+                return;
+
+            if (frameIndex <= 0)
+                return;
+
+            var now = DateTime.UtcNow;
+            if (frameIndex - _autoLastCheckpointFrame < AutoCheckpointFrameInterval &&
+                (now - _autoLastCheckpointAtUtc) < AutoCheckpointInterval)
+                return;
+
+            if (Interlocked.Exchange(ref _autoCheckpointRunning, 1) == 1)
+                return;
+
+            _autoLastCheckpointFrame = frameIndex;
+            _autoLastCheckpointAtUtc = now;
+
+            try
+            {
+                PersistWorkspaceStateInternal(includePreviewMask: false);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _autoCheckpointRunning, 0);
+            }
         }
 
         private void ApplyAutoTemporalFixes()
@@ -855,33 +898,28 @@ namespace FaceShield.ViewModels.Pages
             FrameList.SelectedFrameIndex = _autoAnomalies[0];
         }
 
-        private async Task BuildAutoAnomaliesAsync()
+        private async Task<(int[] NoFace, int[] LowConfidence, int[] Flicker)> AnalyzeIssueFramesAsync()
         {
             int total = FrameList.TotalFrames;
             if (total <= 0)
-            {
-                _autoAnomalies = Array.Empty<int>();
-                AutoAnomalyCount = 0;
-                HasAutoAnomalies = false;
-                FrameList.NoFaceIssueFrames = Array.Empty<int>();
-                FrameList.LowConfidenceIssueFrames = Array.Empty<int>();
-                FrameList.FlickerIssueFrames = Array.Empty<int>();
-                ResetIssueList(_noFaceIssueEntries, Array.Empty<int>(), "얼굴 없음");
-                ResetIssueList(_lowConfidenceIssueEntries, Array.Empty<int>(), "신뢰도 낮음");
-                ResetIssueList(_flickerIssueEntries, Array.Empty<int>(), "연속 끊김");
-                return;
-            }
+                return (Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>());
 
             float lowConfidenceCutoff = GetLowConfidenceCutoff();
 
-            var (noFaceFrames, lowConfidenceFrames, flickerFrames) = await Task.Run(() =>
+            return await Task.Run(() =>
             {
-                var noFace = new System.Collections.Generic.List<int>();
-                var lowConfidence = new System.Collections.Generic.List<int>();
-                var flicker = new System.Collections.Generic.List<int>();
+                var noFace = new List<int>();
+                var lowConfidence = new List<int>();
+                var flicker = new List<int>();
                 var hasFace = new bool[total];
                 for (int i = 0; i < total; i++)
                 {
+                    if (_maskProvider.TryGetStoredMask(i, out _))
+                    {
+                        hasFace[i] = true;
+                        continue;
+                    }
+
                     if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
                     {
                         hasFace[i] = true;
@@ -904,6 +942,82 @@ namespace FaceShield.ViewModels.Pages
 
                 return (noFace.ToArray(), lowConfidence.ToArray(), flicker.ToArray());
             });
+        }
+
+        private async Task<bool> RefineAutoAnomaliesAsync(CancellationToken ct)
+        {
+            if (!_isAutoRunning)
+                return false;
+            if (_autoOptions.DownscaleRatio >= 0.999 &&
+                !_autoOptions.UseTracking &&
+                _autoOptions.DetectEveryNFrames <= 1 &&
+                _autoOptions.DownscaleQuality == DownscaleQuality.BalancedBilinear)
+            {
+                return false;
+            }
+
+            var (noFaceFrames, lowConfidenceFrames, flickerFrames) = await AnalyzeIssueFramesAsync();
+            var targets = MergeSortedFrames(noFaceFrames, lowConfidenceFrames);
+            targets = MergeSortedFrames(targets, flickerFrames);
+            if (targets.Length == 0)
+                return false;
+
+            var refineOptions = new AutoMaskOptions
+            {
+                DownscaleRatio = 1.0,
+                DownscaleQuality = DownscaleQuality.BalancedBilinear,
+                UseTracking = false,
+                DetectEveryNFrames = 1,
+                ParallelDetectorCount = 1
+            };
+
+            try
+            {
+                using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
+                var generator = new AutoMaskGenerator(
+                    detector,
+                    _maskProvider,
+                    refineOptions);
+
+                await Task.Run(async () =>
+                {
+                    foreach (var frameIndex in targets)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        await generator.GenerateFrameAsync(
+                            FrameList.VideoPath,
+                            frameIndex,
+                            progress: null,
+                            ct);
+                    }
+                }, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task BuildAutoAnomaliesAsync()
+        {
+            int total = FrameList.TotalFrames;
+            if (total <= 0)
+            {
+                _autoAnomalies = Array.Empty<int>();
+                AutoAnomalyCount = 0;
+                HasAutoAnomalies = false;
+                FrameList.NoFaceIssueFrames = Array.Empty<int>();
+                FrameList.LowConfidenceIssueFrames = Array.Empty<int>();
+                FrameList.FlickerIssueFrames = Array.Empty<int>();
+                ResetIssueList(_noFaceIssueEntries, Array.Empty<int>(), "얼굴 없음");
+                ResetIssueList(_lowConfidenceIssueEntries, Array.Empty<int>(), "신뢰도 낮음");
+                ResetIssueList(_flickerIssueEntries, Array.Empty<int>(), "연속 끊김");
+                return;
+            }
+
+            var (noFaceFrames, lowConfidenceFrames, flickerFrames) = await AnalyzeIssueFramesAsync();
 
             FrameList.NoFaceIssueFrames = noFaceFrames;
             FrameList.LowConfidenceIssueFrames = lowConfidenceFrames;
@@ -1114,10 +1228,17 @@ namespace FaceShield.ViewModels.Pages
 
         public void PersistWorkspaceState()
         {
+            PersistWorkspaceStateInternal(includePreviewMask: true);
+        }
+
+        private void PersistWorkspaceStateInternal(bool includePreviewMask)
+        {
             if (_stateStore == null)
                 return;
 
-            FramePreview.PersistCurrentMask();
+            if (includePreviewMask)
+                FramePreview.PersistCurrentMask();
+
             var snapshot = BuildSnapshot();
             _stateStore.SaveWorkspace(snapshot, _maskProvider);
         }
@@ -1158,6 +1279,25 @@ namespace FaceShield.ViewModels.Pages
                 index = Math.Clamp(snapshot.SelectedFrameIndex, 0, FrameList.TotalFrames - 1);
 
             FrameList.SelectedFrameIndex = index;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+
+            _autoCts?.Cancel();
+            _autoCts?.Dispose();
+            _autoCts = null;
+
+            _exportCts?.Cancel();
+            _exportCts?.Dispose();
+            _exportCts = null;
+
+            FramePreview.Dispose();
+            FrameList.Dispose();
+            _maskProvider.Dispose();
         }
     }
 }

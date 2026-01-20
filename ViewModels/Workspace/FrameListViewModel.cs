@@ -3,7 +3,6 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
-using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -177,7 +176,14 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 durationSeconds = 0;
             }
 
+            long nbFrames = videoStream->nb_frames;
             int frames = (int)Math.Floor(durationSeconds * fpsValue);
+            if (nbFrames > 0 && nbFrames < int.MaxValue)
+            {
+                if (frames <= 0 || nbFrames > frames)
+                    frames = (int)nbFrames;
+            }
+
             TotalFrames = Math.Max(frames, 0);
 
             // 전체 영상 길이(초)

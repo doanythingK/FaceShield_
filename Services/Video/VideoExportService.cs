@@ -84,24 +84,27 @@ public unsafe sealed class VideoExportService
 
             AVStream* inStream = inFmt->streams[videoStreamIndex];
             AVStream* inAudioStream = audioStreamIndex >= 0 ? inFmt->streams[audioStreamIndex] : null;
-            totalFrames = (int)inStream->nb_frames;
-            if (totalFrames <= 0)
-            {
-                double fps =
-                    inStream->avg_frame_rate.num != 0
-                        ? ffmpeg.av_q2d(inStream->avg_frame_rate)
-                        : inStream->r_frame_rate.num != 0
-                            ? ffmpeg.av_q2d(inStream->r_frame_rate)
-                            : 0.0;
-
-                double durationSeconds = inStream->duration != 0
-                    ? inStream->duration * ffmpeg.av_q2d(inStream->time_base)
-                    : inFmt->duration > 0
-                        ? inFmt->duration / (double)ffmpeg.AV_TIME_BASE
+            long nbFrames = inStream->nb_frames;
+            double fps =
+                inStream->avg_frame_rate.num != 0
+                    ? ffmpeg.av_q2d(inStream->avg_frame_rate)
+                    : inStream->r_frame_rate.num != 0
+                        ? ffmpeg.av_q2d(inStream->r_frame_rate)
                         : 0.0;
 
-                if (fps > 0 && durationSeconds > 0)
-                    totalFrames = (int)Math.Round(durationSeconds * fps);
+            double durationSeconds = inStream->duration != 0
+                ? inStream->duration * ffmpeg.av_q2d(inStream->time_base)
+                : inFmt->duration > 0
+                    ? inFmt->duration / (double)ffmpeg.AV_TIME_BASE
+                    : 0.0;
+
+            if (fps > 0 && durationSeconds > 0)
+                totalFrames = (int)Math.Round(durationSeconds * fps);
+
+            if (nbFrames > 0 && nbFrames < int.MaxValue)
+            {
+                if (totalFrames <= 0 || nbFrames > totalFrames)
+                    totalFrames = (int)nbFrames;
             }
 
             AVCodec* decoder = ffmpeg.avcodec_find_decoder(inStream->codecpar->codec_id);
@@ -266,8 +269,9 @@ public unsafe sealed class VideoExportService
                         throw new OperationCanceledException(cancellationToken);
 
                     WriteableBitmap? mask = null;
-                    bool disposeMask = false;
                     IReadOnlyList<Rect>? faceRects = null;
+                    PixelSize? faceSize = null;
+                    bool useFaceRects = false;
 
                     if (_maskProvider is FrameMaskProvider provider)
                     {
@@ -277,9 +281,9 @@ public unsafe sealed class VideoExportService
                         }
                         else if (provider.TryGetFaceMaskData(frameIndex, out var faces))
                         {
-                            mask = FrameMaskProvider.CreateMaskFromFaceRects(faces.Size, faces.Faces);
-                            disposeMask = true;
                             faceRects = faces.Faces;
+                            faceSize = faces.Size;
+                            useFaceRects = faces.Faces.Count > 0;
                         }
                     }
                     else
@@ -287,7 +291,15 @@ public unsafe sealed class VideoExportService
                         mask = _maskProvider.GetFinalMask(frameIndex);
                     }
 
-                    if (mask != null)
+                    bool hasMask = mask != null
+                        && mask.PixelSize.Width == frame->width
+                        && mask.PixelSize.Height == frame->height;
+                    bool hasFaceRects = useFaceRects
+                        && faceSize.HasValue
+                        && faceSize.Value.Width == frame->width
+                        && faceSize.Value.Height == frame->height;
+
+                    if (hasMask || hasFaceRects)
                     {
                         var tBgra = Stopwatch.StartNew();
                         Throw(ffmpeg.sws_scale(
@@ -302,11 +314,16 @@ public unsafe sealed class VideoExportService
                         swsToBgraMs += tBgra.ElapsedMilliseconds;
 
                         var tMask = Stopwatch.StartNew();
-                        _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
+                        if (hasFaceRects && !hasMask)
+                        {
+                            _masked.ApplyFaceRectsAndBlur(bgra, faceSize!.Value, faceRects!, blurRadius);
+                        }
+                        else
+                        {
+                            _masked.ApplyMaskAndBlur(bgra, mask!, blurRadius, faceRects);
+                        }
                         tMask.Stop();
                         maskMs += tMask.ElapsedMilliseconds;
-                        if (disposeMask)
-                            mask.Dispose();
 
                         var tEncSws = Stopwatch.StartNew();
                         Throw(ffmpeg.sws_scale(

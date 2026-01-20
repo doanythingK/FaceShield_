@@ -5,10 +5,11 @@ using System.Linq;
 
 namespace FaceShield.Services.Video.Session;
 
-public sealed class ThumbnailCache
+public sealed class ThumbnailCache : IDisposable
 {
     private readonly Dictionary<int, WriteableBitmap> _cache;
     private readonly int _step;
+    private bool _disposed;
 
     public ThumbnailCache(Dictionary<int, WriteableBitmap> cache, int step)
     {
@@ -18,6 +19,8 @@ public sealed class ThumbnailCache
 
     public WriteableBitmap GetNearest(int frameIndex)
     {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(ThumbnailCache));
         if (_cache.Count == 0)
             throw new InvalidOperationException("Thumbnail cache is empty.");
 
@@ -30,5 +33,14 @@ public sealed class ThumbnailCache
         // 🔥 가장 가까운 키 찾기 (보정)
         var nearestKey = _cache.Keys.OrderBy(k => Math.Abs(k - frameIndex)).First();
         return _cache[nearestKey];
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        _cache.Clear();
     }
 }

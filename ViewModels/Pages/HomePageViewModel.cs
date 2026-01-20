@@ -474,6 +474,8 @@ namespace FaceShield.ViewModels.Pages
                 return;
 
             _activeAutoWorkspace.UpdateAutoOptions(BuildAutoOptions());
+            if (SelectedOrtThreadOption?.Threads == null)
+                _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
             _autoRestartRequested = true;
             AutoStatusText = statusText;
             _autoCts?.Cancel();
@@ -952,8 +954,11 @@ namespace FaceShield.ViewModels.Pages
             string decodeText = decodeError == null ? decode : $"{decode} · 오류: {decodeError}";
             if (!string.IsNullOrWhiteSpace(decodeDiag))
                 decodeText += $" · {decodeDiag}";
-            string threadText =
-                $"onnx={SelectedOrtThreadOption?.Label ?? "자동"}, cores={Environment.ProcessorCount}, sessions={SelectedParallelSessionCount}";
+            int? effectiveThreads = ResolveOrtThreads();
+            string threadLabel = SelectedOrtThreadOption?.Label ?? "자동";
+            string threadText = effectiveThreads.HasValue
+                ? $"onnx={threadLabel}({effectiveThreads.Value}), cores={Environment.ProcessorCount}, sessions={SelectedParallelSessionCount}"
+                : $"onnx={threadLabel}, cores={Environment.ProcessorCount}, sessions={SelectedParallelSessionCount}";
 
             AutoAccelStatus = accelError == null
                 ? $"가속 상태: {accel} · {decodeText} · {threadText}"
@@ -1111,12 +1116,26 @@ namespace FaceShield.ViewModels.Pages
             {
                 UseOrtOptimization = AutoUseOrtOptimization,
                 UseGpu = AutoUseGpu,
-                IntraOpNumThreads = SelectedOrtThreadOption?.Threads,
+                IntraOpNumThreads = ResolveOrtThreads(),
                 InterOpNumThreads = null,
                 DetectionThreshold = (float)Math.Clamp(AutoDetectionThreshold, 0.01, 0.99),
                 ConfidenceThreshold = (float)Math.Clamp(AutoConfidenceThreshold, 0.01, 0.99),
                 NmsThreshold = (float)Math.Clamp(AutoNmsThreshold, 0.01, 0.99)
             };
+        }
+
+        private int? ResolveOrtThreads()
+        {
+            if (SelectedOrtThreadOption?.Threads is int selected)
+                return selected;
+
+            int sessions = Math.Max(1, SelectedParallelSessionCount);
+            if (sessions <= 1)
+                return null;
+
+            int cores = Math.Max(1, Environment.ProcessorCount);
+            int perSession = cores / sessions;
+            return Math.Max(1, perSession);
         }
 
         private static IReadOnlyList<OrtThreadOption> BuildOrtThreadOptions()
@@ -1302,7 +1321,11 @@ namespace FaceShield.ViewModels.Pages
             }
 
             foreach (var key in keys)
+            {
+                if (_workspaceCache.TryGetValue(key, out var vm))
+                    vm.Dispose();
                 _workspaceCache.Remove(key);
+            }
         }
 
     }

@@ -7,7 +7,7 @@ using System.Linq;
 
 namespace FaceShield.Services.Video
 {
-public sealed class FrameMaskProvider : IFrameMaskProvider
+public sealed class FrameMaskProvider : IFrameMaskProvider, IDisposable
 {
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
@@ -86,6 +86,17 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
 
     public void Clear()
     {
+        _masks.Clear();
+        _faceMasks.Clear();
+    }
+
+    public void Dispose()
+    {
+        foreach (var mask in _masks.Values)
+        {
+            try { mask.Dispose(); }
+            catch { }
+        }
         _masks.Clear();
         _faceMasks.Clear();
     }

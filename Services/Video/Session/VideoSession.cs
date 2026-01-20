@@ -7,11 +7,13 @@ using System;
 
 namespace FaceShield.Services.Video.Session;
 
-public sealed class VideoSession
+public sealed class VideoSession : IDisposable
 {
     public readonly ThumbnailCache ThumbnailCache;
     public readonly ExactFrameProvider ExactProvider;
     public readonly TimelineController Timeline;
+    private readonly TimelineThumbnailProvider _thumbProvider;
+    private bool _disposed;
 
     public VideoSession(
         string videoPath,
@@ -25,7 +27,7 @@ public sealed class VideoSession
         ExactProvider = new ExactFrameProvider(extractor);
 
         // 2) 썸네일 캐시 생성
-        var thumbsProvider = new TimelineThumbnailProvider(videoPath, thumbWidth, thumbHeight);
+        _thumbProvider = new TimelineThumbnailProvider(videoPath, thumbWidth, thumbHeight);
 
         var map = new Dictionary<int, WriteableBitmap>();
         int totalFrames = GetTotalFrames(videoPath);
@@ -33,12 +35,18 @@ public sealed class VideoSession
         if (totalFrames <= 0)
             totalFrames = 300; // 방어용 최소값
 
-        int totalThumbs = (int)Math.Ceiling(totalFrames / (double)Math.Max(1, thumbStep));
+        const int MaxPreloadThumbs = 600;
+        int effectiveStep = Math.Max(1, thumbStep);
+        int stepByCap = (int)Math.Ceiling(totalFrames / (double)MaxPreloadThumbs);
+        if (stepByCap > effectiveStep)
+            effectiveStep = stepByCap;
+
+        int totalThumbs = (int)Math.Ceiling(totalFrames / (double)effectiveStep);
         int done = 0;
 
-        for (int i = 0; i < totalFrames; i += thumbStep)
+        for (int i = 0; i < totalFrames; i += effectiveStep)
         {
-            var bmp = thumbsProvider.GetThumbnail(i);
+            var bmp = _thumbProvider.GetThumbnail(i);
             if (bmp != null)
                 map[i] = bmp;
 
@@ -53,10 +61,10 @@ public sealed class VideoSession
 
         progress?.Report(100);
 
-        ThumbnailCache = new ThumbnailCache(map, thumbStep);
+        ThumbnailCache = new ThumbnailCache(map, effectiveStep);
 
         // 3) UX 컨트롤러 (드래그 중/멈췄을 때 분리)
-        Timeline = new TimelineController(ThumbnailCache, ExactProvider, thumbsProvider);
+        Timeline = new TimelineController(ThumbnailCache, ExactProvider, _thumbProvider);
     }
 
     /// <summary>
@@ -112,10 +120,17 @@ public sealed class VideoSession
             }
             else
             {
-                return 0;
+                durationSeconds = 0;
             }
 
+            long nbFrames = videoStream->nb_frames;
             int frames = (int)Math.Floor(durationSeconds * fpsValue);
+            if (nbFrames > 0 && nbFrames < int.MaxValue)
+            {
+                if (frames <= 0 || nbFrames > frames)
+                    frames = (int)nbFrames;
+            }
+
             return Math.Max(frames, 0);
         }
         finally
@@ -123,5 +138,17 @@ public sealed class VideoSession
             if (fmt != null)
                 ffmpeg.avformat_close_input(&fmt);
         }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        Timeline.Dispose();
+        ExactProvider.Dispose();
+        ThumbnailCache.Dispose();
+        _thumbProvider.Dispose();
     }
 }
