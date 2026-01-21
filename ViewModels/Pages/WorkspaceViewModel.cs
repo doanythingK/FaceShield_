@@ -61,9 +61,37 @@ namespace FaceShield.ViewModels.Pages
         private HashSet<int> _lowConfidenceIssueSet = new();
         private HashSet<int> _flickerIssueSet = new();
         private bool _disposed;
+        private bool _isProxyGenerating;
+        private int _proxyFrameIndex;
+        private int _proxyTotalFrames;
+        private string? _proxyEtaText;
+        private readonly Queue<(DateTime Timestamp, int FrameIndex)> _proxyEtaSamples = new();
+        private (DateTime Timestamp, int FrameIndex) _proxyLastSample;
 
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
+
+        public bool IsProxyGenerating => _isProxyGenerating;
+
+        public string ProxyStatusText
+        {
+            get
+            {
+                if (!_isProxyGenerating)
+                    return string.Empty;
+
+                if (_proxyTotalFrames > 0)
+                {
+                    int percent = (int)Math.Round(_proxyFrameIndex * 100.0 / Math.Max(1, _proxyTotalFrames));
+                    if (percent > 100) percent = 100;
+                    return $"1/2 프록시 생성중: {_proxyFrameIndex}/{_proxyTotalFrames} ({percent}%)";
+                }
+
+                return "1/2 프록시 생성중...";
+            }
+        }
+
+        public string? ProxyEtaText => _proxyEtaText;
 
         // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
         private bool _isAutoRunning;
@@ -300,11 +328,65 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
+                AutoMaskOptions runOptions = _autoOptions;
+                string detectionPath = FrameList.VideoPath;
+                if (_autoOptions.EnableHybridRefine)
+                {
+                    var proxyToken = _autoCts?.Token ?? CancellationToken.None;
+                    _isProxyGenerating = true;
+                    _proxyFrameIndex = 0;
+                    _proxyTotalFrames = 0;
+                    _proxyEtaText = "예상 남은 시간 계산 중...";
+                    _proxyEtaSamples.Clear();
+                    _proxyLastSample = default;
+                    var proxyProgress = new Progress<ProxyProgress>(UpdateProxyProgress);
+
+                    (string? path, string? status) proxyResult;
+                    try
+                    {
+                        proxyResult = await Task.Run(() =>
+                        {
+                            string? status = null;
+                            string? path = DetectionProxyService.EnsureDetectionProxy(
+                                FrameList.VideoPath,
+                                _autoOptions.ProxyPreset,
+                                proxyProgress,
+                                out status,
+                                proxyToken);
+                            return (path, status);
+                        }, proxyToken);
+                    }
+                    finally
+                    {
+                        _isProxyGenerating = false;
+                        _proxyEtaText = null;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(proxyResult.path))
+                        detectionPath = proxyResult.path!;
+                }
+                if (_autoOptions.EnableHybridRefine)
+                {
+                    double hybridRatio = Math.Clamp(_autoOptions.HybridDownscaleRatio, 0.2, 0.95);
+                    runOptions = new AutoMaskOptions
+                    {
+                        DownscaleRatio = hybridRatio,
+                        DownscaleQuality = _autoOptions.DownscaleQuality,
+                        UseTracking = false,
+                        DetectEveryNFrames = 1,
+                        ParallelDetectorCount = _autoOptions.ParallelDetectorCount,
+                        EnableHybridRefine = _autoOptions.EnableHybridRefine,
+                        HybridDownscaleRatio = hybridRatio,
+                        HybridRefineInterval = _autoOptions.HybridRefineInterval,
+                        HybridSmallFaceAreaRatio = _autoOptions.HybridSmallFaceAreaRatio,
+                        ProxyPreset = _autoOptions.ProxyPreset
+                    };
+                }
 
                 var generator = new AutoMaskGenerator(
                     detector,
                     _maskProvider,
-                    _autoOptions,
+                    runOptions,
                     detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
@@ -320,7 +402,7 @@ namespace FaceShield.ViewModels.Pages
                 });
                 var token = _autoCts?.Token ?? CancellationToken.None;
                 await generator.GenerateAsync(
-                    FrameList.VideoPath,
+                    detectionPath,
                     effectiveProgress,
                     token,
                     startFrameIndex: lastProcessed,
@@ -824,6 +906,54 @@ namespace FaceShield.ViewModels.Pages
             return $"{Math.Max(0, (int)remaining.TotalSeconds)}초";
         }
 
+        private void UpdateProxyProgress(ProxyProgress progress)
+        {
+            _proxyFrameIndex = Math.Max(0, progress.FrameIndex);
+            _proxyTotalFrames = Math.Max(0, progress.TotalFrames);
+            UpdateProxyEtaSamples(progress.Timestamp, _proxyFrameIndex);
+
+            var remaining = EstimateProxyRemaining();
+            _proxyEtaText = remaining.HasValue
+                ? $"예상 남은 시간: {FormatEta(remaining.Value)}"
+                : "예상 남은 시간 계산 중...";
+        }
+
+        private void UpdateProxyEtaSamples(DateTime timestamp, int frameIndex)
+        {
+            if (frameIndex < 0)
+                return;
+
+            if (_proxyEtaSamples.Count > 0 && frameIndex <= _proxyLastSample.FrameIndex)
+                return;
+
+            _proxyEtaSamples.Enqueue((timestamp, frameIndex));
+            _proxyLastSample = (timestamp, frameIndex);
+
+            while (_proxyEtaSamples.Count > 0 && (timestamp - _proxyEtaSamples.Peek().Timestamp).TotalSeconds > 10)
+                _proxyEtaSamples.Dequeue();
+
+            if (_proxyEtaSamples.Count == 0)
+                _proxyEtaSamples.Enqueue(_proxyLastSample);
+        }
+
+        private TimeSpan? EstimateProxyRemaining()
+        {
+            if (_proxyTotalFrames <= 0 || _proxyEtaSamples.Count < 2)
+                return null;
+
+            var first = _proxyEtaSamples.Peek();
+            var last = _proxyLastSample;
+            var elapsedSeconds = (last.Timestamp - first.Timestamp).TotalSeconds;
+            var progressed = last.FrameIndex - first.FrameIndex;
+
+            if (elapsedSeconds <= 0 || progressed <= 0)
+                return null;
+
+            double ratePerSecond = progressed / elapsedSeconds;
+            int remainingFrames = Math.Max(0, (_proxyTotalFrames - 1) - _proxyFrameIndex);
+            return TimeSpan.FromSeconds(remainingFrames / ratePerSecond);
+        }
+
         [RelayCommand]
         private void GoBack()
         {
@@ -993,7 +1123,8 @@ namespace FaceShield.ViewModels.Pages
         {
             if (!_isAutoRunning)
                 return false;
-            if (_autoOptions.DownscaleRatio >= 0.999 &&
+            if (!_autoOptions.EnableHybridRefine &&
+                _autoOptions.DownscaleRatio >= 0.999 &&
                 !_autoOptions.UseTracking &&
                 _autoOptions.DetectEveryNFrames <= 1 &&
                 _autoOptions.DownscaleQuality == DownscaleQuality.BalancedBilinear)
@@ -1004,6 +1135,14 @@ namespace FaceShield.ViewModels.Pages
             var (noFaceFrames, lowConfidenceFrames, flickerFrames) = await AnalyzeIssueFramesAsync();
             var targets = MergeSortedFrames(noFaceFrames, lowConfidenceFrames);
             targets = MergeSortedFrames(targets, flickerFrames);
+            if (_autoOptions.EnableHybridRefine)
+            {
+                int total = FrameList.TotalFrames;
+                var smallFaces = FindSmallFaceFrames(total, _autoOptions.HybridSmallFaceAreaRatio);
+                var periodic = BuildIntervalFrames(total, _autoOptions.HybridRefineInterval);
+                targets = MergeSortedFrames(targets, smallFaces);
+                targets = MergeSortedFrames(targets, periodic);
+            }
             if (targets.Length == 0)
                 return false;
 
@@ -1028,7 +1167,8 @@ namespace FaceShield.ViewModels.Pages
                     FrameList.VideoPath,
                     targets,
                     progress: null,
-                    ct);
+                    ct,
+                    clearIfNone: true);
             }
             catch (OperationCanceledException)
             {
@@ -1079,7 +1219,53 @@ namespace FaceShield.ViewModels.Pages
         {
             var defaults = FaceOnnxDetector.GetDefaultThresholds();
             float baseThreshold = _detectorOptions.ConfidenceThreshold ?? defaults.Confidence;
-            return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);
+            float extra = 0.0f;
+            double effectiveRatio = _autoOptions.EnableHybridRefine
+                ? Math.Min(_autoOptions.DownscaleRatio, _autoOptions.HybridDownscaleRatio)
+                : _autoOptions.DownscaleRatio;
+            if (effectiveRatio < 0.9)
+                extra += 0.03f;
+            if (_autoOptions.UseTracking || _autoOptions.DetectEveryNFrames > 1)
+                extra += 0.03f;
+            return Math.Clamp(baseThreshold + LowConfidenceMargin + extra, 0.0f, 0.99f);
+        }
+
+        private int[] FindSmallFaceFrames(int totalFrames, double areaRatio)
+        {
+            if (totalFrames <= 0 || areaRatio <= 0)
+                return Array.Empty<int>();
+
+            var list = new List<int>();
+            for (int i = 0; i < totalFrames; i++)
+            {
+                if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
+                {
+                    double frameArea = Math.Max(1.0, data.Size.Width * (double)data.Size.Height);
+                    for (int j = 0; j < data.Faces.Count; j++)
+                    {
+                        var face = data.Faces[j];
+                        double area = Math.Max(0.0, face.Width * face.Height);
+                        if (area / frameArea <= areaRatio)
+                        {
+                            list.Add(i);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return list.ToArray();
+        }
+
+        private static int[] BuildIntervalFrames(int totalFrames, int interval)
+        {
+            if (totalFrames <= 0 || interval <= 1)
+                return Array.Empty<int>();
+
+            var list = new List<int>();
+            for (int i = 0; i < totalFrames; i += interval)
+                list.Add(i);
+            return list.ToArray();
         }
 
         private static int[] MergeSortedFrames(IReadOnlyList<int> first, IReadOnlyList<int> second)

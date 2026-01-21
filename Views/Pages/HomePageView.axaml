@@ -101,7 +101,7 @@
             </ComboBox>
           </StackPanel>
 
-          <StackPanel Orientation="Horizontal" Spacing="8">
+        <StackPanel Orientation="Horizontal" Spacing="8">
           <CheckBox Content="추적 사용" IsChecked="{Binding AutoTrackingEnabled}"/>
           <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
           <ComboBox Width="80"
@@ -109,6 +109,16 @@
                     SelectedItem="{Binding AutoDetectEveryNFrames}"
                     IsEnabled="{Binding IsTrackingOptionsEnabled}"/>
           <TextBlock Text="프레임" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="프록시 옵션" Width="90" VerticalAlignment="Center"/>
+          <Button Content="설정"
+                  Command="{Binding OpenProxyPresetDialogCommand}"
+                  Height="28" />
+          <TextBlock Text="{Binding ProxyPresetLabel}"
+                     VerticalAlignment="Center"
+                     Opacity="0.7"/>
         </StackPanel>
 
         <StackPanel Spacing="4">

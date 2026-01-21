@@ -501,6 +501,7 @@ namespace FaceShield.Services.Workspace
         public double? ConfidenceThreshold { get; set; }
         public double? NmsThreshold { get; set; }
         public int? BlurRadius { get; set; }
+        public int ProxyPreset { get; set; }
     }
 
     public sealed class WorkspaceSnapshot

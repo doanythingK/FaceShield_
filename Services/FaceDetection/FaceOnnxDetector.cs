@@ -21,7 +21,7 @@ namespace FaceShield.Services.FaceDetection
     public sealed class FaceOnnxDetector : IFaceDetector
     {
         private readonly FaceDetector _detector;
-        private readonly bool _enablePreprocessOptimizations = true;
+        private readonly bool _enablePreprocessOptimizations;
         private float[][,]? _reusableBuffer;
         private int _bufferWidth;
         private int _bufferHeight;
@@ -37,6 +37,7 @@ namespace FaceShield.Services.FaceDetection
 
         public FaceOnnxDetector()
         {
+            _enablePreprocessOptimizations = true;
             _detector = new FaceDetector(); // 확실함
         }
 
@@ -48,6 +49,8 @@ namespace FaceShield.Services.FaceDetection
 
         public FaceOnnxDetector(FaceOnnxDetectorOptions? options)
         {
+            _enablePreprocessOptimizations = options?.EnablePreprocessParallelism ?? true;
+
             if (options == null || (!options.UseOrtOptimization && !options.UseGpu))
             {
                 _detector = new FaceDetector();

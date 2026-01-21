@@ -165,6 +165,16 @@ namespace FaceShield.ViewModels.Pages
         private int selectedParallelSessionCount = 2;
 
         [ObservableProperty]
+        private DetectionProxyPreset selectedProxyPreset = DetectionProxyPreset.Default;
+
+        public string ProxyPresetLabel => selectedProxyPreset switch
+        {
+            DetectionProxyPreset.OptionA => "A옵션",
+            DetectionProxyPreset.OptionB => "B옵션",
+            _ => "원래 설정"
+        };
+
+        [ObservableProperty]
         private bool autoTrackingEnabled;
 
         [ObservableProperty]
@@ -396,6 +406,13 @@ namespace FaceShield.ViewModels.Pages
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
+        partial void OnSelectedProxyPresetChanged(DetectionProxyPreset value)
+        {
+            PersistAutoSettings();
+            OnPropertyChanged(nameof(ProxyPresetLabel));
+            RequestAutoRestartForOptions("프록시 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
         partial void OnAutoDetectEveryNFramesChanged(int value)
         {
             PersistAutoSettings();
@@ -516,6 +533,9 @@ namespace FaceShield.ViewModels.Pages
             AutoUseOrtOptimization = saved.AutoUseOrtOptimization;
             AutoUseGpu = saved.AutoUseGpu;
             AutoExportAfter = saved.AutoExportAfter;
+            SelectedProxyPreset = Enum.IsDefined(typeof(DetectionProxyPreset), saved.ProxyPreset)
+                ? (DetectionProxyPreset)saved.ProxyPreset
+                : DetectionProxyPreset.Default;
             if (saved.DetectionThreshold.HasValue)
                 AutoDetectionThreshold = saved.DetectionThreshold.Value;
             if (saved.ConfidenceThreshold.HasValue)
@@ -539,6 +559,7 @@ namespace FaceShield.ViewModels.Pages
                 AutoUseGpu = AutoUseGpu,
                 OrtThreads = SelectedOrtThreadOption?.Threads,
                 AutoExportAfter = AutoExportAfter,
+                ProxyPreset = (int)SelectedProxyPreset,
                 DetectionThreshold = AutoDetectionThreshold,
                 ConfidenceThreshold = AutoConfidenceThreshold,
                 NmsThreshold = AutoNmsThreshold,
@@ -940,12 +961,19 @@ namespace FaceShield.ViewModels.Pages
             int lastFrame = vm?.AutoLastProcessedFrame ?? -1;
             DateTime lastAt = vm?.AutoLastProcessedAtUtc ?? _autoLastProgressAtUtc;
 
+            if (vm != null && vm.IsProxyGenerating)
+            {
+                AutoStatusText = vm.ProxyStatusText;
+                AutoEtaText = vm.ProxyEtaText ?? "예상 남은 시간 계산 중...";
+                return;
+            }
+
             string frameInfo = (lastFrame >= 0 && total > 0)
                 ? $"{lastFrame + 1}/{total}"
                 : "정보 없음";
 
             var since = now - lastAt;
-            AutoStatusText = $"마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
+            AutoStatusText = $"2/2 프레임 처리중 · 마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
             var accel = FaceOnnxDetector.GetLastExecutionProviderLabel();
             var accelError = FaceOnnxDetector.GetLastExecutionProviderError();
             var decode = FfFrameExtractor.GetLastDecodeStatus();
@@ -969,7 +997,7 @@ namespace FaceShield.ViewModels.Pages
                 UpdateEtaFrameSamples(lastAt, lastFrame);
                 var remaining = EstimateRemainingByFrames(total, lastFrame);
                 if (remaining != null)
-                    AutoEtaText = $"예상 남은 시간: {FormatEta(remaining.Value)}";
+                    AutoEtaText = $"2/2 프레임 처리중 예상 남은 시간: {FormatEta(remaining.Value)}";
             }
         }
 
@@ -1099,6 +1127,7 @@ namespace FaceShield.ViewModels.Pages
             bool useTracking = AutoTrackingEnabled;
             int detectEvery = useTracking ? Math.Max(1, AutoDetectEveryNFrames) : 1;
             var quality = SelectedDownscaleQualityOption?.Quality ?? DownscaleQuality.BalancedBilinear;
+            bool enableHybrid = ratio >= 0.99 && !useTracking && detectEvery <= 1;
 
             return new AutoMaskOptions
             {
@@ -1106,12 +1135,22 @@ namespace FaceShield.ViewModels.Pages
                 DownscaleQuality = quality,
                 UseTracking = useTracking,
                 DetectEveryNFrames = detectEvery,
-                ParallelDetectorCount = Math.Max(1, SelectedParallelSessionCount)
+                ParallelDetectorCount = Math.Max(1, SelectedParallelSessionCount),
+                EnableHybridRefine = enableHybrid,
+                HybridDownscaleRatio = 0.67,
+                HybridRefineInterval = 8,
+                HybridSmallFaceAreaRatio = 0.0012,
+                ProxyPreset = SelectedProxyPreset
             };
         }
 
         private FaceOnnxDetectorOptions BuildDetectorOptions()
         {
+            bool willUseParallelDetectors =
+                !AutoTrackingEnabled &&
+                Math.Max(1, AutoDetectEveryNFrames) <= 1 &&
+                SelectedParallelSessionCount > 1;
+
             return new FaceOnnxDetectorOptions
             {
                 UseOrtOptimization = AutoUseOrtOptimization,
@@ -1120,7 +1159,8 @@ namespace FaceShield.ViewModels.Pages
                 InterOpNumThreads = null,
                 DetectionThreshold = (float)Math.Clamp(AutoDetectionThreshold, 0.01, 0.99),
                 ConfidenceThreshold = (float)Math.Clamp(AutoConfidenceThreshold, 0.01, 0.99),
-                NmsThreshold = (float)Math.Clamp(AutoNmsThreshold, 0.01, 0.99)
+                NmsThreshold = (float)Math.Clamp(AutoNmsThreshold, 0.01, 0.99),
+                EnablePreprocessParallelism = !willUseParallelDetectors
             };
         }
 
@@ -1187,6 +1227,20 @@ namespace FaceShield.ViewModels.Pages
 
             var dialog = new ResumeAutoDialog();
             return await dialog.ShowDialog<bool>(owner);
+        }
+
+        [RelayCommand]
+        private async Task OpenProxyPresetDialog()
+        {
+            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            var owner = lifetime?.MainWindow;
+            if (owner == null)
+                return;
+
+            var dialog = new ProxyPresetDialog(SelectedProxyPreset);
+            var result = await dialog.ShowDialog<DetectionProxyPreset>(owner);
+            if (result != SelectedProxyPreset)
+                SelectedProxyPreset = result;
         }
 
         private Task ShowErrorDialogAsync(string title, string message)

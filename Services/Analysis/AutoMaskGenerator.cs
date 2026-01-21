@@ -21,15 +21,18 @@ namespace FaceShield.Services.Analysis
     /// </summary>
     public sealed class AutoMaskGenerator
     {
-        private const double MinFaceAreaRatio = 0.001;
+        private const double BaseMinFaceAreaRatio = 0.0005;
         private const double MinFaceAspectRatio = 0.5;
         private const double MaxFaceAspectRatio = 2.0;
-        private const double MinSkinRatio = 0.015;
-        private const double MinEdgeRatio = 0.02;
-        private const double MinLumaVariance = 200.0;
+        private const double BaseMinSkinRatio = 0.012;
+        private const double BaseMinEdgeRatio = 0.018;
+        private const double BaseMinLumaVariance = 160.0;
         private const float StatsBypassConfidence = 0.85f;
         private const int StatsSampleStep = 4;
         private const int MinStatsSamples = 20;
+        private const double BaseSmallFaceAreaRatio = 0.0009;
+        private const float SmallFaceMinConfidence = 0.6f;
+        private const double HighResAreaThreshold = 6_000_000.0;
 
         private static bool IsHardwareTransferFailure()
         {
@@ -186,6 +189,7 @@ namespace FaceShield.Services.Analysis
             int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
             double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
             double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var filter = BuildFilterConfig(fullSize, useProxy, _options.DownscaleRatio);
             var swTotal = Stopwatch.StartNew();
             long readMs = 0;
             long detectMs = 0;
@@ -296,7 +300,8 @@ namespace FaceShield.Services.Analysis
                                     bgra.Width,
                                     bgra.Height,
                                     scaleX,
-                                    scaleY);
+                                    scaleY,
+                                    filter);
                             }
                         }
                         else if (!useRaw && frame != null)
@@ -313,12 +318,13 @@ namespace FaceShield.Services.Analysis
                                     frame.PixelSize.Width,
                                     frame.PixelSize.Height,
                                     1.0,
-                                    1.0);
+                                    1.0,
+                                    filter);
                             }
                         }
                         else
                         {
-                            faces = FilterFacesByArea(faces, fullSize);
+                            faces = FilterFacesByArea(faces, fullSize, filter);
                         }
                     }
 
@@ -385,6 +391,45 @@ namespace FaceShield.Services.Analysis
             public float[] Confidences { get; init; } = Array.Empty<float>();
         }
 
+        private readonly struct FilterConfig
+        {
+            public double MinFaceAreaRatio { get; init; }
+            public double MinFaceAspectRatio { get; init; }
+            public double MaxFaceAspectRatio { get; init; }
+            public double MinSkinRatio { get; init; }
+            public double MinEdgeRatio { get; init; }
+            public double MinLumaVariance { get; init; }
+            public float StatsBypassConfidence { get; init; }
+            public int StatsSampleStep { get; init; }
+            public int MinStatsSamples { get; init; }
+            public double SmallFaceAreaRatio { get; init; }
+            public float SmallFaceMinConfidence { get; init; }
+        }
+
+        private static FilterConfig BuildFilterConfig(PixelSize size, bool useProxy, double downscaleRatio)
+        {
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double resFactor = frameArea >= HighResAreaThreshold ? 0.7 : 1.0;
+            double downscaleRelax = useProxy
+                ? Math.Clamp(0.85 + downscaleRatio * 0.15, 0.85, 1.0)
+                : 1.0;
+
+            return new FilterConfig
+            {
+                MinFaceAreaRatio = BaseMinFaceAreaRatio * resFactor,
+                MinFaceAspectRatio = MinFaceAspectRatio,
+                MaxFaceAspectRatio = MaxFaceAspectRatio,
+                MinSkinRatio = BaseMinSkinRatio * downscaleRelax,
+                MinEdgeRatio = BaseMinEdgeRatio * downscaleRelax,
+                MinLumaVariance = BaseMinLumaVariance * downscaleRelax,
+                StatsBypassConfidence = StatsBypassConfidence,
+                StatsSampleStep = StatsSampleStep,
+                MinStatsSamples = MinStatsSamples,
+                SmallFaceAreaRatio = BaseSmallFaceAreaRatio * resFactor,
+                SmallFaceMinConfidence = SmallFaceMinConfidence
+            };
+        }
+
         private void GeneratePipelinedDetectAll(
             string videoPath,
             FaceOnnxDetector onnx,
@@ -404,6 +449,7 @@ namespace FaceShield.Services.Analysis
             int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
             double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
             double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var filter = BuildFilterConfig(fullSize, useProxy, _options.DownscaleRatio);
 
             using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(4);
             using var results = new System.Collections.Concurrent.BlockingCollection<DetectionResult>(8);
@@ -535,19 +581,20 @@ namespace FaceShield.Services.Analysis
 
                                     if (faces.Count > 0)
                                     {
-                                        faces = FilterFacesByAreaAndStats(
-                                            faces,
-                                            resultSize,
-                                            src,
-                                            item.Stride,
-                                            item.Width,
-                                            item.Height,
-                                            useProxy ? scaleX : 1.0,
-                                            useProxy ? scaleY : 1.0);
-                                        bounds = ExtractBounds(faces);
-                                        confidences = ExtractConfidences(faces);
-                                        minConfidence = GetMinConfidence(faces);
-                                        lastFaces = faces;
+                                            faces = FilterFacesByAreaAndStats(
+                                                faces,
+                                                resultSize,
+                                                src,
+                                                item.Stride,
+                                                item.Width,
+                                                item.Height,
+                                                useProxy ? scaleX : 1.0,
+                                                useProxy ? scaleY : 1.0,
+                                                filter);
+                                            bounds = ExtractBounds(faces);
+                                            confidences = ExtractConfidences(faces);
+                                            minConfidence = GetMinConfidence(faces);
+                                            lastFaces = faces;
                                     }
                                 }
                             }
@@ -591,7 +638,8 @@ namespace FaceShield.Services.Analysis
             string videoPath,
             int frameIndex,
             IProgress<int>? progress,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool clearIfNone = false)
         {
             if (string.IsNullOrWhiteSpace(videoPath))
                 throw new ArgumentException("videoPath is null or empty.", nameof(videoPath));
@@ -606,7 +654,7 @@ namespace FaceShield.Services.Analysis
                         return false;
 
                     using var extractor = new FfFrameExtractor(videoPath);
-                    return TryGenerateFrame(extractor, frameIndex, progress, ct);
+                    return TryGenerateFrame(extractor, frameIndex, progress, ct, clearIfNone);
                 }, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -619,7 +667,8 @@ namespace FaceShield.Services.Analysis
             string videoPath,
             IReadOnlyList<int> frameIndices,
             IProgress<int>? progress,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool clearIfNone = false)
         {
             if (string.IsNullOrWhiteSpace(videoPath))
                 throw new ArgumentException("videoPath is null or empty.", nameof(videoPath));
@@ -642,7 +691,7 @@ namespace FaceShield.Services.Analysis
                         if (frameIndex < 0)
                             continue;
 
-                        if (TryGenerateFrame(extractor, frameIndex, progress: null, ct))
+                        if (TryGenerateFrame(extractor, frameIndex, progress: null, ct, clearIfNone))
                             any = true;
 
                         progress?.Report((int)Math.Round((i + 1) * 100.0 / Math.Max(1, total)));
@@ -663,7 +712,8 @@ namespace FaceShield.Services.Analysis
             FfFrameExtractor extractor,
             int frameIndex,
             IProgress<int>? progress,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool clearIfNone)
         {
             if (ct.IsCancellationRequested)
                 return false;
@@ -675,6 +725,7 @@ namespace FaceShield.Services.Analysis
                 return false;
             }
 
+            var filter = BuildFilterConfig(frame.PixelSize, useProxy: false, downscaleRatio: 1.0);
             var faces = DetectFacesWithOptions(frame);
             if (faces.Count > 0)
             {
@@ -690,7 +741,8 @@ namespace FaceShield.Services.Analysis
                         frame.PixelSize.Width,
                         frame.PixelSize.Height,
                         1.0,
-                        1.0);
+                        1.0,
+                        filter);
                 }
             }
 
@@ -705,6 +757,9 @@ namespace FaceShield.Services.Analysis
                 progress?.Report(100);
                 return true;
             }
+
+            if (clearIfNone && !_maskProvider.TryGetStoredMask(frameIndex, out _))
+                _maskProvider.RemoveFaceMask(frameIndex);
 
             progress?.Report(100);
             return false;
@@ -760,6 +815,7 @@ namespace FaceShield.Services.Analysis
             int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
             double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
             double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var filter = BuildFilterConfig(fullSize, useProxy, _options.DownscaleRatio);
 
             int queueDepth = Math.Max(4, detectors.Count * 3);
             using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(queueDepth);
@@ -829,6 +885,7 @@ namespace FaceShield.Services.Analysis
             {
                 consumers.Add(Task.Run(() =>
                 {
+                    IReadOnlyList<FaceDetectionResult>? lastFaces = null;
                     foreach (var item in queue.GetConsumingEnumerable())
                     {
                         if (ct.IsCancellationRequested)
@@ -857,7 +914,7 @@ namespace FaceShield.Services.Analysis
                                             useProxy,
                                             _options.DownscaleRatio,
                                             _options.DownscaleQuality,
-                                            lastFacesFull: null,
+                                            lastFaces,
                                             fullSize,
                                             scaleX,
                                             scaleY,
@@ -875,10 +932,16 @@ namespace FaceShield.Services.Analysis
                                                 item.Width,
                                                 item.Height,
                                                 useProxy ? scaleX : 1.0,
-                                                useProxy ? scaleY : 1.0);
+                                                useProxy ? scaleY : 1.0,
+                                                filter);
                                             bounds = ExtractBounds(faces);
                                             confidences = ExtractConfidences(faces);
                                             minConfidence = GetMinConfidence(faces);
+                                            lastFaces = faces;
+                                        }
+                                        else
+                                        {
+                                            lastFaces = null;
                                         }
                                     }
                                 }
@@ -1197,13 +1260,14 @@ namespace FaceShield.Services.Analysis
 
         private static IReadOnlyList<FaceDetectionResult> FilterFacesByArea(
             IReadOnlyList<FaceDetectionResult> faces,
-            PixelSize size)
+            PixelSize size,
+            FilterConfig filter)
         {
             if (faces.Count == 0)
                 return faces;
 
             double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
-            double minArea = frameArea * MinFaceAreaRatio;
+            double minArea = frameArea * filter.MinFaceAreaRatio;
             if (minArea <= 1.0)
                 return faces;
 
@@ -1215,7 +1279,7 @@ namespace FaceShield.Services.Analysis
                 var rect = faces[i].Bounds;
                 double area = Math.Max(0.0, rect.Width * rect.Height);
                 double ratio = rect.Height > 0 ? rect.Width / rect.Height : 0.0;
-                if (area >= minArea && ratio >= MinFaceAspectRatio && ratio <= MaxFaceAspectRatio)
+                if (area >= minArea && ratio >= filter.MinFaceAspectRatio && ratio <= filter.MaxFaceAspectRatio)
                 {
                     kept ??= new List<FaceDetectionResult>(faces.Count);
                     kept.Add(faces[i]);
@@ -1242,16 +1306,17 @@ namespace FaceShield.Services.Analysis
             int width,
             int height,
             double scaleX,
-            double scaleY)
+            double scaleY,
+            FilterConfig filter)
         {
             if (faces.Count == 0)
                 return faces;
 
             if (basePtr == null || stride <= 0 || width <= 0 || height <= 0)
-                return FilterFacesByArea(faces, size);
+                return FilterFacesByArea(faces, size, filter);
 
             double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
-            double minArea = frameArea * MinFaceAreaRatio;
+            double minArea = frameArea * filter.MinFaceAreaRatio;
             if (minArea <= 1.0)
                 return faces;
 
@@ -1262,10 +1327,14 @@ namespace FaceShield.Services.Analysis
             {
                 var rect = faces[i].Bounds;
                 double area = Math.Max(0.0, rect.Width * rect.Height);
+                double areaRatio = area / frameArea;
                 double ratio = rect.Height > 0 ? rect.Width / rect.Height : 0.0;
-                if (area >= minArea && ratio >= MinFaceAspectRatio && ratio <= MaxFaceAspectRatio)
+                if (area >= minArea && ratio >= filter.MinFaceAspectRatio && ratio <= filter.MaxFaceAspectRatio)
                 {
-                    if (!PassesStatsBgra(basePtr, stride, width, height, rect, scaleX, scaleY, faces[i].Confidence))
+                    float conf = faces[i].Confidence;
+                    bool skipStats = areaRatio <= filter.SmallFaceAreaRatio && conf >= filter.SmallFaceMinConfidence;
+                    if (!skipStats &&
+                        !PassesStatsBgra(basePtr, stride, width, height, rect, scaleX, scaleY, conf, filter))
                     {
                         filtered = true;
                         continue;
@@ -1308,9 +1377,10 @@ namespace FaceShield.Services.Analysis
             Rect rect,
             double scaleX,
             double scaleY,
-            float confidence)
+            float confidence,
+            FilterConfig filter)
         {
-            if (confidence >= StatsBypassConfidence)
+            if (confidence >= filter.StatsBypassConfidence)
                 return true;
             if (basePtr == null || stride <= 0 || width <= 0 || height <= 0)
                 return true;
@@ -1320,7 +1390,7 @@ namespace FaceShield.Services.Analysis
             double w = rect.Width / Math.Max(0.0001, scaleX);
             double h = rect.Height / Math.Max(0.0001, scaleY);
             var mapped = new Rect(x, y, w, h);
-            return EvaluateFaceStatsBgra(basePtr, stride, width, height, mapped);
+            return EvaluateFaceStatsBgra(basePtr, stride, width, height, mapped, filter);
         }
 
         private static unsafe bool EvaluateFaceStatsBgra(
@@ -1328,7 +1398,8 @@ namespace FaceShield.Services.Analysis
             int stride,
             int width,
             int height,
-            Rect rect)
+            Rect rect,
+            FilterConfig filter)
         {
             int x0 = Math.Clamp((int)Math.Floor(rect.X), 0, Math.Max(0, width - 1));
             int y0 = Math.Clamp((int)Math.Floor(rect.Y), 0, Math.Max(0, height - 1));
@@ -1340,9 +1411,9 @@ namespace FaceShield.Services.Analysis
 
             int boxW = x1 - x0 + 1;
             int boxH = y1 - y0 + 1;
-            int step = StatsSampleStep;
-            int baseStep = (int)Math.Floor(Math.Sqrt((boxW * (double)boxH) / Math.Max(1, MinStatsSamples)));
-            step = Math.Clamp(baseStep, 1, StatsSampleStep);
+            int step = filter.StatsSampleStep;
+            int baseStep = (int)Math.Floor(Math.Sqrt((boxW * (double)boxH) / Math.Max(1, filter.MinStatsSamples)));
+            step = Math.Clamp(baseStep, 1, filter.StatsSampleStep);
             int sampleCount = 0;
             int skinCount = 0;
             int edgeCount = 0;
@@ -1356,8 +1427,8 @@ namespace FaceShield.Services.Analysis
             int totalEdgeSamples = samplesY * Math.Max(0, samplesX - 1) +
                 Math.Max(0, samplesY - 1) * samplesX;
             int edgeProcessed = 0;
-            double minSkinNeeded = MinSkinRatio * totalSamples;
-            double minEdgeNeeded = MinEdgeRatio * totalEdgeSamples;
+            double minSkinNeeded = filter.MinSkinRatio * totalSamples;
+            double minEdgeNeeded = filter.MinEdgeRatio * totalEdgeSamples;
 
             for (int y = y0; y <= y1; y += step)
             {
@@ -1410,15 +1481,15 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
-            if (sampleCount < MinStatsSamples)
+            if (sampleCount < filter.MinStatsSamples)
                 return false;
             double variance = sampleCount > 1 ? m2 / (sampleCount - 1) : 0.0;
             double skinRatio = skinCount / (double)Math.Max(1, sampleCount);
             double edgeRatio = edgeCount / (double)Math.Max(1, edgeSamples);
 
-            return skinRatio >= MinSkinRatio &&
-                edgeRatio >= MinEdgeRatio &&
-                variance >= MinLumaVariance;
+            return skinRatio >= filter.MinSkinRatio &&
+                edgeRatio >= filter.MinEdgeRatio &&
+                variance >= filter.MinLumaVariance;
         }
 
         private static float? GetMinConfidence(IReadOnlyList<FaceDetectionResult> faces)

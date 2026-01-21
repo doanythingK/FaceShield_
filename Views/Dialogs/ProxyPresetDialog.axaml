@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dialogs="clr-namespace:FaceShield.Views.Dialogs"
+        x:Class="FaceShield.Views.Dialogs.ProxyPresetDialog"
+        x:DataType="dialogs:ProxyPresetDialog"
+        Title="프록시 옵션"
+        SizeToContent="Height"
+        Width="420"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+  <Border Padding="16" Background="#151515">
+    <StackPanel Spacing="12">
+      <TextBlock Text="검출용 프록시 생성 옵션을 선택하세요."
+                 TextWrapping="Wrap"
+                 FontSize="14" />
+      <TextBlock Text="{Binding CurrentLabel}"
+                 Opacity="0.7"
+                 TextWrapping="Wrap"/>
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+        <Button Content="원래 설정" Click="OnDefaultClick" />
+        <Button Content="A옵션" Click="OnOptionAClick" />
+        <Button Content="B옵션" Click="OnOptionBClick" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

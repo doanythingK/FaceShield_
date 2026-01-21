@@ -36,5 +36,10 @@ namespace FaceShield.Services.FaceDetection
         /// NMS 임계값 (null이면 기본값).
         /// </summary>
         public float? NmsThreshold { get; init; }
+
+        /// <summary>
+        /// 전처리 병렬화 허용 여부 (null이면 기본값).
+        /// </summary>
+        public bool? EnablePreprocessParallelism { get; init; }
     }
 }
