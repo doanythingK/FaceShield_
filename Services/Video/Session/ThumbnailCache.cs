@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Media.Imaging;
 using System;
 using System.Collections.Generic;
@@ -41,6 +42,42 @@ public sealed class ThumbnailCache : IDisposable
             return;
         _disposed = true;
 
+        foreach (var bmp in _cache.Values)
+        {
+            try { bmp.Dispose(); }
+            catch { }
+        }
         _cache.Clear();
+    }
+
+    internal static WriteableBitmap CloneBitmap(WriteableBitmap src)
+    {
+        var dst = new WriteableBitmap(
+            src.PixelSize,
+            src.Dpi,
+            Avalonia.Platform.PixelFormat.Bgra8888,
+            Avalonia.Platform.AlphaFormat.Premul);
+
+        using var sfb = src.Lock();
+        using var dfb = dst.Lock();
+
+        unsafe
+        {
+            int h = src.PixelSize.Height;
+            int copy = Math.Min(sfb.RowBytes, dfb.RowBytes);
+            byte* s = (byte*)sfb.Address;
+            byte* d = (byte*)dfb.Address;
+
+            for (int y = 0; y < h; y++)
+            {
+                Buffer.MemoryCopy(
+                    s + y * sfb.RowBytes,
+                    d + y * dfb.RowBytes,
+                    dfb.RowBytes,
+                    copy);
+            }
+        }
+
+        return dst;
     }
 }

@@ -605,47 +605,50 @@ namespace FaceShield.Services.Analysis
                     if (ct.IsCancellationRequested)
                         return false;
 
-            using var extractor = new FfFrameExtractor(videoPath);
-                    var frame = extractor.GetFrameByIndex(frameIndex);
-                    if (frame == null)
+                    using var extractor = new FfFrameExtractor(videoPath);
+                    return TryGenerateFrame(extractor, frameIndex, progress, ct);
+                }, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return false;
+            }
+        }
+
+        public async Task<bool> GenerateFramesAsync(
+            string videoPath,
+            IReadOnlyList<int> frameIndices,
+            IProgress<int>? progress,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(videoPath))
+                throw new ArgumentException("videoPath is null or empty.", nameof(videoPath));
+            if (frameIndices == null || frameIndices.Count == 0)
+                return false;
+
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    using var extractor = new FfFrameExtractor(videoPath);
+                    bool any = false;
+                    int total = frameIndices.Count;
+
+                    for (int i = 0; i < total; i++)
                     {
-                        progress?.Report(100);
-                        return false;
+                        ct.ThrowIfCancellationRequested();
+
+                        int frameIndex = frameIndices[i];
+                        if (frameIndex < 0)
+                            continue;
+
+                        if (TryGenerateFrame(extractor, frameIndex, progress: null, ct))
+                            any = true;
+
+                        progress?.Report((int)Math.Round((i + 1) * 100.0 / Math.Max(1, total)));
                     }
 
-                    var faces = DetectFacesWithOptions(frame);
-                    if (faces.Count > 0)
-                    {
-                        using var fb = frame.Lock();
-                        unsafe
-                        {
-                            byte* src = (byte*)fb.Address;
-                            faces = FilterFacesByAreaAndStats(
-                                faces,
-                                frame.PixelSize,
-                                src,
-                                fb.RowBytes,
-                                frame.PixelSize.Width,
-                                frame.PixelSize.Height,
-                                1.0,
-                                1.0);
-                        }
-                    }
-
-                    if (faces != null && faces.Count > 0)
-                    {
-                        _maskProvider.SetFaceRects(
-                            frameIndex,
-                            ExtractBounds(faces),
-                            frame.PixelSize,
-                            GetMinConfidence(faces),
-                            ExtractConfidences(faces));
-                        progress?.Report(100);
-                        return true;
-                    }
-
-                    progress?.Report(100);
-                    return false;
+                    return any;
                 }, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -655,6 +658,57 @@ namespace FaceShield.Services.Analysis
         }
 
         // 마스크는 필요 시 FrameMaskProvider에서 생성
+
+        private bool TryGenerateFrame(
+            FfFrameExtractor extractor,
+            int frameIndex,
+            IProgress<int>? progress,
+            CancellationToken ct)
+        {
+            if (ct.IsCancellationRequested)
+                return false;
+
+            var frame = extractor.GetFrameByIndex(frameIndex);
+            if (frame == null)
+            {
+                progress?.Report(100);
+                return false;
+            }
+
+            var faces = DetectFacesWithOptions(frame);
+            if (faces.Count > 0)
+            {
+                using var fb = frame.Lock();
+                unsafe
+                {
+                    byte* src = (byte*)fb.Address;
+                    faces = FilterFacesByAreaAndStats(
+                        faces,
+                        frame.PixelSize,
+                        src,
+                        fb.RowBytes,
+                        frame.PixelSize.Width,
+                        frame.PixelSize.Height,
+                        1.0,
+                        1.0);
+                }
+            }
+
+            if (faces != null && faces.Count > 0)
+            {
+                _maskProvider.SetFaceRects(
+                    frameIndex,
+                    ExtractBounds(faces),
+                    frame.PixelSize,
+                    GetMinConfidence(faces),
+                    ExtractConfidences(faces));
+                progress?.Report(100);
+                return true;
+            }
+
+            progress?.Report(100);
+            return false;
+        }
 
         private IReadOnlyList<FaceDetectionResult> DetectFacesWithOptions(WriteableBitmap frame)
         {

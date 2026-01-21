@@ -48,7 +48,7 @@ public sealed class VideoSession : IDisposable
         {
             var bmp = _thumbProvider.GetThumbnail(i);
             if (bmp != null)
-                map[i] = bmp;
+                map[i] = ThumbnailCache.CloneBitmap(bmp);
 
             done++;
             if (progress != null)

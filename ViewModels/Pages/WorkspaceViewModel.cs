@@ -46,7 +46,11 @@ namespace FaceShield.ViewModels.Pages
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private int _autoLastCheckpointFrame = -1;
         private DateTime _autoLastCheckpointAtUtc = DateTime.MinValue;
-        private int _autoCheckpointRunning;
+        private readonly object _checkpointSync = new();
+        private Task? _checkpointTask;
+        private bool _checkpointPending;
+        private bool _checkpointPendingIncludePreview;
+        private readonly object _stateSaveLock = new();
         private bool _sessionInitialized;
         private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();
         private (DateTime Timestamp, int FrameIndex) _exportLastSample;
@@ -306,7 +310,6 @@ namespace FaceShield.ViewModels.Pages
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
                 _autoLastCheckpointFrame = _autoResumeIndex;
                 _autoLastCheckpointAtUtc = DateTime.UtcNow;
-                Interlocked.Exchange(ref _autoCheckpointRunning, 0);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
                 //       진행률 UI를 그릴 수 있습니다.
@@ -422,19 +425,61 @@ namespace FaceShield.ViewModels.Pages
                 (now - _autoLastCheckpointAtUtc) < AutoCheckpointInterval)
                 return;
 
-            if (Interlocked.Exchange(ref _autoCheckpointRunning, 1) == 1)
-                return;
-
             _autoLastCheckpointFrame = frameIndex;
             _autoLastCheckpointAtUtc = now;
 
-            try
+            QueueCheckpoint(includePreviewMask: false);
+        }
+
+        private void QueueCheckpoint(bool includePreviewMask)
+        {
+            if (_stateStore == null)
+                return;
+
+            lock (_checkpointSync)
             {
-                PersistWorkspaceStateInternal(includePreviewMask: false);
+                _checkpointPending = true;
+                _checkpointPendingIncludePreview |= includePreviewMask;
+                if (_checkpointTask == null || _checkpointTask.IsCompleted)
+                    _checkpointTask = Task.Run(ProcessCheckpointQueue);
             }
-            finally
+        }
+
+        private void ProcessCheckpointQueue()
+        {
+            while (true)
             {
-                Interlocked.Exchange(ref _autoCheckpointRunning, 0);
+                bool includePreview;
+                lock (_checkpointSync)
+                {
+                    if (!_checkpointPending)
+                    {
+                        _checkpointTask = null;
+                        return;
+                    }
+                    if (_disposed)
+                    {
+                        _checkpointPending = false;
+                        _checkpointPendingIncludePreview = false;
+                        _checkpointTask = null;
+                        return;
+                    }
+                    _checkpointPending = false;
+                    includePreview = _checkpointPendingIncludePreview;
+                    _checkpointPendingIncludePreview = false;
+                }
+
+                if (_disposed)
+                    return;
+
+                try
+                {
+                    PersistWorkspaceStateInternal(includePreviewMask: includePreview);
+                }
+                catch
+                {
+                    // ignore checkpoint failures
+                }
             }
         }
 
@@ -979,18 +1024,11 @@ namespace FaceShield.ViewModels.Pages
                     _maskProvider,
                     refineOptions);
 
-                await Task.Run(async () =>
-                {
-                    foreach (var frameIndex in targets)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        await generator.GenerateFrameAsync(
-                            FrameList.VideoPath,
-                            frameIndex,
-                            progress: null,
-                            ct);
-                    }
-                }, ct);
+                await generator.GenerateFramesAsync(
+                    FrameList.VideoPath,
+                    targets,
+                    progress: null,
+                    ct);
             }
             catch (OperationCanceledException)
             {
@@ -1240,7 +1278,10 @@ namespace FaceShield.ViewModels.Pages
                 FramePreview.PersistCurrentMask();
 
             var snapshot = BuildSnapshot();
-            _stateStore.SaveWorkspace(snapshot, _maskProvider);
+            lock (_stateSaveLock)
+            {
+                _stateStore.SaveWorkspace(snapshot, _maskProvider);
+            }
         }
 
         private WorkspaceSnapshot BuildSnapshot()
@@ -1286,6 +1327,21 @@ namespace FaceShield.ViewModels.Pages
             if (_disposed)
                 return;
             _disposed = true;
+
+            Task? checkpointTask;
+            lock (_checkpointSync)
+            {
+                _checkpointPending = false;
+                _checkpointPendingIncludePreview = false;
+                checkpointTask = _checkpointTask;
+                _checkpointTask = null;
+            }
+
+            if (checkpointTask != null)
+            {
+                try { checkpointTask.Wait(TimeSpan.FromSeconds(2)); }
+                catch { }
+            }
 
             _autoCts?.Cancel();
             _autoCts?.Dispose();

@@ -440,7 +440,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         // 1-1) 선택 프레임과 동일한 저화질 썸네일 (정확도 우선)
         var exactThumb = await _session.Timeline.OnFrameChangingExactAsync(index);
         if (exactThumb != null && stamp == _changeStamp)
-            SetPreviewBitmap(exactThumb, owns: false);
+            SetPreviewBitmap(exactThumb, owns: true);
 
         // 2) 고화질 프레임
         var exact = await _session.Timeline.OnFrameChangedAsync(index);

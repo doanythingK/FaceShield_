@@ -44,7 +44,8 @@ public sealed class TimelineController : IDisposable
 
         try
         {
-            return await Task.Run(() => _thumbProvider.GetThumbnail(frameIndex), ct);
+            var bmp = await Task.Run(() => _thumbProvider.GetThumbnail(frameIndex), ct);
+            return bmp == null ? null : ThumbnailCache.CloneBitmap(bmp);
         }
         catch
         {
