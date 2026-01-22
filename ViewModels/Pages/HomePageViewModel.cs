@@ -818,6 +818,7 @@ namespace FaceShield.ViewModels.Pages
                     _autoCts = new CancellationTokenSource();
                     _autoStartTimeUtc = DateTime.UtcNow;
                     _autoLastProgressAtUtc = _autoStartTimeUtc;
+                    bool exportProgressSeen = false;
 
                     var progress = new Progress<int>(p =>
                         Dispatcher.UIThread.Post(() =>
@@ -829,6 +830,7 @@ namespace FaceShield.ViewModels.Pages
                     var exportProgress = new Progress<ExportProgress>(p =>
                         Dispatcher.UIThread.Post(() =>
                         {
+                            exportProgressSeen = true;
                             IsExportRunning = true;
                             ExportProgress = Math.Clamp(p.Percent, 0, 100);
                             UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
@@ -843,6 +845,11 @@ namespace FaceShield.ViewModels.Pages
                         progress,
                         _autoCts.Token,
                         exportProgress);
+
+                    if (completed && AutoExportAfter && !exportProgressSeen)
+                    {
+                        await vm.ExportAutoResultAsync(exportProgress, _autoCts.Token);
+                    }
                 }
                 while (_autoRestartRequested);
             }

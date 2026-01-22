@@ -238,6 +238,7 @@ namespace FaceShield.ViewModels.Pages
             ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
             ToolPanel.ExportStatusText = null;
             _exportEtaSamples.Clear();
+            exportProgress?.Report(new ExportProgress(0, 0, "내보내기 시작..."));
 
             var progress = new Progress<ExportProgress>(p =>
             {
@@ -274,6 +275,13 @@ namespace FaceShield.ViewModels.Pages
                 _exportCts?.Dispose();
                 _exportCts = null;
             }
+        }
+
+        public Task ExportAutoResultAsync(
+            IProgress<ExportProgress>? exportProgress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SaveVideoAsync(exportProgress, cancellationToken);
         }
 
         private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
@@ -863,7 +871,8 @@ namespace FaceShield.ViewModels.Pages
                     return;
                 }
 
-                await RunAutoAsync(exportAfter: false);
+                bool exportAfter = _stateStore?.GetAutoSettings()?.AutoExportAfter ?? false;
+                await RunAutoAsync(exportAfter: exportAfter);
             }
             catch (Exception ex)
             {
