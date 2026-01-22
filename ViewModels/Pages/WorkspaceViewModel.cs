@@ -29,6 +29,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly Action? _onBack;
         private AutoMaskOptions _autoOptions;
         private FaceOnnxDetectorOptions _detectorOptions;
+        private FaceOnnxDetectorOptions? _effectiveDetectorOptions;
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
         private const float LowConfidenceMargin = 0.05f;
@@ -61,10 +62,14 @@ namespace FaceShield.ViewModels.Pages
         private HashSet<int> _lowConfidenceIssueSet = new();
         private HashSet<int> _flickerIssueSet = new();
         private bool _disposed;
+        private bool _useProxyStage;
+        private IProgress<int>? _autoProgressReporter;
         private bool _isProxyGenerating;
         private int _proxyFrameIndex;
         private int _proxyTotalFrames;
         private string? _proxyEtaText;
+        private string? _proxyDecisionText;
+        private string? _autoTuneDecisionText;
         private readonly Queue<(DateTime Timestamp, int FrameIndex)> _proxyEtaSamples = new();
         private (DateTime Timestamp, int FrameIndex) _proxyLastSample;
 
@@ -92,6 +97,8 @@ namespace FaceShield.ViewModels.Pages
         }
 
         public string? ProxyEtaText => _proxyEtaText;
+        public string? ProxyDecisionText => _proxyDecisionText;
+        public string? AutoTuneDecisionText => _autoTuneDecisionText;
 
         // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
         private bool _isAutoRunning;
@@ -327,9 +334,57 @@ namespace FaceShield.ViewModels.Pages
         {
             try
             {
-                using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
-                AutoMaskOptions runOptions = _autoOptions;
+                FaceOnnxDetectorOptions detectorOptions = _detectorOptions;
+                int tunedSessions = Math.Max(1, _autoOptions.ParallelDetectorCount);
+                _autoTuneDecisionText = null;
+                if (_detectorOptions.AllowAutoTune == true)
+                {
+                    bool allowGpuAuto = _detectorOptions.AllowAutoGpu == true;
+                    double tuneRatio = _autoOptions.EnableHybridRefine
+                        ? _autoOptions.HybridDownscaleRatio
+                        : _autoOptions.DownscaleRatio;
+                    if (DetectorAutoTuner.TryTune(
+                            FrameList.VideoPath,
+                            tuneRatio,
+                            _autoOptions.DownscaleQuality,
+                            _detectorOptions,
+                            tunedSessions,
+                            allowGpuAuto,
+                            out var tunedOptions,
+                            out var tunedCount,
+                            out var tuneLabel))
+                    {
+                        detectorOptions = tunedOptions;
+                        tunedSessions = Math.Max(1, tunedCount);
+                        _autoTuneDecisionText = string.IsNullOrWhiteSpace(tuneLabel)
+                            ? "튜닝: 적용됨"
+                            : $"튜닝: {tuneLabel}";
+                    }
+                    else
+                    {
+                        _autoTuneDecisionText = "튜닝: 기본값 사용";
+                    }
+                }
+
+                _effectiveDetectorOptions = detectorOptions;
+                using IFaceDetector detector = new FaceOnnxDetector(detectorOptions);
+                AutoMaskOptions runOptions = new AutoMaskOptions
+                {
+                    DownscaleRatio = _autoOptions.DownscaleRatio,
+                    DownscaleQuality = _autoOptions.DownscaleQuality,
+                    UseTracking = _autoOptions.UseTracking,
+                    DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
+                    ParallelDetectorCount = tunedSessions,
+                    EnableHybridRefine = _autoOptions.EnableHybridRefine,
+                    HybridDownscaleRatio = _autoOptions.HybridDownscaleRatio,
+                    HybridRefineInterval = _autoOptions.HybridRefineInterval,
+                    HybridSmallFaceAreaRatio = _autoOptions.HybridSmallFaceAreaRatio,
+                    ProxyPreset = _autoOptions.ProxyPreset
+                };
                 string detectionPath = FrameList.VideoPath;
+                _autoProgressReporter = progress;
+                _useProxyStage = false;
+                _proxyDecisionText = null;
                 if (_autoOptions.EnableHybridRefine)
                 {
                     var proxyToken = _autoCts?.Token ?? CancellationToken.None;
@@ -364,6 +419,16 @@ namespace FaceShield.ViewModels.Pages
 
                     if (!string.IsNullOrWhiteSpace(proxyResult.path))
                         detectionPath = proxyResult.path!;
+                    _proxyDecisionText = string.IsNullOrWhiteSpace(proxyResult.status)
+                        ? "프록시 결과: 알 수 없음"
+                        : proxyResult.status;
+                    _useProxyStage = !string.Equals(detectionPath, FrameList.VideoPath, StringComparison.OrdinalIgnoreCase);
+                    if (_useProxyStage)
+                        ReportAutoProgressScaled(50);
+                }
+                else
+                {
+                    _proxyDecisionText = BuildProxySkipReason(_autoOptions);
                 }
                 if (_autoOptions.EnableHybridRefine)
                 {
@@ -374,7 +439,7 @@ namespace FaceShield.ViewModels.Pages
                         DownscaleQuality = _autoOptions.DownscaleQuality,
                         UseTracking = false,
                         DetectEveryNFrames = 1,
-                        ParallelDetectorCount = _autoOptions.ParallelDetectorCount,
+                        ParallelDetectorCount = tunedSessions,
                         EnableHybridRefine = _autoOptions.EnableHybridRefine,
                         HybridDownscaleRatio = hybridRatio,
                         HybridRefineInterval = _autoOptions.HybridRefineInterval,
@@ -387,7 +452,7 @@ namespace FaceShield.ViewModels.Pages
                     detector,
                     _maskProvider,
                     runOptions,
-                    detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
+                    detectorFactory: () => new FaceOnnxDetector(detectorOptions));
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
                 _autoLastCheckpointFrame = _autoResumeIndex;
@@ -397,8 +462,11 @@ namespace FaceShield.ViewModels.Pages
                 //       진행률 UI를 그릴 수 있습니다.
                 var effectiveProgress = new Progress<int>(p =>
                 {
-                    progress?.Report(p);
-                    ToolPanel.AutoProgress = p;
+                    int scaled = _useProxyStage ? 50 + (int)Math.Round(p * 0.5) : p;
+                    if (scaled < 0) scaled = 0;
+                    if (scaled > 100) scaled = 100;
+                    progress?.Report(scaled);
+                    ToolPanel.AutoProgress = scaled;
                 });
                 var token = _autoCts?.Token ?? CancellationToken.None;
                 await generator.GenerateAsync(
@@ -916,6 +984,14 @@ namespace FaceShield.ViewModels.Pages
             _proxyEtaText = remaining.HasValue
                 ? $"예상 남은 시간: {FormatEta(remaining.Value)}"
                 : "예상 남은 시간 계산 중...";
+
+            if (_proxyTotalFrames > 0)
+            {
+                int percent = (int)Math.Round(_proxyFrameIndex * 100.0 / Math.Max(1, _proxyTotalFrames));
+                if (percent > 100) percent = 100;
+                int scaled = (int)Math.Round(percent * 0.5);
+                ReportAutoProgressScaled(scaled);
+            }
         }
 
         private void UpdateProxyEtaSamples(DateTime timestamp, int frameIndex)
@@ -952,6 +1028,24 @@ namespace FaceShield.ViewModels.Pages
             double ratePerSecond = progressed / elapsedSeconds;
             int remainingFrames = Math.Max(0, (_proxyTotalFrames - 1) - _proxyFrameIndex);
             return TimeSpan.FromSeconds(remainingFrames / ratePerSecond);
+        }
+
+        private static string BuildProxySkipReason(AutoMaskOptions options)
+        {
+            if (options.UseTracking)
+                return "프록시 생략: 트래킹 ON";
+            if (options.DetectEveryNFrames > 1)
+                return $"프록시 생략: {options.DetectEveryNFrames}프레임마다 검출";
+            if (options.DownscaleRatio < 0.99)
+                return "프록시 생략: 다운스케일 적용됨";
+            return "프록시 생략: 하이브리드 비활성화";
+        }
+
+        private void ReportAutoProgressScaled(int value)
+        {
+            int clamped = Math.Clamp(value, 0, 100);
+            _autoProgressReporter?.Report(clamped);
+            ToolPanel.AutoProgress = clamped;
         }
 
         [RelayCommand]
@@ -1157,7 +1251,8 @@ namespace FaceShield.ViewModels.Pages
 
             try
             {
-                using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
+                var effectiveOptions = _effectiveDetectorOptions ?? _detectorOptions;
+                using IFaceDetector detector = new FaceOnnxDetector(effectiveOptions);
                 var generator = new AutoMaskGenerator(
                     detector,
                     _maskProvider,
@@ -1443,6 +1538,7 @@ namespace FaceShield.ViewModels.Pages
         public void UpdateDetectorOptions(FaceOnnxDetectorOptions options)
         {
             _detectorOptions = options ?? new FaceOnnxDetectorOptions();
+            _effectiveDetectorOptions = null;
         }
 
         public void UpdateAutoOptions(AutoMaskOptions options)

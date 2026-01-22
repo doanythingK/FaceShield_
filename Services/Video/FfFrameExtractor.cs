@@ -16,6 +16,7 @@ namespace FaceShield.Services.Video
         private static string _lastDecodeStatus = "디코딩: 확인 중";
         private static string? _lastDecodeError;
         private static string? _lastDecodeDiagnostics;
+        private static int _hwDecodeState;
         private static readonly object _hwFormatLock = new();
         private static readonly Dictionary<IntPtr, AVPixelFormat> _hwFormatByDecoder = new();
 
@@ -41,6 +42,19 @@ namespace FaceShield.Services.Video
             {
                 return _lastDecodeDiagnostics;
             }
+        }
+
+        public static bool IsHardwareDecodeDisabled => Volatile.Read(ref _hwDecodeState) < 0;
+
+        internal static void ReportHardwareDecodeFailure()
+        {
+            Interlocked.Exchange(ref _hwDecodeState, -1);
+        }
+
+        internal static void ReportHardwareDecodeSuccess()
+        {
+            if (Volatile.Read(ref _hwDecodeState) == 0)
+                Interlocked.Exchange(ref _hwDecodeState, 1);
         }
 
         private static void UpdateDecodeStatus(string status, string? error = null)
@@ -103,6 +117,8 @@ namespace FaceShield.Services.Video
         private AVFrame* _bgraScaledReusable;
         private int _bgraScaledWidth;
         private int _bgraScaledHeight;
+        private AVPacket* _sequentialPacket;
+        private AVFrame* _sequentialFrame;
 
         public FfFrameExtractor(string videoPath, bool enableHardware = true)
         {
@@ -288,6 +304,20 @@ namespace FaceShield.Services.Video
             }
         }
 
+        private AVPacket* GetSequentialPacket()
+        {
+            if (_sequentialPacket == null)
+                _sequentialPacket = ffmpeg.av_packet_alloc();
+            return _sequentialPacket;
+        }
+
+        private AVFrame* GetSequentialFrame()
+        {
+            if (_sequentialFrame == null)
+                _sequentialFrame = ffmpeg.av_frame_alloc();
+            return _sequentialFrame;
+        }
+
         public bool TryGetNextFrame(CancellationToken ct, out WriteableBitmap? frame, out int frameIndex)
             => TryGetNextFrame(ct, requireBitmap: true, out frame, out frameIndex);
 
@@ -303,28 +333,22 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrame.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
-                AVFrame* bgra = requireBitmap ? ffmpeg.av_frame_alloc() : null;
+                AVPacket* pkt = GetSequentialPacket();
+                AVFrame* src = GetSequentialFrame();
 
-                if (pkt == null || src == null || (requireBitmap && bgra == null))
-                {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
-                    if (bgra != null) ffmpeg.av_frame_free(&bgra);
+                if (pkt == null || src == null)
                     return false;
-                }
 
                 try
                 {
+                    AVFrame* bgra = null;
                     if (requireBitmap)
                     {
-                        bgra->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
-                        bgra->width = _dec->width;
-                        bgra->height = _dec->height;
-
-                        if (ffmpeg.av_frame_get_buffer(bgra, 32) < 0)
+                        if (!EnsureReusableBgraFrame())
                             return false;
+                        if (ffmpeg.av_frame_make_writable(_bgraReusable) < 0)
+                            return false;
+                        bgra = _bgraReusable;
                     }
 
                     while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
@@ -359,6 +383,7 @@ namespace FaceShield.Services.Video
                                 frame = bmp;
                                 return true;
                             }
+                            ffmpeg.av_frame_unref(src);
                         }
                     }
 
@@ -366,9 +391,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
-                    ffmpeg.av_frame_free(&bgra);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -385,15 +409,11 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRaw.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
+                AVPacket* pkt = GetSequentialPacket();
+                AVFrame* src = GetSequentialFrame();
 
                 if (pkt == null || src == null)
-                {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
                     return false;
-                }
 
                 try
                 {
@@ -447,8 +467,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -472,15 +492,11 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawScaled.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
+                AVPacket* pkt = GetSequentialPacket();
+                AVFrame* src = GetSequentialFrame();
 
                 if (pkt == null || src == null)
-                {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
                     return false;
-                }
 
                 try
                 {
@@ -535,8 +551,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -569,15 +585,11 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawToBuffer.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
+                AVPacket* pkt = GetSequentialPacket();
+                AVFrame* src = GetSequentialFrame();
 
                 if (pkt == null || src == null)
-                {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
                     return false;
-                }
 
                 try
                 {
@@ -641,8 +653,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -699,6 +711,22 @@ namespace FaceShield.Services.Video
                         ffmpeg.av_frame_free(pBgra);
                     }
                     _bgraScaledReusable = null;
+                }
+                if (_sequentialFrame != null)
+                {
+                    fixed (AVFrame** pSeq = &_sequentialFrame)
+                    {
+                        ffmpeg.av_frame_free(pSeq);
+                    }
+                    _sequentialFrame = null;
+                }
+                if (_sequentialPacket != null)
+                {
+                    fixed (AVPacket** pPkt = &_sequentialPacket)
+                    {
+                        ffmpeg.av_packet_free(pPkt);
+                    }
+                    _sequentialPacket = null;
                 }
 
                 if (_fmt != null)

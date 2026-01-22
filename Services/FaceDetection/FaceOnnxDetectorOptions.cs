@@ -41,5 +41,15 @@ namespace FaceShield.Services.FaceDetection
         /// 전처리 병렬화 허용 여부 (null이면 기본값).
         /// </summary>
         public bool? EnablePreprocessParallelism { get; init; }
+
+        /// <summary>
+        /// 자동 튜닝 허용 여부 (null이면 기본값).
+        /// </summary>
+        public bool? AllowAutoTune { get; init; }
+
+        /// <summary>
+        /// GPU 자동 선택 허용 여부 (null이면 기본값).
+        /// </summary>
+        public bool? AllowAutoGpu { get; init; }
     }
 }

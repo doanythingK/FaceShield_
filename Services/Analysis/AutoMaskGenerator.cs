@@ -52,7 +52,8 @@ namespace FaceShield.Services.Analysis
             bool useRaw,
             CancellationToken ct)
         {
-            var extractor = new FfFrameExtractor(videoPath, enableHardware: true);
+            bool allowHardware = !FfFrameExtractor.IsHardwareDecodeDisabled;
+            var extractor = new FfFrameExtractor(videoPath, enableHardware: allowHardware);
 
             try
             {
@@ -65,8 +66,13 @@ namespace FaceShield.Services.Analysis
                 if (!ok && !ct.IsCancellationRequested && IsHardwareTransferFailure())
                 {
                     Debug.WriteLine("[AutoMask] HW decode failed; falling back to SW.");
+                    FfFrameExtractor.ReportHardwareDecodeFailure();
                     extractor.Dispose();
                     extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+                }
+                else if (allowHardware)
+                {
+                    FfFrameExtractor.ReportHardwareDecodeSuccess();
                 }
             }
             catch
@@ -190,6 +196,7 @@ namespace FaceShield.Services.Analysis
             double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
             double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
             var filter = BuildFilterConfig(fullSize, useProxy, _options.DownscaleRatio);
+            var pool = System.Buffers.ArrayPool<byte>.Shared;
             var swTotal = Stopwatch.StartNew();
             long readMs = 0;
             long detectMs = 0;
@@ -205,18 +212,36 @@ namespace FaceShield.Services.Analysis
                 int idx;
                 WriteableBitmap? frame = null;
                 FfFrameExtractor.BgraFrame bgra = default;
+                byte[]? bgraBuffer = null;
+                int bgraStride = 0;
+                int bgraWidth = 0;
+                int bgraHeight = 0;
 
                 var tRead = Stopwatch.StartNew();
                 if (useRaw)
                 {
-                    if (useProxy)
+                    if (shouldDetect)
                     {
-                        if (!extractor.TryGetNextFrameRawScaled(ct, shouldDetect, proxyWidth, proxyHeight, useBilinear, out bgra, out idx))
+                        bgraWidth = useProxy ? proxyWidth : fullSize.Width;
+                        bgraHeight = useProxy ? proxyHeight : fullSize.Height;
+                        int size = Math.Max(1, bgraWidth * bgraHeight * 4);
+                        bgraBuffer = pool.Rent(size);
+                        if (!extractor.TryGetNextFrameRawToBuffer(
+                                ct,
+                                bgraWidth,
+                                bgraHeight,
+                                useBilinear,
+                                bgraBuffer,
+                                out idx,
+                                out bgraStride))
+                        {
+                            pool.Return(bgraBuffer);
                             break;
+                        }
                     }
                     else
                     {
-                        if (!extractor.TryGetNextFrameRaw(ct, shouldDetect, out bgra, out idx))
+                        if (!extractor.TryGetNextFrameRaw(ct, requireBgra: false, out bgra, out idx))
                             break;
                     }
                 }
@@ -235,6 +260,8 @@ namespace FaceShield.Services.Analysis
                 if (_maskProvider.HasEntry(idx))
                 {
                     ReportProgress(progress, idx, totalFrames);
+                    if (bgraBuffer != null)
+                        pool.Return(bgraBuffer);
                     continue;
                 }
 
@@ -245,29 +272,37 @@ namespace FaceShield.Services.Analysis
                     var tDetect = Stopwatch.StartNew();
                     if (useRaw)
                     {
-                        if (bgra.Data == IntPtr.Zero || onnx == null)
+                        if (bgraBuffer == null || bgraBuffer.Length == 0 || onnx == null)
                         {
                             tDetect.Stop();
                             detectMs += tDetect.ElapsedMilliseconds;
                             ReportProgress(progress, idx, totalFrames);
+                            if (bgraBuffer != null)
+                                pool.Return(bgraBuffer);
                             continue;
                         }
 
                         frameSize = fullSize;
-                        faces = DetectFacesBgraSmart(
-                            onnx,
-                            bgra.Data,
-                            bgra.Stride,
-                            bgra.Width,
-                            bgra.Height,
-                            useProxy,
-                            _options.DownscaleRatio,
-                            _options.DownscaleQuality,
-                            lastFaces,
-                            fullSize,
-                            scaleX,
-                            scaleY,
-                            roiStats);
+                        unsafe
+                        {
+                            fixed (byte* src = bgraBuffer)
+                            {
+                                faces = DetectFacesBgraSmart(
+                                    onnx,
+                                    (IntPtr)src,
+                                    bgraStride,
+                                    bgraWidth,
+                                    bgraHeight,
+                                    useProxy,
+                                    _options.DownscaleRatio,
+                                    _options.DownscaleQuality,
+                                    lastFaces,
+                                    fullSize,
+                                    scaleX,
+                                    scaleY,
+                                    roiStats);
+                            }
+                        }
                     }
                     else
                     {
@@ -287,21 +322,23 @@ namespace FaceShield.Services.Analysis
 
                     if (faces.Count > 0)
                     {
-                        if (useRaw && bgra.Data != IntPtr.Zero)
+                        if (useRaw && bgraBuffer != null)
                         {
                             unsafe
                             {
-                                byte* src = (byte*)bgra.Data;
-                                faces = FilterFacesByAreaAndStats(
-                                    faces,
-                                    fullSize,
-                                    src,
-                                    bgra.Stride,
-                                    bgra.Width,
-                                    bgra.Height,
-                                    scaleX,
-                                    scaleY,
-                                    filter);
+                                fixed (byte* src = bgraBuffer)
+                                {
+                                    faces = FilterFacesByAreaAndStats(
+                                        faces,
+                                        fullSize,
+                                        src,
+                                        bgraStride,
+                                        bgraWidth,
+                                        bgraHeight,
+                                        scaleX,
+                                        scaleY,
+                                        filter);
+                                }
                             }
                         }
                         else if (!useRaw && frame != null)
@@ -342,6 +379,8 @@ namespace FaceShield.Services.Analysis
                 if (faces == null || faces.Count == 0)
                 {
                     ReportProgress(progress, idx, totalFrames);
+                    if (bgraBuffer != null)
+                        pool.Return(bgraBuffer);
                     continue;
                 }
 
@@ -361,6 +400,9 @@ namespace FaceShield.Services.Analysis
                 ReportProgress(progress, idx, totalFrames);
                 processed++;
 
+                if (bgraBuffer != null)
+                    pool.Return(bgraBuffer);
+
                 if (processed % 60 == 0)
                 {
                     Debug.WriteLine(
@@ -373,13 +415,22 @@ namespace FaceShield.Services.Analysis
                 $"[AutoMask] done frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
         }
 
-        private sealed class BgraBuffer
+        private readonly struct BgraBuffer
         {
-            public int Index { get; init; }
-            public byte[] Data { get; init; } = Array.Empty<byte>();
-            public int Stride { get; init; }
-            public int Width { get; init; }
-            public int Height { get; init; }
+            public int Index { get; }
+            public byte[] Data { get; }
+            public int Stride { get; }
+            public int Width { get; }
+            public int Height { get; }
+
+            public BgraBuffer(int index, byte[] data, int stride, int width, int height)
+            {
+                Index = index;
+                Data = data;
+                Stride = stride;
+                Width = width;
+                Height = height;
+            }
         }
 
         private sealed class DetectionResult
@@ -493,14 +544,7 @@ namespace FaceShield.Services.Analysis
 
                         try
                         {
-                            queue.Add(new BgraBuffer
-                            {
-                                Index = idx,
-                                Data = buffer,
-                                Stride = stride,
-                                Width = targetW,
-                                Height = targetH
-                            }, ct);
+                            queue.Add(new BgraBuffer(idx, buffer, stride, targetW, targetH), ct);
                         }
                         catch (OperationCanceledException)
                         {
@@ -858,14 +902,7 @@ namespace FaceShield.Services.Analysis
 
                         try
                         {
-                            queue.Add(new BgraBuffer
-                            {
-                                Index = idx,
-                                Data = buffer,
-                                Stride = stride,
-                                Width = targetW,
-                                Height = targetH
-                            }, ct);
+                            queue.Add(new BgraBuffer(idx, buffer, stride, targetW, targetH), ct);
                         }
                         catch (OperationCanceledException)
                         {

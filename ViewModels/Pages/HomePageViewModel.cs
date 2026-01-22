@@ -974,6 +974,10 @@ namespace FaceShield.ViewModels.Pages
 
             var since = now - lastAt;
             AutoStatusText = $"2/2 프레임 처리중 · 마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
+            if (vm != null && !string.IsNullOrWhiteSpace(vm.ProxyDecisionText))
+                AutoStatusText += $" · {vm.ProxyDecisionText}";
+            if (vm != null && !string.IsNullOrWhiteSpace(vm.AutoTuneDecisionText))
+                AutoStatusText += $" · {vm.AutoTuneDecisionText}";
             var accel = FaceOnnxDetector.GetLastExecutionProviderLabel();
             var accelError = FaceOnnxDetector.GetLastExecutionProviderError();
             var decode = FfFrameExtractor.GetLastDecodeStatus();
@@ -1150,6 +1154,7 @@ namespace FaceShield.ViewModels.Pages
                 !AutoTrackingEnabled &&
                 Math.Max(1, AutoDetectEveryNFrames) <= 1 &&
                 SelectedParallelSessionCount > 1;
+            bool allowAutoTune = SelectedOrtThreadOption?.Threads == null;
 
             return new FaceOnnxDetectorOptions
             {
@@ -1160,7 +1165,9 @@ namespace FaceShield.ViewModels.Pages
                 DetectionThreshold = (float)Math.Clamp(AutoDetectionThreshold, 0.01, 0.99),
                 ConfidenceThreshold = (float)Math.Clamp(AutoConfidenceThreshold, 0.01, 0.99),
                 NmsThreshold = (float)Math.Clamp(AutoNmsThreshold, 0.01, 0.99),
-                EnablePreprocessParallelism = !willUseParallelDetectors
+                EnablePreprocessParallelism = !willUseParallelDetectors,
+                AllowAutoTune = allowAutoTune,
+                AllowAutoGpu = allowAutoTune
             };
         }
 

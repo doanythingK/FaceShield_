@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -29,6 +30,7 @@ namespace FaceShield.Services.FaceDetection
         private static readonly object _statusLock = new();
         private static string _lastExecutionProviderLabel = "CPU";
         private static string? _lastExecutionProviderError;
+        private static int _gpuAvailability;
         private static readonly object _perfLock = new();
         private static long _perfCalls;
         private static long _perfPreMs;
@@ -91,13 +93,22 @@ namespace FaceShield.Services.FaceDetection
                     ? $"GPU:{gpuProvider}"
                     : options.UseGpu ? "CPU(가속 실패)" : "CPU");
                 if (gpuProvider != null)
+                {
                     UpdateExecutionProviderError(null);
+                    ReportGpuAvailability(true);
+                }
+                else if (options.UseGpu)
+                {
+                    ReportGpuAvailability(false);
+                }
             }
             catch (Exception ex)
             {
                 _detector = new FaceDetector(detection, confidence, nms);
                 UpdateExecutionProviderLabel("CPU(가속 실패)");
                 UpdateExecutionProviderError(ex.Message);
+                if (options.UseGpu)
+                    ReportGpuAvailability(false);
             }
         }
 
@@ -782,6 +793,17 @@ namespace FaceShield.Services.FaceDetection
             }
         }
 
+        public static bool? GetGpuAvailability()
+        {
+            int state = Volatile.Read(ref _gpuAvailability);
+            return state switch
+            {
+                > 0 => true,
+                < 0 => false,
+                _ => null
+            };
+        }
+
         private static void UpdateExecutionProviderLabel(string label)
         {
             lock (_statusLock)
@@ -798,13 +820,22 @@ namespace FaceShield.Services.FaceDetection
             }
         }
 
+        private static void ReportGpuAvailability(bool available)
+        {
+            Volatile.Write(ref _gpuAvailability, available ? 1 : -1);
+        }
+
         private static string? TryAppendGpuExecutionProvider(SessionOptions options)
         {
             // Use OS-appropriate providers when available; fall back silently.
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime.CoreML"))
+                {
+                    ReportGpuAvailability(true);
                     return "CoreML";
+                }
+                ReportGpuAvailability(false);
             }
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -813,12 +844,14 @@ namespace FaceShield.Services.FaceDetection
                 {
                     UpdateExecutionProviderLabel("GPU:DirectML");
                     UpdateExecutionProviderError(null);
+                    ReportGpuAvailability(true);
                     return "DirectML";
                 }
 
                 UpdateExecutionProviderLabel("CPU(DirectML 로드 실패)");
                 if (GetLastExecutionProviderError() == null)
                     UpdateExecutionProviderError(BuildDirectMlDiagnostics());
+                ReportGpuAvailability(false);
                 return null;
             }
 
@@ -826,8 +859,10 @@ namespace FaceShield.Services.FaceDetection
             {
                 UpdateExecutionProviderLabel("GPU:DirectML");
                 UpdateExecutionProviderError(null);
+                ReportGpuAvailability(true);
                 return "DirectML";
             }
+            ReportGpuAvailability(false);
 
             return null;
         }

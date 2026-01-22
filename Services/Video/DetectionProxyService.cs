@@ -1,5 +1,6 @@
 using FFmpeg.AutoGen;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -10,7 +11,7 @@ namespace FaceShield.Services.Video;
 
 public static unsafe class DetectionProxyService
 {
-    private const string ProxyExtension = ".mp4";
+    private readonly record struct ProxyOutputFormat(string ContainerName, string Extension, AVCodecID CodecId, string Label);
 
     public static bool TryGetVideoBitDepth(
         string inputPath,
@@ -160,69 +161,107 @@ public static unsafe class DetectionProxyService
         statusMessage = null;
 
         if (!TryGetVideoBitDepth(inputPath, out int bitDepth, out int width, out int height))
+        {
+            statusMessage = "프록시 생략: 비트뎁스 판별 실패";
             return null;
+        }
 
         if (bitDepth <= 8)
+        {
+            statusMessage = $"프록시 생략: {bitDepth}bit 영상";
             return inputPath;
+        }
 
         if (width <= 0 || height <= 0)
+        {
+            statusMessage = "프록시 생략: 해상도 정보 없음";
             return null;
-
-        string proxyPath = BuildProxyPath(inputPath, preset);
-        string tempPath = proxyPath + ".tmp";
-        if (File.Exists(proxyPath))
-        {
-            statusMessage = $"검출용 8bit 프록시 사용 ({LabelFor(preset)})";
-            return proxyPath;
-        }
-        if (File.Exists(tempPath))
-        {
-            try { File.Delete(tempPath); } catch { }
         }
 
-        statusMessage = $"검출용 8bit 프록시 생성 중... ({LabelFor(preset)})";
-        Directory.CreateDirectory(Path.GetDirectoryName(proxyPath)!);
-
-        try
+        var candidates = GetProxyOutputCandidates();
+        if (candidates.Count == 0)
         {
-            CreateProxyInternal(inputPath, tempPath, preset, progress, ct);
-            if (File.Exists(proxyPath))
-                File.Delete(proxyPath);
-            File.Move(tempPath, proxyPath, overwrite: true);
-            statusMessage = $"검출용 8bit 프록시 생성 완료 ({LabelFor(preset)})";
-            return proxyPath;
+            statusMessage = "프록시 생성 실패: 사용 가능한 인코더 없음";
+            return null;
         }
-        catch (OperationCanceledException)
+
+        foreach (var candidate in candidates)
         {
+            string cachedPath = BuildProxyPath(inputPath, preset, candidate);
+            if (File.Exists(cachedPath))
+            {
+                statusMessage = $"프록시 캐시 사용 ({LabelFor(preset)}, {candidate.Label})";
+                return cachedPath;
+            }
+        }
+
+        string? lastError = null;
+        foreach (var candidate in candidates)
+        {
+            string proxyPath = BuildProxyPath(inputPath, preset, candidate);
+            string tempPath = BuildTempProxyPath(proxyPath);
             if (File.Exists(tempPath))
             {
                 try { File.Delete(tempPath); } catch { }
             }
-            statusMessage = "프록시 생성 취소됨";
-            return null;
-        }
-        catch (Exception ex)
-        {
-            if (File.Exists(tempPath))
+
+            statusMessage = $"프록시 생성 중... ({LabelFor(preset)}, {candidate.Label})";
+            Directory.CreateDirectory(Path.GetDirectoryName(proxyPath)!);
+
+            try
             {
-                try { File.Delete(tempPath); } catch { }
+                CreateProxyInternal(inputPath, tempPath, preset, candidate, progress, ct);
+                if (File.Exists(proxyPath))
+                    File.Delete(proxyPath);
+                File.Move(tempPath, proxyPath, overwrite: true);
+                statusMessage = $"프록시 생성 완료 ({LabelFor(preset)}, {candidate.Label})";
+                return proxyPath;
             }
-            statusMessage = $"프록시 생성 실패: {ex.Message}";
-            return null;
+            catch (OperationCanceledException)
+            {
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { }
+                }
+                statusMessage = "프록시 생성 취소됨";
+                return null;
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { }
+                }
+                lastError = ex.Message;
+            }
         }
+
+        statusMessage = $"프록시 생성 실패: {lastError ?? "알 수 없는 오류"}";
+        return null;
     }
 
-    private static string BuildProxyPath(string inputPath, DetectionProxyPreset preset)
+    private static string BuildProxyPath(
+        string inputPath,
+        DetectionProxyPreset preset,
+        ProxyOutputFormat format)
     {
         var info = new FileInfo(inputPath);
-        string key = $"{inputPath}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{(int)preset}";
+        string key = $"{inputPath}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{(int)preset}|{format.ContainerName}|{(int)format.CodecId}|{format.Extension}";
         string hash = HashKey(key);
 
         string root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "FaceShield",
             "proxy");
-        return Path.Combine(root, $"{hash}{ProxyExtension}");
+        return Path.Combine(root, $"{hash}{format.Extension}");
+    }
+
+    private static string BuildTempProxyPath(string proxyPath)
+    {
+        string dir = Path.GetDirectoryName(proxyPath) ?? string.Empty;
+        string name = Path.GetFileNameWithoutExtension(proxyPath);
+        string ext = Path.GetExtension(proxyPath);
+        return Path.Combine(dir, $"{name}_tmp{ext}");
     }
 
     private static string HashKey(string key)
@@ -236,6 +275,7 @@ public static unsafe class DetectionProxyService
         string inputPath,
         string outputPath,
         DetectionProxyPreset preset,
+        ProxyOutputFormat format,
         IProgress<ProxyProgress>? progress,
         System.Threading.CancellationToken ct)
     {
@@ -285,13 +325,13 @@ public static unsafe class DetectionProxyService
             Throw(ffmpeg.avcodec_parameters_to_context(dec, inStream->codecpar));
             Throw(ffmpeg.avcodec_open2(dec, decoder, null));
 
-            Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
+            Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, format.ContainerName, outputPath));
             if (outFmt == null)
                 throw new InvalidOperationException("출력 포맷 컨텍스트 생성 실패");
 
-            AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
+            AVCodec* encoder = ffmpeg.avcodec_find_encoder(format.CodecId);
             if (encoder == null)
-                throw new InvalidOperationException("H264 인코더를 찾을 수 없습니다.");
+                throw new InvalidOperationException("프록시 인코더를 찾을 수 없습니다.");
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, encoder);
             if (outStream == null)
@@ -492,5 +532,39 @@ public static unsafe class DetectionProxyService
         ffmpeg.av_strerror(err, buf, 1024);
         throw new InvalidOperationException(
             Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buf, 1024)).TrimEnd('\0'));
+    }
+
+    private static List<ProxyOutputFormat> GetProxyOutputCandidates()
+    {
+        var candidates = new List<ProxyOutputFormat>
+        {
+            new("mp4", ".mp4", AVCodecID.AV_CODEC_ID_H264, "MP4/H264"),
+            new("mp4", ".mp4", AVCodecID.AV_CODEC_ID_MPEG4, "MP4/MPEG4"),
+            new("matroska", ".mkv", AVCodecID.AV_CODEC_ID_H264, "MKV/H264"),
+            new("matroska", ".mkv", AVCodecID.AV_CODEC_ID_MPEG4, "MKV/MPEG4"),
+            new("avi", ".avi", AVCodecID.AV_CODEC_ID_MPEG4, "AVI/MPEG4")
+        };
+
+        var available = new List<ProxyOutputFormat>();
+        foreach (var candidate in candidates)
+        {
+            if (!IsOutputFormatSupported(candidate.ContainerName, candidate.CodecId))
+                continue;
+            if (ffmpeg.avcodec_find_encoder(candidate.CodecId) == null)
+                continue;
+            available.Add(candidate);
+        }
+
+        return available;
+    }
+
+    private static bool IsOutputFormatSupported(string formatName, AVCodecID codecId)
+    {
+        AVOutputFormat* ofmt = ffmpeg.av_guess_format(formatName, null, null);
+        if (ofmt == null)
+            return false;
+
+        int supported = ffmpeg.avformat_query_codec(ofmt, codecId, 0);
+        return supported > 0;
     }
 }
