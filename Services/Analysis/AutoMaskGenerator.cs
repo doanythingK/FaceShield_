@@ -21,15 +21,15 @@ namespace FaceShield.Services.Analysis
     /// </summary>
     public sealed class AutoMaskGenerator
     {
-        private const double MinFaceAreaRatio = 0.001;
+        private const double MinFaceAreaRatio = 0.00075;
         private const double MinFaceAspectRatio = 0.5;
         private const double MaxFaceAspectRatio = 2.0;
-        private const double MinSkinRatio = 0.015;
-        private const double MinEdgeRatio = 0.02;
-        private const double MinLumaVariance = 200.0;
-        private const float StatsBypassConfidence = 0.85f;
-        private const int StatsSampleStep = 4;
-        private const int MinStatsSamples = 20;
+        private const double MinSkinRatio = 0.013;
+        private const double MinEdgeRatio = 0.016;
+        private const double MinLumaVariance = 160.0;
+        private const float StatsBypassConfidence = 0.80f;
+        private const int StatsSampleStep = 5;
+        private const int MinStatsSamples = 16;
 
         private static bool IsHardwareTransferFailure()
         {
@@ -192,6 +192,7 @@ namespace FaceShield.Services.Analysis
             long maskMs = 0;
             int processed = 0;
             var roiStats = new RoiDetectStats();
+            var progressState = new ProgressState();
             while (!ct.IsCancellationRequested)
             {
                 bool shouldDetect = _options.DetectEveryNFrames <= 1
@@ -233,7 +234,7 @@ namespace FaceShield.Services.Analysis
 
                 if (_maskProvider.HasEntry(idx))
                 {
-                    ReportProgress(progress, idx, totalFrames);
+                    ReportProgress(progress, idx, totalFrames, progressState);
                     continue;
                 }
 
@@ -248,7 +249,7 @@ namespace FaceShield.Services.Analysis
                         {
                             tDetect.Stop();
                             detectMs += tDetect.ElapsedMilliseconds;
-                            ReportProgress(progress, idx, totalFrames);
+                            ReportProgress(progress, idx, totalFrames, progressState);
                             continue;
                         }
 
@@ -274,7 +275,7 @@ namespace FaceShield.Services.Analysis
                         {
                             tDetect.Stop();
                             detectMs += tDetect.ElapsedMilliseconds;
-                            ReportProgress(progress, idx, totalFrames);
+                            ReportProgress(progress, idx, totalFrames, progressState);
                             continue;
                         }
 
@@ -338,24 +339,25 @@ namespace FaceShield.Services.Analysis
 
                 if (faces == null || faces.Count == 0)
                 {
-                    ReportProgress(progress, idx, totalFrames);
+                    ReportProgress(progress, idx, totalFrames, progressState);
                     continue;
                 }
 
                 if (frameSize.HasValue)
                 {
+                    var payload = BuildMaskPayload(faces);
                     var tMask = Stopwatch.StartNew();
                     _maskProvider.SetFaceRects(
                         idx,
-                        ExtractBounds(faces),
+                        payload.Bounds,
                         frameSize.Value,
-                        GetMinConfidence(faces),
-                        ExtractConfidences(faces));
+                        payload.MinConfidence,
+                        payload.Confidences);
                     tMask.Stop();
                     maskMs += tMask.ElapsedMilliseconds;
                 }
 
-                ReportProgress(progress, idx, totalFrames);
+                ReportProgress(progress, idx, totalFrames, progressState);
                 processed++;
 
                 if (processed % 60 == 0)
@@ -388,6 +390,11 @@ namespace FaceShield.Services.Analysis
             public float[] Confidences { get; init; } = Array.Empty<float>();
         }
 
+        private sealed class ProgressState
+        {
+            public int LastPercent = -1;
+        }
+
         private void GeneratePipelinedDetectAll(
             string videoPath,
             FaceOnnxDetector onnx,
@@ -415,6 +422,7 @@ namespace FaceShield.Services.Analysis
             long detectMs = 0;
             int processed = 0;
             var swTotal = Stopwatch.StartNew();
+            var progressState = new ProgressState();
             IReadOnlyList<FaceDetectionResult>? lastFaces = null;
             var roiStats = new RoiDetectStats();
 
@@ -494,7 +502,7 @@ namespace FaceShield.Services.Analysis
                             result.MinConfidence,
                             result.Confidences);
 
-                    ReportProgress(progress, result.Index, totalFrames);
+                    ReportProgress(progress, result.Index, totalFrames, progressState);
                     processed++;
                     if (processed % 60 == 0)
                     {
@@ -553,9 +561,10 @@ namespace FaceShield.Services.Analysis
                                             item.Height,
                                             useProxy ? scaleX : 1.0,
                                             useProxy ? scaleY : 1.0);
-                                        bounds = ExtractBounds(faces);
-                                        confidences = ExtractConfidences(faces);
-                                        minConfidence = GetMinConfidence(faces);
+                                        var payload = BuildMaskPayload(faces);
+                                        bounds = payload.Bounds;
+                                        confidences = payload.Confidences;
+                                        minConfidence = payload.MinConfidence;
                                         lastFaces = faces;
                                     }
                                 }
@@ -643,12 +652,13 @@ namespace FaceShield.Services.Analysis
 
                     if (faces != null && faces.Count > 0)
                     {
+                        var payload = BuildMaskPayload(faces);
                         _maskProvider.SetFaceRects(
                             frameIndex,
-                            ExtractBounds(faces),
+                            payload.Bounds,
                             frame.PixelSize,
-                            GetMinConfidence(faces),
-                            ExtractConfidences(faces));
+                            payload.MinConfidence,
+                            payload.Confidences);
                         progress?.Report(100);
                         return true;
                     }
@@ -724,6 +734,7 @@ namespace FaceShield.Services.Analysis
             long detectMs = 0;
             int processed = 0;
             var swTotal = Stopwatch.StartNew();
+            var progressState = new ProgressState();
 
             var producer = Task.Run(() =>
             {
@@ -837,9 +848,10 @@ namespace FaceShield.Services.Analysis
                                                 item.Height,
                                                 useProxy ? scaleX : 1.0,
                                                 useProxy ? scaleY : 1.0);
-                                            bounds = ExtractBounds(faces);
-                                            confidences = ExtractConfidences(faces);
-                                            minConfidence = GetMinConfidence(faces);
+                                            var payload = BuildMaskPayload(faces);
+                                            bounds = payload.Bounds;
+                                            confidences = payload.Confidences;
+                                            minConfidence = payload.MinConfidence;
                                         }
                                     }
                                 }
@@ -885,7 +897,7 @@ namespace FaceShield.Services.Analysis
                             result.MinConfidence,
                             result.Confidences);
 
-                    ReportProgress(progress, result.Index, totalFrames);
+                    ReportProgress(progress, result.Index, totalFrames, progressState);
                     int done = Interlocked.Increment(ref processed);
                     if (done % 60 == 0)
                     {
@@ -1134,14 +1146,45 @@ namespace FaceShield.Services.Analysis
             return scaled;
         }
 
-        private static void ReportProgress(IProgress<int>? progress, int frameIndex, int totalFrames)
+        private static void ReportProgress(
+            IProgress<int>? progress,
+            int frameIndex,
+            int totalFrames,
+            ProgressState state)
         {
             if (progress == null)
                 return;
 
             int percent = (int)Math.Round(frameIndex * 100.0 / Math.Max(1, totalFrames - 1));
             if (percent > 100) percent = 100;
+            if (percent == state.LastPercent)
+                return;
+            state.LastPercent = percent;
             progress.Report(percent);
+        }
+
+        private static (Rect[] Bounds, float[] Confidences, float? MinConfidence) BuildMaskPayload(
+            IReadOnlyList<FaceDetectionResult> faces)
+        {
+            int count = faces.Count;
+            if (count == 0)
+                return (Array.Empty<Rect>(), Array.Empty<float>(), null);
+
+            var bounds = new Rect[count];
+            var confidences = new float[count];
+            float min = float.MaxValue;
+
+            for (int i = 0; i < count; i++)
+            {
+                var face = faces[i];
+                bounds[i] = face.Bounds;
+                float conf = face.Confidence;
+                confidences[i] = conf;
+                if (conf < min)
+                    min = conf;
+            }
+
+            return (bounds, confidences, min == float.MaxValue ? null : min);
         }
 
         private static Rect[] ExtractBounds(IReadOnlyList<FaceDetectionResult> faces)

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -29,7 +30,6 @@ namespace FaceShield.Services.FaceDetection
         private static readonly object _statusLock = new();
         private static string _lastExecutionProviderLabel = "CPU";
         private static string? _lastExecutionProviderError;
-        private static readonly object _perfLock = new();
         private static long _perfCalls;
         private static long _perfPreMs;
         private static long _perfInferMs;
@@ -103,7 +103,10 @@ namespace FaceShield.Services.FaceDetection
             if (frame is null)
                 return Array.Empty<FaceDetectionResult>();
 
-            return DetectFacesWithTiming(() => ConvertToImageArray(frame));
+            var pre = Stopwatch.StartNew();
+            var input = ConvertToImageArray(frame);
+            pre.Stop();
+            return DetectFaces(input, pre.ElapsedMilliseconds);
         }
 
         internal IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(WriteableBitmap frame, double ratio)
@@ -123,7 +126,10 @@ namespace FaceShield.Services.FaceDetection
                 return DetectFaces(frame);
 
             bool useBilinear = quality == DownscaleQuality.BalancedBilinear;
-            return DetectFacesWithTiming(() => ConvertToImageArrayDownscaled(frame, ratio, useBilinear));
+            var pre = Stopwatch.StartNew();
+            var input = ConvertToImageArrayDownscaled(frame, ratio, useBilinear);
+            pre.Stop();
+            return DetectFaces(input, pre.ElapsedMilliseconds);
         }
 
         internal IReadOnlyList<FaceDetectionResult> DetectFacesBgra(
@@ -139,22 +145,23 @@ namespace FaceShield.Services.FaceDetection
 
             if (ratio >= 1.0 || ratio <= 0)
             {
-                return DetectFacesWithTiming(() => ConvertToImageArrayFromBgra(data, stride, width, height));
+                var pre = Stopwatch.StartNew();
+                var input = ConvertToImageArrayFromBgra(data, stride, width, height);
+                pre.Stop();
+                return DetectFaces(input, pre.ElapsedMilliseconds);
             }
 
             bool useBilinear = quality == DownscaleQuality.BalancedBilinear;
-            return DetectFacesWithTiming(() => ConvertToImageArrayFromBgraDownscaled(data, stride, width, height, ratio, useBilinear));
+            var preDownscaled = Stopwatch.StartNew();
+            var downscaledInput = ConvertToImageArrayFromBgraDownscaled(data, stride, width, height, ratio, useBilinear);
+            preDownscaled.Stop();
+            return DetectFaces(downscaledInput, preDownscaled.ElapsedMilliseconds);
         }
 
         public IReadOnlyList<FaceDetectionResult> DetectFaces(Image<Rgb24> img)
         {
-            return DetectFacesWithTiming(() => ConvertToImageArray(img));
-        }
-
-        private IReadOnlyList<FaceDetectionResult> DetectFacesWithTiming(Func<float[][,]> buildInput)
-        {
             var pre = Stopwatch.StartNew();
-            var input = buildInput();
+            var input = ConvertToImageArray(img);
             pre.Stop();
             return DetectFaces(input, pre.ElapsedMilliseconds);
         }
@@ -190,18 +197,15 @@ namespace FaceShield.Services.FaceDetection
 
         private static void RecordPerf(long preMs, long inferMs)
         {
-            lock (_perfLock)
-            {
-                _perfCalls++;
-                _perfPreMs += preMs;
-                _perfInferMs += inferMs;
-                _perfTotalMs += preMs + inferMs;
+            long calls = Interlocked.Increment(ref _perfCalls);
+            Interlocked.Add(ref _perfPreMs, preMs);
+            Interlocked.Add(ref _perfInferMs, inferMs);
+            Interlocked.Add(ref _perfTotalMs, preMs + inferMs);
 
-                if (_perfCalls % 60 == 0)
-                {
-                    Debug.WriteLine(
-                        $"[OnnxPerf] calls={_perfCalls}, preMs={_perfPreMs}, inferMs={_perfInferMs}, totalMs={_perfTotalMs}");
-                }
+            if (calls % 60 == 0)
+            {
+                Debug.WriteLine(
+                    $"[OnnxPerf] calls={calls}, preMs={Interlocked.Read(ref _perfPreMs)}, inferMs={Interlocked.Read(ref _perfInferMs)}, totalMs={Interlocked.Read(ref _perfTotalMs)}");
             }
         }
 
@@ -800,7 +804,7 @@ namespace FaceShield.Services.FaceDetection
             // Use OS-appropriate providers when available; fall back silently.
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime.CoreML"))
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime"))
                     return "CoreML";
             }
 
