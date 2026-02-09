@@ -128,16 +128,17 @@
   </ItemGroup>
 
 
-  <!-- 🔹 Windows 개발 환경 (디버그 실행용 FFmpeg DLL 복사) -->
-  <ItemGroup Condition="'$(Configuration)' == 'Debug' and '$(Platform)' == 'x64'">
-    <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
+  <!-- 🔹 Windows 실행/디버그: 구성 이름과 무관하게 FFmpeg DLL 복사 -->
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <None Include="FFmpeg\win-x64\*.dll;avcodec-*.dll;avformat-*.dll;avutil-*.dll;swscale-*.dll;swresample-*.dll;avfilter-*.dll;avdevice-*.dll;postproc-*.dll" Link="%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
   <!-- 🔹 Windows 배포: win-x64 publish 시 FFmpeg DLL 포함 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
+    <None Include="FFmpeg\win-x64\*.dll;avcodec-*.dll;avformat-*.dll;avutil-*.dll;swscale-*.dll;swresample-*.dll;avfilter-*.dll;avdevice-*.dll;postproc-*.dll" Link="%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
   </ItemGroup>
@@ -168,7 +169,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.coreml\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.coreml\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib')" Link="libonnxruntime_providers_coreml.dylib">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib')" Link="libonnxruntime_providers_coreml.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>

@@ -11,6 +11,8 @@ namespace FaceShield.Views.Workspace;
 public partial class FramePreviewView : UserControl
 {
     private FramePreviewViewModel? _vm;
+    private bool _isStrokeActive;
+    private Point? _lastImagePoint;
 
     public FramePreviewView()
     {
@@ -22,43 +24,84 @@ public partial class FramePreviewView : UserControl
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         UpdateBrushCursor(e);
-        Forward(e, isPressed: true);
+        var point = e.GetCurrentPoint(this);
+        if (e.Pointer.Type == PointerType.Mouse && !point.Properties.IsLeftButtonPressed)
+            return;
+
+        if (Forward(e, isPressed: true))
+        {
+            _isStrokeActive = true;
+            e.Pointer.Capture(this);
+        }
     }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         UpdateBrushCursor(e);
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-            Forward(e, isPressed: false);
+        if (_isStrokeActive)
+        {
+            if (!Forward(e))
+            {
+                ForceReleaseStrokeFromLastPoint();
+                _isStrokeActive = false;
+                _lastImagePoint = null;
+                e.Pointer.Capture(null);
+            }
+            return;
+        }
+
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && Forward(e, isPressed: true))
+        {
+            _isStrokeActive = true;
+            e.Pointer.Capture(this);
+        }
     }
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
         UpdateBrushCursor(e);
-        Forward(e, isReleased: true);
+        if (_isStrokeActive)
+        {
+            if (!Forward(e, isReleased: true, clampToImage: true))
+                ForceReleaseStrokeFromLastPoint();
+            _isStrokeActive = false;
+            _lastImagePoint = null;
+            e.Pointer.Capture(null);
+        }
     }
 
     private void OnPointerExited(object? sender, PointerEventArgs e)
     {
+        if (_isStrokeActive)
+        {
+            ForceReleaseStrokeFromLastPoint();
+            _isStrokeActive = false;
+            _lastImagePoint = null;
+            e.Pointer.Capture(null);
+        }
         SetBrushCursorVisible(false);
     }
 
-    private void Forward(PointerEventArgs e, bool isPressed = false, bool isReleased = false)
+    private bool Forward(
+        PointerEventArgs e,
+        bool isPressed = false,
+        bool isReleased = false,
+        bool clampToImage = false)
     {
         if (DataContext is not FramePreviewViewModel vm)
-            return;
+            return false;
 
         if (vm.FrameBitmap is null)
-            return;
+            return false;
 
         // ✅ Image 컨트롤을 기준 좌표계로 사용해야 함
         var img = this.FindControl<Image>("FrameImage");
         if (img is null)
-            return;
+            return false;
 
         // 레이아웃 완료 전이면 Bounds가 0일 수 있음
         if (img.Bounds.Width <= 0 || img.Bounds.Height <= 0)
-            return;
+            return false;
 
         // ✅ 포인터 위치도 Image 기준으로 받는다 (기존 코드의 핵심 문제)
         var imagePoint = e.GetPosition(img);
@@ -67,7 +110,7 @@ public partial class FramePreviewView : UserControl
         double imgH = vm.FrameBitmap.PixelSize.Height;
 
         if (imgW <= 0 || imgH <= 0)
-            return;
+            return false;
 
         double scale = Math.Min(
             img.Bounds.Width / imgW,
@@ -82,10 +125,18 @@ public partial class FramePreviewView : UserControl
         double x = (imagePoint.X - offsetX) / scale;
         double y = (imagePoint.Y - offsetY) / scale;
 
-        if (x < 0 || y < 0 || x >= imgW || y >= imgH)
-            return;
+        if (clampToImage)
+        {
+            x = Math.Clamp(x, 0, Math.Max(0, imgW - 1));
+            y = Math.Clamp(y, 0, Math.Max(0, imgH - 1));
+        }
+        else if (x < 0 || y < 0 || x >= imgW || y >= imgH)
+        {
+            return false;
+        }
 
         var p = new Point(x, y);
+        _lastImagePoint = p;
 
         if (isPressed)
             vm.OnPointerPressed(p);
@@ -93,6 +144,17 @@ public partial class FramePreviewView : UserControl
             vm.OnPointerReleased(p);
         else
             vm.OnPointerMoved(p);
+        return true;
+    }
+
+    private void ForceReleaseStrokeFromLastPoint()
+    {
+        if (DataContext is not FramePreviewViewModel vm)
+            return;
+        if (!_lastImagePoint.HasValue)
+            return;
+
+        vm.OnPointerReleased(_lastImagePoint.Value);
     }
 
     private void UpdateBrushCursor(PointerEventArgs e)

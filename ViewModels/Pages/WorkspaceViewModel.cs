@@ -32,11 +32,13 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
         private const float LowConfidenceMargin = 0.05f;
-        private const float TemporalConfidenceStrong = 0.7f;
-        private const float TemporalConfidenceWeak = 0.5f;
-        private const double TemporalIouMin = 0.2;
-        private const double TemporalMaxCenterShiftRatio = 0.5;
-        private const double TemporalMaxAreaChangeRatio = 3.0;
+        private const float TemporalConfidenceStrong = 0.68f;
+        private const float TemporalConfidenceWeak = 0.50f;
+        private const double TemporalIouMin = 0.20;
+        private const double TemporalMaxCenterShiftRatio = 0.55;
+        private const double TemporalMaxAreaChangeRatio = 3.2;
+        private const double TemporalHoleFillIouMin = 0.12;
+        private const double TemporalDuplicateIouMin = 0.35;
         private const int TemporalMinRunLength = 2;
         private int _autoResumeIndex;
         private bool _autoCompleted;
@@ -298,6 +300,8 @@ namespace FaceShield.ViewModels.Pages
                     detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
+                if (lastProcessed == 0)
+                    _maskProvider.ClearFaceMasks();
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
                 //       진행률 UI를 그릴 수 있습니다.
@@ -425,14 +429,52 @@ namespace FaceShield.ViewModels.Pages
 
             for (int i = 1; i < total - 1; i++)
             {
-                if (hasStored[i] || facesByFrame[i] != null)
-                    continue;
-                if (facesByFrame[i - 1] == null || facesByFrame[i + 1] == null)
+                if (hasStored[i])
                     continue;
 
-                facesByFrame[i] = new List<Rect>(facesByFrame[i - 1]!);
-                confByFrame[i] = new List<float>(confByFrame[i - 1]!);
-                sizeByFrame[i] = sizeByFrame[i - 1];
+                var prevFaces = facesByFrame[i - 1];
+                var nextFaces = facesByFrame[i + 1];
+                if (prevFaces == null || nextFaces == null)
+                    continue;
+
+                var matches = MatchFacesForInterpolation(
+                    prevFaces,
+                    confByFrame[i - 1],
+                    nextFaces,
+                    confByFrame[i + 1]);
+                if (matches.Count == 0)
+                    continue;
+
+                if (facesByFrame[i] == null)
+                {
+                    facesByFrame[i] = new List<Rect>(matches.Count);
+                    confByFrame[i] = new List<float>(matches.Count);
+                }
+                else
+                {
+                    confByFrame[i] ??= new List<float>(facesByFrame[i]!.Count);
+                    while (confByFrame[i]!.Count < facesByFrame[i]!.Count)
+                        confByFrame[i]!.Add(TemporalConfidenceStrong);
+                }
+
+                if (sizeByFrame[i].Width <= 0 || sizeByFrame[i].Height <= 0)
+                {
+                    sizeByFrame[i] = sizeByFrame[i - 1].Width > 0 && sizeByFrame[i - 1].Height > 0
+                        ? sizeByFrame[i - 1]
+                        : sizeByFrame[i + 1];
+                }
+
+                foreach (var match in matches)
+                {
+                    var interpolated = InterpolateRect(match.Prev, match.Next);
+                    if (interpolated.Width <= 0 || interpolated.Height <= 0)
+                        continue;
+                    if (HasSimilarFace(interpolated, facesByFrame[i], TemporalDuplicateIouMin))
+                        continue;
+
+                    facesByFrame[i]!.Add(interpolated);
+                    confByFrame[i]!.Add(Math.Clamp(match.Confidence, TemporalConfidenceWeak, 1.0f));
+                }
             }
 
             for (int i = 0; i < total; i++)
@@ -612,6 +654,75 @@ namespace FaceShield.ViewModels.Pages
             if (union <= 0.0)
                 return 0.0;
             return inter / union;
+        }
+
+        private static List<(Rect Prev, Rect Next, float Confidence)> MatchFacesForInterpolation(
+            IReadOnlyList<Rect>? prevFaces,
+            IReadOnlyList<float>? prevConfs,
+            IReadOnlyList<Rect>? nextFaces,
+            IReadOnlyList<float>? nextConfs)
+        {
+            var matches = new List<(Rect Prev, Rect Next, float Confidence)>();
+            if (prevFaces == null || nextFaces == null || prevFaces.Count == 0 || nextFaces.Count == 0)
+                return matches;
+
+            var nextUsed = new bool[nextFaces.Count];
+            for (int i = 0; i < prevFaces.Count; i++)
+            {
+                double bestIou = 0.0;
+                int bestIndex = -1;
+                for (int j = 0; j < nextFaces.Count; j++)
+                {
+                    if (nextUsed[j])
+                        continue;
+
+                    double iou = IoU(prevFaces[i], nextFaces[j]);
+                    if (iou < TemporalHoleFillIouMin || iou <= bestIou)
+                        continue;
+
+                    bestIou = iou;
+                    bestIndex = j;
+                }
+
+                if (bestIndex < 0)
+                    continue;
+
+                nextUsed[bestIndex] = true;
+                float conf = Math.Max(GetConfidenceAt(prevConfs, i), GetConfidenceAt(nextConfs, bestIndex));
+                matches.Add((prevFaces[i], nextFaces[bestIndex], conf));
+            }
+
+            return matches;
+        }
+
+        private static Rect InterpolateRect(Rect prev, Rect next)
+        {
+            double x = (prev.X + next.X) * 0.5;
+            double y = (prev.Y + next.Y) * 0.5;
+            double width = (prev.Width + next.Width) * 0.5;
+            double height = (prev.Height + next.Height) * 0.5;
+            return new Rect(x, y, Math.Max(0.0, width), Math.Max(0.0, height));
+        }
+
+        private static bool HasSimilarFace(Rect candidate, IReadOnlyList<Rect>? faces, double minIou)
+        {
+            if (faces == null || faces.Count == 0)
+                return false;
+
+            for (int i = 0; i < faces.Count; i++)
+            {
+                if (IoU(candidate, faces[i]) >= minIou)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static float GetConfidenceAt(IReadOnlyList<float>? confs, int index)
+        {
+            if (confs == null || index < 0 || index >= confs.Count)
+                return TemporalConfidenceStrong;
+            return confs[index];
         }
 
         private async void OnAutoRequested()

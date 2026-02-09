@@ -51,7 +51,9 @@ public unsafe sealed class MaskedVideoExporter
         fixed (byte* _ = _temp)
         fixed (byte* __ = _blurred)
         {
-            var (rx0, ry0, rx1, ry1) = GetMaskBounds(m, w, h);
+            var (rx0, ry0, rx1, ry1) = faces != null && faces.Count > 0
+                ? GetFaceBounds(faces, w, h)
+                : GetMaskBounds(m, w, h);
             if (rx1 <= rx0 || ry1 <= ry0)
                 return;
 
@@ -64,7 +66,6 @@ public unsafe sealed class MaskedVideoExporter
 
             EnsureIntegralBuffers(pw, ph);
             byte[]? radiusMap = null;
-            int maxRadius = r;
 
             int rowStride = pw + 1;
             for (int y = 1; y <= ph; y++)
@@ -93,7 +94,6 @@ public unsafe sealed class MaskedVideoExporter
 
             if (faces != null && faces.Count > 0)
             {
-                maxRadius = r;
                 radiusMap = EnsureRadiusMap(pw, ph);
                 Array.Clear(radiusMap, 0, pw * ph);
 
@@ -128,8 +128,10 @@ public unsafe sealed class MaskedVideoExporter
             {
                 MaxDegreeOfParallelism = maxWorkers
             };
+            int roiArea = (rx1 - rx0) * (ry1 - ry0);
+            bool useParallel = maxWorkers > 1 && roiArea >= 220_000;
 
-            System.Threading.Tasks.Parallel.For(ry0, ry1, parallelOptions, y =>
+            void ProcessRow(int y)
             {
                 byte* srcRow = data + y * stride;
                 int mi = y * w;
@@ -200,7 +202,17 @@ public unsafe sealed class MaskedVideoExporter
                         dst[3] = 255;
                     }
                 }
-            });
+            }
+
+            if (useParallel)
+            {
+                System.Threading.Tasks.Parallel.For(ry0, ry1, parallelOptions, ProcessRow);
+            }
+            else
+            {
+                for (int y = ry0; y < ry1; y++)
+                    ProcessRow(y);
+            }
         }
     }
 
@@ -228,10 +240,24 @@ public unsafe sealed class MaskedVideoExporter
         }
         else
         {
-            Array.Clear(_integralB, 0, size);
-            Array.Clear(_integralG, 0, size);
-            Array.Clear(_integralR, 0, size);
-            Array.Clear(_integralA, 0, size);
+            var integralB = _integralB!;
+            var integralG = _integralG!;
+            var integralR = _integralR!;
+            var integralA = _integralA!;
+            int rowStride = width + 1;
+            Array.Clear(integralB, 0, rowStride);
+            Array.Clear(integralG, 0, rowStride);
+            Array.Clear(integralR, 0, rowStride);
+            Array.Clear(integralA, 0, rowStride);
+
+            for (int y = 1; y <= height; y++)
+            {
+                int idx = y * rowStride;
+                integralB[idx] = 0;
+                integralG[idx] = 0;
+                integralR[idx] = 0;
+                integralA[idx] = 0;
+            }
         }
     }
 
@@ -285,6 +311,37 @@ public unsafe sealed class MaskedVideoExporter
         double right = Math.Min(width, face.X + face.Width + padX);
         double bottom = Math.Min(height, face.Y + face.Height + padY);
         return new Rect(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
+    }
+
+    private static (int x0, int y0, int x1, int y1) GetFaceBounds(IReadOnlyList<Rect> faces, int width, int height)
+    {
+        if (faces == null || faces.Count == 0 || width <= 0 || height <= 0)
+            return (0, 0, 0, 0);
+
+        int minX = width;
+        int minY = height;
+        int maxX = -1;
+        int maxY = -1;
+
+        foreach (var face in faces)
+        {
+            var padded = GetPaddedRect(face, width, height);
+            int x0 = Math.Clamp((int)Math.Floor(padded.X), 0, width);
+            int y0 = Math.Clamp((int)Math.Floor(padded.Y), 0, height);
+            int x1 = Math.Clamp((int)Math.Ceiling(padded.Right), 0, width);
+            int y1 = Math.Clamp((int)Math.Ceiling(padded.Bottom), 0, height);
+            if (x1 <= x0 || y1 <= y0)
+                continue;
+
+            if (x0 < minX) minX = x0;
+            if (y0 < minY) minY = y0;
+            if (x1 > maxX) maxX = x1;
+            if (y1 > maxY) maxY = y1;
+        }
+
+        if (maxX <= minX || maxY <= minY)
+            return (0, 0, 0, 0);
+        return (minX, minY, maxX, maxY);
     }
 
     private static (int x0, int y0, int x1, int y1) GetMaskBounds(uint* mask, int w, int h)

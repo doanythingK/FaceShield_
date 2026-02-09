@@ -171,7 +171,9 @@ namespace FaceShield.ViewModels.Pages
         private bool autoUseOrtOptimization = true;
 
         [ObservableProperty]
-        private bool autoUseGpu = false;
+        private bool autoUseGpu =
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
         [ObservableProperty]
         private bool autoExportAfter = true;

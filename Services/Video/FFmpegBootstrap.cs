@@ -36,7 +36,7 @@ namespace FaceShield.Services.Video
                 string pathInfo = searchPaths.Count > 0
                     ? string.Join(", ", searchPaths)
                     : "(none)";
-                string probeInfo = ProbeDylibLoad("avcodec", searchPaths);
+                string probeInfo = ProbeNativeLoad("avcodec", searchPaths);
                 throw new InvalidOperationException(
                     $"FFmpeg native libraries not loaded. SearchPaths: {pathInfo}. Probe: {probeInfo}",
                     ex);
@@ -86,29 +86,88 @@ namespace FaceShield.Services.Video
         {
             var baseDir = AppContext.BaseDirectory;
             var paths = new List<string>();
+            string? platformSubDir = GetBundledFfmpegSubDirectory();
 
+            AddPathIfExists(paths, Path.GetFullPath(baseDir));
+            AddPathIfExists(paths, Environment.CurrentDirectory);
+            AddPathIfExists(paths, Path.Combine(baseDir, "FFmpeg"));
+            if (!string.IsNullOrWhiteSpace(platformSubDir))
+                AddPathIfExists(paths, Path.Combine(baseDir, "FFmpeg", platformSubDir));
             AddPathIfExists(paths, Path.GetFullPath(Path.Combine(baseDir, "..", "Frameworks")));
             AddPathIfExists(paths, Path.GetFullPath(Path.Combine(baseDir, "..", "Resources")));
-            AddPathIfExists(paths, Path.GetFullPath(baseDir));
-            AddPathIfExists(paths, Path.Combine(baseDir, "FFmpeg"));
+
+            var current = new DirectoryInfo(baseDir);
+            for (int i = 0; i < 8 && current != null; i++)
+            {
+                AddPathIfExists(paths, current.FullName);
+                AddPathIfExists(paths, Path.Combine(current.FullName, "FFmpeg"));
+                if (!string.IsNullOrWhiteSpace(platformSubDir))
+                    AddPathIfExists(paths, Path.Combine(current.FullName, "FFmpeg", platformSubDir));
+
+                current = current.Parent;
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                AddPathsFromEnvironment(paths, "PATH");
 
             return paths;
         }
 
         private static void AddPathIfExists(List<string> paths, string path)
         {
-            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path) && !paths.Contains(path))
-                paths.Add(path);
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(path);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (!Directory.Exists(fullPath))
+                return;
+
+            var cmp = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            if (paths.Any(p => string.Equals(p, fullPath, cmp)))
+                return;
+
+            paths.Add(fullPath);
+        }
+
+        private static void AddPathsFromEnvironment(List<string> paths, string envName)
+        {
+            string? value = Environment.GetEnvironmentVariable(envName);
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            foreach (var part in value.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                AddPathIfExists(paths, part.Trim());
+        }
+
+        private static string? GetBundledFfmpegSubDirectory()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return "win-x64";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return "osx-arm64";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return "linux-x64";
+            return null;
         }
 
         private static string BuildLibraryFileName(string libraryName)
         {
-            string name = libraryName;
-            if (!name.StartsWith("lib", StringComparison.OrdinalIgnoreCase))
-                name = $"lib{name}";
-            if (!name.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase))
-                name += ".dylib";
-            return name;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return $"{libraryName}.dll";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return $"lib{libraryName}.so";
+            return $"lib{libraryName}.dylib";
         }
 
         private static bool IsFfmpegLibrary(string libraryName)
@@ -128,9 +187,20 @@ namespace FaceShield.Services.Video
                 name = name.Substring(3);
             if (name.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase))
                 name = name.Substring(0, name.Length - ".dylib".Length);
+            if (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - ".dll".Length);
+            int soIndex = name.IndexOf(".so", StringComparison.OrdinalIgnoreCase);
+            if (soIndex > 0)
+                name = name.Substring(0, soIndex);
             int versionIndex = name.IndexOf('.');
             if (versionIndex > 0)
                 name = name.Substring(0, versionIndex);
+            int dashIndex = name.LastIndexOf('-');
+            if (dashIndex > 0 &&
+                int.TryParse(name.Substring(dashIndex + 1), out _))
+            {
+                name = name.Substring(0, dashIndex);
+            }
             return name;
         }
 
@@ -156,26 +226,50 @@ namespace FaceShield.Services.Video
 
         private static IEnumerable<string> EnumerateLibraryCandidates(string dir, string normalized)
         {
-            string baseName = $"lib{normalized}";
-            string direct = Path.Combine(dir, $"{baseName}.dylib");
-            if (File.Exists(direct))
-                yield return direct;
+            var comparer = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal;
+            var result = new HashSet<string>(comparer);
 
-            IEnumerable<string> matches;
-            try
+            void AddIfExists(string path)
             {
-                matches = Directory.EnumerateFiles(dir, $"{baseName}*.dylib");
-            }
-            catch
-            {
-                yield break;
+                if (File.Exists(path))
+                    result.Add(path);
             }
 
-            foreach (var match in matches.OrderBy(path => path.Length))
+            void AddByPattern(string pattern)
             {
-                if (!string.Equals(match, direct, StringComparison.OrdinalIgnoreCase))
-                    yield return match;
+                try
+                {
+                    foreach (var file in Directory.EnumerateFiles(dir, pattern))
+                        result.Add(file);
+                }
+                catch
+                {
+                    // Ignore unreadable paths.
+                }
             }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                AddIfExists(Path.Combine(dir, $"{normalized}.dll"));
+                AddIfExists(Path.Combine(dir, $"lib{normalized}.dll"));
+                AddByPattern($"{normalized}*.dll");
+                AddByPattern($"lib{normalized}*.dll");
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                AddIfExists(Path.Combine(dir, $"lib{normalized}.so"));
+                AddByPattern($"lib{normalized}.so*");
+            }
+            else
+            {
+                AddIfExists(Path.Combine(dir, $"lib{normalized}.dylib"));
+                AddByPattern($"lib{normalized}*.dylib");
+            }
+
+            foreach (var candidate in result.OrderBy(path => path.Length))
+                yield return candidate;
         }
 
         private static string FindFfmpegRootPath(List<string> searchPaths)
@@ -210,11 +304,35 @@ namespace FaceShield.Services.Video
             return string.Empty;
         }
 
+        private static string ProbeNativeLoad(string libraryName, List<string> searchPaths)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return ProbeDylibLoad(libraryName, searchPaths);
+
+            string normalized = NormalizeLibraryName(libraryName);
+            bool foundCandidate = false;
+
+            foreach (var dir in searchPaths)
+            {
+                foreach (var candidate in EnumerateLibraryCandidates(dir, normalized))
+                {
+                    foundCandidate = true;
+                    if (NativeLibrary.TryLoad(candidate, out var handle))
+                    {
+                        NativeLibrary.Free(handle);
+                        return $"loaded {candidate}";
+                    }
+                }
+            }
+
+            if (!foundCandidate)
+                return "no matching native library found";
+
+            return "native library exists but failed to load";
+        }
+
         private static string ProbeDylibLoad(string libraryName, List<string> searchPaths)
         {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                return "unsupported platform";
-
             string normalized = NormalizeLibraryName(libraryName);
             string lastError = string.Empty;
 
@@ -235,10 +353,9 @@ namespace FaceShield.Services.Video
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(lastError))
-                return lastError;
-
-            return "no matching dylib found";
+            return string.IsNullOrWhiteSpace(lastError)
+                ? "no matching dylib found"
+                : lastError;
         }
 
         private static string GetDlError()

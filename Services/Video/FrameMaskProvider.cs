@@ -78,6 +78,20 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks.TryRemove(frameIndex, out _);
     }
 
+    public void ClearFaceMasks()
+    {
+        _faceMasks.Clear();
+    }
+
+    public bool HasAnyMaskEntries()
+        => !_masks.IsEmpty || !_faceMasks.IsEmpty;
+
+    public int[] GetStoredMaskFrameIndices()
+        => _masks.Keys.ToArray();
+
+    public int[] GetFaceMaskFrameIndices()
+        => _faceMasks.Keys.ToArray();
+
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
         => _masks.ToArray();
 
@@ -119,10 +133,21 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             Avalonia.Platform.PixelFormat.Bgra8888,
             Avalonia.Platform.AlphaFormat.Premul);
 
+        RenderMaskFromFaceRects(mask, size, faces);
+        return mask;
+    }
+
+    public static void RenderMaskFromFaceRects(WriteableBitmap mask, PixelSize size, IReadOnlyList<Rect> faces)
+    {
+        if (mask == null)
+            throw new ArgumentNullException(nameof(mask));
+        if (size.Width <= 0 || size.Height <= 0)
+            return;
+
+        if (mask.PixelSize.Width != size.Width || mask.PixelSize.Height != size.Height)
+            throw new ArgumentException("Mask bitmap size does not match target size.", nameof(mask));
+
         const double SoftEdgeRatio = 0.35;
-        const double R1 = 0.01;
-        const double R2 = 0.03;
-        const double R3 = 0.05;
 
         using var fb = mask.Lock();
 
@@ -132,6 +157,12 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
             int stride = fb.RowBytes;
             int w = size.Width;
             int h = size.Height;
+
+            for (int y = 0; y < h; y++)
+            {
+                var row = new Span<byte>(basePtr + y * stride, w * 4);
+                row.Clear();
+            }
 
             foreach (var r in faces)
             {
@@ -201,8 +232,6 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
                 }
             }
         }
-
-        return mask;
     }
 }
 }
