@@ -19,11 +19,49 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Prepare FFmpeg DLL bundle
+        shell: pwsh
+        run: |
+          $bundle = "FFmpeg/win-x64-binaries.tar.gz"
+          if (!(Test-Path $bundle)) {
+            throw "FFmpeg bundle not found: $bundle"
+          }
+          New-Item -ItemType Directory -Path "FFmpeg/win-x64" -Force | Out-Null
+          Get-ChildItem "FFmpeg/win-x64/*.dll" -ErrorAction SilentlyContinue | Remove-Item -Force
+          tar -xzf $bundle -C "FFmpeg/win-x64"
+
       - name: Restore
         run: dotnet restore
 
       - name: Publish Windows app (self-contained)
         run: dotnet publish FaceShield.csproj -c Release -r win-x64 --self-contained true
+
+      - name: Verify native DLLs exist
+        shell: pwsh
+        run: |
+          $outDir = "bin/Release/net8.0/win-x64/publish"
+          $required = @(
+            "FaceShield.exe",
+            "avcodec-62.dll",
+            "avformat-62.dll",
+            "avutil-60.dll",
+            "avfilter-11.dll",
+            "avdevice-62.dll",
+            "swscale-9.dll",
+            "swresample-6.dll",
+            "onnxruntime.dll",
+            "onnxruntime_providers_shared.dll",
+            "DirectML.dll"
+          )
+          $missing = @()
+          foreach ($name in $required) {
+            if (!(Test-Path (Join-Path $outDir $name))) {
+              $missing += $name
+            }
+          }
+          if ($missing.Count -gt 0) {
+            throw "Missing publish files: $($missing -join ', ')"
+          }
 
       - name: Package zip
         shell: pwsh

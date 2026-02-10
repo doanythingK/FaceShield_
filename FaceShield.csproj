@@ -133,14 +133,14 @@
 
   <!-- 🔹 Windows 실행/디버그: 구성 이름과 무관하게 FFmpeg DLL 복사 -->
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-    <None Include="FFmpeg\win-x64\*.dll;avcodec-*.dll;avformat-*.dll;avutil-*.dll;swscale-*.dll;swresample-*.dll;avfilter-*.dll;avdevice-*.dll;postproc-*.dll" Link="%(Filename)%(Extension)">
+    <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
   <!-- 🔹 Windows 배포: win-x64 publish 시 FFmpeg DLL 포함 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <None Include="FFmpeg\win-x64\*.dll;avcodec-*.dll;avformat-*.dll;avutil-*.dll;swscale-*.dll;swresample-*.dll;avfilter-*.dll;avdevice-*.dll;postproc-*.dll" Link="%(Filename)%(Extension)">
+    <None Include="FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
