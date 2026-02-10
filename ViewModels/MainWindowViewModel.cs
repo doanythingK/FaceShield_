@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Workspace;
 using FaceShield.ViewModels.Pages;
 

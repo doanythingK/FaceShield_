@@ -43,6 +43,12 @@
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
+  <!-- Windows publish는 단일 파일을 끄고 네이티브 DLL을 파일로 배치 -->
+  <PropertyGroup Condition="'$(PublishDir)' != '' and '$(RuntimeIdentifier)' == 'win-x64'">
+    <PublishSingleFile>false</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
   <!-- Avalonia 리소스 -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
@@ -73,15 +79,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
-    <None Include="Native/win-x64/onnxruntime.dll" Condition="!Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\\1.23.0\\runtimes\\win-x64\\native\\onnxruntime.dll')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </None>
-    <None Include="Native/win-x64/onnxruntime_providers_shared.dll" Condition="!Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\\1.23.0\\runtimes\\win-x64\\native\\onnxruntime_providers_shared.dll')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </None>
-    <None Include="Native/win-x64/DirectML.dll" Condition="!Exists('$(NuGetPackageRoot)microsoft.ai.directml\\1.15.4\\bin\\x64-win\\DirectML.dll')">
+    <None Include="Native/win-x64/DirectML.dll" Link="DirectML.dll" Condition="!Exists('$(NuGetPackageRoot)microsoft.ai.directml\\1.15.4\\bin\\x64-win\\DirectML.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
@@ -102,6 +100,11 @@
 
   <!-- Windows: DirectML 네이티브 DLL을 출력/퍼블리시 디렉터리로 복사 -->
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <!-- NuGet 경로가 없으면 저장소 내 fallback 네이티브 파일을 사용 -->
+    <None Include="Native/win-x64/DirectML.dll" Link="DirectML.dll" Condition="!Exists('$(NuGetPackageRoot)microsoft.ai.directml\1.15.4\bin\x64-win\DirectML.dll') and Exists('Native/win-x64/DirectML.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
     <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime.dll" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime.directml\1.23.0\runtimes\win-x64\native\onnxruntime.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
