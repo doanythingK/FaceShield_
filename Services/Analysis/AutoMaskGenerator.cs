@@ -78,13 +78,13 @@ namespace FaceShield.Services.Analysis
         private readonly IFaceDetector _detector;
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
-        private readonly Func<IFaceDetector>? _detectorFactory;
+        private readonly IFaceDetectorFactory? _detectorFactory;
 
         public AutoMaskGenerator(
             IFaceDetector detector,
             FrameMaskProvider maskProvider,
             AutoMaskOptions? options = null,
-            Func<IFaceDetector>? detectorFactory = null)
+            IFaceDetectorFactory? detectorFactory = null)
         {
             _detector = detector ?? throw new ArgumentNullException(nameof(detector));
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
@@ -113,19 +113,19 @@ namespace FaceShield.Services.Analysis
                 {
                     bool canPipeline = !_options.UseTracking && _options.DetectEveryNFrames <= 1;
 
-                    if (canPipeline && _detector is FaceOnnxDetector onnx)
+                    if (canPipeline && _detector is IBgraFaceDetector bgraDetector)
                     {
                         if (_detectorFactory != null && _options.ParallelDetectorCount > 1)
                         {
                             Debug.WriteLine($"[AutoMask] mode=pipe-parallel({_options.ParallelDetectorCount})");
-                            var detectors = new List<FaceOnnxDetector> { onnx };
+                            var detectors = new List<IBgraFaceDetector> { bgraDetector };
                             try
                             {
                                 int toCreate = Math.Max(1, _options.ParallelDetectorCount) - 1;
                                 for (int i = 0; i < toCreate; i++)
                                 {
-                                    var created = _detectorFactory();
-                                    if (created is FaceOnnxDetector extra)
+                                    var created = _detectorFactory.CreateDetector();
+                                    if (created is IBgraFaceDetector extra)
                                         detectors.Add(extra);
                                     else
                                     {
@@ -148,7 +148,7 @@ namespace FaceShield.Services.Analysis
                         }
 
                         Debug.WriteLine("[AutoMask] mode=pipe-single");
-                        GeneratePipelinedDetectAll(videoPath, onnx, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                        GeneratePipelinedDetectAll(videoPath, bgraDetector, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
                         return;
                     }
 
@@ -170,7 +170,7 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            bool useRaw = _detector is FaceOnnxDetector;
+            bool useRaw = _detector is IBgraFaceDetector;
             int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw, ct);
 
@@ -178,14 +178,15 @@ namespace FaceShield.Services.Analysis
 
             int nextIndex = start;
             PixelSize? frameSize = null;
-            PixelSize fullSize = extractor.FrameSize;
-            FaceOnnxDetector? onnx = _detector as FaceOnnxDetector;
-            bool useProxy = useRaw && _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
-            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
-            int proxyWidth = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio)) : fullSize.Width;
-            int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
-            double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
-            double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var geometry = CreateDetectionGeometry(extractor.FrameSize);
+            PixelSize fullSize = geometry.FullSize;
+            IBgraFaceDetector? bgraDetector = _detector as IBgraFaceDetector;
+            bool useProxy = useRaw && geometry.UseProxy;
+            bool useBilinear = geometry.UseBilinear;
+            int proxyWidth = geometry.TargetWidth;
+            int proxyHeight = geometry.TargetHeight;
+            double scaleX = geometry.ScaleX;
+            double scaleY = geometry.ScaleY;
             var swTotal = Stopwatch.StartNew();
             long readMs = 0;
             long detectMs = 0;
@@ -245,7 +246,7 @@ namespace FaceShield.Services.Analysis
                     var tDetect = Stopwatch.StartNew();
                     if (useRaw)
                     {
-                        if (bgra.Data == IntPtr.Zero || onnx == null)
+                        if (bgra.Data == IntPtr.Zero || bgraDetector == null)
                         {
                             tDetect.Stop();
                             detectMs += tDetect.ElapsedMilliseconds;
@@ -255,7 +256,7 @@ namespace FaceShield.Services.Analysis
 
                         frameSize = fullSize;
                         faces = DetectFacesBgraSmart(
-                            onnx,
+                            bgraDetector,
                             bgra.Data,
                             bgra.Stride,
                             bgra.Width,
@@ -395,9 +396,34 @@ namespace FaceShield.Services.Analysis
             public int LastPercent = -1;
         }
 
+        private readonly record struct DetectionGeometry(
+            PixelSize FullSize,
+            bool UseProxy,
+            bool UseBilinear,
+            int TargetWidth,
+            int TargetHeight,
+            double ScaleX,
+            double ScaleY);
+
+        private DetectionGeometry CreateDetectionGeometry(PixelSize fullSize)
+        {
+            bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
+            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
+            int targetWidth = useProxy
+                ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio))
+                : fullSize.Width;
+            int targetHeight = useProxy
+                ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio))
+                : fullSize.Height;
+            double scaleX = useProxy && targetWidth > 0 ? (double)fullSize.Width / targetWidth : 1.0;
+            double scaleY = useProxy && targetHeight > 0 ? (double)fullSize.Height / targetHeight : 1.0;
+
+            return new DetectionGeometry(fullSize, useProxy, useBilinear, targetWidth, targetHeight, scaleX, scaleY);
+        }
+
         private void GeneratePipelinedDetectAll(
             string videoPath,
-            FaceOnnxDetector onnx,
+            IBgraFaceDetector detector,
             IProgress<int>? progress,
             CancellationToken ct,
             int startFrameIndex,
@@ -407,13 +433,14 @@ namespace FaceShield.Services.Analysis
             int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
-            PixelSize fullSize = extractor.FrameSize;
-            bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
-            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
-            int proxyWidth = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio)) : fullSize.Width;
-            int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
-            double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
-            double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var geometry = CreateDetectionGeometry(extractor.FrameSize);
+            PixelSize fullSize = geometry.FullSize;
+            bool useProxy = geometry.UseProxy;
+            bool useBilinear = geometry.UseBilinear;
+            int proxyWidth = geometry.TargetWidth;
+            int proxyHeight = geometry.TargetHeight;
+            double scaleX = geometry.ScaleX;
+            double scaleY = geometry.ScaleY;
 
             using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(4);
             using var results = new System.Collections.Concurrent.BlockingCollection<DetectionResult>(8);
@@ -534,7 +561,7 @@ namespace FaceShield.Services.Analysis
                                 {
                                     var tDetect = Stopwatch.StartNew();
                                     var faces = DetectFacesBgraSmart(
-                                        onnx,
+                                        detector,
                                         (IntPtr)src,
                                         item.Stride,
                                         item.Width,
@@ -682,10 +709,10 @@ namespace FaceShield.Services.Analysis
             if (ratio >= 1.0)
                 return _detector.DetectFaces(frame);
 
-            if (_detector is not FaceOnnxDetector onnx)
+            if (_detector is not IBgraFaceDetector bgraDetector)
                 return _detector.DetectFaces(frame);
 
-            var faces = onnx.DetectFacesDownscaled(frame, ratio, _options.DownscaleQuality);
+            var faces = bgraDetector.DetectFacesDownscaled(frame, ratio, _options.DownscaleQuality);
 
             if (faces.Count == 0)
                 return faces;
@@ -708,7 +735,7 @@ namespace FaceShield.Services.Analysis
 
         private void GeneratePipelinedDetectAllParallel(
             string videoPath,
-            IReadOnlyList<FaceOnnxDetector> detectors,
+            IReadOnlyList<IBgraFaceDetector> detectors,
             IProgress<int>? progress,
             CancellationToken ct,
             int startFrameIndex,
@@ -718,13 +745,14 @@ namespace FaceShield.Services.Analysis
             int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
-            PixelSize fullSize = extractor.FrameSize;
-            bool useProxy = _options.DownscaleRatio > 0 && _options.DownscaleRatio < 1.0;
-            bool useBilinear = _options.DownscaleQuality == DownscaleQuality.BalancedBilinear;
-            int proxyWidth = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Width * _options.DownscaleRatio)) : fullSize.Width;
-            int proxyHeight = useProxy ? Math.Max(1, (int)Math.Round(fullSize.Height * _options.DownscaleRatio)) : fullSize.Height;
-            double scaleX = useProxy && proxyWidth > 0 ? (double)fullSize.Width / proxyWidth : 1.0;
-            double scaleY = useProxy && proxyHeight > 0 ? (double)fullSize.Height / proxyHeight : 1.0;
+            var geometry = CreateDetectionGeometry(extractor.FrameSize);
+            PixelSize fullSize = geometry.FullSize;
+            bool useProxy = geometry.UseProxy;
+            bool useBilinear = geometry.UseBilinear;
+            int proxyWidth = geometry.TargetWidth;
+            int proxyHeight = geometry.TargetHeight;
+            double scaleX = geometry.ScaleX;
+            double scaleY = geometry.ScaleY;
 
             int queueDepth = Math.Max(4, detectors.Count * 3);
             using var queue = new System.Collections.Concurrent.BlockingCollection<BgraBuffer>(queueDepth);
@@ -928,7 +956,7 @@ namespace FaceShield.Services.Analysis
         }
 
         private static IReadOnlyList<FaceDetectionResult> DetectFacesBgraSmart(
-            FaceOnnxDetector onnx,
+            IBgraFaceDetector detector,
             IntPtr data,
             int stride,
             int width,
@@ -969,7 +997,7 @@ namespace FaceShield.Services.Analysis
                     if (rw > 0 && rh > 0)
                     {
                         IntPtr roiPtr = IntPtr.Add(data, ry * stride + rx * 4);
-                        var faces = onnx.DetectFacesBgra(
+                        var faces = detector.DetectFacesBgra(
                             roiPtr,
                             stride,
                             rw,
@@ -990,7 +1018,7 @@ namespace FaceShield.Services.Analysis
             }
 
             stats?.AddFallback();
-            var fullFaces = onnx.DetectFacesBgra(
+            var fullFaces = detector.DetectFacesBgra(
                 data,
                 stride,
                 width,

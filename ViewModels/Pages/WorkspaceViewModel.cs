@@ -29,6 +29,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly Action? _onBack;
         private AutoMaskOptions _autoOptions;
         private FaceOnnxDetectorOptions _detectorOptions;
+        private FaceDetectorFactoryOptions _detectorFactoryOptions;
         private readonly WorkspaceStateStore? _stateStore;
         private int[] _autoAnomalies = Array.Empty<int>();
         private const float LowConfidenceMargin = 0.05f;
@@ -108,12 +109,14 @@ namespace FaceShield.ViewModels.Pages
             AutoMaskOptions? autoOptions = null,
             FaceOnnxDetectorOptions? detectorOptions = null,
             WorkspaceStateStore? stateStore = null,
-            bool deferSessionInit = false)
+            bool deferSessionInit = false,
+            FaceDetectorFactoryOptions? detectorFactoryOptions = null)
         {
             Mode = mode;
             _onBack = onBack;
             _autoOptions = autoOptions ?? new AutoMaskOptions();
             _detectorOptions = detectorOptions ?? new FaceOnnxDetectorOptions();
+            _detectorFactoryOptions = detectorFactoryOptions ?? FaceDetectorFactoryOptions.ForOnnx(_detectorOptions);
             _stateStore = stateStore;
             FrameList = new FrameListViewModel(videoPath);
             FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);
@@ -264,6 +267,22 @@ namespace FaceShield.ViewModels.Pages
             return outputPath;
         }
 
+        private IFaceDetectorFactory CreateFaceDetectorFactory()
+        {
+            return new FaceDetectorFactory(_detectorFactoryOptions);
+        }
+
+        private AutoMaskGenerator CreateAutoMaskGenerator(
+            IFaceDetector detector,
+            IFaceDetectorFactory detectorFactory)
+        {
+            return new AutoMaskGenerator(
+                detector,
+                _maskProvider,
+                _autoOptions,
+                detectorFactory);
+        }
+
         public Task<bool> RunAutoAsync(
             bool exportAfter,
             IProgress<int>? progress = null,
@@ -291,13 +310,9 @@ namespace FaceShield.ViewModels.Pages
         {
             try
             {
-                using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
-
-                var generator = new AutoMaskGenerator(
-                    detector,
-                    _maskProvider,
-                    _autoOptions,
-                    detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
+                var detectorFactory = CreateFaceDetectorFactory();
+                using IFaceDetector detector = detectorFactory.CreateDetector();
+                var generator = CreateAutoMaskGenerator(detector, detectorFactory);
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
                 if (lastProcessed == 0)
@@ -877,12 +892,9 @@ namespace FaceShield.ViewModels.Pages
 
             try
             {
-                using IFaceDetector detector = new FaceOnnxDetector(_detectorOptions);
-                var generator = new AutoMaskGenerator(
-                    detector,
-                    _maskProvider,
-                    _autoOptions,
-                    detectorFactory: () => new FaceOnnxDetector(_detectorOptions));
+                var detectorFactory = CreateFaceDetectorFactory();
+                using IFaceDetector detector = detectorFactory.CreateDetector();
+                var generator = CreateAutoMaskGenerator(detector, detectorFactory);
 
                 var effectiveProgress = new Progress<int>(p =>
                 {
@@ -1213,9 +1225,16 @@ namespace FaceShield.ViewModels.Pages
             ApplySnapshot(snapshot);
         }
 
-        public void UpdateDetectorOptions(FaceOnnxDetectorOptions options)
+        public void UpdateDetectorOptions(FaceOnnxDetectorOptions? options)
         {
             _detectorOptions = options ?? new FaceOnnxDetectorOptions();
+            _detectorFactoryOptions = FaceDetectorFactoryOptions.ForOnnx(_detectorOptions);
+        }
+
+        public void UpdateDetectorFactoryOptions(FaceDetectorFactoryOptions? options)
+        {
+            _detectorFactoryOptions = options ?? FaceDetectorFactoryOptions.ForOnnx(new FaceOnnxDetectorOptions());
+            _detectorOptions = _detectorFactoryOptions.FaceOnnxOptions ?? new FaceOnnxDetectorOptions();
         }
 
         public void UpdateAutoOptions(AutoMaskOptions options)

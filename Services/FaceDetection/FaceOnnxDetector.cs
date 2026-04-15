@@ -19,7 +19,7 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace FaceShield.Services.FaceDetection
 {
-    public sealed class FaceOnnxDetector : IFaceDetector
+    public sealed class FaceOnnxDetector : IBgraFaceDetector
     {
         private readonly FaceDetector _detector;
         private readonly bool _enablePreprocessOptimizations = true;
@@ -109,12 +109,12 @@ namespace FaceShield.Services.FaceDetection
             return DetectFaces(input, pre.ElapsedMilliseconds);
         }
 
-        internal IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(WriteableBitmap frame, double ratio)
+        public IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(WriteableBitmap frame, double ratio)
         {
             return DetectFacesDownscaled(frame, ratio, DownscaleQuality.BalancedBilinear);
         }
 
-        internal IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(
+        public IReadOnlyList<FaceDetectionResult> DetectFacesDownscaled(
             WriteableBitmap frame,
             double ratio,
             DownscaleQuality quality)
@@ -132,7 +132,7 @@ namespace FaceShield.Services.FaceDetection
             return DetectFaces(input, pre.ElapsedMilliseconds);
         }
 
-        internal IReadOnlyList<FaceDetectionResult> DetectFacesBgra(
+        public IReadOnlyList<FaceDetectionResult> DetectFacesBgra(
             IntPtr data,
             int stride,
             int width,
