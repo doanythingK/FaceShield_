@@ -12,6 +12,8 @@ public unsafe sealed class VideoExportService
 {
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
+    private int _directFaceBlurFrames;
+    private int _bitmapMaskBlurFrames;
 
     public VideoExportService(IFrameMaskProvider maskProvider)
     {
@@ -26,6 +28,8 @@ public unsafe sealed class VideoExportService
         System.Threading.CancellationToken cancellationToken = default)
     {
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
+        _directFaceBlurFrames = 0;
+        _bitmapMaskBlurFrames = 0;
 
         AVFormatContext* inFmt = null;
         AVFormatContext* outFmt = null;
@@ -482,7 +486,7 @@ public unsafe sealed class VideoExportService
 
             Throw(ffmpeg.av_write_trailer(outFmt));
             Debug.WriteLine(
-                $"[Export] done frames={frameIndex}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
         }
         finally
         {
@@ -604,20 +608,6 @@ public unsafe sealed class VideoExportService
             }
             else if (provider.TryGetFaceMaskData(resolvedFrameIndex, out var faces))
             {
-                if (reusableFaceMask == null ||
-                    reusableFaceMask.PixelSize.Width != faces.Size.Width ||
-                    reusableFaceMask.PixelSize.Height != faces.Size.Height)
-                {
-                    reusableFaceMask?.Dispose();
-                    reusableFaceMask = new WriteableBitmap(
-                        faces.Size,
-                        new Vector(96, 96),
-                        Avalonia.Platform.PixelFormat.Bgra8888,
-                        Avalonia.Platform.AlphaFormat.Premul);
-                }
-
-                FrameMaskProvider.RenderMaskFromFaceRects(reusableFaceMask, faces.Size, faces.Faces);
-                mask = reusableFaceMask;
                 faceRects = faces.Faces;
             }
         }
@@ -626,7 +616,7 @@ public unsafe sealed class VideoExportService
             mask = _maskProvider.GetFinalMask(resolvedFrameIndex);
         }
 
-        if (mask != null)
+        if (mask != null || (faceRects != null && faceRects.Count > 0))
         {
             var tBgra = Stopwatch.StartNew();
             Throw(ffmpeg.sws_scale(
@@ -641,7 +631,16 @@ public unsafe sealed class VideoExportService
             swsToBgraMs += tBgra.ElapsedMilliseconds;
 
             var tMask = Stopwatch.StartNew();
-            _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
+            if (mask != null)
+            {
+                _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
+                _bitmapMaskBlurFrames++;
+            }
+            else
+            {
+                _masked.ApplyFaceRectsAndBlur(bgra, faceRects!, blurRadius);
+                _directFaceBlurFrames++;
+            }
             tMask.Stop();
             maskMs += tMask.ElapsedMilliseconds;
 

@@ -40,6 +40,9 @@ namespace FaceShield.ViewModels.Pages
         private const double TemporalMaxAreaChangeRatio = 3.2;
         private const double TemporalHoleFillIouMin = 0.12;
         private const double TemporalDuplicateIouMin = 0.35;
+        private const double TemporalSmoothIouMin = 0.18;
+        private const double TemporalSmoothWeight = 0.42;
+        private const int TemporalSmoothPasses = 2;
         private const int TemporalMinRunLength = 2;
         private int _autoResumeIndex;
         private bool _autoCompleted;
@@ -354,6 +357,7 @@ namespace FaceShield.ViewModels.Pages
                 }
 
                 ApplyAutoTemporalFixes();
+                ApplyAutoTemporalSmoothing();
 
                 await BuildAutoAnomaliesAsync();
 
@@ -379,6 +383,101 @@ namespace FaceShield.ViewModels.Pages
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
                 PersistWorkspaceState();
+            }
+        }
+
+        private void ApplyAutoTemporalSmoothing()
+        {
+            int total = FrameList.TotalFrames;
+            if (total < 3)
+                return;
+
+            var facesByFrame = new List<Rect>?[total];
+            var confByFrame = new List<float>?[total];
+            var sizeByFrame = new PixelSize[total];
+            var hasStored = new bool[total];
+
+            for (int i = 0; i < total; i++)
+            {
+                hasStored[i] = _maskProvider.TryGetStoredMask(i, out _);
+                if (hasStored[i])
+                    continue;
+
+                if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
+                {
+                    facesByFrame[i] = new List<Rect>(data.Faces);
+                    confByFrame[i] = new List<float>(data.Confidences);
+                    sizeByFrame[i] = data.Size;
+                }
+            }
+
+            for (int pass = 0; pass < TemporalSmoothPasses; pass++)
+            {
+                for (int i = 1; i < total - 1; i++)
+                {
+                    if (hasStored[i] || facesByFrame[i] == null)
+                        continue;
+
+                    var currentFaces = facesByFrame[i]!;
+                    var smoothed = new List<Rect>(currentFaces.Count);
+                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1);
+                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1);
+
+                    for (int j = 0; j < currentFaces.Count; j++)
+                    {
+                        var current = currentFaces[j];
+                        Rect target = current;
+                        int targetCount = 0;
+
+                        double prevIou = GetMaxIoU(current, prevFaces, out var prevMatch);
+                        double nextIou = GetMaxIoU(current, nextFaces, out var nextMatch);
+
+                        if (prevIou >= TemporalSmoothIouMin && IsReasonableTemporalMatch(current, prevMatch))
+                        {
+                            target = prevMatch;
+                            targetCount++;
+                        }
+
+                        if (nextIou >= TemporalSmoothIouMin && IsReasonableTemporalMatch(current, nextMatch))
+                        {
+                            target = targetCount == 0
+                                ? nextMatch
+                                : InterpolateRect(target, nextMatch);
+                            targetCount++;
+                        }
+
+                        smoothed.Add(targetCount == 0
+                            ? current
+                            : BlendRect(current, target, TemporalSmoothWeight));
+                    }
+
+                    facesByFrame[i] = smoothed;
+                }
+            }
+
+            for (int i = 0; i < total; i++)
+            {
+                if (hasStored[i] || facesByFrame[i] == null || facesByFrame[i]!.Count == 0)
+                    continue;
+
+                var confs = confByFrame[i] ?? new List<float>(facesByFrame[i]!.Count);
+                if (confs.Count != facesByFrame[i]!.Count)
+                {
+                    confs = new List<float>(facesByFrame[i]!.Count);
+                    for (int j = 0; j < facesByFrame[i]!.Count; j++)
+                        confs.Add(1.0f);
+                }
+
+                float minConf = float.MaxValue;
+                for (int j = 0; j < confs.Count; j++)
+                    minConf = Math.Min(minConf, confs[j]);
+
+                _maskProvider.SetFaceRects(
+                    i,
+                    facesByFrame[i]!,
+                    sizeByFrame[i],
+                    minConf == float.MaxValue ? null : minConf,
+                    confs);
             }
         }
 
@@ -619,6 +718,54 @@ namespace FaceShield.ViewModels.Pages
                     minConf == float.MaxValue ? null : minConf,
                     confs);
             }
+        }
+
+        private static IReadOnlyList<Rect>? FindNearestTemporalFaces(
+            IReadOnlyList<Rect>?[] facesByFrame,
+            int frameIndex,
+            int direction)
+        {
+            int index = frameIndex + direction;
+            while (index >= 0 && index < facesByFrame.Length)
+            {
+                var faces = facesByFrame[index];
+                if (faces != null && faces.Count > 0)
+                    return faces;
+
+                index += direction;
+            }
+
+            return null;
+        }
+
+        private static bool IsReasonableTemporalMatch(Rect current, Rect match)
+        {
+            if (match.Width <= 0 || match.Height <= 0)
+                return false;
+
+            double area = Math.Max(1.0, current.Width * current.Height);
+            double matchArea = Math.Max(1.0, match.Width * match.Height);
+            double ratio = area / matchArea;
+            if (ratio > TemporalMaxAreaChangeRatio || ratio < 1.0 / TemporalMaxAreaChangeRatio)
+                return false;
+
+            double cx = current.X + current.Width * 0.5;
+            double cy = current.Y + current.Height * 0.5;
+            double mx = match.X + match.Width * 0.5;
+            double my = match.Y + match.Height * 0.5;
+            double shift = Math.Sqrt((cx - mx) * (cx - mx) + (cy - my) * (cy - my));
+            double maxDim = Math.Max(1.0, Math.Max(match.Width, match.Height));
+            return shift / maxDim <= TemporalMaxCenterShiftRatio;
+        }
+
+        private static Rect BlendRect(Rect current, Rect target, double weight)
+        {
+            double keep = 1.0 - weight;
+            return new Rect(
+                current.X * keep + target.X * weight,
+                current.Y * keep + target.Y * weight,
+                Math.Max(0.0, current.Width * keep + target.Width * weight),
+                Math.Max(0.0, current.Height * keep + target.Height * weight));
         }
 
         private static double GetMaxIoU(Rect rect, IReadOnlyList<Rect>? others, out Rect match)
