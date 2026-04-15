@@ -36,6 +36,30 @@ FaceShield는 .NET 8 기반 Avalonia 데스크톱 앱이다. 화면은 `Views`, 
 - `851463f refactor: decouple face detector backend`
 - `f0793de perf: optimize face mask export path`
 - `8d37cc6 docs: record performance refactor notes`
+- `2f30a04 docs: add solution analysis notes`
+
+## 다음 세션 이어받기 메모
+이 문서는 사용자 설명용이 아니라 다음 세션에서 바로 이어서 개발하기 위한 작업 로그다. 다음 세션에서는 먼저 이 브랜치 상태를 확인하고, 실제 문제 영상 기준으로 성능 로그를 확보한 뒤 다음 리팩터링을 이어가면 된다.
+
+현재 브랜치는 `detector-backend-refactor`이고 원격 브랜치도 같은 이름이다. 기존 untracked `.codex`는 작업 대상이 아니므로 건드리지 않는다.
+
+핵심 변경 entry point:
+
+- `Services/FaceDetection/IBgraFaceDetector.cs`: BGRA 프레임 기반 얼굴 검출 인터페이스.
+- `Services/FaceDetection/IFaceDetectorFactory.cs`: 자동 처리 쪽에서 구체 모델 생성을 직접 알지 않게 하는 팩토리 인터페이스.
+- `Services/FaceDetection/FaceDetectorFactory.cs`: 현재는 `FaceDetectorBackend.FaceOnnx`만 생성한다. 새 모델을 붙일 때 우선 수정할 위치다.
+- `Services/Analysis/AutoMaskGenerator.cs`: 자동 분석 파이프라인. `IBgraFaceDetector`를 이용한 raw/BGRA 경로와 병렬 detector 생성 흐름이 들어 있다.
+- `ViewModels/Pages/WorkspaceViewModel.cs`: detector factory 생성, 자동 분석 실행, `ApplyAutoTemporalSmoothing()` 호출 위치가 있다.
+- `Services/Video/MaskedVideoExporter.cs`: `ApplyFaceRectsAndBlur()`가 자동 얼굴 박스용 direct blur 경로다.
+- `Services/Video/VideoExportService.cs`: export 중 자동 face rect는 direct blur, 수동 mask는 기존 bitmap mask blur로 분기한다.
+
+주의할 점:
+
+- 아직 기본 detector는 FaceONNX다. 모델 교체 구조만 열어둔 상태다.
+- 자동 face rect가 있는 프레임만 direct blur를 탄다. 수동 마스크나 bitmap mask가 필요한 프레임은 기존 경로를 유지한다.
+- `ApplyAutoTemporalSmoothing()`은 자동 생성 프레임에만 적용해야 한다. 사용자가 직접 수정한 프레임까지 smoothing하면 의도한 수동 보정을 망칠 수 있다.
+- 성능 개선 폭은 아직 확정하지 않았다. 실제 10분 영상 재측정 전까지는 개선 수치를 단정하면 안 된다.
+- 오탐/미탐은 모델, threshold, ROI 재검출, tracking 부재가 같이 얽힌 문제일 수 있다. 모델 하나만 바꾸면 해결된다고 단정하지 않는다.
 
 ## 모델 교체를 위한 구조 정리
 기존 자동 모자이크 코드는 `FaceOnnxDetector`라는 특정 얼굴 검출기에 직접 묶여 있었다. 이 구조에서는 나중에 더 가벼운 모델이나 더 정확한 모델을 실험하려면 자동 처리 코드 여러 곳을 직접 수정해야 했다.
