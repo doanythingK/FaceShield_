@@ -703,8 +703,7 @@ namespace FaceShield.ViewModels.Pages
             WorkspaceViewModel vm;
             try
             {
-                var progress = new Progress<int>(p =>
-                    Dispatcher.UIThread.Post(() => WorkspaceLoadingProgress = p));
+                var progress = new Progress<int>(p => WorkspaceLoadingProgress = p);
 
                 var autoOptions = BuildAutoOptions();
                 var detectorOptions = BuildDetectorOptions();
@@ -799,23 +798,39 @@ namespace FaceShield.ViewModels.Pages
                     _autoLastProgressAtUtc = _autoStartTimeUtc;
 
                     var progress = new Progress<int>(p =>
-                        Dispatcher.UIThread.Post(() =>
-                        {
-                            AutoProgress = p;
-                            _autoLastProgressAtUtc = DateTime.UtcNow;
-                        }));
+                    {
+                        AutoProgress = p;
+                        _autoLastProgressAtUtc = DateTime.UtcNow;
+                    });
 
+                    int lastExportPercent = -1;
+                    string? lastExportStatus = null;
+                    long lastExportUiTick = 0;
                     var exportProgress = new Progress<ExportProgress>(p =>
-                        Dispatcher.UIThread.Post(() =>
-                        {
-                            IsExportRunning = true;
-                            ExportProgress = Math.Clamp(p.Percent, 0, 100);
-                            UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
-                            if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                                ExportStatusText = p.StatusMessage;
-                            if (ExportProgress == 0 && string.IsNullOrWhiteSpace(ExportEtaText))
-                                ExportEtaText = "예상 남은 시간 계산 중...";
-                        }));
+                    {
+                        int percent = Math.Clamp(p.Percent, 0, 100);
+                        string? status = string.IsNullOrWhiteSpace(p.StatusMessage) ? null : p.StatusMessage;
+                        bool percentChanged = percent != lastExportPercent;
+                        bool statusChanged = status != null &&
+                            !string.Equals(status, lastExportStatus, StringComparison.Ordinal);
+                        long nowTick = Environment.TickCount64;
+                        bool etaDue = nowTick - lastExportUiTick >= 250;
+                        if (!percentChanged && !statusChanged && !etaDue)
+                            return;
+
+                        lastExportPercent = percent;
+                        if (statusChanged)
+                            lastExportStatus = status;
+                        lastExportUiTick = nowTick;
+
+                        IsExportRunning = true;
+                        ExportProgress = percent;
+                        UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
+                        if (statusChanged)
+                            ExportStatusText = status;
+                        if (ExportProgress == 0 && string.IsNullOrWhiteSpace(ExportEtaText))
+                            ExportEtaText = "예상 남은 시간 계산 중...";
+                    });
 
                     completed = await vm.RunAutoAsync(
                         exportAfter: AutoExportAfter,
@@ -1151,8 +1166,7 @@ namespace FaceShield.ViewModels.Pages
 
             try
             {
-                var loadProgress = new Progress<int>(p =>
-                    Dispatcher.UIThread.Post(() => WorkspaceLoadingProgress = p));
+                var loadProgress = new Progress<int>(p => WorkspaceLoadingProgress = p);
                 await vm.EnsureSessionInitializedAsync(loadProgress);
             }
             finally
