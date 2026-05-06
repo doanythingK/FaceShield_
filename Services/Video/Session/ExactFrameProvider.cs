@@ -8,14 +8,28 @@ namespace FaceShield.Services.Video.Session;
 public sealed class ExactFrameProvider
 {
     private readonly FfFrameExtractor _extractor;
+    private readonly SemaphoreSlim _decodeGate = new(1, 1);
 
     public ExactFrameProvider(FfFrameExtractor extractor)
     {
         _extractor = extractor;
     }
 
-    public Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
+    public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
     {
-        return Task.Run(() => _extractor.GetFrameByIndex(frameIndex), ct);
+        await _decodeGate.WaitAsync(ct);
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            return await Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return _extractor.GetFrameByIndex(frameIndex);
+            }, ct);
+        }
+        finally
+        {
+            _decodeGate.Release();
+        }
     }
 }

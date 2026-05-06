@@ -1,4 +1,5 @@
 using Avalonia.Media.Imaging;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -69,7 +70,7 @@ public sealed class TimelineController
         {
             return await _exact.GetExactAsync(frameIndex, ct);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
             return null;
         }
@@ -86,7 +87,7 @@ public sealed class TimelineController
         {
             return await _exact.GetExactAsync(frameIndex, ct);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
             return null;
         }
