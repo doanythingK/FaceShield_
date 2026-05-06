@@ -347,7 +347,10 @@ namespace FaceShield.ViewModels.Pages
                 int tunedSessions = Math.Max(1, _autoOptions.ParallelDetectorCount);
                 if (_detectorOptions.AllowAutoTune != false)
                 {
-                    if (DetectorAutoTuner.TryTune(
+                    var tuneToken = _autoCts?.Token ?? CancellationToken.None;
+                    var tuneResult = await Task.Run(() =>
+                    {
+                        bool tuned = DetectorAutoTuner.TryTune(
                             FrameList.VideoPath,
                             _autoOptions.DownscaleRatio,
                             _autoOptions.DownscaleQuality,
@@ -356,11 +359,19 @@ namespace FaceShield.ViewModels.Pages
                             _detectorOptions.AllowAutoGpu == true,
                             out var tunedOptions,
                             out var tunedCount,
-                            out var tuneLabel))
+                            out var tuneLabel);
+
+                        return (tuned, tunedOptions, tunedCount, tuneLabel);
+                    }, tuneToken);
+
+                    if (tuneToken.IsCancellationRequested)
+                        return false;
+
+                    if (tuneResult.tuned)
                     {
-                        detectorOptions = tunedOptions;
-                        tunedSessions = Math.Max(1, tunedCount);
-                        System.Diagnostics.Debug.WriteLine($"[AutoTune] applied {tuneLabel}");
+                        detectorOptions = tuneResult.tunedOptions;
+                        tunedSessions = Math.Max(1, tuneResult.tunedCount);
+                        System.Diagnostics.Debug.WriteLine($"[AutoTune] applied {tuneResult.tuneLabel}");
                     }
                     else
                     {

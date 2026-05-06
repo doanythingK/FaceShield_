@@ -262,7 +262,7 @@ namespace FaceShield.ViewModels.Pages
                     ? "자동 모자이크 진행 중..."
                     : (WorkspaceLoadingMessage ?? "로딩 중...");
         public bool IsTrackingOptionsEnabled => AutoTrackingEnabled;
-        public bool IsAutoStatusVisible => IsAutoRunning && !IsExportRunning;
+        public bool IsAutoStatusVisible => IsAutoRunning;
         public int MinBlurRadius => MinBlurRadiusValue;
         public int MaxBlurRadius => MaxBlurRadiusValue;
 
