@@ -9,6 +9,11 @@ namespace FaceShield.Views.Dialogs
         private BlurPreviewImageDialog? _previewWindow;
         private double? _selectedPercent;
 
+        public BlurPreviewDialog()
+        {
+            InitializeComponent();
+        }
+
         public BlurPreviewDialog(HomePageViewModel viewModel)
         {
             InitializeComponent();

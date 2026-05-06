@@ -3,7 +3,6 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
-using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
 using System.Linq;

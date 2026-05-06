@@ -14,6 +14,11 @@ namespace FaceShield.Views.Dialogs
     {
         public string OutputPath { get; }
 
+        public ExportConflictDialog()
+            : this(string.Empty)
+        {
+        }
+
         public ExportConflictDialog(string outputPath)
         {
             OutputPath = outputPath ?? string.Empty;

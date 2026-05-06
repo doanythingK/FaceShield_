@@ -8,6 +8,11 @@ namespace FaceShield.Views.Dialogs
     {
         private WriteableBitmap? _image;
 
+        public BlurPreviewImageDialog()
+        {
+            InitializeComponent();
+        }
+
         public BlurPreviewImageDialog(WriteableBitmap image, string label)
         {
             InitializeComponent();

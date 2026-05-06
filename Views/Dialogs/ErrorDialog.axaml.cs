@@ -8,6 +8,11 @@ public partial class ErrorDialog : Window
     public string Message { get; }
     public string DialogTitle { get; }
 
+    public ErrorDialog()
+        : this("오류", string.Empty)
+    {
+    }
+
     public ErrorDialog(string title, string message)
     {
         DialogTitle = string.IsNullOrWhiteSpace(title) ? "오류" : title;
