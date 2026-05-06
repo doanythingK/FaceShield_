@@ -132,7 +132,12 @@ public unsafe sealed class VideoExportService
                 }
 
                 blurRanges = BuildBlurFrameRanges(blurFrameSet);
-                if (blurRanges.Count > 0 && sourceFps > 0.0 && totalFrames > 0)
+                bool canCopyOutsideBlurWindow =
+                    blurRanges.Count > 0 &&
+                    sourceFps > 0.0 &&
+                    totalFrames > 0 &&
+                    (blurRanges[0].Start > 0 || blurRanges[^1].EndExclusive < totalFrames);
+                if (canCopyOutsideBlurWindow)
                 {
                     var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames);
                     if (keyframes.Count > 0)
