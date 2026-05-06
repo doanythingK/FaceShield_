@@ -78,10 +78,7 @@ namespace FaceShield.Services.FaceDetection
 
             string? gpuProvider = null;
             if (options.UseGpu)
-                gpuProvider = TryAppendGpuExecutionProvider(so, Math.Max(0, options.GpuDeviceId ?? 0));
-
-            if (options.UseGpu && options.RequireGpuExecutionProvider && gpuProvider == null)
-                throw new InvalidOperationException(GetLastExecutionProviderError() ?? "GPU 실행 공급자 로드 실패");
+                gpuProvider = TryAppendGpuExecutionProvider(so);
 
             if (options.UseGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
                 UpdateExecutionProviderError("GPU 실행 공급자 로드 실패(패키지/의존성 확인)");
@@ -811,22 +808,22 @@ namespace FaceShield.Services.FaceDetection
             }
         }
 
-        private static string? TryAppendGpuExecutionProvider(SessionOptions options, int deviceId)
+        private static string? TryAppendGpuExecutionProvider(SessionOptions options)
         {
             // Use OS-appropriate providers when available; fall back silently.
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime", deviceId))
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime"))
                     return "CoreML";
             }
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML", deviceId))
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
                 {
-                    UpdateExecutionProviderLabel($"GPU:DirectML({deviceId})");
+                    UpdateExecutionProviderLabel("GPU:DirectML");
                     UpdateExecutionProviderError(null);
-                    return $"DirectML({deviceId})";
+                    return "DirectML";
                 }
 
                 UpdateExecutionProviderLabel("CPU(DirectML 로드 실패)");
@@ -835,11 +832,11 @@ namespace FaceShield.Services.FaceDetection
                 return null;
             }
 
-            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML", deviceId))
+            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
             {
-                UpdateExecutionProviderLabel($"GPU:DirectML({deviceId})");
+                UpdateExecutionProviderLabel("GPU:DirectML");
                 UpdateExecutionProviderError(null);
-                return $"DirectML({deviceId})";
+                return "DirectML";
             }
 
             return null;
@@ -891,12 +888,12 @@ namespace FaceShield.Services.FaceDetection
                 $"{label}을(를) 찾을 수 없습니다. macOS에서는 Homebrew로 'brew install libomp' 실행 후 다시 시도하고, 앱 폴더(.app/Contents/MacOS)에 onnxruntime 관련 dylib가 포함되어 있는지 확인하세요.");
         }
 
-        private static bool TryAppendExecutionProvider(SessionOptions options, string methodName, string assemblyName, int deviceId)
+        private static bool TryAppendExecutionProvider(SessionOptions options, string methodName, string assemblyName)
         {
-            TryLoadAssembly(assemblyName);
             TryLoadAssemblyFromBaseDir(assemblyName);
+            TryLoadAssembly(assemblyName);
 
-            if (TryInvokeSessionOptionsMethod(options, methodName, deviceId))
+            if (TryInvokeSessionOptionsMethod(options, methodName))
                 return true;
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
@@ -939,9 +936,9 @@ namespace FaceShield.Services.FaceDetection
                             {
                                 var pType = parameters[1].ParameterType;
                                 object? arg = pType == typeof(uint)
-                                    ? (uint)Math.Max(0, deviceId)
+                                    ? 0u
                                     : pType == typeof(int)
-                                        ? Math.Max(0, deviceId)
+                                        ? 0
                                         : null;
 
                                 if (arg == null)
@@ -994,7 +991,7 @@ namespace FaceShield.Services.FaceDetection
             }
         }
 
-        private static bool TryInvokeSessionOptionsMethod(SessionOptions options, string methodName, int deviceId)
+        private static bool TryInvokeSessionOptionsMethod(SessionOptions options, string methodName)
         {
             var methods = typeof(SessionOptions)
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -1019,9 +1016,9 @@ namespace FaceShield.Services.FaceDetection
                     {
                         var pType = parameters[0].ParameterType;
                         object? arg = pType == typeof(uint)
-                            ? (uint)Math.Max(0, deviceId)
+                            ? 0u
                             : pType == typeof(int)
-                                ? Math.Max(0, deviceId)
+                                ? 0
                                 : null;
 
                         if (arg == null)
