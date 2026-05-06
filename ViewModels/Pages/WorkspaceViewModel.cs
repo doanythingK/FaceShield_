@@ -181,35 +181,43 @@ namespace FaceShield.ViewModels.Pages
         }
 
 
-        private async Task SaveVideoAsync(
+        private async Task<bool> SaveVideoAsync(
             IProgress<ExportProgress>? exportProgress = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            bool updateToolPanel = true)
         {
             string input = FrameList.VideoPath;
             string output = System.IO.Path.Combine(
                 System.IO.Path.GetDirectoryName(input)!,
                 System.IO.Path.GetFileNameWithoutExtension(input) + "_blur.mp4");
 
-            output = await ResolveExportOutputPathAsync(output);
-            if (string.IsNullOrWhiteSpace(output))
-                return;
+            string? resolvedOutput = await ResolveExportOutputPathAsync(output);
+            if (string.IsNullOrWhiteSpace(resolvedOutput))
+                return false;
+            output = resolvedOutput;
 
             var exporter = new VideoExportService(_maskProvider);
 
-            ToolPanel.IsExportRunning = true;
-            ToolPanel.ExportProgress = 0;
-            ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
-            ToolPanel.ExportStatusText = null;
+            if (updateToolPanel)
+            {
+                ToolPanel.IsExportRunning = true;
+                ToolPanel.ExportProgress = 0;
+                ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
+                ToolPanel.ExportStatusText = null;
+            }
             _exportEtaSamples.Clear();
 
             var progress = new Progress<ExportProgress>(p =>
             {
                 exportProgress?.Report(p);
-                int percent = Math.Clamp(p.Percent, 0, 100);
-                ToolPanel.ExportProgress = percent;
-                UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
-                if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                    ToolPanel.ExportStatusText = p.StatusMessage;
+                if (updateToolPanel)
+                {
+                    int percent = Math.Clamp(p.Percent, 0, 100);
+                    ToolPanel.ExportProgress = percent;
+                    UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
+                    if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                        ToolPanel.ExportStatusText = p.StatusMessage;
+                }
             });
 
             try
@@ -223,17 +231,23 @@ namespace FaceShield.ViewModels.Pages
                 {
                     exporter.Export(input, output, blurRadius: ToolPanel.BlurRadius, progress, _exportCts.Token);
                 }, _exportCts.Token);
+
+                return true;
             }
             catch (OperationCanceledException)
             {
                 // 사용자 취소는 정상 흐름
+                return false;
             }
             finally
             {
-                ToolPanel.IsExportRunning = false;
-                ToolPanel.ExportProgress = 0;
-                ToolPanel.ExportEtaText = null;
-                ToolPanel.ExportStatusText = null;
+                if (updateToolPanel)
+                {
+                    ToolPanel.IsExportRunning = false;
+                    ToolPanel.ExportProgress = 0;
+                    ToolPanel.ExportEtaText = null;
+                    ToolPanel.ExportStatusText = null;
+                }
                 _exportCts?.Dispose();
                 _exportCts = null;
             }
@@ -312,8 +326,11 @@ namespace FaceShield.ViewModels.Pages
                 ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                 : new CancellationTokenSource();
 
-            ToolPanel.IsAutoRunning = true;
-            ToolPanel.AutoProgress = 0;
+            if (!exportAfter)
+            {
+                ToolPanel.IsAutoRunning = true;
+                ToolPanel.AutoProgress = 0;
+            }
 
             return RunAutoCoreAsync(exportAfter, progress, exportProgress);
         }
@@ -373,7 +390,8 @@ namespace FaceShield.ViewModels.Pages
                 var effectiveProgress = new Progress<int>(p =>
                 {
                     progress?.Report(p);
-                    ToolPanel.AutoProgress = p;
+                    if (!exportAfter)
+                        ToolPanel.AutoProgress = p;
                 });
                 var token = _autoCts?.Token ?? CancellationToken.None;
                 await generator.GenerateAsync(
@@ -412,7 +430,19 @@ namespace FaceShield.ViewModels.Pages
                     await BuildAutoAnomaliesAsync();
 
                 if (exportAfter)
-                    await SaveVideoAsync(exportProgress, _autoCts?.Token ?? CancellationToken.None);
+                {
+                    bool exported = await SaveVideoAsync(
+                        exportProgress,
+                        _autoCts?.Token ?? CancellationToken.None,
+                        updateToolPanel: false);
+                    if (!exported)
+                    {
+                        _autoCompleted = false;
+                        PersistWorkspaceState(includePreviewMask: false);
+                        persisted = true;
+                        return false;
+                    }
+                }
 
                 _autoCompleted = true;
                 _autoResumeIndex = 0;
