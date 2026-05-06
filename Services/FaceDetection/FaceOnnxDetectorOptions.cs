@@ -13,6 +13,16 @@ namespace FaceShield.Services.FaceDetection
         public bool UseGpu { get; init; } = false;
 
         /// <summary>
+        /// GPU 실행 공급자 장치 ID (null이면 기본 장치).
+        /// </summary>
+        public int? GpuDeviceId { get; init; }
+
+        /// <summary>
+        /// true면 GPU 실행 공급자를 붙이지 못한 후보를 자동 튜닝에서 제외.
+        /// </summary>
+        public bool RequireGpuExecutionProvider { get; init; } = false;
+
+        /// <summary>
         /// Intra-op 스레드 수 (null이면 기본값).
         /// </summary>
         public int? IntraOpNumThreads { get; init; }

@@ -19,6 +19,7 @@ namespace FaceShield.Services.FaceDetection
             DownscaleQuality Quality,
             bool UseOrtOptimization,
             bool AllowGpu,
+            int? GpuDeviceId,
             float? DetectionThreshold,
             float? ConfidenceThreshold,
             float? NmsThreshold,
@@ -71,6 +72,7 @@ namespace FaceShield.Services.FaceDetection
                 downscaleQuality,
                 baseOptions.UseOrtOptimization,
                 allowGpu,
+                baseOptions.GpuDeviceId,
                 baseOptions.DetectionThreshold,
                 baseOptions.ConfidenceThreshold,
                 baseOptions.NmsThreshold,
@@ -225,6 +227,8 @@ namespace FaceShield.Services.FaceDetection
                         threads,
                         interThreads: baseOptions.InterOpNumThreads,
                         useGpu: false,
+                        gpuDeviceId: null,
+                        requireGpuExecutionProvider: false,
                         enablePreprocessParallelism: sessions <= 1,
                         useParallelExecution: baseOptions.UseParallelExecution == true);
                     candidates.Add((opts, sessions, $"CPU {sessions}세션/{threads}스레드"));
@@ -237,6 +241,8 @@ namespace FaceShield.Services.FaceDetection
                             threads,
                             interThreads,
                             useGpu: false,
+                            gpuDeviceId: null,
+                            requireGpuExecutionProvider: false,
                             enablePreprocessParallelism: sessions <= 1,
                             useParallelExecution: true);
                         candidates.Add((parallelOpts, sessions, $"CPU {sessions}세션/{threads}스레드/ORT_PARALLEL({interThreads})"));
@@ -245,18 +251,31 @@ namespace FaceShield.Services.FaceDetection
 
                 if (allowGpu || baseOptions.UseGpu)
                 {
-                    var opts = CloneOptions(
-                        baseOptions,
-                        perSession,
-                        interThreads: baseOptions.InterOpNumThreads,
-                        useGpu: true,
-                        enablePreprocessParallelism: sessions <= 1,
-                        useParallelExecution: false);
-                    candidates.Add((opts, sessions, $"GPU {sessions}세션/{perSession}스레드"));
+                    foreach (int deviceId in BuildGpuDeviceCandidates(baseOptions.GpuDeviceId))
+                    {
+                        var opts = CloneOptions(
+                            baseOptions,
+                            perSession,
+                            interThreads: baseOptions.InterOpNumThreads,
+                            useGpu: true,
+                            gpuDeviceId: deviceId,
+                            requireGpuExecutionProvider: true,
+                            enablePreprocessParallelism: sessions <= 1,
+                            useParallelExecution: false);
+                        candidates.Add((opts, sessions, $"GPU#{deviceId} {sessions}세션/{perSession}스레드"));
+                    }
                 }
             }
 
             return candidates;
+        }
+
+        private static IReadOnlyList<int> BuildGpuDeviceCandidates(int? requestedDeviceId)
+        {
+            if (requestedDeviceId.HasValue)
+                return new[] { Math.Max(0, requestedDeviceId.Value) };
+
+            return new[] { 0, 1, 2, 3 };
         }
 
         private static FaceOnnxDetectorOptions CloneOptions(
@@ -264,6 +283,8 @@ namespace FaceShield.Services.FaceDetection
             int? intraThreads,
             int? interThreads,
             bool useGpu,
+            int? gpuDeviceId,
+            bool requireGpuExecutionProvider,
             bool enablePreprocessParallelism,
             bool useParallelExecution)
         {
@@ -271,6 +292,8 @@ namespace FaceShield.Services.FaceDetection
             {
                 UseOrtOptimization = source.UseOrtOptimization,
                 UseGpu = useGpu,
+                GpuDeviceId = gpuDeviceId,
+                RequireGpuExecutionProvider = requireGpuExecutionProvider,
                 IntraOpNumThreads = intraThreads,
                 InterOpNumThreads = interThreads,
                 UseParallelExecution = useParallelExecution,
