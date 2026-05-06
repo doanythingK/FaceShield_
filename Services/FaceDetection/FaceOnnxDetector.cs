@@ -87,6 +87,8 @@ namespace FaceShield.Services.FaceDetection
                 so.IntraOpNumThreads = options.IntraOpNumThreads.Value;
             if (options.InterOpNumThreads.HasValue)
                 so.InterOpNumThreads = options.InterOpNumThreads.Value;
+            if (options.UseParallelExecution == true)
+                so.ExecutionMode = ExecutionMode.ORT_PARALLEL;
 
             try
             {

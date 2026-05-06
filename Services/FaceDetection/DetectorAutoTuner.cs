@@ -22,7 +22,8 @@ namespace FaceShield.Services.FaceDetection
             float? DetectionThreshold,
             float? ConfidenceThreshold,
             float? NmsThreshold,
-            int? InterOpNumThreads);
+            int? InterOpNumThreads,
+            bool? UseParallelExecution);
 
         private readonly record struct AutoTuneResult(
             FaceOnnxDetectorOptions Options,
@@ -73,7 +74,8 @@ namespace FaceShield.Services.FaceDetection
                 baseOptions.DetectionThreshold,
                 baseOptions.ConfidenceThreshold,
                 baseOptions.NmsThreshold,
-                baseOptions.InterOpNumThreads);
+                baseOptions.InterOpNumThreads,
+                baseOptions.UseParallelExecution);
             if (Cache.TryGetValue(key, out var cached))
             {
                 tunedOptions = cached.Options;
@@ -218,13 +220,38 @@ namespace FaceShield.Services.FaceDetection
 
                 foreach (int threads in threadCandidates)
                 {
-                    var opts = CloneOptions(baseOptions, threads, useGpu: false, sessions <= 1);
+                    var opts = CloneOptions(
+                        baseOptions,
+                        threads,
+                        interThreads: baseOptions.InterOpNumThreads,
+                        useGpu: false,
+                        enablePreprocessParallelism: sessions <= 1,
+                        useParallelExecution: baseOptions.UseParallelExecution == true);
                     candidates.Add((opts, sessions, $"CPU {sessions}세션/{threads}스레드"));
+
+                    if (baseOptions.UseParallelExecution != false)
+                    {
+                        int interThreads = Math.Max(1, Math.Min(threads, Math.Max(1, Environment.ProcessorCount / Math.Max(1, sessions))));
+                        var parallelOpts = CloneOptions(
+                            baseOptions,
+                            threads,
+                            interThreads,
+                            useGpu: false,
+                            enablePreprocessParallelism: sessions <= 1,
+                            useParallelExecution: true);
+                        candidates.Add((parallelOpts, sessions, $"CPU {sessions}세션/{threads}스레드/ORT_PARALLEL({interThreads})"));
+                    }
                 }
 
                 if (allowGpu || baseOptions.UseGpu)
                 {
-                    var opts = CloneOptions(baseOptions, perSession, useGpu: true, enablePreprocessParallelism: sessions <= 1);
+                    var opts = CloneOptions(
+                        baseOptions,
+                        perSession,
+                        interThreads: baseOptions.InterOpNumThreads,
+                        useGpu: true,
+                        enablePreprocessParallelism: sessions <= 1,
+                        useParallelExecution: false);
                     candidates.Add((opts, sessions, $"GPU {sessions}세션/{perSession}스레드"));
                 }
             }
@@ -235,15 +262,18 @@ namespace FaceShield.Services.FaceDetection
         private static FaceOnnxDetectorOptions CloneOptions(
             FaceOnnxDetectorOptions source,
             int? intraThreads,
+            int? interThreads,
             bool useGpu,
-            bool enablePreprocessParallelism)
+            bool enablePreprocessParallelism,
+            bool useParallelExecution)
         {
             return new FaceOnnxDetectorOptions
             {
                 UseOrtOptimization = source.UseOrtOptimization,
                 UseGpu = useGpu,
                 IntraOpNumThreads = intraThreads,
-                InterOpNumThreads = source.InterOpNumThreads,
+                InterOpNumThreads = interThreads,
+                UseParallelExecution = useParallelExecution,
                 DetectionThreshold = source.DetectionThreshold,
                 ConfidenceThreshold = source.ConfidenceThreshold,
                 NmsThreshold = source.NmsThreshold,

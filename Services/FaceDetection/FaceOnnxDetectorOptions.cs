@@ -23,6 +23,11 @@ namespace FaceShield.Services.FaceDetection
         public int? InterOpNumThreads { get; init; }
 
         /// <summary>
+        /// ONNX Runtime parallel execution mode 사용 여부 (null이면 기본값).
+        /// </summary>
+        public bool? UseParallelExecution { get; init; }
+
+        /// <summary>
         /// 검출 임계값 (null이면 기본값).
         /// </summary>
         public float? DetectionThreshold { get; init; }
