@@ -163,10 +163,12 @@ totalMs=...
 - `FaceOnnxDetectorOptions`에 `EnablePreprocessParallelism`, `AllowAutoTune`, `AllowAutoGpu` 옵션을 추가했다.
 - `FaceOnnxDetector.GetDefaultThresholds()`는 매번 임시 detector를 만들지 않도록 `Lazy` 캐시로 바꿨다.
 - `DetectorAutoTuner`를 추가해 자동 실행 시작 시 첫 프레임 기준으로 CPU 세션 수와 intra-op 스레드 수 후보를 짧게 측정한다. 다운스케일 자동 처리에서는 원본이 아니라 실제 검출 입력 해상도 기준으로 측정하고, 캐시는 검출 입력 크기/품질/threshold/스레드 설정 기준으로 분리한다.
+- 자동 튜닝은 1세션과 최대 세션만 비교하지 않고, 1부터 선택된 최대 세션까지 모든 세션 수와 주요 thread 후보를 비교한다. 장비에 따라 중간 세션 수가 가장 빠른 경우를 잡기 위한 변경이다.
 - `WorkspaceViewModel.RunAutoCoreAsync()`는 튜닝 결과를 이번 자동 실행에만 적용하고, 기존 사용자 설정의 downscale/quality/tracking/detect interval은 유지한다.
 - GPU 사용 설정이 켜져 있어도 자동 튜닝은 CPU 후보와 GPU 후보를 모두 비교한다. 특정 장비에서 GPU 초기화/전송 비용이 더 크면 CPU 조합을 선택할 수 있게 했다.
 - `UseTracking=true`와 `DetectEveryNFrames > 1` 조합에서도 병렬 detector 파이프라인을 탈 수 있도록 `sparse-pipe-parallel` 경로를 추가했다. 검출 대상 프레임만 BGRA로 변환해 여러 detector에 분배하고, 검출 프레임은 즉시 반영하며 완료/취소 시점에 중간 프레임으로 tracking 결과를 펼친다.
 - 자동 후처리(`ApplyAutoTemporalSmoothing`, `BuildAutoAnomaliesAsync`)는 전체 프레임마다 dictionary 조회를 반복하지 않고 현재 저장된 face-mask entry snapshot 기준으로 채우도록 바꿨다. 결과 판정은 유지하고 조회 비용만 줄이는 변경이다.
+- 자동 완료 후 파일 저장 모드에서는 처리 중 워크스페이스 미리보기 프레임 이동을 생략한다. 결과 품질과 저장 결과에는 영향이 없고 UI thread 업데이트 비용만 줄인다.
 
 검증:
 

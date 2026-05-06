@@ -386,7 +386,8 @@ namespace FaceShield.ViewModels.Pages
                         _autoResumeIndex = idx;
                         _autoLastProcessedFrame = idx;
                         _autoLastProcessedAtUtc = DateTime.UtcNow;
-                        TryUpdateAutoPreview(idx);
+                        if (!exportAfter)
+                            TryUpdateAutoPreview(idx);
                     });
 
                 if (token.IsCancellationRequested)

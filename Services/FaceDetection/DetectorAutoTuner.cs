@@ -206,12 +206,15 @@ namespace FaceShield.Services.FaceDetection
         {
             int cores = Math.Max(1, Environment.ProcessorCount);
             var candidates = new List<(FaceOnnxDetectorOptions, int, string)>();
-            int[] sessionCandidates = maxSessions <= 1 ? new[] { 1 } : new[] { 1, maxSessions };
-
-            foreach (int sessions in sessionCandidates)
+            for (int sessions = 1; sessions <= Math.Max(1, maxSessions); sessions++)
             {
                 int perSession = Math.Max(1, cores / sessions);
-                int[] threadCandidates = { perSession, Math.Max(1, perSession / 2) };
+                var threadCandidates = new SortedSet<int>
+                {
+                    perSession,
+                    Math.Max(1, perSession / 2),
+                    1
+                };
 
                 foreach (int threads in threadCandidates)
                 {
