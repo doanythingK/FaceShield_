@@ -286,6 +286,18 @@ namespace FaceShield.ViewModels.Pages
                 detectorFactory);
         }
 
+        private AutoMaskGenerator CreateAutoMaskGenerator(
+            IFaceDetector detector,
+            IFaceDetectorFactory detectorFactory,
+            AutoMaskOptions options)
+        {
+            return new AutoMaskGenerator(
+                detector,
+                _maskProvider,
+                options,
+                detectorFactory);
+        }
+
         public Task<bool> RunAutoAsync(
             bool exportAfter,
             IProgress<int>? progress = null,
@@ -313,9 +325,43 @@ namespace FaceShield.ViewModels.Pages
         {
             try
             {
-                var detectorFactory = CreateFaceDetectorFactory();
+                var detectorOptions = _detectorOptions;
+                int tunedSessions = Math.Max(1, _autoOptions.ParallelDetectorCount);
+                if (_detectorOptions.AllowAutoTune != false)
+                {
+                    if (DetectorAutoTuner.TryTune(
+                            FrameList.VideoPath,
+                            _autoOptions.DownscaleRatio,
+                            _autoOptions.DownscaleQuality,
+                            _detectorOptions,
+                            tunedSessions,
+                            _detectorOptions.AllowAutoGpu == true,
+                            out var tunedOptions,
+                            out var tunedCount,
+                            out var tuneLabel))
+                    {
+                        detectorOptions = tunedOptions;
+                        tunedSessions = Math.Max(1, tunedCount);
+                        System.Diagnostics.Debug.WriteLine($"[AutoTune] applied {tuneLabel}");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("[AutoTune] skipped; using configured detector options.");
+                    }
+                }
+
+                var runOptions = new AutoMaskOptions
+                {
+                    DownscaleRatio = _autoOptions.DownscaleRatio,
+                    DownscaleQuality = _autoOptions.DownscaleQuality,
+                    UseTracking = _autoOptions.UseTracking,
+                    DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
+                    ParallelDetectorCount = tunedSessions
+                };
+
+                var detectorFactory = new FaceDetectorFactory(FaceDetectorFactoryOptions.ForOnnx(detectorOptions));
                 using IFaceDetector detector = detectorFactory.CreateDetector();
-                var generator = CreateAutoMaskGenerator(detector, detectorFactory);
+                var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
                 if (lastProcessed == 0)
@@ -397,13 +443,20 @@ namespace FaceShield.ViewModels.Pages
             var sizeByFrame = new PixelSize[total];
             var hasStored = new bool[total];
 
-            for (int i = 0; i < total; i++)
+            foreach (int index in _maskProvider.GetStoredMaskFrameIndices())
             {
-                hasStored[i] = _maskProvider.TryGetStoredMask(i, out _);
-                if (hasStored[i])
+                if (index >= 0 && index < total)
+                    hasStored[index] = true;
+            }
+
+            foreach (var entry in _maskProvider.GetFaceMaskEntries())
+            {
+                int i = entry.Key;
+                if (i < 0 || i >= total || hasStored[i])
                     continue;
 
-                if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
+                var data = entry.Value;
+                if (data.Faces.Count > 0)
                 {
                     facesByFrame[i] = new List<Rect>(data.Faces);
                     confByFrame[i] = new List<float>(data.Confidences);
@@ -1150,9 +1203,15 @@ namespace FaceShield.ViewModels.Pages
                 var lowConfidence = new System.Collections.Generic.List<int>();
                 var flicker = new System.Collections.Generic.List<int>();
                 var hasFace = new bool[total];
-                for (int i = 0; i < total; i++)
+
+                foreach (var entry in _maskProvider.GetFaceMaskEntries())
                 {
-                    if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
+                    int i = entry.Key;
+                    if (i < 0 || i >= total)
+                        continue;
+
+                    var data = entry.Value;
+                    if (data.Faces.Count > 0)
                     {
                         hasFace[i] = true;
                         if (data.MinConfidence.HasValue &&
@@ -1160,10 +1219,13 @@ namespace FaceShield.ViewModels.Pages
                         {
                             lowConfidence.Add(i);
                         }
-                        continue;
                     }
+                }
 
-                    noFace.Add(i);
+                for (int i = 0; i < total; i++)
+                {
+                    if (!hasFace[i])
+                        noFace.Add(i);
                 }
 
                 for (int i = 1; i < total - 1; i++)

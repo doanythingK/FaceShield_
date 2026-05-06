@@ -140,3 +140,42 @@ totalMs=...
 - 자동 얼굴 박스 export에서 불필요한 전체 마스크 생성을 줄였다.
 
 다음 판단은 실제 영상 재실행 로그를 보고 해야 한다.
+
+## 2026-05-06 추가 작업: 브랜치 비교 후 품질 유지형 자동 튜닝
+작업 브랜치: `perf/quality-speed-max`
+
+비교한 브랜치:
+
+- `main`
+- `fix/auto-persist-quality`
+- `fix/macos-manual-and-auto-quality-speed`
+- `detector-backend-refactor`
+
+판단:
+
+- `detector-backend-refactor`는 `fix/macos-manual-and-auto-quality-speed` 위에 얼굴 검출 백엔드 분리, direct face-rect export, smoothing, 성능 로그가 추가된 상태다.
+- `fix/auto-persist-quality`에는 자동 튜닝, proxy/refine, 캐시/상태 저장 변경이 따로 있으나 UI/상태 저장 범위까지 크게 갈라져 있어 그대로 병합하면 충돌과 회귀 위험이 크다.
+- 이번 작업에서는 품질을 낮추는 검출 간격 증가나 threshold 완화는 하지 않고, 자동 튜닝의 핵심만 현재 detector factory 구조에 맞춰 이식했다.
+
+변경 내용:
+
+- `FaceOnnxDetectorOptions.UseOrtOptimization` 기본값을 `true`로 바꿔 ONNX Runtime 그래프 최적화를 기본 적용한다.
+- `FaceOnnxDetectorOptions`에 `EnablePreprocessParallelism`, `AllowAutoTune`, `AllowAutoGpu` 옵션을 추가했다.
+- `FaceOnnxDetector.GetDefaultThresholds()`는 매번 임시 detector를 만들지 않도록 `Lazy` 캐시로 바꿨다.
+- `DetectorAutoTuner`를 추가해 자동 실행 시작 시 첫 프레임 기준으로 CPU 세션 수와 intra-op 스레드 수 후보를 짧게 측정한다. 다운스케일 자동 처리에서는 원본이 아니라 실제 검출 입력 해상도 기준으로 측정하고, 캐시는 검출 입력 크기/품질/threshold/스레드 설정 기준으로 분리한다.
+- `WorkspaceViewModel.RunAutoCoreAsync()`는 튜닝 결과를 이번 자동 실행에만 적용하고, 기존 사용자 설정의 downscale/quality/tracking/detect interval은 유지한다.
+- GPU 사용 설정이 켜져 있어도 자동 튜닝은 CPU 후보와 GPU 후보를 모두 비교한다. 특정 장비에서 GPU 초기화/전송 비용이 더 크면 CPU 조합을 선택할 수 있게 했다.
+- `UseTracking=true`와 `DetectEveryNFrames > 1` 조합에서도 병렬 detector 파이프라인을 탈 수 있도록 `sparse-pipe-parallel` 경로를 추가했다. 검출 대상 프레임만 BGRA로 변환해 여러 detector에 분배하고, 검출 프레임은 즉시 반영하며 완료/취소 시점에 중간 프레임으로 tracking 결과를 펼친다.
+- 자동 후처리(`ApplyAutoTemporalSmoothing`, `BuildAutoAnomaliesAsync`)는 전체 프레임마다 dictionary 조회를 반복하지 않고 현재 저장된 face-mask entry snapshot 기준으로 채우도록 바꿨다. 결과 판정은 유지하고 조회 비용만 줄이는 변경이다.
+
+검증:
+
+- `dotnet build FaceShield.sln`
+- 결과: 성공
+- Error: 0
+- Warning: 13
+
+아직 확실하지 않은 점:
+
+- 실제 10분 영상에서 개선 폭은 아직 측정하지 않았다. 성능 수치는 실제 샘플의 `[AutoTune]`, `[AutoMaskPipe]`, `[Export]` 로그를 확인하기 전까지 알 수 없다.
+- GPU 자동 선택은 기본값이 꺼져 있다. DirectML/CoreML 적용은 플랫폼별 native 의존성 검증 후 별도 테스트가 필요하다.

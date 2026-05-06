@@ -92,6 +92,9 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
     public int[] GetFaceMaskFrameIndices()
         => _faceMasks.Keys.ToArray();
 
+    public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()
+        => _faceMasks.ToArray();
+
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
         => _masks.ToArray();
 

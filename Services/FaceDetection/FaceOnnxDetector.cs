@@ -40,14 +40,21 @@ namespace FaceShield.Services.FaceDetection
             _detector = new FaceDetector(); // 확실함
         }
 
-        public static (float Detection, float Confidence, float Nms) GetDefaultThresholds()
+        private static readonly Lazy<(float Detection, float Confidence, float Nms)> DefaultThresholds = new(() =>
         {
             using var temp = new FaceDetector();
             return (temp.DetectionThreshold, temp.ConfidenceThreshold, temp.NmsThreshold);
+        });
+
+        public static (float Detection, float Confidence, float Nms) GetDefaultThresholds()
+        {
+            return DefaultThresholds.Value;
         }
 
         public FaceOnnxDetector(FaceOnnxDetectorOptions? options)
         {
+            _enablePreprocessOptimizations = options?.EnablePreprocessParallelism ?? true;
+
             if (options == null || (!options.UseOrtOptimization && !options.UseGpu))
             {
                 _detector = new FaceDetector();
