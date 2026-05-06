@@ -406,7 +406,8 @@ namespace FaceShield.ViewModels.Pages
                 ApplyAutoTemporalFixes();
                 ApplyAutoTemporalSmoothing();
 
-                await BuildAutoAnomaliesAsync();
+                if (!exportAfter)
+                    await BuildAutoAnomaliesAsync();
 
                 if (exportAfter)
                     await SaveVideoAsync(exportProgress, _autoCts?.Token ?? CancellationToken.None);
