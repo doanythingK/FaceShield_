@@ -323,6 +323,7 @@ namespace FaceShield.ViewModels.Pages
             IProgress<int>? progress,
             IProgress<ExportProgress>? exportProgress)
         {
+            bool persisted = false;
             try
             {
                 var detectorOptions = _detectorOptions;
@@ -393,12 +394,13 @@ namespace FaceShield.ViewModels.Pages
                 if (token.IsCancellationRequested)
                 {
                     _autoCompleted = false;
-                    PersistWorkspaceState();
+                    PersistWorkspaceState(includePreviewMask: !exportAfter);
+                    persisted = true;
                     return false;
                 }
 
                 // 자동 마스크 생성 후, 현재 프레임 다시 렌더링 (마스크 반영)
-                if (FrameList.SelectedFrameIndex >= 0)
+                if (!exportAfter && FrameList.SelectedFrameIndex >= 0)
                 {
                     FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
                 }
@@ -414,14 +416,16 @@ namespace FaceShield.ViewModels.Pages
 
                 _autoCompleted = true;
                 _autoResumeIndex = 0;
-                PersistWorkspaceState();
+                PersistWorkspaceState(includePreviewMask: !exportAfter);
+                persisted = true;
 
                 return true;
             }
             catch (OperationCanceledException)
             {
                 _autoCompleted = false;
-                PersistWorkspaceState();
+                PersistWorkspaceState(includePreviewMask: !exportAfter);
+                persisted = true;
                 return false;
             }
             finally
@@ -430,7 +434,8 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
-                PersistWorkspaceState();
+                if (!persisted)
+                    PersistWorkspaceState(includePreviewMask: !exportAfter);
             }
         }
 
@@ -1455,10 +1460,16 @@ namespace FaceShield.ViewModels.Pages
 
         public void PersistWorkspaceState()
         {
+            PersistWorkspaceState(includePreviewMask: true);
+        }
+
+        private void PersistWorkspaceState(bool includePreviewMask)
+        {
             if (_stateStore == null)
                 return;
 
-            FramePreview.PersistCurrentMask();
+            if (includePreviewMask)
+                FramePreview.PersistCurrentMask();
             var snapshot = BuildSnapshot();
             _stateStore.SaveWorkspace(snapshot, _maskProvider);
         }

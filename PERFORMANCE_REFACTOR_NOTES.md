@@ -169,6 +169,7 @@ totalMs=...
 - `UseTracking=true`와 `DetectEveryNFrames > 1` 조합에서도 병렬 detector 파이프라인을 탈 수 있도록 `sparse-pipe-parallel` 경로를 추가했다. 검출 대상 프레임만 BGRA로 변환해 여러 detector에 분배하고, 검출 프레임은 즉시 반영하며 완료/취소 시점에 중간 프레임으로 tracking 결과를 펼친다.
 - 자동 후처리(`ApplyAutoTemporalSmoothing`, `BuildAutoAnomaliesAsync`)는 전체 프레임마다 dictionary 조회를 반복하지 않고 현재 저장된 face-mask entry snapshot 기준으로 채우도록 바꿨다. 결과 판정은 유지하고 조회 비용만 줄이는 변경이다.
 - 자동 완료 후 파일 저장 모드에서는 처리 중 워크스페이스 미리보기 프레임 이동을 생략한다. 결과 품질과 저장 결과에는 영향이 없고 UI thread 업데이트 비용만 줄인다.
+- 자동 완료 후 파일 저장 모드에서는 완료 직후 현재 프레임 재렌더링과 preview mask persist를 생략하고, 성공/취소 경로에서 이미 저장한 workspace state를 finally에서 중복 저장하지 않도록 했다. export 결과에는 쓰이지 않는 UI/디스크 작업만 줄인 변경이다.
 
 검증:
 
