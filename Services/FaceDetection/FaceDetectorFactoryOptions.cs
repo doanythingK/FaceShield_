@@ -14,5 +14,14 @@ namespace FaceShield.Services.FaceDetection
                 FaceOnnxOptions = options
             };
         }
+
+        public FaceDetectorFactoryOptions WithFaceOnnxOptions(FaceOnnxDetectorOptions? options)
+        {
+            return new FaceDetectorFactoryOptions
+            {
+                Backend = Backend,
+                FaceOnnxOptions = options
+            };
+        }
     }
 }

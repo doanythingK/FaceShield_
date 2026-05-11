@@ -44,6 +44,7 @@ namespace FaceShield.ViewModels.Pages
         private const double TemporalSmoothWeight = 0.42;
         private const int TemporalSmoothPasses = 2;
         private const int TemporalMinRunLength = 2;
+        private const int SuspiciousNoFaceMaxGap = 8;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private int _autoLastProcessedFrame = -1;
@@ -184,9 +185,13 @@ namespace FaceShield.ViewModels.Pages
         private async Task<bool> SaveVideoAsync(
             IProgress<ExportProgress>? exportProgress = null,
             CancellationToken cancellationToken = default,
-            bool updateToolPanel = true)
+            bool updateToolPanel = true,
+            string? runId = null)
         {
             string input = FrameList.VideoPath;
+            string exportRunId = string.IsNullOrWhiteSpace(runId)
+                ? $"export-{Guid.NewGuid():N}"
+                : runId;
             string output = System.IO.Path.Combine(
                 System.IO.Path.GetDirectoryName(input)!,
                 System.IO.Path.GetFileNameWithoutExtension(input) + "_blur.mp4");
@@ -229,8 +234,10 @@ namespace FaceShield.ViewModels.Pages
 
                 await Task.Run(() =>
                 {
-                    exporter.Export(input, output, blurRadius: ToolPanel.BlurRadius, progress, _exportCts.Token);
+                    exporter.Export(input, output, blurRadius: ToolPanel.BlurRadius, progress, _exportCts.Token, exportRunId);
                 }, _exportCts.Token);
+                if (exporter.LastExportSummary != null)
+                    System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
 
                 return true;
             }
@@ -341,11 +348,14 @@ namespace FaceShield.ViewModels.Pages
             IProgress<ExportProgress>? exportProgress)
         {
             bool persisted = false;
+            string runId = $"auto-{Guid.NewGuid():N}";
             try
             {
                 var detectorOptions = _detectorOptions;
+                var detectorFactoryOptions = _detectorFactoryOptions;
                 int tunedSessions = Math.Max(1, _autoOptions.ParallelDetectorCount);
-                if (_detectorOptions.AllowAutoTune != false)
+                if (_detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
+                    _detectorOptions.AllowAutoTune != false)
                 {
                     var tuneToken = _autoCts?.Token ?? CancellationToken.None;
                     var tuneResult = await Task.Run(() =>
@@ -357,6 +367,7 @@ namespace FaceShield.ViewModels.Pages
                             _detectorOptions,
                             tunedSessions,
                             _detectorOptions.AllowAutoGpu == true,
+                            tuneToken,
                             out var tunedOptions,
                             out var tunedCount,
                             out var tuneLabel);
@@ -377,6 +388,8 @@ namespace FaceShield.ViewModels.Pages
                     {
                         System.Diagnostics.Debug.WriteLine("[AutoTune] skipped; using configured detector options.");
                     }
+
+                    detectorFactoryOptions = detectorFactoryOptions.WithFaceOnnxOptions(detectorOptions);
                 }
 
                 var runOptions = new AutoMaskOptions
@@ -385,10 +398,11 @@ namespace FaceShield.ViewModels.Pages
                     DownscaleQuality = _autoOptions.DownscaleQuality,
                     UseTracking = _autoOptions.UseTracking,
                     DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
-                    ParallelDetectorCount = tunedSessions
+                    ParallelDetectorCount = tunedSessions,
+                    RunId = runId
                 };
 
-                var detectorFactory = new FaceDetectorFactory(FaceDetectorFactoryOptions.ForOnnx(detectorOptions));
+                var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
                 _autoCompleted = false;
@@ -419,6 +433,8 @@ namespace FaceShield.ViewModels.Pages
                         if (!exportAfter)
                             TryUpdateAutoPreview(idx);
                     });
+                if (generator.LastRunSummary != null)
+                    System.Diagnostics.Debug.WriteLine($"[WorkspaceAuto] {generator.LastRunSummary.ToLogLine()}");
 
                 if (token.IsCancellationRequested)
                 {
@@ -445,7 +461,8 @@ namespace FaceShield.ViewModels.Pages
                     bool exported = await SaveVideoAsync(
                         exportProgress,
                         _autoCts?.Token ?? CancellationToken.None,
-                        updateToolPanel: false);
+                        updateToolPanel: false,
+                        runId: runId);
                     if (!exported)
                     {
                         _autoCompleted = false;
@@ -1270,11 +1287,7 @@ namespace FaceShield.ViewModels.Pages
                     }
                 }
 
-                for (int i = 0; i < total; i++)
-                {
-                    if (!hasFace[i])
-                        noFace.Add(i);
-                }
+                AddSuspiciousNoFaceGaps(hasFace, noFace);
 
                 for (int i = 1; i < total - 1; i++)
                 {
@@ -1308,6 +1321,37 @@ namespace FaceShield.ViewModels.Pages
             var defaults = FaceOnnxDetector.GetDefaultThresholds();
             float baseThreshold = _detectorOptions.ConfidenceThreshold ?? defaults.Confidence;
             return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);
+        }
+
+        private static void AddSuspiciousNoFaceGaps(bool[] hasFace, List<int> noFace)
+        {
+            int total = hasFace.Length;
+            int i = 0;
+            while (i < total)
+            {
+                if (hasFace[i])
+                {
+                    i++;
+                    continue;
+                }
+
+                int start = i;
+                while (i < total && !hasFace[i])
+                    i++;
+
+                int endExclusive = i;
+                int length = endExclusive - start;
+                if (length > SuspiciousNoFaceMaxGap)
+                    continue;
+
+                bool hasPreviousFace = start > 0 && hasFace[start - 1];
+                bool hasNextFace = endExclusive < total && hasFace[endExclusive];
+                if (!hasPreviousFace || !hasNextFace)
+                    continue;
+
+                for (int frame = start; frame < endExclusive; frame++)
+                    noFace.Add(frame);
+            }
         }
 
         private static int[] MergeSortedFrames(IReadOnlyList<int> first, IReadOnlyList<int> second)

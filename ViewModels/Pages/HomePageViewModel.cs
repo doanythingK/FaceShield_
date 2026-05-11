@@ -29,6 +29,11 @@ namespace FaceShield.ViewModels.Pages
         private const int DefaultBlurRadius = 28;
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
+        private const int DefaultAutoDetectEveryNFrames = 1;
+        private const int CurrentAutoSettingsVersion = 3;
+        private static readonly bool DefaultAutoUseGpu =
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
         private readonly Action<WorkspaceViewModel> _onStartWorkspace;
         private readonly Action _onBackHome;
         private readonly WorkspaceStateStore _stateStore;
@@ -157,7 +162,7 @@ namespace FaceShield.ViewModels.Pages
         public IReadOnlyList<int> DetectEveryOptions { get; } = new[] { 1, 2, 3, 5 };
 
         [ObservableProperty]
-        private int autoDetectEveryNFrames = 1;
+        private int autoDetectEveryNFrames = DefaultAutoDetectEveryNFrames;
 
         public IReadOnlyList<int> ParallelSessionOptions { get; } = new[] { 1, 2, 3, 4 };
 
@@ -165,15 +170,13 @@ namespace FaceShield.ViewModels.Pages
         private int selectedParallelSessionCount = 2;
 
         [ObservableProperty]
-        private bool autoTrackingEnabled;
+        private bool autoTrackingEnabled = true;
 
         [ObservableProperty]
         private bool autoUseOrtOptimization = true;
 
         [ObservableProperty]
-        private bool autoUseGpu =
-            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
-            RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        private bool autoUseGpu = DefaultAutoUseGpu;
 
         [ObservableProperty]
         private bool autoExportAfter = true;
@@ -498,8 +501,9 @@ namespace FaceShield.ViewModels.Pages
             if (saved == null)
                 return;
 
+            bool isLegacyAutoSettings = saved.SettingsVersion < CurrentAutoSettingsVersion;
             var downscale = DownscaleOptions.FirstOrDefault(o => Math.Abs(o.Ratio - saved.DownscaleRatio) < 0.0001);
-            if (downscale != null)
+            if (!isLegacyAutoSettings && downscale != null)
                 SelectedDownscaleOption = downscale;
 
             var quality = DownscaleQualityOptions.FirstOrDefault(o => (int)o.Quality == saved.DownscaleQuality);
@@ -511,10 +515,14 @@ namespace FaceShield.ViewModels.Pages
                 SelectedOrtThreadOption = ort;
 
             AutoTrackingEnabled = saved.AutoTrackingEnabled;
-            AutoDetectEveryNFrames = Math.Max(1, saved.AutoDetectEveryNFrames);
-            SelectedParallelSessionCount = Math.Max(1, saved.ParallelSessionCount);
+            AutoDetectEveryNFrames = isLegacyAutoSettings
+                ? DefaultAutoDetectEveryNFrames
+                : Math.Max(1, saved.AutoDetectEveryNFrames);
+            SelectedParallelSessionCount = isLegacyAutoSettings
+                ? Math.Max(2, saved.ParallelSessionCount)
+                : Math.Max(1, saved.ParallelSessionCount);
             AutoUseOrtOptimization = saved.AutoUseOrtOptimization;
-            AutoUseGpu = saved.AutoUseGpu;
+            AutoUseGpu = isLegacyAutoSettings ? DefaultAutoUseGpu : saved.AutoUseGpu;
             AutoExportAfter = saved.AutoExportAfter;
             if (saved.DetectionThreshold.HasValue)
                 AutoDetectionThreshold = saved.DetectionThreshold.Value;
@@ -524,12 +532,16 @@ namespace FaceShield.ViewModels.Pages
                 AutoNmsThreshold = saved.NmsThreshold.Value;
             if (saved.BlurRadius.HasValue)
                 BlurRadius = Math.Clamp(saved.BlurRadius.Value, MinBlurRadiusValue, MaxBlurRadiusValue);
+
+            if (isLegacyAutoSettings)
+                PersistAutoSettings();
         }
 
         private void PersistAutoSettings()
         {
             _stateStore.SaveAutoSettings(new AutoSettingsState
             {
+                SettingsVersion = CurrentAutoSettingsVersion,
                 DownscaleRatio = SelectedDownscaleOption?.Ratio ?? 1.0,
                 DownscaleQuality = (int)(SelectedDownscaleQualityOption?.Quality ?? DownscaleQuality.BalancedBilinear),
                 AutoTrackingEnabled = AutoTrackingEnabled,
@@ -1128,6 +1140,7 @@ namespace FaceShield.ViewModels.Pages
             {
                 UseOrtOptimization = AutoUseOrtOptimization,
                 UseGpu = AutoUseGpu,
+                AllowAutoGpu = AutoUseGpu,
                 IntraOpNumThreads = SelectedOrtThreadOption?.Threads,
                 InterOpNumThreads = null,
                 DetectionThreshold = (float)Math.Clamp(AutoDetectionThreshold, 0.01, 0.99),

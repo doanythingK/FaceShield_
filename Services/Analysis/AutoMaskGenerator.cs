@@ -30,6 +30,9 @@ namespace FaceShield.Services.Analysis
         private const float StatsBypassConfidence = 0.80f;
         private const int StatsSampleStep = 5;
         private const int MinStatsSamples = 16;
+        private const double SparseTrackIouMin = 0.12;
+        private const double SparseTrackMaxCenterShiftRatio = 1.2;
+        private const double SparseTrackMaxAreaChangeRatio = 4.0;
 
         private static bool IsHardwareTransferFailure()
         {
@@ -80,6 +83,8 @@ namespace FaceShield.Services.Analysis
         private readonly AutoMaskOptions _options;
         private readonly IFaceDetectorFactory? _detectorFactory;
 
+        public AutoMaskRunSummary? LastRunSummary { get; private set; }
+
         public AutoMaskGenerator(
             IFaceDetector detector,
             FrameMaskProvider maskProvider,
@@ -107,16 +112,18 @@ namespace FaceShield.Services.Analysis
             if (fps <= 0 || totalFrames <= 0)
                 return;
 
+            LastRunSummary = null;
+
             try
             {
                 await Task.Run(() =>
                 {
-                    bool canPipeline = !_options.UseTracking && _options.DetectEveryNFrames <= 1;
+                    bool canPipeline = _options.DetectEveryNFrames <= 1;
                     bool canSparsePipeline = _options.UseTracking &&
                         _options.DetectEveryNFrames > 1 &&
                         _detector is IBgraFaceDetector &&
                         _detectorFactory != null &&
-                        _options.ParallelDetectorCount > 1;
+                        _options.ParallelDetectorCount >= 1;
 
                     if (canPipeline && _detector is IBgraFaceDetector bgraDetector)
                     {
@@ -176,11 +183,8 @@ namespace FaceShield.Services.Analysis
                                 }
                             }
 
-                            if (detectors.Count > 1)
-                            {
-                                GenerateSparsePipelinedTrackingParallel(videoPath, detectors, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
-                                return;
-                            }
+                            GenerateSparsePipelinedTrackingParallel(videoPath, detectors, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                            return;
                         }
                         finally
                         {
@@ -408,6 +412,26 @@ namespace FaceShield.Services.Analysis
             progress?.Report(100);
             Debug.WriteLine(
                 $"[AutoMask] done frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+            SetLastRunSummary(new AutoMaskRunSummary(
+                "sequential",
+                totalFrames,
+                processed,
+                processed,
+                processed,
+                0,
+                readMs,
+                0,
+                detectMs,
+                maskMs,
+                swTotal.ElapsedMilliseconds,
+                _options.DownscaleRatio,
+                _options.DownscaleQuality,
+                _options.UseTracking,
+                _options.DetectEveryNFrames,
+                _options.ParallelDetectorCount,
+                roiStats.BuildSummary(),
+                _options.RunId,
+                GetDetectorName()));
         }
 
         private sealed class BgraBuffer
@@ -667,6 +691,26 @@ namespace FaceShield.Services.Analysis
             progress?.Report(100);
             Debug.WriteLine(
                 $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+            SetLastRunSummary(new AutoMaskRunSummary(
+                "pipe-single",
+                totalFrames,
+                processed,
+                processed,
+                processed,
+                0,
+                0,
+                decodeMs,
+                detectMs,
+                0,
+                swTotal.ElapsedMilliseconds,
+                _options.DownscaleRatio,
+                _options.DownscaleQuality,
+                _options.UseTracking,
+                _options.DetectEveryNFrames,
+                _options.ParallelDetectorCount,
+                roiStats.BuildSummary(),
+                _options.RunId,
+                GetDetectorName()));
         }
 
         public async Task<bool> GenerateFrameAsync(
@@ -990,6 +1034,26 @@ namespace FaceShield.Services.Analysis
             progress?.Report(100);
             Debug.WriteLine(
                 $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+            SetLastRunSummary(new AutoMaskRunSummary(
+                "pipe-parallel",
+                totalFrames,
+                processed,
+                processed,
+                processed,
+                0,
+                0,
+                decodeMs,
+                detectMs,
+                0,
+                swTotal.ElapsedMilliseconds,
+                _options.DownscaleRatio,
+                _options.DownscaleQuality,
+                _options.UseTracking,
+                _options.DetectEveryNFrames,
+                _options.ParallelDetectorCount,
+                null,
+                _options.RunId,
+                GetDetectorName()));
         }
 
         private void GenerateSparsePipelinedTrackingParallel(
@@ -1227,51 +1291,341 @@ namespace FaceShield.Services.Analysis
             int materializeEndExclusive = ct.IsCancellationRequested
                 ? Math.Min(totalFrames, Math.Max(start, highestDecodedFrame) + 1)
                 : totalFrames;
-            MaterializeSparseTrackingResults(results, start, materializeEndExclusive);
+            int interpolated = MaterializeSparseTrackingResults(results, start, materializeEndExclusive);
 
             if (!ct.IsCancellationRequested)
                 progress?.Report(100);
             Debug.WriteLine(
-                $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+            SetLastRunSummary(new AutoMaskRunSummary(
+                "sparse-pipe-parallel",
+                totalFrames,
+                decoded,
+                decoded,
+                detected,
+                interpolated,
+                0,
+                decodeMs,
+                detectMs,
+                0,
+                swTotal.ElapsedMilliseconds,
+                _options.DownscaleRatio,
+                _options.DownscaleQuality,
+                _options.UseTracking,
+                _options.DetectEveryNFrames,
+                _options.ParallelDetectorCount,
+                null,
+                _options.RunId,
+                GetDetectorName()));
         }
 
-        private void MaterializeSparseTrackingResults(
+        private void SetLastRunSummary(AutoMaskRunSummary summary)
+        {
+            LastRunSummary = summary;
+            Debug.WriteLine(summary.ToLogLine());
+        }
+
+        private string GetDetectorName()
+        {
+            if (_detector is FaceOnnxDetector)
+            {
+                string provider = FaceOnnxDetector.GetLastExecutionProviderLabel();
+                string? error = FaceOnnxDetector.GetLastExecutionProviderError();
+                if (!string.IsNullOrWhiteSpace(error))
+                    return $"{_detector.GetType().Name}/{provider}({error})";
+
+                return $"{_detector.GetType().Name}/{provider}";
+            }
+
+            return _detector.GetType().Name;
+        }
+
+        private int MaterializeSparseTrackingResults(
             System.Collections.Concurrent.ConcurrentDictionary<int, DetectionResult> results,
             int start,
             int endExclusive)
         {
             if (results == null || results.Count == 0)
-                return;
+                return 0;
             if (endExclusive <= start)
-                return;
+                return 0;
 
             int[] keys = results.Keys.ToArray();
             Array.Sort(keys);
 
-            DetectionResult? last = null;
-            int nextKeyCursor = 0;
-            for (int frame = start; frame < endExclusive; frame++)
+            int materialized = 0;
+            int maxBridgeFrames = Math.Max(1, _options.DetectEveryNFrames * 2);
+
+            for (int i = 0; i < keys.Length; i++)
             {
-                if (nextKeyCursor < keys.Length && frame == keys[nextKeyCursor])
+                int key = keys[i];
+                if (key < start || key >= endExclusive)
+                    continue;
+                if (!results.TryGetValue(key, out var current) || current.Bounds.Length == 0)
+                    continue;
+
+                DetectionResult? nextPositive = FindNextPositiveResult(results, keys, i + 1, endExclusive, key, maxBridgeFrames);
+                bool canBridge = nextPositive != null &&
+                    CanBridgeSparseResults(current, nextPositive, maxBridgeFrames);
+
+                int nextKey = FindNextDetectionKey(keys, i + 1, endExclusive);
+                int segmentEnd = canBridge
+                    ? nextPositive!.Index
+                    : nextKey >= 0
+                        ? nextKey
+                        : Math.Min(endExclusive, key + Math.Max(1, _options.DetectEveryNFrames));
+                if (segmentEnd <= key + 1)
+                    continue;
+
+                for (int frame = key + 1; frame < segmentEnd; frame++)
                 {
-                    var current = results[keys[nextKeyCursor]];
-                    last = current.Bounds.Length > 0 ? current : null;
-                    nextKeyCursor++;
+                    if (_maskProvider.HasEntry(frame))
+                        continue;
+
+                    DetectionResult payload = canBridge
+                        ? InterpolateSparseResult(current, nextPositive!, frame)
+                        : current;
+
+                    if (payload.Bounds.Length == 0)
+                        continue;
+
+                    _maskProvider.SetFaceRects(
+                        frame,
+                        payload.Bounds,
+                        payload.Size,
+                        payload.MinConfidence,
+                        payload.Confidences);
+                    materialized++;
                 }
-
-                if (last == null)
-                    continue;
-                if (_maskProvider.HasEntry(frame))
-                    continue;
-
-                var payload = last;
-                _maskProvider.SetFaceRects(
-                    frame,
-                    payload.Bounds,
-                    payload.Size,
-                    payload.MinConfidence,
-                    payload.Confidences);
             }
+
+            return materialized;
+        }
+
+        private static int FindNextDetectionKey(int[] keys, int startIndex, int endExclusive)
+        {
+            if (startIndex < 0 || startIndex >= keys.Length)
+                return -1;
+
+            int key = keys[startIndex];
+            if (key >= endExclusive)
+                return -1;
+
+            return key;
+        }
+
+        private static DetectionResult? FindNextPositiveResult(
+            System.Collections.Concurrent.ConcurrentDictionary<int, DetectionResult> results,
+            int[] keys,
+            int startIndex,
+            int endExclusive,
+            int currentKey,
+            int maxBridgeFrames)
+        {
+            for (int i = startIndex; i < keys.Length; i++)
+            {
+                int key = keys[i];
+                if (key >= endExclusive)
+                    return null;
+                if (!results.TryGetValue(key, out var result))
+                    continue;
+                if (key - currentKey > maxBridgeFrames)
+                    return null;
+                if (result.Bounds.Length > 0)
+                    return result;
+            }
+
+            return null;
+        }
+
+        private static bool CanBridgeSparseResults(
+            DetectionResult current,
+            DetectionResult next,
+            int maxBridgeFrames)
+        {
+            if (next.Index <= current.Index || next.Index - current.Index > maxBridgeFrames)
+                return false;
+            if (current.Bounds.Length == 0 || next.Bounds.Length == 0)
+                return false;
+
+            int matches = 0;
+            var used = new bool[next.Bounds.Length];
+            for (int i = 0; i < current.Bounds.Length; i++)
+            {
+                int match = FindBestSparseMatch(current.Bounds[i], next.Bounds, used);
+                if (match < 0)
+                    continue;
+
+                used[match] = true;
+                matches++;
+            }
+
+            return matches > 0;
+        }
+
+        private static DetectionResult InterpolateSparseResult(
+            DetectionResult current,
+            DetectionResult next,
+            int frameIndex)
+        {
+            if (next.Index <= current.Index)
+                return current;
+
+            double t = (frameIndex - current.Index) / (double)(next.Index - current.Index);
+            t = Math.Clamp(t, 0.0, 1.0);
+
+            var bounds = new List<Rect>(current.Bounds.Length);
+            var confidences = new List<float>(current.Bounds.Length);
+            var used = new bool[next.Bounds.Length];
+
+            for (int i = 0; i < current.Bounds.Length; i++)
+            {
+                var from = current.Bounds[i];
+                int match = FindBestSparseMatch(from, next.Bounds, used);
+                if (match >= 0)
+                {
+                    used[match] = true;
+                    var to = next.Bounds[match];
+                    bounds.Add(LerpRect(from, to, t));
+                    confidences.Add(LerpConfidence(current.Confidences, next.Confidences, i, match, t));
+                }
+            }
+
+            float? minConfidence = GetMinConfidence(confidences);
+            return new DetectionResult
+            {
+                Index = frameIndex,
+                Bounds = bounds.ToArray(),
+                Size = current.Size.Width > 0 && current.Size.Height > 0 ? current.Size : next.Size,
+                MinConfidence = minConfidence,
+                Confidences = confidences.ToArray()
+            };
+        }
+
+        private static int FindBestSparseMatch(Rect source, IReadOnlyList<Rect> candidates, bool[] used)
+        {
+            int bestIndex = -1;
+            double bestScore = 0.0;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (i < used.Length && used[i])
+                    continue;
+
+                var candidate = candidates[i];
+                if (!IsReasonableSparseTrack(source, candidate))
+                    continue;
+
+                double iou = IoU(source, candidate);
+                double score = iou > 0.0
+                    ? iou
+                    : 0.01 / Math.Max(0.01, GetCenterDistanceRatio(source, candidate));
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIndex = i;
+                }
+            }
+
+            return bestIndex;
+        }
+
+        private static bool IsReasonableSparseTrack(Rect current, Rect next)
+        {
+            if (current.Width <= 0 || current.Height <= 0 || next.Width <= 0 || next.Height <= 0)
+                return false;
+
+            double area = Math.Max(1.0, current.Width * current.Height);
+            double nextArea = Math.Max(1.0, next.Width * next.Height);
+            double areaRatio = area / nextArea;
+            if (areaRatio > SparseTrackMaxAreaChangeRatio || areaRatio < 1.0 / SparseTrackMaxAreaChangeRatio)
+                return false;
+
+            double iou = IoU(current, next);
+            if (iou >= SparseTrackIouMin)
+                return true;
+
+            return GetCenterDistanceRatio(current, next) <= SparseTrackMaxCenterShiftRatio;
+        }
+
+        private static double GetCenterDistanceRatio(Rect a, Rect b)
+        {
+            double ax = a.X + a.Width * 0.5;
+            double ay = a.Y + a.Height * 0.5;
+            double bx = b.X + b.Width * 0.5;
+            double by = b.Y + b.Height * 0.5;
+            double dx = ax - bx;
+            double dy = ay - by;
+            double distance = Math.Sqrt(dx * dx + dy * dy);
+            double maxDim = Math.Max(1.0, Math.Max(Math.Max(a.Width, a.Height), Math.Max(b.Width, b.Height)));
+            return distance / maxDim;
+        }
+
+        private static double IoU(Rect a, Rect b)
+        {
+            double ax1 = a.X;
+            double ay1 = a.Y;
+            double ax2 = a.X + a.Width;
+            double ay2 = a.Y + a.Height;
+
+            double bx1 = b.X;
+            double by1 = b.Y;
+            double bx2 = b.X + b.Width;
+            double by2 = b.Y + b.Height;
+
+            double ix1 = Math.Max(ax1, bx1);
+            double iy1 = Math.Max(ay1, by1);
+            double ix2 = Math.Min(ax2, bx2);
+            double iy2 = Math.Min(ay2, by2);
+
+            double iw = Math.Max(0.0, ix2 - ix1);
+            double ih = Math.Max(0.0, iy2 - iy1);
+            double inter = iw * ih;
+            if (inter <= 0.0)
+                return 0.0;
+
+            double union = a.Width * a.Height + b.Width * b.Height - inter;
+            if (union <= 0.0)
+                return 0.0;
+            return inter / union;
+        }
+
+        private static Rect LerpRect(Rect from, Rect to, double t)
+        {
+            double keep = 1.0 - t;
+            return new Rect(
+                from.X * keep + to.X * t,
+                from.Y * keep + to.Y * t,
+                Math.Max(0.0, from.Width * keep + to.Width * t),
+                Math.Max(0.0, from.Height * keep + to.Height * t));
+        }
+
+        private static float LerpConfidence(
+            IReadOnlyList<float> from,
+            IReadOnlyList<float> to,
+            int fromIndex,
+            int toIndex,
+            double t)
+        {
+            double keep = 1.0 - t;
+            return (float)(GetConfidence(from, fromIndex) * keep + GetConfidence(to, toIndex) * t);
+        }
+
+        private static float GetConfidence(IReadOnlyList<float> values, int index)
+        {
+            if (index < 0 || index >= values.Count)
+                return 1.0f;
+            return values[index];
+        }
+
+        private static float? GetMinConfidence(IReadOnlyList<float> values)
+        {
+            if (values.Count == 0)
+                return null;
+
+            float min = float.MaxValue;
+            for (int i = 0; i < values.Count; i++)
+                min = Math.Min(min, values[i]);
+            return min == float.MaxValue ? null : min;
         }
 
         private static IReadOnlyList<FaceDetectionResult> DetectFacesBgraSmart(

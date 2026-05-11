@@ -10,10 +10,14 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
+    private const bool EnableHybridCopyWindow = false;
+
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
     private int _bitmapMaskBlurFrames;
+
+    public ExportRunSummary? LastExportSummary { get; private set; }
 
     public VideoExportService(IFrameMaskProvider maskProvider)
     {
@@ -25,11 +29,13 @@ public unsafe sealed class VideoExportService
         string outputPath,
         int blurRadius,
         IProgress<ExportProgress>? progress = null,
-        System.Threading.CancellationToken cancellationToken = default)
+        System.Threading.CancellationToken cancellationToken = default,
+        string? runId = null)
     {
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
         _directFaceBlurFrames = 0;
         _bitmapMaskBlurFrames = 0;
+        LastExportSummary = null;
 
         AVFormatContext* inFmt = null;
         AVFormatContext* outFmt = null;
@@ -128,11 +134,23 @@ public unsafe sealed class VideoExportService
                         sourceFps,
                         progress,
                         cancellationToken);
+                    LastExportSummary = new ExportRunSummary(
+                        totalFrames,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        swTotal.ElapsedMilliseconds,
+                        runId);
+                    Debug.WriteLine(LastExportSummary.ToLogLine());
                     return;
                 }
 
                 blurRanges = BuildBlurFrameRanges(blurFrameSet);
                 bool canCopyOutsideBlurWindow =
+                    EnableHybridCopyWindow &&
                     blurRanges.Count > 0 &&
                     sourceFps > 0.0 &&
                     totalFrames > 0 &&
@@ -490,8 +508,19 @@ public unsafe sealed class VideoExportService
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
+            LastExportSummary = new ExportRunSummary(
+                frameIndex,
+                _bitmapMaskBlurFrames,
+                _directFaceBlurFrames,
+                swsToBgraMs,
+                maskMs,
+                swsToEncMs,
+                encodeMs,
+                swTotal.ElapsedMilliseconds,
+                runId);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
+            Debug.WriteLine(LastExportSummary.ToLogLine());
         }
         finally
         {
@@ -555,6 +584,7 @@ public unsafe sealed class VideoExportService
     {
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
+            ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
             outPkt->stream_index = outStream->index;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
             ffmpeg.av_packet_unref(outPkt);

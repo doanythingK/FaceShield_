@@ -406,12 +406,17 @@ FodyWeavers.xsd
 # build outputs
 bin/
 obj/
+.tmp/
 
 # large binaries
 *.dll
 *.exe
 *.so
 *.dylib
+srcTest/*.mp4
+srcTest/*.mov
+srcTest/*.mkv
+srcTest/*.avi
 
 # allow tracked macOS FFmpeg dylibs
 !/FFmpeg/osx-arm64/*.dylib

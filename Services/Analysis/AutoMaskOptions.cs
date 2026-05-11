@@ -19,7 +19,7 @@ namespace FaceShield.Services.Analysis
         public DownscaleQuality DownscaleQuality { get; init; } = DownscaleQuality.BalancedBilinear;
 
         /// <summary>
-        /// true면 DetectEveryNFrames 간격으로만 검출하고 중간 프레임은 이전 결과를 재사용.
+        /// true면 DetectEveryNFrames 간격으로 검출하고, 간격이 2 이상일 때 중간 프레임을 추적/보간한다.
         /// </summary>
         public bool UseTracking { get; init; } = false;
 
@@ -32,5 +32,10 @@ namespace FaceShield.Services.Analysis
         /// 병렬 ONNX 세션 수 (파이프라인 모드에서만 적용).
         /// </summary>
         public int ParallelDetectorCount { get; init; } = 2;
+
+        /// <summary>
+        /// 자동 검출과 export 로그를 같은 실행 단위로 묶기 위한 식별자.
+        /// </summary>
+        public string? RunId { get; init; }
     }
 }

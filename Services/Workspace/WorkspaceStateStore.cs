@@ -274,9 +274,10 @@ namespace FaceShield.Services.Workspace
 
     public sealed class AutoSettingsState
     {
+        public int SettingsVersion { get; set; }
         public double DownscaleRatio { get; set; } = 1.0;
         public int DownscaleQuality { get; set; }
-        public bool AutoTrackingEnabled { get; set; }
+        public bool AutoTrackingEnabled { get; set; } = true;
         public int AutoDetectEveryNFrames { get; set; } = 1;
         public int ParallelSessionCount { get; set; } = 2;
         public bool AutoUseOrtOptimization { get; set; } = true;
