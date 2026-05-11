@@ -610,3 +610,40 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - 6분 3초 클립에서 CPU single baseline과 CPU `pipe-parallel(2)` all-frame 경로를 `MinAvgIou=0.99`, `MinBestIou=0.99`로 비교했고 `SmokeQualityGate passed=True`를 확인했다.
 - 같은 클립에서 `DetectEveryNFrames=2` sparse 경로는 `onlyBaseline=27`, `onlyOptimized=87`이 발생해 `SmokeQualityGate passed=False`가 되었고, 스크립트가 exit code 2로 종료되는 것을 확인했다.
 - `scripts/verify-auto-mosaic-default.ps1` 기본 실행이 통과했다. 이 실행에서 품질 gate는 `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였고, auto tune 짧은 검증은 `GPU 2세션/8스레드`, `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=8`, `totalMs=64,236ms`로 완료했다.
+
+## 2026-05-12 실제 사용 확인 상태
+사용자가 현재 앱 상태를 실제 영상에서 확인한 결과는 다음과 같다.
+
+- 큰 얼굴과 일반적인 얼굴 검출, 모자이크는 적당히 동작한다.
+- 작은 얼굴은 모자이크가 잘 안 되는 구간이 있다.
+- 사람이 아닌 물건이 얼굴로 오검출되어 모자이크되는 경우가 있다.
+- 모자이크가 얼굴을 따라 트래킹되는 느낌이 부족하고, 중간에 깜박거리는 구간이 있다.
+- export 시간이 여전히 오래 걸린다.
+
+이 관찰은 기존 smoke gate의 한계를 보여준다. 기존 gate는 짧은 클립에서 CPU baseline과 optimized 경로의 프레임/박스 일치 여부를 보는 데는 유효했지만, 실제 사용 품질 관점의 작은 얼굴, 오탐 물체, track continuity, flicker, 긴 export 시간을 충분히 대표하지 못했다.
+
+현재 우선순위는 다음으로 조정한다.
+
+1. 작은 얼굴 미탐 구간을 frame index와 화면 위치로 수집한다.
+2. 물건 오탐 구간을 frame index와 객체 종류로 수집한다.
+3. 깜박임 구간을 `이전 얼굴 있음 -> 현재 없음 -> 다음 얼굴 있음` 패턴과 실제 영상 확인 결과로 분리한다.
+4. track continuity를 강화한다. 단순 프레임별 face rect dictionary만으로는 부족하므로 얼굴별 track id, 짧은 gap 보간, 박스 smoothing, 오탐 track 제거가 필요하다.
+5. 작은 얼굴 대응은 threshold 완화만으로 처리하지 않는다. threshold 완화는 물건 오탐을 늘릴 수 있으므로, ROI 재검출, 2차 verifier/refiner, 또는 작은 얼굴에 강한 detector backend를 비교해야 한다.
+6. export 병목은 `[ExportRunSummary]`의 `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs`, `totalMs`를 실제 긴 영상에서 확인한 뒤 큰 항목부터 줄인다.
+
+다음 구현 후보:
+
+- `FaceTrack`, `FaceTrackBuilder`, `FaceTrackInterpolator`를 추가해 frame 단위 결과를 track 단위로 재구성한다.
+- 짧은 no-face gap은 앞뒤 track이 같은 얼굴일 때만 보간한다.
+- 일정 길이 이하의 단발 오검출 track은 제거하거나 이상 후보로 표시한다.
+- 작은 얼굴 후보는 낮은 confidence라도 바로 버리지 않고 track 후보로 유지한 뒤, 연속성으로 확정한다.
+- 물건 오탐은 confidence만으로 구분하기 어렵기 때문에, box 크기/비율/움직임/지속시간 기반 필터와 2차 verifier를 검토한다.
+- export는 face rect만 있는 프레임에서 direct blur 경로를 유지하되, 변환/마스크/인코딩 시간 중 실제 병목을 먼저 측정한다.
+
+완료 기준을 다음처럼 보강한다.
+
+- 작은 얼굴이 포함된 대표 구간에서 미탐 frame 수를 기존보다 줄인다.
+- 물건 오탐 frame 수를 줄인다.
+- 같은 얼굴 track의 짧은 깜박임을 줄이고, 모자이크 박스 이동이 프레임 사이에 자연스럽게 이어진다.
+- export는 동일 품질 조건에서 `ExportRunSummary.totalMs` 또는 주요 병목 항목이 감소한다.
+- 위 항목은 짧은 smoke가 아니라 실제 문제 영상의 대표 구간 여러 개에서 확인한다.
