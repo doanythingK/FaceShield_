@@ -450,7 +450,9 @@ namespace FaceShield.ViewModels.Pages
                     FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
                 }
 
-                ApplyAutoTemporalFixes();
+                var trackPost = ApplyAutoTemporalFixes();
+                if (detector is IBgraFaceDetector bgraDetector)
+                    RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
                 ApplyAutoTemporalSmoothing();
 
                 if (!exportAfter)
@@ -631,211 +633,101 @@ namespace FaceShield.ViewModels.Pages
             });
         }
 
-        private void ApplyAutoTemporalFixes()
+        private FaceTrackPostProcessResult ApplyAutoTemporalFixes()
         {
             if (_autoOptions.DetectEveryNFrames > 1 && !_autoOptions.UseTracking)
+                return FaceTrackPostProcessResult.Empty;
+
+            var result = new FaceTrackInterpolator().Apply(
+                _maskProvider,
+                FrameList.TotalFrames,
+                new FaceTrackPostProcessOptions
+                {
+                    MaxTrackGap = SuspiciousNoFaceMaxGap,
+                    MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
+                    WeakConfidence = TemporalConfidenceWeak,
+                    StrongConfidence = TemporalConfidenceStrong,
+                    ShortTrackMaxConfidence = TemporalConfidenceStrong,
+                    SmallTrackMaxAreaRatio = 0.00075,
+                    MinTrackIou = TemporalHoleFillIouMin,
+                    MaxCenterShiftRatio = TemporalMaxCenterShiftRatio,
+                    MaxAreaChangeRatio = TemporalMaxAreaChangeRatio,
+                    DuplicateIou = TemporalDuplicateIouMin
+                });
+
+            if (result.FilledGapFaces > 0 || result.FilledLostFaces > 0 || result.RemovedShortFaces > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} rewritten={result.RewrittenFrames}");
+            }
+
+            return result;
+        }
+
+        private void RefineAutoFacesWithRoi(
+            string videoPath,
+            IBgraFaceDetector detector,
+            FaceTrackPostProcessResult trackPost,
+            FaceOnnxDetectorOptions detectorOptions)
+        {
+            var candidates = trackPost.FilledGapFacesInfo.Concat(trackPost.FilledLostFacesInfo).ToArray();
+            if (candidates.Length == 0)
                 return;
 
-            int total = FrameList.TotalFrames;
-            if (total < 3)
-                return;
+            using var roiDetector = _detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx
+                ? new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions))
+                : null;
+            var refineDetector = roiDetector ?? detector;
+            var refine = new FaceTrackRoiRefiner().Apply(
+                _maskProvider,
+                videoPath,
+                refineDetector,
+                candidates,
+                _autoOptions.DownscaleQuality);
 
-            var facesByFrame = new List<Rect>?[total];
-            var confByFrame = new List<float>?[total];
-            var sizeByFrame = new PixelSize[total];
-            var hasStored = new bool[total];
-
-            for (int i = 0; i < total; i++)
+            if (refine.Attempts > 0)
             {
-                hasStored[i] = _maskProvider.TryGetStoredMask(i, out _);
-                if (hasStored[i])
-                    continue;
-
-                if (_maskProvider.TryGetFaceMaskData(i, out var data) && data.Faces.Count > 0)
-                {
-                    facesByFrame[i] = new List<Rect>(data.Faces);
-                    confByFrame[i] = new List<float>(data.Confidences);
-                    sizeByFrame[i] = data.Size;
-                }
+                System.Diagnostics.Debug.WriteLine(
+                    $"[FaceTrackRoiRefine] attempts={refine.Attempts} hits={refine.Hits} seeks={refine.SeekCount} decoded={refine.DecodedFrames} elapsedMs={refine.ElapsedMs}");
             }
+        }
 
-            for (int i = 1; i < total - 1; i++)
+        private static FaceOnnxDetectorOptions CreateRoiRefinerDetectorOptions(FaceOnnxDetectorOptions source)
+        {
+            var defaults = FaceOnnxDetector.GetDefaultThresholds();
+            float detection = source.DetectionThreshold ?? defaults.Detection;
+            float confidence = source.ConfidenceThreshold ?? defaults.Confidence;
+            float nms = source.NmsThreshold ?? defaults.Nms;
+
+            return new FaceOnnxDetectorOptions
             {
-                if (hasStored[i])
-                    continue;
+                UseOrtOptimization = true,
+                UseGpu = false,
+                IntraOpNumThreads = source.IntraOpNumThreads,
+                InterOpNumThreads = source.InterOpNumThreads,
+                UseParallelExecution = false,
+                EnablePreprocessParallelism = true,
+                AllowAutoTune = false,
+                AllowAutoGpu = false,
+                DetectionThreshold = Math.Min(detection, 0.12f),
+                ConfidenceThreshold = Math.Min(confidence, 0.12f),
+                NmsThreshold = Math.Max(nms, 0.75f)
+            };
+        }
 
-                var prevFaces = facesByFrame[i - 1];
-                var nextFaces = facesByFrame[i + 1];
-                if (prevFaces == null || nextFaces == null)
-                    continue;
+        private static string FormatFrameList(IReadOnlyList<int> frames)
+        {
+            if (frames.Count == 0)
+                return "none";
 
-                var matches = MatchFacesForInterpolation(
-                    prevFaces,
-                    confByFrame[i - 1],
-                    nextFaces,
-                    confByFrame[i + 1]);
-                if (matches.Count == 0)
-                    continue;
-
-                if (facesByFrame[i] == null)
-                {
-                    facesByFrame[i] = new List<Rect>(matches.Count);
-                    confByFrame[i] = new List<float>(matches.Count);
-                }
-                else
-                {
-                    confByFrame[i] ??= new List<float>(facesByFrame[i]!.Count);
-                    while (confByFrame[i]!.Count < facesByFrame[i]!.Count)
-                        confByFrame[i]!.Add(TemporalConfidenceStrong);
-                }
-
-                if (sizeByFrame[i].Width <= 0 || sizeByFrame[i].Height <= 0)
-                {
-                    sizeByFrame[i] = sizeByFrame[i - 1].Width > 0 && sizeByFrame[i - 1].Height > 0
-                        ? sizeByFrame[i - 1]
-                        : sizeByFrame[i + 1];
-                }
-
-                foreach (var match in matches)
-                {
-                    var interpolated = InterpolateRect(match.Prev, match.Next);
-                    if (interpolated.Width <= 0 || interpolated.Height <= 0)
-                        continue;
-                    if (HasSimilarFace(interpolated, facesByFrame[i], TemporalDuplicateIouMin))
-                        continue;
-
-                    facesByFrame[i]!.Add(interpolated);
-                    confByFrame[i]!.Add(Math.Clamp(match.Confidence, TemporalConfidenceWeak, 1.0f));
-                }
-            }
-
-            for (int i = 0; i < total; i++)
-            {
-                if (hasStored[i] || facesByFrame[i] == null)
-                    continue;
-
-                var faces = facesByFrame[i]!;
-                var confs = confByFrame[i] ?? new List<float>(faces.Count);
-                if (confs.Count != faces.Count)
-                {
-                    confs = new List<float>(faces.Count);
-                    for (int j = 0; j < faces.Count; j++)
-                        confs.Add(1.0f);
-                    confByFrame[i] = confs;
-                }
-
-                var keptFaces = new List<Rect>(faces.Count);
-                var keptConfs = new List<float>(faces.Count);
-                var prevFaces = i > 0 ? facesByFrame[i - 1] : null;
-                var nextFaces = i + 1 < total ? facesByFrame[i + 1] : null;
-
-                for (int j = 0; j < faces.Count; j++)
-                {
-                    var face = faces[j];
-                    float conf = confs[j];
-                    if (conf < TemporalConfidenceWeak)
-                        continue;
-
-                    double prevIou = GetMaxIoU(face, prevFaces, out var prevMatch);
-                    double nextIou = GetMaxIoU(face, nextFaces, out var nextMatch);
-                    bool hasContinuity = prevIou >= TemporalIouMin || nextIou >= TemporalIouMin;
-
-                    if (conf < TemporalConfidenceStrong && !hasContinuity)
-                        continue;
-
-                    if (hasContinuity)
-                    {
-                        var match = prevIou >= nextIou ? prevMatch : nextMatch;
-                        if (match.Width > 0 && match.Height > 0)
-                        {
-                            double area = Math.Max(1.0, face.Width * face.Height);
-                            double matchArea = Math.Max(1.0, match.Width * match.Height);
-                            double ratio = area / matchArea;
-                            if ((ratio > TemporalMaxAreaChangeRatio || ratio < 1.0 / TemporalMaxAreaChangeRatio) &&
-                                conf < TemporalConfidenceStrong)
-                                continue;
-
-                            double cx = face.X + face.Width * 0.5;
-                            double cy = face.Y + face.Height * 0.5;
-                            double mx = match.X + match.Width * 0.5;
-                            double my = match.Y + match.Height * 0.5;
-                            double shift = Math.Sqrt((cx - mx) * (cx - mx) + (cy - my) * (cy - my));
-                            double maxDim = Math.Max(1.0, Math.Max(match.Width, match.Height));
-                            if (shift / maxDim > TemporalMaxCenterShiftRatio &&
-                                conf < TemporalConfidenceStrong)
-                                continue;
-                        }
-                    }
-
-                    keptFaces.Add(face);
-                    keptConfs.Add(conf);
-                }
-
-                if (keptFaces.Count == 0)
-                {
-                    facesByFrame[i] = null;
-                    confByFrame[i] = null;
-                }
-                else
-                {
-                    facesByFrame[i] = keptFaces;
-                    confByFrame[i] = keptConfs;
-                }
-            }
-
-            for (int i = 0; i < total; i++)
-            {
-                if (facesByFrame[i] == null)
-                    continue;
-
-                int start = i;
-                while (i < total && facesByFrame[i] != null)
-                    i++;
-
-                int length = i - start;
-                if (length < TemporalMinRunLength)
-                {
-                    for (int j = start; j < i; j++)
-                    {
-                        if (hasStored[j])
-                            continue;
-                        facesByFrame[j] = null;
-                        confByFrame[j] = null;
-                    }
-                }
-            }
-
-            for (int i = 0; i < total; i++)
-            {
-                if (hasStored[i])
-                    continue;
-
-                if (facesByFrame[i] == null || facesByFrame[i]!.Count == 0)
-                {
-                    _maskProvider.RemoveFaceMask(i);
-                    continue;
-                }
-
-                var faces = facesByFrame[i]!;
-                var confs = confByFrame[i] ?? new List<float>(faces.Count);
-                if (confs.Count != faces.Count)
-                {
-                    confs = new List<float>(faces.Count);
-                    for (int j = 0; j < faces.Count; j++)
-                        confs.Add(1.0f);
-                }
-
-                float minConf = float.MaxValue;
-                for (int j = 0; j < confs.Count; j++)
-                    minConf = Math.Min(minConf, confs[j]);
-
-                _maskProvider.SetFaceRects(
-                    i,
-                    faces,
-                    sizeByFrame[i],
-                    minConf == float.MaxValue ? null : minConf,
-                    confs);
-            }
+            const int maxFrames = 16;
+            var selected = frames
+                .Take(maxFrames)
+                .Select(static x => x.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            string text = string.Join(",", selected);
+            return frames.Count > maxFrames
+                ? $"{text},+{frames.Count - maxFrames}"
+                : text;
         }
 
         private static IReadOnlyList<Rect>? FindNearestTemporalFaces(

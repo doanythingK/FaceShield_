@@ -22,8 +22,10 @@ namespace FaceShield.Services.Analysis
     public sealed class AutoMaskGenerator
     {
         private const double MinFaceAreaRatio = 0.00075;
+        private const double MinSmallFaceAreaRatio = 0.00025;
         private const double MinFaceAspectRatio = 0.5;
         private const double MaxFaceAspectRatio = 2.0;
+        private const float SmallFaceConfidenceMin = 0.72f;
         private const double MinSkinRatio = 0.013;
         private const double MinEdgeRatio = 0.016;
         private const double MinLumaVariance = 160.0;
@@ -234,6 +236,7 @@ namespace FaceShield.Services.Analysis
             long maskMs = 0;
             int processed = 0;
             var roiStats = new RoiDetectStats();
+            var filterStats = new FaceFilterStats();
             var progressState = new ProgressState();
             while (!ct.IsCancellationRequested)
             {
@@ -342,7 +345,8 @@ namespace FaceShield.Services.Analysis
                                     bgra.Width,
                                     bgra.Height,
                                     scaleX,
-                                    scaleY);
+                                    scaleY,
+                                    filterStats);
                             }
                         }
                         else if (!useRaw && frame != null)
@@ -359,12 +363,13 @@ namespace FaceShield.Services.Analysis
                                     frame.PixelSize.Width,
                                     frame.PixelSize.Height,
                                     1.0,
-                                    1.0);
+                                    1.0,
+                                    filterStats);
                             }
                         }
                         else
                         {
-                            faces = FilterFacesByArea(faces, fullSize);
+                            faces = FilterFacesByArea(faces, fullSize, filterStats);
                         }
                     }
 
@@ -405,13 +410,13 @@ namespace FaceShield.Services.Analysis
                 if (processed % 60 == 0)
                 {
                     Debug.WriteLine(
-                        $"[AutoMask] frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                        $"[AutoMask] frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
                 }
             }
 
             progress?.Report(100);
             Debug.WriteLine(
-                $"[AutoMask] done frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                $"[AutoMask] done frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
             SetLastRunSummary(new AutoMaskRunSummary(
                 "sequential",
                 totalFrames,
@@ -429,7 +434,7 @@ namespace FaceShield.Services.Analysis
                 _options.UseTracking,
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
-                roiStats.BuildSummary(),
+                BuildDetectionSummary(roiStats, filterStats),
                 _options.RunId,
                 GetDetectorName()));
         }
@@ -513,6 +518,7 @@ namespace FaceShield.Services.Analysis
             var progressState = new ProgressState();
             IReadOnlyList<FaceDetectionResult>? lastFaces = null;
             var roiStats = new RoiDetectStats();
+            var filterStats = new FaceFilterStats();
 
             var producer = Task.Run(() =>
             {
@@ -595,7 +601,7 @@ namespace FaceShield.Services.Analysis
                     if (processed % 60 == 0)
                     {
                         Debug.WriteLine(
-                            $"[AutoMaskPipe] frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                            $"[AutoMaskPipe] frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
                     }
                 }
             }, ct);
@@ -648,7 +654,8 @@ namespace FaceShield.Services.Analysis
                                             item.Width,
                                             item.Height,
                                             useProxy ? scaleX : 1.0,
-                                            useProxy ? scaleY : 1.0);
+                                            useProxy ? scaleY : 1.0,
+                                            filterStats);
                                         var payload = BuildMaskPayload(faces);
                                         bounds = payload.Bounds;
                                         confidences = payload.Confidences;
@@ -690,7 +697,7 @@ namespace FaceShield.Services.Analysis
 
             progress?.Report(100);
             Debug.WriteLine(
-                $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={roiStats.BuildSummary()}");
+                $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
             SetLastRunSummary(new AutoMaskRunSummary(
                 "pipe-single",
                 totalFrames,
@@ -708,7 +715,7 @@ namespace FaceShield.Services.Analysis
                 _options.UseTracking,
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
-                roiStats.BuildSummary(),
+                BuildDetectionSummary(roiStats, filterStats),
                 _options.RunId,
                 GetDetectorName()));
         }
@@ -844,6 +851,7 @@ namespace FaceShield.Services.Analysis
             int processed = 0;
             var swTotal = Stopwatch.StartNew();
             var progressState = new ProgressState();
+            var filterStats = new FaceFilterStats();
 
             var producer = Task.Run(() =>
             {
@@ -956,7 +964,8 @@ namespace FaceShield.Services.Analysis
                                                 item.Width,
                                                 item.Height,
                                                 useProxy ? scaleX : 1.0,
-                                                useProxy ? scaleY : 1.0);
+                                                useProxy ? scaleY : 1.0,
+                                                filterStats);
                                             var payload = BuildMaskPayload(faces);
                                             bounds = payload.Bounds;
                                             confidences = payload.Confidences;
@@ -1011,7 +1020,7 @@ namespace FaceShield.Services.Analysis
                     if (done % 60 == 0)
                     {
                         Debug.WriteLine(
-                            $"[AutoMaskPipe] frames={done}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                            $"[AutoMaskPipe] frames={done}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
                     }
                 }
             }, ct);
@@ -1033,7 +1042,7 @@ namespace FaceShield.Services.Analysis
 
             progress?.Report(100);
             Debug.WriteLine(
-                $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
             SetLastRunSummary(new AutoMaskRunSummary(
                 "pipe-parallel",
                 totalFrames,
@@ -1051,7 +1060,7 @@ namespace FaceShield.Services.Analysis
                 _options.UseTracking,
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
-                null,
+                filterStats.BuildSummary(),
                 _options.RunId,
                 GetDetectorName()));
         }
@@ -1089,6 +1098,7 @@ namespace FaceShield.Services.Analysis
             int highestDecodedFrame = start - 1;
             var swTotal = Stopwatch.StartNew();
             var progressState = new ProgressState();
+            var filterStats = new FaceFilterStats();
 
             var producer = Task.Run(() =>
             {
@@ -1237,7 +1247,8 @@ namespace FaceShield.Services.Analysis
                                             item.Width,
                                             item.Height,
                                             useProxy ? scaleX : 1.0,
-                                            useProxy ? scaleY : 1.0);
+                                            useProxy ? scaleY : 1.0,
+                                            filterStats);
                                         var payload = BuildMaskPayload(faces);
                                         bounds = payload.Bounds;
                                         confidences = payload.Confidences;
@@ -1267,7 +1278,7 @@ namespace FaceShield.Services.Analysis
                             if (done % 20 == 0)
                             {
                                 Debug.WriteLine(
-                                    $"[AutoMaskSparsePipe] detects={done}, decoded={decoded}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                                    $"[AutoMaskSparsePipe] detects={done}, decoded={decoded}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
                             }
                         }
                         finally
@@ -1296,7 +1307,7 @@ namespace FaceShield.Services.Analysis
             if (!ct.IsCancellationRequested)
                 progress?.Report(100);
             Debug.WriteLine(
-                $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
             SetLastRunSummary(new AutoMaskRunSummary(
                 "sparse-pipe-parallel",
                 totalFrames,
@@ -1314,7 +1325,7 @@ namespace FaceShield.Services.Analysis
                 _options.UseTracking,
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
-                null,
+                filterStats.BuildSummary(),
                 _options.RunId,
                 GetDetectorName()));
         }
@@ -1824,6 +1835,41 @@ namespace FaceShield.Services.Analysis
             }
         }
 
+        private sealed class FaceFilterStats
+        {
+            private long _regularKept;
+            private long _smallKept;
+            private long _rejected;
+            private long _statsRejected;
+
+            public void AddKept(FaceCandidateKind kind)
+            {
+                if (kind == FaceCandidateKind.Small)
+                    Interlocked.Increment(ref _smallKept);
+                else if (kind == FaceCandidateKind.Regular)
+                    Interlocked.Increment(ref _regularKept);
+            }
+
+            public void AddRejected()
+            {
+                Interlocked.Increment(ref _rejected);
+            }
+
+            public void AddStatsRejected()
+            {
+                Interlocked.Increment(ref _statsRejected);
+            }
+
+            public string BuildSummary()
+            {
+                return
+                    $"regular={Interlocked.Read(ref _regularKept)}, small={Interlocked.Read(ref _smallKept)}, rejected={Interlocked.Read(ref _rejected)}, statsRejected={Interlocked.Read(ref _statsRejected)}";
+            }
+        }
+
+        private static string BuildDetectionSummary(RoiDetectStats roiStats, FaceFilterStats filterStats)
+            => $"{roiStats.BuildSummary()}, filter={filterStats.BuildSummary()}";
+
         private static IReadOnlyList<FaceDetectionResult> ScaleFaces(
             IReadOnlyList<FaceDetectionResult> faces,
             double scaleX,
@@ -1902,7 +1948,8 @@ namespace FaceShield.Services.Analysis
 
         private static IReadOnlyList<FaceDetectionResult> FilterFacesByArea(
             IReadOnlyList<FaceDetectionResult> faces,
-            PixelSize size)
+            PixelSize size,
+            FaceFilterStats? stats = null)
         {
             if (faces.Count == 0)
                 return faces;
@@ -1917,16 +1964,16 @@ namespace FaceShield.Services.Analysis
 
             for (int i = 0; i < faces.Count; i++)
             {
-                var rect = faces[i].Bounds;
-                double area = Math.Max(0.0, rect.Width * rect.Height);
-                double ratio = rect.Height > 0 ? rect.Width / rect.Height : 0.0;
-                if (area >= minArea && ratio >= MinFaceAspectRatio && ratio <= MaxFaceAspectRatio)
+                var kind = ClassifyFaceCandidate(faces[i], frameArea);
+                if (kind != FaceCandidateKind.Rejected)
                 {
+                    stats?.AddKept(kind);
                     kept ??= new List<FaceDetectionResult>(faces.Count);
                     kept.Add(faces[i]);
                 }
                 else
                 {
+                    stats?.AddRejected();
                     filtered = true;
                 }
             }
@@ -1947,16 +1994,17 @@ namespace FaceShield.Services.Analysis
             int width,
             int height,
             double scaleX,
-            double scaleY)
+            double scaleY,
+            FaceFilterStats? stats = null)
         {
             if (faces.Count == 0)
                 return faces;
 
             if (basePtr == null || stride <= 0 || width <= 0 || height <= 0)
-                return FilterFacesByArea(faces, size);
+                return FilterFacesByArea(faces, size, stats);
 
             double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
-            double minArea = frameArea * MinFaceAreaRatio;
+            double minArea = frameArea * MinSmallFaceAreaRatio;
             if (minArea <= 1.0)
                 return faces;
 
@@ -1966,21 +2014,32 @@ namespace FaceShield.Services.Analysis
             for (int i = 0; i < faces.Count; i++)
             {
                 var rect = faces[i].Bounds;
-                double area = Math.Max(0.0, rect.Width * rect.Height);
-                double ratio = rect.Height > 0 ? rect.Width / rect.Height : 0.0;
-                if (area >= minArea && ratio >= MinFaceAspectRatio && ratio <= MaxFaceAspectRatio)
+                var kind = ClassifyFaceCandidate(faces[i], frameArea);
+                if (kind != FaceCandidateKind.Rejected)
                 {
-                    if (!PassesStatsBgra(basePtr, stride, width, height, rect, scaleX, scaleY, faces[i].Confidence))
+                    if (!PassesStatsBgra(
+                            basePtr,
+                            stride,
+                            width,
+                            height,
+                            rect,
+                            scaleX,
+                            scaleY,
+                            faces[i].Confidence,
+                            requireStats: kind == FaceCandidateKind.Small))
                     {
+                        stats?.AddStatsRejected();
                         filtered = true;
                         continue;
                     }
 
+                    stats?.AddKept(kind);
                     kept ??= new List<FaceDetectionResult>(faces.Count);
                     kept.Add(faces[i]);
                 }
                 else
                 {
+                    stats?.AddRejected();
                     filtered = true;
                 }
             }
@@ -1991,6 +2050,23 @@ namespace FaceShield.Services.Analysis
             if (kept != null)
                 return kept;
             return Array.Empty<FaceDetectionResult>();
+        }
+
+        private static FaceCandidateKind ClassifyFaceCandidate(FaceDetectionResult face, double frameArea)
+        {
+            var rect = face.Bounds;
+            double area = Math.Max(0.0, rect.Width * rect.Height);
+            double ratio = rect.Height > 0 ? rect.Width / rect.Height : 0.0;
+            if (ratio < MinFaceAspectRatio || ratio > MaxFaceAspectRatio)
+                return FaceCandidateKind.Rejected;
+
+            if (area >= frameArea * MinFaceAreaRatio)
+                return FaceCandidateKind.Regular;
+
+            if (area >= frameArea * MinSmallFaceAreaRatio && face.Confidence >= SmallFaceConfidenceMin)
+                return FaceCandidateKind.Small;
+
+            return FaceCandidateKind.Rejected;
         }
 
         private static float[] ExtractConfidences(IReadOnlyList<FaceDetectionResult> faces)
@@ -2013,9 +2089,10 @@ namespace FaceShield.Services.Analysis
             Rect rect,
             double scaleX,
             double scaleY,
-            float confidence)
+            float confidence,
+            bool requireStats = false)
         {
-            if (confidence >= StatsBypassConfidence)
+            if (!requireStats && confidence >= StatsBypassConfidence)
                 return true;
             if (basePtr == null || stride <= 0 || width <= 0 || height <= 0)
                 return true;
@@ -2124,6 +2201,13 @@ namespace FaceShield.Services.Analysis
             return skinRatio >= MinSkinRatio &&
                 edgeRatio >= MinEdgeRatio &&
                 variance >= MinLumaVariance;
+        }
+
+        private enum FaceCandidateKind
+        {
+            Rejected,
+            Regular,
+            Small
         }
 
         private static float? GetMinConfidence(IReadOnlyList<FaceDetectionResult> faces)

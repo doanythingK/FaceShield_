@@ -252,6 +252,12 @@ public unsafe sealed class MaskedVideoExporter
         if (shapes.Length == 0)
             return;
 
+        if (shapes.Length == 1)
+        {
+            ApplySingleFaceRectAndBlur(bgraFrame, faces[0], shapes[0], blurRadius);
+            return;
+        }
+
         EnsureIntegralBuffers(pw, ph);
         byte[] radiusMap = EnsureRadiusMap(pw, ph);
         Array.Clear(radiusMap, 0, pw * ph);
@@ -343,6 +349,145 @@ public unsafe sealed class MaskedVideoExporter
                 int x1 = Math.Min(px1 - 1, x + localR);
                 int y0 = Math.Max(py0, y - localR);
                 int y1 = Math.Min(py1 - 1, y + localR);
+
+                int ix0 = x0 - px0;
+                int ix1 = x1 - px0;
+                int iy0 = y0 - py0;
+                int iy1 = y1 - py0;
+
+                int idxA = (iy1 + 1) * rowStride + (ix1 + 1);
+                int idxB = iy0 * rowStride + (ix1 + 1);
+                int idxC = (iy1 + 1) * rowStride + ix0;
+                int idxD = iy0 * rowStride + ix0;
+
+                int area = (ix1 - ix0 + 1) * (iy1 - iy0 + 1);
+                int sumB = _integralB![idxA] - _integralB[idxB] - _integralB[idxC] + _integralB[idxD];
+                int sumG = _integralG![idxA] - _integralG[idxB] - _integralG[idxC] + _integralG[idxD];
+                int sumR = _integralR![idxA] - _integralR[idxB] - _integralR[idxC] + _integralR[idxD];
+                int sumA = _integralA![idxA] - _integralA[idxB] - _integralA[idxC] + _integralA[idxD];
+
+                byte blurB = (byte)(sumB / area);
+                byte blurG = (byte)(sumG / area);
+                byte blurR = (byte)(sumR / area);
+                byte blurA = (byte)(sumA / area);
+
+                if (smooth == 255)
+                {
+                    dst[0] = blurB;
+                    dst[1] = blurG;
+                    dst[2] = blurR;
+                    dst[3] = blurA;
+                }
+                else
+                {
+                    int inv = 255 - smooth;
+                    dst[0] = (byte)((blurB * smooth + dst[0] * inv + 127) / 255);
+                    dst[1] = (byte)((blurG * smooth + dst[1] * inv + 127) / 255);
+                    dst[2] = (byte)((blurR * smooth + dst[2] * inv + 127) / 255);
+                    dst[3] = 255;
+                }
+            }
+        }
+
+        if (useParallel)
+        {
+            System.Threading.Tasks.Parallel.For(ry0, ry1, parallelOptions, ProcessRow);
+        }
+        else
+        {
+            for (int y = ry0; y < ry1; y++)
+                ProcessRow(y);
+        }
+    }
+
+    private void ApplySingleFaceRectAndBlur(
+        AVFrame* bgraFrame,
+        Rect face,
+        FaceMaskShape shape,
+        int blurRadius)
+    {
+        int w = bgraFrame->width;
+        int h = bgraFrame->height;
+        byte* data = bgraFrame->data[0];
+        int stride = bgraFrame->linesize[0];
+        int r = Math.Max(1, blurRadius);
+        int faceRadius = GetFaceBlurRadius(face, w, h, r);
+        if (faceRadius <= 0)
+            return;
+
+        int rx0 = shape.X0;
+        int ry0 = shape.Y0;
+        int rx1 = shape.X1;
+        int ry1 = shape.Y1;
+        if (rx1 <= rx0 || ry1 <= ry0)
+            return;
+
+        int px0 = Math.Max(0, rx0 - faceRadius);
+        int py0 = Math.Max(0, ry0 - faceRadius);
+        int px1 = Math.Min(w, rx1 + faceRadius);
+        int py1 = Math.Min(h, ry1 + faceRadius);
+        int pw = Math.Max(1, px1 - px0);
+        int ph = Math.Max(1, py1 - py0);
+
+        EnsureIntegralBuffers(pw, ph);
+        int rowStride = pw + 1;
+        for (int y = 1; y <= ph; y++)
+        {
+            int sy = py0 + y - 1;
+            byte* srcRow = data + sy * stride + px0 * 4;
+            int rowIndex = y * rowStride;
+            int prevIndex = (y - 1) * rowStride;
+
+            int sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+            for (int x = 1; x <= pw; x++)
+            {
+                byte* p = srcRow + (x - 1) * 4;
+                sumB += p[0];
+                sumG += p[1];
+                sumR += p[2];
+                sumA += p[3];
+
+                int idx = rowIndex + x;
+                _integralB![idx] = _integralB[prevIndex + x] + sumB;
+                _integralG![idx] = _integralG[prevIndex + x] + sumG;
+                _integralR![idx] = _integralR[prevIndex + x] + sumR;
+                _integralA![idx] = _integralA[prevIndex + x] + sumA;
+            }
+        }
+
+        int maxWorkers = Math.Max(1, Environment.ProcessorCount - 2);
+        var parallelOptions = new System.Threading.Tasks.ParallelOptions
+        {
+            MaxDegreeOfParallelism = maxWorkers
+        };
+        int roiArea = (rx1 - rx0) * (ry1 - ry0);
+        bool useParallel = maxWorkers > 1 && roiArea >= 220_000;
+
+        void ProcessRow(int y)
+        {
+            byte* srcRow = data + y * stride;
+            int mi = y * w;
+
+            for (int x = rx0; x < rx1; x++)
+            {
+                byte alpha = GetSingleFaceAlpha(shape, x, y);
+                int maskIndex = mi + x;
+                byte prev = _prevMaskAlpha![maskIndex];
+                byte smooth = alpha == 0
+                    ? (byte)(prev * 3 / 4)
+                    : prev == 0
+                        ? alpha
+                        : (byte)Math.Max(alpha, prev * 3 / 4);
+                _prevMaskAlpha[maskIndex] = smooth;
+
+                if (smooth == 0)
+                    continue;
+
+                byte* dst = srcRow + x * 4;
+                int x0 = Math.Max(px0, x - faceRadius);
+                int x1 = Math.Min(px1 - 1, x + faceRadius);
+                int y0 = Math.Max(py0, y - faceRadius);
+                int y1 = Math.Min(py1 - 1, y + faceRadius);
 
                 int ix0 = x0 - px0;
                 int ix1 = x1 - px0;
@@ -574,6 +719,23 @@ public unsafe sealed class MaskedVideoExporter
         }
 
         return best;
+    }
+
+    private static byte GetSingleFaceAlpha(FaceMaskShape shape, int x, int y)
+    {
+        double dx = x - shape.CenterX;
+        double dy = y - shape.CenterY;
+        double d2 = (dx * dx) / shape.RadiusX2 + (dy * dy) / shape.RadiusY2;
+        if (d2 > 1.0)
+            return 0;
+
+        if (d2 <= shape.Inner2 || SoftEdgeRatio <= 0.0)
+            return 255;
+
+        double t = (d2 - shape.Inner2) / (1.0 - shape.Inner2);
+        t = Math.Clamp(t, 0.0, 1.0);
+        t = t * t * (3.0 - 2.0 * t);
+        return (byte)Math.Round((1.0 - t) * 255.0);
     }
 
     private static (int x0, int y0, int x1, int y1) GetFaceBounds(IReadOnlyList<Rect> faces, int width, int height)

@@ -14,9 +14,22 @@ param(
     [switch]$UseAutoTune,
     [int]$OptimizedDetectEvery = 1,
     [int]$ParallelDetectorCount = 2,
+    [double]$DetectionThreshold = 0.2,
+    [double]$ConfidenceThreshold = 0.25,
+    [double]$NmsThreshold = 0.7,
     [double]$MinAvgIou = 0.90,
     [double]$MinBestIou = 0.75,
-    [switch]$AllowFrameMismatch
+    [switch]$AllowFrameMismatch,
+    [switch]$DumpDetections,
+    [string]$ScrfdModelPath = "",
+    [switch]$ScrfdUseBgr,
+    [switch]$ScrfdStretchInput,
+    [string]$YuNetModelPath = "",
+    [switch]$YuNetUseTiling,
+    [switch]$YuNetTileOnly,
+    [int]$YuNetTileColumns = 2,
+    [int]$YuNetTileRows = 2,
+    [double]$YuNetTileOverlapRatio = 0.15
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,10 +44,12 @@ $work = Join-Path $repo ".tmp\srcTest-smoke"
 $clip = if ($SkipTrim) { $sourcePath } else { Join-Path $work "smoke-${Seconds}s.mp4" }
 $clipStem = [IO.Path]::GetFileNameWithoutExtension($clip)
 $output = Join-Path $work "${clipStem}_blur.mp4"
-$project = Join-Path $work "SmokeHarness.csproj"
-$program = Join-Path $work "Program.cs"
+$harness = Join-Path $work ("harness-" + [Guid]::NewGuid().ToString("N"))
+$project = Join-Path $harness "SmokeHarness.csproj"
+$program = Join-Path $harness "Program.cs"
 
 New-Item -ItemType Directory -Force -Path $work | Out-Null
+New-Item -ItemType Directory -Force -Path $harness | Out-Null
 
 if (-not $SkipTrim) {
     $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
@@ -84,6 +99,19 @@ int optimizedParallel = int.Parse(args[11], System.Globalization.CultureInfo.Inv
 double minAvgIou = double.Parse(args[12], System.Globalization.CultureInfo.InvariantCulture);
 double minBestIou = double.Parse(args[13], System.Globalization.CultureInfo.InvariantCulture);
 bool allowFrameMismatch = bool.Parse(args[14]);
+bool dumpDetections = bool.Parse(args[15]);
+float detectionThreshold = float.Parse(args[16], System.Globalization.CultureInfo.InvariantCulture);
+float confidenceThreshold = float.Parse(args[17], System.Globalization.CultureInfo.InvariantCulture);
+float nmsThreshold = float.Parse(args[18], System.Globalization.CultureInfo.InvariantCulture);
+string scrfdModelPath = args.Length > 19 && args[19] != "__none__" ? args[19] : string.Empty;
+bool scrfdUseRgb = args.Length <= 20 || !bool.Parse(args[20]);
+bool scrfdUseLetterbox = args.Length <= 21 || !bool.Parse(args[21]);
+string yuNetModelPath = args.Length > 22 && args[22] != "__none__" ? args[22] : string.Empty;
+bool yuNetUseTiling = args.Length > 23 && bool.Parse(args[23]);
+bool yuNetTileOnly = args.Length > 24 && bool.Parse(args[24]);
+int yuNetTileColumns = args.Length > 25 ? int.Parse(args[25], System.Globalization.CultureInfo.InvariantCulture) : 2;
+int yuNetTileRows = args.Length > 26 ? int.Parse(args[26], System.Globalization.CultureInfo.InvariantCulture) : 2;
+double yuNetTileOverlapRatio = args.Length > 27 ? double.Parse(args[27], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -101,10 +129,23 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     bool useGpu,
     bool skipExport,
     bool useAutoTune,
-    int parallelDetectorCount)
+    int parallelDetectorCount,
+    bool dumpDetections,
+    float detectionThreshold,
+    float confidenceThreshold,
+    float nmsThreshold,
+    string scrfdModelPath,
+    bool scrfdUseRgb,
+    bool scrfdUseLetterbox,
+    string yuNetModelPath,
+    bool yuNetUseTiling,
+    bool yuNetTileOnly,
+    int yuNetTileColumns,
+    int yuNetTileRows,
+    double yuNetTileOverlapRatio)
 {
     string runId = $"smoke-{label}-{Guid.NewGuid():N}";
-    Console.WriteLine($"[SmokeCase] start runId={runId}, label={label}, tracking={useTracking}, everyN={detectEvery}, downscale={downscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}, quality={downscaleQuality}, gpu={useGpu}, autoTune={useAutoTune}, parallel={parallelDetectorCount}");
+    Console.WriteLine($"[SmokeCase] start runId={runId}, label={label}, tracking={useTracking}, everyN={detectEvery}, downscale={downscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}, quality={downscaleQuality}, gpu={useGpu}, autoTune={useAutoTune}, parallel={parallelDetectorCount}, detectionThreshold={detectionThreshold:F3}, confidenceThreshold={confidenceThreshold:F3}, nmsThreshold={nmsThreshold:F3}");
     var maskProvider = new FrameMaskProvider();
     var detectorOptions = new FaceOnnxDetectorOptions
     {
@@ -112,9 +153,14 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         UseGpu = useGpu,
         AllowAutoTune = useAutoTune,
         AllowAutoGpu = useGpu,
-        EnablePreprocessParallelism = true
+        EnablePreprocessParallelism = true,
+        DetectionThreshold = detectionThreshold,
+        ConfidenceThreshold = confidenceThreshold,
+        NmsThreshold = nmsThreshold
     };
-    if (useAutoTune && DetectorAutoTuner.TryTune(
+    bool useScrfd = !string.IsNullOrWhiteSpace(scrfdModelPath);
+    bool useYuNet = !string.IsNullOrWhiteSpace(yuNetModelPath);
+    if (useAutoTune && !useScrfd && !useYuNet && DetectorAutoTuner.TryTune(
             input,
             downscaleRatio,
             downscaleQuality,
@@ -134,7 +180,45 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         Console.WriteLine($"[SmokeTune] label={label}, tuned={tuneLabel}, sessions={tunedSessions}, gpu={tunedOptions.UseGpu}, provider={provider}");
     }
 
-    var factory = FaceDetectorFactory.ForOnnx(detectorOptions);
+    FaceDetectorFactory factory;
+    if (useScrfd)
+    {
+        factory = new FaceDetectorFactory(FaceDetectorFactoryOptions.ForScrfdOnnx(new ScrfdOnnxDetectorOptions
+        {
+            ModelPath = scrfdModelPath,
+            UseOrtOptimization = true,
+            UseGpu = useGpu,
+            ConfidenceThreshold = confidenceThreshold,
+            NmsThreshold = nmsThreshold,
+            IntraOpNumThreads = detectorOptions.IntraOpNumThreads,
+            InterOpNumThreads = detectorOptions.InterOpNumThreads,
+            UseParallelExecution = detectorOptions.UseParallelExecution,
+            UseRgbInput = scrfdUseRgb,
+            UseLetterboxResize = scrfdUseLetterbox
+        }));
+    }
+    else if (useYuNet)
+    {
+        factory = new FaceDetectorFactory(FaceDetectorFactoryOptions.ForYuNetOnnx(new YuNetOnnxDetectorOptions
+        {
+            ModelPath = yuNetModelPath,
+            UseOrtOptimization = true,
+            ConfidenceThreshold = confidenceThreshold,
+            NmsThreshold = nmsThreshold,
+            IntraOpNumThreads = detectorOptions.IntraOpNumThreads,
+            InterOpNumThreads = detectorOptions.InterOpNumThreads,
+            UseParallelExecution = detectorOptions.UseParallelExecution,
+            UseTiling = yuNetUseTiling,
+            IncludeFullFrameWhenTiling = !yuNetTileOnly,
+            TileColumns = yuNetTileColumns,
+            TileRows = yuNetTileRows,
+            TileOverlapRatio = yuNetTileOverlapRatio
+        }));
+    }
+    else
+    {
+        factory = FaceDetectorFactory.ForOnnx(detectorOptions);
+    }
     using var detector = factory.CreateDetector();
     var options = new AutoMaskOptions
     {
@@ -149,7 +233,41 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
+    var trackPost = new FaceTrackInterpolator().Apply(
+        maskProvider,
+        generator.LastRunSummary?.TotalFrames ?? 0,
+        new FaceTrackPostProcessOptions
+        {
+            MaxTrackGap = 8,
+            MaxFillGap = 5,
+            WeakConfidence = 0.50f,
+            StrongConfidence = 0.68f,
+            ShortTrackMaxConfidence = 0.68f,
+            SmallTrackMaxAreaRatio = 0.00075,
+            MinTrackIou = 0.12,
+            MaxCenterShiftRatio = 0.55,
+            MaxAreaChangeRatio = 3.2,
+            DuplicateIou = 0.35
+        });
+    string lostFrames = trackPost.FilledLostFrameIndices.Count == 0
+        ? "none"
+        : string.Join(",", trackPost.FilledLostFrameIndices.Take(32));
+    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, rewritten={trackPost.RewrittenFrames}");
+    if (detector is IBgraFaceDetector bgraDetector)
+    {
+        using var faceOnnxRoiDetector = useScrfd || useYuNet ? null : new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));
+        var roiDetector = useScrfd || useYuNet ? bgraDetector : faceOnnxRoiDetector;
+        var refine = new FaceTrackRoiRefiner().Apply(
+            maskProvider,
+            input,
+            roiDetector!,
+            trackPost.FilledGapFacesInfo.Concat(trackPost.FilledLostFacesInfo).ToArray(),
+            downscaleQuality);
+        Console.WriteLine($"[SmokeFaceTrackRoiRefine] label={label}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
+    }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
+    if (dumpDetections)
+        DumpDetections(label, maskProvider);
 
     if (skipExport)
     {
@@ -162,6 +280,45 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     Console.WriteLine(exporter.LastExportSummary?.ToLogLine() ?? $"[Smoke] no export summary label={label}");
     Console.WriteLine($"[Smoke] label={label}, output={output}");
     return (label, maskProvider);
+}
+
+static FaceOnnxDetectorOptions CreateRoiRefinerDetectorOptions(FaceOnnxDetectorOptions source)
+{
+    var defaults = FaceOnnxDetector.GetDefaultThresholds();
+    float detection = source.DetectionThreshold ?? defaults.Detection;
+    float confidence = source.ConfidenceThreshold ?? defaults.Confidence;
+    float nms = source.NmsThreshold ?? defaults.Nms;
+
+    return new FaceOnnxDetectorOptions
+    {
+        UseOrtOptimization = true,
+        UseGpu = false,
+        IntraOpNumThreads = source.IntraOpNumThreads,
+        InterOpNumThreads = source.InterOpNumThreads,
+        UseParallelExecution = false,
+        EnablePreprocessParallelism = true,
+        AllowAutoTune = false,
+        AllowAutoGpu = false,
+        DetectionThreshold = Math.Min(detection, 0.12f),
+        ConfidenceThreshold = Math.Min(confidence, 0.12f),
+        NmsThreshold = Math.Max(nms, 0.75f)
+    };
+}
+
+static void DumpDetections(string label, FrameMaskProvider maskProvider)
+{
+    foreach (var entry in maskProvider.GetFaceMaskEntries().OrderBy(x => x.Key))
+    {
+        var data = entry.Value;
+        for (int i = 0; i < data.Faces.Count; i++)
+        {
+            var r = data.Faces[i];
+            float conf = i < data.Confidences.Count ? data.Confidences[i] : data.MinConfidence ?? 1.0f;
+            double area = Math.Max(0.0, r.Width * r.Height);
+            Console.WriteLine(
+                $"[SmokeDetection] label={label}, frame={entry.Key}, index={i}, x={r.X:F1}, y={r.Y:F1}, w={r.Width:F1}, h={r.Height:F1}, area={area:F1}, conf={conf:F3}");
+        }
+    }
 }
 
 static bool CompareCases(
@@ -251,11 +408,24 @@ if (!bool.Parse(args[2]))
         useGpu: false,
         skipExport,
         useAutoTune: false,
-        parallelDetectorCount: 1);
+        parallelDetectorCount: 1,
+        dumpDetections,
+        detectionThreshold,
+        confidenceThreshold,
+        nmsThreshold,
+        scrfdModelPath: string.Empty,
+        scrfdUseRgb,
+        scrfdUseLetterbox,
+        yuNetModelPath: string.Empty,
+        yuNetUseTiling,
+        yuNetTileOnly,
+        yuNetTileColumns,
+        yuNetTileRows,
+        yuNetTileOverlapRatio);
 }
 
 var optimized = await RunCaseAsync(
-    $"optimized-{(optimizedUseTracking ? "track" : "all")}-{optimizedDetectEvery}-scale-{optimizedDownscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}-{(optimizedUseGpu ? "gpu" : "cpu")}",
+    $"optimized-{(optimizedUseTracking ? "track" : "all")}-{optimizedDetectEvery}-scale-{optimizedDownscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}-{(optimizedUseGpu ? "gpu" : "cpu")}{(!string.IsNullOrWhiteSpace(scrfdModelPath) ? "-scrfd" : "")}{(!string.IsNullOrWhiteSpace(yuNetModelPath) ? "-yunet" : "")}",
     input,
     output,
     useTracking: optimizedUseTracking,
@@ -265,7 +435,20 @@ var optimized = await RunCaseAsync(
     useGpu: optimizedUseGpu,
     skipExport,
     useAutoTune,
-    parallelDetectorCount: optimizedParallel);
+    parallelDetectorCount: optimizedParallel,
+    dumpDetections,
+    detectionThreshold,
+    confidenceThreshold,
+    nmsThreshold,
+    scrfdModelPath,
+    scrfdUseRgb,
+    scrfdUseLetterbox,
+    yuNetModelPath,
+    yuNetUseTiling,
+    yuNetTileOnly,
+    yuNetTileColumns,
+    yuNetTileRows,
+    yuNetTileOverlapRatio);
 
 if (baseline.HasValue && !CompareCases(baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch))
     Environment.Exit(2);
@@ -279,9 +462,22 @@ $skipExportArg = $SkipExport.IsPresent.ToString().ToLowerInvariant()
 $autoTuneArg = $UseAutoTune.IsPresent.ToString().ToLowerInvariant()
 $detectEveryArg = $OptimizedDetectEvery.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $parallelArg = $ParallelDetectorCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$detectionThresholdArg = $DetectionThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$confidenceThresholdArg = $ConfidenceThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$nmsThresholdArg = $NmsThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $minAvgIouArg = $MinAvgIou.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $minBestIouArg = $MinBestIou.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $allowFrameMismatchArg = $AllowFrameMismatch.IsPresent.ToString().ToLowerInvariant()
+$dumpDetectionsArg = $DumpDetections.IsPresent.ToString().ToLowerInvariant()
+$scrfdModelPathArg = if ([string]::IsNullOrWhiteSpace($ScrfdModelPath)) { "__none__" } else { (Resolve-Path $ScrfdModelPath).Path }
+$scrfdUseBgrArg = $ScrfdUseBgr.IsPresent.ToString().ToLowerInvariant()
+$scrfdStretchInputArg = $ScrfdStretchInput.IsPresent.ToString().ToLowerInvariant()
+$yuNetModelPathArg = if ([string]::IsNullOrWhiteSpace($YuNetModelPath)) { "__none__" } else { (Resolve-Path $YuNetModelPath).Path }
+$yuNetUseTilingArg = $YuNetUseTiling.IsPresent.ToString().ToLowerInvariant()
+$yuNetTileOnlyArg = $YuNetTileOnly.IsPresent.ToString().ToLowerInvariant()
+$yuNetTileColumnsArg = $YuNetTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yuNetTileRowsArg = $YuNetTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yuNetTileOverlapRatioArg = $YuNetTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 dotnet run --project $project -- `
     $clip `
     $output `
@@ -297,7 +493,20 @@ dotnet run --project $project -- `
     $parallelArg `
     $minAvgIouArg `
     $minBestIouArg `
-    $allowFrameMismatchArg
+    $allowFrameMismatchArg `
+    $dumpDetectionsArg `
+    $detectionThresholdArg `
+    $confidenceThresholdArg `
+    $nmsThresholdArg `
+    $scrfdModelPathArg `
+    $scrfdUseBgrArg `
+    $scrfdStretchInputArg `
+    $yuNetModelPathArg `
+    $yuNetUseTilingArg `
+    $yuNetTileOnlyArg `
+    $yuNetTileColumnsArg `
+    $yuNetTileRowsArg `
+    $yuNetTileOverlapRatioArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

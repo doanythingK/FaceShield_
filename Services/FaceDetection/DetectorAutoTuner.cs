@@ -14,8 +14,9 @@ namespace FaceShield.Services.FaceDetection
     public static class DetectorAutoTuner
     {
         private const double GpuQualityMinBestIou = 0.75;
-        private const double GpuPreferenceMinScoreRatio = 0.75;
+        private const double GpuPreferenceMinScoreRatio = 1.20;
         private const int QualityProbeFrameLimit = 12;
+        private const int PerformanceProbeFrameLimit = 3;
 
         private readonly record struct AutoTuneKey(
             int Width,
@@ -102,6 +103,8 @@ namespace FaceShield.Services.FaceDetection
             var pool = ArrayPool<byte>.Shared;
             byte[] buffer = pool.Rent(size);
             byte[] qualityBuffer = pool.Rent(size);
+            var performanceSamples = new List<(byte[] Buffer, int Stride)>(PerformanceProbeFrameLimit);
+            var rentedPerformanceBuffers = new List<byte[]>(PerformanceProbeFrameLimit - 1);
             try
             {
                 if (!extractor.TryGetNextFrameRawToBuffer(
@@ -117,6 +120,7 @@ namespace FaceShield.Services.FaceDetection
                 }
 
                 Array.Copy(buffer, 0, qualityBuffer, 0, size);
+                performanceSamples.Add((buffer, stride));
                 int qualityStride = stride;
                 var qualityCpuOptions = CloneOptions(
                     baseOptions,
@@ -137,13 +141,23 @@ namespace FaceShield.Services.FaceDetection
                     qualityBuffer,
                     size,
                     ref qualityStride);
+                CollectPerformanceSamples(
+                    extractor,
+                    cancellationToken,
+                    targetWidth,
+                    targetHeight,
+                    downscaleQuality == DownscaleQuality.BalancedBilinear,
+                    pool,
+                    size,
+                    performanceSamples,
+                    rentedPerformanceBuffers);
 
                 var candidates = BuildCandidates(baseOptions, maxSessions, allowGpu);
                 IReadOnlyList<FaceDetectionResult>? cpuReference = null;
-                double bestScore = 0;
-                FaceOnnxDetectorOptions bestOptions = baseOptions;
-                int bestSessions = Math.Max(1, maxSessions);
-                string? bestLabel = null;
+                double bestCpuScore = 0;
+                FaceOnnxDetectorOptions? bestCpuOptions = null;
+                int bestCpuSessions = Math.Max(1, maxSessions);
+                string? bestCpuLabel = null;
                 double bestGpuScore = 0;
                 FaceOnnxDetectorOptions? bestGpuOptions = null;
                 int bestGpuSessions = Math.Max(1, maxSessions);
@@ -151,7 +165,6 @@ namespace FaceShield.Services.FaceDetection
 
                 unsafe
                 {
-                    fixed (byte* src = buffer)
                     fixed (byte* qualitySrc = qualityBuffer)
                     {
                         foreach (var candidate in candidates)
@@ -191,8 +204,7 @@ namespace FaceShield.Services.FaceDetection
                             }
 
                             double score = MeasureThroughput(
-                                (IntPtr)src,
-                                stride,
+                                performanceSamples,
                                 targetWidth,
                                 targetHeight,
                                 detectorRatio,
@@ -209,22 +221,26 @@ namespace FaceShield.Services.FaceDetection
                                 bestGpuLabel = candidate.Label;
                             }
 
-                            if (score > bestScore)
+                            if (!candidate.Options.UseGpu && score > bestCpuScore)
                             {
-                                bestScore = score;
-                                bestOptions = candidate.Options;
-                                bestSessions = candidate.Sessions;
-                                bestLabel = candidate.Label;
+                                bestCpuScore = score;
+                                bestCpuOptions = candidate.Options;
+                                bestCpuSessions = candidate.Sessions;
+                                bestCpuLabel = candidate.Label;
                             }
                         }
                     }
                 }
 
-                if (bestScore <= 0)
+                if (bestCpuScore <= 0 || bestCpuOptions == null)
                     return false;
 
+                double bestScore = bestCpuScore;
+                var bestOptions = bestCpuOptions;
+                int bestSessions = bestCpuSessions;
+                string? bestLabel = bestCpuLabel;
                 if (allowGpu && bestGpuOptions != null &&
-                    bestGpuScore >= bestScore * GpuPreferenceMinScoreRatio)
+                    bestGpuScore >= bestCpuScore * GpuPreferenceMinScoreRatio)
                 {
                     bestScore = bestGpuScore;
                     bestOptions = bestGpuOptions;
@@ -241,8 +257,43 @@ namespace FaceShield.Services.FaceDetection
             }
             finally
             {
+                foreach (var rented in rentedPerformanceBuffers)
+                    pool.Return(rented);
                 pool.Return(buffer);
                 pool.Return(qualityBuffer);
+            }
+        }
+
+        private static void CollectPerformanceSamples(
+            FfFrameExtractor extractor,
+            CancellationToken cancellationToken,
+            int targetWidth,
+            int targetHeight,
+            bool useBilinear,
+            ArrayPool<byte> pool,
+            int bufferSize,
+            List<(byte[] Buffer, int Stride)> samples,
+            List<byte[]> rentedBuffers)
+        {
+            while (samples.Count < PerformanceProbeFrameLimit)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] sample = pool.Rent(bufferSize);
+                if (!extractor.TryGetNextFrameRawToBuffer(
+                        cancellationToken,
+                        targetWidth,
+                        targetHeight,
+                        useBilinear,
+                        sample,
+                        out _,
+                        out int sampleStride))
+                {
+                    pool.Return(sample);
+                    return;
+                }
+
+                rentedBuffers.Add(sample);
+                samples.Add((sample, sampleStride));
             }
         }
 
@@ -394,8 +445,7 @@ namespace FaceShield.Services.FaceDetection
         }
 
         private static double MeasureThroughput(
-            IntPtr data,
-            int stride,
+            IReadOnlyList<(byte[] Buffer, int Stride)> samples,
             int width,
             int height,
             double ratio,
@@ -404,7 +454,7 @@ namespace FaceShield.Services.FaceDetection
             int sessions,
             CancellationToken cancellationToken)
         {
-            if (data == IntPtr.Zero || sessions <= 0)
+            if (samples.Count == 0 || sessions <= 0)
                 return 0;
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -426,7 +476,7 @@ namespace FaceShield.Services.FaceDetection
                 foreach (var detector in detectors)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    detector.DetectFacesBgra(data, stride, width, height, ratio, quality);
+                    DetectSamples(detector, samples, width, height, ratio, quality, cancellationToken);
                 }
 
                 int iterations = Math.Max(1, options.UseGpu ? 3 : 2);
@@ -441,17 +491,34 @@ namespace FaceShield.Services.FaceDetection
                         for (int k = 0; k < iterations; k++)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
-                            detector.DetectFacesBgra(data, stride, width, height, ratio, quality);
+                            DetectSamples(detector, samples, width, height, ratio, quality, cancellationToken);
                         }
                     });
                 sw.Stop();
 
                 double seconds = Math.Max(0.0001, sw.Elapsed.TotalSeconds);
-                return (sessions * iterations) / seconds;
+                return (sessions * iterations * samples.Count) / seconds;
             }
             finally
             {
                 DisposeAll(detectors);
+            }
+        }
+
+        private static unsafe void DetectSamples(
+            FaceOnnxDetector detector,
+            IReadOnlyList<(byte[] Buffer, int Stride)> samples,
+            int width,
+            int height,
+            double ratio,
+            DownscaleQuality quality,
+            CancellationToken cancellationToken)
+        {
+            foreach (var sample in samples)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                fixed (byte* src = sample.Buffer)
+                    detector.DetectFacesBgra((IntPtr)src, sample.Stride, width, height, ratio, quality);
             }
         }
 
@@ -465,6 +532,15 @@ namespace FaceShield.Services.FaceDetection
             int requestedSessions = Math.Max(1, maxSessions);
             for (int sessions = requestedSessions; sessions <= requestedSessions; sessions++)
             {
+                var defaultCpuOptions = CloneOptions(
+                    baseOptions,
+                    baseOptions.IntraOpNumThreads,
+                    baseOptions.InterOpNumThreads,
+                    useGpu: false,
+                    enablePreprocessParallelism: baseOptions.EnablePreprocessParallelism ?? true,
+                    useParallelExecution: baseOptions.UseParallelExecution == true);
+                candidates.Add((defaultCpuOptions, sessions, $"CPU {sessions}세션/default"));
+
                 int perSession = Math.Max(1, cores / sessions);
                 var threadCandidates = new SortedSet<int>
                 {

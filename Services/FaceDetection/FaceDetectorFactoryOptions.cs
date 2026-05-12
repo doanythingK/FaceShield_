@@ -6,6 +6,10 @@ namespace FaceShield.Services.FaceDetection
 
         public FaceOnnxDetectorOptions? FaceOnnxOptions { get; init; }
 
+        public ScrfdOnnxDetectorOptions? ScrfdOnnxOptions { get; init; }
+
+        public YuNetOnnxDetectorOptions? YuNetOnnxOptions { get; init; }
+
         public static FaceDetectorFactoryOptions ForOnnx(FaceOnnxDetectorOptions? options)
         {
             return new FaceDetectorFactoryOptions
@@ -15,12 +19,32 @@ namespace FaceShield.Services.FaceDetection
             };
         }
 
+        public static FaceDetectorFactoryOptions ForScrfdOnnx(ScrfdOnnxDetectorOptions options)
+        {
+            return new FaceDetectorFactoryOptions
+            {
+                Backend = FaceDetectorBackend.ScrfdOnnx,
+                ScrfdOnnxOptions = options
+            };
+        }
+
+        public static FaceDetectorFactoryOptions ForYuNetOnnx(YuNetOnnxDetectorOptions options)
+        {
+            return new FaceDetectorFactoryOptions
+            {
+                Backend = FaceDetectorBackend.YuNetOnnx,
+                YuNetOnnxOptions = options
+            };
+        }
+
         public FaceDetectorFactoryOptions WithFaceOnnxOptions(FaceOnnxDetectorOptions? options)
         {
             return new FaceDetectorFactoryOptions
             {
                 Backend = Backend,
-                FaceOnnxOptions = options
+                FaceOnnxOptions = options,
+                ScrfdOnnxOptions = ScrfdOnnxOptions,
+                YuNetOnnxOptions = YuNetOnnxOptions
             };
         }
     }

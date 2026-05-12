@@ -425,6 +425,7 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 추가 산출물:
 
 - `scripts/run-srcTest-smoke.ps1`
+- `scripts/verify-face-track-postprocess.ps1`
 - Windows PowerShell에서 `.\scripts\run-srcTest-smoke.ps1 -Start 00:02:00 -Seconds 10` 형태로 실행하면 10초 클립을 만들고 기준선(`baseline-all-frames`)과 개선 경로(`optimized-track-2`)의 자동 검출/export summary를 출력한다.
 - 기준선 실행을 생략하려면 `-SkipBaseline`을 붙인다.
 - 전제: Windows `dotnet`과 `ffmpeg` CLI가 PATH에 있어야 한다.
@@ -577,8 +578,13 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - 현재 `FaceONNX` NuGet 패키지는 별도 `.onnx` 파일을 프로젝트에 노출하지 않고 DLL 내부 리소스로 모델을 포함하는 구조다.
 - XML 문서 기준 `FaceONNX.FaceDetector`의 공개 생성자는 threshold와 `SessionOptions` 중심이며, 임의 모델 경로를 주입하는 생성자는 확인되지 않았다.
 - DLL 문자열 기준 현재 detector 모델 리소스는 `deploy_dpe_220_v4_slim.onnx`로 보인다.
+- 현재 작업공간과 로컬 NuGet cache에는 바로 붙일 수 있는 별도 face/yolo/opencv detector 모델 또는 패키지가 확인되지 않았다. 네트워크나 별도 모델 파일 없이 새 detector backend를 구현하면 임의 추정 구현이 되므로 기본 경로에는 넣지 않는다.
 - 따라서 단기 개선은 `FaceOnnxDetector` 유지 + DirectML/CoreML/CPU provider + pipeline 최적화가 맞고, 실제 모델 교체는 `IBgraFaceDetector` 구현을 새로 추가하는 backend 확장으로 진행해야 한다.
 - 자동 실행 경로에서 `_detectorFactoryOptions`가 `FaceDetectorFactoryOptions.ForOnnx(...)`로 다시 고정되던 부분을 제거했다. 이제 자동 튜닝은 `FaceOnnx` backend에서만 적용하고, factory option 자체는 유지하므로 새 backend를 추가했을 때 자동 모자이크 경로가 다시 FaceONNX로 되돌아가지 않는다.
+- `ScrfdOnnxDetector` backend를 추가했다. 이 backend는 insightface 계열 SCRFD ONNX 출력(score/bbox stride map)을 해석하는 외부 모델 경로 기반 `IBgraFaceDetector` 구현이다. 기본값으로는 사용하지 않으며, 모델 파일이 없으면 명확히 실패한다.
+- `scripts/run-srcTest-smoke.ps1 -ScrfdModelPath <model.onnx>`를 추가했다. baseline은 기존 FaceONNX로 유지하고 optimized case만 SCRFD backend로 실행해 같은 quality gate에서 A/B 비교할 수 있다. 현재 저장소에는 SCRFD 모델 파일이 없으므로 실제 SCRFD 품질/속도 수치는 아직 없다.
+- `scripts/inspect-onnx-outputs.ps1`를 추가했다. 외부 ONNX 모델의 input/output 이름, shape, 값 범위를 확인해 score/bbox/kps 출력 규약을 decoder 구현 전에 검증한다.
+- SCRFD 전처리 옵션으로 `UseLetterboxResize`, `UseRgbInput`, `MultiplyBboxByStride`를 추가했다. smoke script에서는 `-ScrfdStretchInput`, `-ScrfdUseBgr`로 letterbox/stretch와 RGB/BGR 조합을 비교할 수 있다.
 
 ## 2026-05-11 완료 감사
 목표를 다음 deliverable로 나눠 확인한다.
@@ -599,7 +605,7 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 완료로 볼 수 없는 항목:
 
 - 전체 17분 원본 영상 end-to-end 자동 검출 + export 풀런이 아직 없다.
-- 새 detector backend나 실제 모델 A/B 구현은 아직 없다.
+- 외부 SCRFD detector backend는 추가됐지만, 실제 모델 파일이 없어 SCRFD A/B 실행 결과는 아직 없다.
 - GUI에서 열기, preview, 자동 검출, 수동 수정, export 전체 흐름을 직접 smoke하지 않았다.
 - macOS 실기기에서 자동 모드 시작과 ONNX/libomp runtime load를 확인하지 않았다.
 
@@ -631,12 +637,26 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 5. 작은 얼굴 대응은 threshold 완화만으로 처리하지 않는다. threshold 완화는 물건 오탐을 늘릴 수 있으므로, ROI 재검출, 2차 verifier/refiner, 또는 작은 얼굴에 강한 detector backend를 비교해야 한다.
 6. export 병목은 `[ExportRunSummary]`의 `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs`, `totalMs`를 실제 긴 영상에서 확인한 뒤 큰 항목부터 줄인다.
 
+추가 방향: 확정 track 중심으로 모자이크를 유지한다.
+
+- 한 번 얼굴로 확정된 대상은 detector가 잠깐 놓쳐도 영상에서 사라질 때까지 가능한 한 블러를 유지한다.
+- 단, 처음 1프레임만 오검출된 물건을 끝까지 블러하면 안 되므로 모든 후보를 바로 확정하지 않는다.
+- `Tentative`: 새 후보. 1프레임 검출만으로는 확정하지 않는다.
+- `Confirmed`: 일정 프레임 동안 반복 검출되거나 자연스러운 이동/크기 변화가 확인된 얼굴 track. 짧은 미탐 구간은 보간한다.
+- `Lost`: 확정 track이 잠깐 사라진 상태. 일정 프레임까지는 예측/보간으로 블러를 유지한다.
+- `Ended`: 화면 밖 이동, 긴 미탐, scene cut, 비정상적인 크기/위치 변화로 종료된 track.
+- 반쪽 얼굴/가장자리 얼굴은 검출 증거가 짧아도 놓치면 안 되므로 `Tentative` 상태에서 바로 버리지 않는다.
+- 작은 물건 오탐은 confidence가 높아도 짧은 단발 track이면 제거한다.
+- 화면 중앙의 작은 후보라도 3프레임 이상 자연스럽게 이어지면 바로 제거하지 않는다. 사람이 뒤돌면서 얼굴이 반만 보이는 경우도 이 범위에 포함한다.
+- 향후 구현은 `FaceTrackState` 또는 `FaceTrackLifecycle` 형태로 확장해, frame dictionary 후처리가 아니라 track lifecycle 기준으로 최종 face rect를 만들도록 한다.
+
 다음 구현 후보:
 
 - `FaceTrack`, `FaceTrackBuilder`, `FaceTrackInterpolator`를 추가해 frame 단위 결과를 track 단위로 재구성한다.
 - 짧은 no-face gap은 앞뒤 track이 같은 얼굴일 때만 보간한다.
 - 일정 길이 이하의 단발 오검출 track은 제거하거나 이상 후보로 표시한다.
 - 작은 얼굴 후보는 낮은 confidence라도 바로 버리지 않고 track 후보로 유지한 뒤, 연속성으로 확정한다.
+- 확정된 track은 짧은 detector 미탐에도 `Lost` 상태로 유지하고, 영상에서 사라질 때까지 보간/예측 블러를 지속한다.
 - 물건 오탐은 confidence만으로 구분하기 어렵기 때문에, box 크기/비율/움직임/지속시간 기반 필터와 2차 verifier를 검토한다.
 - export는 face rect만 있는 프레임에서 direct blur 경로를 유지하되, 변환/마스크/인코딩 시간 중 실제 병목을 먼저 측정한다.
 
@@ -647,3 +667,221 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - 같은 얼굴 track의 짧은 깜박임을 줄이고, 모자이크 박스 이동이 프레임 사이에 자연스럽게 이어진다.
 - export는 동일 품질 조건에서 `ExportRunSummary.totalMs` 또는 주요 병목 항목이 감소한다.
 - 위 항목은 짧은 smoke가 아니라 실제 문제 영상의 대표 구간 여러 개에서 확인한다.
+
+## 2026-05-12 track 후처리 1차 구현
+실제 사용 확인에서 나온 깜박임과 단발 오검출 문제를 줄이기 위해 frame 단위 보정 로직 일부를 track 단위 후처리로 분리했다.
+
+추가/변경 파일:
+
+- `Services/Analysis/FaceTrack.cs`
+- `Services/Analysis/FaceTrackBuilder.cs`
+- `Services/Analysis/FaceTrackInterpolator.cs`
+- `ViewModels/Pages/WorkspaceViewModel.cs`
+- `scripts/run-srcTest-smoke.ps1`
+
+구현 내용:
+
+- `FaceTrackBuilder`가 frame별 face rect를 IoU, 중심점 이동량, 면적 변화율 기준으로 같은 얼굴 track으로 묶는다.
+- `FaceTrackInterpolator`가 같은 track의 짧은 no-face gap만 보간한다.
+- 확정 track은 마지막 검출 뒤 detector가 잠깐 놓쳐도 최대 3프레임까지 이동량 기반으로 예측해 블러를 유지한다.
+- 확정 track lost-fill이 발생한 frame index를 `FilledLostFrameIndices`와 `lostFrames=` 로그로 남겨, 이후 ROI verifier/refiner를 해당 frame 주변에만 붙일 수 있게 했다.
+- `FaceTrackRoiRefiner`를 추가해 gap-fill/lost-fill 후보 프레임만 FFmpeg raw BGRA로 다시 읽고, 예측 박스 주변 ROI crop만 detector에 넣어 재검출한다. ROI 검출 결과가 예측 박스와 충분히 가까울 때만 기존 예측 박스를 교체한다.
+- ROI 재검출은 전역 detector threshold를 바꾸지 않고, ROI 전용 CPU FaceONNX detector에서만 `DetectionThreshold/ConfidenceThreshold`를 최대 `0.12`까지 낮춰 더 민감하게 확인한다. 전역 자동 검출의 사용자 기준값 `0.2/0.25/0.7`은 유지한다.
+- ROI 후보가 가까운 frame에 몰린 경우 매 후보마다 seek하지 않고 한 번의 sequential read로 이어 읽도록 최적화했다. 후보 frame 간격이 `12`프레임보다 크면 다시 seek해 긴 구간을 불필요하게 디코드하지 않는다.
+- 긴 구간에서 ROI 후보 상한을 적용할 때 입력 순서 편향이 생기지 않도록, 후보를 frame index 기준으로 먼저 정렬한 뒤 `maxCandidates`를 적용한다.
+- confidence가 낮고 지속 길이가 짧은 단발 track은 오검출 후보로 보고 제거한다.
+- confidence가 높더라도 1~2개 검출만 가진 작은 단발 track은 물건 오탐 가능성이 높으므로 제거한다.
+- 작은 track이 3개 이상 검출로 이어지면 중앙의 반쪽 얼굴 가능성을 고려해 즉시 제거하지 않는다.
+- 단, 화면 가장자리에 닿은 작은 단발 후보는 반쪽 얼굴 가능성이 있으므로 보존한다.
+- 수동 mask가 있는 frame은 자동 track 보정 대상에서 제외한다.
+- 기존 `WorkspaceViewModel.ApplyAutoTemporalFixes()`는 track 후처리 호출로 축소했다.
+- smoke harness도 자동 검출 후 `FaceTrackInterpolator`를 적용하고 `[SmokeFaceTrackPost]` 로그를 남기도록 맞췄다.
+- synthetic 검증 스크립트에서 짧은 gap fill, 확정 track lost-fill, low-confidence 단발 제거, 1~2개 검출짜리 작은 오탐 제거, 제거된 track의 보간 재생성 차단, 3프레임 이상 중앙 반쪽 얼굴 후보 보존을 직접 확인하도록 했다.
+- smoke harness도 `FaceTrackRoiRefiner`를 호출해 ROI refiner 경로를 console gate에서 검증한다.
+
+검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg.AutoGen obsolete warning 7개만 발생했다.
+- `.tmp/srcTest-smoke/smoke-0600-3s.mp4` 단일 optimized CPU all-frame 검증에서 `[SmokeFaceTrackPost] tracks=3, filled=0, removedShort=0, rewritten=8`을 확인했다.
+- `scripts/verify-auto-mosaic-default.ps1` 기본 실행이 통과했다.
+- 품질 gate는 baseline과 optimized 모두 track 후처리 적용 후 `baselineFrames=8`, `optimizedFrames=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- auto tune 짧은 검증은 `FaceOnnxDetector/GPU:DirectML`, `mode=pipe-parallel`, `detects=150`, `interpolated=0`으로 통과했고, 후처리 로그는 `tracks=3`, `filled=0`, `removedShort=0`, `rewritten=8`이었다.
+- `scripts/verify-face-track-postprocess.ps1` 실행 결과 `tracks=6`, `filled=1`, `gapFrames=11`, `lostFilled=3`, `lostFrames=33,34,35`, `removedShort=3`, `rewritten=13`, `filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52`를 확인했다. frame 11은 gap-fill ROI 후보, frame 25는 화면 가장자리 반쪽 얼굴 후보 보존 케이스, frame 30~35는 확정 track lost-fill 케이스, frame 50~52는 중앙에서 3프레임 이상 이어지는 작은 반쪽 얼굴 후보 보존 케이스다.
+- `scripts/verify-auto-mosaic-default.ps1` 통합 검증에서 ROI refiner가 민감한 ROI 전용 detector로 `attempts=8`, `hits=0` 실행됐고, baseline/optimized 모두 같은 결과를 유지했다. 이 샘플에서는 ROI crop이 추가 얼굴을 찾지는 못했지만, gap-fill 5프레임과 lost-fill 3프레임을 모두 재검출 대상으로 확인하면서 품질 gate를 깨지 않는 것은 확인했다.
+- ROI hit 대표 구간 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`를 `scripts/verify-auto-mosaic-default.ps1`에 추가했다. 이 gate는 `FaceTrackRoiRefiner`가 실제 구간에서 `attempts=11`, `hits=5`를 내는지 확인한다. ROI seek 최적화 후 단독 실행에서는 `seeks=4`, `decoded=26`, `elapsedMs=9,455`였다.
+- 선택형 export smoke gate `-RunExportSmoke`를 `scripts/verify-auto-mosaic-default.ps1`에 추가했다. `.tmp/srcTest-smoke/smoke-1200-2s.mp4`에서 자동 검출 후 export까지 실행하고 `[ExportRunSummary]`의 `bitmapMaskFrames=0`, `directFaceFrames>0`, output 생성 로그를 확인한다.
+- `.tmp/srcTest-smoke/smoke-1200-30s.mp4` 30초 중간 길이 검증에서 `processed=899`, `detects=899`, `interpolated=0`, `totalMs=357,398ms`, `regular=614`, `small=2037`, `rejected=2111`, `statsRejected=131`을 확인했다. track 후처리는 `tracks=244`, `filled=431`, `lostFilled=104`, `removedShort=77`, `rewritten=778`이었고, ROI refiner는 상한 32개 후보에서 `attempts=32`, `hits=22`, `seeks=4`, `decoded=77`, `elapsedMs=14,599`였다.
+- 위 30초 검증을 재현할 수 있도록 `scripts/verify-auto-mosaic-default.ps1`에 선택형 `-RunMediumAuto` gate를 추가했다. 이 gate는 `processed=899`, `detects=899`, `interpolated=0`, track 보정 발생, ROI `attempts=32`, ROI `hits>0`을 확인한다.
+
+남은 한계:
+
+- 실제 영상 smoke 구간에서는 gap 보간과 단발 제거가 발생하지 않았다. synthetic 검증에서는 기능 자체를 확인했지만, 실제 문제 구간에서 개선 수치는 아직 확인하지 못했다.
+- 작은 얼굴 미탐 자체를 줄이는 detector/backend는 아직 구현하지 않았다. ROI refiner의 기본 경로는 gap-fill/lost-fill 후보까지 확장했지만, 현재 기본 샘플에서는 `hits=0`이라 실제 미탐 감소 효과는 아직 확인되지 않았다.
+- 긴 export 병목 감소는 이번 변경의 대상이 아니며, 실제 긴 구간 `ExportRunSummary` 기준으로 계속 측정해야 한다.
+
+## 2026-05-12 작은 얼굴 필터 보강
+작은 얼굴 미탐 가능성을 줄이기 위해 `AutoMaskGenerator`의 face size filter를 보수적으로 완화했다.
+
+참고 기준:
+
+- 사용자가 2026-05-11 집 테스트에서 사용한 detector threshold는 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`이다.
+- 이 값들은 `HomePageViewModel.BuildDetectorOptions()`에서 `FaceOnnxDetectorOptions`로 전달되고, `DetectorAutoTuner.CloneOptions()`도 threshold 값을 유지한다.
+- 이번 변경은 위 detector threshold를 직접 바꾸지 않고, detector가 반환한 후보를 `AutoMaskGenerator` 필터와 `FaceTrackInterpolator` 후처리에서 어떻게 살리거나 제거할지 조정한 것이다.
+
+기존 한계:
+
+- 기존 `MinFaceAreaRatio=0.00075`는 3840x2160 영상 기준 약 6,220px, 정사각형 환산 약 79x79px 미만 얼굴 후보를 버릴 수 있다.
+- 단순히 면적 기준만 낮추면 물건 오검출이 늘어날 수 있다.
+
+변경 내용:
+
+- 일반 face 후보 기준은 유지한다.
+- 작은 face 후보는 `MinSmallFaceAreaRatio=0.00025` 이상이면서 confidence가 `0.72` 이상일 때만 살린다.
+- 작은 face 후보는 confidence가 높아도 skin/edge/luma variance 기반 픽셀 통계 검사를 강제로 통과해야 한다.
+- 일반 후보의 기존 high-confidence stats bypass 경로는 유지해 큰/일반 얼굴 처리 비용과 기존 결과 변화를 줄였다.
+- `[AutoRunSummary]`의 `roi=` 요약에 `regular`, `small`, `rejected`, `statsRejected` filter 통계를 남기도록 했다.
+
+검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg.AutoGen obsolete warning 7개만 발생했다.
+- `scripts/verify-auto-mosaic-default.ps1` 기본 실행이 통과했다.
+- 품질 gate는 `baselineFrames=8`, `optimizedFrames=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- auto tune 짧은 검증은 `FaceOnnxDetector/GPU:DirectML`, `mode=pipe-parallel`, `detects=150`, `interpolated=0`으로 통과했다.
+- 계측 추가 후 `.tmp/srcTest-smoke/smoke-0600-3s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=8, small=0, rejected=0, statsRejected=0` 로그를 확인했다.
+- `.tmp/srcTest-smoke/smoke-0900-2s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=84, small=0, rejected=0, statsRejected=0`, track 후처리 `tracks=5`, `filled=5`, `removedShort=0`, `rewritten=51`을 확인했다. 실제 영상 구간에서 gap 보간이 발생한 대표 후보로 둔다.
+- `.tmp/srcTest-smoke/smoke-1200-2s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=28, small=0, rejected=12, statsRejected=0`, track 후처리 `tracks=1`, `filled=0`, `removedShort=0`, `rewritten=28`을 확인했다.
+- `.tmp/srcTest-smoke/smoke-1500-2s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=0, small=2, rejected=8, statsRejected=3`, track 후처리 `tracks=2`, `filled=0`, `removedShort=0`, `rewritten=2`를 확인했다. 작은 얼굴 후보가 실제로 유지되는 대표 후보로 둔다.
+- 이후 같은 구간을 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `-DumpDetections`로 재검증했다. 작은 후보는 frame 2/3/4의 빨간 수건/물건 오탐으로 확인되어 작은 단발 track 제거 기준을 추가했다.
+- 제거된 작은 track은 gap 보간에서 다시 살아나지 않도록 보정했다. 재실행 결과 `filter=regular=0, small=5, rejected=13, statsRejected=4`, `tracks=4`, `filled=0`, `removedShort=4`, `rewritten=1`, `faceMaskFrames=1`이었다.
+- 중앙의 빨간 수건/물건 오탐은 제거됐고, 남은 1개는 frame 56의 화면 오른쪽 가장자리 작은 후보다. 프레임 이미지로 육안 확인한 결과 화면 끝에 걸린 반쪽 얼굴 후보로 보여 현재 정책대로 보존한다. 이후 다른 구간에서 가장자리 물체 오탐이 반복되면 가장자리 후보용 verifier 또는 더 엄격한 edge partial-face 검증이 필요하다.
+- 작은 track 제거 기준은 `1~2개 검출`로 제한했다. 사람이 뒤돌면서 얼굴이 반만 보이는 경우처럼 중앙에서 3프레임 이상 이어지는 작은 후보는 `Tentative`로 남겨 이후 lifecycle/ROI 재검증 대상이 되게 한다.
+
+남은 한계:
+
+- 이 변경은 detector가 이미 반환한 작은 얼굴 후보를 덜 버리는 보강이다. detector 자체가 후보를 반환하지 못하는 작은 얼굴은 ROI 재검출, verifier/refiner, 또는 새 detector backend가 필요하다.
+- 작은 얼굴 후보가 유지되는 대표 구간은 확인했지만, 실제 육안 기준 미탐 frame 수 감소는 아직 확인하지 못했다.
+- 가장자리 작은 후보는 반쪽 얼굴 보호를 위해 보수적으로 살린다. 이 정책은 가장자리 물체 오탐을 남길 수 있으므로 실제 영상 확인 결과에 따라 별도 verifier가 필요하다.
+
+## 2026-05-12 auto tune provider 선택 보강
+threshold를 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`로 낮춘 뒤, 짧은 auto tune 샘플에서 GPU가 선택됐지만 실제 5초 검출 wall-clock이 CPU 병렬 경로보다 느려지는 케이스를 확인했다.
+
+변경 내용:
+
+- `DetectorAutoTuner`의 provider 후보 측정을 단일 프레임이 아니라 최대 3개 연속 프레임 기준으로 바꿨다.
+- GPU는 quality gate를 통과하더라도 CPU 최고 후보보다 충분히 빠를 때만 선택하도록 `GpuPreferenceMinScoreRatio`를 `1.20`으로 조정했다.
+- CPU/GPU 후보 점수를 분리해 계산한다. 이전 구조에서는 GPU가 일단 전체 최고점이 되면 CPU 대비 승격 margin을 사실상 우회할 수 있었다.
+- CPU 후보에 고정 thread 수뿐 아니라 기본 ORT thread 설정 후보(`CPU <n>세션/default`)를 추가했다. 수동 smoke의 기본 CPU 경로와 같은 후보를 auto-tune에서도 비교하기 위함이다.
+- `scripts/verify-auto-mosaic-default.ps1`는 더 이상 GPU 선택을 고정 요구하지 않는다. CPU/GPU 중 auto tune이 선택한 provider가 `FaceOnnxDetector/CPU` 또는 `FaceOnnxDetector/GPU:DirectML`로 정상 동작하고, `pipe-parallel`, 전 프레임 검출, `interpolated=0` 조건을 만족하는지 확인한다.
+- `scripts/verify-auto-mosaic-default.ps1`가 `scripts/verify-face-track-postprocess.ps1`를 먼저 실행하도록 묶었다. 기본 검증 한 번으로 track gap 보간, 작은 오탐 제거, 반쪽 얼굴 후보 보존 정책까지 같이 확인한다.
+- `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`를 추가했다. 30초 대표 구간에서 자동 검출 후 export까지 수행하고 `processed=899`, ROI hit, `ExportRunSummary.frames=902`, `bitmapMaskFrames=0`, `directFaceFrames>0`, output 생성을 assertion한다.
+- `scripts/run-srcTest-smoke.ps1`는 매 실행마다 고유 harness 폴더를 사용한다. 이전 smoke 프로세스가 남아 있어도 고정 `SmokeHarness.exe` 파일 잠금 때문에 다음 검증이 실패하는 상황을 줄인다.
+
+검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg.AutoGen obsolete warning 7개만 발생했다.
+- `git diff --check` 통과.
+- `.tmp/srcTest-smoke/smoke-0600-5s.mp4`에서 `-UseAutoTune` 재실행 결과, tuner가 `CPU 2세션/4스레드`를 선택했다.
+- 같은 검증에서 `FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=16`, `totalMs=80,877ms`를 확인했다.
+- 직전 GPU 선택 경로의 같은 5초 검증은 `FaceOnnxDetector/GPU:DirectML`, `totalMs=107,471ms`였으므로, 이 샘플에서는 느린 GPU 고정 선택을 줄였다.
+- 이후 `scripts/verify-auto-mosaic-default.ps1` 전체 기본 검증이 다시 통과했다. 같은 5초 검증에서 최신 실행은 `FaceOnnxDetector/GPU:DirectML`, `totalMs=59,534ms`로 통과했다. provider 선택은 실행 시점의 장비 부하에 따라 CPU/GPU가 달라질 수 있으므로, gate는 provider 고정이 아니라 품질 유지와 전 프레임 병렬 경로 진입을 확인한다.
+- 고유 harness 폴더 변경 후 `.tmp/srcTest-smoke/smoke-1500-2s.mp4` 짧은 smoke도 통과했다. 결과는 `FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `processed=59`, `faceMaskFrames=1`, `removedShort=4`, `totalMs=21,827ms`였다.
+- 후처리 정책 gate를 통합한 뒤 `scripts/verify-auto-mosaic-default.ps1`를 다시 실행했고 전체 통과했다. 최신 통합 실행에서 `track-postprocess-policy`는 `filled=1`, `lostFilled=3`, `lostFrames=33,34,35`, `removedShort=3`, `filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52`였다. 품질 gate는 lost-fill 적용 후에도 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`으로 통과했고, CPU 병렬 경로는 `totalMs=34,381ms`로 CPU single baseline `61,097ms`보다 빨랐다. 품질 gate의 실제 lost-fill frame도 baseline/optimized 모두 `lostFrames=6,7,8`로 일치했다. auto tune gate는 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `interpolated=0`, `lostFilled=3`, `lostFrames=6,7,8`, `totalMs=64,020ms`였다.
+- `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke -RunMediumAuto -RunLongAutoTune`가 통과했다. 해당 실행에서 export smoke는 `bitmapMaskFrames=0`, `directFaceFrames=31`, `totalMs=12,299ms`였고, 30초 medium CPU gate는 `processed=899`, `detects=899`, `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, `totalMs=397,825ms`였다.
+- 같은 verifier 실행에서 short auto-tune은 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=84,769ms`였고, long auto-tune은 `FaceOnnxDetector/GPU:DirectML`, `processed=899`, `detects=899`, `interpolated=0`, ROI `attempts=32`, `hits=22`, `totalMs=430,952ms`였다.
+- GPU 승격 margin과 CPU default 후보 추가 후 `.tmp/srcTest-smoke/smoke-0600-5s.mp4 -UseAutoTune`은 다시 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=60,447ms`로 완료됐다. 같은 변경 직후 30초 long auto-tune은 `CPU 2세션/4스레드`를 선택했고 `processed=899`, `detects=899`, `interpolated=0`, ROI `attempts=32`, `hits=22`, `totalMs=438,618ms`였다. provider 선택은 부하에 따라 흔들릴 수 있어 gate는 provider 고정보다 전 프레임 처리/품질/병렬 경로를 확인한다.
+- 30초 대표 구간 export 포함 smoke도 실행했다. `.tmp/srcTest-smoke/smoke-1200-30s.mp4`에서 자동 검출은 `processed=899`, `detectMs=762,418`, `totalMs=382,985ms`, track 후처리는 `filled=431`, `lostFilled=104`, `removedShort=77`, ROI는 `attempts=32`, `hits=22`, `elapsedMs=17,773`이었다. 이어진 export는 `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `swsToBgraMs=15,927`, `maskMs=47,715`, `swsToEncMs=24,851`, `encodeMs=4,361`, `totalMs=148,317ms`였다. 이 구간에서는 export보다 detector가 더 큰 병목이다.
+- `-RunMediumExport` 추가 후 `scripts/verify-auto-mosaic-default.ps1` 기본 실행도 다시 통과했다. 최신 실행에서 품질 gate는 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, CPU 병렬 `totalMs=34,870ms`였고, ROI-hit 대표 gate는 `attempts=11`, `hits=5`, `elapsedMs=9,134`였다. auto-tune은 `CPU 2세션/default`, `provider=CPU`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=52,773ms`로 통과했다.
+- `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`도 실제 통과했다. 이 실행에서 품질 gate는 CPU single `totalMs=54,409ms`, CPU 병렬 `totalMs=34,181ms`, `avgBestIou=1.000`이었다. ROI-hit 대표 gate는 `attempts=11`, `hits=5`, `elapsedMs=9,288`이었다. `medium-auto-export`는 자동 검출 `processed=899`, `detectMs=629,598`, `totalMs=316,366ms`, track `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, `elapsedMs=13,718`을 확인했고, export는 `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `maskMs=39,891`, `swsToEncMs=22,251`, `encodeMs=4,160`, `totalMs=127,750ms`로 통과했다. 마지막 short auto-tune gate는 `CPU 2세션/default`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=53,885ms`였다.
+- `MaskedVideoExporter.ApplyFaceRectsAndBlur()`에 단일 얼굴 fast path를 추가했다. 얼굴이 1개인 frame은 기존 ellipse alpha/soft edge 계산은 유지하되, per-pixel shape list 순회와 radius map 생성/조회 비용을 건너뛴다. 적용 후 `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke`가 다시 통과했다. 이 실행에서 direct face export smoke는 `frames=61`, `bitmapMaskFrames=0`, `directFaceFrames=31`, `maskMs=713`, `swsToEncMs=1,089`, `encodeMs=479`, `totalMs=7,066ms`였고, short auto-tune gate는 `CPU 2세션/default`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=61,999ms`였다.
+- 전체 원본 `srcTest/260102_jp_10.mp4`는 `3840x2160`, `30000/1001fps`, `duration=1067.599867`, `nb_frames=31996`, 파일 크기 약 `2.3GB`다. 30초 대표 구간 자동 검출+export 수치를 단순 환산하면 전체 원본 풀런은 몇 시간 단위가 될 수 있다.
+- detector 호출 수를 줄이는 `sparse-pipe-parallel`도 품질 gate에서 확인했다. `.tmp/srcTest-smoke/smoke-0600-3s.mp4`에 `-OptimizedDetectEvery 2`를 적용하면 `detects=45`, `interpolated=9`, `detectMs=32,705`, `totalMs=16,820ms`로 매우 빨라졌지만, FaceONNX all-frame baseline 대비 `baselineFrames=19`, `optimizedFrames=22`, `onlyBaseline=3`, `onlyOptimized=6`, `avgBestIou=0.930`, `minBestIou=0.627`, `passed=False`였다. 따라서 `DetectEveryNFrames=2` sparse tracking은 현재 품질 최우선 기본값으로 승격하지 않는다.
+
+남은 한계:
+
+- auto tune 측정 프레임 수와 후보 수를 늘렸기 때문에 자동 시작 전 튜닝 시간이 조금 늘 수 있다.
+- 장기 영상에서 CPU/GPU 우위가 실행 시점 부하에 따라 바뀌므로, 전체 영상 기준 최종 선택 정책은 더 긴 대표 구간으로 계속 검증해야 한다.
+
+## 2026-05-12 completion audit
+목표를 구체 deliverable로 나누면 다음과 같다.
+
+| 요구/완료 기준 | 현재 증거 | 판정 |
+| --- | --- | --- |
+| 기본 품질을 희생하지 않는 자동 모자이크 | `DownscaleRatio=1.0`, `DetectEveryNFrames=1` 경로를 유지한다. `scripts/verify-auto-mosaic-default.ps1` 품질 gate에서 baseline/optimized 모두 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`으로 통과했다. | 충족 |
+| 처리 속도 개선 | 같은 6분 3초 클립 gate에서 CPU single baseline `totalMs=66,771ms`, CPU 병렬 `totalMs=36,138ms`를 확인했다. 최신 강한 verifier에서 3초 품질 gate는 CPU single `totalMs=70,544ms`, CPU 병렬 `totalMs=41,973ms`로 통과했고, 30초 medium CPU gate는 `processed=899`, `totalMs=397,825ms`였다. auto tune은 CPU/GPU 후보를 모두 비교하고 `pipe-parallel` 경로로 통과한다. `DetectEveryNFrames=2` sparse는 `totalMs=16,820ms`까지 줄었지만 품질 gate 실패로 기본 승격하지 않는다. | 부분 충족 |
+| 작은 얼굴 후보 보존 | `MinSmallFaceAreaRatio=0.00025`, `SmallFaceConfidenceMin=0.72`, stats gate를 추가했고 15분 2초 구간에서 작은 후보 유지/오탐 제거를 확인했다. | 부분 충족 |
+| 작은 얼굴 detector 미탐 자체 감소 | 현재 변경은 detector가 반환한 후보를 덜 버리는 방식이다. detector가 후보를 반환하지 못한 얼굴을 새로 찾는 기본 `FaceTrackRoiRefiner` 경로는 gap-fill/lost-fill 후보까지 추가했고 ROI 전용 threshold도 더 민감하게 낮췄다. 9분 2초 대표 구간에서는 `attempts=11`, `hits=5`로 실제 ROI 보정 hit를 확인했다. 다만 작은 얼굴 전용 새 detector backend는 없다. | 부분 충족 |
+| 물건 오탐 감소 | 15분 2초 구간에서 빨간 수건/물건 오탐은 `removedShort=4`로 제거됐고, synthetic gate에서 1~2개 검출짜리 작은 오탐 제거와 보간 재생성 차단을 확인했다. | 부분 충족 |
+| 반쪽 얼굴/뒤도는 얼굴 보존 | synthetic gate에서 가장자리 반쪽 얼굴 후보와 중앙 3프레임 작은 후보 보존을 확인했다. 15분 2초 frame 56의 오른쪽 가장자리 후보도 프레임 이미지로 확인해 보존했다. | 부분 충족 |
+| 확정 track 유지 | 확정 track lost-fill을 추가했고 synthetic gate에서 `lostFilled=3`, `lostFrames=33,34,35`, 실제 9분 2초 smoke에서 `lostFilled=10`을 확인했다. | 부분 충족 |
+| 오탐 잔상 방지 | lost-fill은 3개 이상 검출된 강한 track만, 최대 3프레임만 적용한다. 작은 track은 lost-fill 대상에서 제외한다. | 부분 충족 |
+| detector/backend 교체 가능성 | `FaceDetectorBackend.ScrfdOnnx`, `ScrfdOnnxDetectorOptions`, `ScrfdOnnxDetector`를 추가했고 `FaceDetectorFactory`에서 생성 가능하다. `scripts/run-srcTest-smoke.ps1 -ScrfdModelPath <model.onnx>`로 FaceONNX baseline 대비 SCRFD optimized A/B를 실행할 수 있다. `.tmp`에 받은 SCRFD 500M/10G 후보는 실행됐지만 quality gate를 통과하지 못해 기본 승격하지 않는다. | 부분 충족 |
+| ROI 재검출/2차 verifier | `FaceTrackRoiRefiner`가 track gap-fill/lost-fill 후보만 raw BGRA로 다시 읽어 ROI crop 재검출을 수행한다. 전역 threshold는 유지하고 ROI 전용 CPU detector만 `0.12/0.12`로 더 민감하게 돌린다. 기본 품질 gate에서는 `attempts=8`, `hits=0`으로 품질 유지가 확인됐고, 9분 2초 ROI-hit 대표 gate에서는 `attempts=11`, `hits=5`로 실제 보정 hit가 확인됐다. 후보 frame 정렬/sequential read 최적화 후 해당 구간은 `seeks=4`, `decoded=26`, `elapsedMs=9,455`로 계측됐다. 강한 2차 모델 verifier는 아직 없다. | 부분 충족 |
+| export 병목 개선 | direct face rect export와 summary는 유지된다. 단일 얼굴 direct blur fast path 추가 후 최신 `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke`에서 `.tmp/srcTest-smoke/smoke-1200-2s.mp4` export가 `bitmapMaskFrames=0`, `directFaceFrames=31`, `swsToBgraMs=552`, `maskMs=713`, `swsToEncMs=1,089`, `encodeMs=479`, `totalMs=7,066ms`로 완료됐다. `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`로 재현 가능한 30초 대표 구간 export gate도 통과했고, `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `maskMs=39,891`, `swsToEncMs=22,251`, `encodeMs=4,160`, `totalMs=127,750ms`였다. 전체 17분 원본 export 병목은 아직 없다. | 부분 충족 |
+| 실제 `srcTest` 대표 구간 검증 | 원본 `srcTest/260102_jp_10.mp4`는 `3840x2160`, `duration=1067.599867`, `nb_frames=31996`로 확인했다. 6분/9분/12분/15분 짧은 clip smoke와 12분 30초 자동 검출 smoke가 있다. 최신 30초 검증에서는 `processed=899`, `detects=899`, `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, CPU medium `totalMs=397,825ms`, long auto-tune `totalMs=430,952ms` 및 변경 후 long auto-tune 직접 smoke `totalMs=438,618ms`를 확인했다. 30초 export 포함 smoke는 자동 검출 `totalMs=382,985ms`, export `totalMs=148,317ms`로 완료됐다. 전체 17분 원본 end-to-end 자동 검출 + export 풀런은 아직 없다. | 부분 충족 |
+| GUI smoke | shell harness 검증은 통과했다. Avalonia GUI에서 open, preview, auto detect, manual edit, export 전체 흐름은 직접 확인하지 않았다. | 미완료 |
+| 빌드/정적 gate | `dotnet build FaceShield.sln` 성공, `git diff --check` 통과, `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke -RunMediumAuto -RunLongAutoTune` 통과, `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport` 통과. 최신 강한 verifier에는 track policy, 품질 gate, ROI-hit 대표 gate, direct face export smoke, medium 30초 gate, medium 30초 export gate, short auto-tune gate, long auto-tune gate가 포함된다. SCRFD/YuNet backend와 YuNet tiling 실험, auto-tune CPU/GPU 선택 보정 후 `dotnet build FaceShield.sln`은 7개 기존 FFmpeg obsolete warning만 남기고 성공했고, `git diff --check`도 통과했다. 최신 `-RunExportSmoke`는 단일 얼굴 fast path 추가 후 다시 통과했다. 품질 gate는 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`, CPU 병렬 `totalMs=32,437ms`였고, direct export smoke는 `bitmapMaskFrames=0`, `directFaceFrames=31`, `maskMs=713`, `totalMs=7,066ms`였다. 최신 `-RunMediumExport` verifier는 자동 검출 `totalMs=316,366ms`, export `totalMs=127,750ms`로 통과했다. | 충족 |
+
+현재 결론:
+
+- 목표를 완료로 처리할 수 없다.
+- 지금까지의 변경은 기본 품질 유지, 병렬 처리 속도, track continuity, 짧은 오탐 제거, 반쪽 얼굴 후보 보존을 보강한 단계다.
+- 다음으로 실제 목표에 더 직접적으로 남은 작업은 SCRFD decoder/전처리 추가 보정 또는 다른 detector 후보 A/B, 전체 17분 원본 또는 그에 준하는 긴 구간 end-to-end 자동 검출 + export 검증, Avalonia GUI smoke다. `FaceTrackRoiRefiner`의 실제 hit 대표 구간은 9분 2초 clip에서 확보했지만, 강한 2차 모델 verifier의 실제 모델 검증은 아직 없다.
+
+## 2026-05-12 SCRFD 외부 모델 A/B 1차
+외부 모델 후보는 Hugging Face `RuteNL/SCRFD-face-detection-ONNX`의 `500m.onnx`와 `10g_bnkps.onnx`를 `.tmp/models/`에만 내려받아 테스트했다. 해당 모델 카드는 Apache-2.0으로 표시되지만, upstream pretrained model 출처가 InsightFace이므로 배포/상용 사용은 별도 확인이 필요하다. 모델 파일은 repo에 포함하지 않는다.
+
+추가/변경 파일:
+
+- `Services/FaceDetection/ScrfdOnnxDetector.cs`
+- `Services/FaceDetection/ScrfdOnnxDetectorOptions.cs`
+- `Services/FaceDetection/YuNetOnnxDetector.cs`
+- `Services/FaceDetection/YuNetOnnxDetectorOptions.cs`
+- `Services/FaceDetection/FaceDetectorBackend.cs`
+- `Services/FaceDetection/FaceDetectorFactory.cs`
+- `Services/FaceDetection/FaceDetectorFactoryOptions.cs`
+- `scripts/run-srcTest-smoke.ps1`
+- `scripts/inspect-onnx-outputs.ps1`
+
+검증:
+
+- `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/scrfd_500m.onnx` 결과 input은 `input.1=1x3x640x640`, output은 `score_8/16/32`, `bbox_8/16/32` 구조였다.
+- `scrfd_500m.onnx` 단독 optimized smoke는 `.tmp/srcTest-smoke/smoke-0600-3s.mp4`에서 실행됐다. `ConfidenceThreshold=0.25` 기준 `totalMs=13,174ms`, `faceMaskFrames=23`이었으나 FaceONNX baseline과 비교하면 `baselineFrames=19`, `optimizedFrames=23`, `onlyBaseline=13`, `onlyOptimized=17`, `avgBestIou=0.001`, `passed=False`였다.
+- `scrfd_500m.onnx`를 `ConfidenceThreshold=0.5`로 올리면 `totalMs=11,166ms`까지 줄었지만 `faceMaskFrames=0`으로 전부 미탐이었다.
+- `scrfd_10g_bnkps.onnx` 단독 optimized smoke는 `totalMs=27,819ms`, `faceMaskFrames=19`로 baseline frame 수와 같았다.
+- 그러나 `scrfd_10g_bnkps.onnx` A/B gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`였다.
+- insightface 방식에 맞춘 letterbox + RGB 전처리를 추가로 적용했지만, `scrfd_10g_bnkps.onnx`는 `faceMaskFrames=2`, `onlyBaseline=17`, `avgBestIou=0.290`, `passed=False`로 더 나빠졌다.
+- stretch + BGR 조합도 `scrfd_10g_bnkps.onnx`에서 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`로 기존 stretch + RGB와 동일하게 실패했다.
+
+판정:
+
+- SCRFD backend는 실제 모델 로드와 자동 모자이크 파이프라인 실행까지 가능하다.
+- 현재 decoder/전처리 조합 또는 후보 모델은 FaceONNX baseline 품질 gate를 통과하지 못한다. letterbox/RGB, stretch/RGB, stretch/BGR 중 통과한 조합은 없다.
+- 속도만 보면 SCRFD 500M은 매우 빠르지만 품질이 부족하고, SCRFD 10G는 일부 프레임 수는 맞지만 좌표/구간 일치가 부족하다.
+- 따라서 기본 detector 교체는 보류한다. 다음 후보는 letterbox 입력, RGB/BGR 입력 옵션, bbox decode 방식별 A/B, 또는 다른 모델 계열(YuNet/RetinaFace/YOLO-face) 비교다.
+
+## 2026-05-12 YuNet 외부 모델 A/B 1차
+OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려받아 테스트했다. OpenCV Zoo README 기준 YuNet은 MIT License이며, 2023-March 모델은 WIDER Face 기준 AP hard 0.7503으로 공개되어 있다. 모델 파일은 repo에 포함하지 않는다.
+
+구현:
+
+- `FaceDetectorBackend.YuNetOnnx`를 추가했다.
+- `YuNetOnnxDetector`를 추가해 OpenCV `FaceDetectorYN`의 공개 postprocess와 같은 방식으로 `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`를 decode한다.
+- `scripts/run-srcTest-smoke.ps1 -YuNetModelPath <model.onnx>`로 FaceONNX baseline 대비 YuNet optimized A/B를 실행할 수 있다.
+- `-YuNetUseTiling`, `-YuNetTileOnly`, `-YuNetTileColumns`, `-YuNetTileRows`, `-YuNetTileOverlapRatio` 옵션을 추가해 4K 원본을 640 입력 하나로만 압축하지 않는 tile/multi-region 실험도 실행할 수 있게 했다.
+
+검증:
+
+- `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/face_detection_yunet_2023mar.onnx` 결과 input은 `input=1x3x640x640`, output은 `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`, `kps_8/16/32` 12개였다.
+- `.tmp/srcTest-smoke/smoke-0600-3s.mp4` YuNet 단독 optimized smoke는 `totalMs=9,825ms`, `detectMs=15,890ms`, `faceMaskFrames=33`, ROI refiner `attempts=7`, `hits=7`로 매우 빨랐다.
+- 같은 구간 FaceONNX baseline 대비 A/B gate는 `baselineFrames=19`, `optimizedFrames=33`, `onlyBaseline=4`, `onlyOptimized=18`, `avgBestIou=0.277`, `passed=False`였다.
+- `ConfidenceThreshold=0.6`은 오탐을 줄였지만 `faceMaskFrames=0`으로 전부 미탐이었다.
+- `-YuNetUseTiling` 단독 optimized smoke는 `totalMs=41,791ms`, `detectMs=82,467ms`, `faceMaskFrames=51`, ROI refiner `attempts=28`, `hits=27`이었다.
+- 같은 tiling 설정의 FaceONNX baseline 대비 A/B gate는 `baselineFrames=19`, `optimizedFrames=51`, `onlyBaseline=4`, `onlyOptimized=36`, `avgBestIou=0.272`, `minBestIou=0.000`, `passed=False`였다.
+- full frame 입력을 빼고 tile만 돌리는 `-YuNetUseTiling -YuNetTileOnly` A/B gate도 실행했다. 결과는 `totalMs=34,976ms`, `detectMs=69,111ms`, `faceMaskFrames=38`, ROI refiner `attempts=25`, `hits=24`였고, FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=38`, `onlyBaseline=5`, `onlyOptimized=24`, `avgBestIou=0.163`, `minBestIou=0.000`, `passed=False`였다.
+
+판정:
+
+- YuNet backend도 실제 모델 로드와 자동 모자이크 파이프라인 실행까지 가능하다.
+- 속도는 현재 후보 중 가장 좋지만, 4K 원본을 640 고정 입력으로 줄이는 구조와 현재 threshold 조합에서는 FaceONNX baseline 품질 gate를 통과하지 못한다.
+- tiling은 작은 얼굴 recall을 늘리는 대신 오탐 후보를 크게 늘리고 단일 YuNet 대비 속도 이점도 줄었다. tile-only는 full+tile보다 빠르고 오탐 frame 수는 줄었지만 baseline과의 좌표/구간 일치가 더 나빴다. 현재 2x2 tiling 설정은 기본 detector 교체 후보가 아니다.
+- 기본 detector 교체는 보류한다. YuNet은 빠른 1차 후보/ROI verifier 후보로 남기되, 기본 승격 전에는 threshold curve, tile-only/full+tile 비교, 오탐 필터, 더 적합한 대체 모델(RetinaFace/YOLO-face 등)을 별도로 검증해야 한다.
