@@ -885,3 +885,446 @@ OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려
 - 속도는 현재 후보 중 가장 좋지만, 4K 원본을 640 고정 입력으로 줄이는 구조와 현재 threshold 조합에서는 FaceONNX baseline 품질 gate를 통과하지 못한다.
 - tiling은 작은 얼굴 recall을 늘리는 대신 오탐 후보를 크게 늘리고 단일 YuNet 대비 속도 이점도 줄었다. tile-only는 full+tile보다 빠르고 오탐 frame 수는 줄었지만 baseline과의 좌표/구간 일치가 더 나빴다. 현재 2x2 tiling 설정은 기본 detector 교체 후보가 아니다.
 - 기본 detector 교체는 보류한다. YuNet은 빠른 1차 후보/ROI verifier 후보로 남기되, 기본 승격 전에는 threshold curve, tile-only/full+tile 비교, 오탐 필터, 더 적합한 대체 모델(RetinaFace/YOLO-face 등)을 별도로 검증해야 한다.
+
+## 2026-05-12 현재 환경 재검증 계획
+기존 SCRFD/YuNet A/B와 auto tune 검증은 GPU가 없는 노트북 환경에서 수행된 결과가 섞여 있다. 따라서 그 결과는 CPU-only 저사양 기준의 참고값으로 보고, 현재 목표 환경에서 다시 검증한다.
+
+커뮤니케이션/문구 기준:
+
+- 사용자에게 보이는 문구, 문서 기록, 검증 결과 설명, UI 문구에서는 반말을 절대 사용하지 않는다.
+- 모든 설명은 존댓말 또는 중립적인 기술 문체로 작성한다.
+- 급한 작업 메모라도 사용자를 향한 표현에는 반말, 명령조, 비하 표현을 남기지 않는다.
+- Git 관련 작업은 별도 확인을 받는다. 특히 `push`, `pull`, 작업 취소, 되돌리기처럼 원격/브랜치/작업 상태에 영향을 주는 작업은 사용자 확인 후 진행한다.
+- 그 외 목표 범위 안의 코드 구현, 코드 수정, 문서 수정, 로컬 테스트, smoke 실행, 검증 스크립트 실행은 매번 되묻지 않고 자율적으로 진행한다.
+- 자율 진행한 작업은 결과와 근거를 문서와 최종 보고에 남긴다.
+- 실행 환경의 권한 시스템 때문에 도구 승인 프롬프트가 필요한 경우가 있을 수 있지만, 작업 판단 자체는 위 기준에 따라 자율 진행한다.
+
+이번 라운드의 목표는 최상 검증 품질과 빠른 처리 속도를 동시에 달성하는 것이다. 우선순위는 품질을 먼저 통과시키고, 통과한 후보들 중에서 가장 빠른 설정을 찾는 방식으로 둔다.
+
+- 얼굴 미탐은 허용하지 않는다. 작은 얼굴, 먼 얼굴, 반쪽 얼굴, 고개가 돌아간 얼굴도 노출되면 실패로 본다.
+- 얼굴이 아닌 물건 오탐도 허용하지 않는다. 불필요한 모자이크는 영상 품질을 떨어뜨리므로 실패로 본다.
+- 같은 얼굴의 모자이크가 중간에 사라졌다 나타나는 깜박임도 실패로 본다.
+- 모자이크 박스가 얼굴을 따라 자연스럽게 이어지지 않고 튀거나 흔들리면 실패로 본다.
+- 한 번 사람 얼굴로 확정된 track은 화면에서 실제로 사라지거나 scene cut/큰 위치 변화로 종료 판정되기 전까지 모자이크가 유지되어야 한다.
+- 확정 track이 detector 미탐 때문에 1~몇 프레임 비어도 즉시 모자이크를 제거하지 않는다. 이전 이동 방향과 크기 변화로 예측/보간해 유지하고, ROI 재검출로 확인한다.
+- 확정 track 종료는 긴 미탐, 화면 밖 이동, scene cut, 비정상적인 위치/크기 변화 같은 명확한 조건이 있을 때만 허용한다.
+- 속도 개선도 핵심 목표다. 다만 속도는 위 품질 조건을 만족한 후보끼리 비교한다. 빠르지만 미탐, 오탐, 깜박임이 생기는 설정은 기본값이나 추천값으로 쓰지 않는다.
+- 최종 후보는 `미탐 0`, `오탐 0`, `깜박임 0`, `박스 튐 최소화`를 만족하면서 `[AutoRunSummary].totalMs`와 `[ExportRunSummary].totalMs`가 가장 낮은 조합이어야 한다.
+
+따라서 자동 gate의 수치만으로 완료를 판단하지 않는다. `avgBestIou`, `minBestIou`, `faceMaskFrames`, `removedShort`, `lostFilled` 같은 로그는 후보를 좁히는 근거일 뿐이며, 대표 구간의 육안 확인에서 미탐/오탐/깜박임이 없어야 통과로 본다.
+
+이번 재검증에서는 YuNet을 우선 제외한다.
+
+제외 이유:
+
+- YuNet은 속도는 빠르지만 기존 A/B에서 오탐/미탐과 baseline 좌표 불일치가 컸다.
+- tiling을 켜면 작은 얼굴 후보는 늘지만 오탐도 크게 늘고 속도 이점이 줄었다.
+- 현재 문제의 핵심은 작은 얼굴 미탐, 물건 오탐, track 깜박임, 긴 export 시간이므로 YuNet을 계속 튜닝하기보다 FaceONNX baseline과 SCRFD 후보를 먼저 현재 환경에서 다시 비교한다.
+
+현재 환경 검증 대상:
+
+1. `FaceONNX`
+   - 현재 기본 detector이자 안정 baseline이다.
+   - CPU/GPU auto tune 결과를 모두 기록한다.
+   - track 후처리, ROI refiner, 작은 얼굴 filter가 켜진 현재 기본 경로를 기준으로 둔다.
+
+2. `SCRFD`
+   - 작은 얼굴과 미탐 감소 가능성이 있는 후보로 다시 검증한다.
+   - 기존 노트북 검증에서 실패한 `500M`, `10G` 결과는 폐기하지 않되, 현재 환경에서 같은 clip과 같은 quality gate로 다시 확인한다.
+   - 가능하면 `2.5G` 계열도 추가 후보로 검토한다.
+
+이번 검증에서 고정할 기본 조건:
+
+- `DownscaleRatio=1.0`
+- `DetectEveryNFrames=1`
+- `UseTracking=true`
+- `ParallelDetectorCount`는 `2`와 `4`를 모두 측정한다.
+- threshold는 현재 사용자 기준값 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`을 시작점으로 사용한다. 이 값은 고정 결론이 아니다.
+- FaceONNX와 SCRFD 각각에 대해 미탐 0, 오탐 0, 깜박임 0에 가장 가까운 threshold 조합을 찾고, 검증된 조합을 기본값 후보로 문서화한다.
+- 품질 비교 전에는 sparse 검출, downscale, threshold 완화로 속도를 얻지 않는다.
+
+검증 지표:
+
+- 작은 얼굴 미탐 frame 수
+- 물건 오탐 frame 수
+- 모자이크 깜박임 frame 수
+- 박스 튐/흔들림 구간 수
+- `faceMaskFrames`
+- track 후처리 로그: `tracks`, `filled`, `lostFilled`, `removedShort`, `rewritten`
+- ROI refiner 로그: `attempts`, `hits`, `seeks`, `decoded`, `elapsedMs`
+- `[AutoRunSummary] totalMs`, `detectMs`, provider
+- `[ExportRunSummary] totalMs`, `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs`
+- threshold sweep 결과: `DetectionThreshold`, `ConfidenceThreshold`, `NmsThreshold`별 미탐/오탐/깜박임/속도 변화
+- 육안 확인 결과: 모자이크 깜박임, 박스 튐, 작은 얼굴 누락, 물건 오탐
+
+진행 순서:
+
+1. 현재 기본 `FaceONNX`로 대표 clip들을 다시 실행한다.
+2. 같은 clip에서 `ParallelDetectorCount=2`와 `4`를 비교한다. 판단은 `detectMs`가 아니라 wall-clock인 `totalMs`를 우선한다.
+3. SCRFD 후보 모델을 같은 clip에서 실행한다.
+4. SCRFD가 FaceONNX 대비 작은 얼굴 미탐을 줄이는지 먼저 본다.
+5. FaceONNX와 SCRFD 각각에 대해 threshold sweep을 실행한다.
+6. threshold sweep은 detection/confidence를 낮춰 미탐을 줄이는 방향과, confidence/NMS를 올려 오탐을 줄이는 방향을 모두 포함한다.
+7. threshold 후보마다 작은 얼굴 미탐, 물건 오탐, 깜박임, track 보정 로그, 속도를 기록한다.
+8. SCRFD가 오탐을 늘리면 threshold, NMS, 후처리 필터 조합을 조정한다.
+9. FaceONNX와 SCRFD 중 하나를 기본값으로 바로 교체하지 않고, `Balanced/Accurate` 같은 내부 모드 후보로 둔다.
+10. representative clip에서 통과한 뒤에만 더 긴 구간과 export 포함 smoke를 실행한다.
+
+판정 기준:
+
+- SCRFD가 FaceONNX보다 작은 얼굴 미탐을 줄이고, 물건 오탐과 모자이크 깜박임을 만들지 않을 때만 다음 후보로 유지한다.
+- SCRFD가 빠르더라도 미탐/오탐/깜박임/박스 튐이 생기면 기본 승격하지 않는다.
+- threshold 기본값은 하드코딩된 현재 값이 아니라, 현재 환경 대표 구간에서 가장 좋은 품질/속도 균형을 보인 검증값으로 정한다.
+- 최종 문서에는 detector별 추천 threshold와 근거를 남긴다. 예: `FaceONNX 기본 후보: detection=?, confidence=?, nms=?`, `SCRFD 후보: confidence=?, nms=?`.
+- FaceONNX가 현재 환경에서도 가장 안정적이면 기본 detector는 유지하고, SCRFD는 정확도 우선 실험 옵션으로 남긴다.
+- YuNet은 이번 라운드에서는 제외하고, FaceONNX/SCRFD 비교가 끝난 뒤 fast mode 후보로 다시 볼지 결정한다.
+
+### 2026-05-13 현재 환경 1차 실행 기록
+
+대상 clip:
+
+- `.tmp/srcTest-smoke/current-0030-2s.mp4`
+- 원본: `/mnt/d/WorkSpace/src/260102_two4.mp4`의 00:00:30부터 2초 구간
+- 공통 조건: `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `UseTracking=true`, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, export 포함
+
+코드 변경:
+
+- `Services/Analysis/FaceTrackInterpolator.cs`
+- 확정 track lost-fill 조건에서 `IsSmallTrack(track, options)` 제외 조건을 제거했다.
+- 목적은 한 번 사람 얼굴로 확정된 작은 얼굴 track이 detector 미탐 1~몇 프레임 때문에 바로 끊기지 않게 하는 것이다.
+- 짧은 단발/저신뢰 track 제거 로직은 유지하므로, 1~2프레임짜리 작은 물건 오탐을 확정 track처럼 끝까지 유지하는 변경은 아니다.
+
+FaceONNX 병렬 2 재검증:
+
+- 변경 전: `faceMaskFrames=16`, `onlyBaseline=58,59`, `passed=False`
+- 변경 후: `faceMaskFrames=19`, `onlyBaseline=none`, `onlyOptimized=none`
+- 후처리 로그: `tracks=3`, `lostFilled=3`, `lostFrames=58,59,60`, `removedShort=1`, `rewritten=19`
+- `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=2`, `detectMs=32629`, `totalMs=16732`
+- `[ExportRunSummary]`: `directFaceFrames=19`, `totalMs=2897`
+- `[SmokeQualityGate]`: `passed=False`, `frameMatchOk=True`, `iouOk=False`, `avgBestIou=0.755`, `minBestIou=0.560`
+- 판단: 작은 얼굴 끝부분 깜박임/누락은 보정됐지만, baseline 대비 box 위치/크기 차이가 커서 최상 검증 품질 통과는 아니다.
+
+FaceONNX 병렬 4 재검증:
+
+- `faceMaskFrames=19`, `onlyBaseline=none`, `onlyOptimized=none`
+- 후처리 로그: `tracks=3`, `lostFilled=3`, `lostFrames=58,59,60`, `removedShort=1`, `rewritten=19`
+- `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=4`, `detectMs=73995`, `totalMs=19601`
+- `[ExportRunSummary]`: `directFaceFrames=19`, `totalMs=2879`
+- `[SmokeQualityGate]`: `passed=False`, `frameMatchOk=True`, `iouOk=False`, `avgBestIou=0.755`, `minBestIou=0.560`
+- 판단: 이 clip과 현재 PC에서는 4스레드가 2스레드보다 느리다. 4스레드가 항상 빠르다고 볼 근거는 아직 없다.
+
+SCRFD 500M 재검증:
+
+- 모델: `.tmp/models/scrfd_500m.onnx`
+- RGB/letterbox 기본 입력 결과: `faceMaskFrames=0`
+- `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `parallel=2`, `detectMs=5714`, `totalMs=5105`
+- filter 로그: `regular=0`, `small=0`, `rejected=54`, `statsRejected=3`
+- `[SmokeQualityGate]`: `passed=False`, `onlyBaseline=37,38,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60`
+- BGR 입력 결과도 `faceMaskFrames=0`
+- BGR `[AutoRunSummary]`: `detectMs=5393`, `totalMs=3889`
+- 판단: 추론 속도는 빠르지만 현재 decode/filter 조합에서는 최종 마스크가 0프레임이므로 미탐 100% 실패다.
+
+SCRFD 10G 재검증:
+
+- 모델: `.tmp/models/scrfd_10g_bnkps.onnx`
+- RGB/letterbox 기본 입력 결과: `faceMaskFrames=0`
+- `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `parallel=2`, `detectMs=16131`, `totalMs=8539`
+- filter 로그: `regular=0`, `small=0`, `rejected=26`, `statsRejected=0`
+- stretch 입력 결과도 `faceMaskFrames=0`
+- stretch `[AutoRunSummary]`: `detectMs=16897`, `totalMs=8841`
+- 판단: 500M보다 느리고 현재 설정에서는 역시 최종 마스크가 0프레임이다. SCRFD는 모델 성능 평가 이전에 현재 SCRFD decode, 좌표 변환, 후처리 필터 호환성을 먼저 확인해야 한다.
+
+1차 결론:
+
+- 현재 기본 FaceONNX는 작은 얼굴 끝부분 누락을 후처리로 복구할 수 있음을 확인했다.
+- `ParallelDetectorCount=2`가 이 clip에서는 `4`보다 빠르다.
+- SCRFD 500M/10G는 원시 detector가 후보를 일부 반환하지만, 최종 필터를 통과하지 못해 모자이크가 0프레임이다.
+- 따라서 SCRFD를 기본값 후보로 판단하기 전에 raw box 좌표, aspect ratio, area ratio, confidence 분포, `MultiplyBboxByStride`, letterbox/stretced 입력, 필터 기준을 먼저 계측해야 한다.
+- threshold 기본값은 아직 확정하지 않는다. 현재 `0.2/0.25/0.7`은 시작점일 뿐이며, FaceONNX와 SCRFD 각각 별도의 sweep과 육안 확인이 필요하다.
+
+### 2026-05-13 `260101_oneday6.mp4` 3초 구간 A/B
+
+사용자 지정 테스트 원본:
+
+- `D:\WorkSpace\src\260101_oneday6.mp4`
+- 길이: 약 608.7초
+- 검증 clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4`
+- 생성 조건: 원본 00:00:30부터 3초 구간
+- 공통 조건: `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `UseTracking=true`, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, export 포함
+- 이번 라운드에서 YuNet은 실행하지 않았다.
+
+FaceONNX baseline:
+
+- `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-single`, `totalFrames=91`, `processed=90`, `detects=90`, `parallel=1`
+- 대표 실행값: `detectMs=32055`, `totalMs=33123`
+- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- ROI refiner: `attempts=11`, `hits=0`, `seeks=2`, `decoded=17`
+- `faceMaskFrames=19`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=34`, `totalMs=5122`
+
+FaceONNX parallel 2:
+
+- `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=2`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=59832`, `totalMs=30995`
+- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- ROI refiner: `attempts=11`, `hits=0`, `seeks=2`, `decoded=17`, `elapsedMs=2557`
+- `faceMaskFrames=19`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=26`, `totalMs=4952`
+- `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`
+- `[SmokeQualityGate]`: `passed=True`
+- 판단: baseline과 프레임/박스가 완전히 일치했다. 이 구간에서는 baseline보다 wall-clock이 조금 빠르다.
+
+FaceONNX parallel 4:
+
+- `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=4`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=113143`, `totalMs=30003`
+- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- ROI refiner: `attempts=11`, `hits=0`, `seeks=2`, `decoded=17`, `elapsedMs=2480`
+- `faceMaskFrames=19`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=27`, `totalMs=5001`
+- `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`
+- `[SmokeQualityGate]`: `passed=True`
+- 판단: 이 clip에서는 4스레드가 AutoRunSummary wall-clock 기준으로 2스레드보다 조금 빠르다. 다만 export totalMs는 2스레드가 조금 낮다.
+
+SCRFD 500M parallel 2:
+
+- 모델: `.tmp/models/scrfd_500m.onnx`
+- `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=2`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=10657`, `totalMs=7843`
+- filter 로그: `regular=5`, `small=0`, `rejected=4`, `statsRejected=8`
+- track 보정: `tracks=3`, `filled=6`, `lostFilled=0`, `lostFrames=none`, `removedShort=2`, `rewritten=9`
+- ROI refiner: `attempts=6`, `hits=6`, `seeks=1`, `decoded=7`, `elapsedMs=1053`
+- `faceMaskFrames=9`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=9`, `maskMs=4`, `totalMs=5229`
+- `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=9`, `common=6`, `onlyBaseline=13`, `onlyOptimized=3`, `avgBestIou=0.000`, `minBestIou=0.000`
+- `[SmokeCompareFrames]`: `onlyBaseline=0,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=11,12,13`
+- `[SmokeQualityGate]`: `passed=False`
+- 판단: 미탐이 많고 optimized-only frame도 있어 오탐 위험이 있다. 품질 조건 실패다.
+
+SCRFD 500M parallel 4:
+
+- `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=4`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=16163`, `totalMs=11396`
+- filter 로그: `regular=5`, `small=0`, `rejected=4`, `statsRejected=8`
+- track 보정: `tracks=3`, `filled=6`, `lostFilled=0`, `lostFrames=none`, `removedShort=2`, `rewritten=9`
+- ROI refiner: `attempts=6`, `hits=6`, `seeks=1`, `decoded=7`, `elapsedMs=1036`
+- `faceMaskFrames=9`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=9`, `maskMs=5`, `totalMs=4739`
+- `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=9`, `common=6`, `onlyBaseline=13`, `onlyOptimized=3`, `avgBestIou=0.000`, `minBestIou=0.000`
+- `[SmokeQualityGate]`: `passed=False`
+- 판단: 2스레드보다 AutoRunSummary wall-clock이 느리고 품질 실패 양상은 같다.
+
+SCRFD 10G parallel 2:
+
+- 모델: `.tmp/models/scrfd_10g_bnkps.onnx`
+- `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=2`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=24897`, `totalMs=13467`
+- filter 로그: `regular=13`, `small=0`, `rejected=18`, `statsRejected=0`
+- track 보정: `tracks=3`, `filled=7`, `lostFilled=0`, `lostFrames=none`, `removedShort=1`, `rewritten=19`
+- ROI refiner: `attempts=7`, `hits=0`, `seeks=1`, `decoded=11`, `elapsedMs=1830`
+- `faceMaskFrames=19`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=141`, `totalMs=4947`
+- `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `common=0`, `onlyBaseline=19`, `onlyOptimized=19`
+- `[SmokeCompareFrames]`: `onlyBaseline=0,14,15,16,17,18,19,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=50,51,52,53,54,55,56,57,58,59,60,61,62,63,75,76,77,78,79`
+- `[SmokeQualityGate]`: `passed=False`
+- 판단: 최종 frame 수는 같지만 baseline과 공통 frame이 0이다. 실제 얼굴 구간을 놓치고 다른 구간을 잡은 것으로 보며, 미탐/오탐 조건 모두 실패다.
+
+SCRFD 10G parallel 4:
+
+- `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=4`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=258485`, `totalMs=66993`
+- filter 로그: `regular=13`, `small=0`, `rejected=18`, `statsRejected=0`
+- track 보정: `tracks=3`, `filled=7`, `lostFilled=0`, `lostFrames=none`, `removedShort=1`, `rewritten=19`
+- ROI refiner: `attempts=7`, `hits=0`, `seeks=1`, `decoded=11`, `elapsedMs=8306`
+- `faceMaskFrames=19`
+- `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=355`, `totalMs=8175`
+- `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `common=0`, `onlyBaseline=19`, `onlyOptimized=19`
+- `[SmokeCompareFrames]`: `onlyBaseline=0,14,15,16,17,18,19,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=50,51,52,53,54,55,56,57,58,59,60,61,62,63,75,76,77,78,79`
+- `[SmokeQualityGate]`: `passed=False`
+- 판단: 10G 4스레드는 매우 느리고 품질도 실패다. CPU에서 10G를 4세션 병렬로 돌리는 것은 현재 PC 기준 후보가 아니다.
+
+`260101_oneday6.mp4` 1차 결론:
+
+- 이 구간의 기본 후보는 FaceONNX 유지다.
+- FaceONNX parallel 2와 4는 모두 baseline과 완전 일치했고 품질 gate를 통과했다.
+- AutoRunSummary 기준 최고속은 FaceONNX parallel 4(`totalMs=30003`)였고, export까지 포함한 `ExportRunSummary`는 FaceONNX parallel 2(`totalMs=4952`)와 4(`totalMs=5001`)가 거의 비슷했다.
+- SCRFD 500M은 빠르지만 `faceMaskFrames=9`로 baseline 19프레임 대비 미탐이 크고 optimized-only frame도 있어 오탐 위험이 있다.
+- SCRFD 10G는 frame 수만 맞고 실제 frame 위치가 전부 달라 품질 실패다.
+- 이번 고정 threshold `0.2/0.25/0.7` 조건에서는 SCRFD 500M/10G 모두 기본 detector 후보가 아니다.
+
+### 다음 세션 목표: SCRFD 전용 adapter/필터 정합
+
+현재 A/B 결과는 SCRFD 모델 자체의 최종 성능으로 단정하지 않는다. 현재 코드 구조가 FaceONNX 출력 특성에 맞춰져 있고, SCRFD는 같은 후처리/필터/track 기준에 그대로 들어가고 있다. 따라서 다음 세션의 목표는 SCRFD를 FaceONNX 파이프라인에 억지로 끼우는 것이 아니라, SCRFD 전용 adapter와 검증 로그를 수정하면서 FaceShield 품질 기준에 맞추는 것이다.
+
+목표 문장:
+
+- `FaceONNX baseline은 유지한다. SCRFD 500M/10G는 detector adapter, bbox decode, 좌표 복원, detector별 필터 옵션을 수정하면서 공정하게 비교 가능한 상태로 맞춘다. 최종 기준은 미탐 0, 오탐 0, 깜박임 0, 원본 해상도, 전 프레임 검출, tracking on, threshold sweep 기반 기본값 산정이다.`
+
+다음 세션에서 해야 할 일:
+
+1. SCRFD raw output 검증
+   - output tensor 이름, shape, score tensor, bbox tensor 순서를 로그로 남긴다.
+   - 현재 `PairScoreAndBoxTensors()`가 실제 모델 output 순서와 맞는지 확인한다.
+   - `GuessStride()` 결과가 8/16/32 stride별 실제 output count와 맞는지 확인한다.
+   - `anchorsPerPoint` 계산이 모델별로 올바른지 확인한다.
+
+2. SCRFD bbox decode 검증
+   - `MultiplyBboxByStride=true/false`를 비교한다.
+   - `UseLetterboxResize=true/false`를 비교한다.
+   - RGB/BGR 입력을 비교한다.
+   - raw candidate의 `x,y,w,h,area,aspect,confidence`를 frame별로 dump한다.
+   - FaceONNX baseline box와 SCRFD raw box를 같은 frame에서 IoU로 비교한다.
+
+3. detector별 필터 분리
+   - 현재 `AutoMaskGenerator`의 면적/종횡비/skin/edge/luma 필터는 FaceONNX 출력에 맞춰져 있을 가능성이 높다.
+   - `FaceCandidateKind`, `SmallFaceConfidenceMin`, `StatsBypassConfidence`, skin/edge/luma 기준을 detector별 옵션으로 분리한다.
+   - SCRFD 후보에는 FaceONNX용 skin/luma 필터를 그대로 적용하지 않고, 먼저 raw detector 품질을 확인한 뒤 별도 기준을 만든다.
+
+4. SCRFD track 후처리 분리
+   - `FaceTrackPostProcessOptions`의 `StrongConfidence`, `ShortTrackMaxConfidence`, `SmallTrackMaxAreaRatio`, `MinTrackIou`, `MaxCenterShiftRatio`, `MaxAreaChangeRatio`가 SCRFD confidence/box 특성과 맞는지 확인한다.
+   - SCRFD 전용 track 옵션 또는 detector별 option profile을 만든다.
+   - SCRFD가 같은 사람을 다른 frame 구간으로 밀어 잡는 문제가 bbox decode 문제인지, track matching 문제인지 분리해서 판단한다.
+
+5. 검증 스크립트 보강
+   - `scripts/run-srcTest-smoke.ps1`에 SCRFD debug dump 옵션을 추가한다.
+   - raw detector 결과와 post-filter 결과를 따로 출력한다.
+   - `baselineFrames`, `optimizedFrames`, `onlyBaseline`, `onlyOptimized`뿐 아니라 raw candidate 수, filter reject 사유, detector별 confidence 분포를 기록한다.
+
+6. 재검증 순서
+   - `D:\WorkSpace\src\260101_oneday6.mp4`에서 3초 clip으로 먼저 빠르게 반복한다.
+   - FaceONNX baseline을 고정한다.
+   - SCRFD 500M부터 raw decode를 맞춘다.
+   - SCRFD 500M이 baseline frame/box에 근접하면 10G를 같은 방식으로 확인한다.
+   - 이후 threshold sweep으로 기본값 후보를 다시 정한다.
+
+완료 기준:
+
+- SCRFD raw box가 같은 frame에서 실제 얼굴 근처에 그려지는지 확인된다.
+- SCRFD post-filter 전/후 차이가 문서화된다.
+- SCRFD가 실패할 경우 원인이 모델 미탐인지, decode 오류인지, FaceONNX 기준 필터 탈락인지 구분된다.
+- SCRFD 500M/10G 각각에 대해 `후보 유지`, `보류`, `폐기` 판단과 근거가 남는다.
+- FaceONNX 기본값을 유지할지, SCRFD를 accurate mode 후보로 둘지, 또는 SCRFD 구현을 더 수정할지 다음 결정이 가능해야 한다.
+
+### 2026-05-13 SCRFD adapter/필터 정합 검증
+
+코드 변경:
+
+- `AutoMaskOptions.FilterProfile`을 추가해 FaceONNX와 SCRFD 후보 필터를 분리했다.
+- FaceONNX 기본 profile은 기존 면적/종횡비/skin/edge/luma 필터 기준을 유지한다.
+- SCRFD profile은 우선 raw detector 품질을 확인하기 위해 skin/edge/luma 통계 필터를 끄고, small 후보 confidence 기준을 `0.25`로 낮췄다.
+- `AutoMaskOptions.DumpDetectionDiagnostics`와 `[AutoMaskDetectionDump]` 로그를 추가해 frame별 raw 후보 수와 post-filter 후보 수, top box 좌표/area/aspect/confidence를 확인할 수 있게 했다.
+- `ScrfdOnnxDetectorOptions.DumpDebug`, `DebugCandidateLimit`을 추가했다.
+- SCRFD debug 로그는 output tensor 이름/shape, score-box pairing, stride, feature map 크기, anchors per point, raw-after-threshold 후보와 NMS 후 top box를 출력한다.
+- `scripts/run-srcTest-smoke.ps1`에 `-ScrfdDebugDump`, `-ScrfdNoStrideScale`을 추가했다. 기존 `-ScrfdUseBgr`, `-ScrfdStretchInput`과 함께 RGB/BGR, letterbox/stretch, bbox stride scale true/false를 비교할 수 있다.
+- smoke harness에서 SCRFD 실행 시 `FaceTrackPostProcessOptions`를 별도 profile로 낮춰 `StrongConfidence=0.55`, `ShortTrackMaxConfidence=0.55`, `MinTrackIou=0.08`, `MaxCenterShiftRatio=0.75`, `MaxAreaChangeRatio=4.0`을 적용했다.
+- 기존 FaceONNX baseline 실행에는 FaceONNX detector, FaceONNX filter profile, 기존 track 옵션을 유지했다.
+
+검증 clip:
+
+- 원본: `D:\WorkSpace\src\260101_oneday6.mp4`
+- clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4`
+- 공통 조건: 원본 해상도, `DetectEveryNFrames=1`, tracking on, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `ParallelDetectorCount=2`, export 생략
+- YuNet은 이번 라운드에서도 실행하지 않았다.
+
+FaceONNX baseline:
+
+- `faceMaskFrames=19`
+- `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `processed=90`, `detects=90`, `totalMs=30825~32445`
+- filter: `regular=5`, `small=5`, `rejected=0`, `statsRejected=0`
+- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- baseline 얼굴 frame은 `0,14~20,33~37,41~46` 구간이었다.
+
+SCRFD 500M RGB/letterbox/stride-scale on:
+
+- output: `score_8[1x12800x1]`, `score_16[1x3200x1]`, `score_32[1x800x1]`, `bbox_8[1x12800x4]`, `bbox_16[1x3200x4]`, `bbox_32[1x800x4]`
+- pairing/stride: score/bbox count 기준 pairing이 `8/16/32` stride와 `80x80/40x40/20x20`, `anchorsPerPoint=2`로 맞았다.
+- `[AutoRunSummary]`: `totalMs=4554`, filter `regular=13`, `small=3`, `rejected=1`, `statsRejected=0`
+- track 보정: `tracks=9`, `filled=14`, `lostFilled=0`, `removedShort=6`, `rewritten=24`
+- `faceMaskFrames=24`
+- baseline 비교: `baselineFrames=19`, `optimizedFrames=24`, `common=8`, `onlyBaseline=11`, `onlyOptimized=16`, `avgBestIou=0.000`, `minBestIou=0.000`
+- raw 후보는 frame 3/4, 11~19, 22~34, 50 등에서 나오지만 baseline 얼굴 좌표와 겹치지 않았다.
+- 판정: output pairing과 bbox stride decode 자체는 구조상 맞아 보인다. 실패 원인은 FaceONNX용 skin/luma 필터 탈락이 아니라, raw 후보가 baseline 얼굴과 다른 위치/구간에 나오는 detector/전처리 품질 문제다.
+
+SCRFD 500M `MultiplyBboxByStride=false`:
+
+- `[AutoRunSummary]`: `totalMs=5809`, filter `regular=0`, `small=0`, `rejected=24`, `statsRejected=0`
+- `faceMaskFrames=0`
+- raw top box들이 `areaRatio=0.000003~0.0001` 수준으로 지나치게 작아졌고 post-filter에서 전부 제거됐다.
+- 판정: 이 모델은 bbox distance에 stride scale을 곱해야 한다. `MultiplyBboxByStride=false`는 폐기한다.
+
+SCRFD 500M BGR/letterbox/stride-scale on:
+
+- `[AutoRunSummary]`: `totalMs=5230`, filter `regular=13`, `small=2`, `rejected=4`, `statsRejected=0`
+- track 보정: `tracks=11`, `filled=13`, `lostFilled=0`, `removedShort=8`, `rewritten=20`
+- `faceMaskFrames=20`
+- 일부 후보 수는 baseline과 비슷하지만 frame 3/4, 44~54, 59~65 등 baseline과 다른 구간/좌표가 중심이었다.
+- 판정: BGR 전환으로 baseline 정합이 회복되지 않았다.
+
+SCRFD 500M RGB/stretch/stride-scale on:
+
+- `[AutoRunSummary]`: `totalMs=5362`, filter `regular=64`, `small=15`, `rejected=6`, `statsRejected=0`
+- track 보정: `tracks=15`, `filled=25`, `lostFilled=1`, `removedShort=8`, `rewritten=51`
+- `faceMaskFrames=51`
+- stretch는 후보를 크게 늘렸지만 다수의 optimized-only 후보가 생겨 오탐 위험이 커졌다.
+- 판정: stretch 입력은 이 clip에서 품질을 회복하지 못하고 오탐을 늘렸다.
+
+SCRFD 10G RGB/letterbox/stride-scale on:
+
+- output: `448[12800x1]`, `471[3200x1]`, `494[800x1]`, `451[12800x4]`, `474[3200x4]`, `497[800x4]`, keypoint `454/477/500`은 last dimension 10이라 box pairing에서 제외됐다.
+- pairing/stride: score/bbox pairing은 `8/16/32` stride와 `anchorsPerPoint=2`로 맞았다.
+- `[AutoRunSummary]`: `totalMs=5234`, filter `regular=13`, `small=15`, `rejected=3`, `statsRejected=0`
+- track 보정: `tracks=9`, `filled=19`, `lostFilled=0`, `removedShort=5`, `rewritten=42`
+- `faceMaskFrames=42`
+- baseline 비교: `baselineFrames=19`, `optimizedFrames=42`, `common=10`, `onlyBaseline=9`, `onlyOptimized=32`, `avgBestIou=0.000`, `minBestIou=0.000`
+- raw/post-filter 후보가 frame 1~7, 14~17, 30~41, 50~63, 75~79 등 baseline과 다른 구간에 집중됐다.
+- 판정: 10G도 output decode 구조는 맞아 보이지만, baseline 얼굴과 좌표가 맞지 않는다. 현재 adapter/전처리 조합에서는 raw detector 후보 품질 문제가 주된 실패 원인이다.
+
+이번 라운드 결론:
+
+- FaceONNX baseline은 유지한다.
+- SCRFD 500M/10G 모두 FaceONNX skin/luma 필터 때문에만 실패한 것은 아니다. SCRFD profile로 stats 필터를 우회해도 baseline과 IoU가 0이고 optimized-only 후보가 많다.
+- `PairScoreAndBoxTensors()`는 이번 두 모델의 output shape 기준으로는 score/bbox/keypoint를 올바르게 분리했다.
+- `GuessStride()`와 anchors per point 계산도 500M/10G 모두 `8/16/32`, `2 anchors`로 맞았다.
+- `MultiplyBboxByStride=false`는 box가 지나치게 작아지는 decode 오류 경로로 확인했다.
+- RGB/BGR, letterbox/stretch 비교에서 baseline 정합을 회복한 조합은 없었다.
+- track 옵션을 SCRFD 전용으로 완화해도 raw 후보 구간/좌표 자체가 다르기 때문에 품질 실패를 해결하지 못했다.
+
+후보 판단:
+
+- SCRFD 500M: `보류`. 빠르고 adapter 계측은 정상화됐지만, 현재 모델/전처리 조합에서는 raw 후보가 baseline 얼굴과 맞지 않고 오탐/미탐이 크다. 다른 SCRFD variant, 입력 정규화/letterbox 구현, 모델 출처별 preprocessing을 추가 확인하기 전까지 기본/accurate 후보로 올리지 않는다.
+- SCRFD 10G: `폐기`. 500M보다 큰 모델인데도 같은 clip에서 baseline 정합이 회복되지 않고 optimized-only 후보가 더 많다. 현재 CPU/DirectML 실행에서도 500M 대비 후보 품질 이점이 확인되지 않았다.
+- 기본 detector: `FaceONNX 유지`. 이 clip 기준 FaceONNX는 baseline/postprocess가 일관되고, SCRFD는 raw 후보 단계에서 실패한다.
+
+### 2026-05-13 SCRFD preprocessing/decode 추가 검증
+
+목표는 SCRFD 최종 폐기 자체가 아니라 FaceONNX 기준 후처리/필터에 억지로 들어가던 구조를 계속 분리하면서 실패 원인을 더 좁히는 것이다. 이번 추가 라운드에서도 YuNet은 실행하지 않았다.
+
+코드 변경:
+
+- `ScrfdOnnxDetectorOptions`에 `AnchorCenterOffset`, `CenterLetterboxPadding`, `LetterboxPaddingValue`, `InputMean`, `InputStd`, `InputWidth`, `InputHeight` 기반 입력 크기 override를 추가했다.
+- smoke script에 `-ScrfdHalfStrideAnchor`, `-ScrfdCenterLetterbox`, `-ScrfdInputSize`, `-ScrfdInputMean`, `-ScrfdInputStd`, `-ScrfdPaddingValue`를 추가했다.
+- letterbox padding 영역은 더 이상 tensor 기본값 `0`으로 방치하지 않고 `(paddingValue - mean) / std`로 채운다. 기본값은 InsightFace 계열 전처리에 맞춰 `paddingValue=0`, `mean=127.5`, `std=128`이다.
+- bbox anchor center는 기존 `(x + 0.5) * stride`와 InsightFace식 `x * stride`를 비교할 수 있게 분리했다. 기본값은 `AnchorCenterOffset=0.0`이다.
+- 10G처럼 입력 shape가 동적인 모델은 `-ScrfdInputSize`로 입력 크기를 바꿔 시도할 수 있게 했다. 500M은 model metadata가 `1x3x640x640` 고정이라 640 외 입력은 사용하지 않는다.
+
+검증 clip/공통 조건:
+
+- clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4` (`D:\WorkSpace\src\260101_oneday6.mp4`에서 만든 3초 clip)
+- 공통 조건: 원본 해상도, `DetectEveryNFrames=1`, tracking on, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `ParallelDetectorCount=2`, export 생략
+- FaceONNX baseline은 다시 `faceMaskFrames=19`, `filter regular=5/small=5/rejected=0/statsRejected=0`, track 후 `rewritten=19`로 확인됐다.
+
+SCRFD 500M 추가 검증:
+
+- RGB/letterbox/top-left padding/normalized padding/anchor offset `0.0`: `faceMaskFrames=15`, filter `regular=13`, `small=2`, `rejected=3`, track 후 `rewritten=15`. FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=15`, `common=2`, `onlyBaseline=17`, `onlyOptimized=13`, `avgBestIou=0.000`, `minBestIou=0.000`.
+- 같은 조건에서 기존 half-stride anchor offset `0.5`: `faceMaskFrames=15`, filter `regular=12`, `small=2`, `rejected=4`, track 후 `rewritten=15`. anchor 기준을 되돌려도 baseline 정합은 회복되지 않았다.
+- center letterbox padding: `faceMaskFrames=47`, filter `regular=31`, `small=13`, `rejected=2`, track 후 `rewritten=47`. 후보가 크게 늘어 오탐 위험이 커졌고 baseline 정합 개선 신호는 없었다.
+- mean/std raw 입력(`-ScrfdInputMean 0 -ScrfdInputStd 1`): `faceMaskFrames=46`, filter `regular=50`, `small=5`, `rejected=0`, track 후 `rewritten=46`. raw 후보가 크게 늘어 오탐 위험이 커졌고 baseline 정합 개선 신호는 없었다.
+- 결론: 500M은 output pairing/stride/anchor count뿐 아니라 padding 값, padding 위치, anchor center, mean/std를 분리해도 raw 후보가 실제 baseline 얼굴 근처로 안정적으로 이동하지 않았다. 다만 속도와 adapter 구조 자체는 유지 가치가 있어 `보류`로 둔다.
+
+SCRFD 10G 추가 검증:
+
+- RGB/letterbox/top-left padding/normalized padding/anchor offset `0.0`: output은 `448/471/494` score, `451/474/497` bbox, `454/477/500` keypoint로 분리됐고 score/bbox는 stride `8/16/32`, anchors per point `2`로 정합됐다. `faceMaskFrames=47`, filter `regular=13`, `small=15`, `rejected=2`, track 후 `rewritten=47`.
+- FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=47`, `common=10`, `onlyBaseline=9`, `onlyOptimized=37`, `avgBestIou=0.000`, `minBestIou=0.000`.
+- center letterbox padding: `faceMaskFrames=36`, filter `regular=16`, `small=10`, `rejected=2`, track 후 `rewritten=36`. 후보 수는 줄었지만 baseline 정합을 회복했다는 신호는 없었다.
+- `-ScrfdInputSize 320`: 10G model metadata는 동적 입력처럼 보이나 DirectML 실행에서 `Reshape_223` 오류가 발생한 뒤 진행이 멈췄다. 따라서 현재 DML 실행 경로에서는 640 외 입력 크기 검증은 실패 경로로 기록한다.
+- 결론: 10G는 500M보다 큰 모델이지만 같은 clip에서 raw/post-filter 후보가 baseline 얼굴과 맞지 않고 optimized-only가 많다. 입력 크기 변경도 현재 실행 경로에서 안정적으로 검증되지 않았다. 따라서 10G는 `폐기` 판단을 유지한다.
+
+현재 판단:
+
+- `FaceONNX`: 기본 detector 유지. 이 clip에서 baseline frame/postprocess가 안정적이다.
+- `SCRFD 500M`: `보류`. 전처리와 bbox decode 축을 더 분리해도 정합이 회복되지 않았지만, 모델이 빠르고 adapter 실험 기반은 남길 가치가 있다. 다른 SCRFD variant나 모델 출처별 전처리 근거가 추가될 때만 재검토한다.
+- `SCRFD 10G`: `폐기`. 500M 대비 품질 이점이 없고 optimized-only 후보가 많으며, 동적 input size 변경도 현재 DML 경로에서 실패했다.

@@ -253,8 +253,7 @@ namespace FaceShield.Services.Analysis
             {
                 if (removedTrackIds.Contains(track.Id) ||
                     track.DetectionCount < options.ConfirmedTrackMinDetections ||
-                    track.MaxConfidence < options.StrongConfidence ||
-                    IsSmallTrack(track, options))
+                    track.MaxConfidence < options.StrongConfidence)
                 {
                     continue;
                 }

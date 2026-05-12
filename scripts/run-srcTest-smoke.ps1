@@ -24,6 +24,14 @@ param(
     [string]$ScrfdModelPath = "",
     [switch]$ScrfdUseBgr,
     [switch]$ScrfdStretchInput,
+    [switch]$ScrfdDebugDump,
+    [switch]$ScrfdNoStrideScale,
+    [switch]$ScrfdHalfStrideAnchor,
+    [switch]$ScrfdCenterLetterbox,
+    [int]$ScrfdInputSize = 0,
+    [double]$ScrfdInputMean = 127.5,
+    [double]$ScrfdInputStd = 128.0,
+    [double]$ScrfdPaddingValue = 0.0,
     [string]$YuNetModelPath = "",
     [switch]$YuNetUseTiling,
     [switch]$YuNetTileOnly,
@@ -106,12 +114,20 @@ float nmsThreshold = float.Parse(args[18], System.Globalization.CultureInfo.Inva
 string scrfdModelPath = args.Length > 19 && args[19] != "__none__" ? args[19] : string.Empty;
 bool scrfdUseRgb = args.Length <= 20 || !bool.Parse(args[20]);
 bool scrfdUseLetterbox = args.Length <= 21 || !bool.Parse(args[21]);
-string yuNetModelPath = args.Length > 22 && args[22] != "__none__" ? args[22] : string.Empty;
-bool yuNetUseTiling = args.Length > 23 && bool.Parse(args[23]);
-bool yuNetTileOnly = args.Length > 24 && bool.Parse(args[24]);
-int yuNetTileColumns = args.Length > 25 ? int.Parse(args[25], System.Globalization.CultureInfo.InvariantCulture) : 2;
-int yuNetTileRows = args.Length > 26 ? int.Parse(args[26], System.Globalization.CultureInfo.InvariantCulture) : 2;
-double yuNetTileOverlapRatio = args.Length > 27 ? double.Parse(args[27], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
+bool scrfdDebugDump = args.Length > 22 && bool.Parse(args[22]);
+bool scrfdMultiplyBboxByStride = args.Length <= 23 || !bool.Parse(args[23]);
+float scrfdAnchorCenterOffset = args.Length > 24 && bool.Parse(args[24]) ? 0.5f : 0.0f;
+bool scrfdCenterLetterbox = args.Length > 25 && bool.Parse(args[25]);
+int scrfdInputSize = args.Length > 26 ? int.Parse(args[26], System.Globalization.CultureInfo.InvariantCulture) : 0;
+float scrfdInputMean = args.Length > 27 ? float.Parse(args[27], System.Globalization.CultureInfo.InvariantCulture) : 127.5f;
+float scrfdInputStd = args.Length > 28 ? float.Parse(args[28], System.Globalization.CultureInfo.InvariantCulture) : 128.0f;
+float scrfdPaddingValue = args.Length > 29 ? float.Parse(args[29], System.Globalization.CultureInfo.InvariantCulture) : 0.0f;
+string yuNetModelPath = args.Length > 30 && args[30] != "__none__" ? args[30] : string.Empty;
+bool yuNetUseTiling = args.Length > 31 && bool.Parse(args[31]);
+bool yuNetTileOnly = args.Length > 32 && bool.Parse(args[32]);
+int yuNetTileColumns = args.Length > 33 ? int.Parse(args[33], System.Globalization.CultureInfo.InvariantCulture) : 2;
+int yuNetTileRows = args.Length > 34 ? int.Parse(args[34], System.Globalization.CultureInfo.InvariantCulture) : 2;
+double yuNetTileOverlapRatio = args.Length > 35 ? double.Parse(args[35], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -137,6 +153,14 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     string scrfdModelPath,
     bool scrfdUseRgb,
     bool scrfdUseLetterbox,
+    bool scrfdDebugDump,
+    bool scrfdMultiplyBboxByStride,
+    float scrfdAnchorCenterOffset,
+    bool scrfdCenterLetterbox,
+    int scrfdInputSize,
+    float scrfdInputMean,
+    float scrfdInputStd,
+    float scrfdPaddingValue,
     string yuNetModelPath,
     bool yuNetUseTiling,
     bool yuNetTileOnly,
@@ -194,7 +218,16 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             InterOpNumThreads = detectorOptions.InterOpNumThreads,
             UseParallelExecution = detectorOptions.UseParallelExecution,
             UseRgbInput = scrfdUseRgb,
-            UseLetterboxResize = scrfdUseLetterbox
+            UseLetterboxResize = scrfdUseLetterbox,
+            MultiplyBboxByStride = scrfdMultiplyBboxByStride,
+            AnchorCenterOffset = scrfdAnchorCenterOffset,
+            CenterLetterboxPadding = scrfdCenterLetterbox,
+            InputWidth = scrfdInputSize > 0 ? scrfdInputSize : null,
+            InputHeight = scrfdInputSize > 0 ? scrfdInputSize : null,
+            InputMean = scrfdInputMean,
+            InputStd = scrfdInputStd,
+            LetterboxPaddingValue = scrfdPaddingValue,
+            DumpDebug = scrfdDebugDump
         }));
     }
     else if (useYuNet)
@@ -227,7 +260,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         UseTracking = useTracking,
         DetectEveryNFrames = detectEvery,
         ParallelDetectorCount = parallelDetectorCount,
-        RunId = runId
+        RunId = runId,
+        FilterProfile = useScrfd ? FaceFilterProfile.Scrfd : FaceFilterProfile.FaceOnnx,
+        DumpDetectionDiagnostics = dumpDetections || scrfdDebugDump
     };
 
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
@@ -236,7 +271,21 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var trackPost = new FaceTrackInterpolator().Apply(
         maskProvider,
         generator.LastRunSummary?.TotalFrames ?? 0,
-        new FaceTrackPostProcessOptions
+        useScrfd
+            ? new FaceTrackPostProcessOptions
+            {
+                MaxTrackGap = 8,
+                MaxFillGap = 5,
+                WeakConfidence = 0.35f,
+                StrongConfidence = 0.55f,
+                ShortTrackMaxConfidence = 0.55f,
+                SmallTrackMaxAreaRatio = 0.00075,
+                MinTrackIou = 0.08,
+                MaxCenterShiftRatio = 0.75,
+                MaxAreaChangeRatio = 4.0,
+                DuplicateIou = 0.35
+            }
+            : new FaceTrackPostProcessOptions
         {
             MaxTrackGap = 8,
             MaxFillGap = 5,
@@ -416,6 +465,14 @@ if (!bool.Parse(args[2]))
         scrfdModelPath: string.Empty,
         scrfdUseRgb,
         scrfdUseLetterbox,
+        scrfdDebugDump: false,
+        scrfdMultiplyBboxByStride: true,
+        scrfdAnchorCenterOffset,
+        scrfdCenterLetterbox,
+        scrfdInputSize,
+        scrfdInputMean,
+        scrfdInputStd,
+        scrfdPaddingValue,
         yuNetModelPath: string.Empty,
         yuNetUseTiling,
         yuNetTileOnly,
@@ -443,6 +500,14 @@ var optimized = await RunCaseAsync(
     scrfdModelPath,
     scrfdUseRgb,
     scrfdUseLetterbox,
+    scrfdDebugDump,
+    scrfdMultiplyBboxByStride,
+    scrfdAnchorCenterOffset,
+    scrfdCenterLetterbox,
+    scrfdInputSize,
+    scrfdInputMean,
+    scrfdInputStd,
+    scrfdPaddingValue,
     yuNetModelPath,
     yuNetUseTiling,
     yuNetTileOnly,
@@ -472,6 +537,14 @@ $dumpDetectionsArg = $DumpDetections.IsPresent.ToString().ToLowerInvariant()
 $scrfdModelPathArg = if ([string]::IsNullOrWhiteSpace($ScrfdModelPath)) { "__none__" } else { (Resolve-Path $ScrfdModelPath).Path }
 $scrfdUseBgrArg = $ScrfdUseBgr.IsPresent.ToString().ToLowerInvariant()
 $scrfdStretchInputArg = $ScrfdStretchInput.IsPresent.ToString().ToLowerInvariant()
+$scrfdDebugDumpArg = $ScrfdDebugDump.IsPresent.ToString().ToLowerInvariant()
+$scrfdNoStrideScaleArg = $ScrfdNoStrideScale.IsPresent.ToString().ToLowerInvariant()
+$scrfdHalfStrideAnchorArg = $ScrfdHalfStrideAnchor.IsPresent.ToString().ToLowerInvariant()
+$scrfdCenterLetterboxArg = $ScrfdCenterLetterbox.IsPresent.ToString().ToLowerInvariant()
+$scrfdInputSizeArg = $ScrfdInputSize.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$scrfdInputMeanArg = $ScrfdInputMean.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$scrfdInputStdArg = $ScrfdInputStd.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$scrfdPaddingValueArg = $ScrfdPaddingValue.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetModelPathArg = if ([string]::IsNullOrWhiteSpace($YuNetModelPath)) { "__none__" } else { (Resolve-Path $YuNetModelPath).Path }
 $yuNetUseTilingArg = $YuNetUseTiling.IsPresent.ToString().ToLowerInvariant()
 $yuNetTileOnlyArg = $YuNetTileOnly.IsPresent.ToString().ToLowerInvariant()
@@ -501,6 +574,14 @@ dotnet run --project $project -- `
     $scrfdModelPathArg `
     $scrfdUseBgrArg `
     $scrfdStretchInputArg `
+    $scrfdDebugDumpArg `
+    $scrfdNoStrideScaleArg `
+    $scrfdHalfStrideAnchorArg `
+    $scrfdCenterLetterboxArg `
+    $scrfdInputSizeArg `
+    $scrfdInputMeanArg `
+    $scrfdInputStdArg `
+    $scrfdPaddingValueArg `
     $yuNetModelPathArg `
     $yuNetUseTilingArg `
     $yuNetTileOnlyArg `

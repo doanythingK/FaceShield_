@@ -6,6 +6,12 @@ namespace FaceShield.Services.Analysis
         BalancedBilinear
     }
 
+    public enum FaceFilterProfile
+    {
+        FaceOnnx,
+        Scrfd
+    }
+
     public sealed class AutoMaskOptions
     {
         /// <summary>
@@ -37,5 +43,15 @@ namespace FaceShield.Services.Analysis
         /// 자동 검출과 export 로그를 같은 실행 단위로 묶기 위한 식별자.
         /// </summary>
         public string? RunId { get; init; }
+
+        /// <summary>
+        /// detector 출력 특성에 맞춘 후보 필터 프로필.
+        /// </summary>
+        public FaceFilterProfile FilterProfile { get; init; } = FaceFilterProfile.FaceOnnx;
+
+        /// <summary>
+        /// detector raw 후보와 post-filter 후보 수를 frame별 로그로 남긴다.
+        /// </summary>
+        public bool DumpDetectionDiagnostics { get; init; } = false;
     }
 }

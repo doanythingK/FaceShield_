@@ -50,8 +50,15 @@ namespace FaceShield.Services.FaceDetection
             _inputName = _session.InputMetadata.Keys.First();
 
             var dims = _session.InputMetadata[_inputName].Dimensions;
-            _inputHeight = ReadInputDimension(dims, 2, 640);
-            _inputWidth = ReadInputDimension(dims, 3, 640);
+            _inputHeight = _options.InputHeight.GetValueOrDefault(ReadInputDimension(dims, 2, 640));
+            _inputWidth = _options.InputWidth.GetValueOrDefault(ReadInputDimension(dims, 3, 640));
+
+            if (_options.DumpDebug)
+            {
+                string inputs = string.Join("; ", _session.InputMetadata.Select(m => $"{m.Key}[{string.Join("x", m.Value.Dimensions)}]"));
+                string outputs = string.Join("; ", _session.OutputMetadata.Select(m => $"{m.Key}[{string.Join("x", m.Value.Dimensions)}]"));
+                Debug.WriteLine($"[ScrfdOnnxMeta] model={Path.GetFileName(_options.ModelPath)}, inputs={inputs}, outputs={outputs}");
+            }
         }
 
         public IReadOnlyList<FaceDetectionResult> DetectFaces(WriteableBitmap frame)
@@ -116,6 +123,7 @@ namespace FaceShield.Services.FaceDetection
             infer.Stop();
 
             var detections = DecodeScrfdOutputs(results, sourceWidth, sourceHeight, resize);
+            int rawCount = detections.Count;
             if (ratio > 0 && ratio < 1.0)
                 detections = detections.Select(d => new Candidate(
                     d.X / (float)ratio,
@@ -124,7 +132,11 @@ namespace FaceShield.Services.FaceDetection
                     d.Height / (float)ratio,
                     d.Score)).ToList();
 
-            var final = ApplyNms(detections, _options.NmsThreshold)
+            var afterNms = ApplyNms(detections, _options.NmsThreshold);
+            if (_options.DumpDebug)
+                WriteCandidateDebug(rawCount, afterNms, sourceWidth, sourceHeight, ratio);
+
+            var final = afterNms
                 .Select(d => new FaceDetectionResult
                 {
                     Bounds = new Rect(d.X, d.Y, d.Width, d.Height),
@@ -166,7 +178,14 @@ namespace FaceShield.Services.FaceDetection
                 int count = Math.Min(pair.Score.Count, pair.Box.Count);
                 int stride = GuessStride(count, sourceWidth, sourceHeight);
                 int featureWidth = Math.Max(1, (int)Math.Ceiling(_inputWidth / (double)stride));
-                int anchorsPerPoint = Math.Max(1, count / Math.Max(1, featureWidth * Math.Max(1, (int)Math.Ceiling(_inputHeight / (double)stride))));
+                int featureHeight = Math.Max(1, (int)Math.Ceiling(_inputHeight / (double)stride));
+                int anchorsPerPoint = Math.Max(1, count / Math.Max(1, featureWidth * featureHeight));
+
+                if (_options.DumpDebug)
+                {
+                    Debug.WriteLine(
+                        $"[ScrfdOnnxPair] score={pair.Score.Name}[{string.Join("x", pair.Score.Dimensions)}], box={pair.Box.Name}[{string.Join("x", pair.Box.Dimensions)}], count={count}, stride={stride}, feature={featureWidth}x{featureHeight}, anchorsPerPoint={anchorsPerPoint}");
+                }
 
                 for (int i = 0; i < count; i++)
                 {
@@ -177,8 +196,8 @@ namespace FaceShield.Services.FaceDetection
                     int pointIndex = i / anchorsPerPoint;
                     int anchorX = pointIndex % featureWidth;
                     int anchorY = pointIndex / featureWidth;
-                    float centerX = (anchorX + 0.5f) * stride;
-                    float centerY = (anchorY + 0.5f) * stride;
+                    float centerX = (anchorX + _options.AnchorCenterOffset) * stride;
+                    float centerY = (anchorY + _options.AnchorCenterOffset) * stride;
 
                     float bboxScale = _options.MultiplyBboxByStride ? stride : 1.0f;
                     float left = ReadBox(boxValues, i, 0) * bboxScale;
@@ -195,6 +214,33 @@ namespace FaceShield.Services.FaceDetection
             }
 
             return candidates;
+        }
+
+        private void WriteCandidateDebug(
+            int rawCount,
+            IReadOnlyList<Candidate> afterNms,
+            int sourceWidth,
+            int sourceHeight,
+            double ratio)
+        {
+            string top = "none";
+            if (afterNms.Count > 0)
+            {
+                top = string.Join(
+                    "; ",
+                    afterNms
+                        .OrderByDescending(c => c.Score)
+                        .Take(Math.Max(1, _options.DebugCandidateLimit))
+                        .Select(c =>
+                        {
+                            double areaRatio = c.Width * c.Height / Math.Max(1.0, sourceWidth * (double)sourceHeight);
+                            double aspect = c.Height > 0 ? c.Width / c.Height : 0.0;
+                            return $"x={c.X:0.0},y={c.Y:0.0},w={c.Width:0.0},h={c.Height:0.0},areaRatio={areaRatio:0.######},aspect={aspect:0.###},conf={c.Score:0.###}";
+                        }));
+            }
+
+            Debug.WriteLine(
+                $"[ScrfdOnnxDump] model={Path.GetFileName(_options.ModelPath)}, input={_inputWidth}x{_inputHeight}, source={sourceWidth}x{sourceHeight}, ratio={ratio:0.###}, rgb={_options.UseRgbInput}, letterbox={_options.UseLetterboxResize}, centerPad={_options.CenterLetterboxPadding}, padValue={_options.LetterboxPaddingValue:0.###}, mean={_options.InputMean:0.###}, std={_options.InputStd:0.###}, anchorOffset={_options.AnchorCenterOffset:0.###}, multiplyStride={_options.MultiplyBboxByStride}, rawAboveThreshold={rawCount}, afterNms={afterNms.Count}, top={top}");
         }
 
         private static (OutputTensor Score, OutputTensor Box)[] PairScoreAndBoxTensors(OutputTensor[] scores, OutputTensor[] boxes)
@@ -269,6 +315,8 @@ namespace FaceShield.Services.FaceDetection
             double scaleY;
             int resizedWidth;
             int resizedHeight;
+            int padX = 0;
+            int padY = 0;
             if (_options.UseLetterboxResize)
             {
                 double scale = Math.Min(_inputWidth / (double)sourceWidth, _inputHeight / (double)sourceHeight);
@@ -276,6 +324,11 @@ namespace FaceShield.Services.FaceDetection
                 scaleY = scale;
                 resizedWidth = Math.Max(1, Math.Min(_inputWidth, (int)Math.Round(sourceWidth * scale)));
                 resizedHeight = Math.Max(1, Math.Min(_inputHeight, (int)Math.Round(sourceHeight * scale)));
+                if (_options.CenterLetterboxPadding)
+                {
+                    padX = Math.Max(0, (_inputWidth - resizedWidth) / 2);
+                    padY = Math.Max(0, (_inputHeight - resizedHeight) / 2);
+                }
             }
             else
             {
@@ -285,26 +338,37 @@ namespace FaceShield.Services.FaceDetection
                 resizedHeight = _inputHeight;
             }
 
+            float inputStd = Math.Abs(_options.InputStd) > 0.0001f ? _options.InputStd : 1.0f;
+            float padding = (_options.LetterboxPaddingValue - _options.InputMean) / inputStd;
+            for (int c = 0; c < 3; c++)
+            {
+                for (int y = 0; y < _inputHeight; y++)
+                {
+                    for (int x = 0; x < _inputWidth; x++)
+                        tensor[0, c, y, x] = padding;
+                }
+            }
+
             double modelToSourceX = 1.0 / scaleX;
             double modelToSourceY = 1.0 / scaleY;
             double sourceToActual = ratio > 0 && ratio < 1.0 ? 1.0 / ratio : 1.0;
 
             for (int y = 0; y < _inputHeight; y++)
             {
-                if (y >= resizedHeight)
+                if (y < padY || y >= padY + resizedHeight)
                     continue;
 
-                double srcY = y * modelToSourceY * sourceToActual;
+                double srcY = (y - padY) * modelToSourceY * sourceToActual;
                 int y0 = Math.Clamp((int)Math.Floor(srcY), 0, height - 1);
                 int y1 = Math.Min(y0 + 1, height - 1);
                 double fy = srcY - y0;
 
                 for (int x = 0; x < _inputWidth; x++)
                 {
-                    if (x >= resizedWidth)
+                    if (x < padX || x >= padX + resizedWidth)
                         continue;
 
-                    double srcX = x * modelToSourceX * sourceToActual;
+                    double srcX = (x - padX) * modelToSourceX * sourceToActual;
                     int x0 = Math.Clamp((int)Math.Floor(srcX), 0, width - 1);
                     int x1 = Math.Min(x0 + 1, width - 1);
                     double fx = srcX - x0;
@@ -315,20 +379,20 @@ namespace FaceShield.Services.FaceDetection
 
                     if (_options.UseRgbInput)
                     {
-                        tensor[0, 0, y, x] = (r - _options.InputMean) / _options.InputStd;
-                        tensor[0, 1, y, x] = (g - _options.InputMean) / _options.InputStd;
-                        tensor[0, 2, y, x] = (b - _options.InputMean) / _options.InputStd;
+                        tensor[0, 0, y, x] = (r - _options.InputMean) / inputStd;
+                        tensor[0, 1, y, x] = (g - _options.InputMean) / inputStd;
+                        tensor[0, 2, y, x] = (b - _options.InputMean) / inputStd;
                     }
                     else
                     {
-                        tensor[0, 0, y, x] = (b - _options.InputMean) / _options.InputStd;
-                        tensor[0, 1, y, x] = (g - _options.InputMean) / _options.InputStd;
-                        tensor[0, 2, y, x] = (r - _options.InputMean) / _options.InputStd;
+                        tensor[0, 0, y, x] = (b - _options.InputMean) / inputStd;
+                        tensor[0, 1, y, x] = (g - _options.InputMean) / inputStd;
+                        tensor[0, 2, y, x] = (r - _options.InputMean) / inputStd;
                     }
                 }
             }
 
-            return new ResizeTransform((float)scaleX, (float)scaleY, 0, 0);
+            return new ResizeTransform((float)scaleX, (float)scaleY, padX, padY);
         }
 
         private static unsafe (float B, float G, float R) ReadPixel(byte* src, int stride, int x, int y)
