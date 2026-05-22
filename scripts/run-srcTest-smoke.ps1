@@ -11,6 +11,7 @@ param(
     [switch]$OptimizedUseGpu,
     [switch]$OptimizedCpuOnly,
     [switch]$SkipExport,
+    [switch]$SkipOptimized,
     [switch]$UseAutoTune,
     [int]$OptimizedDetectEvery = 1,
     [int]$ParallelDetectorCount = 2,
@@ -142,6 +143,7 @@ using SixLabors.ImageSharp.Processing;
 
 string input = args[0];
 string output = args[1];
+bool skipBaseline = bool.Parse(args[2]);
 double optimizedDownscaleRatio = double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture);
 var optimizedDownscaleQuality = Enum.Parse<DownscaleQuality>(args[5]);
 bool optimizedUseTracking = bool.Parse(args[6]);
@@ -215,6 +217,7 @@ float yoloLowConfidencePositionMaxConfidence = args.Length > 73 ? float.Parse(ar
 double yoloLowConfidencePositionMinCenterYRatio = args.Length > 74 ? double.Parse(args[74], System.Globalization.CultureInfo.InvariantCulture) : 0.08;
 bool yoloUseSmallAreaFilter = args.Length > 75 && bool.Parse(args[75]);
 double yoloSmallAreaMaxAreaRatio = args.Length > 76 ? double.Parse(args[76], System.Globalization.CultureInfo.InvariantCulture) : 0.0035;
+bool skipOptimized = args.Length > 77 && bool.Parse(args[77]);
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -1036,7 +1039,7 @@ static double Coverage(Rect reference, Rect candidate)
 }
 
 (string Label, FrameMaskProvider MaskProvider)? baseline = null;
-if (!bool.Parse(args[2]))
+if (!skipBaseline)
 {
     baseline = await RunCaseAsync(
         "baseline-all-frames",
@@ -1105,73 +1108,83 @@ if (!bool.Parse(args[2]))
         yoloDebugDump: false);
 }
 
-var optimized = await RunCaseAsync(
-    $"optimized-{(optimizedUseTracking ? "track" : "all")}-{optimizedDetectEvery}-scale-{optimizedDownscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}-{(optimizedUseGpu ? "gpu" : "cpu")}{(!string.IsNullOrWhiteSpace(scrfdModelPath) ? "-scrfd" : "")}{(!string.IsNullOrWhiteSpace(yuNetModelPath) ? "-yunet" : "")}{(!string.IsNullOrWhiteSpace(yoloModelPath) ? "-yolo" : "")}",
-    input,
-    output,
-    useTracking: optimizedUseTracking,
-    detectEvery: optimizedDetectEvery,
-    downscaleRatio: optimizedDownscaleRatio,
-    downscaleQuality: optimizedDownscaleQuality,
-    useGpu: optimizedUseGpu,
-    skipExport,
-    useAutoTune,
-    parallelDetectorCount: optimizedParallel,
-    dumpDetections,
-    detectionThreshold,
-    confidenceThreshold,
-    nmsThreshold,
-    scrfdModelPath,
-    scrfdUseRgb,
-    scrfdUseLetterbox,
-    scrfdDebugDump,
-    scrfdMultiplyBboxByStride,
-    scrfdAnchorCenterOffset,
-    scrfdCenterLetterbox,
-    scrfdInputSize,
-    scrfdInputMean,
-    scrfdInputStd,
-    scrfdPaddingValue,
-    yuNetModelPath,
-    yuNetUseTiling,
-    yuNetTileOnly,
-    yuNetTileColumns,
-    yuNetTileRows,
-    yuNetTileOverlapRatio,
-    yoloModelPath,
-    yoloModelType,
-    yoloInputSize,
-    yoloObjectnessThreshold,
-    yoloConfidenceThreshold,
-    yoloNmsThreshold,
-    yoloLargeBoxWidthScale,
-    yoloLargeBoxHeightScale,
-    yoloLargeBoxMinAreaRatio,
-    yoloUseLandmarkBoxRefine,
-    yoloLandmarkBoxMinAreaRatio,
-    yoloLandmarkBoxWidthScale,
-    yoloLandmarkBoxHeightScale,
-    yoloLandmarkBoxCenterYOffsetRatio,
-    yoloLandmarkBoxMinOriginalIou,
-    yoloUseTiling,
-    yoloUseFaceOnnxRoiRefine,
-    yoloFaceOnnxRoiMinAreaRatio,
-    yoloFaceOnnxRoiMaxCandidates,
-    yoloTileOnly,
-    yoloTileColumns,
-    yoloTileRows,
-    yoloTileOverlapRatio,
-    yoloDropShortTrackMaxDetections,
-    yoloShortTrackMaxConfidence,
-    yoloLowerFrameTrackMaxConfidence,
-    yoloUseLowConfidencePositionFilter,
-    yoloLowConfidencePositionMaxConfidence,
-    yoloLowConfidencePositionMinCenterYRatio,
-    yoloUseSmallAreaFilter,
-    yoloSmallAreaMaxAreaRatio,
-    yoloDebugDump);
+(string Label, FrameMaskProvider MaskProvider)? optimized = null;
+if (!skipOptimized)
+{
+    optimized = await RunCaseAsync(
+        $"optimized-{(optimizedUseTracking ? "track" : "all")}-{optimizedDetectEvery}-scale-{optimizedDownscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}-{(optimizedUseGpu ? "gpu" : "cpu")}{(!string.IsNullOrWhiteSpace(scrfdModelPath) ? "-scrfd" : "")}{(!string.IsNullOrWhiteSpace(yuNetModelPath) ? "-yunet" : "")}{(!string.IsNullOrWhiteSpace(yoloModelPath) ? "-yolo" : "")}",
+        input,
+        output,
+        useTracking: optimizedUseTracking,
+        detectEvery: optimizedDetectEvery,
+        downscaleRatio: optimizedDownscaleRatio,
+        downscaleQuality: optimizedDownscaleQuality,
+        useGpu: optimizedUseGpu,
+        skipExport,
+        useAutoTune,
+        parallelDetectorCount: optimizedParallel,
+        dumpDetections,
+        detectionThreshold,
+        confidenceThreshold,
+        nmsThreshold,
+        scrfdModelPath,
+        scrfdUseRgb,
+        scrfdUseLetterbox,
+        scrfdDebugDump,
+        scrfdMultiplyBboxByStride,
+        scrfdAnchorCenterOffset,
+        scrfdCenterLetterbox,
+        scrfdInputSize,
+        scrfdInputMean,
+        scrfdInputStd,
+        scrfdPaddingValue,
+        yuNetModelPath,
+        yuNetUseTiling,
+        yuNetTileOnly,
+        yuNetTileColumns,
+        yuNetTileRows,
+        yuNetTileOverlapRatio,
+        yoloModelPath,
+        yoloModelType,
+        yoloInputSize,
+        yoloObjectnessThreshold,
+        yoloConfidenceThreshold,
+        yoloNmsThreshold,
+        yoloLargeBoxWidthScale,
+        yoloLargeBoxHeightScale,
+        yoloLargeBoxMinAreaRatio,
+        yoloUseLandmarkBoxRefine,
+        yoloLandmarkBoxMinAreaRatio,
+        yoloLandmarkBoxWidthScale,
+        yoloLandmarkBoxHeightScale,
+        yoloLandmarkBoxCenterYOffsetRatio,
+        yoloLandmarkBoxMinOriginalIou,
+        yoloUseTiling,
+        yoloUseFaceOnnxRoiRefine,
+        yoloFaceOnnxRoiMinAreaRatio,
+        yoloFaceOnnxRoiMaxCandidates,
+        yoloTileOnly,
+        yoloTileColumns,
+        yoloTileRows,
+        yoloTileOverlapRatio,
+        yoloDropShortTrackMaxDetections,
+        yoloShortTrackMaxConfidence,
+        yoloLowerFrameTrackMaxConfidence,
+        yoloUseLowConfidencePositionFilter,
+        yoloLowConfidencePositionMaxConfidence,
+        yoloLowConfidencePositionMinCenterYRatio,
+        yoloUseSmallAreaFilter,
+        yoloSmallAreaMaxAreaRatio,
+        yoloDebugDump);
+}
 
-if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir, compareOverlayMaxFrames, dumpCompareCrops, compareCropDir, compareCropPaddingRatio, compareCropMaxOnlyFrames, compareCropMaxBoxDiffFrames))
+if (!baseline.HasValue && !optimized.HasValue)
+{
+    Console.WriteLine("[SmokeRun] no cases selected");
+    Environment.Exit(2);
+}
+
+if (baseline.HasValue && optimized.HasValue && !CompareCases(input, baseline.Value, optimized.Value, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir, compareOverlayMaxFrames, dumpCompareCrops, compareCropDir, compareCropPaddingRatio, compareCropMaxOnlyFrames, compareCropMaxBoxDiffFrames))
     Environment.Exit(2);
 '@ | Set-Content -Encoding UTF8 $program
 
@@ -1237,6 +1250,7 @@ $yoloLowConfidencePositionMaxConfidenceArg = $YoloLowConfidencePositionMaxConfid
 $yoloLowConfidencePositionMinCenterYRatioArg = $YoloLowConfidencePositionMinCenterYRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloUseSmallAreaFilterArg = $YoloUseSmallAreaFilter.IsPresent.ToString().ToLowerInvariant()
 $yoloSmallAreaMaxAreaRatioArg = $YoloSmallAreaMaxAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$skipOptimizedArg = $SkipOptimized.IsPresent.ToString().ToLowerInvariant()
 $yoloDebugDumpArg = $YoloDebugDump.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareDetailsArg = $DumpCompareDetails.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareOverlaysArg = $DumpCompareOverlays.IsPresent.ToString().ToLowerInvariant()
@@ -1336,7 +1350,8 @@ dotnet run --project $project -- `
     $yoloLowConfidencePositionMaxConfidenceArg `
     $yoloLowConfidencePositionMinCenterYRatioArg `
     $yoloUseSmallAreaFilterArg `
-    $yoloSmallAreaMaxAreaRatioArg
+    $yoloSmallAreaMaxAreaRatioArg `
+    $skipOptimizedArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

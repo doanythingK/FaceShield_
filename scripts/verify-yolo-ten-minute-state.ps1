@@ -27,6 +27,11 @@ foreach ($required in @($resolvedPlanPath, $resolvedRunnerPath, $resolvedSourceP
 
 $plan = Get-Content -Raw -Path $resolvedPlanPath
 $runner = Get-Content -Raw -Path $resolvedRunnerPath
+$smokePath = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
+if (-not (Test-Path $smokePath)) {
+    throw "Smoke script not found: $smokePath"
+}
+$smoke = Get-Content -Raw -Path $smokePath
 
 function Assert-Contains {
     param(
@@ -60,6 +65,7 @@ Assert-Contains "plan runner marker" $plan "yolo-ten-minute-runner-state: prepar
 Assert-Contains "plan records runner path" $plan "scripts/run-yolo-ten-minute-full.ps1"
 Assert-Contains "plan records ten minute clip" $plan ".tmp/srcTest-smoke/smoke-0200-600s.mp4"
 Assert-Contains "plan records optimized full run" $plan "full-run=yolo-optimized-only-pass"
+Assert-Contains "plan records baseline-only runner support" $plan "baseline-only-runner=short-smoke-pass"
 Assert-Contains "plan records ten minute log" $plan ".tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log"
 Assert-Contains "plan records ten minute auto total" $plan "autoTotalMs=2536529"
 Assert-Contains "plan records ten minute export total" $plan "exportTotalMs=1375350"
@@ -72,8 +78,13 @@ Assert-Match "runner uses objectness 0.12" $runner '\[double\]\$YoloObjectnessTh
 Assert-Match "runner uses confidence 0.18" $runner '\[double\]\$YoloConfidenceThreshold\s*=\s*0\.18'
 Assert-Match "runner uses nms 0.45" $runner '\[double\]\$YoloNmsThreshold\s*=\s*0\.45'
 Assert-Contains "runner can include baseline" $runner "[switch]`$RunBaseline"
+Assert-Contains "runner can run baseline only" $runner "[switch]`$BaselineOnly"
 Assert-Contains "runner can skip export" $runner "[switch]`$SkipExport"
 Assert-Contains "runner can allow quality failure" $runner "[switch]`$AllowQualityFailure"
+Assert-Contains "runner streams log lines" $runner "ForEach-Object"
+Assert-Contains "runner writes incremental log" $runner "Add-Content -Encoding UTF8 -Path `$logPath"
+Assert-Contains "smoke can skip optimized case" $smoke "[switch]`$SkipOptimized"
+Assert-Contains "smoke guards empty run selection" $smoke "[SmokeRun] no cases selected"
 
 $sourceInfo = Get-Item $resolvedSourcePath
 if ($sourceInfo.Length -lt 2000000000) {

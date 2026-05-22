@@ -26,7 +26,8 @@ function Assert-Contains {
 }
 
 Assert-Contains "distribution marker" "distribution=no-bundled-yolo-model"
-Assert-Contains "license source marker" "yolo-license-source-state: checked=2026-05-22"
+Assert-Contains "license source marker" "yolo-license-source-state: checked=2026-05-23"
+Assert-Contains "license source gate" "source-gate=pass"
 Assert-Contains "yolov8 source" "lindevs/yolov8-face"
 Assert-Contains "yolov8 source url" "https://github.com/lindevs/yolov8-face"
 Assert-Contains "yolov8 mit marker" "MIT license"
@@ -35,7 +36,8 @@ Assert-Contains "ultralytics license caveat" "Ultralytics 공식 문서는 YOLOv
 Assert-Contains "yolo5 source" "hayashiLin/deepfacelivemodels"
 Assert-Contains "yolo5 source url" "https://huggingface.co/hayashiLin/deepfacelivemodels/blob/main/YoloV5Face.onnx"
 Assert-Contains "yolo5 gpl marker" "gpl-3.0"
-Assert-Contains "legal policy still required" "법무/제품 배포 정책 확인"
+Assert-Contains "bundle policy fixed" "YOLO 모델 번들 금지"
+Assert-Contains "external model path policy" "사용자 지정 외부 모델 경로"
 Assert-Contains "no repo bundling" "no-bundled-yolo-model"
 Assert-Contains "faceonnx remains default" "default=FaceONNX"
 

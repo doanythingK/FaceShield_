@@ -17,6 +17,8 @@ param(
     [switch]$RunYoloTenMinuteState,
     [switch]$RequireYoloTenMinuteClip,
     [switch]$RequireYoloTenMinuteRun,
+    [switch]$RunYoloGuiSmokeState,
+    [switch]$RequireYoloGuiSmokeManualPass,
     [switch]$RunYoloProfileState,
     [switch]$RunYoloConclusionState,
     [switch]$RunYoloDistributionState,
@@ -45,6 +47,7 @@ $yoloRepresentativeGateVerify = Join-Path $repo "scripts\verify-yolo-representat
 $yoloExtendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
 $yoloTenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
+$yoloGuiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -135,6 +138,10 @@ if ($RunYoloExtendedExportGate -and -not (Test-Path $yoloExtendedExportGateVerif
 
 if ($RunYoloTenMinuteState -and -not (Test-Path $yoloTenMinuteStateVerify)) {
     throw "YOLO ten-minute state verifier not found: $yoloTenMinuteStateVerify"
+}
+
+if ($RunYoloGuiSmokeState -and -not (Test-Path $yoloGuiSmokeStateVerify)) {
+    throw "YOLO GUI smoke state verifier not found: $yoloGuiSmokeStateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -297,6 +304,12 @@ if ($RunYoloState) {
     if ($RequireYoloTenMinuteRun) {
         $yoloStateArgs += "-RequireTenMinuteRun"
     }
+    if ($RunYoloGuiSmokeState) {
+        $yoloStateArgs += "-RunGuiSmokeState"
+    }
+    if ($RequireYoloGuiSmokeManualPass) {
+        $yoloStateArgs += "-RequireGuiSmokeManualPass"
+    }
 
     $yoloStateOutput = Invoke-ScriptStep "yolo-state" $yoloStateVerify $yoloStateArgs
     Assert-Contains "yolo-state" $yoloStateOutput "\[YoloStateVerify\] all requested checks passed"
@@ -352,6 +365,16 @@ if ($RunYoloTenMinuteState -and -not $RunYoloState) {
 
     $yoloTenMinuteOutput = Invoke-ScriptStep "yolo-ten-minute-state" $yoloTenMinuteStateVerify $tenMinuteArgs
     Assert-Contains "yolo-ten-minute-state" $yoloTenMinuteOutput "\[YoloTenMinuteStateVerify\] all requested checks passed"
+}
+
+if ($RunYoloGuiSmokeState -and -not $RunYoloState) {
+    $guiSmokeArgs = @()
+    if ($RequireYoloGuiSmokeManualPass) {
+        $guiSmokeArgs += "-RequireManualPass"
+    }
+
+    $yoloGuiSmokeOutput = Invoke-ScriptStep "yolo-gui-smoke-state" $yoloGuiSmokeStateVerify $guiSmokeArgs
+    Assert-Contains "yolo-gui-smoke-state" $yoloGuiSmokeOutput "\[YoloGuiSmokeVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"

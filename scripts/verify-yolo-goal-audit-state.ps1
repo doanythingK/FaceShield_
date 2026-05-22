@@ -61,7 +61,7 @@ $plan = Read-RepoFile $PlanPath
 $autoVerify = Read-RepoFile $AutoMosaicDefaultVerify
 $yoloState = Read-RepoFile $YoloStateVerify
 
-$marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; complete=false; remaining=full-gt-label,gui-smoke,license,10min-full"
+$marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; complete=false; remaining=full-gt-label,gui-smoke,10min-full"
 Assert-Contains "goal audit marker" $plan $marker
 
 foreach ($token in @(
@@ -72,10 +72,11 @@ foreach ($token in @(
     "extended=fail",
     "extended-export=fail",
     "sample-gt=pass",
+    "full-gt-harness=pass",
+    "license-source=pass",
     "complete=false",
     "full-gt-label",
     "gui-smoke",
-    "license",
     "10min-full")) {
     Assert-Contains "goal audit token $token" $plan $token
 }
@@ -102,6 +103,23 @@ Assert-Contains "gt label fail unclear recorded" $plan "failUnclear=1"
 Assert-Contains "gt label fail yolo fp recorded" $plan "failYoloFP=10"
 Assert-Contains "gt label fail faceonnx fp recorded" $plan "failFaceOnnxFP=14"
 Assert-Contains "gt label scope recorded" $plan "sample-crops-not-full-video-gt"
+Assert-Contains "full gt harness marker recorded" $plan "yolo-full-gt-label-harness-state:"
+Assert-Contains "full gt harness verifier recorded" $plan "verify-yolo-full-gt-label-state.ps1"
+Assert-Contains "full gt template recorded" $plan "new-yolo-full-gt-template.ps1"
+Assert-Contains "full gt harness selftest recorded" $plan "mode=selftest-pass-and-synthetic-data-pass"
+Assert-Contains "full gt data missing recorded" $plan "gt-data=missing"
+Assert-Contains "full gt harness metrics recorded" $plan "metrics=tp,miss,false-positive,low-iou"
+Assert-Contains "gui smoke harness marker recorded" $plan "yolo-gui-smoke-harness-state:"
+Assert-Contains "gui smoke verifier recorded" $plan "verify-yolo-gui-smoke-state.ps1"
+Assert-Contains "gui smoke checklist recorded" $plan "new-yolo-gui-smoke-checklist.ps1"
+Assert-Contains "gui smoke source invariant recorded" $plan "source-invariant=pass"
+Assert-Contains "gui smoke manual missing recorded" $plan "manual-checklist=missing"
+Assert-Contains "gui smoke open video step recorded" $plan "open-video"
+Assert-Contains "gui smoke export step recorded" $plan "export"
+Assert-Contains "license source marker recorded" $plan "yolo-license-source-state: checked=2026-05-23"
+Assert-Contains "license source gate recorded" $plan "source-gate=pass"
+Assert-Contains "license bundle marker recorded" $plan "bundle=blocked"
+Assert-Contains "license source pass recorded" $plan "license-source=pass"
 Assert-Contains "extended fail recorded" $plan "SmokeQualityGate passed=False"
 Assert-Contains "extended baseline frames recorded" $plan "baselineFrames=83"
 Assert-Contains "extended optimized frames recorded" $plan "optimizedFrames=74"
@@ -111,7 +129,6 @@ Assert-Contains "extended export yolo direct frames recorded" $plan "directFaceF
 Assert-Contains "no final recommendation recorded" $plan "recommendation=none"
 Assert-Contains "full gt label still missing" $plan "full-gt-label"
 Assert-Contains "gui smoke still missing" $plan "gui-smoke"
-Assert-Contains "license still unresolved" $plan "license"
 Assert-Contains "ten minute still unresolved" $plan "10min-full"
 
 Assert-Contains "auto verifier exposes yolo state" $autoVerify "RunYoloState"
@@ -121,11 +138,15 @@ Assert-Contains "auto verifier exposes extended export gate" $autoVerify "RunYol
 Assert-Contains "auto verifier exposes ten minute state" $autoVerify "RunYoloTenMinuteState"
 Assert-Contains "auto verifier exposes ten minute clip requirement" $autoVerify "RequireYoloTenMinuteClip"
 Assert-Contains "auto verifier exposes ten minute run requirement" $autoVerify "RequireYoloTenMinuteRun"
+Assert-Contains "auto verifier exposes gui smoke state" $autoVerify "RunYoloGuiSmokeState"
+Assert-Contains "auto verifier exposes gui smoke manual pass" $autoVerify "RequireYoloGuiSmokeManualPass"
 Assert-Contains "yolo state exposes representative gate" $yoloState "RunRepresentativeGate"
 Assert-Contains "yolo state exposes extended gate" $yoloState "RunExtendedGate"
 Assert-Contains "yolo state exposes extended export gate" $yoloState "RunExtendedExportGate"
 Assert-Contains "yolo state exposes ten minute state" $yoloState "RunTenMinuteState"
 Assert-Contains "yolo state exposes ten minute clip requirement" $yoloState "RequireTenMinuteClip"
 Assert-Contains "yolo state exposes ten minute run requirement" $yoloState "RequireTenMinuteRun"
+Assert-Contains "yolo state exposes gui smoke state" $yoloState "RunGuiSmokeState"
+Assert-Contains "yolo state exposes gui smoke manual pass" $yoloState "RequireGuiSmokeManualPass"
 
 Write-Host "[YoloGoalAuditVerify] all requested checks passed"

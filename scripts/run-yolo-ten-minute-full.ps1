@@ -13,6 +13,7 @@ param(
     [switch]$PrepareClipOnly,
     [switch]$SkipClipPrepare,
     [switch]$RunBaseline,
+    [switch]$BaselineOnly,
     [switch]$SkipExport,
     [switch]$AllowQualityFailure,
     [string]$LogDir = ".tmp\yolo-ten-minute"
@@ -35,7 +36,7 @@ if (-not (Test-Path $sourcePath)) {
     throw "Source video not found: $sourcePath"
 }
 
-if (-not (Test-Path $modelPath)) {
+if (-not $BaselineOnly -and -not (Test-Path $modelPath)) {
     throw "YOLO model not found: $modelPath"
 }
 
@@ -79,32 +80,47 @@ $arguments = @(
     "-SkipTrim",
     "-Source", $Clip,
     "-OptimizedCpuOnly",
-    "-ParallelDetectorCount", "$ParallelDetectorCount",
+    "-ParallelDetectorCount", "$ParallelDetectorCount"
+)
+
+if (-not $BaselineOnly) {
+    $arguments += @(
     "-YoloModelPath", $YoloModelPath,
     "-YoloModelType", $YoloModelType,
     "-YoloInputSize", "$YoloInputSize",
     "-YoloObjectnessThreshold", "$YoloObjectnessThreshold",
     "-YoloConfidenceThreshold", "$YoloConfidenceThreshold",
     "-YoloNmsThreshold", "$YoloNmsThreshold"
-)
+    )
+}
 
-if (-not $RunBaseline) {
+if (-not $RunBaseline -and -not $BaselineOnly) {
     $arguments += "-SkipBaseline"
+}
+
+if ($BaselineOnly) {
+    $arguments += "-SkipOptimized"
 }
 
 if ($SkipExport) {
     $arguments += "-SkipExport"
 }
 
-Write-Host "[YoloTenMinuteFull] start smoke log=$logPath, baseline=$($RunBaseline.IsPresent), export=$(-not $SkipExport.IsPresent)"
+$baselineEnabled = $RunBaseline.IsPresent -or $BaselineOnly.IsPresent
+Write-Host "[YoloTenMinuteFull] start smoke log=$logPath, baseline=$baselineEnabled, baselineOnly=$($BaselineOnly.IsPresent), export=$(-not $SkipExport.IsPresent)"
 $oldErrorAction = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"
-    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $smoke @arguments 2>&1
+    if (Test-Path $logPath) {
+        Remove-Item -Force -Path $logPath
+    }
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $smoke @arguments 2>&1 | ForEach-Object {
+        $line = $_.ToString()
+        Add-Content -Encoding UTF8 -Path $logPath -Value $line
+        Write-Host $line
+    }
     $exitCode = $LASTEXITCODE
-    $text = ($output | Out-String)
-    $text | Set-Content -Encoding UTF8 -Path $logPath
-    Write-Host $text
 }
 finally {
     $ErrorActionPreference = $oldErrorAction

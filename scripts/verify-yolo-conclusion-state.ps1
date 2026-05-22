@@ -38,7 +38,7 @@ function Assert-Match {
     Write-Host "[YoloConclusionVerify] pass $Name"
 }
 
-$marker = "yolo-conclusion-state: no-final-yolo-recommendation; default=FaceONNX; ab-gate-not-ground-truth; required=label-gui-10min-license; distribution=no-bundled-yolo-model; axes=model,decode,preprocess,post-filter,track,roi,tiling,small-face,box-refine,speed"
+$marker = "yolo-conclusion-state: no-final-yolo-recommendation; default=FaceONNX; ab-gate-not-ground-truth; required=label-gui-10min; distribution=no-bundled-yolo-model; axes=model,decode,preprocess,post-filter,track,roi,tiling,small-face,box-refine,speed"
 Assert-Contains "conclusion marker" $marker
 
 foreach ($candidate in @(
@@ -59,7 +59,7 @@ foreach ($token in @(
     "no-final-yolo-recommendation",
     "default=FaceONNX",
     "ab-gate-not-ground-truth",
-    "label-gui-10min-license",
+    "label-gui-10min",
     "no-bundled-yolo-model",
     "model",
     "decode",

@@ -12,7 +12,9 @@ param(
     [string]$ExtendedExportYoloModelPath = ".tmp/models/YoloV5Face.onnx",
     [switch]$RunTenMinuteState,
     [switch]$RequireTenMinuteClip,
-    [switch]$RequireTenMinuteRun
+    [switch]$RequireTenMinuteRun,
+    [switch]$RunGuiSmokeState,
+    [switch]$RequireGuiSmokeManualPass
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,9 +55,11 @@ function Invoke-YoloVerify {
 $profileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
 $cropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $gtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-gt-label-state.ps1"
+$fullGtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-label-state.ps1"
 $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
+$guiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $representativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $extendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $extendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
@@ -69,6 +73,9 @@ Invoke-YoloVerify "crop-review" $cropReviewVerify @(
 Invoke-YoloVerify "gt-label-state" $gtLabelStateVerify @(
     "-PassReviewCsv", $YoloCropReviewPassCsv,
     "-FailReviewCsv", $YoloCropReviewFailCsv
+)
+Invoke-YoloVerify "full-gt-label-state" $fullGtLabelStateVerify @(
+    "-SelfTest"
 )
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
 Invoke-YoloVerify "distribution-state" $distributionStateVerify @()
@@ -101,6 +108,14 @@ if ($RunTenMinuteState) {
     }
 
     Invoke-YoloVerify "ten-minute-state" $tenMinuteStateVerify $tenMinuteArgs
+}
+if ($RunGuiSmokeState) {
+    $guiSmokeArgs = @()
+    if ($RequireGuiSmokeManualPass) {
+        $guiSmokeArgs += "-RequireManualPass"
+    }
+
+    Invoke-YoloVerify "gui-smoke-state" $guiSmokeStateVerify $guiSmokeArgs
 }
 
 Write-Host "[YoloStateVerify] all requested checks passed"
