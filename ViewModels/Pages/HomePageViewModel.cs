@@ -30,7 +30,7 @@ namespace FaceShield.ViewModels.Pages
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
         private const int DefaultAutoDetectEveryNFrames = 1;
-        private const int CurrentAutoSettingsVersion = 4;
+        private const int CurrentAutoSettingsVersion = 5;
         private const double DefaultYolo5FaceObjectnessThreshold = 0.12;
         private const double DefaultYolo5FaceConfidenceThreshold = 0.18;
         private const double DefaultYoloNmsThreshold = 0.45;
@@ -53,6 +53,11 @@ namespace FaceShield.ViewModels.Pages
         private (DateTime Timestamp, int Progress) _workspaceLastSample;
         private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();
         private (DateTime Timestamp, int FrameIndex) _exportLastSample;
+        private bool _isApplyingAutoSettings;
+        private bool _isApplyingYoloProfile;
+        private YoloFaceModelType _activeYoloModelType = YoloFaceModelType.Yolo5Face;
+        private YoloProfileState _yoloV8Profile = YoloProfileState.CreateDefault(YoloFaceModelType.YoloV8Face);
+        private YoloProfileState _yolo5Profile = YoloProfileState.CreateDefault(YoloFaceModelType.Yolo5Face);
 
         [ObservableProperty]
         private string? selectedVideoPath;
@@ -200,6 +205,36 @@ namespace FaceShield.ViewModels.Pages
             new YoloModelTypeOption("YOLOv8-Face", YoloFaceModelType.YoloV8Face),
             new YoloModelTypeOption("YOLO5Face", YoloFaceModelType.Yolo5Face)
         };
+
+        private sealed class YoloProfileState
+        {
+            public string? ModelPath { get; init; }
+            public double ObjectnessThreshold { get; init; }
+            public double ConfidenceThreshold { get; init; }
+            public double NmsThreshold { get; init; }
+            public int InputSize { get; init; }
+            public bool UseTiling { get; init; }
+            public bool TileOnly { get; init; }
+            public int TileColumns { get; init; }
+            public int TileRows { get; init; }
+            public double TileOverlapRatio { get; init; }
+
+            public static YoloProfileState CreateDefault(YoloFaceModelType modelType)
+            {
+                return new YoloProfileState
+                {
+                    ObjectnessThreshold = modelType == YoloFaceModelType.Yolo5Face ? DefaultYolo5FaceObjectnessThreshold : 0.25,
+                    ConfidenceThreshold = modelType == YoloFaceModelType.Yolo5Face ? DefaultYolo5FaceConfidenceThreshold : 0.35,
+                    NmsThreshold = DefaultYoloNmsThreshold,
+                    InputSize = 640,
+                    UseTiling = false,
+                    TileOnly = false,
+                    TileColumns = 2,
+                    TileRows = 2,
+                    TileOverlapRatio = 0.15
+                };
+            }
+        }
 
         [ObservableProperty]
         private YoloModelTypeOption? selectedYoloModelTypeOption;
@@ -562,82 +597,165 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnSelectedYoloModelTypeOptionChanged(YoloModelTypeOption? value)
         {
-            ApplyYoloProfileDefaults(value?.ModelType);
+            var modelType = value?.ModelType ?? YoloFaceModelType.YoloV8Face;
+            if (_isApplyingAutoSettings)
+            {
+                _activeYoloModelType = modelType;
+                return;
+            }
+
+            StoreCurrentYoloProfile();
+            _activeYoloModelType = modelType;
+            ApplyYoloProfile(GetYoloProfile(modelType));
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 모델 종류 변경 감지 · 재시작 준비 중...");
         }
 
-        private void ApplyYoloProfileDefaults(YoloFaceModelType? modelType)
+        private YoloProfileState GetYoloProfile(YoloFaceModelType modelType)
         {
+            return modelType == YoloFaceModelType.Yolo5Face
+                ? _yolo5Profile
+                : _yoloV8Profile;
+        }
+
+        private void StoreCurrentYoloProfile()
+        {
+            var modelType = _activeYoloModelType;
+            var profile = CaptureCurrentYoloProfile();
             if (modelType == YoloFaceModelType.Yolo5Face)
             {
-                AutoYoloObjectnessThreshold = DefaultYolo5FaceObjectnessThreshold;
-                AutoYoloConfidenceThreshold = DefaultYolo5FaceConfidenceThreshold;
-                AutoYoloNmsThreshold = DefaultYoloNmsThreshold;
+                _yolo5Profile = profile;
                 return;
             }
 
-            AutoYoloObjectnessThreshold = 0.25;
-            AutoYoloConfidenceThreshold = 0.35;
-            AutoYoloNmsThreshold = DefaultYoloNmsThreshold;
+            _yoloV8Profile = profile;
+        }
+
+        private YoloProfileState CaptureCurrentYoloProfile()
+        {
+            return new YoloProfileState
+            {
+                ModelPath = AutoYoloModelPath,
+                ObjectnessThreshold = AutoYoloObjectnessThreshold,
+                ConfidenceThreshold = AutoYoloConfidenceThreshold,
+                NmsThreshold = AutoYoloNmsThreshold,
+                InputSize = AutoYoloInputSize,
+                UseTiling = AutoYoloUseTiling,
+                TileOnly = AutoYoloTileOnly,
+                TileColumns = AutoYoloTileColumns,
+                TileRows = AutoYoloTileRows,
+                TileOverlapRatio = AutoYoloTileOverlapRatio
+            };
+        }
+
+        private void ApplyYoloProfile(YoloProfileState profile)
+        {
+            _isApplyingYoloProfile = true;
+            try
+            {
+                AutoYoloModelPath = profile.ModelPath;
+                AutoYoloObjectnessThreshold = profile.ObjectnessThreshold;
+                AutoYoloConfidenceThreshold = profile.ConfidenceThreshold;
+                AutoYoloNmsThreshold = profile.NmsThreshold;
+                AutoYoloInputSize = profile.InputSize;
+                AutoYoloUseTiling = profile.UseTiling;
+                AutoYoloTileOnly = profile.TileOnly;
+                AutoYoloTileColumns = profile.TileColumns;
+                AutoYoloTileRows = profile.TileRows;
+                AutoYoloTileOverlapRatio = profile.TileOverlapRatio;
+            }
+            finally
+            {
+                _isApplyingYoloProfile = false;
+            }
         }
 
         partial void OnAutoYoloModelPathChanged(string? value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 모델 경로 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloObjectnessThresholdChanged(double value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO objectness 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloConfidenceThresholdChanged(double value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO confidence 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloNmsThresholdChanged(double value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO NMS 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloInputSizeChanged(int value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 입력 크기 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloUseTilingChanged(bool value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloTileOnlyChanged(bool value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloTileColumnsChanged(int value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloTileRowsChanged(int value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloTileOverlapRatioChanged(double value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
         }
@@ -676,74 +794,126 @@ namespace FaceShield.ViewModels.Pages
             _autoCts?.Cancel();
         }
 
+        private static YoloProfileState ReadSavedYoloProfile(
+            AutoSettingsState saved,
+            YoloFaceModelType modelType,
+            YoloFaceModelType selectedModelType)
+        {
+            var defaults = YoloProfileState.CreateDefault(modelType);
+            bool useLegacyActiveProfile = selectedModelType == modelType;
+
+            if (modelType == YoloFaceModelType.Yolo5Face)
+            {
+                return new YoloProfileState
+                {
+                    ModelPath = saved.Yolo5ModelPath ?? (useLegacyActiveProfile ? saved.YoloModelPath : defaults.ModelPath),
+                    ObjectnessThreshold = saved.Yolo5ObjectnessThreshold ?? (useLegacyActiveProfile ? saved.YoloObjectnessThreshold : null) ?? defaults.ObjectnessThreshold,
+                    ConfidenceThreshold = saved.Yolo5ConfidenceThreshold ?? (useLegacyActiveProfile ? saved.YoloConfidenceThreshold : null) ?? defaults.ConfidenceThreshold,
+                    NmsThreshold = saved.Yolo5NmsThreshold ?? (useLegacyActiveProfile ? saved.YoloNmsThreshold : null) ?? defaults.NmsThreshold,
+                    InputSize = Math.Clamp(saved.Yolo5InputSize ?? (useLegacyActiveProfile ? saved.YoloInputSize : null) ?? defaults.InputSize, 64, 2048),
+                    UseTiling = saved.Yolo5UseTiling ?? (useLegacyActiveProfile ? (bool?)saved.YoloUseTiling : null) ?? defaults.UseTiling,
+                    TileOnly = saved.Yolo5TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
+                    TileColumns = Math.Clamp(saved.Yolo5TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
+                    TileRows = Math.Clamp(saved.Yolo5TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
+                    TileOverlapRatio = Math.Clamp(saved.Yolo5TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45)
+                };
+            }
+
+            return new YoloProfileState
+            {
+                ModelPath = saved.YoloV8ModelPath ?? (useLegacyActiveProfile ? saved.YoloModelPath : defaults.ModelPath),
+                ObjectnessThreshold = saved.YoloV8ObjectnessThreshold ?? (useLegacyActiveProfile ? saved.YoloObjectnessThreshold : null) ?? defaults.ObjectnessThreshold,
+                ConfidenceThreshold = saved.YoloV8ConfidenceThreshold ?? (useLegacyActiveProfile ? saved.YoloConfidenceThreshold : null) ?? defaults.ConfidenceThreshold,
+                NmsThreshold = saved.YoloV8NmsThreshold ?? (useLegacyActiveProfile ? saved.YoloNmsThreshold : null) ?? defaults.NmsThreshold,
+                InputSize = Math.Clamp(saved.YoloV8InputSize ?? (useLegacyActiveProfile ? saved.YoloInputSize : null) ?? defaults.InputSize, 64, 2048),
+                UseTiling = saved.YoloV8UseTiling ?? (useLegacyActiveProfile ? (bool?)saved.YoloUseTiling : null) ?? defaults.UseTiling,
+                TileOnly = saved.YoloV8TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
+                TileColumns = Math.Clamp(saved.YoloV8TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
+                TileRows = Math.Clamp(saved.YoloV8TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
+                TileOverlapRatio = Math.Clamp(saved.YoloV8TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45)
+            };
+        }
+
         private void ApplySavedAutoSettings()
         {
             var saved = _stateStore.GetAutoSettings();
             if (saved == null)
                 return;
 
-            bool isLegacyAutoSettings = saved.SettingsVersion < CurrentAutoSettingsVersion;
-            var downscale = DownscaleOptions.FirstOrDefault(o => Math.Abs(o.Ratio - saved.DownscaleRatio) < 0.0001);
-            if (!isLegacyAutoSettings && downscale != null)
-                SelectedDownscaleOption = downscale;
-
-            var quality = DownscaleQualityOptions.FirstOrDefault(o => (int)o.Quality == saved.DownscaleQuality);
-            if (quality != null)
-                SelectedDownscaleQualityOption = quality;
-
-            var ort = OrtThreadOptions.FirstOrDefault(o => o.Threads == saved.OrtThreads);
-            if (ort != null)
-                SelectedOrtThreadOption = ort;
-
-            AutoTrackingEnabled = saved.AutoTrackingEnabled;
-            AutoDetectEveryNFrames = isLegacyAutoSettings
-                ? DefaultAutoDetectEveryNFrames
-                : Math.Max(1, saved.AutoDetectEveryNFrames);
-            SelectedParallelSessionCount = isLegacyAutoSettings
-                ? Math.Max(2, saved.ParallelSessionCount)
-                : Math.Max(1, saved.ParallelSessionCount);
-            AutoUseOrtOptimization = saved.AutoUseOrtOptimization;
-            AutoUseGpu = isLegacyAutoSettings ? DefaultAutoUseGpu : saved.AutoUseGpu;
-            AutoExportAfter = saved.AutoExportAfter;
-            if (saved.DetectionThreshold.HasValue)
-                AutoDetectionThreshold = saved.DetectionThreshold.Value;
-            if (saved.ConfidenceThreshold.HasValue)
-                AutoConfidenceThreshold = saved.ConfidenceThreshold.Value;
-            if (saved.NmsThreshold.HasValue)
-                AutoNmsThreshold = saved.NmsThreshold.Value;
-            if (saved.BlurRadius.HasValue)
-                BlurRadius = Math.Clamp(saved.BlurRadius.Value, MinBlurRadiusValue, MaxBlurRadiusValue);
-            var backend = AutoDetectorBackendOptions.FirstOrDefault(o => (int)o.Backend == saved.DetectorBackend);
-            if (backend != null)
-                SelectedAutoDetectorBackendOption = backend;
+            bool isLegacyAutoSettings = saved.SettingsVersion < 4;
+            bool requiresSettingsUpgrade = saved.SettingsVersion < CurrentAutoSettingsVersion;
             var yoloType = YoloModelTypeOptions.FirstOrDefault(o => (int)o.ModelType == saved.YoloModelType);
-            if (yoloType != null)
-                SelectedYoloModelTypeOption = yoloType;
-            if (!string.IsNullOrWhiteSpace(saved.YoloModelPath))
-                AutoYoloModelPath = saved.YoloModelPath;
-            if (saved.YoloObjectnessThreshold.HasValue)
-                AutoYoloObjectnessThreshold = saved.YoloObjectnessThreshold.Value;
-            if (saved.YoloConfidenceThreshold.HasValue)
-                AutoYoloConfidenceThreshold = saved.YoloConfidenceThreshold.Value;
-            if (saved.YoloNmsThreshold.HasValue)
-                AutoYoloNmsThreshold = saved.YoloNmsThreshold.Value;
-            if (saved.YoloInputSize.HasValue)
-                AutoYoloInputSize = Math.Clamp(saved.YoloInputSize.Value, 64, 2048);
-            AutoYoloUseTiling = saved.YoloUseTiling;
-            AutoYoloTileOnly = saved.YoloTileOnly;
-            if (saved.YoloTileColumns.HasValue)
-                AutoYoloTileColumns = Math.Clamp(saved.YoloTileColumns.Value, 1, 8);
-            if (saved.YoloTileRows.HasValue)
-                AutoYoloTileRows = Math.Clamp(saved.YoloTileRows.Value, 1, 8);
-            if (saved.YoloTileOverlapRatio.HasValue)
-                AutoYoloTileOverlapRatio = Math.Clamp(saved.YoloTileOverlapRatio.Value, 0.0, 0.45);
+            var selectedYoloModelType = yoloType?.ModelType ?? YoloFaceModelType.Yolo5Face;
 
-            if (isLegacyAutoSettings)
+            _isApplyingAutoSettings = true;
+            try
+            {
+                var downscale = DownscaleOptions.FirstOrDefault(o => Math.Abs(o.Ratio - saved.DownscaleRatio) < 0.0001);
+                if (!isLegacyAutoSettings && downscale != null)
+                    SelectedDownscaleOption = downscale;
+
+                var quality = DownscaleQualityOptions.FirstOrDefault(o => (int)o.Quality == saved.DownscaleQuality);
+                if (quality != null)
+                    SelectedDownscaleQualityOption = quality;
+
+                var ort = OrtThreadOptions.FirstOrDefault(o => o.Threads == saved.OrtThreads);
+                if (ort != null)
+                    SelectedOrtThreadOption = ort;
+
+                AutoTrackingEnabled = saved.AutoTrackingEnabled;
+                AutoDetectEveryNFrames = isLegacyAutoSettings
+                    ? DefaultAutoDetectEveryNFrames
+                    : Math.Max(1, saved.AutoDetectEveryNFrames);
+                SelectedParallelSessionCount = isLegacyAutoSettings
+                    ? Math.Max(2, saved.ParallelSessionCount)
+                    : Math.Max(1, saved.ParallelSessionCount);
+                AutoUseOrtOptimization = saved.AutoUseOrtOptimization;
+                AutoUseGpu = isLegacyAutoSettings ? DefaultAutoUseGpu : saved.AutoUseGpu;
+                AutoExportAfter = saved.AutoExportAfter;
+                if (saved.DetectionThreshold.HasValue)
+                    AutoDetectionThreshold = saved.DetectionThreshold.Value;
+                if (saved.ConfidenceThreshold.HasValue)
+                    AutoConfidenceThreshold = saved.ConfidenceThreshold.Value;
+                if (saved.NmsThreshold.HasValue)
+                    AutoNmsThreshold = saved.NmsThreshold.Value;
+                if (saved.BlurRadius.HasValue)
+                    BlurRadius = Math.Clamp(saved.BlurRadius.Value, MinBlurRadiusValue, MaxBlurRadiusValue);
+                var backend = AutoDetectorBackendOptions.FirstOrDefault(o => (int)o.Backend == saved.DetectorBackend);
+                if (backend != null)
+                    SelectedAutoDetectorBackendOption = backend;
+
+                _yoloV8Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType);
+                _yolo5Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType);
+                if (yoloType != null)
+                    SelectedYoloModelTypeOption = yoloType;
+                _activeYoloModelType = selectedYoloModelType;
+                ApplyYoloProfile(GetYoloProfile(selectedYoloModelType));
+            }
+            finally
+            {
+                _isApplyingAutoSettings = false;
+            }
+
+            if (requiresSettingsUpgrade)
                 PersistAutoSettings();
         }
 
         private void PersistAutoSettings()
         {
+            if (_isApplyingAutoSettings || _isApplyingYoloProfile)
+                return;
+
+            var activeYoloModelType = SelectedYoloModelTypeOption?.ModelType ?? _activeYoloModelType;
+            var yoloV8Profile = activeYoloModelType == YoloFaceModelType.YoloV8Face
+                ? CaptureCurrentYoloProfile()
+                : _yoloV8Profile;
+            var yolo5Profile = activeYoloModelType == YoloFaceModelType.Yolo5Face
+                ? CaptureCurrentYoloProfile()
+                : _yolo5Profile;
+            var activeYoloProfile = activeYoloModelType == YoloFaceModelType.Yolo5Face
+                ? yolo5Profile
+                : yoloV8Profile;
+
             _stateStore.SaveAutoSettings(new AutoSettingsState
             {
                 SettingsVersion = CurrentAutoSettingsVersion,
@@ -761,17 +931,37 @@ namespace FaceShield.ViewModels.Pages
                 NmsThreshold = AutoNmsThreshold,
                 BlurRadius = BlurRadius,
                 DetectorBackend = (int)(SelectedAutoDetectorBackendOption?.Backend ?? FaceDetectorBackend.FaceOnnx),
-                YoloModelType = (int)(SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.YoloV8Face),
-                YoloModelPath = AutoYoloModelPath,
-                YoloObjectnessThreshold = AutoYoloObjectnessThreshold,
-                YoloConfidenceThreshold = AutoYoloConfidenceThreshold,
-                YoloNmsThreshold = AutoYoloNmsThreshold,
-                YoloInputSize = AutoYoloInputSize,
-                YoloUseTiling = AutoYoloUseTiling,
-                YoloTileOnly = AutoYoloTileOnly,
-                YoloTileColumns = AutoYoloTileColumns,
-                YoloTileRows = AutoYoloTileRows,
-                YoloTileOverlapRatio = AutoYoloTileOverlapRatio
+                YoloModelType = (int)activeYoloModelType,
+                YoloModelPath = activeYoloProfile.ModelPath,
+                YoloObjectnessThreshold = activeYoloProfile.ObjectnessThreshold,
+                YoloConfidenceThreshold = activeYoloProfile.ConfidenceThreshold,
+                YoloNmsThreshold = activeYoloProfile.NmsThreshold,
+                YoloInputSize = activeYoloProfile.InputSize,
+                YoloUseTiling = activeYoloProfile.UseTiling,
+                YoloTileOnly = activeYoloProfile.TileOnly,
+                YoloTileColumns = activeYoloProfile.TileColumns,
+                YoloTileRows = activeYoloProfile.TileRows,
+                YoloTileOverlapRatio = activeYoloProfile.TileOverlapRatio,
+                YoloV8ModelPath = yoloV8Profile.ModelPath,
+                YoloV8ObjectnessThreshold = yoloV8Profile.ObjectnessThreshold,
+                YoloV8ConfidenceThreshold = yoloV8Profile.ConfidenceThreshold,
+                YoloV8NmsThreshold = yoloV8Profile.NmsThreshold,
+                YoloV8InputSize = yoloV8Profile.InputSize,
+                YoloV8UseTiling = yoloV8Profile.UseTiling,
+                YoloV8TileOnly = yoloV8Profile.TileOnly,
+                YoloV8TileColumns = yoloV8Profile.TileColumns,
+                YoloV8TileRows = yoloV8Profile.TileRows,
+                YoloV8TileOverlapRatio = yoloV8Profile.TileOverlapRatio,
+                Yolo5ModelPath = yolo5Profile.ModelPath,
+                Yolo5ObjectnessThreshold = yolo5Profile.ObjectnessThreshold,
+                Yolo5ConfidenceThreshold = yolo5Profile.ConfidenceThreshold,
+                Yolo5NmsThreshold = yolo5Profile.NmsThreshold,
+                Yolo5InputSize = yolo5Profile.InputSize,
+                Yolo5UseTiling = yolo5Profile.UseTiling,
+                Yolo5TileOnly = yolo5Profile.TileOnly,
+                Yolo5TileColumns = yolo5Profile.TileColumns,
+                Yolo5TileRows = yolo5Profile.TileRows,
+                Yolo5TileOverlapRatio = yolo5Profile.TileOverlapRatio
             });
         }
 

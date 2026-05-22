@@ -66,9 +66,12 @@ param(
     [switch]$DumpCompareDetails,
     [switch]$DumpCompareOverlays,
     [string]$CompareOverlayDir = "",
+    [int]$CompareOverlayMaxFrames = 16,
     [switch]$DumpCompareCrops,
     [string]$CompareCropDir = "",
-    [double]$CompareCropPaddingRatio = 0.65
+    [double]$CompareCropPaddingRatio = 0.65,
+    [int]$CompareCropMaxOnlyFrames = 16,
+    [int]$CompareCropMaxBoxDiffFrames = 16
 )
 
 $ErrorActionPreference = "Stop"
@@ -190,9 +193,12 @@ bool yoloDebugDump = args.Length > 59 && bool.Parse(args[59]);
 bool dumpCompareDetails = args.Length > 60 && bool.Parse(args[60]);
 bool dumpCompareOverlays = args.Length > 61 && bool.Parse(args[61]);
 string compareOverlayDir = args.Length > 62 && args[62] != "__none__" ? args[62] : string.Empty;
-bool dumpCompareCrops = args.Length > 63 && bool.Parse(args[63]);
-string compareCropDir = args.Length > 64 && args[64] != "__none__" ? args[64] : string.Empty;
-double compareCropPaddingRatio = args.Length > 65 ? double.Parse(args[65], System.Globalization.CultureInfo.InvariantCulture) : 0.65;
+int compareOverlayMaxFrames = args.Length > 63 ? int.Parse(args[63], System.Globalization.CultureInfo.InvariantCulture) : 16;
+bool dumpCompareCrops = args.Length > 64 && bool.Parse(args[64]);
+string compareCropDir = args.Length > 65 && args[65] != "__none__" ? args[65] : string.Empty;
+double compareCropPaddingRatio = args.Length > 66 ? double.Parse(args[66], System.Globalization.CultureInfo.InvariantCulture) : 0.65;
+int compareCropMaxOnlyFrames = args.Length > 67 ? int.Parse(args[67], System.Globalization.CultureInfo.InvariantCulture) : 16;
+int compareCropMaxBoxDiffFrames = args.Length > 68 ? int.Parse(args[68], System.Globalization.CultureInfo.InvariantCulture) : 16;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -569,9 +575,12 @@ static bool CompareCases(
     bool dumpCompareDetails,
     bool dumpCompareOverlays,
     string compareOverlayDir,
+    int compareOverlayMaxFrames,
     bool dumpCompareCrops,
     string compareCropDir,
-    double compareCropPaddingRatio)
+    double compareCropPaddingRatio,
+    int compareCropMaxOnlyFrames,
+    int compareCropMaxBoxDiffFrames)
 {
     var baselineEntries = baseline.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
     var optimizedEntries = optimized.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
@@ -641,11 +650,11 @@ static bool CompareCases(
     }
     if (dumpCompareOverlays && !string.IsNullOrWhiteSpace(compareOverlayDir))
     {
-        DumpCompareOverlays(input, compareOverlayDir, onlyBaseline, onlyOptimized, boxCountDiffFrameList, lowIouFrames, baselineEntries, optimizedEntries);
+        DumpCompareOverlays(input, compareOverlayDir, compareOverlayMaxFrames, onlyBaseline, onlyOptimized, boxCountDiffFrameList, lowIouFrames, baselineEntries, optimizedEntries);
     }
     if (dumpCompareCrops && !string.IsNullOrWhiteSpace(compareCropDir))
     {
-        DumpCompareCrops(input, compareCropDir, compareCropPaddingRatio, onlyBaseline, onlyOptimized, boxCountDiffFrameList, baselineEntries, optimizedEntries);
+        DumpCompareCrops(input, compareCropDir, compareCropPaddingRatio, compareCropMaxOnlyFrames, compareCropMaxBoxDiffFrames, onlyBaseline, onlyOptimized, boxCountDiffFrameList, baselineEntries, optimizedEntries);
     }
 
     bool frameMatchOk = allowFrameMismatch ||
@@ -660,6 +669,7 @@ static bool CompareCases(
 static void DumpCompareOverlays(
     string input,
     string outputDir,
+    int maxFramesPerReason,
     IReadOnlyList<int> onlyBaseline,
     IReadOnlyList<int> onlyOptimized,
     IReadOnlyList<int> boxCountDiff,
@@ -669,10 +679,11 @@ static void DumpCompareOverlays(
 {
     Directory.CreateDirectory(outputDir);
     var items = new List<(string Reason, int Frame)>();
-    items.AddRange(onlyBaseline.Take(8).Select(frame => ("onlyBaseline", frame)));
-    items.AddRange(onlyOptimized.Take(8).Select(frame => ("onlyOptimized", frame)));
-    items.AddRange(boxCountDiff.Take(8).Select(frame => ("boxCountDiff", frame)));
-    items.AddRange(lowIou.Take(8).Select(frame => ("lowIou", frame)));
+    int limit = Math.Max(0, maxFramesPerReason);
+    items.AddRange(onlyBaseline.Take(limit).Select(frame => ("onlyBaseline", frame)));
+    items.AddRange(onlyOptimized.Take(limit).Select(frame => ("onlyOptimized", frame)));
+    items.AddRange(boxCountDiff.Take(limit).Select(frame => ("boxCountDiff", frame)));
+    items.AddRange(lowIou.Take(limit).Select(frame => ("lowIou", frame)));
     if (items.Count == 0)
         return;
 
@@ -714,6 +725,8 @@ static void DumpCompareCrops(
     string input,
     string outputDir,
     double paddingRatio,
+    int maxOnlyFrames,
+    int maxBoxDiffFrames,
     IReadOnlyList<int> onlyBaseline,
     IReadOnlyList<int> onlyOptimized,
     IReadOnlyList<int> boxCountDiff,
@@ -721,7 +734,7 @@ static void DumpCompareCrops(
     Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries)
 {
     Directory.CreateDirectory(outputDir);
-    var items = BuildCompareCropItems(onlyBaseline, onlyOptimized, boxCountDiff, baselineEntries, optimizedEntries);
+    var items = BuildCompareCropItems(onlyBaseline, onlyOptimized, boxCountDiff, baselineEntries, optimizedEntries, maxOnlyFrames, maxBoxDiffFrames);
     if (items.Count == 0)
         return;
 
@@ -772,11 +785,15 @@ static List<(string Reason, int Frame, string Label, int Index, Rect Face, float
     IReadOnlyList<int> onlyOptimized,
     IReadOnlyList<int> boxCountDiff,
     Dictionary<int, FrameMaskProvider.FaceMaskData> baselineEntries,
-    Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries)
+    Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries,
+    int maxOnlyFrames,
+    int maxBoxDiffFrames)
 {
     const double MatchIou = 0.35;
     var items = new List<(string Reason, int Frame, string Label, int Index, Rect Face, float Confidence)>();
-    foreach (int frame in onlyBaseline.Take(8))
+    int onlyLimit = Math.Max(0, maxOnlyFrames);
+    int boxDiffLimit = Math.Max(0, maxBoxDiffFrames);
+    foreach (int frame in onlyBaseline.Take(onlyLimit))
     {
         if (!baselineEntries.TryGetValue(frame, out var baseline))
             continue;
@@ -784,7 +801,7 @@ static List<(string Reason, int Frame, string Label, int Index, Rect Face, float
         AddCropItems(items, "onlyBaseline", frame, "baseline", baseline);
     }
 
-    foreach (int frame in onlyOptimized.Take(8))
+    foreach (int frame in onlyOptimized.Take(onlyLimit))
     {
         if (!optimizedEntries.TryGetValue(frame, out var optimized))
             continue;
@@ -792,7 +809,7 @@ static List<(string Reason, int Frame, string Label, int Index, Rect Face, float
         AddCropItems(items, "onlyOptimized", frame, "optimized", optimized);
     }
 
-    foreach (int frame in boxCountDiff.Take(12))
+    foreach (int frame in boxCountDiff.Take(boxDiffLimit))
     {
         var baseline = baselineEntries.TryGetValue(frame, out var baselineData)
             ? baselineData
@@ -1108,7 +1125,7 @@ var optimized = await RunCaseAsync(
     yoloTileOverlapRatio,
     yoloDebugDump);
 
-if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir, dumpCompareCrops, compareCropDir, compareCropPaddingRatio))
+if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir, compareOverlayMaxFrames, dumpCompareCrops, compareCropDir, compareCropPaddingRatio, compareCropMaxOnlyFrames, compareCropMaxBoxDiffFrames))
     Environment.Exit(2);
 '@ | Set-Content -Encoding UTF8 $program
 
@@ -1169,6 +1186,7 @@ $yoloTileOverlapRatioArg = $YoloTileOverlapRatio.ToString([System.Globalization.
 $yoloDebugDumpArg = $YoloDebugDump.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareDetailsArg = $DumpCompareDetails.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareOverlaysArg = $DumpCompareOverlays.IsPresent.ToString().ToLowerInvariant()
+$compareOverlayMaxFramesArg = $CompareOverlayMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 if ([string]::IsNullOrWhiteSpace($CompareOverlayDir)) {
     $compareOverlayDirArg = Join-Path $work ("compare-overlays-" + $clipStem)
 } elseif ([IO.Path]::IsPathRooted($CompareOverlayDir)) {
@@ -1185,6 +1203,8 @@ if ([string]::IsNullOrWhiteSpace($CompareCropDir)) {
     $compareCropDirArg = Join-Path $repo $CompareCropDir
 }
 $compareCropPaddingRatioArg = $CompareCropPaddingRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$compareCropMaxOnlyFramesArg = $CompareCropMaxOnlyFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$compareCropMaxBoxDiffFramesArg = $CompareCropMaxBoxDiffFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 dotnet run --project $project -- `
     $clip `
     $output `
@@ -1249,9 +1269,12 @@ dotnet run --project $project -- `
     $dumpCompareDetailsArg `
     $dumpCompareOverlaysArg `
     $compareOverlayDirArg `
+    $compareOverlayMaxFramesArg `
     $dumpCompareCropsArg `
     $compareCropDirArg `
-    $compareCropPaddingRatioArg
+    $compareCropPaddingRatioArg `
+    $compareCropMaxOnlyFramesArg `
+    $compareCropMaxBoxDiffFramesArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

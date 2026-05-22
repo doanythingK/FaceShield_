@@ -17,7 +17,7 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - `Services/Analysis/AutoMaskOptions.cs`: downscale, tracking, 검출 간격, 병렬 detector 수 옵션.
 - `Services/FaceDetection/IBgraFaceDetector.cs`: BGRA 기반 검출기 교체용 인터페이스.
 - `Services/FaceDetection/FaceDetectorFactory.cs`: 검출기 생성 팩토리.
-- `Services/FaceDetection/FaceDetectorBackend.cs`: 현재 `FaceOnnx`만 등록된 backend enum.
+- `Services/FaceDetection/FaceDetectorBackend.cs`: `FaceOnnx`, `ScrfdOnnx`, `YuNetOnnx`, `YoloFaceOnnx` backend enum.
 - `Services/FaceDetection/FaceOnnxDetector.cs`: 현재 기본 얼굴 검출 구현.
 - `Services/FaceDetection/DetectorAutoTuner.cs`: 자동 실행 시작 시 ONNX 실행 옵션/세션 수 측정.
 - `Services/Video/VideoExportService.cs`: export, 색상 변환, direct face rect blur, bitmap mask blur, encode.
@@ -36,13 +36,19 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - export 로그에 `bitmapMaskFrames`, `directFaceFrames`, `swsToBgraMs`, `maskMs`, `swsToEncMs`, `encodeMs`, `totalMs`가 남는다.
 - 홈 자동 진행 상태는 export 단계에서도 숨기지 않는 방향으로 수정되어 있다.
 
+현재 추가 확인된 상태:
+
+- `FaceDetectorBackend.YoloFaceOnnx`, `YoloFaceOnnxDetectorOptions`, `YoloFaceModelType`, `YoloFaceOnnxDetector`가 추가되어 YOLOv8-Face/YOLO5Face ONNX 후보를 실행할 수 있다.
+- 홈 자동 옵션에서 FaceONNX와 YOLO Face ONNX를 선택할 수 있고, YOLO는 모델 종류, 모델 경로, objectness/confidence/NMS, 입력 크기, tiling 값을 FaceONNX threshold와 분리해서 가진다. YOLOv8-Face와 YOLO5Face 사이에서도 모델 경로와 threshold/input/tiling profile을 별도로 저장/복원한다.
+- `AutoMaskOptions.FilterProfile`과 track 후처리 profile은 FaceONNX/SCRFD/YOLO별로 분리되어 있으며, FaceONNX auto-tune은 FaceONNX backend에서만 적용된다.
+- YOLO5Face `0.12/0.18/0.45` profile은 대표 6분 3초 gate를 통과했지만 9분 2초 및 6분 30초 확장 gate에서 추천 후보로 승격하지 못했다.
+
 남은 한계:
 
-- `FaceDetectorBackend`는 아직 `FaceOnnx` 하나뿐이다.
 - 실제 10분 문제 영상 기준으로 자동 검출 시간과 export 시간이 분리 측정되어 있지 않다.
-- 검출 품질 평가는 로그만으로 부족하고, 미탐/오탐/박스 튐 구간을 샘플로 수집해야 한다.
-- 트래킹은 프레임 재사용과 smoothing 중심이라, 얼굴별 track identity를 안정적으로 유지하는 구조까지는 아니다.
-- 모델 후보별 배포 크기, native/provider 안정성, Windows/macOS 지원 여부가 아직 확정되지 않았다.
+- YOLO 확장 gate의 mismatch에는 FaceONNX false-positive, YOLO false-positive, 실제 작은 얼굴 recall, box definition 차이가 섞여 있어 정답 라벨 기반 평가는 아직 없다.
+- YOLO 후보별 profile은 아직 최종 추천 상태가 아니며, 대체 YOLO face 모델 또는 verifier/refiner 전략이 더 필요하다.
+- 모델 후보별 배포 크기, native/provider 안정성, Windows/macOS 지원 여부는 아직 확정되지 않았다.
 
 ## 성능/품질 목표
 정량 목표는 실제 샘플 측정 후 확정한다. 1차 목표는 다음 기준으로 잡는다.
@@ -1759,7 +1765,7 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 현재 YOLO5Face 판정 보정:
 
 - `YoloV5Face.onnx` `0.12/0.18/0.45` 조합은 6분 3초 gate와 12분 30초 smoke 기준으로는 빠르고 유망하지만, 9분 2초 추가 gate에서 실패했다.
-- 따라서 이 조합을 최종 `추천 후보`로 보지 않는다. 현재 상태는 `대표 6분 3초 구간 통과 후보 / 전체 추천 보류`다.
+- 따라서 이 조합을 최종 `추천 후보`로 보지 않는다. 현재 상태는 `대표 6분 3초 구간 통과 후보 / 9분 2초 및 6분 30초 확장 gate 실패 / 전체 추천 보류`다.
 - Home UI에서 YOLO를 선택했을 때의 초기 profile은 지금까지 가장 나은 YOLO5Face 조합으로 남겨두지만, 앱 기본 detector는 계속 FaceONNX다.
 - 다음 YOLO 작업은 9분 구간의 box count diff와 low-IoU frame을 기준으로 원인을 더 분리해야 한다. 우선순위는 raw YOLO 후보 dump, FaceONNX 대비 후보 수 차이, 큰 얼굴/다중 얼굴 구간의 YOLO 전용 post-filter, track merge 기준 재조정이다.
 
@@ -1809,7 +1815,9 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 - `scripts/run-srcTest-smoke.ps1`에 `-DumpCompareDetails`를 추가했다. 이 옵션을 켜면 `[SmokeCompareDetail]` 로그로 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` frame의 baseline/optimized 박스 `x/y/w/h`, 정규화 중심점, 면적 비율, confidence를 출력한다.
 - `[SmokeCompareNote]`를 추가해 `onlyBaseline`/`onlyOptimized`가 실제 정답 라벨의 미탐/오탐이 아니라 detector 간 차이임을 로그에 명시한다.
 - `-DumpCompareOverlays`와 `-CompareOverlayDir`를 추가했다. 이 옵션을 켜면 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` 대표 frame을 PNG로 저장한다. overlay 색상은 FaceONNX baseline이 빨간 박스, optimized detector가 청록 박스다. 이 이미지는 baseline-diff frame을 실제 미탐/오탐으로 판정할 때 사용하는 육안 검토 자료다.
+- overlay dump도 앞쪽 일부 frame만 저장하는 한계를 줄이기 위해 `-CompareOverlayMaxFrames`를 추가했다. 기본값은 reason별 `16` frame이다.
 - `-DumpCompareCrops`, `-CompareCropDir`, `-CompareCropPaddingRatio`를 추가했다. 이 옵션은 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`에서 baseline과 IoU `0.35` 미만인 후보만 crop PNG와 `compare-crops.csv`로 저장한다. 목적은 YOLO-only 후보가 실제 얼굴인지 손/물체 오탐인지 더 빠르게 육안 분류하는 것이다.
+- crop dump가 앞쪽 일부 frame만 저장해 후반 `onlyBaseline` 원인 확인에 수동 ffmpeg crop이 필요했던 문제를 줄이기 위해 `-CompareCropMaxOnlyFrames`, `-CompareCropMaxBoxDiffFrames`를 추가했다. 기본값은 각각 `16`이라 6분 30초 gate의 `onlyBaseline=14` 같은 케이스는 한 번에 모두 저장할 수 있다.
 - `[SmokeCompare]`에 `avgBaselineCoverage`와 `minBaselineCoverage`를 추가했다. 기준은 FaceONNX baseline 박스 면적 중 optimized 박스가 덮은 비율이다. IoU가 낮아도 coverage가 높으면 큰 박스/정의 차이에 가깝고, coverage도 낮으면 실제 모자이크 미커버 위험으로 본다.
 - 9분 2초 상세 로그 기준, YOLO5Face 실패는 두 가지가 섞여 있다.
   - `onlyOptimized=4,8,9`와 frame 10~49의 `boxCountDiff`는 화면 상단의 작은 두 번째 얼굴 후보가 FaceONNX보다 먼저 잡히는 현상이다. 예: frame 10의 추가 후보는 `cx=0.576`, `cy=0.052`, `area=0.00424`, `conf=0.455`였다.
@@ -1819,6 +1827,15 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 - 따라서 이 구간의 YOLO-only 작은 상단 후보를 손/물체 오탐으로 단정하면 안 된다. 현재 증거로는 FaceONNX baseline이 놓친 실제 얼굴을 YOLO가 추가로 잡는 recall 개선 가능성이 더 크다.
 - coverage 지표 추가 후 같은 9분 2초 구간을 다시 실행했다. 결과는 FaceONNX baseline `totalMs=13,528ms`, YOLO optimized `totalMs=8,856ms`, `baselineFrames=55`, `optimizedFrames=58`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `avgBaselineCoverage=0.918`, `minBaselineCoverage=0.714`, `boxCountDiffFrames=33`이었다.
 - 판단: 이 구간의 YOLO는 속도는 FaceONNX 대비 빠르지만, 큰 얼굴 coverage 최저값이 `0.714`라 단순히 "YOLO 박스가 더 커서 안전하다"로 정리할 수 없다. 현재 상태는 추가 얼굴 recall 가능성과 일부 baseline 얼굴 미커버 위험이 같이 있다.
+- 6분 30초 확장 gate에서 같은 YOLO5Face profile을 export 포함으로 실행했다. FaceONNX baseline은 자동 검출 `totalMs=339,661ms`, export `totalMs=43,605ms`, `directFaceFrames=83`이었고, YOLO optimized는 자동 검출 `totalMs=123,243ms`, export `totalMs=43,331ms`, `directFaceFrames=74`였다.
+- 같은 6분 30초 확장 gate의 A/B 결과는 `baselineFrames=83`, `optimizedFrames=74`, `common=69`, `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `avgBaselineCoverage=0.877`, `minBaselineCoverage=0.000`, `boxCountDiffFrames=14`였다.
+- 판단: 30초 이상 구간에서도 YOLO 자동 검출은 FaceONNX 대비 약 `2.76x` 빠르지만, FaceONNX 기준 누락 frame과 baseline coverage 0 frame이 있어 품질 gate 실패다. export 시간은 두 detector 모두 direct face rect 경로라 거의 같고, detector 교체만으로 export 병목은 줄지 않는다.
+- 6분 30초 crop 진단을 추가 실행했다. 명령은 같은 YOLO5Face profile에 `-SkipExport -DumpCompareDetails -DumpCompareCrops -CompareCropDir .tmp/yolo-crops/test-0600-30s-yolo5face`를 붙였다.
+- crop 기준 `onlyBaseline` frame `204~211`은 바닥의 금속/문양 물체였고, 추가로 확인한 frame `315/350/709`도 옷/문자/직물 영역이라 얼굴로 보이지 않았다. 따라서 6분 30초의 `onlyBaseline=14`를 그대로 YOLO 실제 미탐으로 해석하면 안 된다. 이 부분은 FaceONNX baseline false-positive가 strict baseline-diff gate를 악화시킨 사례에 가깝다.
+- 반대로 `onlyOptimized` frame `167~169/887`도 금속 문양이나 문자 영역으로 보이는 false-positive가 포함되어 있다. frame `683`은 작은 사람 얼굴 가능성이 있으나 crop만으로 확정하지 않는다.
+- 6분 30초 YOLO false-positive를 줄이기 위해 YOLO profile의 짧은 저신뢰 track 제거를 `DropShortTrackMaxDetections=3`, `ShortTrackMaxConfidence=0.40`으로 올려 실험했다. 이 설정은 6분 3초 대표 gate에서 정상 track까지 제거해 `removedShort=5`, `optimizedFrames=10`, `onlyBaseline=9`, `passed=False`를 만들었다. 따라서 기본 profile에는 넣지 않고 기존 `DropShortTrackMaxDetections=1`, `ShortTrackMaxConfidence=0.18`로 되돌렸다.
+- 되돌린 뒤 6분 3초 gate를 다시 실행했고, FaceONNX baseline `totalMs=40,072ms`, YOLO optimized `totalMs=13,595ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
+- crop/overlay dump 범위 옵션 추가 후 6분 3초 gate를 다시 실행했고, FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
 - `YoloConfidenceThreshold=0.70` 실험은 작은 추가 후보 일부를 줄였지만 큰 얼굴도 FaceONNX 대비 누락되어 `onlyBaseline=5,6,7,10`, `avgBestIou=0.777`, `minBestIou=0.000`, `boxCountDiffFrames=13`, `passed=False`였다. threshold만 올리는 방식은 baseline-diff 기준으로 누락을 만든다. 실제 미탐 여부는 해당 frame overlay 확인이 필요하다.
 - `YoloInputSize=800` 실험은 `totalMs=21,556ms`로 FaceONNX baseline `20,883ms`보다 느려졌고, `avgBestIou=0.783`, `minBestIou=0.553`, `boxCountDiffFrames=37`, `passed=False`였다. 입력 크기 확대는 속도/품질 모두 기본 후보보다 나쁘다.
 - `run-srcTest-smoke.ps1`에 `-YoloUseFaceOnnxRoiRefine` 실험 옵션을 추가했다. YOLO 결과 중 `YoloFaceOnnxRoiMinAreaRatio` 이상 큰 박스만 FaceONNX ROI detector로 재검출한다.
@@ -1880,6 +1897,12 @@ YOLO threshold sweep harness:
 - 판단: 하단 저신뢰 track 필터가 기존 6분 3초 통과 구간을 깨지는 않았다.
 - script 진단 옵션 추가 후에도 6분 3초 gate는 다시 통과했다. 최신 실행은 FaceONNX baseline `totalMs=120,601ms`, YOLO optimized `totalMs=20,367ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`였다. 이 실행의 FaceONNX baseline 시간은 같은 세션의 부하 영향이 커서 속도 비교 기준값으로 고정하지 않는다.
 - coverage 지표 추가 후 기본 비활성 상태의 6분 3초 gate를 다시 실행했다. 최신 실행은 FaceONNX baseline `totalMs=39,714ms`, YOLO optimized `totalMs=13,028ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`였다.
+- 6분 30초 확장 gate는 같은 profile에서 실패했다. FaceONNX baseline 자동 검출 `totalMs=339,661ms`, YOLO 자동 검출 `totalMs=123,243ms`, export는 각각 `43,605ms`와 `43,331ms`였지만, A/B가 `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `avgBaselineCoverage=0.877`, `minBaselineCoverage=0.000`, `boxCountDiffFrames=14`라 추천 후보로 승격하지 않는다.
+- 6분 30초 crop 진단 결과, `onlyBaseline` 대표 frame 상당수는 얼굴이 아닌 금속 문양/문자/직물 영역으로 보였다. 이 확장 gate 실패는 YOLO 미탐만이 아니라 FaceONNX baseline false-positive와 YOLO false-positive가 함께 섞인 baseline-diff 실패로 분류한다.
+- 짧은 저신뢰 YOLO track 제거를 강화하는 실험은 6분 3초 gate를 깨서 폐기했다. 현재 YOLO 기본 profile은 6분 3초 gate 통과값으로 되돌린 상태다.
+- crop/overlay dump 범위 옵션 추가 후에도 6분 3초 YOLO gate는 다시 통과했다. 최신 실행은 FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`였다.
+- Home 자동 설정 저장을 `SettingsVersion=5`로 올리고 YOLOv8-Face/YOLO5Face별 모델 경로, threshold, input, tiling profile을 별도 저장/복원하도록 수정했다. 기존 단일 `Yolo*` 필드는 active profile 호환용으로 유지하고, 기존 version 4 설정은 선택된 YOLO 모델 profile로 마이그레이션한다.
+- profile 저장 분리 후 6분 3초 YOLO gate를 다시 실행했다. FaceONNX baseline `totalMs=40,080ms`, YOLO optimized `totalMs=13,653ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
 
 회귀 검증:
 

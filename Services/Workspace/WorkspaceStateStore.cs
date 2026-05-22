@@ -300,6 +300,26 @@ namespace FaceShield.Services.Workspace
         public int? YoloTileColumns { get; set; }
         public int? YoloTileRows { get; set; }
         public double? YoloTileOverlapRatio { get; set; }
+        public string? YoloV8ModelPath { get; set; }
+        public double? YoloV8ObjectnessThreshold { get; set; }
+        public double? YoloV8ConfidenceThreshold { get; set; }
+        public double? YoloV8NmsThreshold { get; set; }
+        public int? YoloV8InputSize { get; set; }
+        public bool? YoloV8UseTiling { get; set; }
+        public bool? YoloV8TileOnly { get; set; }
+        public int? YoloV8TileColumns { get; set; }
+        public int? YoloV8TileRows { get; set; }
+        public double? YoloV8TileOverlapRatio { get; set; }
+        public string? Yolo5ModelPath { get; set; }
+        public double? Yolo5ObjectnessThreshold { get; set; }
+        public double? Yolo5ConfidenceThreshold { get; set; }
+        public double? Yolo5NmsThreshold { get; set; }
+        public int? Yolo5InputSize { get; set; }
+        public bool? Yolo5UseTiling { get; set; }
+        public bool? Yolo5TileOnly { get; set; }
+        public int? Yolo5TileColumns { get; set; }
+        public int? Yolo5TileRows { get; set; }
+        public double? Yolo5TileOverlapRatio { get; set; }
     }
 
     public sealed class WorkspaceSnapshot
