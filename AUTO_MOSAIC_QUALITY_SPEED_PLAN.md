@@ -1835,6 +1835,7 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 - overlay dump도 앞쪽 일부 frame만 저장하는 한계를 줄이기 위해 `-CompareOverlayMaxFrames`를 추가했다. 기본값은 reason별 `16` frame이다.
 - `-DumpCompareCrops`, `-CompareCropDir`, `-CompareCropPaddingRatio`를 추가했다. 이 옵션은 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`에서 baseline과 IoU `0.35` 미만인 후보만 crop PNG와 `compare-crops.csv`로 저장한다. 목적은 YOLO-only 후보가 실제 얼굴인지 손/물체 오탐인지 더 빠르게 육안 분류하는 것이다.
 - crop dump가 앞쪽 일부 frame만 저장해 후반 `onlyBaseline` 원인 확인에 수동 ffmpeg crop이 필요했던 문제를 줄이기 위해 `-CompareCropMaxOnlyFrames`, `-CompareCropMaxBoxDiffFrames`를 추가했다. 기본값은 각각 `16`이라 6분 30초 gate의 `onlyBaseline=14` 같은 케이스는 한 번에 모두 저장할 수 있다.
+- `scripts/new-yolo-crop-review.ps1`를 추가했다. `compare-crops.csv`를 `crop-review.csv`로 변환하고, `verdict`에 `Face`, `NonFace`, `Unclear`를 입력한 뒤 `-Summarize`로 실제 판정 집계를 낼 수 있게 한다. 집계 기준은 optimized crop이 `Face`면 YOLO recall gain, optimized crop이 `NonFace`면 YOLO false-positive, baseline crop이 `Face`면 YOLO miss, baseline crop이 `NonFace`면 FaceONNX false-positive다. `-QualityGate`를 켜면 `OptimizedMiss`, `OptimizedFalsePositive`, `Unclear`, `Unreviewed`가 허용치 이내인지 검사하고 실패 시 exit code `2`를 반환한다.
 - `[SmokeCompare]`에 `avgBaselineCoverage`와 `minBaselineCoverage`를 추가했다. 기준은 FaceONNX baseline 박스 면적 중 optimized 박스가 덮은 비율이다. IoU가 낮아도 coverage가 높으면 큰 박스/정의 차이에 가깝고, coverage도 낮으면 실제 모자이크 미커버 위험으로 본다.
 - 9분 2초 상세 로그 기준, YOLO5Face 실패는 두 가지가 섞여 있다.
   - `onlyOptimized=4,8,9`와 frame 10~49의 `boxCountDiff`는 화면 상단의 작은 두 번째 얼굴 후보가 FaceONNX보다 먼저 잡히는 현상이다. 예: frame 10의 추가 후보는 `cx=0.576`, `cy=0.052`, `area=0.00424`, `conf=0.455`였다.
@@ -1963,6 +1964,15 @@ YOLO threshold sweep harness:
 - crop/overlay dump 범위 옵션 추가 후에도 6분 3초 YOLO gate는 다시 통과했다. 최신 실행은 FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`였다.
 - Home 자동 설정 저장을 `SettingsVersion=5`로 올리고 YOLOv8-Face/YOLO5Face별 모델 경로, threshold, input, tiling profile을 별도 저장/복원하도록 수정했다. 기존 단일 `Yolo*` 필드는 active profile 호환용으로 유지하고, 기존 version 4 설정은 선택된 YOLO 모델 profile로 마이그레이션한다.
 - profile 저장 분리 후 6분 3초 YOLO gate를 다시 실행했다. FaceONNX baseline `totalMs=40,080ms`, YOLO optimized `totalMs=13,653ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
+- crop review template 생성 검증을 수행했다. 9분 2초 YOLO5Face crop은 `.tmp/yolo-crops/test-0900-yolo5face/crop-review.csv`에 15건으로 생성됐고, 6분 30초 YOLO5Face crop은 `.tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv`에 26건으로 생성됐다. `verdict`가 채워지기 전에는 실제 오탐/미탐 count로 쓰지 않는다.
+- 9분 2초 crop review 결과: `Reviewed=15`, `OptimizedActualFace=15`, `OptimizedFalsePositive=0`, `OptimizedMiss=0`, `BaselineFalsePositive=0`, `Unclear=0`. 이 구간의 YOLO-only/YOLO-extra 작은 상단 후보는 모두 사람 옆얼굴로 보여 YOLO false-positive가 아니라 YOLO recall gain으로 분류한다.
+- 6분 30초 crop review 결과: `Reviewed=26`, `OptimizedActualFace=1`, `OptimizedFalsePositive=10`, `OptimizedMiss=0`, `BaselineFalsePositive=14`, `Unclear=1`. 이 구간의 strict baseline-diff 실패는 YOLO 미탐보다 FaceONNX false-positive와 YOLO false-positive가 같이 섞인 문제로 분류한다. 단, 이 review는 대표 crop 육안 판정이며 전체 영상 GT 라벨 검증은 아니다.
+- crop review quality gate 결과: 9분 2초 crop review는 `passed=True`였고, 6분 30초 crop review는 `passed=False`, `optimizedFalsePositive=10`, `unclear=1`, `exitCode=2`였다. 따라서 YOLO5Face 현재 profile은 9분 2초의 recall 개선 가능성에도 불구하고 6분 30초 실제 crop review 기준 false-positive 때문에 최종 추천 후보로 올리지 않는다.
+- unreviewed gate 검증: 9분 2초 review CSV의 `verdict`를 임시로 모두 비운 파일에 `-QualityGate`를 실행했을 때 `passed=False`, `unreviewed=15`, `exitCode=2`를 확인했다. 따라서 실제 판정이 비어 있는 crop review는 추천 gate로 통과하지 않는다.
+- `scripts/verify-yolo-crop-review.ps1`를 추가했다. 이 스크립트는 현재 YOLO5Face review CSV 기준으로 9분 2초 review가 통과하는지와 6분 30초 review가 false-positive 때문에 실패하는지를 한 번에 검증한다. 최신 실행은 `yolo5face-0900-review-pass exitCode=0`, `yolo5face-0600-30s-review-fail exitCode=2`, `all requested checks passed`였다.
+- `scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` 옵션을 추가했다. 이 옵션은 기존 FaceONNX default verifier를 그대로 실행한 뒤 `verify-yolo-crop-review.ps1`를 호출해 YOLO crop review gate도 함께 확인한다.
+- `scripts/verify-yolo-profile-state.ps1`를 추가했다. 이 스크립트는 소스 invariant로 FaceONNX/YOLO backend 선택, YOLOv8-Face/YOLO5Face 선택지, `SettingsVersion=5`, 모델별 `YoloV8*`/`Yolo5*` 저장 필드, active legacy profile 호환 필드, YOLO filter profile 분리, FaceONNX threshold와 YOLO threshold 분리, `YoloFaceOnnxDetectorOptions`의 threshold/tiling 옵션 존재를 확인한다.
+- `scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` 옵션을 추가했다. 이 옵션은 기존 FaceONNX default verifier를 그대로 실행한 뒤 `verify-yolo-profile-state.ps1`를 호출해 backend/profile 분리 invariant도 함께 확인한다.
 
 현재 마감 상태:
 
@@ -1978,4 +1988,10 @@ YOLO threshold sweep harness:
 - `git diff --check` 통과.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
 - default verifier는 track postprocess policy, 6분 3초 FaceONNX all-frame parallel quality gate, ROI-hit 대표 구간, short auto-tune provider gate를 모두 통과했다.
-- 최신 short auto-tune gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=19`, `totalMs=37,629ms`였다.
+- 최신 short auto-tune gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=19`, `totalMs=38,164ms`였다.
+- crop review workflow 추가 후 PowerShell parser 검증을 통과했다. `new-yolo-crop-review.ps1`로 9분 2초/6분 30초 crop review template 생성과 `-Summarize` 실행을 확인했다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-crop-review.ps1` 실행 성공. 9분 2초 review pass와 6분 30초 review fail을 모두 기대한 결과로 확인했다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` 실행 성공. 기본 FaceONNX verifier와 YOLO crop review wrapper가 모두 통과했다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-profile-state.ps1` 실행 성공.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` 실행 성공. 기본 FaceONNX verifier와 YOLO profile-state invariant가 모두 통과했다.
+- 같은 상태에서 `dotnet build FaceShield.sln`은 성공했고 기존 FFmpeg obsolete warning 7개만 출력됐다.

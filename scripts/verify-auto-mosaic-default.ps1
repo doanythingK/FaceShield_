@@ -9,7 +9,11 @@ param(
     [switch]$RunMediumExport,
     [string]$MediumExportClip = ".tmp/srcTest-smoke/smoke-1200-30s.mp4",
     [switch]$RunLongAutoTune,
-    [string]$LongAutoTuneClip = ".tmp/srcTest-smoke/smoke-1200-30s.mp4"
+    [string]$LongAutoTuneClip = ".tmp/srcTest-smoke/smoke-1200-30s.mp4",
+    [switch]$RunYoloProfileState,
+    [switch]$RunYoloCropReview,
+    [string]$YoloCropReviewPassCsv = ".tmp/yolo-crops/test-0900-yolo5face/crop-review.csv",
+    [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +21,8 @@ $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $trackPostprocessVerify = Join-Path $repo "scripts\verify-face-track-postprocess.ps1"
+$yoloProfileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
+$yoloCropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -71,6 +77,14 @@ if ($RunMediumAuto -and -not (Test-Path (Join-Path $repo $MediumAutoClip))) {
 
 if ($RunMediumExport -and -not (Test-Path (Join-Path $repo $MediumExportClip))) {
     throw "Medium export clip not found: $MediumExportClip"
+}
+
+if ($RunYoloCropReview -and -not (Test-Path $yoloCropReviewVerify)) {
+    throw "YOLO crop review verifier not found: $yoloCropReviewVerify"
+}
+
+if ($RunYoloProfileState -and -not (Test-Path $yoloProfileStateVerify)) {
+    throw "YOLO profile state verifier not found: $yoloProfileStateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -194,6 +208,19 @@ if ($RunLongAutoTune) {
     Assert-Contains "default-autotune-gpu-long" $longTuneOutput "mode=pipe-parallel"
     Assert-Contains "default-autotune-gpu-long" $longTuneOutput "detects=899"
     Assert-Contains "default-autotune-gpu-long" $longTuneOutput "interpolated=0"
+}
+
+if ($RunYoloCropReview) {
+    $yoloReviewOutput = Invoke-ScriptStep "yolo-crop-review" $yoloCropReviewVerify @(
+        "-PassReviewCsv", $YoloCropReviewPassCsv,
+        "-FailReviewCsv", $YoloCropReviewFailCsv
+    )
+    Assert-Contains "yolo-crop-review" $yoloReviewOutput "\[YoloCropReviewVerify\] all requested checks passed"
+}
+
+if ($RunYoloProfileState) {
+    $yoloProfileOutput = Invoke-ScriptStep "yolo-profile-state" $yoloProfileStateVerify @()
+    Assert-Contains "yolo-profile-state" $yoloProfileOutput "\[YoloProfileVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"
