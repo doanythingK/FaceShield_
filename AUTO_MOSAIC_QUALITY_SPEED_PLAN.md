@@ -1522,6 +1522,38 @@ FaceONNX 회귀 재검증:
 - ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
 - auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=50,439ms`로 통과했다.
 
+## 2026-05-22 YOLOv8m 대체 모델 smoke
+
+후보:
+
+- 다운로드 후보: `lindevs/yolov8-face` release `1.0.1`의 `yolov8m-face-lindevs.onnx`.
+- 로컬 경로: `.tmp/models/yolov8m-face-lindevs.onnx`.
+- 모델 파일 크기: 약 `99MB`.
+- `scripts/inspect-onnx-outputs.ps1` 결과 input은 `images=1x3x640x640`, output은 `output0=1x5x8400`이었다. 기존 YOLOv8n과 같은 generic YOLOv8 face decode 경로를 사용한다.
+
+실험 1: YOLOv8m low threshold `objectness=0.05`, `confidence=0.05`, `nms=0.45`
+
+- 대상: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=38,256ms`.
+- YOLOv8m optimized: `optimizedFrames=29`, `totalMs=34,862ms`.
+- A/B 결과: `common=16`, `onlyBaseline=3`, `onlyOptimized=13`, `avgBestIou=0.406`, `minBestIou=0.000`, `boxCountDiffFrames=9`.
+- 판단: low threshold는 YOLO-only frame이 크게 늘고 IoU가 낮아 3초 strict gate를 통과하지 못한다. YOLOv8m은 YOLOv8n보다 큰 모델이지만 이 threshold에서는 기존 FaceONNX 동작과의 차이가 더 크다.
+
+실험 2: YOLOv8m middle threshold `objectness=0.20`, `confidence=0.20`, `nms=0.45`
+
+- 대상: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=38,943ms`.
+- YOLOv8m optimized: `optimizedFrames=11`, `totalMs=36,154ms`.
+- A/B 결과: `common=10`, `onlyBaseline=9`, `onlyOptimized=1`, `avgBestIou=0.674`, `minBestIou=0.000`, `boxCountDiffFrames=1`.
+- 판단: threshold를 올리면 YOLO-only frame은 줄지만 FaceONNX-only frame이 크게 늘어 recall이 부족해진다. 이 모델도 6분 3초 대표 gate 기준 추천 후보가 아니다.
+
+YOLOv8m 현재 판단:
+
+- 같은 adapter에서 모델 로드와 output decode는 가능하다.
+- 그러나 3초 gate에서 low threshold는 과검출/낮은 IoU, middle threshold는 FaceONNX 대비 누락으로 실패했다.
+- 3초 gate를 통과하지 못했으므로 30초 이상 구간과 export smoke로 확장하지 않는다.
+- 실패 축은 decode 불능보다는 모델/threshold curve와 YOLOv8 계열 후보의 post-filter 정합 문제에 가깝다.
+
 ## 2026-05-22 YOLO5Face feature-map decode 및 smoke
 
 구현 상태:
@@ -1771,6 +1803,7 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 
 - `scripts/run-srcTest-smoke.ps1`에 `-DumpCompareDetails`를 추가했다. 이 옵션을 켜면 `[SmokeCompareDetail]` 로그로 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` frame의 baseline/optimized 박스 `x/y/w/h`, 정규화 중심점, 면적 비율, confidence를 출력한다.
 - `[SmokeCompareNote]`를 추가해 `onlyBaseline`/`onlyOptimized`가 실제 정답 라벨의 미탐/오탐이 아니라 detector 간 차이임을 로그에 명시한다.
+- `-DumpCompareOverlays`와 `-CompareOverlayDir`를 추가했다. 이 옵션을 켜면 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` 대표 frame을 PNG로 저장한다. overlay 색상은 FaceONNX baseline이 빨간 박스, optimized detector가 청록 박스다. 이 이미지는 baseline-diff frame을 실제 미탐/오탐으로 판정할 때 사용하는 육안 검토 자료다.
 - 9분 2초 상세 로그 기준, YOLO5Face 실패는 두 가지가 섞여 있다.
   - `onlyOptimized=4,8,9`와 frame 10~49의 `boxCountDiff`는 화면 상단의 작은 두 번째 얼굴 후보가 FaceONNX보다 먼저 잡히는 현상이다. 예: frame 10의 추가 후보는 `cx=0.576`, `cy=0.052`, `area=0.00424`, `conf=0.455`였다.
   - `lowIou`는 큰 얼굴 박스의 정의 차이다. 예: frame 11은 FaceONNX `w=535,h=638,area=0.04115` 대비 YOLO `w=727.8,h=663.9,area=0.05826`으로 YOLO 폭이 더 넓다.
@@ -1780,6 +1813,50 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 - 9분 2초에서 `-YoloUseFaceOnnxRoiRefine -YoloFaceOnnxRoiMinAreaRatio 0.03 -YoloFaceOnnxRoiMaxCandidates 64`는 `candidates=52`, `attempts=50`, `hits=50`, `elapsedMs=22,956`이었다.
 - 이 2단계 실험은 `avgBestIou=0.816`으로 기본 YOLO `0.798`보다 조금 나아졌지만 `minBestIou=0.567`, `boxCountDiffFrames=33`, `passed=False`였고, ROI refine 추가 시간 때문에 속도 이점도 사라진다.
 - 판단: 현재 9분 구간 실패는 threshold, 입력 크기, 단순 큰 박스 축소, 큰 박스 FaceONNX ROI refiner만으로 해결되지 않는다. 남은 후보는 더 세밀한 박스 보정 모델, 작은 상단 얼굴 후보를 실제 얼굴/오탐으로 분류할 verifier, 또는 다른 YOLO face 모델이다.
+
+YOLO threshold sweep harness:
+
+- `scripts/run-yolo-threshold-sweep.ps1`를 추가했다. 기존 `run-srcTest-smoke.ps1`를 반복 호출해 YOLO model/input/objectness/confidence/NMS/tiling 조합별 결과를 CSV와 log로 저장한다.
+- sweep은 후보 수집을 중단하지 않기 위해 smoke quality threshold를 `MinAvgIou=0`, `MinBestIou=0`, `AllowFrameMismatch=true`로 낮춰 실행한다. 따라서 CSV의 `CollectionGatePassed`는 실행 수집 성공에 가까운 값이며 최종 품질 통과로 보지 않는다.
+- 최종 3초 gate 판단용으로 `StrictFrameMatchOk`, `StrictIouOk`, `StrictGatePassed` 컬럼을 별도로 계산한다. 기본 strict 기준은 `onlyBaseline=0`, `onlyOptimized=0`, `boxCountDiffFrames=0`, `avgBestIou>=0.90`, `minBestIou>=0.75`다.
+- 검증 실행: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`, `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45` 1케이스에서 `StrictGatePassed=True`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, YOLO `totalMs=13,621ms`를 확인했다.
+
+9분 2초 YOLO5Face objectness sweep:
+
+- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `confidence=0.18`, `nms=0.45`, `objectness=0.10/0.12/0.18/0.25`, export skip.
+- 결과 CSV: `.tmp/yolo-sweep/yolo5face-0900-objectness.csv`
+
+| objectness | YOLO totalMs | baselineFrames | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | boxCountDiffFrames |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.10 | 11,595ms | 55 | 58 | 0 | 3 | 0.798 | 0.625 | 33 |
+| 0.12 | 9,999ms | 55 | 58 | 0 | 3 | 0.798 | 0.625 | 33 |
+| 0.18 | 9,504ms | 55 | 58 | 0 | 3 | 0.798 | 0.625 | 33 |
+| 0.25 | 9,486ms | 55 | 54 | 2 | 1 | 0.793 | 0.625 | 28 |
+
+- 판단: objectness `0.10~0.18`은 속도만 조금 달라지고 baseline-diff 품질 지표는 사실상 같다. `0.25`는 `boxCountDiffFrames`를 28까지 줄였지만 FaceONNX-only frame이 2개 생겨 strict gate를 통과하지 못한다.
+
+9분 2초 YOLO5Face confidence sweep:
+
+- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `nms=0.45`, `confidence=0.18/0.25/0.35/0.50`, export skip.
+- 결과 CSV: `.tmp/yolo-sweep/yolo5face-0900-confidence.csv`
+
+| confidence | YOLO totalMs | baselineFrames | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | boxCountDiffFrames | removedLower |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.18 | 8,712ms | 55 | 54 | 2 | 1 | 0.793 | 0.625 | 28 | 6 |
+| 0.25 | 8,639ms | 55 | 54 | 2 | 1 | 0.793 | 0.625 | 28 | 4 |
+| 0.35 | 8,940ms | 55 | 53 | 2 | 0 | 0.793 | 0.625 | 29 | 2 |
+| 0.50 | 8,724ms | 55 | 52 | 3 | 0 | 0.791 | 0.625 | 27 | 0 |
+
+- 판단: confidence를 올리면 YOLO-only frame과 `removedLower`는 줄지만 FaceONNX-only frame이 늘거나 유지되고 `minBestIou=0.625`가 그대로 남는다. 즉 confidence 단일 축은 추가 후보를 줄이는 대신 기존 baseline 대비 누락을 만든다.
+- 따라서 9분 2초 실패는 objectness/confidence/NMS 단일 threshold curve로 해결되지 않는다. 현재 실패 원인은 `threshold` 자체보다 `post-filter/track`과 큰 얼굴 box shape 차이, 그리고 YOLO-only 작은 상단 후보의 실제 얼굴 여부 판정 부재에 가깝다. 다음 최적화 우선순위는 후보를 실제 얼굴/비얼굴로 분류하는 verifier, 큰 얼굴 box shape 보정 모델/전략, 또는 다른 YOLO face 모델 비교다.
+
+9분 2초 overlay 검토:
+
+- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, `-DumpCompareOverlays`.
+- 출력 위치: `.tmp/yolo-overlays/test-0900-yolo5face/`
+- `onlyBaseline-frame-000006.png`와 `onlyBaseline-frame-000007.png`의 빨간 박스는 화면 뒤쪽 사람 얼굴로 육안 확인된다. 따라서 이 threshold에서는 단순 baseline-diff가 아니라 실제 얼굴 누락으로 볼 수 있다.
+- `boxCountDiff-frame-000021.png`는 청록 박스가 뒤쪽 얼굴도 잡고 큰 전면 얼굴을 더 넓게 잡는다. 이 frame은 실제 얼굴 추가 검출 가능성과 큰 얼굴 box shape 차이가 같이 섞인 사례다.
+- 이 overlay 결과는 9분 구간 실패가 단순 threshold 문제가 아니라, 실제 뒤쪽 얼굴 보존과 큰 얼굴 박스 정합을 동시에 만족해야 하는 문제임을 보여준다.
 
 보정 후 6분 3초 회귀 gate:
 

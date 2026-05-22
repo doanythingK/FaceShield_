@@ -57,7 +57,9 @@ param(
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
     [switch]$YoloDebugDump,
-    [switch]$DumpCompareDetails
+    [switch]$DumpCompareDetails,
+    [switch]$DumpCompareOverlays,
+    [string]$CompareOverlayDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,6 +108,7 @@ if (-not $SkipTrim) {
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -113,6 +116,8 @@ using Avalonia;
 using FaceShield.Services.Analysis;
 using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 string input = args[0];
 string output = args[1];
@@ -167,6 +172,8 @@ int yoloTileRows = args.Length > 51 ? int.Parse(args[51], System.Globalization.C
 double yoloTileOverlapRatio = args.Length > 52 ? double.Parse(args[52], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
 bool yoloDebugDump = args.Length > 53 && bool.Parse(args[53]);
 bool dumpCompareDetails = args.Length > 54 && bool.Parse(args[54]);
+bool dumpCompareOverlays = args.Length > 55 && bool.Parse(args[55]);
+string compareOverlayDir = args.Length > 56 && args[56] != "__none__" ? args[56] : string.Empty;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -522,12 +529,15 @@ static void DumpDetections(string label, FrameMaskProvider maskProvider)
 }
 
 static bool CompareCases(
+    string input,
     (string Label, FrameMaskProvider MaskProvider) baseline,
     (string Label, FrameMaskProvider MaskProvider) optimized,
     double minAvgIou,
     double minBestIou,
     bool allowFrameMismatch,
-    bool dumpCompareDetails)
+    bool dumpCompareDetails,
+    bool dumpCompareOverlays,
+    string compareOverlayDir)
 {
     var baselineEntries = baseline.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
     var optimizedEntries = optimized.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
@@ -581,6 +591,10 @@ static bool CompareCases(
         DumpCompareDetails("boxCountDiff", boxCountDiffFrameList, baselineEntries, optimizedEntries);
         DumpCompareDetails("lowIou", lowIouFrames, baselineEntries, optimizedEntries);
     }
+    if (dumpCompareOverlays && !string.IsNullOrWhiteSpace(compareOverlayDir))
+    {
+        DumpCompareOverlays(input, compareOverlayDir, onlyBaseline, onlyOptimized, boxCountDiffFrameList, lowIouFrames, baselineEntries, optimizedEntries);
+    }
 
     bool frameMatchOk = allowFrameMismatch ||
         (onlyBaseline.Length == 0 && onlyOptimized.Length == 0 && boxCountDiffFrames == 0);
@@ -589,6 +603,126 @@ static bool CompareCases(
     Console.WriteLine(
         $"[SmokeQualityGate] passed={passed}, frameMatchOk={frameMatchOk}, iouOk={iouOk}, minAvgIou={minAvgIou:F3}, minBestIou={minBestIou:F3}, allowFrameMismatch={allowFrameMismatch}");
     return passed;
+}
+
+static void DumpCompareOverlays(
+    string input,
+    string outputDir,
+    IReadOnlyList<int> onlyBaseline,
+    IReadOnlyList<int> onlyOptimized,
+    IReadOnlyList<int> boxCountDiff,
+    IReadOnlyList<int> lowIou,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> baselineEntries,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries)
+{
+    Directory.CreateDirectory(outputDir);
+    var items = new List<(string Reason, int Frame)>();
+    items.AddRange(onlyBaseline.Take(8).Select(frame => ("onlyBaseline", frame)));
+    items.AddRange(onlyOptimized.Take(8).Select(frame => ("onlyOptimized", frame)));
+    items.AddRange(boxCountDiff.Take(8).Select(frame => ("boxCountDiff", frame)));
+    items.AddRange(lowIou.Take(8).Select(frame => ("lowIou", frame)));
+    if (items.Count == 0)
+        return;
+
+    var ordered = items.OrderBy(x => x.Frame).ThenBy(x => x.Reason).ToArray();
+    using var extractor = new FfFrameExtractor(input, enableHardware: false);
+    extractor.StartSequentialRead(Math.Max(0, ordered[0].Frame));
+    int next = 0;
+    int maxFrame = ordered[^1].Frame;
+    while (next < ordered.Length &&
+           extractor.TryGetNextFrameRaw(CancellationToken.None, requireBgra: true, out var frame, out int frameIndex))
+    {
+        if (frameIndex > maxFrame)
+            break;
+
+        while (next < ordered.Length && ordered[next].Frame < frameIndex)
+        {
+            Console.WriteLine($"[SmokeCompareOverlay] reason={ordered[next].Reason}, frame={ordered[next].Frame}, path=decode-skipped");
+            next++;
+        }
+
+        while (next < ordered.Length && ordered[next].Frame == frameIndex)
+        {
+            var item = ordered[next];
+            using var image = ConvertToRgbImage(frame);
+            if (baselineEntries.TryGetValue(item.Frame, out var baseline))
+                DrawFaces(image, baseline.Faces, new Rgb24(255, 64, 64));
+            if (optimizedEntries.TryGetValue(item.Frame, out var optimized))
+                DrawFaces(image, optimized.Faces, new Rgb24(64, 220, 255));
+
+            string path = Path.Combine(outputDir, $"{item.Reason}-frame-{item.Frame:D6}.png");
+            image.SaveAsPng(path);
+            Console.WriteLine($"[SmokeCompareOverlay] reason={item.Reason}, frame={item.Frame}, path={path}");
+            next++;
+        }
+    }
+}
+
+static Image<Rgb24> ConvertToRgbImage(FfFrameExtractor.BgraFrame frame)
+{
+    int width = frame.Width;
+    int height = frame.Height;
+    var image = new Image<Rgb24>(width, height);
+    unsafe
+    {
+        byte* src = (byte*)frame.Data;
+        int stride = frame.Stride;
+        image.ProcessPixelRows(rows =>
+        {
+            for (int y = 0; y < height; y++)
+            {
+                var row = rows.GetRowSpan(y);
+                byte* srcRow = src + y * stride;
+                for (int x = 0; x < width; x++)
+                {
+                    byte b = srcRow[x * 4];
+                    byte g = srcRow[x * 4 + 1];
+                    byte r = srcRow[x * 4 + 2];
+                    row[x] = new Rgb24(r, g, b);
+                }
+            }
+        });
+    }
+
+    return image;
+}
+
+static void DrawFaces(Image<Rgb24> image, IReadOnlyList<Rect> faces, Rgb24 color)
+{
+    foreach (var face in faces)
+        DrawRect(image, face, color, 6);
+}
+
+static void DrawRect(Image<Rgb24> image, Rect rect, Rgb24 color, int thickness)
+{
+    int x1 = Math.Clamp((int)Math.Round(rect.X), 0, image.Width - 1);
+    int y1 = Math.Clamp((int)Math.Round(rect.Y), 0, image.Height - 1);
+    int x2 = Math.Clamp((int)Math.Round(rect.Right), 0, image.Width - 1);
+    int y2 = Math.Clamp((int)Math.Round(rect.Bottom), 0, image.Height - 1);
+    if (x2 <= x1 || y2 <= y1)
+        return;
+
+    image.ProcessPixelRows(rows =>
+    {
+        for (int t = 0; t < thickness; t++)
+        {
+            int top = Math.Clamp(y1 + t, 0, image.Height - 1);
+            int bottom = Math.Clamp(y2 - t, 0, image.Height - 1);
+            for (int x = x1; x <= x2; x++)
+            {
+                rows.GetRowSpan(top)[x] = color;
+                rows.GetRowSpan(bottom)[x] = color;
+            }
+
+            int left = Math.Clamp(x1 + t, 0, image.Width - 1);
+            int right = Math.Clamp(x2 - t, 0, image.Width - 1);
+            for (int y = y1; y <= y2; y++)
+            {
+                rows.GetRowSpan(y)[left] = color;
+                rows.GetRowSpan(y)[right] = color;
+            }
+        }
+    });
 }
 
 static void DumpCompareDetails(
@@ -754,7 +888,7 @@ var optimized = await RunCaseAsync(
     yoloTileOverlapRatio,
     yoloDebugDump);
 
-if (baseline.HasValue && !CompareCases(baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails))
+if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir))
     Environment.Exit(2);
 '@ | Set-Content -Encoding UTF8 $program
 
@@ -808,6 +942,14 @@ $yoloTileRowsArg = $YoloTileRows.ToString([System.Globalization.CultureInfo]::In
 $yoloTileOverlapRatioArg = $YoloTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloDebugDumpArg = $YoloDebugDump.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareDetailsArg = $DumpCompareDetails.IsPresent.ToString().ToLowerInvariant()
+$dumpCompareOverlaysArg = $DumpCompareOverlays.IsPresent.ToString().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($CompareOverlayDir)) {
+    $compareOverlayDirArg = Join-Path $work ("compare-overlays-" + $clipStem)
+} elseif ([IO.Path]::IsPathRooted($CompareOverlayDir)) {
+    $compareOverlayDirArg = $CompareOverlayDir
+} else {
+    $compareOverlayDirArg = Join-Path $repo $CompareOverlayDir
+}
 dotnet run --project $project -- `
     $clip `
     $output `
@@ -863,7 +1005,9 @@ dotnet run --project $project -- `
     $yoloTileRowsArg `
     $yoloTileOverlapRatioArg `
     $yoloDebugDumpArg `
-    $dumpCompareDetailsArg
+    $dumpCompareDetailsArg `
+    $dumpCompareOverlaysArg `
+    $compareOverlayDirArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
