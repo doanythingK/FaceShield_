@@ -23,6 +23,7 @@ namespace FaceShield.Services.FaceDetection
                 FaceDetectorBackend.FaceOnnx => new FaceOnnxDetector(_options.FaceOnnxOptions),
                 FaceDetectorBackend.ScrfdOnnx => new ScrfdOnnxDetector(_options.ScrfdOnnxOptions),
                 FaceDetectorBackend.YuNetOnnx => new YuNetOnnxDetector(_options.YuNetOnnxOptions),
+                FaceDetectorBackend.YoloFaceOnnx => new YoloFaceOnnxDetector(_options.YoloFaceOnnxOptions),
                 _ => throw new NotSupportedException($"Unsupported face detector backend: {_options.Backend}")
             };
         }

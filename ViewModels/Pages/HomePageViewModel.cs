@@ -30,7 +30,10 @@ namespace FaceShield.ViewModels.Pages
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
         private const int DefaultAutoDetectEveryNFrames = 1;
-        private const int CurrentAutoSettingsVersion = 3;
+        private const int CurrentAutoSettingsVersion = 4;
+        private const double DefaultYolo5FaceObjectnessThreshold = 0.12;
+        private const double DefaultYolo5FaceConfidenceThreshold = 0.18;
+        private const double DefaultYoloNmsThreshold = 0.45;
         private static readonly bool DefaultAutoUseGpu =
             RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -159,6 +162,78 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private OrtThreadOption? selectedOrtThreadOption;
 
+        public sealed class AutoDetectorBackendOption
+        {
+            public string Label { get; }
+            public FaceDetectorBackend Backend { get; }
+
+            public AutoDetectorBackendOption(string label, FaceDetectorBackend backend)
+            {
+                Label = label;
+                Backend = backend;
+            }
+        }
+
+        public IReadOnlyList<AutoDetectorBackendOption> AutoDetectorBackendOptions { get; } = new[]
+        {
+            new AutoDetectorBackendOption("FaceONNX", FaceDetectorBackend.FaceOnnx),
+            new AutoDetectorBackendOption("YOLO Face ONNX", FaceDetectorBackend.YoloFaceOnnx)
+        };
+
+        [ObservableProperty]
+        private AutoDetectorBackendOption? selectedAutoDetectorBackendOption;
+
+        public sealed class YoloModelTypeOption
+        {
+            public string Label { get; }
+            public YoloFaceModelType ModelType { get; }
+
+            public YoloModelTypeOption(string label, YoloFaceModelType modelType)
+            {
+                Label = label;
+                ModelType = modelType;
+            }
+        }
+
+        public IReadOnlyList<YoloModelTypeOption> YoloModelTypeOptions { get; } = new[]
+        {
+            new YoloModelTypeOption("YOLOv8-Face", YoloFaceModelType.YoloV8Face),
+            new YoloModelTypeOption("YOLO5Face", YoloFaceModelType.Yolo5Face)
+        };
+
+        [ObservableProperty]
+        private YoloModelTypeOption? selectedYoloModelTypeOption;
+
+        [ObservableProperty]
+        private string? autoYoloModelPath;
+
+        [ObservableProperty]
+        private double autoYoloObjectnessThreshold = DefaultYolo5FaceObjectnessThreshold;
+
+        [ObservableProperty]
+        private double autoYoloConfidenceThreshold = DefaultYolo5FaceConfidenceThreshold;
+
+        [ObservableProperty]
+        private double autoYoloNmsThreshold = DefaultYoloNmsThreshold;
+
+        [ObservableProperty]
+        private int autoYoloInputSize = 640;
+
+        [ObservableProperty]
+        private bool autoYoloUseTiling;
+
+        [ObservableProperty]
+        private bool autoYoloTileOnly;
+
+        [ObservableProperty]
+        private int autoYoloTileColumns = 2;
+
+        [ObservableProperty]
+        private int autoYoloTileRows = 2;
+
+        [ObservableProperty]
+        private double autoYoloTileOverlapRatio = 0.15;
+
         public IReadOnlyList<int> DetectEveryOptions { get; } = new[] { 1, 2, 3, 5 };
 
         [ObservableProperty]
@@ -236,6 +311,8 @@ namespace FaceShield.ViewModels.Pages
 
             OrtThreadOptions = BuildOrtThreadOptions();
             selectedOrtThreadOption = OrtThreadOptions[0];
+            selectedAutoDetectorBackendOption = AutoDetectorBackendOptions[0];
+            selectedYoloModelTypeOption = YoloModelTypeOptions[1];
             selectedResolutionOption = ResolutionOptions[0];
             var defaults = FaceOnnxDetector.GetDefaultThresholds();
             autoDetectionThreshold = defaults.Detection;
@@ -266,6 +343,8 @@ namespace FaceShield.ViewModels.Pages
                     : (WorkspaceLoadingMessage ?? "로딩 중...");
         public bool IsTrackingOptionsEnabled => AutoTrackingEnabled;
         public bool IsAutoStatusVisible => IsAutoRunning;
+        public bool IsYoloDetectorSelected => SelectedAutoDetectorBackendOption?.Backend == FaceDetectorBackend.YoloFaceOnnx;
+        public bool IsFaceOnnxDetectorSelected => !IsYoloDetectorSelected;
         public int MinBlurRadius => MinBlurRadiusValue;
         public int MaxBlurRadius => MaxBlurRadiusValue;
 
@@ -376,7 +455,7 @@ namespace FaceShield.ViewModels.Pages
             if (!IsAutoRunning || _activeAutoWorkspace == null)
                 return;
 
-            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _activeAutoWorkspace.UpdateDetectorFactoryOptions(BuildDetectorFactoryOptions());
             _autoRestartRequested = true;
             AutoStatusText = "가속 옵션 변경 감지 · 재시작 준비 중...";
             _autoCts?.Cancel();
@@ -388,7 +467,7 @@ namespace FaceShield.ViewModels.Pages
             if (!IsAutoRunning || _activeAutoWorkspace == null)
                 return;
 
-            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _activeAutoWorkspace.UpdateDetectorFactoryOptions(BuildDetectorFactoryOptions());
             _autoRestartRequested = true;
             AutoStatusText = "GPU 옵션 변경 감지 · 재시작 준비 중...";
             _autoCts?.Cancel();
@@ -462,7 +541,7 @@ namespace FaceShield.ViewModels.Pages
             if (!IsAutoRunning || _activeAutoWorkspace == null)
                 return;
 
-            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _activeAutoWorkspace.UpdateDetectorFactoryOptions(BuildDetectorFactoryOptions());
             _autoRestartRequested = true;
             AutoStatusText = "가속 옵션 변경 감지 · 재시작 준비 중...";
             _autoCts?.Cancel();
@@ -471,6 +550,96 @@ namespace FaceShield.ViewModels.Pages
         partial void OnAutoExportAfterChanged(bool value)
         {
             PersistAutoSettings();
+        }
+
+        partial void OnSelectedAutoDetectorBackendOptionChanged(AutoDetectorBackendOption? value)
+        {
+            PersistAutoSettings();
+            OnPropertyChanged(nameof(IsYoloDetectorSelected));
+            OnPropertyChanged(nameof(IsFaceOnnxDetectorSelected));
+            RequestAutoRestartForDetectorFactoryOptions("검출 모델 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnSelectedYoloModelTypeOptionChanged(YoloModelTypeOption? value)
+        {
+            ApplyYoloProfileDefaults(value?.ModelType);
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 모델 종류 변경 감지 · 재시작 준비 중...");
+        }
+
+        private void ApplyYoloProfileDefaults(YoloFaceModelType? modelType)
+        {
+            if (modelType == YoloFaceModelType.Yolo5Face)
+            {
+                AutoYoloObjectnessThreshold = DefaultYolo5FaceObjectnessThreshold;
+                AutoYoloConfidenceThreshold = DefaultYolo5FaceConfidenceThreshold;
+                AutoYoloNmsThreshold = DefaultYoloNmsThreshold;
+                return;
+            }
+
+            AutoYoloObjectnessThreshold = 0.25;
+            AutoYoloConfidenceThreshold = 0.35;
+            AutoYoloNmsThreshold = DefaultYoloNmsThreshold;
+        }
+
+        partial void OnAutoYoloModelPathChanged(string? value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 모델 경로 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloObjectnessThresholdChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO objectness 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloConfidenceThresholdChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO confidence 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloNmsThresholdChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO NMS 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloInputSizeChanged(int value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 입력 크기 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloUseTilingChanged(bool value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloTileOnlyChanged(bool value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloTileColumnsChanged(int value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloTileRowsChanged(int value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnAutoYoloTileOverlapRatioChanged(double value)
+        {
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions("YOLO 타일 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         private void RequestAutoRestartForOptions(string statusText)
@@ -489,7 +658,19 @@ namespace FaceShield.ViewModels.Pages
             if (!IsAutoRunning || _activeAutoWorkspace == null)
                 return;
 
-            _activeAutoWorkspace.UpdateDetectorOptions(BuildDetectorOptions());
+            _activeAutoWorkspace.UpdateDetectorFactoryOptions(BuildDetectorFactoryOptions());
+            _autoRestartRequested = true;
+            AutoStatusText = statusText;
+            _autoCts?.Cancel();
+        }
+
+        private void RequestAutoRestartForDetectorFactoryOptions(string statusText)
+        {
+            if (!IsAutoRunning || _activeAutoWorkspace == null)
+                return;
+
+            _activeAutoWorkspace.UpdateAutoOptions(BuildAutoOptions());
+            _activeAutoWorkspace.UpdateDetectorFactoryOptions(BuildDetectorFactoryOptions());
             _autoRestartRequested = true;
             AutoStatusText = statusText;
             _autoCts?.Cancel();
@@ -532,6 +713,30 @@ namespace FaceShield.ViewModels.Pages
                 AutoNmsThreshold = saved.NmsThreshold.Value;
             if (saved.BlurRadius.HasValue)
                 BlurRadius = Math.Clamp(saved.BlurRadius.Value, MinBlurRadiusValue, MaxBlurRadiusValue);
+            var backend = AutoDetectorBackendOptions.FirstOrDefault(o => (int)o.Backend == saved.DetectorBackend);
+            if (backend != null)
+                SelectedAutoDetectorBackendOption = backend;
+            var yoloType = YoloModelTypeOptions.FirstOrDefault(o => (int)o.ModelType == saved.YoloModelType);
+            if (yoloType != null)
+                SelectedYoloModelTypeOption = yoloType;
+            if (!string.IsNullOrWhiteSpace(saved.YoloModelPath))
+                AutoYoloModelPath = saved.YoloModelPath;
+            if (saved.YoloObjectnessThreshold.HasValue)
+                AutoYoloObjectnessThreshold = saved.YoloObjectnessThreshold.Value;
+            if (saved.YoloConfidenceThreshold.HasValue)
+                AutoYoloConfidenceThreshold = saved.YoloConfidenceThreshold.Value;
+            if (saved.YoloNmsThreshold.HasValue)
+                AutoYoloNmsThreshold = saved.YoloNmsThreshold.Value;
+            if (saved.YoloInputSize.HasValue)
+                AutoYoloInputSize = Math.Clamp(saved.YoloInputSize.Value, 64, 2048);
+            AutoYoloUseTiling = saved.YoloUseTiling;
+            AutoYoloTileOnly = saved.YoloTileOnly;
+            if (saved.YoloTileColumns.HasValue)
+                AutoYoloTileColumns = Math.Clamp(saved.YoloTileColumns.Value, 1, 8);
+            if (saved.YoloTileRows.HasValue)
+                AutoYoloTileRows = Math.Clamp(saved.YoloTileRows.Value, 1, 8);
+            if (saved.YoloTileOverlapRatio.HasValue)
+                AutoYoloTileOverlapRatio = Math.Clamp(saved.YoloTileOverlapRatio.Value, 0.0, 0.45);
 
             if (isLegacyAutoSettings)
                 PersistAutoSettings();
@@ -554,7 +759,19 @@ namespace FaceShield.ViewModels.Pages
                 DetectionThreshold = AutoDetectionThreshold,
                 ConfidenceThreshold = AutoConfidenceThreshold,
                 NmsThreshold = AutoNmsThreshold,
-                BlurRadius = BlurRadius
+                BlurRadius = BlurRadius,
+                DetectorBackend = (int)(SelectedAutoDetectorBackendOption?.Backend ?? FaceDetectorBackend.FaceOnnx),
+                YoloModelType = (int)(SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.YoloV8Face),
+                YoloModelPath = AutoYoloModelPath,
+                YoloObjectnessThreshold = AutoYoloObjectnessThreshold,
+                YoloConfidenceThreshold = AutoYoloConfidenceThreshold,
+                YoloNmsThreshold = AutoYoloNmsThreshold,
+                YoloInputSize = AutoYoloInputSize,
+                YoloUseTiling = AutoYoloUseTiling,
+                YoloTileOnly = AutoYoloTileOnly,
+                YoloTileColumns = AutoYoloTileColumns,
+                YoloTileRows = AutoYoloTileRows,
+                YoloTileOverlapRatio = AutoYoloTileOverlapRatio
             });
         }
 
@@ -694,6 +911,32 @@ namespace FaceShield.ViewModels.Pages
             TouchRecent(localPath);
         }
 
+        public async Task PickYoloModelAsync(IStorageProvider storageProvider)
+        {
+            var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "YOLO ONNX 모델 선택",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("ONNX")
+                    {
+                        Patterns = ["*.onnx"]
+                    }
+                ]
+            });
+
+            var file = files.Count > 0 ? files[0] : null;
+            if (file is null)
+                return;
+
+            var localPath = file.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(localPath))
+                return;
+
+            AutoYoloModelPath = localPath;
+        }
+
         // 기존과 호환: "워크스페이스 열기"는 Manual로 동작
         [RelayCommand]
         private async Task OpenWorkspace()
@@ -718,7 +961,7 @@ namespace FaceShield.ViewModels.Pages
                 var progress = new Progress<int>(p => WorkspaceLoadingProgress = p);
 
                 var autoOptions = BuildAutoOptions();
-                var detectorOptions = BuildDetectorOptions();
+                var detectorFactoryOptions = BuildDetectorFactoryOptions();
                 TouchRecent(SelectedVideoPath);
 
                 vm = await Task.Run(
@@ -726,7 +969,7 @@ namespace FaceShield.ViewModels.Pages
                         WorkspaceMode.Manual,
                         progress,
                         autoOptions,
-                        detectorOptions));
+                        detectorFactoryOptions));
             }
             finally
             {
@@ -744,7 +987,7 @@ namespace FaceShield.ViewModels.Pages
 
             try
             {
-                FaceOnnxDetector.EnsureRuntimeAvailable();
+                EnsureSelectedDetectorReady();
             }
             catch (Exception ex)
             {
@@ -761,7 +1004,7 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 var autoOptions = BuildAutoOptions();
-                var detectorOptions = BuildDetectorOptions();
+                var detectorFactoryOptions = BuildDetectorFactoryOptions();
                 TouchRecent(SelectedVideoPath);
 
                 vm = await Task.Run(
@@ -769,7 +1012,7 @@ namespace FaceShield.ViewModels.Pages
                         WorkspaceMode.Auto,
                         loadProgress: null,
                         autoOptions,
-                        detectorOptions));
+                        detectorFactoryOptions));
             }
             finally
             {
@@ -1130,8 +1373,39 @@ namespace FaceShield.ViewModels.Pages
                 DownscaleQuality = quality,
                 UseTracking = useTracking,
                 DetectEveryNFrames = detectEvery,
-                ParallelDetectorCount = Math.Max(1, SelectedParallelSessionCount)
+                ParallelDetectorCount = Math.Max(1, SelectedParallelSessionCount),
+                FilterProfile = IsYoloDetectorSelected ? FaceFilterProfile.Yolo : FaceFilterProfile.FaceOnnx
             };
+        }
+
+        private FaceDetectorFactoryOptions BuildDetectorFactoryOptions()
+        {
+            var faceOnnxOptions = BuildDetectorOptions();
+            if (SelectedAutoDetectorBackendOption?.Backend == FaceDetectorBackend.YoloFaceOnnx)
+            {
+                var yoloModelType = SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.YoloV8Face;
+                return FaceDetectorFactoryOptions.ForYoloFaceOnnx(new YoloFaceOnnxDetectorOptions
+                {
+                    ModelPath = AutoYoloModelPath,
+                    ModelType = yoloModelType,
+                    UseOrtOptimization = AutoUseOrtOptimization,
+                    UseGpu = AutoUseGpu,
+                    IntraOpNumThreads = SelectedOrtThreadOption?.Threads,
+                    InterOpNumThreads = null,
+                    ObjectnessThreshold = (float)Math.Clamp(AutoYoloObjectnessThreshold, 0.01, 0.99),
+                    ConfidenceThreshold = (float)Math.Clamp(AutoYoloConfidenceThreshold, 0.01, 0.99),
+                    NmsThreshold = (float)Math.Clamp(AutoYoloNmsThreshold, 0.01, 0.99),
+                    InputWidth = AutoYoloInputSize > 0 ? AutoYoloInputSize : null,
+                    InputHeight = AutoYoloInputSize > 0 ? AutoYoloInputSize : null,
+                    UseTiling = AutoYoloUseTiling,
+                    IncludeFullFrameWhenTiling = !AutoYoloTileOnly,
+                    TileColumns = Math.Clamp(AutoYoloTileColumns, 1, 8),
+                    TileRows = Math.Clamp(AutoYoloTileRows, 1, 8),
+                    TileOverlapRatio = Math.Clamp(AutoYoloTileOverlapRatio, 0.0, 0.45)
+                });
+            }
+
+            return FaceDetectorFactoryOptions.ForOnnx(faceOnnxOptions);
         }
 
         private FaceOnnxDetectorOptions BuildDetectorOptions()
@@ -1241,11 +1515,25 @@ namespace FaceShield.ViewModels.Pages
             return $"{ex.Message}{hint}";
         }
 
+        private void EnsureSelectedDetectorReady()
+        {
+            if (SelectedAutoDetectorBackendOption?.Backend == FaceDetectorBackend.YoloFaceOnnx)
+            {
+                if (string.IsNullOrWhiteSpace(AutoYoloModelPath))
+                    throw new InvalidOperationException("YOLO ONNX 모델 파일을 선택해야 합니다.");
+                if (!File.Exists(AutoYoloModelPath))
+                    throw new FileNotFoundException("YOLO ONNX 모델 파일을 찾지 못했습니다.", AutoYoloModelPath);
+                return;
+            }
+
+            FaceOnnxDetector.EnsureRuntimeAvailable();
+        }
+
         private WorkspaceViewModel GetOrCreateWorkspace(
             WorkspaceMode mode,
             IProgress<int>? loadProgress,
             AutoMaskOptions autoOptions,
-            FaceOnnxDetectorOptions detectorOptions)
+            FaceDetectorFactoryOptions detectorFactoryOptions)
         {
             if (string.IsNullOrWhiteSpace(SelectedVideoPath))
                 throw new InvalidOperationException("SelectedVideoPath is empty.");
@@ -1254,7 +1542,7 @@ namespace FaceShield.ViewModels.Pages
             if (_workspaceCache.TryGetValue(key, out var cached))
             {
                 cached.UpdateAutoOptions(autoOptions);
-                cached.UpdateDetectorOptions(detectorOptions);
+                cached.UpdateDetectorFactoryOptions(detectorFactoryOptions);
                 cached.ToolPanel.BlurRadius = BlurRadius;
                 return cached;
             }
@@ -1265,8 +1553,9 @@ namespace FaceShield.ViewModels.Pages
                 loadProgress,
                 _onBackHome,
                 autoOptions,
-                detectorOptions,
+                detectorFactoryOptions.FaceOnnxOptions ?? new FaceOnnxDetectorOptions(),
                 _stateStore,
+                detectorFactoryOptions: detectorFactoryOptions,
                 deferSessionInit: mode == WorkspaceMode.Auto);
 
             vm.RestoreFromStore(_stateStore);

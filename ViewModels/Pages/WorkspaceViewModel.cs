@@ -399,7 +399,9 @@ namespace FaceShield.ViewModels.Pages
                     UseTracking = _autoOptions.UseTracking,
                     DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
                     ParallelDetectorCount = tunedSessions,
-                    RunId = runId
+                    RunId = runId,
+                    FilterProfile = _autoOptions.FilterProfile,
+                    DumpDetectionDiagnostics = _autoOptions.DumpDetectionDiagnostics
                 };
 
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
@@ -641,24 +643,15 @@ namespace FaceShield.ViewModels.Pages
             var result = new FaceTrackInterpolator().Apply(
                 _maskProvider,
                 FrameList.TotalFrames,
-                new FaceTrackPostProcessOptions
-                {
-                    MaxTrackGap = SuspiciousNoFaceMaxGap,
-                    MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                    WeakConfidence = TemporalConfidenceWeak,
-                    StrongConfidence = TemporalConfidenceStrong,
-                    ShortTrackMaxConfidence = TemporalConfidenceStrong,
-                    SmallTrackMaxAreaRatio = 0.00075,
-                    MinTrackIou = TemporalHoleFillIouMin,
-                    MaxCenterShiftRatio = TemporalMaxCenterShiftRatio,
-                    MaxAreaChangeRatio = TemporalMaxAreaChangeRatio,
-                    DuplicateIou = TemporalDuplicateIouMin
-                });
+                BuildTrackPostProcessOptions(_autoOptions.FilterProfile));
 
-            if (result.FilledGapFaces > 0 || result.FilledLostFaces > 0 || result.RemovedShortFaces > 0)
+            if (result.FilledGapFaces > 0 ||
+                result.FilledLostFaces > 0 ||
+                result.RemovedShortFaces > 0 ||
+                result.RemovedLowerFrameFaces > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} rewritten={result.RewrittenFrames}");
+                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} removedLower={result.RemovedLowerFrameFaces} rewritten={result.RewrittenFrames}");
             }
 
             return result;
@@ -690,6 +683,66 @@ namespace FaceShield.ViewModels.Pages
                 System.Diagnostics.Debug.WriteLine(
                     $"[FaceTrackRoiRefine] attempts={refine.Attempts} hits={refine.Hits} seeks={refine.SeekCount} decoded={refine.DecodedFrames} elapsedMs={refine.ElapsedMs}");
             }
+        }
+
+        private static FaceTrackPostProcessOptions BuildTrackPostProcessOptions(FaceFilterProfile profile)
+        {
+            if (profile == FaceFilterProfile.Yolo)
+            {
+                return new FaceTrackPostProcessOptions
+                {
+                    MaxTrackGap = SuspiciousNoFaceMaxGap,
+                    MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
+                    MaxLostFillFrames = 3,
+                    WeakConfidence = 0.38f,
+                    StrongConfidence = 0.58f,
+                    ShortTrackMaxConfidence = 0.18f,
+                    SmallTrackMaxAreaRatio = 0.00070,
+                    MinTrackIou = 0.08,
+                    MaxCenterShiftRatio = 0.72,
+                    MaxAreaChangeRatio = 4.0,
+                    DuplicateIou = TemporalDuplicateIouMin,
+                    UnstableTailMaxConfidence = 0.40f,
+                    UnstableTailMinStableDetections = 3,
+                    UnstableTailMinIou = 0.45,
+                    UnstableTailMaxAreaChangeRatio = 1.8,
+                    LowerFrameTrackMaxConfidence = 0.50f,
+                    LowerFrameTrackMinCenterYRatio = 0.58,
+                    LowerFrameTrackMinAreaRatio = 0.015,
+                    LowerFrameTrackMaxAreaRatio = 0.045
+                };
+            }
+
+            if (profile == FaceFilterProfile.Scrfd)
+            {
+                return new FaceTrackPostProcessOptions
+                {
+                    MaxTrackGap = SuspiciousNoFaceMaxGap,
+                    MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
+                    WeakConfidence = 0.35f,
+                    StrongConfidence = 0.55f,
+                    ShortTrackMaxConfidence = 0.55f,
+                    SmallTrackMaxAreaRatio = 0.00075,
+                    MinTrackIou = 0.08,
+                    MaxCenterShiftRatio = 0.75,
+                    MaxAreaChangeRatio = 4.0,
+                    DuplicateIou = TemporalDuplicateIouMin
+                };
+            }
+
+            return new FaceTrackPostProcessOptions
+            {
+                MaxTrackGap = SuspiciousNoFaceMaxGap,
+                MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
+                WeakConfidence = TemporalConfidenceWeak,
+                StrongConfidence = TemporalConfidenceStrong,
+                ShortTrackMaxConfidence = TemporalConfidenceStrong,
+                SmallTrackMaxAreaRatio = 0.00075,
+                MinTrackIou = TemporalHoleFillIouMin,
+                MaxCenterShiftRatio = TemporalMaxCenterShiftRatio,
+                MaxAreaChangeRatio = TemporalMaxAreaChangeRatio,
+                DuplicateIou = TemporalDuplicateIouMin
+            };
         }
 
         private static FaceOnnxDetectorOptions CreateRoiRefinerDetectorOptions(FaceOnnxDetectorOptions source)

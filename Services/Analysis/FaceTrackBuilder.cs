@@ -150,5 +150,13 @@ namespace FaceShield.Services.Analysis
         public double MaxCenterShiftRatio { get; init; } = 0.62;
         public double MaxAreaChangeRatio { get; init; } = 3.2;
         public double DuplicateIou { get; init; } = 0.35;
+        public float UnstableTailMaxConfidence { get; init; } = 0.0f;
+        public int UnstableTailMinStableDetections { get; init; } = 3;
+        public double UnstableTailMinIou { get; init; } = 0.45;
+        public double UnstableTailMaxAreaChangeRatio { get; init; } = 1.8;
+        public float LowerFrameTrackMaxConfidence { get; init; } = 0.0f;
+        public double LowerFrameTrackMinCenterYRatio { get; init; } = 0.58;
+        public double LowerFrameTrackMinAreaRatio { get; init; } = 0.015;
+        public double LowerFrameTrackMaxAreaRatio { get; init; } = 0.045;
     }
 }

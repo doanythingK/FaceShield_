@@ -9,7 +9,8 @@ namespace FaceShield.Services.Analysis
     public enum FaceFilterProfile
     {
         FaceOnnx,
-        Scrfd
+        Scrfd,
+        Yolo
     }
 
     public sealed class AutoMaskOptions

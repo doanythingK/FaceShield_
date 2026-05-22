@@ -2146,6 +2146,17 @@ namespace FaceShield.Services.Analysis
                     UseStatsFilter: false);
             }
 
+            if (profile == FaceFilterProfile.Yolo)
+            {
+                return new FaceFilterSettings(
+                    MinFaceAreaRatio,
+                    MinSmallFaceAreaRatio * 0.70,
+                    MinFaceAspectRatio,
+                    2.7,
+                    0.30f,
+                    UseStatsFilter: false);
+            }
+
             return new FaceFilterSettings(
                 MinFaceAreaRatio,
                 MinSmallFaceAreaRatio,

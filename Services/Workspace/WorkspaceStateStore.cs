@@ -288,6 +288,18 @@ namespace FaceShield.Services.Workspace
         public double? ConfidenceThreshold { get; set; }
         public double? NmsThreshold { get; set; }
         public int? BlurRadius { get; set; }
+        public int DetectorBackend { get; set; }
+        public int YoloModelType { get; set; }
+        public string? YoloModelPath { get; set; }
+        public double? YoloObjectnessThreshold { get; set; }
+        public double? YoloConfidenceThreshold { get; set; }
+        public double? YoloNmsThreshold { get; set; }
+        public int? YoloInputSize { get; set; }
+        public bool YoloUseTiling { get; set; }
+        public bool YoloTileOnly { get; set; }
+        public int? YoloTileColumns { get; set; }
+        public int? YoloTileRows { get; set; }
+        public double? YoloTileOverlapRatio { get; set; }
     }
 
     public sealed class WorkspaceSnapshot

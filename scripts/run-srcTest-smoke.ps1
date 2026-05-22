@@ -37,7 +37,27 @@ param(
     [switch]$YuNetTileOnly,
     [int]$YuNetTileColumns = 2,
     [int]$YuNetTileRows = 2,
-    [double]$YuNetTileOverlapRatio = 0.15
+    [double]$YuNetTileOverlapRatio = 0.15,
+    [string]$YoloModelPath = "",
+    [ValidateSet("YoloV8Face", "Yolo5Face")]
+    [string]$YoloModelType = "YoloV8Face",
+    [int]$YoloInputSize = 640,
+    [double]$YoloObjectnessThreshold = 0.25,
+    [double]$YoloConfidenceThreshold = 0.35,
+    [double]$YoloNmsThreshold = 0.45,
+    [double]$YoloLargeBoxWidthScale = 1.0,
+    [double]$YoloLargeBoxHeightScale = 1.0,
+    [double]$YoloLargeBoxMinAreaRatio = 0.0,
+    [switch]$YoloUseFaceOnnxRoiRefine,
+    [double]$YoloFaceOnnxRoiMinAreaRatio = 0.03,
+    [int]$YoloFaceOnnxRoiMaxCandidates = 64,
+    [switch]$YoloUseTiling,
+    [switch]$YoloTileOnly,
+    [int]$YoloTileColumns = 2,
+    [int]$YoloTileRows = 2,
+    [double]$YoloTileOverlapRatio = 0.15,
+    [switch]$YoloDebugDump,
+    [switch]$DumpCompareDetails
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,6 +148,25 @@ bool yuNetTileOnly = args.Length > 32 && bool.Parse(args[32]);
 int yuNetTileColumns = args.Length > 33 ? int.Parse(args[33], System.Globalization.CultureInfo.InvariantCulture) : 2;
 int yuNetTileRows = args.Length > 34 ? int.Parse(args[34], System.Globalization.CultureInfo.InvariantCulture) : 2;
 double yuNetTileOverlapRatio = args.Length > 35 ? double.Parse(args[35], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
+string yoloModelPath = args.Length > 36 && args[36] != "__none__" ? args[36] : string.Empty;
+var yoloModelType = args.Length > 37 ? Enum.Parse<YoloFaceModelType>(args[37]) : YoloFaceModelType.YoloV8Face;
+int yoloInputSize = args.Length > 38 ? int.Parse(args[38], System.Globalization.CultureInfo.InvariantCulture) : 640;
+float yoloObjectnessThreshold = args.Length > 39 ? float.Parse(args[39], System.Globalization.CultureInfo.InvariantCulture) : 0.25f;
+float yoloConfidenceThreshold = args.Length > 40 ? float.Parse(args[40], System.Globalization.CultureInfo.InvariantCulture) : 0.35f;
+float yoloNmsThreshold = args.Length > 41 ? float.Parse(args[41], System.Globalization.CultureInfo.InvariantCulture) : 0.45f;
+float yoloLargeBoxWidthScale = args.Length > 42 ? float.Parse(args[42], System.Globalization.CultureInfo.InvariantCulture) : 1.0f;
+float yoloLargeBoxHeightScale = args.Length > 43 ? float.Parse(args[43], System.Globalization.CultureInfo.InvariantCulture) : 1.0f;
+double yoloLargeBoxMinAreaRatio = args.Length > 44 ? double.Parse(args[44], System.Globalization.CultureInfo.InvariantCulture) : 0.0;
+bool yoloUseTiling = args.Length > 45 && bool.Parse(args[45]);
+bool yoloUseFaceOnnxRoiRefine = args.Length > 46 && bool.Parse(args[46]);
+double yoloFaceOnnxRoiMinAreaRatio = args.Length > 47 ? double.Parse(args[47], System.Globalization.CultureInfo.InvariantCulture) : 0.03;
+int yoloFaceOnnxRoiMaxCandidates = args.Length > 48 ? int.Parse(args[48], System.Globalization.CultureInfo.InvariantCulture) : 64;
+bool yoloTileOnly = args.Length > 49 && bool.Parse(args[49]);
+int yoloTileColumns = args.Length > 50 ? int.Parse(args[50], System.Globalization.CultureInfo.InvariantCulture) : 2;
+int yoloTileRows = args.Length > 51 ? int.Parse(args[51], System.Globalization.CultureInfo.InvariantCulture) : 2;
+double yoloTileOverlapRatio = args.Length > 52 ? double.Parse(args[52], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
+bool yoloDebugDump = args.Length > 53 && bool.Parse(args[53]);
+bool dumpCompareDetails = args.Length > 54 && bool.Parse(args[54]);
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -166,7 +205,25 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     bool yuNetTileOnly,
     int yuNetTileColumns,
     int yuNetTileRows,
-    double yuNetTileOverlapRatio)
+    double yuNetTileOverlapRatio,
+    string yoloModelPath,
+    YoloFaceModelType yoloModelType,
+    int yoloInputSize,
+    float yoloObjectnessThreshold,
+    float yoloConfidenceThreshold,
+    float yoloNmsThreshold,
+    float yoloLargeBoxWidthScale,
+    float yoloLargeBoxHeightScale,
+    double yoloLargeBoxMinAreaRatio,
+    bool yoloUseTiling,
+    bool yoloUseFaceOnnxRoiRefine,
+    double yoloFaceOnnxRoiMinAreaRatio,
+    int yoloFaceOnnxRoiMaxCandidates,
+    bool yoloTileOnly,
+    int yoloTileColumns,
+    int yoloTileRows,
+    double yoloTileOverlapRatio,
+    bool yoloDebugDump)
 {
     string runId = $"smoke-{label}-{Guid.NewGuid():N}";
     Console.WriteLine($"[SmokeCase] start runId={runId}, label={label}, tracking={useTracking}, everyN={detectEvery}, downscale={downscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}, quality={downscaleQuality}, gpu={useGpu}, autoTune={useAutoTune}, parallel={parallelDetectorCount}, detectionThreshold={detectionThreshold:F3}, confidenceThreshold={confidenceThreshold:F3}, nmsThreshold={nmsThreshold:F3}");
@@ -184,7 +241,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     };
     bool useScrfd = !string.IsNullOrWhiteSpace(scrfdModelPath);
     bool useYuNet = !string.IsNullOrWhiteSpace(yuNetModelPath);
-    if (useAutoTune && !useScrfd && !useYuNet && DetectorAutoTuner.TryTune(
+    bool useYolo = !string.IsNullOrWhiteSpace(yoloModelPath);
+    if (useAutoTune && !useScrfd && !useYuNet && !useYolo && DetectorAutoTuner.TryTune(
             input,
             downscaleRatio,
             downscaleQuality,
@@ -248,6 +306,33 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             TileOverlapRatio = yuNetTileOverlapRatio
         }));
     }
+    else if (useYolo)
+    {
+        factory = new FaceDetectorFactory(FaceDetectorFactoryOptions.ForYoloFaceOnnx(new YoloFaceOnnxDetectorOptions
+        {
+            ModelPath = yoloModelPath,
+            ModelType = yoloModelType,
+            UseOrtOptimization = true,
+            UseGpu = useGpu,
+            ObjectnessThreshold = yoloObjectnessThreshold,
+            ConfidenceThreshold = yoloConfidenceThreshold,
+            NmsThreshold = yoloNmsThreshold,
+            LargeBoxWidthScale = yoloLargeBoxWidthScale,
+            LargeBoxHeightScale = yoloLargeBoxHeightScale,
+            LargeBoxMinAreaRatio = yoloLargeBoxMinAreaRatio,
+            IntraOpNumThreads = detectorOptions.IntraOpNumThreads,
+            InterOpNumThreads = detectorOptions.InterOpNumThreads,
+            UseParallelExecution = detectorOptions.UseParallelExecution,
+            InputWidth = yoloInputSize > 0 ? yoloInputSize : null,
+            InputHeight = yoloInputSize > 0 ? yoloInputSize : null,
+            UseTiling = yoloUseTiling,
+            IncludeFullFrameWhenTiling = !yoloTileOnly,
+            TileColumns = yoloTileColumns,
+            TileRows = yoloTileRows,
+            TileOverlapRatio = yoloTileOverlapRatio,
+            DumpDebug = yoloDebugDump
+        }));
+    }
     else
     {
         factory = FaceDetectorFactory.ForOnnx(detectorOptions);
@@ -261,8 +346,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         DetectEveryNFrames = detectEvery,
         ParallelDetectorCount = parallelDetectorCount,
         RunId = runId,
-        FilterProfile = useScrfd ? FaceFilterProfile.Scrfd : FaceFilterProfile.FaceOnnx,
-        DumpDetectionDiagnostics = dumpDetections || scrfdDebugDump
+        FilterProfile = useYolo ? FaceFilterProfile.Yolo : useScrfd ? FaceFilterProfile.Scrfd : FaceFilterProfile.FaceOnnx,
+        DumpDetectionDiagnostics = dumpDetections || scrfdDebugDump || yoloDebugDump
     };
 
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
@@ -271,7 +356,30 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var trackPost = new FaceTrackInterpolator().Apply(
         maskProvider,
         generator.LastRunSummary?.TotalFrames ?? 0,
-        useScrfd
+        useYolo
+            ? new FaceTrackPostProcessOptions
+            {
+                MaxTrackGap = 8,
+                MaxFillGap = 5,
+                MaxLostFillFrames = 3,
+                WeakConfidence = 0.38f,
+                StrongConfidence = 0.58f,
+                ShortTrackMaxConfidence = 0.18f,
+                SmallTrackMaxAreaRatio = 0.00070,
+                MinTrackIou = 0.08,
+                MaxCenterShiftRatio = 0.72,
+                MaxAreaChangeRatio = 4.0,
+                DuplicateIou = 0.35,
+                UnstableTailMaxConfidence = 0.40f,
+                UnstableTailMinStableDetections = 3,
+                UnstableTailMinIou = 0.45,
+                UnstableTailMaxAreaChangeRatio = 1.8,
+                LowerFrameTrackMaxConfidence = 0.50f,
+                LowerFrameTrackMinCenterYRatio = 0.58,
+                LowerFrameTrackMinAreaRatio = 0.015,
+                LowerFrameTrackMaxAreaRatio = 0.045
+            }
+            : useScrfd
             ? new FaceTrackPostProcessOptions
             {
                 MaxTrackGap = 8,
@@ -301,11 +409,11 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     string lostFrames = trackPost.FilledLostFrameIndices.Count == 0
         ? "none"
         : string.Join(",", trackPost.FilledLostFrameIndices.Take(32));
-    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, rewritten={trackPost.RewrittenFrames}");
+    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, removedLower={trackPost.RemovedLowerFrameFaces}, rewritten={trackPost.RewrittenFrames}");
     if (detector is IBgraFaceDetector bgraDetector)
     {
-        using var faceOnnxRoiDetector = useScrfd || useYuNet ? null : new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));
-        var roiDetector = useScrfd || useYuNet ? bgraDetector : faceOnnxRoiDetector;
+        using var faceOnnxRoiDetector = useScrfd || useYuNet || useYolo ? null : new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));
+        var roiDetector = useScrfd || useYuNet || useYolo ? bgraDetector : faceOnnxRoiDetector;
         var refine = new FaceTrackRoiRefiner().Apply(
             maskProvider,
             input,
@@ -313,6 +421,22 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             trackPost.FilledGapFacesInfo.Concat(trackPost.FilledLostFacesInfo).ToArray(),
             downscaleQuality);
         Console.WriteLine($"[SmokeFaceTrackRoiRefine] label={label}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
+    }
+    if (useYolo && yoloUseFaceOnnxRoiRefine)
+    {
+        var candidates = BuildLargeFaceRoiCandidates(
+            maskProvider,
+            yoloFaceOnnxRoiMinAreaRatio,
+            yoloFaceOnnxRoiMaxCandidates);
+        using var faceOnnxRoiDetector = new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));
+        var refine = new FaceTrackRoiRefiner().Apply(
+            maskProvider,
+            input,
+            faceOnnxRoiDetector,
+            candidates,
+            downscaleQuality,
+            yoloFaceOnnxRoiMaxCandidates);
+        Console.WriteLine($"[SmokeYoloFaceOnnxRoiRefine] label={label}, candidates={candidates.Count}, minAreaRatio={yoloFaceOnnxRoiMinAreaRatio:F3}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
     if (dumpDetections)
@@ -354,6 +478,33 @@ static FaceOnnxDetectorOptions CreateRoiRefinerDetectorOptions(FaceOnnxDetectorO
     };
 }
 
+static IReadOnlyList<FaceTrackFilledFace> BuildLargeFaceRoiCandidates(
+    FrameMaskProvider maskProvider,
+    double minAreaRatio,
+    int maxCandidates)
+{
+    var candidates = new List<FaceTrackFilledFace>();
+    foreach (var entry in maskProvider.GetFaceMaskEntries().OrderBy(x => x.Key))
+    {
+        var data = entry.Value;
+        double frameArea = Math.Max(1.0, data.Size.Width * (double)data.Size.Height);
+        for (int i = 0; i < data.Faces.Count; i++)
+        {
+            var face = data.Faces[i];
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            if (areaRatio < minAreaRatio)
+                continue;
+
+            float conf = i < data.Confidences.Count ? data.Confidences[i] : data.MinConfidence ?? 0.50f;
+            candidates.Add(new FaceTrackFilledFace(entry.Key, face, data.Size, conf));
+            if (candidates.Count >= maxCandidates)
+                return candidates;
+        }
+    }
+
+    return candidates;
+}
+
 static void DumpDetections(string label, FrameMaskProvider maskProvider)
 {
     foreach (var entry in maskProvider.GetFaceMaskEntries().OrderBy(x => x.Key))
@@ -375,7 +526,8 @@ static bool CompareCases(
     (string Label, FrameMaskProvider MaskProvider) optimized,
     double minAvgIou,
     double minBestIou,
-    bool allowFrameMismatch)
+    bool allowFrameMismatch,
+    bool dumpCompareDetails)
 {
     var baselineEntries = baseline.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
     var optimizedEntries = optimized.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
@@ -389,13 +541,18 @@ static bool CompareCases(
     double minIou = commonFrames.Length > 0 ? 1.0 : 0.0;
     int iouSamples = 0;
     int boxCountDiffFrames = 0;
+    var lowIouFrames = new List<int>();
+    var boxCountDiffFrameList = new List<int>();
 
     foreach (int frame in commonFrames)
     {
         var baseFaces = baselineEntries[frame].Faces;
         var optFaces = optimizedEntries[frame].Faces;
         if (baseFaces.Count != optFaces.Count)
+        {
             boxCountDiffFrames++;
+            boxCountDiffFrameList.Add(frame);
+        }
 
         foreach (var face in baseFaces)
         {
@@ -405,6 +562,8 @@ static bool CompareCases(
 
             iouSum += best;
             minIou = Math.Min(minIou, best);
+            if (best < minBestIou && !lowIouFrames.Contains(frame))
+                lowIouFrames.Add(frame);
             iouSamples++;
         }
     }
@@ -413,6 +572,15 @@ static bool CompareCases(
     Console.WriteLine(
         $"[SmokeCompare] baseline={baseline.Label}, optimized={optimized.Label}, baselineFrames={baselineFrames.Length}, optimizedFrames={optimizedFrames.Length}, common={commonFrames.Length}, onlyBaseline={onlyBaseline.Length}, onlyOptimized={onlyOptimized.Length}, avgBestIou={avgIou:F3}, minBestIou={minIou:F3}, boxCountDiffFrames={boxCountDiffFrames}");
     Console.WriteLine($"[SmokeCompareFrames] onlyBaseline={FormatFrames(onlyBaseline)}, onlyOptimized={FormatFrames(onlyOptimized)}");
+    Console.WriteLine($"[SmokeCompareBadFrames] boxCountDiff={FormatFrames(boxCountDiffFrameList)}, lowIou={FormatFrames(lowIouFrames)}");
+    Console.WriteLine("[SmokeCompareNote] onlyBaseline/onlyOptimized are detector-difference frames, not ground-truth false-negative/false-positive labels.");
+    if (dumpCompareDetails)
+    {
+        DumpCompareDetails("onlyBaseline", onlyBaseline, baselineEntries, optimizedEntries);
+        DumpCompareDetails("onlyOptimized", onlyOptimized, baselineEntries, optimizedEntries);
+        DumpCompareDetails("boxCountDiff", boxCountDiffFrameList, baselineEntries, optimizedEntries);
+        DumpCompareDetails("lowIou", lowIouFrames, baselineEntries, optimizedEntries);
+    }
 
     bool frameMatchOk = allowFrameMismatch ||
         (onlyBaseline.Length == 0 && onlyOptimized.Length == 0 && boxCountDiffFrames == 0);
@@ -421,6 +589,41 @@ static bool CompareCases(
     Console.WriteLine(
         $"[SmokeQualityGate] passed={passed}, frameMatchOk={frameMatchOk}, iouOk={iouOk}, minAvgIou={minAvgIou:F3}, minBestIou={minBestIou:F3}, allowFrameMismatch={allowFrameMismatch}");
     return passed;
+}
+
+static void DumpCompareDetails(
+    string reason,
+    IReadOnlyList<int> frames,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> baselineEntries,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries)
+{
+    foreach (int frame in frames.Take(16))
+    {
+        FrameMaskProvider.FaceMaskData? baseline = baselineEntries.TryGetValue(frame, out var baselineData)
+            ? baselineData
+            : null;
+        FrameMaskProvider.FaceMaskData? optimized = optimizedEntries.TryGetValue(frame, out var optimizedData)
+            ? optimizedData
+            : null;
+        Console.WriteLine(
+            $"[SmokeCompareDetail] reason={reason}, frame={frame}, baseline={FormatFaceData(baseline)}, optimized={FormatFaceData(optimized)}");
+    }
+}
+
+static string FormatFaceData(FrameMaskProvider.FaceMaskData? data)
+{
+    if (!data.HasValue || data.Value.Faces.Count == 0)
+        return "none";
+
+    var value = data.Value;
+    return string.Join("|", value.Faces.Select((r, i) =>
+    {
+        float conf = i < value.Confidences.Count ? value.Confidences[i] : value.MinConfidence ?? 1.0f;
+        double areaRatio = r.Width * r.Height / Math.Max(1.0, value.Size.Width * (double)value.Size.Height);
+        double centerX = (r.X + r.Width * 0.5) / Math.Max(1.0, value.Size.Width);
+        double centerY = (r.Y + r.Height * 0.5) / Math.Max(1.0, value.Size.Height);
+        return $"{i}:x={r.X:F1},y={r.Y:F1},w={r.Width:F1},h={r.Height:F1},cx={centerX:F3},cy={centerY:F3},area={areaRatio:F5},conf={conf:F3}";
+    }));
 }
 
 static string FormatFrames(IReadOnlyList<int> frames)
@@ -478,11 +681,29 @@ if (!bool.Parse(args[2]))
         yuNetTileOnly,
         yuNetTileColumns,
         yuNetTileRows,
-        yuNetTileOverlapRatio);
+        yuNetTileOverlapRatio,
+        yoloModelPath: string.Empty,
+        yoloModelType,
+        yoloInputSize,
+        yoloObjectnessThreshold,
+        yoloConfidenceThreshold,
+        yoloNmsThreshold,
+        yoloLargeBoxWidthScale,
+        yoloLargeBoxHeightScale,
+        yoloLargeBoxMinAreaRatio,
+        yoloUseTiling: false,
+        yoloUseFaceOnnxRoiRefine: false,
+        yoloFaceOnnxRoiMinAreaRatio,
+        yoloFaceOnnxRoiMaxCandidates,
+        yoloTileOnly: false,
+        yoloTileColumns,
+        yoloTileRows,
+        yoloTileOverlapRatio,
+        yoloDebugDump: false);
 }
 
 var optimized = await RunCaseAsync(
-    $"optimized-{(optimizedUseTracking ? "track" : "all")}-{optimizedDetectEvery}-scale-{optimizedDownscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}-{(optimizedUseGpu ? "gpu" : "cpu")}{(!string.IsNullOrWhiteSpace(scrfdModelPath) ? "-scrfd" : "")}{(!string.IsNullOrWhiteSpace(yuNetModelPath) ? "-yunet" : "")}",
+    $"optimized-{(optimizedUseTracking ? "track" : "all")}-{optimizedDetectEvery}-scale-{optimizedDownscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}-{(optimizedUseGpu ? "gpu" : "cpu")}{(!string.IsNullOrWhiteSpace(scrfdModelPath) ? "-scrfd" : "")}{(!string.IsNullOrWhiteSpace(yuNetModelPath) ? "-yunet" : "")}{(!string.IsNullOrWhiteSpace(yoloModelPath) ? "-yolo" : "")}",
     input,
     output,
     useTracking: optimizedUseTracking,
@@ -513,9 +734,27 @@ var optimized = await RunCaseAsync(
     yuNetTileOnly,
     yuNetTileColumns,
     yuNetTileRows,
-    yuNetTileOverlapRatio);
+    yuNetTileOverlapRatio,
+    yoloModelPath,
+    yoloModelType,
+    yoloInputSize,
+    yoloObjectnessThreshold,
+    yoloConfidenceThreshold,
+    yoloNmsThreshold,
+    yoloLargeBoxWidthScale,
+    yoloLargeBoxHeightScale,
+    yoloLargeBoxMinAreaRatio,
+    yoloUseTiling,
+    yoloUseFaceOnnxRoiRefine,
+    yoloFaceOnnxRoiMinAreaRatio,
+    yoloFaceOnnxRoiMaxCandidates,
+    yoloTileOnly,
+    yoloTileColumns,
+    yoloTileRows,
+    yoloTileOverlapRatio,
+    yoloDebugDump);
 
-if (baseline.HasValue && !CompareCases(baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch))
+if (baseline.HasValue && !CompareCases(baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails))
     Environment.Exit(2);
 '@ | Set-Content -Encoding UTF8 $program
 
@@ -551,6 +790,24 @@ $yuNetTileOnlyArg = $YuNetTileOnly.IsPresent.ToString().ToLowerInvariant()
 $yuNetTileColumnsArg = $YuNetTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetTileRowsArg = $YuNetTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetTileOverlapRatioArg = $YuNetTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloModelPathArg = if ([string]::IsNullOrWhiteSpace($YoloModelPath)) { "__none__" } else { (Resolve-Path $YoloModelPath).Path }
+$yoloInputSizeArg = $YoloInputSize.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloObjectnessThresholdArg = $YoloObjectnessThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloConfidenceThresholdArg = $YoloConfidenceThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloNmsThresholdArg = $YoloNmsThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLargeBoxWidthScaleArg = $YoloLargeBoxWidthScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLargeBoxHeightScaleArg = $YoloLargeBoxHeightScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLargeBoxMinAreaRatioArg = $YoloLargeBoxMinAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloUseTilingArg = $YoloUseTiling.IsPresent.ToString().ToLowerInvariant()
+$yoloUseFaceOnnxRoiRefineArg = $YoloUseFaceOnnxRoiRefine.IsPresent.ToString().ToLowerInvariant()
+$yoloFaceOnnxRoiMinAreaRatioArg = $YoloFaceOnnxRoiMinAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloFaceOnnxRoiMaxCandidatesArg = $YoloFaceOnnxRoiMaxCandidates.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloTileOnlyArg = $YoloTileOnly.IsPresent.ToString().ToLowerInvariant()
+$yoloTileColumnsArg = $YoloTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloTileRowsArg = $YoloTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloTileOverlapRatioArg = $YoloTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloDebugDumpArg = $YoloDebugDump.IsPresent.ToString().ToLowerInvariant()
+$dumpCompareDetailsArg = $DumpCompareDetails.IsPresent.ToString().ToLowerInvariant()
 dotnet run --project $project -- `
     $clip `
     $output `
@@ -587,7 +844,26 @@ dotnet run --project $project -- `
     $yuNetTileOnlyArg `
     $yuNetTileColumnsArg `
     $yuNetTileRowsArg `
-    $yuNetTileOverlapRatioArg
+    $yuNetTileOverlapRatioArg `
+    $yoloModelPathArg `
+    $YoloModelType `
+    $yoloInputSizeArg `
+    $yoloObjectnessThresholdArg `
+    $yoloConfidenceThresholdArg `
+    $yoloNmsThresholdArg `
+    $yoloLargeBoxWidthScaleArg `
+    $yoloLargeBoxHeightScaleArg `
+    $yoloLargeBoxMinAreaRatioArg `
+    $yoloUseTilingArg `
+    $yoloUseFaceOnnxRoiRefineArg `
+    $yoloFaceOnnxRoiMinAreaRatioArg `
+    $yoloFaceOnnxRoiMaxCandidatesArg `
+    $yoloTileOnlyArg `
+    $yoloTileColumnsArg `
+    $yoloTileRowsArg `
+    $yoloTileOverlapRatioArg `
+    $yoloDebugDumpArg `
+    $dumpCompareDetailsArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

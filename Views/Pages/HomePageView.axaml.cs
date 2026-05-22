@@ -25,4 +25,17 @@ public partial class HomePageView : UserControl
 
         await vm.PickVideoAsync(storageProvider);
     }
+
+    private async void PickYoloModel_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not HomePageViewModel vm)
+            return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        var storageProvider = topLevel?.StorageProvider;
+        if (storageProvider is null)
+            return;
+
+        await vm.PickYoloModelAsync(storageProvider);
+    }
 }

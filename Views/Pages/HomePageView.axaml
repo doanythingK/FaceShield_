@@ -76,6 +76,71 @@
 
         <StackPanel Spacing="6">
           <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="검출 모델" Width="90" VerticalAlignment="Center"/>
+            <ComboBox Width="180"
+                      ItemsSource="{Binding AutoDetectorBackendOptions}"
+                      SelectedItem="{Binding SelectedAutoDetectorBackendOption}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+
+          <StackPanel Spacing="6" IsVisible="{Binding IsYoloDetectorSelected}">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="YOLO 종류" Width="90" VerticalAlignment="Center"/>
+              <ComboBox Width="180"
+                        ItemsSource="{Binding YoloModelTypeOptions}"
+                        SelectedItem="{Binding SelectedYoloModelTypeOption}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Label}"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="YOLO 모델" Width="90" VerticalAlignment="Center"/>
+              <TextBox Width="220"
+                       Text="{Binding AutoYoloModelPath, Mode=TwoWay}"
+                       Watermark="*.onnx"/>
+              <Button Content="찾기" Click="PickYoloModel_Click"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="입력 크기" Width="90" VerticalAlignment="Center"/>
+              <NumericUpDown Width="100" Minimum="64" Maximum="2048" Increment="32"
+                             Value="{Binding AutoYoloInputSize, Mode=TwoWay}"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <CheckBox Content="타일 검출"
+                        IsChecked="{Binding AutoYoloUseTiling}"/>
+              <CheckBox Content="타일만"
+                        IsChecked="{Binding AutoYoloTileOnly}"
+                        IsEnabled="{Binding AutoYoloUseTiling}"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="타일" Width="90" VerticalAlignment="Center"/>
+              <NumericUpDown Width="72" Minimum="1" Maximum="8" Increment="1"
+                             Value="{Binding AutoYoloTileColumns, Mode=TwoWay}"
+                             IsEnabled="{Binding AutoYoloUseTiling}"/>
+              <TextBlock Text="x" VerticalAlignment="Center"/>
+              <NumericUpDown Width="72" Minimum="1" Maximum="8" Increment="1"
+                             Value="{Binding AutoYoloTileRows, Mode=TwoWay}"
+                             IsEnabled="{Binding AutoYoloUseTiling}"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="타일 겹침" Width="90" VerticalAlignment="Center"/>
+              <Slider Width="160" Minimum="0" Maximum="0.45"
+                      Value="{Binding AutoYoloTileOverlapRatio, Mode=TwoWay}"
+                      IsEnabled="{Binding AutoYoloUseTiling}"/>
+              <TextBlock Text="{Binding AutoYoloTileOverlapRatio, StringFormat={}{0:0.00}}"
+                         Width="48" VerticalAlignment="Center"/>
+            </StackPanel>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="해상도 축소" Width="90" VerticalAlignment="Center"/>
             <ComboBox Width="140"
                       ItemsSource="{Binding DownscaleOptions}"
@@ -111,7 +176,7 @@
           <TextBlock Text="프레임" VerticalAlignment="Center"/>
         </StackPanel>
 
-        <StackPanel Spacing="4">
+        <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
           <TextBlock Text="Detection Threshold (얼굴 후보 기준)"/>
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Slider Width="220" Minimum="0.05" Maximum="0.95"
@@ -125,7 +190,7 @@
                      Opacity="0.7" TextWrapping="Wrap"/>
         </StackPanel>
 
-        <StackPanel Spacing="4">
+        <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
           <TextBlock Text="Confidence Threshold (최종 확정 기준)"/>
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Slider Width="220" Minimum="0.05" Maximum="0.95"
@@ -139,7 +204,7 @@
                      Opacity="0.7" TextWrapping="Wrap"/>
         </StackPanel>
 
-        <StackPanel Spacing="4">
+        <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
           <TextBlock Text="NMS Threshold (겹친 결과 정리)"/>
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Slider Width="220" Minimum="0.05" Maximum="0.95"
@@ -151,6 +216,36 @@
                      Opacity="0.7" TextWrapping="Wrap"/>
           <TextBlock Text="값을 높이면: 덜 제거되어 가까운 얼굴은 분리될 수 있지만, 중복 박스가 남을 수 있습니다."
                      Opacity="0.7" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <StackPanel Spacing="4" IsVisible="{Binding IsYoloDetectorSelected}">
+          <TextBlock Text="YOLO Objectness"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Width="220" Minimum="0.05" Maximum="0.95"
+                    Value="{Binding AutoYoloObjectnessThreshold, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding AutoYoloObjectnessThreshold, StringFormat={}{0:0.00}}"
+                       Width="48" VerticalAlignment="Center"/>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Spacing="4" IsVisible="{Binding IsYoloDetectorSelected}">
+          <TextBlock Text="YOLO Confidence"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Width="220" Minimum="0.05" Maximum="0.95"
+                    Value="{Binding AutoYoloConfidenceThreshold, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding AutoYoloConfidenceThreshold, StringFormat={}{0:0.00}}"
+                       Width="48" VerticalAlignment="Center"/>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Spacing="4" IsVisible="{Binding IsYoloDetectorSelected}">
+          <TextBlock Text="YOLO NMS"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Width="220" Minimum="0.05" Maximum="0.95"
+                    Value="{Binding AutoYoloNmsThreshold, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding AutoYoloNmsThreshold, StringFormat={}{0:0.00}}"
+                       Width="48" VerticalAlignment="Center"/>
+          </StackPanel>
         </StackPanel>
 
         <StackPanel Spacing="6">

@@ -58,6 +58,8 @@ namespace FaceShield.Services.Analysis
             var gapFilledFaces = new List<FaceTrackFilledFace>();
             var lostFillFrameIndices = new List<int>();
             var lostFilledFaces = new List<FaceTrackFilledFace>();
+            TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
+            int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces);
             int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces);
@@ -71,7 +73,129 @@ namespace FaceShield.Services.Analysis
                 lostFillFrameIndices.ToArray(),
                 lostFilledFaces.ToArray(),
                 removedFaces,
+                removedLowerFrameFaces,
                 rewrittenFrames);
+        }
+
+        private static void TrimUnstableLowConfidenceTails(
+            IReadOnlyList<FaceTrack> tracks,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame,
+            FaceTrackPostProcessOptions options)
+        {
+            if (options.UnstableTailMaxConfidence <= 0)
+                return;
+
+            foreach (var track in tracks)
+            {
+                int keepCount = track.DetectionCount;
+                while (keepCount > options.UnstableTailMinStableDetections)
+                {
+                    var previous = track.Detections[keepCount - 2];
+                    var current = track.Detections[keepCount - 1];
+                    if (current.Confidence > options.UnstableTailMaxConfidence)
+                        break;
+                    if (!IsUnstableTailTransition(previous.Bounds, current.Bounds, options))
+                        break;
+
+                    RemoveDetectionFromFrame(current, facesByFrame, confByFrame);
+                    keepCount--;
+                }
+
+                if (keepCount < track.DetectionCount)
+                    track.RemoveDetectionsFrom(keepCount);
+            }
+        }
+
+        private static int RemoveLowerFrameLowConfidenceTracks(
+            IReadOnlyList<FaceTrack> tracks,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame,
+            FaceTrackPostProcessOptions options,
+            ISet<int> removedTrackIds)
+        {
+            if (options.LowerFrameTrackMaxConfidence <= 0)
+                return 0;
+
+            int removed = 0;
+            foreach (var track in tracks)
+            {
+                if (removedTrackIds.Contains(track.Id) ||
+                    track.MaxConfidence > options.LowerFrameTrackMaxConfidence ||
+                    !IsLowerFrameMediumAreaTrack(track, options))
+                {
+                    continue;
+                }
+
+                removedTrackIds.Add(track.Id);
+                removed += RemoveTrackDetections(track, facesByFrame, confByFrame);
+            }
+
+            return removed;
+        }
+
+        private static bool IsLowerFrameMediumAreaTrack(FaceTrack track, FaceTrackPostProcessOptions options)
+        {
+            if (track.DetectionCount == 0)
+                return false;
+
+            for (int i = 0; i < track.Detections.Count; i++)
+            {
+                var detection = track.Detections[i];
+                if (detection.Size.Width <= 0 || detection.Size.Height <= 0)
+                    return false;
+
+                double frameArea = Math.Max(1.0, detection.Size.Width * (double)detection.Size.Height);
+                double areaRatio = Math.Max(0.0, detection.Bounds.Width * detection.Bounds.Height) / frameArea;
+                double centerYRatio = (detection.Bounds.Y + detection.Bounds.Height * 0.5) / detection.Size.Height;
+                if (centerYRatio < options.LowerFrameTrackMinCenterYRatio ||
+                    areaRatio < options.LowerFrameTrackMinAreaRatio ||
+                    areaRatio > options.LowerFrameTrackMaxAreaRatio)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsUnstableTailTransition(Rect previous, Rect current, FaceTrackPostProcessOptions options)
+        {
+            double areaRatio = FaceTrackBuilder.GetAreaRatio(previous, current);
+            if (areaRatio > options.UnstableTailMaxAreaChangeRatio ||
+                areaRatio < 1.0 / options.UnstableTailMaxAreaChangeRatio)
+            {
+                return true;
+            }
+
+            return FaceTrackBuilder.IoU(previous, current) < options.UnstableTailMinIou;
+        }
+
+        private static void RemoveDetectionFromFrame(
+            FaceTrackDetection detection,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame)
+        {
+            var faces = facesByFrame[detection.FrameIndex];
+            var confs = confByFrame[detection.FrameIndex];
+            if (faces == null || confs == null)
+                return;
+
+            for (int i = faces.Count - 1; i >= 0; i--)
+            {
+                if (FaceTrackBuilder.IoU(faces[i], detection.Bounds) < 0.95)
+                    continue;
+
+                faces.RemoveAt(i);
+                if (i < confs.Count)
+                    confs.RemoveAt(i);
+            }
+
+            if (faces.Count == 0)
+            {
+                facesByFrame[detection.FrameIndex] = null;
+                confByFrame[detection.FrameIndex] = null;
+            }
         }
 
         private static int RemoveShortLowConfidenceTracks(
@@ -94,29 +218,40 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 removedTrackIds.Add(track.Id);
-                foreach (var detection in track.Detections)
+                removed += RemoveTrackDetections(track, facesByFrame, confByFrame);
+            }
+
+            return removed;
+        }
+
+        private static int RemoveTrackDetections(
+            FaceTrack track,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame)
+        {
+            int removed = 0;
+            foreach (var detection in track.Detections)
+            {
+                var faces = facesByFrame[detection.FrameIndex];
+                var confs = confByFrame[detection.FrameIndex];
+                if (faces == null || confs == null)
+                    continue;
+
+                for (int i = faces.Count - 1; i >= 0; i--)
                 {
-                    var faces = facesByFrame[detection.FrameIndex];
-                    var confs = confByFrame[detection.FrameIndex];
-                    if (faces == null || confs == null)
+                    if (FaceTrackBuilder.IoU(faces[i], detection.Bounds) < 0.95)
                         continue;
 
-                    for (int i = faces.Count - 1; i >= 0; i--)
-                    {
-                        if (FaceTrackBuilder.IoU(faces[i], detection.Bounds) < 0.95)
-                            continue;
+                    faces.RemoveAt(i);
+                    if (i < confs.Count)
+                        confs.RemoveAt(i);
+                    removed++;
+                }
 
-                        faces.RemoveAt(i);
-                        if (i < confs.Count)
-                            confs.RemoveAt(i);
-                        removed++;
-                    }
-
-                    if (faces.Count == 0)
-                    {
-                        facesByFrame[detection.FrameIndex] = null;
-                        confByFrame[detection.FrameIndex] = null;
-                    }
+                if (faces.Count == 0)
+                {
+                    facesByFrame[detection.FrameIndex] = null;
+                    confByFrame[detection.FrameIndex] = null;
                 }
             }
 
@@ -437,9 +572,10 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<int> FilledLostFrameIndices,
         IReadOnlyList<FaceTrackFilledFace> FilledLostFacesInfo,
         int RemovedShortFaces,
+        int RemovedLowerFrameFaces,
         int RewrittenFrames)
     {
-        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, 0);
+        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, 0, 0);
     }
 
     public readonly record struct FaceTrackFilledFace(

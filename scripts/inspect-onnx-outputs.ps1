@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $model = (Resolve-Path $ModelPath).Path
-$work = Join-Path $repo ".tmp\onnx-inspect"
+$work = Join-Path $repo (".tmp\onnx-inspect\inspect-" + [guid]::NewGuid().ToString("N"))
 $project = Join-Path $work "OnnxInspect.csproj"
 $program = Join-Path $work "Program.cs"
 

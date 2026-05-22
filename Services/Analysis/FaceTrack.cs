@@ -35,6 +35,19 @@ namespace FaceShield.Services.Analysis
             _detections.Add(detection);
             MaxConfidence = Math.Max(MaxConfidence, detection.Confidence);
         }
+
+        public void RemoveDetectionsFrom(int startIndex)
+        {
+            if (startIndex < 0 || startIndex > _detections.Count)
+                throw new ArgumentOutOfRangeException(nameof(startIndex));
+            if (startIndex == _detections.Count)
+                return;
+
+            _detections.RemoveRange(startIndex, _detections.Count - startIndex);
+            MaxConfidence = 0;
+            for (int i = 0; i < _detections.Count; i++)
+                MaxConfidence = Math.Max(MaxConfidence, _detections[i].Confidence);
+        }
     }
 
     public readonly record struct FaceTrackDetection(

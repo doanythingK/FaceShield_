@@ -846,7 +846,7 @@ threshold를 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold
 
 - `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/scrfd_500m.onnx` 결과 input은 `input.1=1x3x640x640`, output은 `score_8/16/32`, `bbox_8/16/32` 구조였다.
 - `scrfd_500m.onnx` 단독 optimized smoke는 `.tmp/srcTest-smoke/smoke-0600-3s.mp4`에서 실행됐다. `ConfidenceThreshold=0.25` 기준 `totalMs=13,174ms`, `faceMaskFrames=23`이었으나 FaceONNX baseline과 비교하면 `baselineFrames=19`, `optimizedFrames=23`, `onlyBaseline=13`, `onlyOptimized=17`, `avgBestIou=0.001`, `passed=False`였다.
-- `scrfd_500m.onnx`를 `ConfidenceThreshold=0.5`로 올리면 `totalMs=11,166ms`까지 줄었지만 `faceMaskFrames=0`으로 전부 미탐이었다.
+- `scrfd_500m.onnx`를 `ConfidenceThreshold=0.5`로 올리면 `totalMs=11,166ms`까지 줄었지만 `faceMaskFrames=0`이었다. 알려진 얼굴 구간에서 최종 마스크가 0프레임이므로 현재 pipeline 결과로는 불합격이다.
 - `scrfd_10g_bnkps.onnx` 단독 optimized smoke는 `totalMs=27,819ms`, `faceMaskFrames=19`로 baseline frame 수와 같았다.
 - 그러나 `scrfd_10g_bnkps.onnx` A/B gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`였다.
 - insightface 방식에 맞춘 letterbox + RGB 전처리를 추가로 적용했지만, `scrfd_10g_bnkps.onnx`는 `faceMaskFrames=2`, `onlyBaseline=17`, `avgBestIou=0.290`, `passed=False`로 더 나빠졌다.
@@ -855,8 +855,9 @@ threshold를 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold
 판정:
 
 - SCRFD backend는 실제 모델 로드와 자동 모자이크 파이프라인 실행까지 가능하다.
-- 현재 decoder/전처리 조합 또는 후보 모델은 FaceONNX baseline 품질 gate를 통과하지 못한다. letterbox/RGB, stretch/RGB, stretch/BGR 중 통과한 조합은 없다.
-- 속도만 보면 SCRFD 500M은 매우 빠르지만 품질이 부족하고, SCRFD 10G는 일부 프레임 수는 맞지만 좌표/구간 일치가 부족하다.
+- 현재 decoder/전처리 조합 또는 후보 모델은 FaceONNX baseline-diff gate를 통과하지 못한다. letterbox/RGB, stretch/RGB, stretch/BGR 중 통과한 조합은 없다.
+- 이 결과만으로 SCRFD 모델 자체가 실제 얼굴 검출 기준에서 틀렸다고 단정하지 않는다. 다만 `avgBestIou=0.001~0.010` 수준의 좌표 불일치와 `faceMaskFrames=0` 결과가 있어 현재 adapter/전처리/후처리 조합은 추천할 수 없다.
+- 속도만 보면 SCRFD 500M은 매우 빠르지만 현재 pipeline 출력은 기존 동작과 크게 다르고, SCRFD 10G는 일부 프레임 수는 맞지만 좌표/구간 일치가 부족하다.
 - 따라서 기본 detector 교체는 보류한다. 다음 후보는 letterbox 입력, RGB/BGR 입력 옵션, bbox decode 방식별 A/B, 또는 다른 모델 계열(YuNet/RetinaFace/YOLO-face) 비교다.
 
 ## 2026-05-12 YuNet 외부 모델 A/B 1차
@@ -874,7 +875,7 @@ OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려
 - `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/face_detection_yunet_2023mar.onnx` 결과 input은 `input=1x3x640x640`, output은 `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`, `kps_8/16/32` 12개였다.
 - `.tmp/srcTest-smoke/smoke-0600-3s.mp4` YuNet 단독 optimized smoke는 `totalMs=9,825ms`, `detectMs=15,890ms`, `faceMaskFrames=33`, ROI refiner `attempts=7`, `hits=7`로 매우 빨랐다.
 - 같은 구간 FaceONNX baseline 대비 A/B gate는 `baselineFrames=19`, `optimizedFrames=33`, `onlyBaseline=4`, `onlyOptimized=18`, `avgBestIou=0.277`, `passed=False`였다.
-- `ConfidenceThreshold=0.6`은 오탐을 줄였지만 `faceMaskFrames=0`으로 전부 미탐이었다.
+- `ConfidenceThreshold=0.6`은 YuNet-only 후보를 줄였지만 `faceMaskFrames=0`이었다. 알려진 얼굴 구간에서 최종 마스크가 0프레임이므로 현재 pipeline 결과로는 불합격이다.
 - `-YuNetUseTiling` 단독 optimized smoke는 `totalMs=41,791ms`, `detectMs=82,467ms`, `faceMaskFrames=51`, ROI refiner `attempts=28`, `hits=27`이었다.
 - 같은 tiling 설정의 FaceONNX baseline 대비 A/B gate는 `baselineFrames=19`, `optimizedFrames=51`, `onlyBaseline=4`, `onlyOptimized=36`, `avgBestIou=0.272`, `minBestIou=0.000`, `passed=False`였다.
 - full frame 입력을 빼고 tile만 돌리는 `-YuNetUseTiling -YuNetTileOnly` A/B gate도 실행했다. 결과는 `totalMs=34,976ms`, `detectMs=69,111ms`, `faceMaskFrames=38`, ROI refiner `attempts=25`, `hits=24`였고, FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=38`, `onlyBaseline=5`, `onlyOptimized=24`, `avgBestIou=0.163`, `minBestIou=0.000`, `passed=False`였다.
@@ -883,7 +884,7 @@ OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려
 
 - YuNet backend도 실제 모델 로드와 자동 모자이크 파이프라인 실행까지 가능하다.
 - 속도는 현재 후보 중 가장 좋지만, 4K 원본을 640 고정 입력으로 줄이는 구조와 현재 threshold 조합에서는 FaceONNX baseline 품질 gate를 통과하지 못한다.
-- tiling은 작은 얼굴 recall을 늘리는 대신 오탐 후보를 크게 늘리고 단일 YuNet 대비 속도 이점도 줄었다. tile-only는 full+tile보다 빠르고 오탐 frame 수는 줄었지만 baseline과의 좌표/구간 일치가 더 나빴다. 현재 2x2 tiling 설정은 기본 detector 교체 후보가 아니다.
+- tiling은 작은 얼굴 후보를 늘리는 대신 YuNet-only 후보도 크게 늘리고 단일 YuNet 대비 속도 이점도 줄었다. tile-only는 full+tile보다 빠르고 YuNet-only frame 수는 줄었지만 baseline과의 좌표/구간 일치가 더 나빴다. 현재 2x2 tiling 설정은 기본 detector 교체 후보가 아니다.
 - 기본 detector 교체는 보류한다. YuNet은 빠른 1차 후보/ROI verifier 후보로 남기되, 기본 승격 전에는 threshold curve, tile-only/full+tile 비교, 오탐 필터, 더 적합한 대체 모델(RetinaFace/YOLO-face 등)을 별도로 검증해야 한다.
 
 ## 2026-05-12 현재 환경 재검증 계획
@@ -913,13 +914,23 @@ OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려
 
 따라서 자동 gate의 수치만으로 완료를 판단하지 않는다. `avgBestIou`, `minBestIou`, `faceMaskFrames`, `removedShort`, `lostFilled` 같은 로그는 후보를 좁히는 근거일 뿐이며, 대표 구간의 육안 확인에서 미탐/오탐/깜박임이 없어야 통과로 본다.
 
+FaceONNX baseline은 기존 앱 동작 보존을 위한 회귀 기준이지 실제 정답 라벨이 아니다. A/B 로그의 `onlyBaseline`은 FaceONNX에만 있는 후보 frame, `onlyOptimized`는 YOLO/SCRFD/YuNet 등 optimized detector에만 있는 후보 frame을 뜻한다. 이 값은 detector 간 차이를 찾는 신호일 뿐이며, 곧바로 실제 `미탐` 또는 `오탐`으로 판정하지 않는다.
+
+실제 오탐/미탐 판정 기준은 다음과 같이 분리한다.
+
+- 실제 미탐: 라벨된 GT 또는 대표 frame overlay 육안 확인에서 사람 얼굴이 보이는데 detector 결과가 없거나 모자이크가 유지되지 않는 경우.
+- 실제 오탐: 라벨된 GT 또는 대표 frame overlay 육안 확인에서 얼굴이 아닌 손/물체/배경인데 detector가 얼굴로 잡아 모자이크 대상이 되는 경우.
+- baseline-diff: `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou`처럼 FaceONNX와 optimized detector의 후보 수나 박스 정의가 다른 경우.
+
+따라서 YOLO가 FaceONNX보다 빠르고 `onlyOptimized`를 만들더라도, 그 후보가 실제 얼굴이면 recall 개선 가능성으로 따로 기록한다. 반대로 `onlyBaseline`도 FaceONNX가 맞고 YOLO가 틀렸다는 뜻으로 단정하지 않는다. 추천 여부는 먼저 baseline-diff gate로 기존 동작 변화 폭을 확인하고, 그 다음 representative overlay 또는 GT 기준으로 실제 얼굴/비얼굴 여부를 확인해 판단한다.
+
 이번 재검증에서는 YuNet을 우선 제외한다.
 
 제외 이유:
 
-- YuNet은 속도는 빠르지만 기존 A/B에서 오탐/미탐과 baseline 좌표 불일치가 컸다.
-- tiling을 켜면 작은 얼굴 후보는 늘지만 오탐도 크게 늘고 속도 이점이 줄었다.
-- 현재 문제의 핵심은 작은 얼굴 미탐, 물건 오탐, track 깜박임, 긴 export 시간이므로 YuNet을 계속 튜닝하기보다 FaceONNX baseline과 SCRFD 후보를 먼저 현재 환경에서 다시 비교한다.
+- YuNet은 속도는 빠르지만 기존 A/B에서 FaceONNX-only/YuNet-only frame과 baseline 좌표 불일치가 컸다.
+- tiling을 켜면 작은 얼굴 후보는 늘지만 YuNet-only 후보도 크게 늘고 속도 이점이 줄었다.
+- 현재 문제의 핵심은 실제 작은 얼굴 누락, 실제 물건 오검출, track 깜박임, 긴 export 시간이므로 YuNet을 계속 튜닝하기보다 FaceONNX baseline과 SCRFD 후보를 먼저 현재 환경에서 다시 비교한다.
 
 현재 환경 검증 대상:
 
@@ -940,7 +951,7 @@ OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려
 - `UseTracking=true`
 - `ParallelDetectorCount`는 `2`와 `4`를 모두 측정한다.
 - threshold는 현재 사용자 기준값 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`을 시작점으로 사용한다. 이 값은 고정 결론이 아니다.
-- FaceONNX와 SCRFD 각각에 대해 미탐 0, 오탐 0, 깜박임 0에 가장 가까운 threshold 조합을 찾고, 검증된 조합을 기본값 후보로 문서화한다.
+- FaceONNX와 SCRFD 각각에 대해 실제 누락 0, 실제 오검출 0, 깜박임 0에 가장 가까운 threshold 조합을 찾고, 검증된 조합을 기본값 후보로 문서화한다.
 - 품질 비교 전에는 sparse 검출, downscale, threshold 완화로 속도를 얻지 않는다.
 
 검증 지표:
@@ -972,8 +983,8 @@ OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려
 
 판정 기준:
 
-- SCRFD가 FaceONNX보다 작은 얼굴 미탐을 줄이고, 물건 오탐과 모자이크 깜박임을 만들지 않을 때만 다음 후보로 유지한다.
-- SCRFD가 빠르더라도 미탐/오탐/깜박임/박스 튐이 생기면 기본 승격하지 않는다.
+- SCRFD가 FaceONNX보다 실제 작은 얼굴 누락을 줄이고, 실제 물건 오검출과 모자이크 깜박임을 만들지 않을 때만 다음 후보로 유지한다.
+- SCRFD가 빠르더라도 실제 누락/오검출/깜박임/박스 튐이 생기면 기본 승격하지 않는다.
 - threshold 기본값은 하드코딩된 현재 값이 아니라, 현재 환경 대표 구간에서 가장 좋은 품질/속도 균형을 보인 검증값으로 정한다.
 - 최종 문서에는 detector별 추천 threshold와 근거를 남긴다. 예: `FaceONNX 기본 후보: detection=?, confidence=?, nms=?`, `SCRFD 후보: confidence=?, nms=?`.
 - FaceONNX가 현재 환경에서도 가장 안정적이면 기본 detector는 유지하고, SCRFD는 정확도 우선 실험 옵션으로 남긴다.
@@ -1022,7 +1033,7 @@ SCRFD 500M 재검증:
 - `[SmokeQualityGate]`: `passed=False`, `onlyBaseline=37,38,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60`
 - BGR 입력 결과도 `faceMaskFrames=0`
 - BGR `[AutoRunSummary]`: `detectMs=5393`, `totalMs=3889`
-- 판단: 추론 속도는 빠르지만 현재 decode/filter 조합에서는 최종 마스크가 0프레임이므로 미탐 100% 실패다.
+- 판단: 추론 속도는 빠르지만 현재 decode/filter 조합에서는 최종 마스크가 0프레임이므로 현재 pipeline 기준 불합격이다. 이 결과만으로 SCRFD 500M 모델 자체가 실제 정답 기준에서 틀렸다고 단정하지 않는다.
 
 SCRFD 10G 재검증:
 
@@ -1122,7 +1133,7 @@ SCRFD 10G parallel 2:
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `common=0`, `onlyBaseline=19`, `onlyOptimized=19`
 - `[SmokeCompareFrames]`: `onlyBaseline=0,14,15,16,17,18,19,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=50,51,52,53,54,55,56,57,58,59,60,61,62,63,75,76,77,78,79`
 - `[SmokeQualityGate]`: `passed=False`
-- 판단: 최종 frame 수는 같지만 baseline과 공통 frame이 0이다. 실제 얼굴 구간을 놓치고 다른 구간을 잡은 것으로 보며, 미탐/오탐 조건 모두 실패다.
+- 판단: 최종 frame 수는 같지만 baseline과 공통 frame이 0이다. baseline-diff 기준으로 기존 FaceONNX 얼굴 구간과 완전히 다른 구간을 잡고 있으므로 현재 pipeline 기준 불합격이다. 실제 미탐/오탐 확정은 overlay 또는 GT 확인이 필요하지만, 이 수치만으로도 기본/accurate 후보로 올릴 수 없다.
 
 SCRFD 10G parallel 4:
 
@@ -1142,8 +1153,8 @@ SCRFD 10G parallel 4:
 - 이 구간의 기본 후보는 FaceONNX 유지다.
 - FaceONNX parallel 2와 4는 모두 baseline과 완전 일치했고 품질 gate를 통과했다.
 - AutoRunSummary 기준 최고속은 FaceONNX parallel 4(`totalMs=30003`)였고, export까지 포함한 `ExportRunSummary`는 FaceONNX parallel 2(`totalMs=4952`)와 4(`totalMs=5001`)가 거의 비슷했다.
-- SCRFD 500M은 빠르지만 `faceMaskFrames=9`로 baseline 19프레임 대비 미탐이 크고 optimized-only frame도 있어 오탐 위험이 있다.
-- SCRFD 10G는 frame 수만 맞고 실제 frame 위치가 전부 달라 품질 실패다.
+- SCRFD 500M은 빠르지만 `faceMaskFrames=9`로 baseline 19프레임 대비 FaceONNX-only frame이 크고 SCRFD-only frame도 있어 기존 동작과 차이가 크다.
+- SCRFD 10G는 frame 수만 맞고 baseline frame 위치가 전부 달라 현재 pipeline 기준 불합격이다.
 - 이번 고정 threshold `0.2/0.25/0.7` 조건에서는 SCRFD 500M/10G 모두 기본 detector 후보가 아니다.
 
 ### 다음 세션 목표: SCRFD 전용 adapter/필터 정합
@@ -1285,7 +1296,7 @@ SCRFD 10G RGB/letterbox/stride-scale on:
 
 후보 판단:
 
-- SCRFD 500M: `보류`. 빠르고 adapter 계측은 정상화됐지만, 현재 모델/전처리 조합에서는 raw 후보가 baseline 얼굴과 맞지 않고 오탐/미탐이 크다. 다른 SCRFD variant, 입력 정규화/letterbox 구현, 모델 출처별 preprocessing을 추가 확인하기 전까지 기본/accurate 후보로 올리지 않는다.
+- SCRFD 500M: `보류`. 빠르고 adapter 계측은 정상화됐지만, 현재 모델/전처리 조합에서는 raw 후보가 baseline 얼굴과 맞지 않고 FaceONNX-only/SCRFD-only 차이가 크다. 다른 SCRFD variant, 입력 정규화/letterbox 구현, 모델 출처별 preprocessing을 추가 확인하기 전까지 기본/accurate 후보로 올리지 않는다.
 - SCRFD 10G: `폐기`. 500M보다 큰 모델인데도 같은 clip에서 baseline 정합이 회복되지 않고 optimized-only 후보가 더 많다. 현재 CPU/DirectML 실행에서도 500M 대비 후보 품질 이점이 확인되지 않았다.
 - 기본 detector: `FaceONNX 유지`. 이 clip 기준 FaceONNX는 baseline/postprocess가 일관되고, SCRFD는 raw 후보 단계에서 실패한다.
 
@@ -1328,3 +1339,461 @@ SCRFD 10G 추가 검증:
 - `FaceONNX`: 기본 detector 유지. 이 clip에서 baseline frame/postprocess가 안정적이다.
 - `SCRFD 500M`: `보류`. 전처리와 bbox decode 축을 더 분리해도 정합이 회복되지 않았지만, 모델이 빠르고 adapter 실험 기반은 남길 가치가 있다. 다른 SCRFD variant나 모델 출처별 전처리 근거가 추가될 때만 재검토한다.
 - `SCRFD 10G`: `폐기`. 500M 대비 품질 이점이 없고 optimized-only 후보가 많으며, 동적 input size 변경도 현재 DML 경로에서 실패했다.
+
+## 2026-05-22 YOLO backend 분리 구현 목표
+
+작업 브랜치: `feature/yolo-auto-mosaic-backend`
+
+이번 라운드의 목표는 FaceONNX를 제거하거나 기존 최적화값을 덮어쓰는 것이 아니다. 현재 검증된 FaceONNX 품질/속도 설정은 그대로 보존하고, YOLO 계열 detector를 별도 backend/profile로 추가해 같은 자동 모자이크 파이프라인에서 선택 실행할 수 있게 만든다.
+
+목표 문장:
+
+```text
+AUTO_MOSAIC_QUALITY_SPEED_PLAN.md:1 내용을 기준으로 FaceShield 자동 모자이크 파이프라인에 YOLO 기반 detector backend를 추가하고, 기존 FaceONNX 최적화 설정값과 동작은 그대로 유지한 채 FaceONNX와 YOLO를 모델별로 선택해 사용할 수 있도록 구현한다. FaceONNX용 threshold/filter/track/ROI/auto-tune 설정은 기존 검증값을 훼손하지 않고 보존하며, YOLOv8-Face 또는 YOLO5Face ONNX 후보에는 YOLO 전용 threshold, NMS, 후보 필터, small-face 처리, track 후처리, ROI 재검출, auto-tune/profile 설정을 별도로 분리해 최적화한다. 사용자는 FaceONNX와 YOLO 모델을 선택해 자동 모자이크를 실행할 수 있어야 하며, 각 모델은 서로 다른 최적화 값을 독립적으로 가져야 한다. srcTest 대표 구간에서 FaceONNX baseline과 YOLO 후보를 A/B 비교하고, YOLO가 실제 미탐/오탐/깜박임/박스 튐 품질을 유지하거나 개선하면서 자동 검출 totalMs 또는 export totalMs를 줄이는지 검증한다. 품질 gate를 통과한 YOLO 설정만 추천 후보로 문서화하고, 실패한 YOLO 설정은 원인과 보류/폐기 판단을 AUTO_MOSAIC_QUALITY_SPEED_PLAN.md에 기록한다. 이 목표에는 branch 생성, commit, push, pull, reset, stash 같은 git 작업은 포함하지 않는다. git 관련 작업은 별도 사용자 지시가 있을 때만 수행한다. 그 외 목표 범위 안의 코드 구현, 문서 수정, 로컬 빌드, smoke 실행, 모델 후보 다운로드/검증, A/B 테스트, 디버그 로그 추가, threshold/profile 튜닝은 사용자에게 매번 확인하지 않고 자율적으로 진행한다.
+```
+
+핵심 조건:
+
+- 이 목표 범위에서 git 작업은 제외한다. branch 생성, commit, push, pull, reset, stash 등은 별도 지시가 있을 때만 수행한다.
+- git을 제외한 구현/수정/로컬 검증/모델 후보 실험은 매 단계 승인 요청 없이 자율적으로 진행한다.
+- FaceONNX 기존 기본값과 검증값은 변경하지 않는다.
+- FaceONNX와 YOLO는 같은 설정 객체를 공유하지 않고 detector별 profile을 가진다.
+- 사용자는 FaceONNX와 YOLO 모델을 선택해서 자동 모자이크를 실행할 수 있어야 한다.
+- YOLO threshold, NMS, 후보 필터, small-face 기준, track 후처리, ROI 재검출, auto-tune 후보는 YOLO 전용 값으로 분리한다.
+- YOLO가 FaceONNX보다 빠르더라도 실제 미탐, 실제 오탐, 깜박임, 박스 튐이 늘면 기본값으로 승격하지 않는다.
+- YOLO가 품질 gate를 통과하지 못하면 실패 원인을 모델, decode, 전처리, post-filter, track/ROI 중 어디인지 분리해서 기록한다.
+
+우선 검토 후보:
+
+1. `YOLOv8-Face`
+   - `nano`는 속도 후보로 본다.
+   - `medium`은 품질 후보로 본다.
+   - 단점: 공개 구현/weight의 라이선스가 GPL/Ultralytics 계열일 수 있으므로 배포 전 확인이 필요하다.
+
+2. `YOLO5Face`
+   - 작은 얼굴과 어려운 각도 대응 후보로 본다.
+   - `n/s` 계열부터 ONNX runtime adapter를 붙여 속도와 품질을 확인한다.
+   - 단점: 모델 파일 출처와 라이선스 확인이 필요하다.
+
+초기 구현 방향:
+
+- `FaceDetectorBackend`에 YOLO 계열 backend를 추가한다.
+- `YoloFaceOnnxDetectorOptions`와 `YoloFaceOnnxDetector`를 새로 추가한다.
+- YOLO output decode는 모델별 output shape를 먼저 inspect하고, anchor-free/anchor-based 구조를 명확히 분리한다.
+- `FaceDetectorFactoryOptions`는 FaceONNX, SCRFD, YuNet, YOLO option을 독립적으로 가진다.
+- `AutoMaskOptions.FilterProfile`에 YOLO profile을 추가하고 FaceONNX/SCRFD/YuNet과 분리한다.
+- smoke script에 `-YoloModelPath`, `-YoloModelType`, `-YoloInputSize`, `-YoloConfidenceThreshold`, `-YoloNmsThreshold`, `-YoloDebugDump` 옵션을 추가한다.
+- A/B 비교는 FaceONNX baseline을 기준으로 `faceMaskFrames`, `onlyBaseline`, `onlyOptimized`, `avgBestIou`, `minBestIou`, track/ROI 로그를 같이 본다.
+
+검증 기준:
+
+- 기본 FaceONNX gate는 기존과 동일하게 통과해야 한다.
+- YOLO 후보는 같은 clip에서 FaceONNX baseline 대비 frame 누락/추가, 박스 수 차이, 낮은 IoU가 작아야 한다.
+- `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou`는 실제 오탐/미탐 판정이 아니라 baseline-diff 신호로 기록한다.
+- 실제 미탐/오탐은 representative overlay 육안 확인 또는 GT 라벨 기준으로만 확정한다.
+- YOLO의 자동 검출 wall-clock은 `[AutoRunSummary].totalMs`로 판단한다. 병렬 thread 누적값인 `detectMs`만으로 빠르다고 판단하지 않는다.
+- 대표 clip gate를 통과한 YOLO 후보만 30초 이상 구간과 export smoke로 확장한다.
+- 전체 목표 완료 전에는 Avalonia GUI에서 detector 선택, 자동 검출, preview, export 흐름도 확인해야 한다.
+
+## 2026-05-22 YOLO backend 1차 구현 및 YOLOv8n 후보 smoke
+
+구현 상태:
+
+- `FaceDetectorBackend.YoloFaceOnnx`를 추가했다.
+- `YoloFaceOnnxDetectorOptions`, `YoloFaceModelType`, `YoloFaceOnnxDetector`를 추가했다.
+- `YoloFaceOnnxDetector`는 ONNX Runtime으로 YOLOv8-Face/YOLO5Face 계열 후보를 실행하고, `[1,N,F]` 또는 `[1,F,N]` 형태의 YOLO 후보 텐서를 해석한다. YOLO5Face의 raw 3-scale feature map `[1,48,H,W]` 출력은 별도 decode 경로에서 처리한다.
+- `FaceDetectorFactoryOptions`는 FaceONNX/SCRFD/YuNet/YOLO option을 별도 프로퍼티로 가진다.
+- `AutoMaskOptions.FilterProfile`에 `Yolo`를 추가했고, YOLO 후보 필터는 FaceONNX와 분리했다.
+- `WorkspaceViewModel`의 자동 실행 경로는 FaceONNX backend에서만 기존 `DetectorAutoTuner`를 적용하고, YOLO backend에서는 YOLO factory/options를 유지한다.
+- 홈 자동 옵션 UI에서 `FaceONNX`와 `YOLO Face ONNX`를 선택할 수 있게 했다. YOLO 선택 시 YOLO 모델 종류, `.onnx` 경로, 입력 크기, objectness/confidence/NMS 값을 별도 입력한다.
+- `scripts/run-srcTest-smoke.ps1`에 `-YoloModelPath`, `-YoloModelType`, `-YoloInputSize`, `-YoloObjectnessThreshold`, `-YoloConfidenceThreshold`, `-YoloNmsThreshold`, `-YoloDebugDump` 옵션을 추가했다. 이후 진단용으로 `-DumpCompareDetails`, `-YoloUseFaceOnnxRoiRefine`, `-YoloFaceOnnxRoiMinAreaRatio`, `-YoloFaceOnnxRoiMaxCandidates`도 추가했다.
+
+FaceONNX 회귀 검증:
+
+- `dotnet build FaceShield.sln` 성공.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
+- 기본 verifier의 quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- 같은 verifier에서 ROI-hit 대표 구간은 `attempts=11`, `hits=5`를 유지했다.
+- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=53,703ms`로 통과했다. 현재 장비/부하에서는 튜너가 CPU 2세션을 선택했다.
+
+YOLO 후보:
+
+- 다운로드 후보: `lindevs/yolov8-face` release `1.0.1`의 `yolov8n-face-lindevs.onnx`.
+- 로컬 경로: `.tmp/models/yolov8n-face-lindevs.onnx`.
+- SHA-256: `8d0bfb0c3383c5bd7a78dd24ef79a21e2aa456619b6ab5e53867092d1c7dc414`.
+- 모델 metadata: input `images[1x3x640x640]`, output `output0[1x5x8400]`.
+- 라이선스/배포 적합성은 아직 확정하지 않았다. 후보 실험용 로컬 파일로만 취급한다.
+
+YOLOv8n 기본 threshold smoke:
+
+- 명령:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.25 -YoloConfidenceThreshold 0.35 -YoloNmsThreshold 0.45 -YoloDebugDump
+```
+
+- adapter 실행은 성공했다.
+- YOLO optimized `totalMs=14,655ms`로 FaceONNX baseline `totalMs=62,090ms`보다 빨랐다.
+- 하지만 YOLO는 후처리 후 `faceMaskFrames=0`이었다.
+- A/B 결과는 `baselineFrames=19`, `optimizedFrames=0`, `onlyBaseline=19`, `onlyOptimized=0`, `avgBestIou=0.000`, `minBestIou=0.000`, `passed=False`.
+- 판단: `폐기`. 이 threshold는 알려진 얼굴 구간에서 최종 마스크가 0프레임이라 quality gate를 통과하지 못한다.
+
+YOLOv8n low-threshold smoke:
+
+- 명령:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.05 -YoloConfidenceThreshold 0.05 -YoloNmsThreshold 0.45
+```
+
+- YOLO optimized `totalMs=13,033ms`로 FaceONNX baseline `totalMs=59,679ms`보다 빨랐다.
+- 후보는 생겼지만 후처리 후 `faceMaskFrames=8`에 그쳤다.
+- A/B 결과는 `baselineFrames=19`, `optimizedFrames=8`, `common=8`, `onlyBaseline=11`, `onlyOptimized=0`, `avgBestIou=0.603`, `minBestIou=0.048`, `boxCountDiffFrames=7`, `passed=False`.
+- 판단: `보류`. 속도는 유의미하게 빠르지만 미탐과 박스 정합 실패가 커서 추천 후보가 아니다. 실패 축은 모델 후보의 작은 얼굴/장면 적합성, 640 고정 입력 해상도, low-threshold 후보의 위치 정합, YOLO 전용 후처리 모두에 걸쳐 있다. 현재 증거만으로는 decode 자체 실패라고 단정하지 않는다.
+
+현재 추천 후보:
+
+- 없음.
+
+다음 후보:
+
+- 같은 adapter로 다른 YOLOv8-Face 후보를 비교한다. 우선순위는 더 큰 입력 또는 더 높은 mAP 후보지만, 현재 모델은 metadata가 `1x3x640x640` 고정이라 단순 `-YoloInputSize 1280` 실험은 먼저 모델 동적 입력 여부를 확인한 뒤 진행한다.
+- YOLO5Face ONNX 후보를 확보해 `Yolo5Face` decode 경로를 검증한다.
+- YOLO가 3초 gate를 통과하기 전에는 30초/export smoke로 승격하지 않는다.
+
+## 2026-05-22 YOLO tiling 실험
+
+구현 상태:
+
+- `YoloFaceOnnxDetectorOptions`에 `UseTiling`, `IncludeFullFrameWhenTiling`, `TileColumns`, `TileRows`, `TileOverlapRatio`를 추가했다.
+- `YoloFaceOnnxDetector`는 전체 프레임 단일 추론 외에 source frame을 겹치는 tile region으로 나눠 YOLO를 실행할 수 있다.
+- 홈 자동 옵션 UI에 YOLO 전용 타일 검출, 타일만 실행, 타일 행/열, 타일 겹침 값을 추가했다.
+- `scripts/run-srcTest-smoke.ps1`에 `-YoloUseTiling`, `-YoloTileOnly`, `-YoloTileColumns`, `-YoloTileRows`, `-YoloTileOverlapRatio`를 추가했다.
+
+실험 1: YOLOv8n low-threshold + 2x2 tile-only
+
+- 명령:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.05 -YoloConfidenceThreshold 0.05 -YoloNmsThreshold 0.45 -YoloUseTiling -YoloTileOnly -YoloTileColumns 2 -YoloTileRows 2 -YoloTileOverlapRatio 0.15
+```
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=58,923ms`.
+- YOLO tile-only: `optimizedFrames=16`, `totalMs=46,520ms`.
+- A/B 결과: `common=9`, `onlyBaseline=10`, `onlyOptimized=7`, `avgBestIou=0.741`, `minBestIou=0.572`, `boxCountDiffFrames=8`, `passed=False`.
+- 판단: `보류`. tiling은 FaceONNX-only frame을 일부 줄였지만 YOLO-only/불일치 frame이 생겼고 IoU gate를 통과하지 못했다. 속도도 non-tiled YOLO보다 크게 느려졌다.
+
+실험 2: YOLOv8n low-threshold + full-frame + 2x2 tile
+
+- 명령:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipBaseline -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.05 -YoloConfidenceThreshold 0.05 -YoloNmsThreshold 0.45 -YoloUseTiling -YoloTileColumns 2 -YoloTileRows 2 -YoloTileOverlapRatio 0.15
+```
+
+- YOLO full+tile: `faceMaskFrames=23`, `totalMs=61,397ms`, ROI refine `attempts=8`, `hits=1`.
+- 이 실행은 빠른 진단용으로 baseline compare를 생략했다.
+- 판단: `보류`. frame 수는 baseline 19보다 많아졌지만, 직전 tile-only A/B에서 이미 `onlyOptimized`가 발생했고 full+tile은 `totalMs`가 FaceONNX baseline 수준까지 올라왔다. 따라서 추천 후보로 승격하지 않는다.
+
+현재 YOLOv8n 정리:
+
+- non-tiled low-threshold: 빠르지만 `optimizedFrames=8`, IoU 실패.
+- tile-only low-threshold: 미탐은 줄었지만 `onlyBaseline=10`, `onlyOptimized=7`, IoU 실패.
+- full+tile low-threshold: 후보 수는 늘었지만 속도 이점이 거의 사라지고 오탐 가능성이 커졌다.
+- 따라서 `yolov8n-face-lindevs.onnx`는 현재 `보류` 유지. 추천 후보 없음.
+
+9분 2초 추가 gate:
+
+- `YoloObjectnessThreshold=0.05`, `YoloConfidenceThreshold=0.05`, `YoloNmsThreshold=0.45` low-threshold 조합을 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`에서 재검증했다.
+- FaceONNX baseline: `baselineFrames=55`, `totalMs=24,280ms`.
+- YOLOv8n optimized: `optimizedFrames=62`, `totalMs=12,401ms`.
+- A/B 결과: `common=55`, `onlyBaseline=0`, `onlyOptimized=7`, `avgBestIou=0.731`, `minBestIou=0.488`, `boxCountDiffFrames=39`, `passed=False`.
+- 추가 frame은 `0,1,2,3,4,8,9`였고, low-threshold 특성상 화면 상단 작은 얼굴 후보 외에 하단/중단 물체성 후보도 같이 들어왔다.
+- `YoloObjectnessThreshold=0.20`, `YoloConfidenceThreshold=0.20`, `YoloNmsThreshold=0.45` 중간 threshold도 확인했다.
+- FaceONNX baseline: `baselineFrames=55`, `totalMs=24,099ms`.
+- YOLOv8n optimized: `optimizedFrames=57`, `totalMs=11,254ms`.
+- A/B 결과: `common=53`, `onlyBaseline=2`, `onlyOptimized=4`, `avgBestIou=0.720`, `minBestIou=0.000`, `boxCountDiffFrames=27`, `passed=False`.
+- 판단: 9분 구간에서 YOLOv8n은 threshold를 낮추면 YOLO-only 후보가 많고, threshold를 올리면 일부 FaceONNX-only frame이 생긴다. 큰 얼굴 박스 정합도 FaceONNX 기준 gate를 넘지 못한다. 실제 오탐/미탐 여부는 overlay 또는 GT 확인이 필요하지만, 현재 baseline-diff gate 기준으로는 추천 후보가 아니다.
+
+FaceONNX 회귀 재검증:
+
+- YOLO tiling 구현 후 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행을 다시 통과했다.
+- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
+- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=50,439ms`로 통과했다.
+
+## 2026-05-22 YOLO5Face feature-map decode 및 smoke
+
+구현 상태:
+
+- `YoloFaceOnnxDetector`에 YOLO5Face 전용 raw feature-map decode를 추가했다.
+- 적용 대상 output shape는 `pred0[1x48x80x80]`, `pred1[1x48x40x40]`, `pred2[1x48x20x20]` 같은 3-scale NCHW tensor다.
+- anchors는 `deepcam-cn/yolov5-face`의 `models/yolov5s.yaml` 설정을 기준으로 했다: P3/8 `[4,5, 8,10, 13,16]`, P4/16 `[23,29, 43,55, 73,105]`, P5/32 `[146,217, 231,300, 335,433]`.
+- decode는 YOLO5Face `Detect.forward`의 inference 공식을 따른다. `xy=(sigmoid(xy)*2-0.5+grid)*stride`, `wh=(sigmoid(wh)*2)^2*anchor`, `score=sigmoid(objectness)*sigmoid(class)`로 후보를 만든 뒤 letterbox padding/scale을 되돌린다.
+- 기존 generic `[1,F,N]` 경로가 `[1,48,H,W]`를 잘못 후보 tensor로 해석하던 문제를 피하기 위해 YOLO5Face 4D feature-map 경로를 먼저 검사한다.
+
+YOLO5Face 후보:
+
+- 다운로드 후보: Hugging Face `hayashiLin/deepfacelivemodels`의 `YoloV5Face.onnx`.
+- 로컬 경로: `.tmp/models/YoloV5Face.onnx`.
+- SHA-256: `907c295f79eba1b0f4be59bcf5d8aabe4e2a9002ec44c5d1c518b97eb9fb13da`.
+- Hugging Face 페이지 기준 license는 `GPL-3.0`으로 표시되어 있다. 현재는 로컬 실험 후보로만 취급하고 배포 후보로 추천하지 않는다.
+
+실험 1: YOLO5Face 기본 threshold
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.25 -YoloConfidenceThreshold 0.25 -YoloNmsThreshold 0.45
+```
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=58,029ms`.
+- YOLO5Face optimized: `optimizedFrames=9`, `totalMs=16,116ms`.
+- A/B 결과: `common=9`, `onlyBaseline=10`, `onlyOptimized=0`, `avgBestIou=0.973`, `minBestIou=0.953`, `boxCountDiffFrames=0`, `passed=False`.
+- 판단: `보류`. decode와 박스 정합은 정상에 가깝지만 recall이 부족해 품질 gate를 통과하지 못한다.
+
+실험 2: YOLO5Face low threshold
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.10 -YoloConfidenceThreshold 0.10 -YoloNmsThreshold 0.45
+```
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=67,228ms`.
+- YOLO5Face optimized: `optimizedFrames=23`, `totalMs=22,355ms`.
+- A/B 결과: `common=18`, `onlyBaseline=1`, `onlyOptimized=5`, `avgBestIou=0.755`, `minBestIou=0.000`, `boxCountDiffFrames=5`, `passed=False`.
+- 판단: `보류`. threshold를 낮추면 FaceONNX-only frame은 줄지만 YOLO-only/프레임 불일치가 생긴다.
+
+실험 3: YOLO5Face 중간 threshold
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.15 -YoloConfidenceThreshold 0.15 -YoloNmsThreshold 0.45
+```
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=57,546ms`.
+- YOLO5Face optimized: `optimizedFrames=20`, `totalMs=18,010ms`.
+- A/B 결과: `common=18`, `onlyBaseline=1`, `onlyOptimized=2`, `avgBestIou=0.724`, `minBestIou=0.000`, `boxCountDiffFrames=2`, `passed=False`.
+- 판단: `보류`. 기본 threshold보다 recall은 좋아졌지만 gate 기준의 frame set과 IoU를 만족하지 못한다.
+
+실험 4: YOLO5Face 기본 threshold + 2x2 tile-only
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.25 -YoloConfidenceThreshold 0.25 -YoloNmsThreshold 0.45 -YoloUseTiling -YoloTileOnly -YoloTileColumns 2 -YoloTileRows 2 -YoloTileOverlapRatio 0.15
+```
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=53,496ms`.
+- YOLO5Face tile-only: `optimizedFrames=39`, `totalMs=56,705ms`.
+- A/B 결과: `common=10`, `onlyBaseline=9`, `onlyOptimized=29`, `avgBestIou=0.778`, `minBestIou=0.620`, `boxCountDiffFrames=2`, `passed=False`.
+- 판단: `폐기`. tiling은 YOLO-only 후보를 크게 늘리고 속도 이점도 사라진다.
+
+실험 5: YOLO5Face 근접 threshold `objectness=0.12`, `confidence=0.18`
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.12 -YoloConfidenceThreshold 0.18 -YoloNmsThreshold 0.45
+```
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=76,625ms`.
+- YOLO5Face optimized: `optimizedFrames=19`, `totalMs=17,580ms`.
+- A/B 결과: `common=18`, `onlyBaseline=1`, `onlyOptimized=1`, `avgBestIou=0.790`, `minBestIou=0.000`, `boxCountDiffFrames=2`, `passed=False`.
+- mismatch frame은 `onlyBaseline=86`, `onlyOptimized=9`였다.
+- 판단: `보류`. 지금까지의 YOLO5Face 후보 중 frame 수와 속도는 가장 근접했지만, 실제 frame set과 최소 IoU가 gate를 통과하지 못한다. 실패 축은 모델/threshold curve와 YOLO 전용 track 후처리 경계에 가깝다. decode는 기본 threshold에서 높은 IoU를 보였으므로 현재 증거만으로 decode 실패라고 보지는 않는다.
+
+YOLO 전용 track 후처리 1차 보정:
+
+- YOLO profile에서 `MaxLostFillFrames`를 `3`에서 `1`로 줄였다.
+- YOLO profile의 `ShortTrackMaxConfidence`를 `0.58`에서 `0.38`로 낮췄다.
+- 목적은 YOLO 저신뢰 tail box가 화면 밖 방향으로 길게 extrapolate되는 false positive를 줄이고, 실제 단발 얼굴 후보인 frame 86을 short-track 제거에서 보존하는 것이다.
+- FaceONNX profile 값은 변경하지 않았다.
+
+보정 후 같은 0.12/0.18 재검증:
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=54,624ms`.
+- YOLO5Face optimized: `optimizedFrames=19`, `totalMs=19,930ms`.
+- A/B 결과: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.798`, `minBestIou=0.000`, `boxCountDiffFrames=1`, `passed=False`.
+- bad frame 로그: `boxCountDiff=27`, `lowIou=6,7,8,27`.
+- 판단: `보류`. frame set mismatch는 해소됐지만, YOLO의 저신뢰 edge-tail 박스가 frame 6~8에서 FaceONNX baseline보다 위쪽으로 크게 튀고, frame 27의 두 얼굴 중 하나가 postprocess에서 정합되지 않는다. 실패 축은 decode보다는 YOLO 전용 track/post-filter와 false-positive/false-negative 경계에 가깝다.
+
+YOLO 전용 track 후처리 2차 보정:
+
+- `FaceTrackPostProcessOptions`에 저신뢰 tail pruning 옵션을 추가했다.
+- YOLO profile에서 `UnstableTailMaxConfidence=0.40`, `UnstableTailMinStableDetections=3`, `UnstableTailMinIou=0.45`, `UnstableTailMaxAreaChangeRatio=1.8`을 사용한다.
+- 안정 track 뒤에 붙은 저신뢰 tail detection이 면적/IoU 기준으로 급격히 튀면 해당 tail detection을 제거하고, 이전 안정 track 기준 lost-fill이 적용되게 했다.
+- YOLO profile의 `MaxLostFillFrames`는 다시 `3`으로 두고, `ShortTrackMaxConfidence`는 `0.18`로 낮춰 실제 단발 얼굴 후보를 제거하지 않게 했다.
+- FaceONNX profile은 tail pruning 비활성 기본값(`UnstableTailMaxConfidence=0`)을 유지한다.
+
+2차 보정 후 같은 0.12/0.18 재검증:
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=55,885ms`.
+- YOLO5Face optimized: `optimizedFrames=19`, `totalMs=16,149ms`.
+- A/B 결과: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`.
+- bad frame 로그: `boxCountDiff=none`, `lowIou=none`.
+- 판단: `3초 gate 통과`. 이 설정은 현재 대표 3초 구간에서 FaceONNX baseline 대비 frame set, 박스 수, IoU gate를 통과했고 자동 검출 wall-clock도 약 3.5배 빨랐다. 단, 이 결과만으로 YOLO 최종 최적화 완료나 전체 영상 기본값 승격으로 보지는 않는다.
+
+30초 확장 smoke:
+
+- 대상: `.tmp/srcTest-smoke/smoke-1200-30s.mp4`
+- 명령 조건: `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, `ParallelDetectorCount=2`, `DownscaleRatio=1.0`, `DetectEveryNFrames=1`.
+- 자동 검출: `processed=899`, `detects=899`, `interpolated=0`, `faceMaskFrames=774`, `totalMs=157,604ms`.
+- track/ROI: `tracks=144`, `filled=338`, `lostFilled=150`, `removedShort=36`, ROI `attempts=32`, `hits=23`.
+- 기존 FaceONNX 30초 문서 기록은 `processed=899`, `faceMaskFrames=778`, `totalMs=316,366ms`였으므로, frame 수는 근접하고 자동 검출 wall-clock은 약 2배 빠르다.
+- 이 실행은 baseline A/B 비교가 아니라 확장 smoke이므로, 30초 구간의 미탐/오탐/박스 튐이 완전히 없다고 단정하지 않는다.
+
+30초 export smoke:
+
+- 같은 30초 구간에서 export 포함 실행을 완료했다.
+- 자동 검출: `processed=899`, `faceMaskFrames=774`, `totalMs=158,063ms`.
+- export: `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=774`, `swsToBgraMs=13,898`, `maskMs=44,094`, `swsToEncMs=22,153`, `encodeMs=4,442`, `totalMs=135,572ms`.
+- 기존 FaceONNX 30초 medium export 기록은 자동 검출 `totalMs=316,366ms`, export `totalMs=127,750ms`, `directFaceFrames=778`이었다. YOLO는 자동 검출이 크게 빠르지만 export는 face rect 수가 비슷해 거의 같은 병목 구조를 가진다.
+- export output은 `.tmp/srcTest-smoke/smoke-1200-30s_blur.mp4`로 생성됐다.
+
+당시 YOLO5Face 추천 상태:
+
+- `YoloV5Face.onnx`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, YOLO 전용 unstable-tail pruning 적용 조합은 이 시점에는 `조건부 추천 후보`로 올렸다.
+- 조건부인 이유는 대표 3초 gate와 30초/export smoke는 통과했지만, 30초 구간의 baseline A/B 품질 비교와 육안 확인, 다른 시간대 대표 구간, 긴 구간 export 검증은 아직 남아 있기 때문이다.
+- 현재 실패 축은 완전 해소가 아니라 1차 대표 구간에서 해소된 상태다. 다음 검증은 다른 대표 3초 구간과 30초 baseline A/B 또는 육안 검토다.
+- 홈 자동 옵션의 신규 YOLO 기본 profile도 `YOLO5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`로 맞췄다. 저장된 사용자 설정이 있으면 기존처럼 저장값이 우선 적용된다.
+
+현재 YOLO5Face 정리:
+
+- feature-map decode는 동작한다. 기본 threshold의 `avgBestIou=0.973`, `minBestIou=0.953`가 이를 뒷받침한다.
+- 기본 threshold는 빠르고 위치가 맞지만 FaceONNX-only frame이 크다.
+- 낮은 threshold와 중간 threshold는 FaceONNX-only frame을 줄이는 대신 YOLO-only frame과 frame mismatch를 만든다.
+- 2x2 tile-only는 추천 후보가 아니다.
+- `objectness=0.12`, `confidence=0.18`은 3초 gate에서 `faceMaskFrames=19`까지 맞췄지만 `onlyBaseline`/`onlyOptimized`와 IoU 실패가 남았다.
+- YOLO 전용 track 후처리 보정 후 frame set mismatch는 사라졌지만, 저신뢰 edge-tail 박스 튐과 frame 27 박스 수 차이가 남아 품질 gate를 통과하지 못했다.
+- YOLO 전용 unstable-tail pruning 적용 후 대표 3초 gate는 통과했고, 30초 자동 검출/export smoke도 완료했다.
+- 따라서 이 시점의 `YoloV5Face.onnx` `0.12/0.18/0.45` 설정은 조건부 추천 후보로 두었다. 아래 9분 2초 추가 gate 실패에 따라 최종 추천 상태는 다시 보정한다.
+
+FaceONNX 회귀 재검증:
+
+- YOLO5Face feature-map decode 추가 후 `dotnet build FaceShield.sln`은 기존 FFmpeg obsolete warning 7개만 남기고 성공했다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행을 다시 통과했다.
+- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
+- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=47,742ms`로 통과했다.
+
+YOLO 전용 후처리 보정 후 회귀 재검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
+- `git diff --check` 통과.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
+- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
+- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=75,233ms`로 통과했다. 현재 실행에서는 auto-tune이 CPU 2세션을 선택했다.
+
+YOLO unstable-tail pruning 추가 후 회귀 재검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
+- `git diff --check` 통과.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
+- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
+- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=49,033ms`로 통과했다. 현재 실행에서는 auto-tune이 CPU 2세션/default를 선택했다.
+
+YOLO5Face 기본 profile 연결 후 회귀 재검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
+- `git diff --check` 통과.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
+- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
+- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
+- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=47,649ms`로 통과했다. 현재 실행에서는 auto-tune이 CPU 2세션/default를 선택했다.
+
+다른 대표 구간 추가 gate: 9분 2초 구간
+
+- 대상: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`
+- 목적: 6분 3초 gate를 통과한 YOLO5Face `0.12/0.18/0.45` 조합이 얼굴 수가 많은 다른 구간에서도 FaceONNX baseline과 같은 품질 gate를 통과하는지 확인한다.
+
+실험 1: YOLO5Face `objectness=0.12`, `confidence=0.18`, `nms=0.45`
+
+- FaceONNX baseline: `baselineFrames=55`, `totalMs=19,772ms`.
+- YOLO5Face optimized: `optimizedFrames=58`, `totalMs=12,314ms`.
+- A/B 결과: `common=55`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `boxCountDiffFrames=34`, `passed=False`.
+- bad frame 로그: `boxCountDiff=10,17,18,19,20,21,22,23,24,25,31,32,33,34,35,36,37,38,39,40,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
+- 판단: `보류`. 6분 3초 대표 gate와 달리 얼굴 수가 많은 9분 구간에서는 YOLO-only frame, 박스 수 차이, 낮은 IoU가 발생한다. YOLO-only 후보 중 일부는 실제 얼굴일 수 있으므로 실제 오탐으로 단정하지 않는다. 다만 기존 동작 변화 폭이 크고 overlay/GT 기준 통과 증거가 부족해 최종 추천 후보로 유지하지 않는다.
+
+실험 2: YOLO5Face `objectness=0.18`, `confidence=0.25`, `nms=0.45`
+
+- FaceONNX baseline: `baselineFrames=55`, `totalMs=16,920ms`.
+- YOLO5Face optimized: `optimizedFrames=54`, `totalMs=10,720ms`.
+- A/B 결과: `common=53`, `onlyBaseline=2`, `onlyOptimized=1`, `avgBestIou=0.793`, `minBestIou=0.625`, `boxCountDiffFrames=29`, `passed=False`.
+- bad frame 로그: `boxCountDiff=20,21,22,23,24,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
+- 판단: threshold를 올리면 YOLO-only 후보는 일부 줄지만, FaceONNX-only/YOLO-only frame과 박스 정합 실패가 남아 gate를 통과하지 못한다. 이 단계만으로 실제 미탐/오탐 여부는 확정하지 않는다.
+
+실험 3: YOLO5Face `objectness=0.18`, `confidence=0.25`, `nms=0.30`
+
+- FaceONNX baseline: `baselineFrames=55`, `totalMs=17,226ms`.
+- YOLO5Face optimized: `optimizedFrames=54`, `totalMs=10,662ms`.
+- A/B 결과: `common=53`, `onlyBaseline=2`, `onlyOptimized=1`, `avgBestIou=0.793`, `minBestIou=0.625`, `boxCountDiffFrames=29`, `passed=False`.
+- 판단: NMS를 더 강하게 낮춰도 실험 2와 결과가 사실상 같았다. 따라서 이 구간의 주된 실패 원인은 단순 중복 박스 NMS가 아니라 YOLO5Face의 후보 분포, FaceONNX 대비 박스 크기/위치 차이, YOLO 전용 post-filter/track 정합 문제에 가깝다.
+
+현재 YOLO5Face 판정 보정:
+
+- `YoloV5Face.onnx` `0.12/0.18/0.45` 조합은 6분 3초 gate와 12분 30초 smoke 기준으로는 빠르고 유망하지만, 9분 2초 추가 gate에서 실패했다.
+- 따라서 이 조합을 최종 `추천 후보`로 보지 않는다. 현재 상태는 `대표 6분 3초 구간 통과 후보 / 전체 추천 보류`다.
+- Home UI에서 YOLO를 선택했을 때의 초기 profile은 지금까지 가장 나은 YOLO5Face 조합으로 남겨두지만, 앱 기본 detector는 계속 FaceONNX다.
+- 다음 YOLO 작업은 9분 구간의 box count diff와 low-IoU frame을 기준으로 원인을 더 분리해야 한다. 우선순위는 raw YOLO 후보 dump, FaceONNX 대비 후보 수 차이, 큰 얼굴/다중 얼굴 구간의 YOLO 전용 post-filter, track merge 기준 재조정이다.
+
+9분 구간 원인 분리 및 YOLO 하단 저신뢰 track 필터:
+
+- `-DumpDetections`와 대표 frame overlay로 9분 구간 mismatch를 확인했다.
+- frame 20/32 overlay 기준 YOLO의 추가 청록 박스는 뒤쪽 사람 얼굴 후보로 보이며, FaceONNX baseline이 놓친 실제 얼굴일 가능성이 있다.
+- frame 32의 노란 박스는 손/물체 영역을 얼굴로 잡은 오탐이다.
+- 큰 얼굴 박스는 YOLO가 FaceONNX보다 더 넓게 잡는 경향이 있어 `avgBestIou`와 `minBestIou`를 낮춘다. 이 차이는 단순 NMS 문제는 아니다.
+- 따라서 9분 실패 축은 하나가 아니라 다음이 섞여 있다.
+  - 실제 작은/뒤쪽 얼굴 추가 검출: 모델 recall 측면에서는 개선일 수 있지만, FaceONNX 기준 strict frame/box gate에서는 `onlyOptimized`와 box count diff로 잡힌다.
+  - 손/물체 오탐: YOLO 전용 false-positive filter 대상이다.
+  - 큰 얼굴 box shape 차이: YOLO decode는 동작하지만 FaceONNX 대비 박스 정의가 넓어 box 정합 gate를 낮춘다.
+
+코드 보정:
+
+- `FaceTrackPostProcessOptions`에 YOLO 전용 하단 저신뢰 track 제거 옵션을 추가했다.
+- `LowerFrameTrackMaxConfidence`, `LowerFrameTrackMinCenterYRatio`, `LowerFrameTrackMinAreaRatio`, `LowerFrameTrackMaxAreaRatio`를 추가했다.
+- FaceONNX profile은 기본값 `LowerFrameTrackMaxConfidence=0`으로 비활성이다.
+- YOLO profile에서는 `LowerFrameTrackMaxConfidence=0.50`, `LowerFrameTrackMinCenterYRatio=0.58`, `LowerFrameTrackMinAreaRatio=0.015`, `LowerFrameTrackMaxAreaRatio=0.045`를 적용한다.
+- 목적은 9분 frame 31~38에 나온 손/물체 오탐처럼 화면 하단의 중간 크기 저신뢰 track만 좁게 제거하는 것이다.
+- `FaceTrackPostProcessResult`와 로그에 `removedLower`를 추가해 기존 `removedShort`와 분리했다.
+
+보정 후 9분 2초 gate:
+
+- FaceONNX baseline: `baselineFrames=55`, `totalMs=20,840ms`.
+- YOLO5Face optimized: `optimizedFrames=58`, `totalMs=12,909ms`.
+- YOLO track 후처리: `removedShort=0`, `removedLower=7`, `rewritten=58`.
+- A/B 결과: `common=55`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `boxCountDiffFrames=33`, `passed=False`.
+- bad frame 로그: `boxCountDiff=10,17,18,19,20,21,22,23,24,25,32,33,34,35,36,37,38,39,40,41,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
+- 판단: 육안 확인된 손/물체 오탐 track 일부는 제거됐지만, gate 실패의 대부분은 YOLO-only 뒤쪽 얼굴 후보와 큰 얼굴 박스 정의 차이라서 이 필터만으로 통과하지 못한다. YOLO-only 뒤쪽 후보는 실제 얼굴 가능성이 있으므로 오탐으로 단정하지 않는다. 현재 추천 상태는 계속 `전체 추천 보류`다.
+
+추가 box 보정 실험:
+
+- `YoloFaceOnnxDetectorOptions`에 큰 YOLO5Face 박스를 축소하는 `LargeBoxWidthScale`, `LargeBoxHeightScale`, `LargeBoxMinAreaRatio` 옵션을 추가했다.
+- 기본값은 `1.0/1.0/0.0`이라 앱 Home YOLO profile에서는 비활성이다. 현재는 `run-srcTest-smoke.ps1`에서 명시적으로 넘겨 실험할 수 있는 옵션으로만 둔다.
+- 9분 2초 gate에서 `LargeBoxWidthScale=0.84`, `LargeBoxHeightScale=0.97`, `LargeBoxMinAreaRatio=0.03`을 적용하면 `avgBestIou=0.786`, `minBestIou=0.631`, `boxCountDiffFrames=33`, `passed=False`로 오히려 악화됐다.
+- 판단: 큰 얼굴 박스가 넓은 문제는 확인됐지만, 일괄 축소 보정은 다른 frame의 정합을 같이 깨서 기본 profile에 넣지 않는다.
+
+추가 진단 및 2단계 실험:
+
+- `scripts/run-srcTest-smoke.ps1`에 `-DumpCompareDetails`를 추가했다. 이 옵션을 켜면 `[SmokeCompareDetail]` 로그로 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` frame의 baseline/optimized 박스 `x/y/w/h`, 정규화 중심점, 면적 비율, confidence를 출력한다.
+- `[SmokeCompareNote]`를 추가해 `onlyBaseline`/`onlyOptimized`가 실제 정답 라벨의 미탐/오탐이 아니라 detector 간 차이임을 로그에 명시한다.
+- 9분 2초 상세 로그 기준, YOLO5Face 실패는 두 가지가 섞여 있다.
+  - `onlyOptimized=4,8,9`와 frame 10~49의 `boxCountDiff`는 화면 상단의 작은 두 번째 얼굴 후보가 FaceONNX보다 먼저 잡히는 현상이다. 예: frame 10의 추가 후보는 `cx=0.576`, `cy=0.052`, `area=0.00424`, `conf=0.455`였다.
+  - `lowIou`는 큰 얼굴 박스의 정의 차이다. 예: frame 11은 FaceONNX `w=535,h=638,area=0.04115` 대비 YOLO `w=727.8,h=663.9,area=0.05826`으로 YOLO 폭이 더 넓다.
+- `YoloConfidenceThreshold=0.70` 실험은 작은 추가 후보 일부를 줄였지만 큰 얼굴도 FaceONNX 대비 누락되어 `onlyBaseline=5,6,7,10`, `avgBestIou=0.777`, `minBestIou=0.000`, `boxCountDiffFrames=13`, `passed=False`였다. threshold만 올리는 방식은 baseline-diff 기준으로 누락을 만든다. 실제 미탐 여부는 해당 frame overlay 확인이 필요하다.
+- `YoloInputSize=800` 실험은 `totalMs=21,556ms`로 FaceONNX baseline `20,883ms`보다 느려졌고, `avgBestIou=0.783`, `minBestIou=0.553`, `boxCountDiffFrames=37`, `passed=False`였다. 입력 크기 확대는 속도/품질 모두 기본 후보보다 나쁘다.
+- `run-srcTest-smoke.ps1`에 `-YoloUseFaceOnnxRoiRefine` 실험 옵션을 추가했다. YOLO 결과 중 `YoloFaceOnnxRoiMinAreaRatio` 이상 큰 박스만 FaceONNX ROI detector로 재검출한다.
+- 9분 2초에서 `-YoloUseFaceOnnxRoiRefine -YoloFaceOnnxRoiMinAreaRatio 0.03 -YoloFaceOnnxRoiMaxCandidates 64`는 `candidates=52`, `attempts=50`, `hits=50`, `elapsedMs=22,956`이었다.
+- 이 2단계 실험은 `avgBestIou=0.816`으로 기본 YOLO `0.798`보다 조금 나아졌지만 `minBestIou=0.567`, `boxCountDiffFrames=33`, `passed=False`였고, ROI refine 추가 시간 때문에 속도 이점도 사라진다.
+- 판단: 현재 9분 구간 실패는 threshold, 입력 크기, 단순 큰 박스 축소, 큰 박스 FaceONNX ROI refiner만으로 해결되지 않는다. 남은 후보는 더 세밀한 박스 보정 모델, 작은 상단 얼굴 후보를 실제 얼굴/오탐으로 분류할 verifier, 또는 다른 YOLO face 모델이다.
+
+보정 후 6분 3초 회귀 gate:
+
+- FaceONNX baseline: `baselineFrames=19`, `totalMs=57,937ms`.
+- YOLO5Face optimized: `optimizedFrames=19`, `totalMs=17,651ms`.
+- YOLO track 후처리: `removedShort=0`, `removedLower=0`, `rewritten=19`.
+- A/B 결과: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`.
+- 판단: 하단 저신뢰 track 필터가 기존 6분 3초 통과 구간을 깨지는 않았다.
+- script 진단 옵션 추가 후에도 6분 3초 gate는 다시 통과했다. 최신 실행은 FaceONNX baseline `totalMs=120,601ms`, YOLO optimized `totalMs=20,367ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`였다. 이 실행의 FaceONNX baseline 시간은 같은 세션의 부하 영향이 커서 속도 비교 기준값으로 고정하지 않는다.
+
+회귀 검증:
+
+- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
+- `git diff --check` 통과.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
+- default verifier는 track postprocess policy, 6분 3초 FaceONNX all-frame parallel quality gate, ROI-hit 대표 구간, short auto-tune provider gate를 모두 통과했다.
+- 최신 short auto-tune gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=19`, `totalMs=48,805ms`였다.
