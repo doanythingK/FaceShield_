@@ -3,7 +3,13 @@ param(
     [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv",
     [switch]$RunRepresentativeGate,
     [string]$RepresentativeQualityClip = ".tmp/srcTest-smoke/smoke-0600-3s.mp4",
-    [string]$RepresentativeYoloModelPath = ".tmp/models/YoloV5Face.onnx"
+    [string]$RepresentativeYoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [switch]$RunExtendedGate,
+    [string]$ExtendedQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
+    [string]$ExtendedYoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [switch]$RunExtendedExportGate,
+    [string]$ExtendedExportQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
+    [string]$ExtendedExportYoloModelPath = ".tmp/models/YoloV5Face.onnx"
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,7 +51,10 @@ $profileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
 $cropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
+$goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
 $representativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
+$extendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
+$extendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
 
 Invoke-YoloVerify "profile-state" $profileStateVerify @()
 Invoke-YoloVerify "crop-review" $cropReviewVerify @(
@@ -54,10 +63,23 @@ Invoke-YoloVerify "crop-review" $cropReviewVerify @(
 )
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
 Invoke-YoloVerify "distribution-state" $distributionStateVerify @()
+Invoke-YoloVerify "goal-audit-state" $goalAuditStateVerify @()
 if ($RunRepresentativeGate) {
     Invoke-YoloVerify "representative-gate" $representativeGateVerify @(
         "-QualityClip", $RepresentativeQualityClip,
         "-YoloModelPath", $RepresentativeYoloModelPath
+    )
+}
+if ($RunExtendedGate) {
+    Invoke-YoloVerify "extended-gate" $extendedGateVerify @(
+        "-QualityClip", $ExtendedQualityClip,
+        "-YoloModelPath", $ExtendedYoloModelPath
+    )
+}
+if ($RunExtendedExportGate) {
+    Invoke-YoloVerify "extended-export-gate" $extendedExportGateVerify @(
+        "-QualityClip", $ExtendedExportQualityClip,
+        "-YoloModelPath", $ExtendedExportYoloModelPath
     )
 }
 

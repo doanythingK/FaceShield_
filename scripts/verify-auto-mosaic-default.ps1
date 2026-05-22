@@ -12,6 +12,8 @@ param(
     [string]$LongAutoTuneClip = ".tmp/srcTest-smoke/smoke-1200-30s.mp4",
     [switch]$RunYoloState,
     [switch]$RunYoloRepresentativeGate,
+    [switch]$RunYoloExtendedGate,
+    [switch]$RunYoloExtendedExportGate,
     [switch]$RunYoloProfileState,
     [switch]$RunYoloConclusionState,
     [switch]$RunYoloDistributionState,
@@ -19,7 +21,11 @@ param(
     [string]$YoloCropReviewPassCsv = ".tmp/yolo-crops/test-0900-yolo5face/crop-review.csv",
     [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv",
     [string]$YoloRepresentativeQualityClip = ".tmp/srcTest-smoke/smoke-0600-3s.mp4",
-    [string]$YoloRepresentativeModelPath = ".tmp/models/YoloV5Face.onnx"
+    [string]$YoloRepresentativeModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$YoloExtendedQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
+    [string]$YoloExtendedModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$YoloExtendedExportQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
+    [string]$YoloExtendedExportModelPath = ".tmp/models/YoloV5Face.onnx"
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +39,8 @@ $yoloConclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-sta
 $yoloDistributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $yoloCropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $yoloRepresentativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
+$yoloExtendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
+$yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -111,6 +119,14 @@ if ($RunYoloDistributionState -and -not (Test-Path $yoloDistributionStateVerify)
 
 if ($RunYoloRepresentativeGate -and -not (Test-Path $yoloRepresentativeGateVerify)) {
     throw "YOLO representative gate verifier not found: $yoloRepresentativeGateVerify"
+}
+
+if ($RunYoloExtendedGate -and -not (Test-Path $yoloExtendedGateVerify)) {
+    throw "YOLO extended gate verifier not found: $yoloExtendedGateVerify"
+}
+
+if ($RunYoloExtendedExportGate -and -not (Test-Path $yoloExtendedExportGateVerify)) {
+    throw "YOLO extended export gate verifier not found: $yoloExtendedExportGateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -249,10 +265,20 @@ if ($RunYoloState) {
         "-YoloCropReviewPassCsv", $YoloCropReviewPassCsv,
         "-YoloCropReviewFailCsv", $YoloCropReviewFailCsv,
         "-RepresentativeQualityClip", $YoloRepresentativeQualityClip,
-        "-RepresentativeYoloModelPath", $YoloRepresentativeModelPath
+        "-RepresentativeYoloModelPath", $YoloRepresentativeModelPath,
+        "-ExtendedQualityClip", $YoloExtendedQualityClip,
+        "-ExtendedYoloModelPath", $YoloExtendedModelPath,
+        "-ExtendedExportQualityClip", $YoloExtendedExportQualityClip,
+        "-ExtendedExportYoloModelPath", $YoloExtendedExportModelPath
     )
     if ($RunYoloRepresentativeGate) {
         $yoloStateArgs += "-RunRepresentativeGate"
+    }
+    if ($RunYoloExtendedGate) {
+        $yoloStateArgs += "-RunExtendedGate"
+    }
+    if ($RunYoloExtendedExportGate) {
+        $yoloStateArgs += "-RunExtendedExportGate"
     }
 
     $yoloStateOutput = Invoke-ScriptStep "yolo-state" $yoloStateVerify $yoloStateArgs
@@ -280,6 +306,22 @@ if ($RunYoloRepresentativeGate -and -not $RunYoloState) {
         "-YoloModelPath", $YoloRepresentativeModelPath
     )
     Assert-Contains "yolo-representative-gate" $yoloRepresentativeOutput "\[YoloRepresentativeGateVerify\] all requested checks passed"
+}
+
+if ($RunYoloExtendedGate -and -not $RunYoloState) {
+    $yoloExtendedOutput = Invoke-ScriptStep "yolo-extended-gate" $yoloExtendedGateVerify @(
+        "-QualityClip", $YoloExtendedQualityClip,
+        "-YoloModelPath", $YoloExtendedModelPath
+    )
+    Assert-Contains "yolo-extended-gate" $yoloExtendedOutput "\[YoloExtendedGateVerify\] all requested checks passed"
+}
+
+if ($RunYoloExtendedExportGate -and -not $RunYoloState) {
+    $yoloExtendedExportOutput = Invoke-ScriptStep "yolo-extended-export-gate" $yoloExtendedExportGateVerify @(
+        "-QualityClip", $YoloExtendedExportQualityClip,
+        "-YoloModelPath", $YoloExtendedExportModelPath
+    )
+    Assert-Contains "yolo-extended-export-gate" $yoloExtendedExportOutput "\[YoloExtendedExportGateVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"
