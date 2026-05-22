@@ -14,6 +14,9 @@ param(
     [switch]$RunYoloRepresentativeGate,
     [switch]$RunYoloExtendedGate,
     [switch]$RunYoloExtendedExportGate,
+    [switch]$RunYoloTenMinuteState,
+    [switch]$RequireYoloTenMinuteClip,
+    [switch]$RequireYoloTenMinuteRun,
     [switch]$RunYoloProfileState,
     [switch]$RunYoloConclusionState,
     [switch]$RunYoloDistributionState,
@@ -41,6 +44,7 @@ $yoloCropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $yoloRepresentativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $yoloExtendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
+$yoloTenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -127,6 +131,10 @@ if ($RunYoloExtendedGate -and -not (Test-Path $yoloExtendedGateVerify)) {
 
 if ($RunYoloExtendedExportGate -and -not (Test-Path $yoloExtendedExportGateVerify)) {
     throw "YOLO extended export gate verifier not found: $yoloExtendedExportGateVerify"
+}
+
+if ($RunYoloTenMinuteState -and -not (Test-Path $yoloTenMinuteStateVerify)) {
+    throw "YOLO ten-minute state verifier not found: $yoloTenMinuteStateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -280,6 +288,15 @@ if ($RunYoloState) {
     if ($RunYoloExtendedExportGate) {
         $yoloStateArgs += "-RunExtendedExportGate"
     }
+    if ($RunYoloTenMinuteState) {
+        $yoloStateArgs += "-RunTenMinuteState"
+    }
+    if ($RequireYoloTenMinuteClip) {
+        $yoloStateArgs += "-RequireTenMinuteClip"
+    }
+    if ($RequireYoloTenMinuteRun) {
+        $yoloStateArgs += "-RequireTenMinuteRun"
+    }
 
     $yoloStateOutput = Invoke-ScriptStep "yolo-state" $yoloStateVerify $yoloStateArgs
     Assert-Contains "yolo-state" $yoloStateOutput "\[YoloStateVerify\] all requested checks passed"
@@ -322,6 +339,19 @@ if ($RunYoloExtendedExportGate -and -not $RunYoloState) {
         "-YoloModelPath", $YoloExtendedExportModelPath
     )
     Assert-Contains "yolo-extended-export-gate" $yoloExtendedExportOutput "\[YoloExtendedExportGateVerify\] all requested checks passed"
+}
+
+if ($RunYoloTenMinuteState -and -not $RunYoloState) {
+    $tenMinuteArgs = @()
+    if ($RequireYoloTenMinuteClip) {
+        $tenMinuteArgs += "-RequireClip"
+    }
+    if ($RequireYoloTenMinuteRun) {
+        $tenMinuteArgs += "-RequireRun"
+    }
+
+    $yoloTenMinuteOutput = Invoke-ScriptStep "yolo-ten-minute-state" $yoloTenMinuteStateVerify $tenMinuteArgs
+    Assert-Contains "yolo-ten-minute-state" $yoloTenMinuteOutput "\[YoloTenMinuteStateVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"

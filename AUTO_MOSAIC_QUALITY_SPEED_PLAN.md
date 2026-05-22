@@ -930,6 +930,8 @@ FaceONNX baseline은 기존 앱 동작 보존을 위한 회귀 기준이지 실�
 
 따라서 YOLO가 FaceONNX보다 빠르고 `onlyOptimized`를 만들더라도, 그 후보가 실제 얼굴이면 recall 개선 가능성으로 따로 기록한다. 반대로 `onlyBaseline`도 FaceONNX가 맞고 YOLO가 틀렸다는 뜻으로 단정하지 않는다. 추천 여부는 먼저 baseline-diff gate로 기존 동작 변화 폭을 확인하고, 그 다음 representative overlay 또는 GT 기준으로 실제 얼굴/비얼굴 여부를 확인해 판단한다.
 
+현재 표본 GT 라벨은 기존 crop review CSV의 `label`과 `verdict`를 기준으로 산출한다. `optimized + Face`는 `YoloTruePositive`, `optimized + NonFace`는 `YoloFalsePositive`, `baseline + Face`는 `YoloMiss`, `baseline + NonFace`는 `FaceOnnxFalsePositive`로 분류한다. 이 분류는 표본 crop 단위의 face/non-face 판정이며, 전체 영상 frame/track GT를 대체하지 않는다.
+
 이번 재검증에서는 YuNet을 우선 제외한다.
 
 제외 이유:
@@ -2010,17 +2012,19 @@ YOLO 실패 원인 분류:
 
 YOLO 모델 출처/license/배포 판단:
 
+<!-- yolo-license-source-state: checked=2026-05-22; yolov8-face=lindevs-mit-with-yolov8-initial-weights-caveat; yolo5face=huggingface-gpl-3.0; ultralytics-yolov8=agpl-3.0-or-enterprise; bundle=blocked -->
+
 | 모델 후보 | 출처 | 표시 license/배포 메모 | 현재 제품 배포 판단 |
 | --- | --- | --- | --- |
-| `yolov8n/s/m/l-face-lindevs.onnx` | `lindevs/yolov8-face` GitHub release | 저장소는 MIT license로 표시된다. README는 pretrained model이 WIDERFace로 학습됐고 YOLOv8 models를 initial weights로 사용했다고 설명한다. 따라서 저장소 license와 별개로 upstream YOLOv8 weight/license 영향은 제품 배포 전 별도 확인이 필요하다. | 성능 gate 실패이므로 repo/installer에 포함하지 않는다. 로컬 `.tmp/models/` 실험 후보로만 둔다. |
-| `YoloV5Face.onnx` | Hugging Face `hayashiLin/deepfacelivemodels` | Hugging Face 파일 페이지의 license는 `gpl-3.0`으로 표시되고 SHA-256은 로컬 실험값과 일치한다. GPL-3.0 모델을 닫힌 제품에 번들할 수 있는지는 별도 법무/배포 정책 확인 없이는 확정하지 않는다. | 성능 최종 추천 보류 및 license 리스크 때문에 repo/installer에 포함하지 않는다. 사용자가 직접 경로를 지정하는 실험용 후보로만 둔다. |
+| `yolov8n/s/m/l-face-lindevs.onnx` | `lindevs/yolov8-face` GitHub release: https://github.com/lindevs/yolov8-face | 2026-05-22 확인 기준 저장소는 MIT license로 표시된다. README는 pretrained model이 WIDERFace로 학습됐고 YOLOv8 models를 initial weights로 사용했다고 설명한다. Ultralytics 공식 문서는 YOLOv8 models가 AGPL-3.0 또는 Enterprise license 대상이라고 설명하므로, 저장소 license와 별개로 upstream YOLOv8 weight/license 영향은 제품 배포 전 별도 확인이 필요하다. | 성능 gate 실패이므로 repo/installer에 포함하지 않는다. 로컬 `.tmp/models/` 실험 후보로만 둔다. |
+| `YoloV5Face.onnx` | Hugging Face `hayashiLin/deepfacelivemodels`: https://huggingface.co/hayashiLin/deepfacelivemodels/blob/main/YoloV5Face.onnx | 2026-05-22 확인 기준 Hugging Face 파일 페이지의 license는 `gpl-3.0`으로 표시된다. 로컬 실험 SHA-256은 이전 확인값과 일치했다. GPL-3.0 모델을 닫힌 제품에 번들할 수 있는지는 별도 법무/배포 정책 확인 없이는 확정하지 않는다. | 성능 최종 추천 보류 및 license 리스크 때문에 repo/installer에 포함하지 않는다. 사용자가 직접 경로를 지정하는 실험용 후보로만 둔다. |
 
 배포 상태 invariant:
 
 - YOLO 모델 파일은 repo에 추적하지 않는다.
 - Home의 앱 기본 detector는 계속 `FaceONNX`다.
 - YOLO는 사용자가 직접 선택하고 모델 경로를 지정하는 backend/profile 경로로만 유지한다.
-- license/배포 가능성이 확인되기 전에는 YOLO 모델을 기본값, bundled asset, CI publish output 필수 파일로 승격하지 않는다.
+- 최신 출처 기준으로도 YOLOv8 upstream license 영향과 YoloV5Face GPL-3.0 리스크가 남아 있으므로, 법무/제품 배포 정책 확인 전에는 YOLO 모델을 기본값, bundled asset, CI publish output 필수 파일로 승격하지 않는다.
 - `scripts/verify-yolo-distribution-state.ps1`는 위 상태 중 추적 가능한 부분을 검사한다.
 
 회귀 검증:
@@ -2040,18 +2044,31 @@ YOLO 모델 출처/license/배포 판단:
 - `scripts/verify-yolo-representative-gate.ps1`를 추가했다. 이 스크립트는 `.tmp/models/YoloV5Face.onnx`와 6분 3초 대표 clip이 있을 때 현재 YOLO5Face 초기 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, tiling off)이 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `boxCountDiffFrames=0`, `SmokeQualityGate passed=True`를 유지하는지 확인한다.
 - `scripts/verify-yolo-extended-gate.ps1`를 추가했다. 이 스크립트는 같은 YOLO5Face 초기 profile이 6분 30초 30초 clip에서 `SmokeQualityGate passed=False`, `baselineFrames=83`, `optimizedFrames=74`, `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `boxCountDiffFrames=14`로 실패하는지 확인한다. 이 gate는 3초 대표 통과를 최종 추천으로 오해하지 않게 만드는 확장 실패 회귀 검증이다.
 - `scripts/verify-yolo-extended-export-gate.ps1`를 추가했다. 이 스크립트는 같은 6분 30초 clip에서 export까지 실제 수행한 뒤 `[ExportRunSummary]`가 FaceONNX `directFaceFrames=83`, YOLO `directFaceFrames=74`를 기록하고, 이후 A/B 품질 gate가 실패하는지 확인한다.
-- `scripts/verify-yolo-state.ps1`를 추가했다. 이 스크립트는 `verify-yolo-profile-state.ps1`, `verify-yolo-crop-review.ps1`, `verify-yolo-conclusion-state.ps1`, `verify-yolo-distribution-state.ps1`를 묶어 YOLO 전용 상태를 빠르게 재확인한다. `-RunRepresentativeGate`를 붙이면 `verify-yolo-representative-gate.ps1`까지 실행하고, `-RunExtendedGate`를 붙이면 `verify-yolo-extended-gate.ps1`까지 실행한다. `-RunExtendedExportGate`를 붙이면 `verify-yolo-extended-export-gate.ps1`까지 실행한다. `verify-auto-mosaic-default.ps1 -RunYoloState`에서도 같은 wrapper를 호출할 수 있고, `-RunYoloRepresentativeGate`/`-RunYoloExtendedGate`/`-RunYoloExtendedExportGate`를 함께 붙이면 해당 YOLO gate까지 포함한다.
+- `scripts/verify-yolo-state.ps1`를 추가했다. 이 스크립트는 `verify-yolo-profile-state.ps1`, `verify-yolo-crop-review.ps1`, `verify-yolo-conclusion-state.ps1`, `verify-yolo-distribution-state.ps1`를 묶어 YOLO 전용 상태를 빠르게 재확인한다. `-RunRepresentativeGate`를 붙이면 `verify-yolo-representative-gate.ps1`까지 실행하고, `-RunExtendedGate`를 붙이면 `verify-yolo-extended-gate.ps1`까지 실행한다. `-RunExtendedExportGate`를 붙이면 `verify-yolo-extended-export-gate.ps1`까지 실행한다. `verify-auto-mosaic-default.ps1 -RunYoloState`에서도 같은 wrapper를 호출할 수 있고, `-RunYoloRepresentativeGate`/`-RunYoloExtendedGate`/`-RunYoloExtendedExportGate`를 함께 붙이면 해당 YOLO gate까지 포함한다. `-RunTenMinuteState`는 10분 runner/preflight 상태를 확인하고, `-RequireTenMinuteClip`을 함께 붙이면 준비된 10분 clip까지 검사한다.
+- `scripts/verify-yolo-gt-label-state.ps1`를 추가했다. 이 스크립트는 crop review CSV의 표본 verdict를 GT식 face/non-face count로 변환해, A/B diff를 실제 오탐/미탐으로 단정하지 않는 기준을 회귀 검증한다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-gt-label-state.ps1` 실행 성공. 9분 2초 pass 표본은 `rows=15`, `reviewed=15`, `yoloTruePositive=15`, `yoloFalsePositive=0`, `yoloMiss=0`, `faceOnnxFalsePositive=0`이었다. 6분 30초 fail 표본은 `rows=26`, `reviewed=26`, `unclear=1`, `yoloTruePositive=1`, `yoloFalsePositive=10`, `yoloMiss=0`, `faceOnnxFalsePositive=14`였다.
 - `scripts/verify-yolo-profile-state.ps1`를 확장해 YOLO profile 저장뿐 아니라 UI/런타임 분리 invariant도 확인한다. 현재 검증 항목에는 Home 화면의 detector selector, YOLO 모델 종류 selector, YOLO 모델 파일 picker, YOLO threshold/input/tiling 바인딩, FaceONNX threshold panel 분리, FaceONNX backend에서만 `DetectorAutoTuner`가 호출되는지, auto-tune 결과가 FaceONNX options에만 반영되는지, YOLO 전용 track/filter profile이 FaceONNX 기본 profile과 분리되어 있는지가 포함된다.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-representative-gate.ps1` 실행 성공. 최신 실행에서 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `SmokeQualityGate passed=True`였고 YOLO optimized `totalMs`는 약 `12~13.5초`였다.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-extended-gate.ps1` 실행 성공. 이 스크립트는 내부 smoke의 exit code 2를 기대값으로 본다. 최신 실행에서 FaceONNX baseline 자동 검출은 `totalMs=335,537ms`, YOLO optimized 자동 검출은 `totalMs=121,118ms`였지만, A/B는 `baselineFrames=83`, `optimizedFrames=74`, `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `boxCountDiffFrames=14`, `SmokeQualityGate passed=False`라 현재 YOLO5Face profile을 최종 추천 후보로 승격하지 않는다.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-extended-export-gate.ps1` 실행 성공. 이 스크립트도 내부 smoke의 exit code 2를 기대값으로 본다. 최신 실행에서 FaceONNX baseline은 자동 검출 `totalMs=344,795ms`, export `totalMs=44,396ms`, `directFaceFrames=83`이었고, YOLO optimized는 자동 검출 `totalMs=131,590ms`, export `totalMs=50,043ms`, `directFaceFrames=74`였다. export는 완료됐지만 A/B는 `baselineFrames=83`, `optimizedFrames=74`, `onlyBaseline=14`, `onlyOptimized=5`, `boxCountDiffFrames=14`, `SmokeQualityGate passed=False`라 detector 교체만으로 이 30초 구간을 추천 후보로 승격하지 않는다.
+- `scripts/run-yolo-ten-minute-full.ps1`를 추가했다. 이 runner는 원본 `srcTest/260102_jp_10.mp4`에서 10분 clip `.tmp/srcTest-smoke/smoke-0200-600s.mp4`를 준비하고, 현재 YOLO5Face 초기 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`)로 10분급 자동 검출+export를 실행한다. 기본은 YOLO optimized 단독이며, `-RunBaseline`을 붙이면 FaceONNX baseline A/B까지 포함하고 `-AllowQualityFailure`로 긴 A/B 실패 로그를 보존할 수 있다.
+- `scripts/verify-yolo-ten-minute-state.ps1`를 추가했다. 이 스크립트는 10분 runner, 원본 영상, 10분 clip 준비 상태, 그리고 문서의 10분 검증 미완료 상태를 확인한다. `-RequireClip`을 붙이면 `.tmp/srcTest-smoke/smoke-0200-600s.mp4`가 실제 준비되어 있고 1GB 이상인지 검사한다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -SkipClipPrepare` 실행 성공. 10분 clip `.tmp/srcTest-smoke/smoke-0200-600s.mp4`에서 YOLO5Face `0.12/0.18/0.45`, CPU, `ParallelDetectorCount=2`, baseline 없이 optimized 단독 자동 검출+export를 실행했다. 로그는 `.tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log`이고 출력은 `.tmp/srcTest-smoke/smoke-0200-600s_blur.mp4`다.
+- 10분 YOLO optimized 단독 자동 검출 결과: `detector=YoloFaceOnnxDetector`, `mode=pipe-parallel`, `totalFrames=17984`, `processed=17982`, `detects=17982`, `interpolated=0`, `decodeMs=1,647,657`, `detectMs=5,058,207`, `totalMs=2,536,529`, filter `regular=15053`, `small=15862`, `rejected=19146`. Track/ROI 후처리는 `tracks=2644`, `filled=5492`, `lostFilled=1762`, `removedShort=686`, `removedLower=13`, `rewritten=8064`, ROI `attempts=32`, `hits=6`, `elapsedMs=10,612`였다.
+- 10분 YOLO optimized 단독 export 결과: `[ExportRunSummary]` 기준 `frames=17984`, `bitmapMaskFrames=0`, `directFaceFrames=8063`, `swsToBgraMs=82,579`, `maskMs=439,442`, `swsToEncMs=203,111`, `encodeMs=59,806`, `totalMs=1,375,350`이었다. 출력 파일은 `ffprobe` 기준 `3840x2160`, `30000/1001fps`, `nb_frames=17983`, `duration=600.032767`, size `1,490,083,950` bytes다.
+- 이 10분 실행은 YOLO optimized 단독 end-to-end 시간 측정이며, FaceONNX 10분 baseline A/B나 label 기반 GT 품질 검증은 아니다. 이미 30초 확장 gate가 실패했으므로 이 측정만으로 YOLO5Face를 추천 후보로 승격하지 않는다.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunRepresentativeGate` 실행 성공.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunTenMinuteState -RequireTenMinuteClip -RequireTenMinuteRun` 실행 성공. YOLO profile/crop review/표본 GT label/conclusion/distribution/goal audit/10분 run artifact 상태를 한 번에 확인했다.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloState -RunYoloRepresentativeGate` 실행 성공. 기본 FaceONNX gate와 YOLO wrapper/대표 gate가 모두 통과했다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloTenMinuteState -RequireYoloTenMinuteClip -RequireYoloTenMinuteRun` 실행 성공. 기본 FaceONNX gate와 10분 YOLO run artifact 상태가 모두 통과했다.
 - 같은 상태에서 `dotnet build FaceShield.sln`은 성공했고 기존 FFmpeg obsolete warning 7개만 출력됐다.
+
+<!-- yolo-ten-minute-runner-state: prepared=true; runner=scripts/run-yolo-ten-minute-full.ps1; clip=.tmp/srcTest-smoke/smoke-0200-600s.mp4; profile=Yolo5Face-0.12-0.18-0.45-640; full-run=yolo-optimized-only-pass; log=.tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log; autoTotalMs=2536529; exportTotalMs=1375350; directFaceFrames=8063 -->
+<!-- yolo-gt-label-sample-state: verifier=scripts/verify-yolo-gt-label-state.ps1; passRows=15; passYoloTP=15; passYoloFP=0; passYoloMiss=0; passFaceOnnxFP=0; failRows=26; failUnclear=1; failYoloTP=1; failYoloFP=10; failYoloMiss=0; failFaceOnnxFP=14; scope=sample-crops-not-full-video-gt -->
 
 YOLO 목표 완료 감사:
 
-<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; complete=false; remaining=gt-label,gui-smoke,license,10min-full -->
+<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; complete=false; remaining=full-gt-label,gui-smoke,license,10min-full -->
 
 | 요구사항 | 현재 증거 | 판정 |
 | --- | --- | --- |
@@ -2061,9 +2078,9 @@ YOLO 목표 완료 감사:
 | 30초 이상 확장 gate | `verify-yolo-extended-gate.ps1` 기준 같은 profile은 6분 30초 30초 clip에서 `baselineFrames=83`, `optimizedFrames=74`, `onlyBaseline=14`, `onlyOptimized=5`, `minBestIou=0.000`, `SmokeQualityGate passed=False`다. | 실패 |
 | 30초 export smoke | `verify-yolo-extended-export-gate.ps1` 기준 export는 FaceONNX/YOLO 모두 완료되지만 FaceONNX `directFaceFrames=83`, YOLO `directFaceFrames=74`이고 이후 A/B가 `SmokeQualityGate passed=False`다. | 실패 |
 | 최종 추천 후보 | YOLO5Face는 대표 3초 gate는 통과했지만 9분 2초 및 6분 30초 확장 gate에서 추천 후보로 승격하지 못했고, 현재 분류표도 `전체 추천 보류`다. | recommendation=none |
-| label 기반 GT 검증 | 현재 crop review는 대표 crop 육안 판정이며 전체 영상 label 기반 GT 검증이 아니다. 실제 face/non-face 정답 라벨 기준 미탐/오탐 판정은 남아 있다. | 미완료: gt-label |
+| label 기반 GT 검증 | `verify-yolo-gt-label-state.ps1` 기준 표본 crop GT식 분류는 통과했다. 9분 2초 pass 표본은 YOLO TP 15/FP 0/miss 0이고, 6분 30초 fail 표본은 YOLO TP 1/FP 10/miss 0, FaceONNX FP 14, unclear 1이다. 다만 전체 영상 frame/track GT는 아니므로 실제 full GT 기준 미탐/오탐 판정은 남아 있다. | 부분 충족: sample-gt pass, 미완료: full-gt-label |
 | Avalonia GUI smoke | shell harness 검증은 통과했지만 Avalonia GUI에서 detector 선택, open, preview, 자동 검출, 수동 편집, export 전체 흐름은 직접 확인해야 한다. | 미완료: gui-smoke |
-| 모델 license/배포 판단 | YOLO 모델은 repo에 추적하지 않고, GPL-3.0/YOLOv8 upstream weight/license 영향은 제품 배포 전 별도 확인이 필요하다. | 미완료: license |
-| 10분급/전체 영상 최종 검증 | 30초 대표 구간은 검증했지만 10분급 전체 구간 또는 전체 17분 원본 end-to-end 자동 검출 + export 풀런은 아직 없다. | 미완료: 10min-full |
+| 모델 license/배포 판단 | 2026-05-22 기준 `lindevs/yolov8-face` MIT 표시, YOLOv8 initial weights 및 Ultralytics AGPL-3.0/Enterprise caveat, Hugging Face `YoloV5Face.onnx` gpl-3.0 표시를 확인했다. YOLO 모델은 repo에 추적하지 않고 번들 승격도 막는다. 다만 법무/제품 배포 정책 확인은 별도 필요하다. | 미완료: license |
+| 10분급/전체 영상 최종 검증 | YOLO optimized 단독 10분 자동 검출+export는 완료했고 자동 검출 `totalMs=2,536,529`, export `totalMs=1,375,350`, `directFaceFrames=8063`을 기록했다. 그러나 FaceONNX 10분 baseline A/B와 label 기반 품질 검증은 없고, 30초 확장 gate도 실패했으므로 현재 YOLO profile을 최종 추천 후보로 승격하지 않는다. | 미완료: 10min-full |
 
 따라서 현재 goal 상태는 `complete=false`다. 구현과 초기/확장 검증은 진행됐지만, 최종 추천 후보는 없고 GT label, GUI smoke, license, 10분급 전체 검증이 남아 있으므로 목표 완료로 처리하지 않는다.
