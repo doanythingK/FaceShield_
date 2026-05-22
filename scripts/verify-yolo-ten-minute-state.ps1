@@ -10,6 +10,11 @@ param(
     [string]$BaselineOnlyLogDir = ".tmp\yolo-ten-minute-baseline-smoke",
     [string]$BaselineOnlyLogPattern = "yolo-ten-minute-baseline-only-*.log",
     [int]$BaselineOnlyMinFrames = 90,
+    [string]$IncompleteBaselineFullLogPath = "",
+    [string]$IncompleteBaselineFullLogDir = ".tmp\yolo-ten-minute-baseline-full",
+    [string]$IncompleteBaselineFullLogPattern = "yolo-ten-minute-baseline-only-*.log",
+    [int]$IncompleteBaselineFullMinProgressFrames = 240,
+    [int]$IncompleteBaselineFullMaxProgressFrames = 1000,
     [string]$FaceOnnxOptimizedOnlyLogPath = "",
     [string]$FaceOnnxOptimizedOnlyLogDir = ".tmp\yolo-ten-minute-faceonnx-optimized-smoke",
     [string]$FaceOnnxOptimizedOnlyLogPattern = "yolo-ten-minute-faceonnx-optimized-only-*.log",
@@ -17,9 +22,15 @@ param(
     [string]$PartialSpeedYoloLogDir = ".tmp\yolo-partial-speed\yolo",
     [string]$PartialSpeedFaceOnnxLogDir = ".tmp\yolo-partial-speed\faceonnx-optimized",
     [int]$PartialSpeedMinFrames = 90,
+    [int]$ExpectedOutputWidth = 3840,
+    [int]$ExpectedOutputHeight = 2160,
+    [int]$ExpectedOutputMinFrames = 17980,
+    [double]$ExpectedOutputMinDurationSeconds = 599.0,
+    [double]$ExpectedOutputMaxDurationSeconds = 601.0,
     [switch]$RequireClip,
     [switch]$RequireRun,
     [switch]$RequireBaselineOnlyRun,
+    [switch]$RequireIncompleteBaselineFullAttempt,
     [switch]$RequireFaceOnnxOptimizedOnlyRun,
     [switch]$RequirePartialSpeedCompareRun
 )
@@ -35,6 +46,7 @@ $resolvedClipPath = if ([IO.Path]::IsPathRooted($ClipPath)) { $ClipPath } else {
 $resolvedLogPath = if ([IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $repo $LogPath }
 $resolvedOutputPath = if ([IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path $repo $OutputPath }
 $resolvedBaselineOnlyLogDir = if ([IO.Path]::IsPathRooted($BaselineOnlyLogDir)) { $BaselineOnlyLogDir } else { Join-Path $repo $BaselineOnlyLogDir }
+$resolvedIncompleteBaselineFullLogDir = if ([IO.Path]::IsPathRooted($IncompleteBaselineFullLogDir)) { $IncompleteBaselineFullLogDir } else { Join-Path $repo $IncompleteBaselineFullLogDir }
 $resolvedFaceOnnxOptimizedOnlyLogDir = if ([IO.Path]::IsPathRooted($FaceOnnxOptimizedOnlyLogDir)) { $FaceOnnxOptimizedOnlyLogDir } else { Join-Path $repo $FaceOnnxOptimizedOnlyLogDir }
 $resolvedPartialSpeedYoloLogDir = if ([IO.Path]::IsPathRooted($PartialSpeedYoloLogDir)) { $PartialSpeedYoloLogDir } else { Join-Path $repo $PartialSpeedYoloLogDir }
 $resolvedPartialSpeedFaceOnnxLogDir = if ([IO.Path]::IsPathRooted($PartialSpeedFaceOnnxLogDir)) { $PartialSpeedFaceOnnxLogDir } else { Join-Path $repo $PartialSpeedFaceOnnxLogDir }
@@ -121,12 +133,127 @@ function Resolve-LatestLog {
     return $latest.FullName
 }
 
+function Convert-ToWslPath {
+    param([string]$Path)
+
+    if ($Path -match '^([A-Za-z]):\\(.*)$') {
+        $drive = $matches[1].ToLowerInvariant()
+        $rest = $matches[2] -replace '\\', '/'
+        return "/mnt/$drive/$rest"
+    }
+
+    return $Path -replace '\\', '/'
+}
+
+function Resolve-Ffprobe {
+    $native = Get-Command ffprobe -ErrorAction SilentlyContinue
+    if ($null -ne $native) {
+        return [pscustomobject]@{
+            Command = $native.Source
+            UseWsl = $false
+        }
+    }
+
+    $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($null -ne $wsl) {
+        return [pscustomobject]@{
+            Command = $wsl.Source
+            UseWsl = $true
+        }
+    }
+
+    return $null
+}
+
+function Invoke-FfprobeJson {
+    param([string]$VideoPath)
+
+    $tool = Resolve-Ffprobe
+    if ($null -eq $tool) {
+        throw "ffprobe not found on PATH and wsl.exe is unavailable."
+    }
+
+    $probePath = if ($tool.UseWsl) { Convert-ToWslPath $VideoPath } else { $VideoPath }
+    $arguments = @(
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,avg_frame_rate,nb_frames,duration",
+        "-show_entries", "format=duration,size",
+        "-of", "json",
+        $probePath
+    )
+
+    $json = if ($tool.UseWsl) {
+        & $tool.Command --exec ffprobe @arguments
+    }
+    else {
+        & $tool.Command @arguments
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "ffprobe failed with exit code $LASTEXITCODE for $VideoPath"
+    }
+
+    return ($json | Out-String | ConvertFrom-Json)
+}
+
+function Assert-VideoProbe {
+    param([string]$VideoPath)
+
+    $probe = Invoke-FfprobeJson $VideoPath
+    if ($null -eq $probe.streams -or $probe.streams.Count -lt 1) {
+        throw "ffprobe did not return a video stream for $VideoPath"
+    }
+
+    $stream = @($probe.streams)[0]
+    $width = [int]$stream.width
+    $height = [int]$stream.height
+    if ($width -ne $ExpectedOutputWidth -or $height -ne $ExpectedOutputHeight) {
+        throw "10-minute output dimensions mismatch: ${width}x${height}, expected ${ExpectedOutputWidth}x${ExpectedOutputHeight}"
+    }
+
+    $frames = 0
+    if ($null -ne $stream.nb_frames -and -not [string]::IsNullOrWhiteSpace([string]$stream.nb_frames)) {
+        $frames = [int]$stream.nb_frames
+    }
+    if ($frames -lt $ExpectedOutputMinFrames) {
+        throw "10-minute output frame count $frames is below expected minimum $ExpectedOutputMinFrames"
+    }
+
+    $durationValue = if ($null -ne $stream.duration -and -not [string]::IsNullOrWhiteSpace([string]$stream.duration)) {
+        [string]$stream.duration
+    }
+    else {
+        [string]$probe.format.duration
+    }
+
+    $duration = [double]::Parse($durationValue, [System.Globalization.CultureInfo]::InvariantCulture)
+    if ($duration -lt $ExpectedOutputMinDurationSeconds -or $duration -gt $ExpectedOutputMaxDurationSeconds) {
+        throw "10-minute output duration $duration is outside expected range $ExpectedOutputMinDurationSeconds-$ExpectedOutputMaxDurationSeconds"
+    }
+
+    Write-Host "[YoloTenMinuteStateVerify] pass ten minute output probe width=$width, height=$height, frames=$frames, duration=$duration"
+}
+
+function Get-MaxProgressFrames {
+    param([string]$Text)
+
+    $maxFrames = 0
+    foreach ($match in [regex]::Matches($Text, "\[AutoMaskPipe\] frames=(\d+)")) {
+        $frames = [int]$match.Groups[1].Value
+        $maxFrames = [Math]::Max($maxFrames, $frames)
+    }
+
+    return $maxFrames
+}
+
 Assert-Contains "plan runner marker" $plan "yolo-ten-minute-runner-state: prepared=true"
 Assert-Contains "plan records runner path" $plan "scripts/run-yolo-ten-minute-full.ps1"
 Assert-Contains "plan records ten minute clip" $plan ".tmp/srcTest-smoke/smoke-0200-600s.mp4"
 Assert-Contains "plan records optimized full run" $plan "full-run=yolo-optimized-only-pass"
 Assert-Contains "plan records baseline-only runner support" $plan "baseline-only-runner=short-smoke-pass"
 Assert-Contains "plan records incomplete baseline-only full attempt" $plan "baseline-only-full=attempted-incomplete-slow"
+Assert-Contains "plan records incomplete baseline-only full progress" $plan "baseline-only-full-progress=240frames-no-complete"
 Assert-Contains "plan records baseline-only log pattern" $plan "baseline-only-log-pattern=.tmp/yolo-ten-minute-baseline-smoke/yolo-ten-minute-baseline-only-*.log"
 Assert-Contains "plan records faceonnx optimized-only runner support" $plan "faceonnx-optimized-only-runner=short-smoke-pass"
 Assert-Contains "plan records faceonnx optimized-only log pattern" $plan "faceonnx-optimized-only-log-pattern=.tmp/yolo-ten-minute-faceonnx-optimized-smoke/yolo-ten-minute-faceonnx-optimized-only-*.log"
@@ -205,6 +332,7 @@ if ($RequireRun) {
         throw "10-minute output is smaller than expected: $($outputInfo.Length)"
     }
 
+    Assert-VideoProbe $resolvedOutputPath
     Write-Host "[YoloTenMinuteStateVerify] pass ten minute run artifacts"
 }
 
@@ -232,6 +360,31 @@ if ($RequireBaselineOnlyRun) {
     }
 
     Write-Host "[YoloTenMinuteStateVerify] pass baseline-only run artifacts"
+}
+
+if ($RequireIncompleteBaselineFullAttempt) {
+    $resolvedIncompleteBaselineFullLogPath = Resolve-LatestLog $IncompleteBaselineFullLogPath $resolvedIncompleteBaselineFullLogDir $IncompleteBaselineFullLogPattern
+    if (-not (Test-Path $resolvedIncompleteBaselineFullLogPath)) {
+        throw "Required incomplete baseline full attempt log not found: $resolvedIncompleteBaselineFullLogPath"
+    }
+
+    $incompleteLog = Get-Content -Raw -Path $resolvedIncompleteBaselineFullLogPath
+    Assert-Contains "incomplete baseline-full log has baseline-only mode" $incompleteLog "baselineOnly=True"
+    Assert-Contains "incomplete baseline-full log has faceonnx detector path" $incompleteLog "label=baseline-all-frames"
+    Assert-Contains "incomplete baseline-full log has pipe-single mode" $incompleteLog "[AutoMask] mode=pipe-single"
+    Assert-NotContains "incomplete baseline-full log is not complete" $incompleteLog "[YoloTenMinuteFull] complete"
+    Assert-NotContains "incomplete baseline-full log has no yolo detector" $incompleteLog "detector=YoloFaceOnnxDetector"
+
+    $maxFrames = Get-MaxProgressFrames $incompleteLog
+    if ($maxFrames -lt $IncompleteBaselineFullMinProgressFrames) {
+        throw "incomplete baseline-full max progress frames $maxFrames is below expected minimum $IncompleteBaselineFullMinProgressFrames"
+    }
+
+    if ($maxFrames -gt $IncompleteBaselineFullMaxProgressFrames) {
+        throw "incomplete baseline-full max progress frames $maxFrames is above expected maximum $IncompleteBaselineFullMaxProgressFrames"
+    }
+
+    Write-Host "[YoloTenMinuteStateVerify] pass incomplete baseline-full attempt maxProgressFrames=$maxFrames"
 }
 
 if ($RequireFaceOnnxOptimizedOnlyRun) {

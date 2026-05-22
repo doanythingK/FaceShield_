@@ -14,6 +14,7 @@ param(
     [switch]$RequireTenMinuteClip,
     [switch]$RequireTenMinuteRun,
     [switch]$RequireTenMinuteBaselineOnlyRun,
+    [switch]$RequireTenMinuteIncompleteBaselineFullAttempt,
     [switch]$RequireTenMinuteFaceOnnxOptimizedOnlyRun,
     [switch]$RequireTenMinutePartialSpeedCompareRun,
     [switch]$RunGuiSmokeState,
@@ -119,6 +120,9 @@ if ($RunTenMinuteState) {
     }
     if ($RequireTenMinuteBaselineOnlyRun) {
         $tenMinuteArgs += "-RequireBaselineOnlyRun"
+    }
+    if ($RequireTenMinuteIncompleteBaselineFullAttempt) {
+        $tenMinuteArgs += "-RequireIncompleteBaselineFullAttempt"
     }
     if ($RequireTenMinuteFaceOnnxOptimizedOnlyRun) {
         $tenMinuteArgs += "-RequireFaceOnnxOptimizedOnlyRun"

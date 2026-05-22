@@ -18,6 +18,7 @@ param(
     [switch]$RequireYoloTenMinuteClip,
     [switch]$RequireYoloTenMinuteRun,
     [switch]$RequireYoloTenMinuteBaselineOnlyRun,
+    [switch]$RequireYoloTenMinuteIncompleteBaselineFullAttempt,
     [switch]$RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun,
     [switch]$RequireYoloTenMinutePartialSpeedCompareRun,
     [switch]$RunYoloGuiSmokeState,
@@ -310,6 +311,9 @@ if ($RunYoloState) {
     if ($RequireYoloTenMinuteBaselineOnlyRun) {
         $yoloStateArgs += "-RequireTenMinuteBaselineOnlyRun"
     }
+    if ($RequireYoloTenMinuteIncompleteBaselineFullAttempt) {
+        $yoloStateArgs += "-RequireTenMinuteIncompleteBaselineFullAttempt"
+    }
     if ($RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun) {
         $yoloStateArgs += "-RequireTenMinuteFaceOnnxOptimizedOnlyRun"
     }
@@ -376,6 +380,9 @@ if ($RunYoloTenMinuteState -and -not $RunYoloState) {
     }
     if ($RequireYoloTenMinuteBaselineOnlyRun) {
         $tenMinuteArgs += "-RequireBaselineOnlyRun"
+    }
+    if ($RequireYoloTenMinuteIncompleteBaselineFullAttempt) {
+        $tenMinuteArgs += "-RequireIncompleteBaselineFullAttempt"
     }
     if ($RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun) {
         $tenMinuteArgs += "-RequireFaceOnnxOptimizedOnlyRun"

@@ -18,7 +18,7 @@ $rows = @(
         evidenceType = "screenshot-or-recording"
         artifactPath = ""
         evidence = ""
-        notes = "Open a short srcTest video from the Home screen and confirm Workspace opens with preview frames. Attach a screenshot or recording path."
+        notes = "Open a short srcTest video from the Home screen and confirm Workspace opens with preview frames. artifactPath must be a non-empty image or video file."
     },
     [pscustomobject]@{
         stepId = "select-yolo-backend"
@@ -26,7 +26,7 @@ $rows = @(
         evidenceType = "screenshot"
         artifactPath = ""
         evidence = ""
-        notes = "Select YOLO Face ONNX, choose YOLO5Face or YOLOv8-Face, set a model path, and confirm FaceONNX threshold controls remain separate. Attach a screenshot path."
+        notes = "Select YOLO Face ONNX, choose YOLO5Face or YOLOv8-Face, set a model path, and confirm FaceONNX threshold controls remain separate. artifactPath must be a non-empty image file."
     },
     [pscustomobject]@{
         stepId = "run-yolo-auto-detect"
@@ -34,7 +34,7 @@ $rows = @(
         evidenceType = "screenshot-or-log"
         artifactPath = ""
         evidence = ""
-        notes = "Run automatic mosaic with YOLO selected and confirm progress/status completes without crashing. Attach a completion screenshot or log path."
+        notes = "Run automatic mosaic with YOLO selected and confirm progress/status completes without crashing. artifactPath must be a non-empty image or log file."
     },
     [pscustomobject]@{
         stepId = "preview-result"
@@ -42,7 +42,7 @@ $rows = @(
         evidenceType = "screenshot-or-recording"
         artifactPath = ""
         evidence = ""
-        notes = "Scrub or play preview frames and confirm detected faces are masked without obvious flicker on the tested clip. Attach a screenshot or recording path."
+        notes = "Scrub or play preview frames and confirm detected faces are masked without obvious flicker on the tested clip. artifactPath must be a non-empty image or video file."
     },
     [pscustomobject]@{
         stepId = "manual-edit"
@@ -50,7 +50,7 @@ $rows = @(
         evidenceType = "screenshot-or-recording"
         artifactPath = ""
         evidence = ""
-        notes = "Use manual/brush/eraser or undo workflow on at least one frame and confirm the preview reflects the edit. Attach before/after screenshot or recording path."
+        notes = "Use manual/brush/eraser or undo workflow on at least one frame and confirm the preview reflects the edit. artifactPath must be a non-empty image or video file."
     },
     [pscustomobject]@{
         stepId = "export"
@@ -58,7 +58,7 @@ $rows = @(
         evidenceType = "output-file"
         artifactPath = ""
         evidence = ""
-        notes = "Export the edited YOLO workspace and confirm output file is created and playable. artifactPath must point to the exported video file."
+        notes = "Export the edited YOLO workspace and confirm output file is created and playable. artifactPath must be a non-empty exported video file."
     },
     [pscustomobject]@{
         stepId = "reopen-state"
@@ -66,7 +66,7 @@ $rows = @(
         evidenceType = "screenshot-or-recording"
         artifactPath = ""
         evidence = ""
-        notes = "Reopen the same workspace and confirm YOLO model/profile settings and mask state are restored. Attach a screenshot or recording path."
+        notes = "Reopen the same workspace and confirm YOLO model/profile settings and mask state are restored. artifactPath must be a non-empty image or video file."
     }
 )
 

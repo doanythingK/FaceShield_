@@ -9,6 +9,7 @@ param(
     [int]$MaxLowIou = 0,
     [switch]$RequireEvidence,
     [switch]$RequireFullFrameReview,
+    [switch]$RequireArtifacts,
     [switch]$AllowUnreviewed,
     [switch]$SelfTest
 )
@@ -32,10 +33,36 @@ function Resolve-RepoPath {
     return Join-Path $repo $Path
 }
 
+function Assert-ArtifactFile {
+    param(
+        [string]$Name,
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Name path is required"
+    }
+
+    $resolved = Resolve-RepoPath $Path
+    if (-not (Test-Path $resolved)) {
+        throw "$Name file not found: $resolved"
+    }
+
+    $item = Get-Item $resolved
+    if ($item -isnot [IO.FileInfo]) {
+        throw "$Name is not a file: $resolved"
+    }
+
+    if ($item.Length -le 0) {
+        throw "$Name file is empty: $resolved"
+    }
+}
+
 function Assert-ReviewedCsv {
     param(
         [string]$Path,
         [bool]$RequireEvidenceNotes,
+        [bool]$RequireArtifactFiles,
         [bool]$AllowMissingReview
     )
 
@@ -60,6 +87,8 @@ function Assert-ReviewedCsv {
         $label = if ($null -ne $row.PSObject.Properties["label"]) { $row.label } else { "" }
         $reviewStatus = if ($null -ne $row.PSObject.Properties["reviewStatus"]) { $row.reviewStatus } else { "" }
         $evidenceNotes = if ($null -ne $row.PSObject.Properties["evidenceNotes"]) { $row.evidenceNotes } else { "" }
+        $sourcePredictionId = if ($null -ne $row.PSObject.Properties["sourcePredictionId"]) { $row.sourcePredictionId } else { "" }
+        $cropPath = if ($null -ne $row.PSObject.Properties["cropPath"]) { $row.cropPath } else { "" }
 
         if ([string]::IsNullOrWhiteSpace($label)) {
             $unreviewedRows++
@@ -84,6 +113,10 @@ function Assert-ReviewedCsv {
 
         if ($RequireEvidenceNotes -and [string]::IsNullOrWhiteSpace($evidenceNotes)) {
             throw "evidenceNotes is required at frame=$($row.frame), sourcePredictionId=$($row.sourcePredictionId)"
+        }
+
+        if ($RequireArtifactFiles -and -not [string]::IsNullOrWhiteSpace($sourcePredictionId)) {
+            Assert-ArtifactFile -Name "cropPath" -Path $cropPath
         }
     }
 
@@ -111,6 +144,7 @@ function Assert-FullFrameReviewCsv {
         [int]$ManualMissRows,
         [hashtable]$ManualMissRowsByFrame,
         [bool]$RequireEvidenceNotes,
+        [bool]$RequireArtifactFiles,
         [bool]$AllowMissingReview
     )
 
@@ -138,6 +172,8 @@ function Assert-FullFrameReviewCsv {
         $missedFaceRowsAdded = if ($null -ne $row.PSObject.Properties["missedFaceRowsAdded"]) { $row.missedFaceRowsAdded } else { "" }
         $reviewStatus = if ($null -ne $row.PSObject.Properties["reviewStatus"]) { $row.reviewStatus } else { "" }
         $evidenceNotes = if ($null -ne $row.PSObject.Properties["evidenceNotes"]) { $row.evidenceNotes } else { "" }
+        $frameImagePath = if ($null -ne $row.PSObject.Properties["frameImagePath"]) { $row.frameImagePath } else { "" }
+        $overlayFrameImagePath = if ($null -ne $row.PSObject.Properties["overlayFrameImagePath"]) { $row.overlayFrameImagePath } else { "" }
 
         if ([string]::IsNullOrWhiteSpace($missedFaceCount)) {
             $unreviewedRows++
@@ -174,6 +210,13 @@ function Assert-FullFrameReviewCsv {
 
         if ($RequireEvidenceNotes -and [string]::IsNullOrWhiteSpace($evidenceNotes)) {
             throw "full-frame evidenceNotes is required at frame=$($row.frame)"
+        }
+
+        if ($RequireArtifactFiles) {
+            Assert-ArtifactFile -Name "frameImagePath" -Path $frameImagePath
+            if (-not [string]::IsNullOrWhiteSpace($overlayFrameImagePath)) {
+                Assert-ArtifactFile -Name "overlayFrameImagePath" -Path $overlayFrameImagePath
+            }
         }
 
         $declaredMisses += $missCount
@@ -239,6 +282,29 @@ function Invoke-LabelVerifier {
     }
 }
 
+function Assert-Throws {
+    param(
+        [string]$Name,
+        [scriptblock]$Action,
+        [string]$ExpectedText
+    )
+
+    try {
+        & $Action
+    }
+    catch {
+        $message = $_.Exception.Message
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedText) -and $message -notlike "*$ExpectedText*") {
+            throw "$Name threw an unexpected error. Expected text '$ExpectedText', actual '$message'"
+        }
+
+        Write-Host "[YoloFullGtReviewedVerify] pass negative selftest $Name"
+        return
+    }
+
+    throw "$Name did not throw"
+}
+
 if (-not (Test-Path $labelVerifier)) {
     throw "Full GT label verifier not found: $labelVerifier"
 }
@@ -247,10 +313,20 @@ if ($SelfTest) {
     $selfTestDir = Join-Path $repo ".tmp\yolo-full-gt-reviewed-state"
     New-Item -ItemType Directory -Force -Path $selfTestDir | Out-Null
 
+    $cropAPath = Join-Path $selfTestDir "synthetic-a.png"
+    $cropBPath = Join-Path $selfTestDir "synthetic-b.png"
+    $frameAPath = Join-Path $selfTestDir "synthetic-frame-a.png"
+    $frameBPath = Join-Path $selfTestDir "synthetic-frame-b.png"
+    $frameCPath = Join-Path $selfTestDir "synthetic-frame-c.png"
+    $overlayAPath = Join-Path $selfTestDir "synthetic-frame-a-overlay.png"
+    foreach ($artifactPath in @($cropAPath, $cropBPath, $frameAPath, $frameBPath, $frameCPath, $overlayAPath)) {
+        Set-Content -Path $artifactPath -Value "synthetic artifact" -Encoding UTF8
+    }
+
     $reviewPath = Join-Path $selfTestDir "reviewed.csv"
     @(
-        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; cropPath = "synthetic-a.png"; reviewStatus = "pass"; evidenceNotes = "synthetic face" },
-        [pscustomobject]@{ frame = 20; gtId = ""; label = "nonface"; x = "300"; y = "200"; w = "40"; h = "40"; sourcePredictionId = "pred-fp"; sourceConfidence = "0.30"; cropPath = "synthetic-b.png"; reviewStatus = "pass"; evidenceNotes = "synthetic nonface" }
+        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; cropPath = $cropAPath; reviewStatus = "pass"; evidenceNotes = "synthetic face" },
+        [pscustomobject]@{ frame = 20; gtId = ""; label = "nonface"; x = "300"; y = "200"; w = "40"; h = "40"; sourcePredictionId = "pred-fp"; sourceConfidence = "0.30"; cropPath = $cropBPath; reviewStatus = "pass"; evidenceNotes = "synthetic nonface" }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $reviewPath
 
     $predictionPath = Join-Path $selfTestDir "predictions.csv"
@@ -261,40 +337,86 @@ if ($SelfTest) {
 
     $frameReviewPath = Join-Path $selfTestDir "full-frame-review.csv"
     @(
-        [pscustomobject]@{ frame = 10; frameImagePath = "synthetic-frame-a.png"; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
-        [pscustomobject]@{ frame = 20; frameImagePath = "synthetic-frame-b.png"; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" }
+        [pscustomobject]@{ frame = 10; frameImagePath = $frameAPath; overlayFrameImagePath = $overlayAPath; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
+        [pscustomobject]@{ frame = 20; frameImagePath = $frameBPath; overlayFrameImagePath = ""; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $frameReviewPath
 
-    $summary = Assert-ReviewedCsv -Path $reviewPath -RequireEvidenceNotes:$true -AllowMissingReview:$false
-    $frameSummary = Assert-FullFrameReviewCsv -Path $frameReviewPath -ManualMissRows 0 -ManualMissRowsByFrame @{} -RequireEvidenceNotes:$true -AllowMissingReview:$false
+    $summary = Assert-ReviewedCsv -Path $reviewPath -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
+    $frameSummary = Assert-FullFrameReviewCsv -Path $frameReviewPath -ManualMissRows 0 -ManualMissRowsByFrame @{} -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
     Invoke-LabelVerifier -GtCsvPath $reviewPath -PredCsvPath $predictionPath -PredLogPath "" -Iou $MinIou -Misses 0 -FalsePositives 1 -LowIou 0
 
     $missReviewPath = Join-Path $selfTestDir "reviewed-with-manual-miss.csv"
     @(
-        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; source = "prediction"; cropPath = "synthetic-a.png"; reviewStatus = "pass"; evidenceNotes = "synthetic face" },
-        [pscustomobject]@{ frame = 20; gtId = ""; label = "nonface"; x = "300"; y = "200"; w = "40"; h = "40"; sourcePredictionId = "pred-fp"; sourceConfidence = "0.30"; source = "prediction"; cropPath = "synthetic-b.png"; reviewStatus = "pass"; evidenceNotes = "synthetic nonface" },
+        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; source = "prediction"; cropPath = $cropAPath; reviewStatus = "pass"; evidenceNotes = "synthetic face" },
+        [pscustomobject]@{ frame = 20; gtId = ""; label = "nonface"; x = "300"; y = "200"; w = "40"; h = "40"; sourcePredictionId = "pred-fp"; sourceConfidence = "0.30"; source = "prediction"; cropPath = $cropBPath; reviewStatus = "pass"; evidenceNotes = "synthetic nonface" },
         [pscustomobject]@{ frame = 30; gtId = "manual-miss-a"; label = "face"; x = "500"; y = "200"; w = "50"; h = "50"; sourcePredictionId = ""; sourceConfidence = ""; source = "manual-missed"; cropPath = ""; reviewStatus = "pass"; evidenceNotes = "synthetic manual missed face" }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missReviewPath
 
     $missFrameReviewPath = Join-Path $selfTestDir "full-frame-review-with-miss.csv"
     @(
-        [pscustomobject]@{ frame = 10; frameImagePath = "synthetic-frame-a.png"; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
-        [pscustomobject]@{ frame = 20; frameImagePath = "synthetic-frame-b.png"; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
-        [pscustomobject]@{ frame = 30; frameImagePath = "synthetic-frame-c.png"; detectedCandidateCount = "0"; missedFaceCount = "1"; missedFaceRowsAdded = "1"; reviewStatus = "pass"; evidenceNotes = "synthetic missed face row added" }
+        [pscustomobject]@{ frame = 10; frameImagePath = $frameAPath; overlayFrameImagePath = $overlayAPath; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
+        [pscustomobject]@{ frame = 20; frameImagePath = $frameBPath; overlayFrameImagePath = ""; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
+        [pscustomobject]@{ frame = 30; frameImagePath = $frameCPath; overlayFrameImagePath = ""; detectedCandidateCount = "0"; missedFaceCount = "1"; missedFaceRowsAdded = "1"; reviewStatus = "pass"; evidenceNotes = "synthetic missed face row added" }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missFrameReviewPath
 
-    $missSummary = Assert-ReviewedCsv -Path $missReviewPath -RequireEvidenceNotes:$true -AllowMissingReview:$false
-    $missFrameSummary = Assert-FullFrameReviewCsv -Path $missFrameReviewPath -ManualMissRows 1 -ManualMissRowsByFrame @{ 30 = 1 } -RequireEvidenceNotes:$true -AllowMissingReview:$false
+    $missSummary = Assert-ReviewedCsv -Path $missReviewPath -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
+    $missFrameSummary = Assert-FullFrameReviewCsv -Path $missFrameReviewPath -ManualMissRows 1 -ManualMissRowsByFrame @{ 30 = 1 } -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
     Invoke-LabelVerifier -GtCsvPath $missReviewPath -PredCsvPath $predictionPath -PredLogPath "" -Iou $MinIou -Misses 1 -FalsePositives 1 -LowIou 0
+
+    $mismatchedFrameReviewPath = Join-Path $selfTestDir "full-frame-review-mismatched-row-count.csv"
+    @(
+        [pscustomobject]@{ frame = 30; frameImagePath = $frameCPath; detectedCandidateCount = "0"; missedFaceCount = "1"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic mismatch" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $mismatchedFrameReviewPath
+
+    Assert-Throws "full-frame missed row count mismatch" {
+        Assert-FullFrameReviewCsv -Path $mismatchedFrameReviewPath -ManualMissRows 1 -ManualMissRowsByFrame @{ 30 = 1 } -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false | Out-Null
+    } "missedFaceCount=1 but missedFaceRowsAdded=0"
+
+    $missingManualFrameReviewPath = Join-Path $selfTestDir "full-frame-review-missing-manual-row.csv"
+    @(
+        [pscustomobject]@{ frame = 40; frameImagePath = $frameCPath; detectedCandidateCount = "0"; missedFaceCount = "1"; missedFaceRowsAdded = "1"; reviewStatus = "pass"; evidenceNotes = "synthetic missing manual row" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missingManualFrameReviewPath
+
+    Assert-Throws "full-frame missing manual row" {
+        Assert-FullFrameReviewCsv -Path $missingManualFrameReviewPath -ManualMissRows 0 -ManualMissRowsByFrame @{} -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false | Out-Null
+    } "review CSV has 0 manual missed-face rows"
+
+    $missingEvidenceReviewPath = Join-Path $selfTestDir "reviewed-missing-evidence.csv"
+    @(
+        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; cropPath = $cropAPath; reviewStatus = "pass"; evidenceNotes = "" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missingEvidenceReviewPath
+
+    Assert-Throws "review evidence required" {
+        Assert-ReviewedCsv -Path $missingEvidenceReviewPath -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false | Out-Null
+    } "evidenceNotes is required"
+
+    $missingCropReviewPath = Join-Path $selfTestDir "reviewed-missing-crop.csv"
+    @(
+        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; cropPath = (Join-Path $selfTestDir "missing-crop.png"); reviewStatus = "pass"; evidenceNotes = "synthetic missing crop" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missingCropReviewPath
+
+    Assert-Throws "review crop artifact required" {
+        Assert-ReviewedCsv -Path $missingCropReviewPath -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false | Out-Null
+    } "cropPath file not found"
+
+    $missingFrameReviewPath = Join-Path $selfTestDir "full-frame-review-missing-frame-artifact.csv"
+    @(
+        [pscustomobject]@{ frame = 10; frameImagePath = (Join-Path $selfTestDir "missing-frame.png"); overlayFrameImagePath = ""; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic missing frame" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missingFrameReviewPath
+
+    Assert-Throws "full-frame artifact required" {
+        Assert-FullFrameReviewCsv -Path $missingFrameReviewPath -ManualMissRows 0 -ManualMissRowsByFrame @{} -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false | Out-Null
+    } "frameImagePath file not found"
 
     Write-Host "[YoloFullGtReviewedVerify] pass selftest rows=$($summary.Rows), reviewed=$($summary.Reviewed), face=$($summary.Face), nonFace=$($summary.NonFace), unreviewed=$($summary.Unreviewed)"
     Write-Host "[YoloFullGtFrameReviewedVerify] pass selftest rows=$($frameSummary.Rows), reviewed=$($frameSummary.Reviewed), declaredMisses=$($frameSummary.DeclaredMisses), declaredRowsAdded=$($frameSummary.DeclaredRowsAdded), unreviewed=$($frameSummary.Unreviewed)"
     Write-Host "[YoloFullGtFrameReviewedVerify] pass manual-miss selftest rows=$($missSummary.Rows), reviewed=$($missSummary.Reviewed), declaredMisses=$($missFrameSummary.DeclaredMisses), declaredRowsAdded=$($missFrameSummary.DeclaredRowsAdded), unreviewed=$($missFrameSummary.Unreviewed)"
+    Write-Host "[YoloFullGtFrameReviewedVerify] pass negative selftests=5"
     Write-Host "[YoloFullGtReviewedVerify] all requested checks passed"
     return
 }
 
-$reviewSummary = Assert-ReviewedCsv -Path $ReviewCsv -RequireEvidenceNotes:$RequireEvidence.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
+$reviewSummary = Assert-ReviewedCsv -Path $ReviewCsv -RequireEvidenceNotes:$RequireEvidence.IsPresent -RequireArtifactFiles:$RequireArtifacts.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
 $manualMissRows = 0
 if ($RequireFullFrameReview) {
     if ([string]::IsNullOrWhiteSpace($FullFrameReviewCsv)) {
@@ -326,7 +448,7 @@ if ($RequireFullFrameReview) {
         $manualMissRows++
     }
 
-    $frameSummary = Assert-FullFrameReviewCsv -Path $FullFrameReviewCsv -ManualMissRows $manualMissRows -ManualMissRowsByFrame $manualMissRowsByFrame -RequireEvidenceNotes:$RequireEvidence.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
+    $frameSummary = Assert-FullFrameReviewCsv -Path $FullFrameReviewCsv -ManualMissRows $manualMissRows -ManualMissRowsByFrame $manualMissRowsByFrame -RequireEvidenceNotes:$RequireEvidence.IsPresent -RequireArtifactFiles:$RequireArtifacts.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
 }
 Invoke-LabelVerifier -GtCsvPath $reviewSummary.Path -PredCsvPath (Resolve-RepoPath $PredictionCsv) -PredLogPath (Resolve-RepoPath $PredictionLog) -Iou $MinIou -Misses $MaxMisses -FalsePositives $MaxFalsePositives -LowIou $MaxLowIou
 
