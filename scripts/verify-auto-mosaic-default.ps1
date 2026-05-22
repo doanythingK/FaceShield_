@@ -10,10 +10,16 @@ param(
     [string]$MediumExportClip = ".tmp/srcTest-smoke/smoke-1200-30s.mp4",
     [switch]$RunLongAutoTune,
     [string]$LongAutoTuneClip = ".tmp/srcTest-smoke/smoke-1200-30s.mp4",
+    [switch]$RunYoloState,
+    [switch]$RunYoloRepresentativeGate,
     [switch]$RunYoloProfileState,
+    [switch]$RunYoloConclusionState,
+    [switch]$RunYoloDistributionState,
     [switch]$RunYoloCropReview,
     [string]$YoloCropReviewPassCsv = ".tmp/yolo-crops/test-0900-yolo5face/crop-review.csv",
-    [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv"
+    [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv",
+    [string]$YoloRepresentativeQualityClip = ".tmp/srcTest-smoke/smoke-0600-3s.mp4",
+    [string]$YoloRepresentativeModelPath = ".tmp/models/YoloV5Face.onnx"
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,8 +27,12 @@ $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $trackPostprocessVerify = Join-Path $repo "scripts\verify-face-track-postprocess.ps1"
+$yoloStateVerify = Join-Path $repo "scripts\verify-yolo-state.ps1"
 $yoloProfileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
+$yoloConclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
+$yoloDistributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $yoloCropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
+$yoloRepresentativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -83,8 +93,24 @@ if ($RunYoloCropReview -and -not (Test-Path $yoloCropReviewVerify)) {
     throw "YOLO crop review verifier not found: $yoloCropReviewVerify"
 }
 
+if ($RunYoloState -and -not (Test-Path $yoloStateVerify)) {
+    throw "YOLO state verifier not found: $yoloStateVerify"
+}
+
 if ($RunYoloProfileState -and -not (Test-Path $yoloProfileStateVerify)) {
     throw "YOLO profile state verifier not found: $yoloProfileStateVerify"
+}
+
+if ($RunYoloConclusionState -and -not (Test-Path $yoloConclusionStateVerify)) {
+    throw "YOLO conclusion state verifier not found: $yoloConclusionStateVerify"
+}
+
+if ($RunYoloDistributionState -and -not (Test-Path $yoloDistributionStateVerify)) {
+    throw "YOLO distribution state verifier not found: $yoloDistributionStateVerify"
+}
+
+if ($RunYoloRepresentativeGate -and -not (Test-Path $yoloRepresentativeGateVerify)) {
+    throw "YOLO representative gate verifier not found: $yoloRepresentativeGateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -218,9 +244,42 @@ if ($RunYoloCropReview) {
     Assert-Contains "yolo-crop-review" $yoloReviewOutput "\[YoloCropReviewVerify\] all requested checks passed"
 }
 
+if ($RunYoloState) {
+    $yoloStateArgs = @(
+        "-YoloCropReviewPassCsv", $YoloCropReviewPassCsv,
+        "-YoloCropReviewFailCsv", $YoloCropReviewFailCsv,
+        "-RepresentativeQualityClip", $YoloRepresentativeQualityClip,
+        "-RepresentativeYoloModelPath", $YoloRepresentativeModelPath
+    )
+    if ($RunYoloRepresentativeGate) {
+        $yoloStateArgs += "-RunRepresentativeGate"
+    }
+
+    $yoloStateOutput = Invoke-ScriptStep "yolo-state" $yoloStateVerify $yoloStateArgs
+    Assert-Contains "yolo-state" $yoloStateOutput "\[YoloStateVerify\] all requested checks passed"
+}
+
 if ($RunYoloProfileState) {
     $yoloProfileOutput = Invoke-ScriptStep "yolo-profile-state" $yoloProfileStateVerify @()
     Assert-Contains "yolo-profile-state" $yoloProfileOutput "\[YoloProfileVerify\] all requested checks passed"
+}
+
+if ($RunYoloConclusionState) {
+    $yoloConclusionOutput = Invoke-ScriptStep "yolo-conclusion-state" $yoloConclusionStateVerify @()
+    Assert-Contains "yolo-conclusion-state" $yoloConclusionOutput "\[YoloConclusionVerify\] all requested checks passed"
+}
+
+if ($RunYoloDistributionState) {
+    $yoloDistributionOutput = Invoke-ScriptStep "yolo-distribution-state" $yoloDistributionStateVerify @()
+    Assert-Contains "yolo-distribution-state" $yoloDistributionOutput "\[YoloDistributionVerify\] all requested checks passed"
+}
+
+if ($RunYoloRepresentativeGate -and -not $RunYoloState) {
+    $yoloRepresentativeOutput = Invoke-ScriptStep "yolo-representative-gate" $yoloRepresentativeGateVerify @(
+        "-QualityClip", $YoloRepresentativeQualityClip,
+        "-YoloModelPath", $YoloRepresentativeModelPath
+    )
+    Assert-Contains "yolo-representative-gate" $yoloRepresentativeOutput "\[YoloRepresentativeGateVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"

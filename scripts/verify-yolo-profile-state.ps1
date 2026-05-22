@@ -1,5 +1,7 @@
 param(
     [string]$HomeViewModel = "ViewModels/Pages/HomePageViewModel.cs",
+    [string]$WorkspaceViewModel = "ViewModels/Pages/WorkspaceViewModel.cs",
+    [string]$AutoMaskGenerator = "Services/Analysis/AutoMaskGenerator.cs",
     [string]$WorkspaceStateStore = "Services/Workspace/WorkspaceStateStore.cs",
     [string]$YoloOptions = "Services/FaceDetection/YoloFaceOnnxDetectorOptions.cs",
     [string]$BackendEnum = "Services/FaceDetection/FaceDetectorBackend.cs",
@@ -36,6 +38,8 @@ function Assert-Match {
 }
 
 $homeText = Read-RepoFile $HomeViewModel
+$workspaceText = Read-RepoFile $WorkspaceViewModel
+$autoMaskGeneratorText = Read-RepoFile $AutoMaskGenerator
 $state = Read-RepoFile $WorkspaceStateStore
 $options = Read-RepoFile $YoloOptions
 $backend = Read-RepoFile $BackendEnum
@@ -102,6 +106,19 @@ Assert-Match "factory creates yolo detector options" $homeText "FaceDetectorFact
 Assert-Match "factory falls back to faceonnx options" $homeText "return FaceDetectorFactoryOptions\.ForOnnx\(faceOnnxOptions\)"
 Assert-Match "faceonnx thresholds stay separate" $homeText "DetectionThreshold\s*=\s*\(float\)Math\.Clamp\(AutoDetectionThreshold"
 Assert-Match "yolo objectness comes from yolo property" $homeText "ObjectnessThreshold\s*=\s*\(float\)Math\.Clamp\(AutoYoloObjectnessThreshold"
+Assert-Match "yolo confidence comes from yolo property" $homeText "ConfidenceThreshold\s*=\s*\(float\)Math\.Clamp\(AutoYoloConfidenceThreshold"
+Assert-Match "yolo nms comes from yolo property" $homeText "NmsThreshold\s*=\s*\(float\)Math\.Clamp\(AutoYoloNmsThreshold"
+Assert-Match "yolo tiling comes from yolo property" $homeText "UseTiling\s*=\s*AutoYoloUseTiling"
+Assert-Match "yolo tile-only maps to full-frame switch" $homeText "IncludeFullFrameWhenTiling\s*=\s*!AutoYoloTileOnly"
+
+Assert-Match "workspace autotune guarded to faceonnx backend" $workspaceText "_detectorFactoryOptions\.Backend\s*==\s*FaceDetectorBackend\.FaceOnnx[\s\S]*DetectorAutoTuner\.TryTune"
+Assert-Match "workspace autotune updates faceonnx options only" $workspaceText "detectorFactoryOptions\s*=\s*detectorFactoryOptions\.WithFaceOnnxOptions\(detectorOptions\)"
+Assert-Match "workspace keeps configured filter profile in run options" $workspaceText "FilterProfile\s*=\s*_autoOptions\.FilterProfile"
+Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
+Assert-Match "workspace faceonnx track profile remains default branch" $workspaceText "return\s+new\s+FaceTrackPostProcessOptions[\s\S]*WeakConfidence\s*=\s*TemporalConfidenceWeak[\s\S]*StrongConfidence\s*=\s*TemporalConfidenceStrong"
+
+Assert-Match "automask yolo filter profile exists" $autoMaskGeneratorText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MinSmallFaceAreaRatio\s*\*\s*0\.70[\s\S]*2\.7[\s\S]*0\.30f[\s\S]*UseStatsFilter:\s*false"
+Assert-Match "automask faceonnx default uses stats filter" $autoMaskGeneratorText "return\s+new\s+FaceFilterSettings[\s\S]*MaxFaceAspectRatio[\s\S]*SmallFaceConfidenceMin[\s\S]*UseStatsFilter:\s*true"
 
 foreach ($property in @(
     "ObjectnessThreshold",

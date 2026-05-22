@@ -1989,6 +1989,40 @@ YOLO threshold sweep harness:
 - 기준: 현재 A/B gate의 `onlyBaseline`/`onlyOptimized`는 실제 정답 라벨이 아니라 detector 간 차이다. crop/overlay로 일부 확인한 결과 FaceONNX false-positive, YOLO false-positive, YOLO 추가 recall 가능성이 모두 섞여 있었다. 그래서 이 결과만으로 한쪽 모델의 모든 오탐/미탐을 확정하지 않는다.
 - 남은 판단: YOLO를 실제 배포 후보로 보려면 label 기반 face/non-face 검증, Avalonia GUI에서 열기/미리보기/편집/export 수동 smoke, 모델 license/배포 가능성, 10분급 전체 구간 품질/속도 측정을 별도로 확인해야 한다.
 
+YOLO 실패 원인 분류:
+
+<!-- yolo-conclusion-state: no-final-yolo-recommendation; default=FaceONNX; ab-gate-not-ground-truth; required=label-gui-10min-license; distribution=no-bundled-yolo-model; axes=model,decode,preprocess,post-filter,track,roi,tiling,small-face,box-refine,speed -->
+
+| 후보/전략 | 현재 판정 | 가까운 실패 축 | 근거 | 다음 판단 |
+| --- | --- | --- | --- | --- |
+| YOLOv8n 640 | 추천 후보 없음 | 모델/threshold curve, post-filter | 6분 3초 low-threshold는 `onlyBaseline=11`, `avgBestIou=0.603`, `minBestIou=0.048`; 9분 2초도 threshold를 낮추면 YOLO-only 후보가 많고 올리면 FaceONNX-only frame이 생긴다. decode는 `output0=1x5x8400` 경로로 실행됐으므로 decode 불능으로 보지는 않는다. | YOLOv8n은 현 pipeline에서 보류한다. |
+| YOLOv8m 640 | 추천 후보 없음 | 모델/threshold curve, post-filter | low-threshold는 `onlyBaseline=3`, `onlyOptimized=13`, `avgBestIou=0.406`; middle-threshold는 `onlyBaseline=9`, `avgBestIou=0.674`라 3초 gate를 통과하지 못했다. | 30초/export 확장 대상이 아니다. |
+| YOLOv8s 640 | 추천 후보 없음 | 모델 후보 | 6분 3초 sweep의 모든 `objectness/confidence` 조합에서 `optimizedFrames=6`, `onlyBaseline=13`, `StrictGatePassed=False`였다. 기존 YOLOv8 decode shape과 같으므로 현재 증거는 decode보다 모델 후보 부적합에 가깝다. | 추천 후보에서 제외한다. |
+| YOLOv8l 640 | 추천 후보 없음 | 모델 후보, 속도 | 6분 3초 sweep에서 `0.05/0.05`는 `onlyOptimized=6`, `avgBestIou=0.354`, 나머지 조합은 `onlyBaseline=10`이고, 각 케이스 `totalMs`가 약 `64초`였다. | 품질과 속도 양쪽에서 제외한다. |
+| YOLO5Face 0.12/0.18/0.45 | 전체 추천 보류 | 모델/box definition, post-filter/track, label 부재 | 6분 3초 strict gate는 통과하고 빠르지만, 9분 2초는 큰 얼굴 box shape 차이와 YOLO-only 뒤쪽 얼굴 후보가 섞였고 6분 30초 crop review는 YOLO false-positive와 FaceONNX false-positive가 함께 있었다. | 앱 기본값으로 승격하지 않는다. YOLO 선택 시 초기 profile로만 유지한다. |
+| selective tiling | 추천 후보 없음 | tiling 전략 | YOLO5Face 6분 3초 full+tile/tile-only는 `onlyOptimized` 증가, coverage 저하, 큰 속도 비용을 만들었다. YOLOv8n tile-only도 `onlyBaseline=10`, `onlyOptimized=7`이었다. | 현재 전략은 tiling off 유지. |
+| low-confidence position filter | 추천 후보 없음 | post-filter | review crop 표본에서는 유망했지만 6분 3초 frame gate에서 `onlyBaseline=8~10`, `StrictGatePassed=False`가 됐다. | frame gate를 깨므로 폐기한다. |
+| small-area filter | 추천 후보 없음 | small-face 기준/post-filter | review 표본에서는 `NonFace` 일부를 제거했지만 6분 3초 gate에서 필요한 작은 얼굴 후보까지 제거해 `optimizedFrames=5`, `onlyBaseline=14`가 됐다. | 단순 작은 박스 제거는 폐기한다. |
+| FaceONNX ROI verifier | 추천 후보 없음 | ROI refine 전략 | 9분 2초에서 ROI hit는 많았지만 `boxCountDiffFrames`를 줄이지 못했고 `minBestIou`가 낮아졌으며 ROI 비용이 추가됐다. | 현재 단순 ROI verifier는 추천 profile에 넣지 않는다. |
+| large-box/landmark box refine | 추천 후보 없음 | box refine 전략 | 단순 축소와 landmark span 재박싱 모두 9분 2초에서 `avgBestIou`/coverage를 악화시켰다. | 다른 box 보정 모델/전략이 필요하다. |
+
+이 분류 기준에서 `전처리`는 현재 주요 실패 축으로 확정하지 않는다. 같은 모델 shape에서 입력 크기 확대(`YoloInputSize=800`)는 속도/품질이 모두 나빠졌고, YOLOv8 계열은 metadata가 `1x3x640x640` 고정이라 전처리만으로 해결됐다는 증거가 없다. `decode`도 YOLOv8 generic output과 YOLO5Face feature-map output이 각각 실행되고 일부 높은 IoU 결과가 있어 현재 주요 실패 축으로 보지 않는다.
+
+YOLO 모델 출처/license/배포 판단:
+
+| 모델 후보 | 출처 | 표시 license/배포 메모 | 현재 제품 배포 판단 |
+| --- | --- | --- | --- |
+| `yolov8n/s/m/l-face-lindevs.onnx` | `lindevs/yolov8-face` GitHub release | 저장소는 MIT license로 표시된다. README는 pretrained model이 WIDERFace로 학습됐고 YOLOv8 models를 initial weights로 사용했다고 설명한다. 따라서 저장소 license와 별개로 upstream YOLOv8 weight/license 영향은 제품 배포 전 별도 확인이 필요하다. | 성능 gate 실패이므로 repo/installer에 포함하지 않는다. 로컬 `.tmp/models/` 실험 후보로만 둔다. |
+| `YoloV5Face.onnx` | Hugging Face `hayashiLin/deepfacelivemodels` | Hugging Face 파일 페이지의 license는 `gpl-3.0`으로 표시되고 SHA-256은 로컬 실험값과 일치한다. GPL-3.0 모델을 닫힌 제품에 번들할 수 있는지는 별도 법무/배포 정책 확인 없이는 확정하지 않는다. | 성능 최종 추천 보류 및 license 리스크 때문에 repo/installer에 포함하지 않는다. 사용자가 직접 경로를 지정하는 실험용 후보로만 둔다. |
+
+배포 상태 invariant:
+
+- YOLO 모델 파일은 repo에 추적하지 않는다.
+- Home의 앱 기본 detector는 계속 `FaceONNX`다.
+- YOLO는 사용자가 직접 선택하고 모델 경로를 지정하는 backend/profile 경로로만 유지한다.
+- license/배포 가능성이 확인되기 전에는 YOLO 모델을 기본값, bundled asset, CI publish output 필수 파일로 승격하지 않는다.
+- `scripts/verify-yolo-distribution-state.ps1`는 위 상태 중 추적 가능한 부분을 검사한다.
+
 회귀 검증:
 
 - `dotnet build FaceShield.sln` 성공. WSL `dotnet build` 직접 실행 기준 warning/error는 0개였다. Windows verifier 내부 build에서는 기존 FFmpeg obsolete warning 7개가 다시 출력됐다.
@@ -2001,4 +2035,12 @@ YOLO threshold sweep harness:
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` 실행 성공. 기본 FaceONNX verifier와 YOLO crop review wrapper가 모두 통과했다.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-profile-state.ps1` 실행 성공.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` 실행 성공. 기본 FaceONNX verifier와 YOLO profile-state invariant가 모두 통과했다.
+- `scripts/verify-yolo-conclusion-state.ps1`를 추가했다. 이 스크립트는 현재 문서가 `최종 YOLO 추천 후보 없음`, 앱 기본 detector `FaceONNX`, A/B gate가 정답 라벨이 아니라는 caveat, 후보별 실패 원인 분류, 남은 label/GUI/10분급/license 검증 항목을 계속 포함하는지 확인한다.
+- `scripts/verify-yolo-distribution-state.ps1`를 추가했다. 이 스크립트는 YOLO 모델 파일이 repo에 추적되지 않고, 문서에 `no-bundled-yolo-model`, `GPL-3.0`, `MIT`, `upstream YOLOv8 weight/license` 배포 caveat가 유지되는지 확인한다.
+- `scripts/verify-yolo-representative-gate.ps1`를 추가했다. 이 스크립트는 `.tmp/models/YoloV5Face.onnx`와 6분 3초 대표 clip이 있을 때 현재 YOLO5Face 초기 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, tiling off)이 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `boxCountDiffFrames=0`, `SmokeQualityGate passed=True`를 유지하는지 확인한다.
+- `scripts/verify-yolo-state.ps1`를 추가했다. 이 스크립트는 `verify-yolo-profile-state.ps1`, `verify-yolo-crop-review.ps1`, `verify-yolo-conclusion-state.ps1`, `verify-yolo-distribution-state.ps1`를 묶어 YOLO 전용 상태를 빠르게 재확인한다. `-RunRepresentativeGate`를 붙이면 `verify-yolo-representative-gate.ps1`까지 실행한다. `verify-auto-mosaic-default.ps1 -RunYoloState`에서도 같은 wrapper를 호출할 수 있고, `-RunYoloRepresentativeGate`를 함께 붙이면 대표 YOLO gate까지 포함한다.
+- `scripts/verify-yolo-profile-state.ps1`를 확장해 YOLO profile 저장뿐 아니라 런타임 분리 invariant도 확인한다. 현재 검증 항목에는 FaceONNX backend에서만 `DetectorAutoTuner`가 호출되는지, auto-tune 결과가 FaceONNX options에만 반영되는지, YOLO 전용 track/filter profile이 FaceONNX 기본 profile과 분리되어 있는지가 포함된다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-representative-gate.ps1` 실행 성공. 최신 실행에서 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `SmokeQualityGate passed=True`였고 YOLO optimized `totalMs`는 약 `12~13.5초`였다.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunRepresentativeGate` 실행 성공.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloState -RunYoloRepresentativeGate` 실행 성공. 기본 FaceONNX gate와 YOLO wrapper/대표 gate가 모두 통과했다.
 - 같은 상태에서 `dotnet build FaceShield.sln`은 성공했고 기존 FFmpeg obsolete warning 7개만 출력됐다.
