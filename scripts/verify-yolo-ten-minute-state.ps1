@@ -1,6 +1,7 @@
 param(
     [string]$PlanPath = "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md",
     [string]$RunnerPath = "scripts\run-yolo-ten-minute-full.ps1",
+    [string]$PartialSpeedCompareRunnerPath = "scripts\run-yolo-partial-speed-compare.ps1",
     [string]$SourcePath = "srcTest\260102_jp_10.mp4",
     [string]$ClipPath = ".tmp\srcTest-smoke\smoke-0200-600s.mp4",
     [string]$LogPath = ".tmp\yolo-ten-minute\yolo-ten-minute-20260523-000044.log",
@@ -13,10 +14,14 @@ param(
     [string]$FaceOnnxOptimizedOnlyLogDir = ".tmp\yolo-ten-minute-faceonnx-optimized-smoke",
     [string]$FaceOnnxOptimizedOnlyLogPattern = "yolo-ten-minute-faceonnx-optimized-only-*.log",
     [int]$FaceOnnxOptimizedOnlyMinFrames = 90,
+    [string]$PartialSpeedYoloLogDir = ".tmp\yolo-partial-speed\yolo",
+    [string]$PartialSpeedFaceOnnxLogDir = ".tmp\yolo-partial-speed\faceonnx-optimized",
+    [int]$PartialSpeedMinFrames = 90,
     [switch]$RequireClip,
     [switch]$RequireRun,
     [switch]$RequireBaselineOnlyRun,
-    [switch]$RequireFaceOnnxOptimizedOnlyRun
+    [switch]$RequireFaceOnnxOptimizedOnlyRun,
+    [switch]$RequirePartialSpeedCompareRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,14 +29,17 @@ $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $resolvedPlanPath = if ([IO.Path]::IsPathRooted($PlanPath)) { $PlanPath } else { Join-Path $repo $PlanPath }
 $resolvedRunnerPath = if ([IO.Path]::IsPathRooted($RunnerPath)) { $RunnerPath } else { Join-Path $repo $RunnerPath }
+$resolvedPartialSpeedCompareRunnerPath = if ([IO.Path]::IsPathRooted($PartialSpeedCompareRunnerPath)) { $PartialSpeedCompareRunnerPath } else { Join-Path $repo $PartialSpeedCompareRunnerPath }
 $resolvedSourcePath = if ([IO.Path]::IsPathRooted($SourcePath)) { $SourcePath } else { Join-Path $repo $SourcePath }
 $resolvedClipPath = if ([IO.Path]::IsPathRooted($ClipPath)) { $ClipPath } else { Join-Path $repo $ClipPath }
 $resolvedLogPath = if ([IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $repo $LogPath }
 $resolvedOutputPath = if ([IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path $repo $OutputPath }
 $resolvedBaselineOnlyLogDir = if ([IO.Path]::IsPathRooted($BaselineOnlyLogDir)) { $BaselineOnlyLogDir } else { Join-Path $repo $BaselineOnlyLogDir }
 $resolvedFaceOnnxOptimizedOnlyLogDir = if ([IO.Path]::IsPathRooted($FaceOnnxOptimizedOnlyLogDir)) { $FaceOnnxOptimizedOnlyLogDir } else { Join-Path $repo $FaceOnnxOptimizedOnlyLogDir }
+$resolvedPartialSpeedYoloLogDir = if ([IO.Path]::IsPathRooted($PartialSpeedYoloLogDir)) { $PartialSpeedYoloLogDir } else { Join-Path $repo $PartialSpeedYoloLogDir }
+$resolvedPartialSpeedFaceOnnxLogDir = if ([IO.Path]::IsPathRooted($PartialSpeedFaceOnnxLogDir)) { $PartialSpeedFaceOnnxLogDir } else { Join-Path $repo $PartialSpeedFaceOnnxLogDir }
 
-foreach ($required in @($resolvedPlanPath, $resolvedRunnerPath, $resolvedSourcePath)) {
+foreach ($required in @($resolvedPlanPath, $resolvedRunnerPath, $resolvedPartialSpeedCompareRunnerPath, $resolvedSourcePath)) {
     if (-not (Test-Path $required)) {
         throw "Required file not found: $required"
     }
@@ -122,6 +130,10 @@ Assert-Contains "plan records incomplete baseline-only full attempt" $plan "base
 Assert-Contains "plan records baseline-only log pattern" $plan "baseline-only-log-pattern=.tmp/yolo-ten-minute-baseline-smoke/yolo-ten-minute-baseline-only-*.log"
 Assert-Contains "plan records faceonnx optimized-only runner support" $plan "faceonnx-optimized-only-runner=short-smoke-pass"
 Assert-Contains "plan records faceonnx optimized-only log pattern" $plan "faceonnx-optimized-only-log-pattern=.tmp/yolo-ten-minute-faceonnx-optimized-smoke/yolo-ten-minute-faceonnx-optimized-only-*.log"
+Assert-Contains "plan records partial speed compare runner support" $plan "partial-speed-compare=short-smoke-pass"
+Assert-Contains "plan records partial speed yolo total" $plan "partial-yolo-totalMs=20720"
+Assert-Contains "plan records partial speed faceonnx total" $plan "partial-faceonnx-totalMs=34039"
+Assert-Contains "plan records partial speed ratio" $plan "partial-faceonnx-yolo-ratio=1.643"
 Assert-Contains "plan records ten minute log" $plan ".tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log"
 Assert-Contains "plan records ten minute auto total" $plan "autoTotalMs=2536529"
 Assert-Contains "plan records ten minute export total" $plan "exportTotalMs=1375350"
@@ -147,6 +159,8 @@ Assert-Contains "runner names faceonnx optimized-only mode" $runner "faceonnx-op
 Assert-Contains "runner records faceonnx optimized-only flag" $runner "faceOnnxOptimizedOnly="
 Assert-Contains "runner streams log lines" $runner "ForEach-Object"
 Assert-Contains "runner writes incremental log" $runner "Add-Content -Encoding UTF8 -Path `$logPath"
+Assert-Contains "partial speed compare runner calls ten minute runner" (Get-Content -Raw -Path $resolvedPartialSpeedCompareRunnerPath) "run-yolo-ten-minute-full.ps1"
+Assert-Contains "partial speed compare runner reports summary" (Get-Content -Raw -Path $resolvedPartialSpeedCompareRunnerPath) "[YoloPartialSpeedCompare] summary"
 Assert-Contains "smoke can skip optimized case" $smoke "[switch]`$SkipOptimized"
 Assert-Contains "smoke guards empty run selection" $smoke "[SmokeRun] no cases selected"
 
@@ -245,6 +259,35 @@ if ($RequireFaceOnnxOptimizedOnlyRun) {
     }
 
     Write-Host "[YoloTenMinuteStateVerify] pass faceonnx optimized-only run artifacts"
+}
+
+if ($RequirePartialSpeedCompareRun) {
+    $partialYoloLog = Resolve-LatestLog "" $resolvedPartialSpeedYoloLogDir "yolo-ten-minute-yolo-only-*.log"
+    $partialFaceOnnxLog = Resolve-LatestLog "" $resolvedPartialSpeedFaceOnnxLogDir "yolo-ten-minute-faceonnx-optimized-only-*.log"
+    $partialYoloText = Get-Content -Raw -Path $partialYoloLog
+    $partialFaceOnnxText = Get-Content -Raw -Path $partialFaceOnnxLog
+
+    Assert-Contains "partial speed yolo log has yolo detector" $partialYoloText "detector=YoloFaceOnnxDetector"
+    Assert-Contains "partial speed yolo log completed" $partialYoloText "[YoloTenMinuteFull] complete exitCode=0"
+    Assert-Contains "partial speed faceonnx log has faceonnx detector" $partialFaceOnnxText "detector=FaceOnnxDetector/CPU"
+    Assert-Contains "partial speed faceonnx log completed" $partialFaceOnnxText "[YoloTenMinuteFull] complete exitCode=0"
+
+    foreach ($entry in @(
+        @{ Name = "partial speed yolo"; Text = $partialYoloText },
+        @{ Name = "partial speed faceonnx"; Text = $partialFaceOnnxText }
+    )) {
+        $match = [regex]::Match($entry.Text, "totalFrames=(\d+)")
+        if (-not $match.Success) {
+            throw "$($entry.Name) log missing totalFrames"
+        }
+
+        $frames = [int]$match.Groups[1].Value
+        if ($frames -lt $PartialSpeedMinFrames) {
+            throw "$($entry.Name) totalFrames $frames is below expected minimum $PartialSpeedMinFrames"
+        }
+    }
+
+    Write-Host "[YoloTenMinuteStateVerify] pass partial speed compare artifacts"
 }
 
 Write-Host "[YoloTenMinuteStateVerify] all requested checks passed"

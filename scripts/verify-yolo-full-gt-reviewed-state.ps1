@@ -109,6 +109,7 @@ function Assert-FullFrameReviewCsv {
     param(
         [string]$Path,
         [int]$ManualMissRows,
+        [hashtable]$ManualMissRowsByFrame,
         [bool]$RequireEvidenceNotes,
         [bool]$AllowMissingReview
     )
@@ -126,8 +127,15 @@ function Assert-FullFrameReviewCsv {
     $reviewedRows = 0
     $unreviewedRows = 0
     $declaredMisses = 0
+    $declaredRowsAdded = 0
     foreach ($row in $rows) {
+        $frame = 0
+        if ($null -eq $row.PSObject.Properties["frame"] -or -not [int]::TryParse($row.frame, [ref]$frame)) {
+            throw "Full-frame review row has invalid frame value: $($row.frame)"
+        }
+
         $missedFaceCount = if ($null -ne $row.PSObject.Properties["missedFaceCount"]) { $row.missedFaceCount } else { "" }
+        $missedFaceRowsAdded = if ($null -ne $row.PSObject.Properties["missedFaceRowsAdded"]) { $row.missedFaceRowsAdded } else { "" }
         $reviewStatus = if ($null -ne $row.PSObject.Properties["reviewStatus"]) { $row.reviewStatus } else { "" }
         $evidenceNotes = if ($null -ne $row.PSObject.Properties["evidenceNotes"]) { $row.evidenceNotes } else { "" }
 
@@ -141,6 +149,25 @@ function Assert-FullFrameReviewCsv {
             throw "Invalid missedFaceCount '$missedFaceCount' at frame=$($row.frame)"
         }
 
+        $rowsAdded = 0
+        if ([string]::IsNullOrWhiteSpace($missedFaceRowsAdded)) {
+            if (-not $AllowMissingReview) {
+                throw "missedFaceRowsAdded is required at frame=$($row.frame)"
+            }
+        }
+        elseif (-not [int]::TryParse($missedFaceRowsAdded.Trim(), [ref]$rowsAdded) -or $rowsAdded -lt 0) {
+            throw "Invalid missedFaceRowsAdded '$missedFaceRowsAdded' at frame=$($row.frame)"
+        }
+
+        if ($missCount -ne $rowsAdded) {
+            throw "Full-frame review frame=$frame has missedFaceCount=$missCount but missedFaceRowsAdded=$rowsAdded."
+        }
+
+        $manualRowsForFrame = if ($ManualMissRowsByFrame.ContainsKey($frame)) { $ManualMissRowsByFrame[$frame] } else { 0 }
+        if ($rowsAdded -ne $manualRowsForFrame) {
+            throw "Full-frame review frame=$frame declares missedFaceRowsAdded=$rowsAdded but review CSV has $manualRowsForFrame manual missed-face rows for that frame."
+        }
+
         if (-not $AllowMissingReview -and [string]::IsNullOrWhiteSpace($reviewStatus)) {
             throw "full-frame reviewStatus is required at frame=$($row.frame)"
         }
@@ -150,6 +177,7 @@ function Assert-FullFrameReviewCsv {
         }
 
         $declaredMisses += $missCount
+        $declaredRowsAdded += $rowsAdded
         $reviewedRows++
     }
 
@@ -157,8 +185,12 @@ function Assert-FullFrameReviewCsv {
         throw "Full-frame review CSV has unreviewed rows: $unreviewedRows"
     }
 
-    if ($declaredMisses -gt $ManualMissRows) {
-        throw "Full-frame review declares $declaredMisses missed faces but review CSV has only $ManualMissRows manual missed-face rows."
+    if ($declaredMisses -ne $ManualMissRows) {
+        throw "Full-frame review declares $declaredMisses missed faces but review CSV has $ManualMissRows manual missed-face rows."
+    }
+
+    if ($declaredRowsAdded -ne $ManualMissRows) {
+        throw "Full-frame review declares $declaredRowsAdded missed-face rows added but review CSV has $ManualMissRows manual missed-face rows."
     }
 
     [pscustomobject]@{
@@ -166,6 +198,7 @@ function Assert-FullFrameReviewCsv {
         Reviewed = $reviewedRows
         Unreviewed = $unreviewedRows
         DeclaredMisses = $declaredMisses
+        DeclaredRowsAdded = $declaredRowsAdded
         Path = $resolved
     }
 }
@@ -233,10 +266,30 @@ if ($SelfTest) {
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $frameReviewPath
 
     $summary = Assert-ReviewedCsv -Path $reviewPath -RequireEvidenceNotes:$true -AllowMissingReview:$false
-    $frameSummary = Assert-FullFrameReviewCsv -Path $frameReviewPath -ManualMissRows 0 -RequireEvidenceNotes:$true -AllowMissingReview:$false
+    $frameSummary = Assert-FullFrameReviewCsv -Path $frameReviewPath -ManualMissRows 0 -ManualMissRowsByFrame @{} -RequireEvidenceNotes:$true -AllowMissingReview:$false
     Invoke-LabelVerifier -GtCsvPath $reviewPath -PredCsvPath $predictionPath -PredLogPath "" -Iou $MinIou -Misses 0 -FalsePositives 1 -LowIou 0
+
+    $missReviewPath = Join-Path $selfTestDir "reviewed-with-manual-miss.csv"
+    @(
+        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; source = "prediction"; cropPath = "synthetic-a.png"; reviewStatus = "pass"; evidenceNotes = "synthetic face" },
+        [pscustomobject]@{ frame = 20; gtId = ""; label = "nonface"; x = "300"; y = "200"; w = "40"; h = "40"; sourcePredictionId = "pred-fp"; sourceConfidence = "0.30"; source = "prediction"; cropPath = "synthetic-b.png"; reviewStatus = "pass"; evidenceNotes = "synthetic nonface" },
+        [pscustomobject]@{ frame = 30; gtId = "manual-miss-a"; label = "face"; x = "500"; y = "200"; w = "50"; h = "50"; sourcePredictionId = ""; sourceConfidence = ""; source = "manual-missed"; cropPath = ""; reviewStatus = "pass"; evidenceNotes = "synthetic manual missed face" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missReviewPath
+
+    $missFrameReviewPath = Join-Path $selfTestDir "full-frame-review-with-miss.csv"
+    @(
+        [pscustomobject]@{ frame = 10; frameImagePath = "synthetic-frame-a.png"; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
+        [pscustomobject]@{ frame = 20; frameImagePath = "synthetic-frame-b.png"; detectedCandidateCount = "1"; missedFaceCount = "0"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic frame reviewed" },
+        [pscustomobject]@{ frame = 30; frameImagePath = "synthetic-frame-c.png"; detectedCandidateCount = "0"; missedFaceCount = "1"; missedFaceRowsAdded = "1"; reviewStatus = "pass"; evidenceNotes = "synthetic missed face row added" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missFrameReviewPath
+
+    $missSummary = Assert-ReviewedCsv -Path $missReviewPath -RequireEvidenceNotes:$true -AllowMissingReview:$false
+    $missFrameSummary = Assert-FullFrameReviewCsv -Path $missFrameReviewPath -ManualMissRows 1 -ManualMissRowsByFrame @{ 30 = 1 } -RequireEvidenceNotes:$true -AllowMissingReview:$false
+    Invoke-LabelVerifier -GtCsvPath $missReviewPath -PredCsvPath $predictionPath -PredLogPath "" -Iou $MinIou -Misses 1 -FalsePositives 1 -LowIou 0
+
     Write-Host "[YoloFullGtReviewedVerify] pass selftest rows=$($summary.Rows), reviewed=$($summary.Reviewed), face=$($summary.Face), nonFace=$($summary.NonFace), unreviewed=$($summary.Unreviewed)"
-    Write-Host "[YoloFullGtFrameReviewedVerify] pass selftest rows=$($frameSummary.Rows), reviewed=$($frameSummary.Reviewed), declaredMisses=$($frameSummary.DeclaredMisses), unreviewed=$($frameSummary.Unreviewed)"
+    Write-Host "[YoloFullGtFrameReviewedVerify] pass selftest rows=$($frameSummary.Rows), reviewed=$($frameSummary.Reviewed), declaredMisses=$($frameSummary.DeclaredMisses), declaredRowsAdded=$($frameSummary.DeclaredRowsAdded), unreviewed=$($frameSummary.Unreviewed)"
+    Write-Host "[YoloFullGtFrameReviewedVerify] pass manual-miss selftest rows=$($missSummary.Rows), reviewed=$($missSummary.Reviewed), declaredMisses=$($missFrameSummary.DeclaredMisses), declaredRowsAdded=$($missFrameSummary.DeclaredRowsAdded), unreviewed=$($missFrameSummary.Unreviewed)"
     Write-Host "[YoloFullGtReviewedVerify] all requested checks passed"
     return
 }
@@ -250,21 +303,35 @@ if ($RequireFullFrameReview) {
     }
 
     $reviewRows = @(Import-Csv $reviewSummary.Path)
-    $manualMissRows = @($reviewRows | Where-Object {
+    $manualMissRowsByFrame = @{}
+    $manualMissRows = 0
+    foreach ($manualRow in @($reviewRows | Where-Object {
         $label = if ($null -ne $_.PSObject.Properties["label"]) { $_.label } else { "" }
         $sourcePredictionId = if ($null -ne $_.PSObject.Properties["sourcePredictionId"]) { $_.sourcePredictionId } else { "" }
         $source = if ($null -ne $_.PSObject.Properties["source"]) { $_.source } else { "" }
         $normalizedLabel = $label.Trim().ToLowerInvariant()
         ($normalizedLabel -in @("face", "actualface", "true", "1")) -and
             ([string]::IsNullOrWhiteSpace($sourcePredictionId) -or $source -eq "manual-missed")
-    }).Count
+    })) {
+        $frame = 0
+        if (-not [int]::TryParse($manualRow.frame, [ref]$frame)) {
+            throw "Manual missed-face row has invalid frame value: $($manualRow.frame)"
+        }
 
-    $frameSummary = Assert-FullFrameReviewCsv -Path $FullFrameReviewCsv -ManualMissRows $manualMissRows -RequireEvidenceNotes:$RequireEvidence.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
+        if (-not $manualMissRowsByFrame.ContainsKey($frame)) {
+            $manualMissRowsByFrame[$frame] = 0
+        }
+
+        $manualMissRowsByFrame[$frame]++
+        $manualMissRows++
+    }
+
+    $frameSummary = Assert-FullFrameReviewCsv -Path $FullFrameReviewCsv -ManualMissRows $manualMissRows -ManualMissRowsByFrame $manualMissRowsByFrame -RequireEvidenceNotes:$RequireEvidence.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
 }
 Invoke-LabelVerifier -GtCsvPath $reviewSummary.Path -PredCsvPath (Resolve-RepoPath $PredictionCsv) -PredLogPath (Resolve-RepoPath $PredictionLog) -Iou $MinIou -Misses $MaxMisses -FalsePositives $MaxFalsePositives -LowIou $MaxLowIou
 
 Write-Host "[YoloFullGtReviewedVerify] pass rows=$($reviewSummary.Rows), reviewed=$($reviewSummary.Reviewed), face=$($reviewSummary.Face), nonFace=$($reviewSummary.NonFace), unreviewed=$($reviewSummary.Unreviewed)"
 if ($RequireFullFrameReview) {
-    Write-Host "[YoloFullGtFrameReviewedVerify] pass rows=$($frameSummary.Rows), reviewed=$($frameSummary.Reviewed), declaredMisses=$($frameSummary.DeclaredMisses), manualMissRows=$manualMissRows, unreviewed=$($frameSummary.Unreviewed)"
+    Write-Host "[YoloFullGtFrameReviewedVerify] pass rows=$($frameSummary.Rows), reviewed=$($frameSummary.Reviewed), declaredMisses=$($frameSummary.DeclaredMisses), declaredRowsAdded=$($frameSummary.DeclaredRowsAdded), manualMissRows=$manualMissRows, unreviewed=$($frameSummary.Unreviewed)"
 }
 Write-Host "[YoloFullGtReviewedVerify] all requested checks passed"

@@ -223,6 +223,21 @@ function Convert-ToHtmlText {
     return [System.Net.WebUtility]::HtmlEncode($Text)
 }
 
+function Get-DrawBoxFilter {
+    param([object[]]$Rects)
+
+    $segments = New-Object System.Collections.Generic.List[string]
+    foreach ($rect in $Rects) {
+        $x = [int]([Math]::Max(0, [Math]::Floor([double]$rect.X)))
+        $y = [int]([Math]::Max(0, [Math]::Floor([double]$rect.Y)))
+        $w = [int]([Math]::Max(1, [Math]::Ceiling([double]$rect.W)))
+        $h = [int]([Math]::Max(1, [Math]::Ceiling([double]$rect.H)))
+        $segments.Add(("drawbox=x={0}:y={1}:w={2}:h={3}:color=lime:t=4" -f $x, $y, $w, $h)) | Out-Null
+    }
+
+    return ($segments.ToArray() -join ",")
+}
+
 function Convert-ToRelativeImagePath {
     param(
         [string]$BaseDir,
@@ -278,9 +293,20 @@ function Write-ReviewIndexHtml {
         [void]$builder.AppendLine("<div class=""grid"">")
         foreach ($row in $FrameRows) {
             $relativePath = Convert-ToRelativeImagePath -BaseDir $OutputDir -Path $row.frameImagePath
+            $overlayRelativePath = ""
+            if ($null -ne $row.PSObject.Properties["overlayFrameImagePath"] -and -not [string]::IsNullOrWhiteSpace($row.overlayFrameImagePath)) {
+                $overlayRelativePath = Convert-ToRelativeImagePath -BaseDir $OutputDir -Path $row.overlayFrameImagePath
+            }
+
             [void]$builder.AppendLine("<div class=""item frame"">")
+            if (-not [string]::IsNullOrWhiteSpace($overlayRelativePath)) {
+                [void]$builder.AppendLine("<img src=""$(Convert-ToHtmlText $overlayRelativePath)"" alt=""overlay frame $(Convert-ToHtmlText $row.frame)"">")
+            }
             [void]$builder.AppendLine("<img src=""$(Convert-ToHtmlText $relativePath)"" alt=""full frame $(Convert-ToHtmlText $row.frame)"">")
             [void]$builder.AppendLine("<div class=""meta"">frame=$(Convert-ToHtmlText $row.frame), detectedCandidateCount=$(Convert-ToHtmlText $row.detectedCandidateCount)</div>")
+            if ($null -ne $row.PSObject.Properties["candidateSummary"] -and -not [string]::IsNullOrWhiteSpace($row.candidateSummary)) {
+                [void]$builder.AppendLine("<div class=""meta muted"">$(Convert-ToHtmlText $row.candidateSummary)</div>")
+            }
             [void]$builder.AppendLine("</div>")
         }
         [void]$builder.AppendLine("</div>")
@@ -409,6 +435,8 @@ if ($IncludeFullFrameReview) {
     New-Item -ItemType Directory -Force -Path $frameDir | Out-Null
 
     $candidateCountByFrame = @{}
+    $candidateRectsByFrame = @{}
+    $candidateSummaryByFrame = @{}
     foreach ($row in $rows) {
         $frame = Read-IntValue $row "frame"
         if (-not $candidateCountByFrame.ContainsKey($frame)) {
@@ -416,6 +444,23 @@ if ($IncludeFullFrameReview) {
         }
 
         $candidateCountByFrame[$frame]++
+
+        if (-not $candidateRectsByFrame.ContainsKey($frame)) {
+            $candidateRectsByFrame[$frame] = New-Object System.Collections.Generic.List[object]
+        }
+
+        $candidateRectsByFrame[$frame].Add([pscustomobject]@{
+            X = Read-DoubleValue $row "x"
+            Y = Read-DoubleValue $row "y"
+            W = Read-DoubleValue $row "w"
+            H = Read-DoubleValue $row "h"
+        }) | Out-Null
+
+        if (-not $candidateSummaryByFrame.ContainsKey($frame)) {
+            $candidateSummaryByFrame[$frame] = New-Object System.Collections.Generic.List[string]
+        }
+
+        $candidateSummaryByFrame[$frame].Add(("pred={0},conf={1},box={2}/{3}/{4}/{5}" -f $row.sourcePredictionId, $row.sourceConfidence, $row.x, $row.y, $row.w, $row.h)) | Out-Null
     }
 
     $candidateFrameNumbers = New-Object System.Collections.Generic.List[int]
@@ -458,7 +503,9 @@ if ($IncludeFullFrameReview) {
 
     foreach ($frame in @($selectedFrames | Sort-Object)) {
         $frameFileName = "frame-{0:D6}.png" -f $frame
+        $overlayFrameFileName = "frame-{0:D6}-overlay.png" -f $frame
         $framePath = Join-Path $frameDir $frameFileName
+        $overlayFramePath = Join-Path $frameDir $overlayFrameFileName
         $filter = "select=eq(n\,$frame)"
         if ($FullFrameScaleWidth -gt 0) {
             $filter = "$filter,scale=$($FullFrameScaleWidth):-2"
@@ -469,15 +516,38 @@ if ($IncludeFullFrameReview) {
             throw "ffmpeg full-frame extraction failed for frame $frame with exit code $LASTEXITCODE"
         }
 
+        $overlayFilter = "select=eq(n\,$frame)"
+        if ($candidateRectsByFrame.ContainsKey($frame)) {
+            $drawBoxFilter = Get-DrawBoxFilter -Rects ($candidateRectsByFrame[$frame]).ToArray()
+            if (-not [string]::IsNullOrWhiteSpace($drawBoxFilter)) {
+                $overlayFilter = "$overlayFilter,$drawBoxFilter"
+            }
+        }
+
+        if ($FullFrameScaleWidth -gt 0) {
+            $overlayFilter = "$overlayFilter,scale=$($FullFrameScaleWidth):-2"
+        }
+
+        Invoke-Tool $ffmpeg @("-y", "-hide_banner", "-loglevel", "error", "-i", $resolvedVideo, "-vf", $overlayFilter, "-frames:v", "1", $overlayFramePath) | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "ffmpeg full-frame overlay extraction failed for frame $frame with exit code $LASTEXITCODE"
+        }
+
         $candidateCount = 0
+        $candidateSummary = ""
         if ($candidateCountByFrame.ContainsKey($frame)) {
             $candidateCount = $candidateCountByFrame[$frame]
+        }
+        if ($candidateSummaryByFrame.ContainsKey($frame)) {
+            $candidateSummary = ($candidateSummaryByFrame[$frame].ToArray() -join "; ")
         }
 
         $frameReviewRows.Add([pscustomobject]@{
             frame = $frame
             frameImagePath = $framePath
+            overlayFrameImagePath = $overlayFramePath
             detectedCandidateCount = $candidateCount
+            candidateSummary = $candidateSummary
             missedFaceCount = ""
             missedFaceRowsAdded = ""
             reviewStatus = ""

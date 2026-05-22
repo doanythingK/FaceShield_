@@ -92,6 +92,26 @@ $requiredSteps = @(
     "reopen-state"
 )
 
+$requiredEvidenceTypes = @{
+    "open-video" = @("screenshot-or-recording")
+    "select-yolo-backend" = @("screenshot")
+    "run-yolo-auto-detect" = @("screenshot-or-log")
+    "preview-result" = @("screenshot-or-recording")
+    "manual-edit" = @("screenshot-or-recording")
+    "export" = @("output-file")
+    "reopen-state" = @("screenshot-or-recording")
+}
+
+$checklistScript = Join-Path $repo "scripts\new-yolo-gui-smoke-checklist.ps1"
+if (-not (Test-Path $checklistScript)) {
+    throw "GUI smoke checklist script not found: $checklistScript"
+}
+
+$checklistScriptText = Get-Content -Raw -Path $checklistScript
+Assert-Contains "checklist has evidence type column" $checklistScriptText "evidenceType"
+Assert-Contains "checklist has artifact path column" $checklistScriptText "artifactPath"
+Assert-Contains "checklist requires output file evidence" $checklistScriptText "output-file"
+
 if ($RequireManualPass) {
     $resolvedChecklist = Resolve-RepoPath $ChecklistCsv
     if (-not (Test-Path $resolvedChecklist)) {
@@ -105,12 +125,37 @@ if ($RequireManualPass) {
             throw "Manual GUI smoke checklist missing step: $step"
         }
 
+        foreach ($column in @("status", "evidenceType", "artifactPath", "evidence", "notes")) {
+            if ($null -eq $row.PSObject.Properties[$column]) {
+                throw "Manual GUI smoke checklist row missing column '$column': $step"
+            }
+        }
+
         if ($row.status.Trim().ToLowerInvariant() -ne "pass") {
             throw "Manual GUI smoke step is not pass: $step status=$($row.status)"
         }
 
+        $evidenceType = $row.evidenceType.Trim().ToLowerInvariant()
+        if ($evidenceType -notin $requiredEvidenceTypes[$step]) {
+            throw "Manual GUI smoke step has unsupported evidenceType: $step evidenceType=$($row.evidenceType)"
+        }
+
         if ([string]::IsNullOrWhiteSpace($row.evidence)) {
             throw "Manual GUI smoke step is missing evidence: $step"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($row.artifactPath)) {
+            throw "Manual GUI smoke step is missing artifactPath: $step"
+        }
+
+        $artifactPath = Resolve-RepoPath $row.artifactPath
+        if (-not (Test-Path $artifactPath)) {
+            throw "Manual GUI smoke artifactPath does not exist: $step artifactPath=$artifactPath"
+        }
+
+        $artifactInfo = Get-Item $artifactPath
+        if ($artifactInfo.Length -le 0) {
+            throw "Manual GUI smoke artifactPath is empty: $step artifactPath=$artifactPath"
         }
     }
 

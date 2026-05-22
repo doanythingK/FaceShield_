@@ -59,14 +59,69 @@ if ([string]::IsNullOrWhiteSpace($clipDirectory)) {
 New-Item -ItemType Directory -Force -Path $clipDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
+function Convert-ToWslPath {
+    param([string]$Path)
+
+    if ($Path -match '^([A-Za-z]):\\(.*)$') {
+        $drive = $matches[1].ToLowerInvariant()
+        $rest = $matches[2] -replace '\\', '/'
+        return "/mnt/$drive/$rest"
+    }
+
+    return $Path -replace '\\', '/'
+}
+
+function Resolve-Ffmpeg {
+    $native = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($null -ne $native) {
+        return [pscustomobject]@{
+            Command = $native.Source
+            UseWsl = $false
+        }
+    }
+
+    $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($null -ne $wsl) {
+        return [pscustomobject]@{
+            Command = $wsl.Source
+            UseWsl = $true
+        }
+    }
+
+    return $null
+}
+
+function Invoke-Ffmpeg {
+    param(
+        [object]$Tool,
+        [string[]]$Arguments
+    )
+
+    if ($Tool.UseWsl) {
+        $converted = @()
+        foreach ($arg in $Arguments) {
+            if ($arg -match '^[A-Za-z]:\\') {
+                $converted += Convert-ToWslPath $arg
+            }
+            else {
+                $converted += $arg
+            }
+        }
+
+        return & $Tool.Command --exec ffmpeg @converted
+    }
+
+    return & $Tool.Command @Arguments
+}
+
 if (-not $SkipClipPrepare -and -not (Test-Path $clipPath)) {
-    $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    $ffmpeg = Resolve-Ffmpeg
     if ($null -eq $ffmpeg) {
-        throw "ffmpeg not found on PATH. Prepare $clipPath manually or rerun with -SkipClipPrepare after creating the clip."
+        throw "ffmpeg not found on PATH and wsl.exe is unavailable. Prepare $clipPath manually or rerun with -SkipClipPrepare after creating the clip."
     }
 
     Write-Host "[YoloTenMinuteFull] prepare clip source=$sourcePath, start=$Start, seconds=$Seconds, output=$clipPath"
-    & ffmpeg -y -hide_banner -loglevel error -ss $Start -t $Seconds -i $sourcePath -c copy $clipPath
+    Invoke-Ffmpeg $ffmpeg @("-y", "-hide_banner", "-loglevel", "error", "-ss", $Start, "-t", "$Seconds", "-i", $sourcePath, "-c", "copy", $clipPath)
     if ($LASTEXITCODE -ne 0) {
         throw "ffmpeg clip creation failed with exit code $LASTEXITCODE"
     }

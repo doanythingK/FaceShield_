@@ -116,7 +116,7 @@ foreach ($candidateFrame in $candidateFrames) {
 }
 
 $firstFrameRow = $frameRows[0]
-foreach ($column in @("frame", "frameImagePath", "detectedCandidateCount", "missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
+foreach ($column in @("frame", "frameImagePath", "overlayFrameImagePath", "detectedCandidateCount", "candidateSummary", "missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
     Assert-Column $firstFrameRow $column
 }
 
@@ -128,6 +128,19 @@ foreach ($row in $frameRows) {
     $frameInfo = Get-Item $row.frameImagePath
     if ($frameInfo.Length -le 0) {
         throw "Full-frame image is empty: $($row.frameImagePath)"
+    }
+
+    if (-not (Test-Path $row.overlayFrameImagePath)) {
+        throw "Full-frame overlay image not found: $($row.overlayFrameImagePath)"
+    }
+
+    $overlayInfo = Get-Item $row.overlayFrameImagePath
+    if ($overlayInfo.Length -le 0) {
+        throw "Full-frame overlay image is empty: $($row.overlayFrameImagePath)"
+    }
+
+    if ([int]$row.detectedCandidateCount -gt 0 -and [string]::IsNullOrWhiteSpace($row.candidateSummary)) {
+        throw "Full-frame review row with candidates is missing candidateSummary: frame=$($row.frame)"
     }
 }
 
@@ -146,11 +159,11 @@ if (-not (Test-Path $reviewIndex)) {
 }
 
 $reviewIndexText = Get-Content -Raw -Path $reviewIndex
-foreach ($text in @("Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv")) {
+foreach ($text in @("Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv", "-overlay.png", "pred=")) {
     if (-not $reviewIndexText.Contains($text)) {
         throw "Review index missing text: $text"
     }
 }
 
-Write-Host "[YoloFullGtReviewPackageVerify] pass rows=$($rows.Count), fullFrameRows=$($frameRows.Count), reviewCsv=$reviewCsv, frameReviewCsv=$frameReviewCsv, reviewIndex=$reviewIndex, outputDir=$resolvedOutputDir"
+Write-Host "[YoloFullGtReviewPackageVerify] pass rows=$($rows.Count), fullFrameRows=$($frameRows.Count), overlayFrames=pass, candidateSummary=pass, reviewCsv=$reviewCsv, frameReviewCsv=$frameReviewCsv, reviewIndex=$reviewIndex, outputDir=$resolvedOutputDir"
 Write-Host "[YoloFullGtReviewPackageVerify] all requested checks passed"
