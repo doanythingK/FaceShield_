@@ -11,9 +11,27 @@ param(
     [double]$StrictMinAvgIou = 0.90,
     [double]$StrictMinBestIou = 0.75,
     [switch]$IncludeTiling,
+    [switch]$IncludeTileOnly,
     [int]$YoloTileColumns = 2,
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
+    [switch]$IncludeLargeBoxScale,
+    [double[]]$YoloLargeBoxWidthScales = @(1.0),
+    [double[]]$YoloLargeBoxHeightScales = @(1.0),
+    [double[]]$YoloLargeBoxMinAreaRatios = @(0.0),
+    [switch]$IncludeLandmarkBoxRefine,
+    [double[]]$YoloLandmarkBoxMinAreaRatios = @(0.03),
+    [double[]]$YoloLandmarkBoxWidthScales = @(1.80),
+    [double[]]$YoloLandmarkBoxHeightScales = @(2.10),
+    [double[]]$YoloLandmarkBoxCenterYOffsetRatios = @(-0.04),
+    [double[]]$YoloLandmarkBoxMinOriginalIous = @(0.30),
+    [switch]$IncludeFaceOnnxRoiRefine,
+    [double[]]$YoloFaceOnnxRoiMinAreaRatios = @(0.03),
+    [int[]]$YoloFaceOnnxRoiMaxCandidates = @(32),
+    [switch]$IncludeTrackPostProcess,
+    [int[]]$YoloDropShortTrackMaxDetections = @(1),
+    [double[]]$YoloShortTrackMaxConfidences = @(0.18),
+    [double[]]$YoloLowerFrameTrackMaxConfidences = @(0.50),
     [int]$MaxCases = 0,
     [string]$OutputCsv = "",
     [string]$OutputLog = ""
@@ -105,17 +123,55 @@ foreach ($source in $Sources) {
         foreach ($objectness in $ObjectnessThresholds) {
             foreach ($confidence in $ConfidenceThresholds) {
                 foreach ($nms in $NmsThresholds) {
-                    foreach ($tiling in @($false, $true)) {
-                        if ($tiling -and -not $IncludeTiling.IsPresent) {
-                            continue
+                    $tilingModes = @([pscustomobject]@{ Tiling = $false; TileOnly = $false })
+                    if ($IncludeTiling.IsPresent) {
+                        $tilingModes += [pscustomobject]@{ Tiling = $true; TileOnly = $false }
+                        if ($IncludeTileOnly.IsPresent) {
+                            $tilingModes += [pscustomobject]@{ Tiling = $true; TileOnly = $true }
                         }
+                    }
+                    $largeBoxScaleValues = if ($IncludeLargeBoxScale.IsPresent) { @($true) } else { @($false) }
+                    $landmarkRefineValues = if ($IncludeLandmarkBoxRefine.IsPresent) { @($false, $true) } else { @($false) }
+                    $faceOnnxRoiRefineValues = if ($IncludeFaceOnnxRoiRefine.IsPresent) { @($false, $true) } else { @($false) }
+                    $dropShortTrackValues = if ($IncludeTrackPostProcess.IsPresent) { $YoloDropShortTrackMaxDetections } else { @(1) }
+                    $shortTrackConfidenceValues = if ($IncludeTrackPostProcess.IsPresent) { $YoloShortTrackMaxConfidences } else { @(0.18) }
+                    $lowerFrameConfidenceValues = if ($IncludeTrackPostProcess.IsPresent) { $YoloLowerFrameTrackMaxConfidences } else { @(0.50) }
 
-                        $caseIndex++
-                        if ($MaxCases -gt 0 -and $caseIndex -gt $MaxCases) {
-                            break
-                        }
+                    foreach ($tilingMode in $tilingModes) {
+                        $tiling = [bool]$tilingMode.Tiling
+                        $tileOnly = [bool]$tilingMode.TileOnly
+                        foreach ($useLargeBoxScale in $largeBoxScaleValues) {
+                            $largeBoxWidthScaleValues = if ($useLargeBoxScale) { $YoloLargeBoxWidthScales } else { @(1.0) }
+                            $largeBoxHeightScaleValues = if ($useLargeBoxScale) { $YoloLargeBoxHeightScales } else { @(1.0) }
+                            $largeBoxMinAreaRatioValues = if ($useLargeBoxScale) { $YoloLargeBoxMinAreaRatios } else { @(0.0) }
+                            foreach ($largeBoxWidthScale in $largeBoxWidthScaleValues) {
+                                foreach ($largeBoxHeightScale in $largeBoxHeightScaleValues) {
+                                    foreach ($largeBoxMinAreaRatio in $largeBoxMinAreaRatioValues) {
+                                        foreach ($useLandmarkRefine in $landmarkRefineValues) {
+                                            $landmarkMinAreaRatioValues = if ($useLandmarkRefine) { $YoloLandmarkBoxMinAreaRatios } else { @(0.03) }
+                                            $landmarkWidthScaleValues = if ($useLandmarkRefine) { $YoloLandmarkBoxWidthScales } else { @(1.80) }
+                                            $landmarkHeightScaleValues = if ($useLandmarkRefine) { $YoloLandmarkBoxHeightScales } else { @(2.10) }
+                                            $landmarkCenterYOffsetValues = if ($useLandmarkRefine) { $YoloLandmarkBoxCenterYOffsetRatios } else { @(-0.04) }
+                                            $landmarkMinOriginalIouValues = if ($useLandmarkRefine) { $YoloLandmarkBoxMinOriginalIous } else { @(0.30) }
+                                            foreach ($landmarkMinAreaRatio in $landmarkMinAreaRatioValues) {
+                                                foreach ($landmarkWidthScale in $landmarkWidthScaleValues) {
+                                                    foreach ($landmarkHeightScale in $landmarkHeightScaleValues) {
+                                                        foreach ($landmarkCenterYOffset in $landmarkCenterYOffsetValues) {
+                                                            foreach ($landmarkMinOriginalIou in $landmarkMinOriginalIouValues) {
+                                                                foreach ($useFaceOnnxRoiRefine in $faceOnnxRoiRefineValues) {
+                                                                    $faceOnnxRoiMinAreaRatioValues = if ($useFaceOnnxRoiRefine) { $YoloFaceOnnxRoiMinAreaRatios } else { @(0.03) }
+                                                                    $faceOnnxRoiMaxCandidateValues = if ($useFaceOnnxRoiRefine) { $YoloFaceOnnxRoiMaxCandidates } else { @(32) }
+                                                                    foreach ($faceOnnxRoiMinAreaRatio in $faceOnnxRoiMinAreaRatioValues) {
+                                                                        foreach ($faceOnnxRoiMaxCandidates in $faceOnnxRoiMaxCandidateValues) {
+                                                                            foreach ($dropShortTrackMaxDetections in $dropShortTrackValues) {
+                                                                                foreach ($shortTrackMaxConfidence in $shortTrackConfidenceValues) {
+                                                                                    foreach ($lowerFrameTrackMaxConfidence in $lowerFrameConfidenceValues) {
+                                                                $caseIndex++
+                                                                if ($MaxCases -gt 0 -and $caseIndex -gt $MaxCases) {
+                                                                    break
+                                                                }
 
-                        $caseLabel = "case=$caseIndex source=$source model=$YoloModelType input=$inputSize obj=$(Format-Number $objectness) conf=$(Format-Number $confidence) nms=$(Format-Number $nms) tiling=$tiling"
+                                                                $caseLabel = "case=$caseIndex source=$source model=$YoloModelType input=$inputSize obj=$(Format-Number $objectness) conf=$(Format-Number $confidence) nms=$(Format-Number $nms) tiling=$tiling tileOnly=$tileOnly largeBoxScale=$useLargeBoxScale largeBoxWidth=$(Format-Number $largeBoxWidthScale) largeBoxHeight=$(Format-Number $largeBoxHeightScale) largeBoxMinArea=$(Format-Number $largeBoxMinAreaRatio) landmarkRefine=$useLandmarkRefine landmarkMinArea=$(Format-Number $landmarkMinAreaRatio) landmarkWidth=$(Format-Number $landmarkWidthScale) landmarkHeight=$(Format-Number $landmarkHeightScale) landmarkCenterYOffset=$(Format-Number $landmarkCenterYOffset) landmarkMinOriginalIou=$(Format-Number $landmarkMinOriginalIou) faceOnnxRoiRefine=$useFaceOnnxRoiRefine faceOnnxRoiMinArea=$(Format-Number $faceOnnxRoiMinAreaRatio) faceOnnxRoiMaxCandidates=$faceOnnxRoiMaxCandidates dropShortTrackMaxDetections=$dropShortTrackMaxDetections shortTrackMaxConfidence=$(Format-Number $shortTrackMaxConfidence) lowerFrameTrackMaxConfidence=$(Format-Number $lowerFrameTrackMaxConfidence)"
                         Write-Host "[YoloSweep] start $caseLabel"
                         Add-Content -Path $OutputLog -Value ""
                         Add-Content -Path $OutputLog -Value "[YoloSweep] start $caseLabel"
@@ -134,7 +190,18 @@ foreach ($source in $Sources) {
                             "-YoloInputSize", $inputSize.ToString([System.Globalization.CultureInfo]::InvariantCulture),
                             "-YoloObjectnessThreshold", (Format-Number $objectness),
                             "-YoloConfidenceThreshold", (Format-Number $confidence),
-                            "-YoloNmsThreshold", (Format-Number $nms)
+                            "-YoloNmsThreshold", (Format-Number $nms),
+                            "-YoloLargeBoxWidthScale", (Format-Number $largeBoxWidthScale),
+                            "-YoloLargeBoxHeightScale", (Format-Number $largeBoxHeightScale),
+                            "-YoloLargeBoxMinAreaRatio", (Format-Number $largeBoxMinAreaRatio),
+                            "-YoloLandmarkBoxMinAreaRatio", (Format-Number $landmarkMinAreaRatio),
+                            "-YoloLandmarkBoxWidthScale", (Format-Number $landmarkWidthScale),
+                            "-YoloLandmarkBoxHeightScale", (Format-Number $landmarkHeightScale),
+                            "-YoloLandmarkBoxCenterYOffsetRatio", (Format-Number $landmarkCenterYOffset),
+                            "-YoloLandmarkBoxMinOriginalIou", (Format-Number $landmarkMinOriginalIou),
+                            "-YoloDropShortTrackMaxDetections", $dropShortTrackMaxDetections.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+                            "-YoloShortTrackMaxConfidence", (Format-Number $shortTrackMaxConfidence),
+                            "-YoloLowerFrameTrackMaxConfidence", (Format-Number $lowerFrameTrackMaxConfidence)
                         )
 
                         if ($tiling) {
@@ -143,6 +210,19 @@ foreach ($source in $Sources) {
                                 "-YoloTileColumns", $YoloTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture),
                                 "-YoloTileRows", $YoloTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
                                 "-YoloTileOverlapRatio", (Format-Number $YoloTileOverlapRatio)
+                            )
+                            if ($tileOnly) {
+                                $smokeArgs += @("-YoloTileOnly")
+                            }
+                        }
+                        if ($useLandmarkRefine) {
+                            $smokeArgs += @("-YoloUseLandmarkBoxRefine")
+                        }
+                        if ($useFaceOnnxRoiRefine) {
+                            $smokeArgs += @(
+                                "-YoloUseFaceOnnxRoiRefine",
+                                "-YoloFaceOnnxRoiMinAreaRatio", (Format-Number $faceOnnxRoiMinAreaRatio),
+                                "-YoloFaceOnnxRoiMaxCandidates", $faceOnnxRoiMaxCandidates.ToString([System.Globalization.CultureInfo]::InvariantCulture)
                             )
                         }
 
@@ -162,11 +242,13 @@ foreach ($source in $Sources) {
                         $compareLine = ($output | Select-String "\[SmokeCompare\]" | Select-Object -Last 1).Line
                         $qualityLine = ($output | Select-String "\[SmokeQualityGate\]" | Select-Object -Last 1).Line
                         $postLine = ($output | Select-String "\[SmokeFaceTrackPost\]" | Select-Object -Last 1).Line
+                        $yoloRoiLine = ($output | Select-String "\[SmokeYoloFaceOnnxRoiRefine\]" | Select-Object -Last 1).Line
 
                         $autoMap = if ($autoRunLine) { ConvertTo-Map $autoRunLine } else { @{} }
                         $compareMap = if ($compareLine) { ConvertTo-Map $compareLine } else { @{} }
                         $qualityMap = if ($qualityLine) { ConvertTo-Map $qualityLine } else { @{} }
                         $postMap = if ($postLine) { ConvertTo-Map $postLine } else { @{} }
+                        $yoloRoiMap = if ($yoloRoiLine) { ConvertTo-Map $yoloRoiLine } else { @{} }
 
                         $onlyBaselineValue = Read-Int $compareMap "onlyBaseline"
                         $onlyOptimizedValue = Read-Int $compareMap "onlyOptimized"
@@ -187,6 +269,23 @@ foreach ($source in $Sources) {
                             Confidence = $confidence
                             Nms = $nms
                             Tiling = $tiling
+                            TileOnly = $tileOnly
+                            LargeBoxScale = $useLargeBoxScale
+                            LargeBoxWidthScale = $largeBoxWidthScale
+                            LargeBoxHeightScale = $largeBoxHeightScale
+                            LargeBoxMinAreaRatio = $largeBoxMinAreaRatio
+                            LandmarkBoxRefine = $useLandmarkRefine
+                            LandmarkBoxMinAreaRatio = $landmarkMinAreaRatio
+                            LandmarkBoxWidthScale = $landmarkWidthScale
+                            LandmarkBoxHeightScale = $landmarkHeightScale
+                            LandmarkBoxCenterYOffsetRatio = $landmarkCenterYOffset
+                            LandmarkBoxMinOriginalIou = $landmarkMinOriginalIou
+                            FaceOnnxRoiRefine = $useFaceOnnxRoiRefine
+                            FaceOnnxRoiMinAreaRatio = $faceOnnxRoiMinAreaRatio
+                            FaceOnnxRoiMaxCandidates = $faceOnnxRoiMaxCandidates
+                            DropShortTrackMaxDetections = $dropShortTrackMaxDetections
+                            ShortTrackMaxConfidence = $shortTrackMaxConfidence
+                            LowerFrameTrackMaxConfidence = $lowerFrameTrackMaxConfidence
                             ExitCode = $exitCode
                             Detector = $autoMap["detector"]
                             TotalMs = Read-Int $autoMap "totalMs"
@@ -211,6 +310,9 @@ foreach ($source in $Sources) {
                             RemovedShort = Read-Int $postMap "removedShort"
                             RemovedLower = Read-Int $postMap "removedLower"
                             RewrittenFrames = Read-Int $postMap "rewritten"
+                            FaceOnnxRoiAttempts = Read-Int $yoloRoiMap "attempts"
+                            FaceOnnxRoiHits = Read-Int $yoloRoiMap "hits"
+                            FaceOnnxRoiElapsedMs = Read-Int $yoloRoiMap "elapsedMs"
                         }
 
                         $rows.Add($row)
@@ -227,6 +329,40 @@ foreach ($source in $Sources) {
                             $row.AvgBaselineCoverage,
                             $row.MinBaselineCoverage,
                             $row.BoxCountDiffFrames)
+                                                                                    }
+                                                                                    if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                                                }
+                                                                                if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                                            }
+                                                                            if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                                        }
+                                                                        if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                                    }
+                                                                    if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                                }
+                                                                if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                            }
+                                                            if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                        }
+                                                        if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                    }
+                                                    if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                                }
+                                                if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                            }
+                                            if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                        }
+                                        if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                    }
+                                    if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                                }
+                                if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                            }
+                            if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) { break }
+                        }
+                        if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) {
+                            break
+                        }
                     }
 
                     if ($MaxCases -gt 0 -and $caseIndex -ge $MaxCases) {
@@ -262,6 +398,6 @@ if ($rows.Count -gt 0) {
             @{ Expression = { if ($_.BoxCountDiffFrames -ne $null) { $_.BoxCountDiffFrames } else { 999999 } } }, `
             @{ Expression = { if ($_.AvgBestIou -ne $null) { -1 * $_.AvgBestIou } else { 999999 } } }, `
             @{ Expression = { if ($_.TotalMs -ne $null) { $_.TotalMs } else { 999999 } } } |
-        Select-Object -First 5 Source, ModelType, InputSize, Objectness, Confidence, Nms, Tiling, TotalMs, BaselineFrames, FaceMaskFrames, OnlyBaseline, OnlyOptimized, AvgBestIou, MinBestIou, AvgBaselineCoverage, MinBaselineCoverage, BoxCountDiffFrames |
+        Select-Object -First 5 Source, ModelType, InputSize, Objectness, Confidence, Nms, Tiling, TileOnly, TotalMs, BaselineFrames, FaceMaskFrames, OnlyBaseline, OnlyOptimized, AvgBestIou, MinBestIou, AvgBaselineCoverage, MinBaselineCoverage, BoxCountDiffFrames |
         Format-Table -AutoSize
 }

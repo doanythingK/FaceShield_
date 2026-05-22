@@ -62,6 +62,9 @@ param(
     [int]$YoloTileColumns = 2,
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
+    [int]$YoloDropShortTrackMaxDetections = 1,
+    [double]$YoloShortTrackMaxConfidence = 0.18,
+    [double]$YoloLowerFrameTrackMaxConfidence = 0.50,
     [switch]$YoloDebugDump,
     [switch]$DumpCompareDetails,
     [switch]$DumpCompareOverlays,
@@ -189,16 +192,19 @@ bool yoloTileOnly = args.Length > 55 && bool.Parse(args[55]);
 int yoloTileColumns = args.Length > 56 ? int.Parse(args[56], System.Globalization.CultureInfo.InvariantCulture) : 2;
 int yoloTileRows = args.Length > 57 ? int.Parse(args[57], System.Globalization.CultureInfo.InvariantCulture) : 2;
 double yoloTileOverlapRatio = args.Length > 58 ? double.Parse(args[58], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
-bool yoloDebugDump = args.Length > 59 && bool.Parse(args[59]);
-bool dumpCompareDetails = args.Length > 60 && bool.Parse(args[60]);
-bool dumpCompareOverlays = args.Length > 61 && bool.Parse(args[61]);
-string compareOverlayDir = args.Length > 62 && args[62] != "__none__" ? args[62] : string.Empty;
-int compareOverlayMaxFrames = args.Length > 63 ? int.Parse(args[63], System.Globalization.CultureInfo.InvariantCulture) : 16;
-bool dumpCompareCrops = args.Length > 64 && bool.Parse(args[64]);
-string compareCropDir = args.Length > 65 && args[65] != "__none__" ? args[65] : string.Empty;
-double compareCropPaddingRatio = args.Length > 66 ? double.Parse(args[66], System.Globalization.CultureInfo.InvariantCulture) : 0.65;
-int compareCropMaxOnlyFrames = args.Length > 67 ? int.Parse(args[67], System.Globalization.CultureInfo.InvariantCulture) : 16;
-int compareCropMaxBoxDiffFrames = args.Length > 68 ? int.Parse(args[68], System.Globalization.CultureInfo.InvariantCulture) : 16;
+int yoloDropShortTrackMaxDetections = args.Length > 59 ? int.Parse(args[59], System.Globalization.CultureInfo.InvariantCulture) : 1;
+float yoloShortTrackMaxConfidence = args.Length > 60 ? float.Parse(args[60], System.Globalization.CultureInfo.InvariantCulture) : 0.18f;
+float yoloLowerFrameTrackMaxConfidence = args.Length > 61 ? float.Parse(args[61], System.Globalization.CultureInfo.InvariantCulture) : 0.50f;
+bool yoloDebugDump = args.Length > 62 && bool.Parse(args[62]);
+bool dumpCompareDetails = args.Length > 63 && bool.Parse(args[63]);
+bool dumpCompareOverlays = args.Length > 64 && bool.Parse(args[64]);
+string compareOverlayDir = args.Length > 65 && args[65] != "__none__" ? args[65] : string.Empty;
+int compareOverlayMaxFrames = args.Length > 66 ? int.Parse(args[66], System.Globalization.CultureInfo.InvariantCulture) : 16;
+bool dumpCompareCrops = args.Length > 67 && bool.Parse(args[67]);
+string compareCropDir = args.Length > 68 && args[68] != "__none__" ? args[68] : string.Empty;
+double compareCropPaddingRatio = args.Length > 69 ? double.Parse(args[69], System.Globalization.CultureInfo.InvariantCulture) : 0.65;
+int compareCropMaxOnlyFrames = args.Length > 70 ? int.Parse(args[70], System.Globalization.CultureInfo.InvariantCulture) : 16;
+int compareCropMaxBoxDiffFrames = args.Length > 71 ? int.Parse(args[71], System.Globalization.CultureInfo.InvariantCulture) : 16;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -261,6 +267,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     int yoloTileColumns,
     int yoloTileRows,
     double yoloTileOverlapRatio,
+    int yoloDropShortTrackMaxDetections,
+    float yoloShortTrackMaxConfidence,
+    float yoloLowerFrameTrackMaxConfidence,
     bool yoloDebugDump)
 {
     string runId = $"smoke-{label}-{Guid.NewGuid():N}";
@@ -408,7 +417,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 MaxLostFillFrames = 3,
                 WeakConfidence = 0.38f,
                 StrongConfidence = 0.58f,
-                ShortTrackMaxConfidence = 0.18f,
+                DropShortTrackMaxDetections = yoloDropShortTrackMaxDetections,
+                ShortTrackMaxConfidence = yoloShortTrackMaxConfidence,
                 SmallTrackMaxAreaRatio = 0.00070,
                 MinTrackIou = 0.08,
                 MaxCenterShiftRatio = 0.72,
@@ -418,7 +428,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 UnstableTailMinStableDetections = 3,
                 UnstableTailMinIou = 0.45,
                 UnstableTailMaxAreaChangeRatio = 1.8,
-                LowerFrameTrackMaxConfidence = 0.50f,
+                LowerFrameTrackMaxConfidence = yoloLowerFrameTrackMaxConfidence,
                 LowerFrameTrackMinCenterYRatio = 0.58,
                 LowerFrameTrackMinAreaRatio = 0.015,
                 LowerFrameTrackMaxAreaRatio = 0.045
@@ -1064,6 +1074,9 @@ if (!bool.Parse(args[2]))
         yoloTileColumns,
         yoloTileRows,
         yoloTileOverlapRatio,
+        yoloDropShortTrackMaxDetections,
+        yoloShortTrackMaxConfidence,
+        yoloLowerFrameTrackMaxConfidence,
         yoloDebugDump: false);
 }
 
@@ -1123,6 +1136,9 @@ var optimized = await RunCaseAsync(
     yoloTileColumns,
     yoloTileRows,
     yoloTileOverlapRatio,
+    yoloDropShortTrackMaxDetections,
+    yoloShortTrackMaxConfidence,
+    yoloLowerFrameTrackMaxConfidence,
     yoloDebugDump);
 
 if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir, compareOverlayMaxFrames, dumpCompareCrops, compareCropDir, compareCropPaddingRatio, compareCropMaxOnlyFrames, compareCropMaxBoxDiffFrames))
@@ -1183,6 +1199,9 @@ $yoloTileOnlyArg = $YoloTileOnly.IsPresent.ToString().ToLowerInvariant()
 $yoloTileColumnsArg = $YoloTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloTileRowsArg = $YoloTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloTileOverlapRatioArg = $YoloTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloDropShortTrackMaxDetectionsArg = $YoloDropShortTrackMaxDetections.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloShortTrackMaxConfidenceArg = $YoloShortTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLowerFrameTrackMaxConfidenceArg = $YoloLowerFrameTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloDebugDumpArg = $YoloDebugDump.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareDetailsArg = $DumpCompareDetails.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareOverlaysArg = $DumpCompareOverlays.IsPresent.ToString().ToLowerInvariant()
@@ -1265,6 +1284,9 @@ dotnet run --project $project -- `
     $yoloTileColumnsArg `
     $yoloTileRowsArg `
     $yoloTileOverlapRatioArg `
+    $yoloDropShortTrackMaxDetectionsArg `
+    $yoloShortTrackMaxConfidenceArg `
+    $yoloLowerFrameTrackMaxConfidenceArg `
     $yoloDebugDumpArg `
     $dumpCompareDetailsArg `
     $dumpCompareOverlaysArg `
