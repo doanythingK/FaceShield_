@@ -111,7 +111,12 @@ foreach ($property in @(
     "IncludeFullFrameWhenTiling",
     "TileColumns",
     "TileRows",
-    "TileOverlapRatio")) {
+    "TileOverlapRatio",
+    "UseLowConfidencePositionFilter",
+    "LowConfidencePositionMaxConfidence",
+    "LowConfidencePositionMinCenterYRatio",
+    "UseSmallAreaFilter",
+    "SmallAreaMaxAreaRatio")) {
     Assert-Match "yolo options expose $property" $options "public\s+.*\s+$property\s*\{"
 }
 

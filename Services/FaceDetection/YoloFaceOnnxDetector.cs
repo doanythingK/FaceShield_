@@ -168,8 +168,14 @@ namespace FaceShield.Services.FaceDetection
                     d.Landmarks.HasValue ? d.Landmarks.Value.Scale(1.0f / (float)ratio) : null)).ToList();
             }
 
-            var afterNms = RefineLargeBoxes(
-                ApplyNms(candidates, _options.NmsThreshold, Math.Max(1, _options.MaxDetections)),
+            var afterNms = ApplySmallAreaFilter(
+                ApplyLowConfidencePositionFilter(
+                    RefineLargeBoxes(
+                        ApplyNms(candidates, _options.NmsThreshold, Math.Max(1, _options.MaxDetections)),
+                        width,
+                        height),
+                    width,
+                    height),
                 width,
                 height);
             if (_options.DumpDebug)
@@ -785,6 +791,70 @@ namespace FaceShield.Services.FaceDetection
                 ordered.RemoveAt(0);
                 kept.Add(current);
                 ordered.RemoveAll(other => IoU(current, other) > threshold);
+            }
+
+            return kept;
+        }
+
+        private IReadOnlyList<Candidate> ApplyLowConfidencePositionFilter(IReadOnlyList<Candidate> candidates, int width, int height)
+        {
+            if (!_options.UseLowConfidencePositionFilter || candidates.Count == 0)
+                return candidates;
+
+            float maxConfidence = Math.Clamp(_options.LowConfidencePositionMaxConfidence, 0.0f, 1.0f);
+            double minCenterYRatio = Math.Clamp(_options.LowConfidencePositionMinCenterYRatio, 0.0, 1.0);
+            double safeHeight = Math.Max(1.0, height);
+            var kept = new List<Candidate>(candidates.Count);
+            int dropped = 0;
+            foreach (var candidate in candidates)
+            {
+                double centerYRatio = (candidate.Y + candidate.Height * 0.5f) / safeHeight;
+                if (candidate.Score <= maxConfidence && centerYRatio >= minCenterYRatio)
+                {
+                    dropped++;
+                    continue;
+                }
+
+                kept.Add(candidate);
+            }
+
+            if (_options.DumpDebug)
+            {
+                Trace.WriteLine(
+                    $"[YoloLowConfidencePositionFilter] candidates={candidates.Count}, kept={kept.Count}, dropped={dropped}, maxConfidence={maxConfidence:0.###}, minCenterY={minCenterYRatio:0.###}");
+            }
+
+            return kept;
+        }
+
+        private IReadOnlyList<Candidate> ApplySmallAreaFilter(IReadOnlyList<Candidate> candidates, int width, int height)
+        {
+            if (!_options.UseSmallAreaFilter || candidates.Count == 0)
+                return candidates;
+
+            double maxAreaRatio = Math.Clamp(_options.SmallAreaMaxAreaRatio, 0.0, 1.0);
+            if (maxAreaRatio <= 0.0)
+                return candidates;
+
+            double frameArea = Math.Max(1.0, width * (double)height);
+            var kept = new List<Candidate>(candidates.Count);
+            int dropped = 0;
+            foreach (var candidate in candidates)
+            {
+                double areaRatio = Math.Max(0.0, candidate.Width * candidate.Height) / frameArea;
+                if (areaRatio <= maxAreaRatio)
+                {
+                    dropped++;
+                    continue;
+                }
+
+                kept.Add(candidate);
+            }
+
+            if (_options.DumpDebug)
+            {
+                Trace.WriteLine(
+                    $"[YoloSmallAreaFilter] candidates={candidates.Count}, kept={kept.Count}, dropped={dropped}, maxArea={maxAreaRatio:0.####}");
             }
 
             return kept;

@@ -28,6 +28,16 @@ namespace FaceShield.Services.FaceDetection
 
         public int MaxDetections { get; init; } = 300;
 
+        public bool UseLowConfidencePositionFilter { get; init; } = false;
+
+        public float LowConfidencePositionMaxConfidence { get; init; } = 0.0f;
+
+        public double LowConfidencePositionMinCenterYRatio { get; init; } = 1.0;
+
+        public bool UseSmallAreaFilter { get; init; } = false;
+
+        public double SmallAreaMaxAreaRatio { get; init; } = 0.0;
+
         public float LargeBoxWidthScale { get; init; } = 1.0f;
 
         public float LargeBoxHeightScale { get; init; } = 1.0f;
