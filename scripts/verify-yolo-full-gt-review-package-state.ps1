@@ -2,7 +2,8 @@ param(
     [string]$VideoPath = ".tmp\srcTest-smoke\smoke-0600-3s.mp4",
     [string]$TemplateCsv = ".tmp\yolo-full-gt\yolo-detection-smoke-template.csv",
     [string]$OutputDir = ".tmp\yolo-full-gt\review-package-smoke",
-    [int]$ExpectedRows = 20
+    [int]$ExpectedRows = 20,
+    [int]$ExpectedFullFrameRows = 19
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,7 +58,10 @@ if (-not (Test-Path $resolvedTemplate)) {
     -VideoPath $resolvedVideo `
     -TemplateCsv $resolvedTemplate `
     -OutputDir $resolvedOutputDir `
-    -MaxRows $ExpectedRows
+    -MaxRows $ExpectedRows `
+    -IncludeFullFrameReview `
+    -MaxFullFrameRows $ExpectedFullFrameRows `
+    -FullFrameScaleWidth 1280
 if ($LASTEXITCODE -ne 0) {
     throw "Review package generation failed with exit code $LASTEXITCODE"
 }
@@ -93,5 +97,60 @@ if ($nonBlankLabels.Count -ne 0) {
     throw "Generated review package should not pre-label rows; nonBlankLabels=$($nonBlankLabels.Count)"
 }
 
-Write-Host "[YoloFullGtReviewPackageVerify] pass rows=$($rows.Count), reviewCsv=$reviewCsv, outputDir=$resolvedOutputDir"
+$frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
+if (-not (Test-Path $frameReviewCsv)) {
+    throw "Full-frame review CSV not found: $frameReviewCsv"
+}
+
+$frameRows = @(Import-Csv $frameReviewCsv)
+if ($frameRows.Count -ne $ExpectedFullFrameRows) {
+    throw "Full-frame review row count expected $ExpectedFullFrameRows but got $($frameRows.Count)"
+}
+
+$candidateFrames = @($rows | ForEach-Object { [int]$_.frame } | Sort-Object -Unique)
+foreach ($candidateFrame in $candidateFrames) {
+    $match = @($frameRows | Where-Object { [int]$_.frame -eq $candidateFrame })
+    if ($match.Count -eq 0) {
+        throw "Full-frame review is missing candidate frame: $candidateFrame"
+    }
+}
+
+$firstFrameRow = $frameRows[0]
+foreach ($column in @("frame", "frameImagePath", "detectedCandidateCount", "missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
+    Assert-Column $firstFrameRow $column
+}
+
+foreach ($row in $frameRows) {
+    if (-not (Test-Path $row.frameImagePath)) {
+        throw "Full-frame image not found: $($row.frameImagePath)"
+    }
+
+    $frameInfo = Get-Item $row.frameImagePath
+    if ($frameInfo.Length -le 0) {
+        throw "Full-frame image is empty: $($row.frameImagePath)"
+    }
+}
+
+$reviewedFrameRows = @($frameRows | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_.missedFaceCount) -or
+    -not [string]::IsNullOrWhiteSpace($_.reviewStatus) -or
+    -not [string]::IsNullOrWhiteSpace($_.evidenceNotes)
+})
+if ($reviewedFrameRows.Count -ne 0) {
+    throw "Generated full-frame review package should not pre-review rows; reviewedFrameRows=$($reviewedFrameRows.Count)"
+}
+
+$reviewIndex = Join-Path $resolvedOutputDir "review-index.html"
+if (-not (Test-Path $reviewIndex)) {
+    throw "Review index not found: $reviewIndex"
+}
+
+$reviewIndexText = Get-Content -Raw -Path $reviewIndex
+foreach ($text in @("Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv")) {
+    if (-not $reviewIndexText.Contains($text)) {
+        throw "Review index missing text: $text"
+    }
+}
+
+Write-Host "[YoloFullGtReviewPackageVerify] pass rows=$($rows.Count), fullFrameRows=$($frameRows.Count), reviewCsv=$reviewCsv, frameReviewCsv=$frameReviewCsv, reviewIndex=$reviewIndex, outputDir=$resolvedOutputDir"
 Write-Host "[YoloFullGtReviewPackageVerify] all requested checks passed"

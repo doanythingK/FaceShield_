@@ -9,9 +9,14 @@ param(
     [string]$BaselineOnlyLogDir = ".tmp\yolo-ten-minute-baseline-smoke",
     [string]$BaselineOnlyLogPattern = "yolo-ten-minute-baseline-only-*.log",
     [int]$BaselineOnlyMinFrames = 90,
+    [string]$FaceOnnxOptimizedOnlyLogPath = "",
+    [string]$FaceOnnxOptimizedOnlyLogDir = ".tmp\yolo-ten-minute-faceonnx-optimized-smoke",
+    [string]$FaceOnnxOptimizedOnlyLogPattern = "yolo-ten-minute-faceonnx-optimized-only-*.log",
+    [int]$FaceOnnxOptimizedOnlyMinFrames = 90,
     [switch]$RequireClip,
     [switch]$RequireRun,
-    [switch]$RequireBaselineOnlyRun
+    [switch]$RequireBaselineOnlyRun,
+    [switch]$RequireFaceOnnxOptimizedOnlyRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +29,7 @@ $resolvedClipPath = if ([IO.Path]::IsPathRooted($ClipPath)) { $ClipPath } else {
 $resolvedLogPath = if ([IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $repo $LogPath }
 $resolvedOutputPath = if ([IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path $repo $OutputPath }
 $resolvedBaselineOnlyLogDir = if ([IO.Path]::IsPathRooted($BaselineOnlyLogDir)) { $BaselineOnlyLogDir } else { Join-Path $repo $BaselineOnlyLogDir }
+$resolvedFaceOnnxOptimizedOnlyLogDir = if ([IO.Path]::IsPathRooted($FaceOnnxOptimizedOnlyLogDir)) { $FaceOnnxOptimizedOnlyLogDir } else { Join-Path $repo $FaceOnnxOptimizedOnlyLogDir }
 
 foreach ($required in @($resolvedPlanPath, $resolvedRunnerPath, $resolvedSourcePath)) {
     if (-not (Test-Path $required)) {
@@ -112,7 +118,10 @@ Assert-Contains "plan records runner path" $plan "scripts/run-yolo-ten-minute-fu
 Assert-Contains "plan records ten minute clip" $plan ".tmp/srcTest-smoke/smoke-0200-600s.mp4"
 Assert-Contains "plan records optimized full run" $plan "full-run=yolo-optimized-only-pass"
 Assert-Contains "plan records baseline-only runner support" $plan "baseline-only-runner=short-smoke-pass"
+Assert-Contains "plan records incomplete baseline-only full attempt" $plan "baseline-only-full=attempted-incomplete-slow"
 Assert-Contains "plan records baseline-only log pattern" $plan "baseline-only-log-pattern=.tmp/yolo-ten-minute-baseline-smoke/yolo-ten-minute-baseline-only-*.log"
+Assert-Contains "plan records faceonnx optimized-only runner support" $plan "faceonnx-optimized-only-runner=short-smoke-pass"
+Assert-Contains "plan records faceonnx optimized-only log pattern" $plan "faceonnx-optimized-only-log-pattern=.tmp/yolo-ten-minute-faceonnx-optimized-smoke/yolo-ten-minute-faceonnx-optimized-only-*.log"
 Assert-Contains "plan records ten minute log" $plan ".tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log"
 Assert-Contains "plan records ten minute auto total" $plan "autoTotalMs=2536529"
 Assert-Contains "plan records ten minute export total" $plan "exportTotalMs=1375350"
@@ -126,6 +135,7 @@ Assert-Match "runner uses confidence 0.18" $runner '\[double\]\$YoloConfidenceTh
 Assert-Match "runner uses nms 0.45" $runner '\[double\]\$YoloNmsThreshold\s*=\s*0\.45'
 Assert-Contains "runner can include baseline" $runner "[switch]`$RunBaseline"
 Assert-Contains "runner can run baseline only" $runner "[switch]`$BaselineOnly"
+Assert-Contains "runner can run faceonnx optimized only" $runner "[switch]`$FaceOnnxOptimizedOnly"
 Assert-Contains "runner can skip export" $runner "[switch]`$SkipExport"
 Assert-Contains "runner can dump detections" $runner "[switch]`$DumpDetections"
 Assert-Contains "runner can dump compare details" $runner "[switch]`$DumpCompareDetails"
@@ -133,6 +143,8 @@ Assert-Contains "runner can dump compare overlays" $runner "[switch]`$DumpCompar
 Assert-Contains "runner can dump compare crops" $runner "[switch]`$DumpCompareCrops"
 Assert-Contains "runner can allow quality failure" $runner "[switch]`$AllowQualityFailure"
 Assert-Contains "runner names baseline-only logs" $runner 'yolo-ten-minute-$modeName-$timestamp.log'
+Assert-Contains "runner names faceonnx optimized-only mode" $runner "faceonnx-optimized-only"
+Assert-Contains "runner records faceonnx optimized-only flag" $runner "faceOnnxOptimizedOnly="
 Assert-Contains "runner streams log lines" $runner "ForEach-Object"
 Assert-Contains "runner writes incremental log" $runner "Add-Content -Encoding UTF8 -Path `$logPath"
 Assert-Contains "smoke can skip optimized case" $smoke "[switch]`$SkipOptimized"
@@ -206,6 +218,33 @@ if ($RequireBaselineOnlyRun) {
     }
 
     Write-Host "[YoloTenMinuteStateVerify] pass baseline-only run artifacts"
+}
+
+if ($RequireFaceOnnxOptimizedOnlyRun) {
+    $resolvedFaceOnnxOptimizedOnlyLogPath = Resolve-LatestLog $FaceOnnxOptimizedOnlyLogPath $resolvedFaceOnnxOptimizedOnlyLogDir $FaceOnnxOptimizedOnlyLogPattern
+    if (-not (Test-Path $resolvedFaceOnnxOptimizedOnlyLogPath)) {
+        throw "Required FaceONNX optimized-only run log not found: $resolvedFaceOnnxOptimizedOnlyLogPath"
+    }
+
+    $faceOnnxOptimizedLog = Get-Content -Raw -Path $resolvedFaceOnnxOptimizedOnlyLogPath
+    Assert-Contains "faceonnx optimized-only log has flag" $faceOnnxOptimizedLog "faceOnnxOptimizedOnly=True"
+    Assert-Contains "faceonnx optimized-only log has faceonnx detector" $faceOnnxOptimizedLog "detector=FaceOnnxDetector/CPU"
+    Assert-Contains "faceonnx optimized-only log has parallel mode" $faceOnnxOptimizedLog "mode=pipe-parallel"
+    Assert-Contains "faceonnx optimized-only log completed" $faceOnnxOptimizedLog "[YoloTenMinuteFull] complete exitCode=0"
+    Assert-NotContains "faceonnx optimized-only log has no baseline case" $faceOnnxOptimizedLog "label=baseline-all-frames"
+    Assert-NotContains "faceonnx optimized-only log has no yolo detector" $faceOnnxOptimizedLog "detector=YoloFaceOnnxDetector"
+
+    $match = [regex]::Match($faceOnnxOptimizedLog, "totalFrames=(\d+)")
+    if (-not $match.Success) {
+        throw "FaceONNX optimized-only log missing totalFrames"
+    }
+
+    $frames = [int]$match.Groups[1].Value
+    if ($frames -lt $FaceOnnxOptimizedOnlyMinFrames) {
+        throw "FaceONNX optimized-only totalFrames $frames is below expected minimum $FaceOnnxOptimizedOnlyMinFrames"
+    }
+
+    Write-Host "[YoloTenMinuteStateVerify] pass faceonnx optimized-only run artifacts"
 }
 
 Write-Host "[YoloTenMinuteStateVerify] all requested checks passed"

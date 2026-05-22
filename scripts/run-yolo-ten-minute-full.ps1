@@ -14,6 +14,7 @@ param(
     [switch]$SkipClipPrepare,
     [switch]$RunBaseline,
     [switch]$BaselineOnly,
+    [switch]$FaceOnnxOptimizedOnly,
     [switch]$SkipExport,
     [switch]$DumpDetections,
     [switch]$DumpCompareDetails,
@@ -46,7 +47,7 @@ if (-not (Test-Path $sourcePath)) {
     throw "Source video not found: $sourcePath"
 }
 
-if (-not $BaselineOnly -and -not (Test-Path $modelPath)) {
+if (-not $BaselineOnly -and -not $FaceOnnxOptimizedOnly -and -not (Test-Path $modelPath)) {
     throw "YOLO model not found: $modelPath"
 }
 
@@ -86,6 +87,8 @@ if ($PrepareClipOnly) {
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $modeName = if ($BaselineOnly) {
     "baseline-only"
+} elseif ($FaceOnnxOptimizedOnly) {
+    "faceonnx-optimized-only"
 } elseif ($RunBaseline) {
     "ab"
 } else {
@@ -100,7 +103,7 @@ $arguments = @(
     "-ParallelDetectorCount", "$ParallelDetectorCount"
 )
 
-if (-not $BaselineOnly) {
+if (-not $BaselineOnly -and -not $FaceOnnxOptimizedOnly) {
     $arguments += @(
     "-YoloModelPath", $YoloModelPath,
     "-YoloModelType", $YoloModelType,
@@ -167,7 +170,7 @@ function Write-RunnerLog {
 }
 
 $baselineEnabled = $RunBaseline.IsPresent -or $BaselineOnly.IsPresent
-Write-RunnerLog "[YoloTenMinuteFull] start smoke log=$logPath, baseline=$baselineEnabled, baselineOnly=$($BaselineOnly.IsPresent), export=$(-not $SkipExport.IsPresent)"
+Write-RunnerLog "[YoloTenMinuteFull] start smoke log=$logPath, baseline=$baselineEnabled, baselineOnly=$($BaselineOnly.IsPresent), faceOnnxOptimizedOnly=$($FaceOnnxOptimizedOnly.IsPresent), export=$(-not $SkipExport.IsPresent)"
 $oldErrorAction = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"

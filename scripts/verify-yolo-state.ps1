@@ -14,6 +14,7 @@ param(
     [switch]$RequireTenMinuteClip,
     [switch]$RequireTenMinuteRun,
     [switch]$RequireTenMinuteBaselineOnlyRun,
+    [switch]$RequireTenMinuteFaceOnnxOptimizedOnlyRun,
     [switch]$RunGuiSmokeState,
     [switch]$RequireGuiSmokeManualPass
 )
@@ -117,6 +118,9 @@ if ($RunTenMinuteState) {
     }
     if ($RequireTenMinuteBaselineOnlyRun) {
         $tenMinuteArgs += "-RequireBaselineOnlyRun"
+    }
+    if ($RequireTenMinuteFaceOnnxOptimizedOnlyRun) {
+        $tenMinuteArgs += "-RequireFaceOnnxOptimizedOnlyRun"
     }
 
     Invoke-YoloVerify "ten-minute-state" $tenMinuteStateVerify $tenMinuteArgs
