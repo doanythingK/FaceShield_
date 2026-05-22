@@ -34,6 +34,18 @@ namespace FaceShield.Services.FaceDetection
 
         public double LargeBoxMinAreaRatio { get; init; } = 0.0;
 
+        public bool UseYolo5LandmarkBoxRefine { get; init; } = false;
+
+        public double Yolo5LandmarkBoxMinAreaRatio { get; init; } = 0.03;
+
+        public float Yolo5LandmarkBoxWidthScale { get; init; } = 1.80f;
+
+        public float Yolo5LandmarkBoxHeightScale { get; init; } = 2.10f;
+
+        public float Yolo5LandmarkBoxCenterYOffsetRatio { get; init; } = -0.04f;
+
+        public float Yolo5LandmarkBoxMinOriginalIou { get; init; } = 0.30f;
+
         public bool UseTiling { get; init; } = false;
 
         public bool IncludeFullFrameWhenTiling { get; init; } = true;

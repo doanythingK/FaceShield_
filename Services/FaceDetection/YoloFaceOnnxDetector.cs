@@ -164,7 +164,8 @@ namespace FaceShield.Services.FaceDetection
                     d.Y / (float)ratio,
                     d.Width / (float)ratio,
                     d.Height / (float)ratio,
-                    d.Score)).ToList();
+                    d.Score,
+                    d.Landmarks.HasValue ? d.Landmarks.Value.Scale(1.0f / (float)ratio) : null)).ToList();
             }
 
             var afterNms = RefineLargeBoxes(
@@ -306,7 +307,8 @@ namespace FaceShield.Services.FaceDetection
                         float y1 = (cy - h * 0.5f - resize.PadY) / resize.ScaleY;
                         float x2 = (cx + w * 0.5f - resize.PadX) / resize.ScaleX;
                         float y2 = (cy + h * 0.5f - resize.PadY) / resize.ScaleY;
-                        AddClampedCandidate(candidates, x1, y1, x2, y2, sourceWidth, sourceHeight, score);
+                        var landmarks = DecodeYolo5LandmarkBounds(tensor.Values, anchorIndex, y, x, gridHeight, gridWidth, strideX, strideY, anchor.Width, anchor.Height, resize);
+                        AddClampedCandidate(candidates, x1, y1, x2, y2, sourceWidth, sourceHeight, score, landmarks);
                     }
                 }
             }
@@ -402,7 +404,8 @@ namespace FaceShield.Services.FaceDetection
                     candidate.Y + sourceY,
                     candidate.Width,
                     candidate.Height,
-                    candidate.Score));
+                    candidate.Score,
+                    candidate.Landmarks.HasValue ? candidate.Landmarks.Value.Offset(sourceX, sourceY) : null));
             }
 
             return infer.ElapsedMilliseconds;
@@ -583,7 +586,56 @@ namespace FaceShield.Services.FaceDetection
             }
         }
 
-        private static void AddClampedCandidate(List<Candidate> candidates, float x1, float y1, float x2, float y2, int width, int height, float score)
+        private static LandmarkBounds? DecodeYolo5LandmarkBounds(
+            float[] values,
+            int anchorIndex,
+            int gridY,
+            int gridX,
+            int gridHeight,
+            int gridWidth,
+            float strideX,
+            float strideY,
+            float anchorWidth,
+            float anchorHeight,
+            ResizeTransform resize)
+        {
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+            int count = 0;
+            for (int i = 0; i < 5; i++)
+            {
+                int feature = 5 + i * 2;
+                float rawX = ReadYolo5FaceFeature(values, anchorIndex, feature, gridY, gridX, gridHeight, gridWidth);
+                float rawY = ReadYolo5FaceFeature(values, anchorIndex, feature + 1, gridY, gridX, gridHeight, gridWidth);
+                float x = (rawX * anchorWidth + gridX * strideX - resize.PadX) / resize.ScaleX;
+                float y = (rawY * anchorHeight + gridY * strideY - resize.PadY) / resize.ScaleY;
+                if (!float.IsFinite(x) || !float.IsFinite(y))
+                    continue;
+
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+                count++;
+            }
+
+            return count >= 5 && maxX > minX && maxY > minY
+                ? new LandmarkBounds(minX, minY, maxX, maxY, count)
+                : null;
+        }
+
+        private static void AddClampedCandidate(
+            List<Candidate> candidates,
+            float x1,
+            float y1,
+            float x2,
+            float y2,
+            int width,
+            int height,
+            float score,
+            LandmarkBounds? landmarks = null)
         {
             x1 = Math.Clamp(x1, 0, width - 1);
             y1 = Math.Clamp(y1, 0, height - 1);
@@ -593,7 +645,7 @@ namespace FaceShield.Services.FaceDetection
             float h = y2 - y1;
             if (w < 2 || h < 2)
                 return;
-            candidates.Add(new Candidate(x1, y1, w, h, score));
+            candidates.Add(new Candidate(x1, y1, w, h, score, landmarks));
         }
 
         private unsafe ResizeTransform FillTensorFromBgra(
@@ -740,10 +792,15 @@ namespace FaceShield.Services.FaceDetection
 
         private IReadOnlyList<Candidate> RefineLargeBoxes(IReadOnlyList<Candidate> candidates, int width, int height)
         {
+            bool useScaleRefine =
+                _options.LargeBoxMinAreaRatio > 0 &&
+                (_options.LargeBoxWidthScale < 0.999f || _options.LargeBoxHeightScale < 0.999f);
+            bool useLandmarkRefine =
+                _options.UseYolo5LandmarkBoxRefine &&
+                _options.Yolo5LandmarkBoxMinAreaRatio > 0;
             if (candidates.Count == 0 ||
                 _options.ModelType != YoloFaceModelType.Yolo5Face ||
-                (_options.LargeBoxWidthScale >= 0.999f && _options.LargeBoxHeightScale >= 0.999f) ||
-                _options.LargeBoxMinAreaRatio <= 0)
+                (!useScaleRefine && !useLandmarkRefine))
             {
                 return candidates;
             }
@@ -752,15 +809,74 @@ namespace FaceShield.Services.FaceDetection
             float widthScale = Math.Clamp(_options.LargeBoxWidthScale, 0.50f, 1.0f);
             float heightScale = Math.Clamp(_options.LargeBoxHeightScale, 0.50f, 1.0f);
             var refined = new List<Candidate>(candidates.Count);
+            int landmarkEligible = 0;
+            int landmarkApplied = 0;
             foreach (var candidate in candidates)
             {
+                var current = candidate;
                 double areaRatio = candidate.Width * candidate.Height / frameArea;
-                refined.Add(areaRatio >= _options.LargeBoxMinAreaRatio
-                    ? ScaleCandidate(candidate, widthScale, heightScale, width, height)
-                    : candidate);
+                if (useLandmarkRefine && areaRatio >= _options.Yolo5LandmarkBoxMinAreaRatio)
+                {
+                    landmarkEligible++;
+                    if (TryRefineFromLandmarks(current, width, height, out var landmarkRefined))
+                    {
+                        current = landmarkRefined;
+                        landmarkApplied++;
+                    }
+                }
+
+                if (useScaleRefine && areaRatio >= _options.LargeBoxMinAreaRatio)
+                    current = ScaleCandidate(current, widthScale, heightScale, width, height);
+
+                refined.Add(current);
+            }
+
+            if (_options.DumpDebug && useLandmarkRefine)
+            {
+                Trace.WriteLine(
+                    $"[YoloLandmarkBoxRefine] candidates={candidates.Count}, eligible={landmarkEligible}, applied={landmarkApplied}, minAreaRatio={_options.Yolo5LandmarkBoxMinAreaRatio:0.###}, widthScale={_options.Yolo5LandmarkBoxWidthScale:0.###}, heightScale={_options.Yolo5LandmarkBoxHeightScale:0.###}, centerYOffset={_options.Yolo5LandmarkBoxCenterYOffsetRatio:0.###}");
             }
 
             return refined;
+        }
+
+        private bool TryRefineFromLandmarks(Candidate candidate, int width, int height, out Candidate refined)
+        {
+            refined = candidate;
+            if (!candidate.Landmarks.HasValue)
+                return false;
+
+            var landmarks = candidate.Landmarks.Value;
+            float landmarkWidth = landmarks.Width;
+            float landmarkHeight = landmarks.Height;
+            if (landmarkWidth < 4 || landmarkHeight < 4)
+                return false;
+
+            float targetWidth = Math.Clamp(
+                landmarkWidth * Math.Clamp(_options.Yolo5LandmarkBoxWidthScale, 1.10f, 3.50f),
+                candidate.Width * 0.45f,
+                candidate.Width * 1.05f);
+            float targetHeight = Math.Clamp(
+                landmarkHeight * Math.Clamp(_options.Yolo5LandmarkBoxHeightScale, 1.10f, 3.80f),
+                candidate.Height * 0.45f,
+                candidate.Height * 1.05f);
+            float cx = landmarks.CenterX;
+            float cy = landmarks.CenterY + targetHeight * Math.Clamp(_options.Yolo5LandmarkBoxCenterYOffsetRatio, -0.35f, 0.35f);
+            float x1 = Math.Clamp(cx - targetWidth * 0.5f, 0, Math.Max(0, width - 1));
+            float y1 = Math.Clamp(cy - targetHeight * 0.5f, 0, Math.Max(0, height - 1));
+            float x2 = Math.Clamp(cx + targetWidth * 0.5f, 0, Math.Max(0, width - 1));
+            float y2 = Math.Clamp(cy + targetHeight * 0.5f, 0, Math.Max(0, height - 1));
+            float w = Math.Max(0, x2 - x1);
+            float h = Math.Max(0, y2 - y1);
+            if (w < 2 || h < 2)
+                return false;
+
+            var candidateRefined = new Candidate(x1, y1, w, h, candidate.Score, candidate.Landmarks);
+            if (IoU(candidate, candidateRefined) < Math.Clamp(_options.Yolo5LandmarkBoxMinOriginalIou, 0.0f, 0.95f))
+                return false;
+
+            refined = candidateRefined;
+            return true;
         }
 
         private static Candidate ScaleCandidate(Candidate candidate, float widthScale, float heightScale, int width, int height)
@@ -777,7 +893,7 @@ namespace FaceShield.Services.FaceDetection
             float h = Math.Max(0, y2 - y1);
             return w < 2 || h < 2
                 ? candidate
-                : new Candidate(x1, y1, w, h, candidate.Score);
+                : new Candidate(x1, y1, w, h, candidate.Score, candidate.Landmarks);
         }
 
         private static float IoU(Candidate a, Candidate b)
@@ -832,7 +948,28 @@ namespace FaceShield.Services.FaceDetection
             return false;
         }
 
-        private readonly record struct Candidate(float X, float Y, float Width, float Height, float Score);
+        private readonly record struct Candidate(float X, float Y, float Width, float Height, float Score, LandmarkBounds? Landmarks);
+
+        private readonly record struct LandmarkBounds(float MinX, float MinY, float MaxX, float MaxY, int Count)
+        {
+            public float Width => Math.Max(0, MaxX - MinX);
+
+            public float Height => Math.Max(0, MaxY - MinY);
+
+            public float CenterX => MinX + Width * 0.5f;
+
+            public float CenterY => MinY + Height * 0.5f;
+
+            public LandmarkBounds Offset(float x, float y)
+            {
+                return new LandmarkBounds(MinX + x, MinY + y, MaxX + x, MaxY + y, Count);
+            }
+
+            public LandmarkBounds Scale(float scale)
+            {
+                return new LandmarkBounds(MinX * scale, MinY * scale, MaxX * scale, MaxY * scale, Count);
+            }
+        }
 
         private readonly record struct ResizeTransform(float ScaleX, float ScaleY, float PadX, float PadY);
 

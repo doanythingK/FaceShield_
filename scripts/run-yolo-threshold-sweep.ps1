@@ -173,6 +173,8 @@ foreach ($source in $Sources) {
                         $boxCountDiffValue = Read-Int $compareMap "boxCountDiffFrames"
                         $avgBestIouValue = Read-Double $compareMap "avgBestIou"
                         $minBestIouValue = Read-Double $compareMap "minBestIou"
+                        $avgBaselineCoverageValue = Read-Double $compareMap "avgBaselineCoverage"
+                        $minBaselineCoverageValue = Read-Double $compareMap "minBaselineCoverage"
                         $strictFrameMatchOk = $onlyBaselineValue -eq 0 -and $onlyOptimizedValue -eq 0 -and $boxCountDiffValue -eq 0
                         $strictIouOk = $avgBestIouValue -ne $null -and $minBestIouValue -ne $null -and $avgBestIouValue -ge $StrictMinAvgIou -and $minBestIouValue -ge $StrictMinBestIou
 
@@ -197,6 +199,8 @@ foreach ($source in $Sources) {
                             OnlyOptimized = $onlyOptimizedValue
                             AvgBestIou = $avgBestIouValue
                             MinBestIou = $minBestIouValue
+                            AvgBaselineCoverage = $avgBaselineCoverageValue
+                            MinBaselineCoverage = $minBaselineCoverageValue
                             BoxCountDiffFrames = $boxCountDiffValue
                             CollectionGatePassed = $qualityMap["passed"]
                             StrictFrameMatchOk = $strictFrameMatchOk
@@ -211,7 +215,7 @@ foreach ($source in $Sources) {
 
                         $rows.Add($row)
                         $row | Export-Csv -NoTypeInformation -Path $OutputCsv -Append
-                        Write-Host ("[YoloSweep] done case={0} totalMs={1} baseline={2} optimized={3} onlyBaseline={4} onlyOptimized={5} avgIou={6} minIou={7} boxDiff={8}" -f `
+                        Write-Host ("[YoloSweep] done case={0} totalMs={1} baseline={2} optimized={3} onlyBaseline={4} onlyOptimized={5} avgIou={6} minIou={7} avgCoverage={8} minCoverage={9} boxDiff={10}" -f `
                             $caseIndex,
                             $row.TotalMs,
                             $row.BaselineFrames,
@@ -220,6 +224,8 @@ foreach ($source in $Sources) {
                             $row.OnlyOptimized,
                             $row.AvgBestIou,
                             $row.MinBestIou,
+                            $row.AvgBaselineCoverage,
+                            $row.MinBaselineCoverage,
                             $row.BoxCountDiffFrames)
                     }
 
@@ -256,6 +262,6 @@ if ($rows.Count -gt 0) {
             @{ Expression = { if ($_.BoxCountDiffFrames -ne $null) { $_.BoxCountDiffFrames } else { 999999 } } }, `
             @{ Expression = { if ($_.AvgBestIou -ne $null) { -1 * $_.AvgBestIou } else { 999999 } } }, `
             @{ Expression = { if ($_.TotalMs -ne $null) { $_.TotalMs } else { 999999 } } } |
-        Select-Object -First 5 Source, ModelType, InputSize, Objectness, Confidence, Nms, Tiling, TotalMs, BaselineFrames, FaceMaskFrames, OnlyBaseline, OnlyOptimized, AvgBestIou, MinBestIou, BoxCountDiffFrames |
+        Select-Object -First 5 Source, ModelType, InputSize, Objectness, Confidence, Nms, Tiling, TotalMs, BaselineFrames, FaceMaskFrames, OnlyBaseline, OnlyOptimized, AvgBestIou, MinBestIou, AvgBaselineCoverage, MinBaselineCoverage, BoxCountDiffFrames |
         Format-Table -AutoSize
 }

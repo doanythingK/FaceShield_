@@ -48,6 +48,12 @@ param(
     [double]$YoloLargeBoxWidthScale = 1.0,
     [double]$YoloLargeBoxHeightScale = 1.0,
     [double]$YoloLargeBoxMinAreaRatio = 0.0,
+    [switch]$YoloUseLandmarkBoxRefine,
+    [double]$YoloLandmarkBoxMinAreaRatio = 0.03,
+    [double]$YoloLandmarkBoxWidthScale = 1.80,
+    [double]$YoloLandmarkBoxHeightScale = 2.10,
+    [double]$YoloLandmarkBoxCenterYOffsetRatio = -0.04,
+    [double]$YoloLandmarkBoxMinOriginalIou = 0.30,
     [switch]$YoloUseFaceOnnxRoiRefine,
     [double]$YoloFaceOnnxRoiMinAreaRatio = 0.03,
     [int]$YoloFaceOnnxRoiMaxCandidates = 64,
@@ -59,7 +65,10 @@ param(
     [switch]$YoloDebugDump,
     [switch]$DumpCompareDetails,
     [switch]$DumpCompareOverlays,
-    [string]$CompareOverlayDir = ""
+    [string]$CompareOverlayDir = "",
+    [switch]$DumpCompareCrops,
+    [string]$CompareCropDir = "",
+    [double]$CompareCropPaddingRatio = 0.65
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,6 +127,7 @@ using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 string input = args[0];
 string output = args[1];
@@ -162,18 +172,27 @@ float yoloNmsThreshold = args.Length > 41 ? float.Parse(args[41], System.Globali
 float yoloLargeBoxWidthScale = args.Length > 42 ? float.Parse(args[42], System.Globalization.CultureInfo.InvariantCulture) : 1.0f;
 float yoloLargeBoxHeightScale = args.Length > 43 ? float.Parse(args[43], System.Globalization.CultureInfo.InvariantCulture) : 1.0f;
 double yoloLargeBoxMinAreaRatio = args.Length > 44 ? double.Parse(args[44], System.Globalization.CultureInfo.InvariantCulture) : 0.0;
-bool yoloUseTiling = args.Length > 45 && bool.Parse(args[45]);
-bool yoloUseFaceOnnxRoiRefine = args.Length > 46 && bool.Parse(args[46]);
-double yoloFaceOnnxRoiMinAreaRatio = args.Length > 47 ? double.Parse(args[47], System.Globalization.CultureInfo.InvariantCulture) : 0.03;
-int yoloFaceOnnxRoiMaxCandidates = args.Length > 48 ? int.Parse(args[48], System.Globalization.CultureInfo.InvariantCulture) : 64;
-bool yoloTileOnly = args.Length > 49 && bool.Parse(args[49]);
-int yoloTileColumns = args.Length > 50 ? int.Parse(args[50], System.Globalization.CultureInfo.InvariantCulture) : 2;
-int yoloTileRows = args.Length > 51 ? int.Parse(args[51], System.Globalization.CultureInfo.InvariantCulture) : 2;
-double yoloTileOverlapRatio = args.Length > 52 ? double.Parse(args[52], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
-bool yoloDebugDump = args.Length > 53 && bool.Parse(args[53]);
-bool dumpCompareDetails = args.Length > 54 && bool.Parse(args[54]);
-bool dumpCompareOverlays = args.Length > 55 && bool.Parse(args[55]);
-string compareOverlayDir = args.Length > 56 && args[56] != "__none__" ? args[56] : string.Empty;
+bool yoloUseLandmarkBoxRefine = args.Length > 45 && bool.Parse(args[45]);
+double yoloLandmarkBoxMinAreaRatio = args.Length > 46 ? double.Parse(args[46], System.Globalization.CultureInfo.InvariantCulture) : 0.03;
+float yoloLandmarkBoxWidthScale = args.Length > 47 ? float.Parse(args[47], System.Globalization.CultureInfo.InvariantCulture) : 1.80f;
+float yoloLandmarkBoxHeightScale = args.Length > 48 ? float.Parse(args[48], System.Globalization.CultureInfo.InvariantCulture) : 2.10f;
+float yoloLandmarkBoxCenterYOffsetRatio = args.Length > 49 ? float.Parse(args[49], System.Globalization.CultureInfo.InvariantCulture) : -0.04f;
+float yoloLandmarkBoxMinOriginalIou = args.Length > 50 ? float.Parse(args[50], System.Globalization.CultureInfo.InvariantCulture) : 0.30f;
+bool yoloUseTiling = args.Length > 51 && bool.Parse(args[51]);
+bool yoloUseFaceOnnxRoiRefine = args.Length > 52 && bool.Parse(args[52]);
+double yoloFaceOnnxRoiMinAreaRatio = args.Length > 53 ? double.Parse(args[53], System.Globalization.CultureInfo.InvariantCulture) : 0.03;
+int yoloFaceOnnxRoiMaxCandidates = args.Length > 54 ? int.Parse(args[54], System.Globalization.CultureInfo.InvariantCulture) : 64;
+bool yoloTileOnly = args.Length > 55 && bool.Parse(args[55]);
+int yoloTileColumns = args.Length > 56 ? int.Parse(args[56], System.Globalization.CultureInfo.InvariantCulture) : 2;
+int yoloTileRows = args.Length > 57 ? int.Parse(args[57], System.Globalization.CultureInfo.InvariantCulture) : 2;
+double yoloTileOverlapRatio = args.Length > 58 ? double.Parse(args[58], System.Globalization.CultureInfo.InvariantCulture) : 0.15;
+bool yoloDebugDump = args.Length > 59 && bool.Parse(args[59]);
+bool dumpCompareDetails = args.Length > 60 && bool.Parse(args[60]);
+bool dumpCompareOverlays = args.Length > 61 && bool.Parse(args[61]);
+string compareOverlayDir = args.Length > 62 && args[62] != "__none__" ? args[62] : string.Empty;
+bool dumpCompareCrops = args.Length > 63 && bool.Parse(args[63]);
+string compareCropDir = args.Length > 64 && args[64] != "__none__" ? args[64] : string.Empty;
+double compareCropPaddingRatio = args.Length > 65 ? double.Parse(args[65], System.Globalization.CultureInfo.InvariantCulture) : 0.65;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -222,6 +241,12 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     float yoloLargeBoxWidthScale,
     float yoloLargeBoxHeightScale,
     double yoloLargeBoxMinAreaRatio,
+    bool yoloUseLandmarkBoxRefine,
+    double yoloLandmarkBoxMinAreaRatio,
+    float yoloLandmarkBoxWidthScale,
+    float yoloLandmarkBoxHeightScale,
+    float yoloLandmarkBoxCenterYOffsetRatio,
+    float yoloLandmarkBoxMinOriginalIou,
     bool yoloUseTiling,
     bool yoloUseFaceOnnxRoiRefine,
     double yoloFaceOnnxRoiMinAreaRatio,
@@ -327,6 +352,12 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             LargeBoxWidthScale = yoloLargeBoxWidthScale,
             LargeBoxHeightScale = yoloLargeBoxHeightScale,
             LargeBoxMinAreaRatio = yoloLargeBoxMinAreaRatio,
+            UseYolo5LandmarkBoxRefine = yoloUseLandmarkBoxRefine,
+            Yolo5LandmarkBoxMinAreaRatio = yoloLandmarkBoxMinAreaRatio,
+            Yolo5LandmarkBoxWidthScale = yoloLandmarkBoxWidthScale,
+            Yolo5LandmarkBoxHeightScale = yoloLandmarkBoxHeightScale,
+            Yolo5LandmarkBoxCenterYOffsetRatio = yoloLandmarkBoxCenterYOffsetRatio,
+            Yolo5LandmarkBoxMinOriginalIou = yoloLandmarkBoxMinOriginalIou,
             IntraOpNumThreads = detectorOptions.IntraOpNumThreads,
             InterOpNumThreads = detectorOptions.InterOpNumThreads,
             UseParallelExecution = detectorOptions.UseParallelExecution,
@@ -537,7 +568,10 @@ static bool CompareCases(
     bool allowFrameMismatch,
     bool dumpCompareDetails,
     bool dumpCompareOverlays,
-    string compareOverlayDir)
+    string compareOverlayDir,
+    bool dumpCompareCrops,
+    string compareCropDir,
+    double compareCropPaddingRatio)
 {
     var baselineEntries = baseline.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
     var optimizedEntries = optimized.MaskProvider.GetFaceMaskEntries().ToDictionary(x => x.Key, x => x.Value);
@@ -548,10 +582,14 @@ static bool CompareCases(
     var onlyOptimized = optimizedFrames.Except(baselineFrames).OrderBy(x => x).ToArray();
 
     double iouSum = 0.0;
+    double coverageSum = 0.0;
     double minIou = commonFrames.Length > 0 ? 1.0 : 0.0;
+    double minCoverage = commonFrames.Length > 0 ? 1.0 : 0.0;
     int iouSamples = 0;
+    int coverageSamples = 0;
     int boxCountDiffFrames = 0;
     var lowIouFrames = new List<int>();
+    var lowCoverageFrames = new List<int>();
     var boxCountDiffFrameList = new List<int>();
 
     foreach (int frame in commonFrames)
@@ -567,22 +605,32 @@ static bool CompareCases(
         foreach (var face in baseFaces)
         {
             double best = 0.0;
+            double bestCoverage = 0.0;
             foreach (var candidate in optFaces)
+            {
                 best = Math.Max(best, IoU(face, candidate));
+                bestCoverage = Math.Max(bestCoverage, Coverage(face, candidate));
+            }
 
             iouSum += best;
+            coverageSum += bestCoverage;
             minIou = Math.Min(minIou, best);
+            minCoverage = Math.Min(minCoverage, bestCoverage);
             if (best < minBestIou && !lowIouFrames.Contains(frame))
                 lowIouFrames.Add(frame);
+            if (bestCoverage < 0.95 && !lowCoverageFrames.Contains(frame))
+                lowCoverageFrames.Add(frame);
             iouSamples++;
+            coverageSamples++;
         }
     }
 
     double avgIou = iouSamples > 0 ? iouSum / iouSamples : 0.0;
+    double avgCoverage = coverageSamples > 0 ? coverageSum / coverageSamples : 0.0;
     Console.WriteLine(
-        $"[SmokeCompare] baseline={baseline.Label}, optimized={optimized.Label}, baselineFrames={baselineFrames.Length}, optimizedFrames={optimizedFrames.Length}, common={commonFrames.Length}, onlyBaseline={onlyBaseline.Length}, onlyOptimized={onlyOptimized.Length}, avgBestIou={avgIou:F3}, minBestIou={minIou:F3}, boxCountDiffFrames={boxCountDiffFrames}");
+        $"[SmokeCompare] baseline={baseline.Label}, optimized={optimized.Label}, baselineFrames={baselineFrames.Length}, optimizedFrames={optimizedFrames.Length}, common={commonFrames.Length}, onlyBaseline={onlyBaseline.Length}, onlyOptimized={onlyOptimized.Length}, avgBestIou={avgIou:F3}, minBestIou={minIou:F3}, avgBaselineCoverage={avgCoverage:F3}, minBaselineCoverage={minCoverage:F3}, boxCountDiffFrames={boxCountDiffFrames}");
     Console.WriteLine($"[SmokeCompareFrames] onlyBaseline={FormatFrames(onlyBaseline)}, onlyOptimized={FormatFrames(onlyOptimized)}");
-    Console.WriteLine($"[SmokeCompareBadFrames] boxCountDiff={FormatFrames(boxCountDiffFrameList)}, lowIou={FormatFrames(lowIouFrames)}");
+    Console.WriteLine($"[SmokeCompareBadFrames] boxCountDiff={FormatFrames(boxCountDiffFrameList)}, lowIou={FormatFrames(lowIouFrames)}, lowBaselineCoverage={FormatFrames(lowCoverageFrames)}");
     Console.WriteLine("[SmokeCompareNote] onlyBaseline/onlyOptimized are detector-difference frames, not ground-truth false-negative/false-positive labels.");
     if (dumpCompareDetails)
     {
@@ -594,6 +642,10 @@ static bool CompareCases(
     if (dumpCompareOverlays && !string.IsNullOrWhiteSpace(compareOverlayDir))
     {
         DumpCompareOverlays(input, compareOverlayDir, onlyBaseline, onlyOptimized, boxCountDiffFrameList, lowIouFrames, baselineEntries, optimizedEntries);
+    }
+    if (dumpCompareCrops && !string.IsNullOrWhiteSpace(compareCropDir))
+    {
+        DumpCompareCrops(input, compareCropDir, compareCropPaddingRatio, onlyBaseline, onlyOptimized, boxCountDiffFrameList, baselineEntries, optimizedEntries);
     }
 
     bool frameMatchOk = allowFrameMismatch ||
@@ -656,6 +708,150 @@ static void DumpCompareOverlays(
             next++;
         }
     }
+}
+
+static void DumpCompareCrops(
+    string input,
+    string outputDir,
+    double paddingRatio,
+    IReadOnlyList<int> onlyBaseline,
+    IReadOnlyList<int> onlyOptimized,
+    IReadOnlyList<int> boxCountDiff,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> baselineEntries,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries)
+{
+    Directory.CreateDirectory(outputDir);
+    var items = BuildCompareCropItems(onlyBaseline, onlyOptimized, boxCountDiff, baselineEntries, optimizedEntries);
+    if (items.Count == 0)
+        return;
+
+    string csvPath = Path.Combine(outputDir, "compare-crops.csv");
+    File.WriteAllText(csvPath, "reason,frame,label,index,x,y,w,h,cx,cy,area,confidence,path" + Environment.NewLine);
+    var ordered = items.OrderBy(x => x.Frame).ThenBy(x => x.Reason).ThenBy(x => x.Label).ThenBy(x => x.Index).ToArray();
+    using var extractor = new FfFrameExtractor(input, enableHardware: false);
+    extractor.StartSequentialRead(Math.Max(0, ordered[0].Frame));
+    int next = 0;
+    int maxFrame = ordered[^1].Frame;
+    while (next < ordered.Length &&
+           extractor.TryGetNextFrameRaw(CancellationToken.None, requireBgra: true, out var frame, out int frameIndex))
+    {
+        if (frameIndex > maxFrame)
+            break;
+
+        while (next < ordered.Length && ordered[next].Frame < frameIndex)
+        {
+            Console.WriteLine($"[SmokeCompareCrop] reason={ordered[next].Reason}, frame={ordered[next].Frame}, label={ordered[next].Label}, path=decode-skipped");
+            next++;
+        }
+
+        using var image = ConvertToRgbImage(frame);
+        while (next < ordered.Length && ordered[next].Frame == frameIndex)
+        {
+            var item = ordered[next];
+            var cropRect = BuildCropRect(item.Face, image.Width, image.Height, paddingRatio);
+            using var crop = CropImage(image, cropRect);
+            DrawRect(crop, new Rect(item.Face.X - cropRect.X, item.Face.Y - cropRect.Y, item.Face.Width, item.Face.Height), new Rgb24(64, 220, 255), 4);
+
+            string fileName = $"{item.Reason}-{item.Label}-frame-{item.Frame:D6}-{item.Index:D2}.png";
+            string path = Path.Combine(outputDir, fileName);
+            crop.SaveAsPng(path);
+            double areaRatio = item.Face.Width * item.Face.Height / Math.Max(1.0, image.Width * (double)image.Height);
+            double cx = (item.Face.X + item.Face.Width * 0.5) / Math.Max(1.0, image.Width);
+            double cy = (item.Face.Y + item.Face.Height * 0.5) / Math.Max(1.0, image.Height);
+            File.AppendAllText(
+                csvPath,
+                $"{item.Reason},{item.Frame},{item.Label},{item.Index},{item.Face.X:F1},{item.Face.Y:F1},{item.Face.Width:F1},{item.Face.Height:F1},{cx:F4},{cy:F4},{areaRatio:F6},{item.Confidence:F3},{fileName}{Environment.NewLine}");
+            Console.WriteLine($"[SmokeCompareCrop] reason={item.Reason}, frame={item.Frame}, label={item.Label}, index={item.Index}, path={path}");
+            next++;
+        }
+    }
+}
+
+static List<(string Reason, int Frame, string Label, int Index, Rect Face, float Confidence)> BuildCompareCropItems(
+    IReadOnlyList<int> onlyBaseline,
+    IReadOnlyList<int> onlyOptimized,
+    IReadOnlyList<int> boxCountDiff,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> baselineEntries,
+    Dictionary<int, FrameMaskProvider.FaceMaskData> optimizedEntries)
+{
+    const double MatchIou = 0.35;
+    var items = new List<(string Reason, int Frame, string Label, int Index, Rect Face, float Confidence)>();
+    foreach (int frame in onlyBaseline.Take(8))
+    {
+        if (!baselineEntries.TryGetValue(frame, out var baseline))
+            continue;
+
+        AddCropItems(items, "onlyBaseline", frame, "baseline", baseline);
+    }
+
+    foreach (int frame in onlyOptimized.Take(8))
+    {
+        if (!optimizedEntries.TryGetValue(frame, out var optimized))
+            continue;
+
+        AddCropItems(items, "onlyOptimized", frame, "optimized", optimized);
+    }
+
+    foreach (int frame in boxCountDiff.Take(12))
+    {
+        var baseline = baselineEntries.TryGetValue(frame, out var baselineData)
+            ? baselineData
+            : new FrameMaskProvider.FaceMaskData(default, Array.Empty<Rect>(), null, Array.Empty<float>());
+        var optimized = optimizedEntries.TryGetValue(frame, out var optimizedData)
+            ? optimizedData
+            : new FrameMaskProvider.FaceMaskData(default, Array.Empty<Rect>(), null, Array.Empty<float>());
+        if (optimized.Faces.Count > 0)
+        {
+            for (int i = 0; i < optimized.Faces.Count; i++)
+            {
+                double best = baseline.Faces.Count == 0 ? 0.0 : baseline.Faces.Max(face => IoU(face, optimized.Faces[i]));
+                if (best < MatchIou)
+                    items.Add(("boxCountDiffOptimizedExtra", frame, "optimized", i, optimized.Faces[i], GetFaceConfidence(optimized, i)));
+            }
+        }
+
+        if (baseline.Faces.Count > 0)
+        {
+            for (int i = 0; i < baseline.Faces.Count; i++)
+            {
+                double best = optimized.Faces.Count == 0 ? 0.0 : optimized.Faces.Max(face => IoU(face, baseline.Faces[i]));
+                if (best < MatchIou)
+                    items.Add(("boxCountDiffBaselineUnmatched", frame, "baseline", i, baseline.Faces[i], GetFaceConfidence(baseline, i)));
+            }
+        }
+    }
+
+    return items;
+}
+
+static void AddCropItems(List<(string Reason, int Frame, string Label, int Index, Rect Face, float Confidence)> items, string reason, int frame, string label, FrameMaskProvider.FaceMaskData data)
+{
+    for (int i = 0; i < data.Faces.Count; i++)
+        items.Add((reason, frame, label, i, data.Faces[i], GetFaceConfidence(data, i)));
+}
+
+static float GetFaceConfidence(FrameMaskProvider.FaceMaskData data, int index)
+{
+    return index < data.Confidences.Count ? data.Confidences[index] : data.MinConfidence ?? 1.0f;
+}
+
+static Rect BuildCropRect(Rect face, int imageWidth, int imageHeight, double paddingRatio)
+{
+    double padding = Math.Max(face.Width, face.Height) * Math.Clamp(paddingRatio, 0.0, 3.0);
+    double x1 = Math.Clamp(face.X - padding, 0, Math.Max(0, imageWidth - 1));
+    double y1 = Math.Clamp(face.Y - padding, 0, Math.Max(0, imageHeight - 1));
+    double x2 = Math.Clamp(face.Right + padding, 0, Math.Max(0, imageWidth - 1));
+    double y2 = Math.Clamp(face.Bottom + padding, 0, Math.Max(0, imageHeight - 1));
+    return new Rect(x1, y1, Math.Max(1, x2 - x1), Math.Max(1, y2 - y1));
+}
+
+static Image<Rgb24> CropImage(Image<Rgb24> image, Rect cropRect)
+{
+    int x = Math.Clamp((int)Math.Floor(cropRect.X), 0, image.Width - 1);
+    int y = Math.Clamp((int)Math.Floor(cropRect.Y), 0, image.Height - 1);
+    int width = Math.Clamp((int)Math.Ceiling(cropRect.Width), 1, image.Width - x);
+    int height = Math.Clamp((int)Math.Ceiling(cropRect.Height), 1, image.Height - y);
+    return image.Clone(ctx => ctx.Crop(new SixLabors.ImageSharp.Rectangle(x, y, width, height)));
 }
 
 static Image<Rgb24> ConvertToRgbImage(FfFrameExtractor.BgraFrame frame)
@@ -780,6 +976,18 @@ static double IoU(Rect a, Rect b)
     return union <= 0.0 ? 0.0 : intersection / union;
 }
 
+static double Coverage(Rect reference, Rect candidate)
+{
+    double x1 = Math.Max(reference.X, candidate.X);
+    double y1 = Math.Max(reference.Y, candidate.Y);
+    double x2 = Math.Min(reference.Right, candidate.Right);
+    double y2 = Math.Min(reference.Bottom, candidate.Bottom);
+    double w = Math.Max(0.0, x2 - x1);
+    double h = Math.Max(0.0, y2 - y1);
+    double referenceArea = Math.Max(0.0, reference.Width * reference.Height);
+    return referenceArea <= 0.0 ? 0.0 : (w * h) / referenceArea;
+}
+
 (string Label, FrameMaskProvider MaskProvider)? baseline = null;
 if (!bool.Parse(args[2]))
 {
@@ -825,6 +1033,12 @@ if (!bool.Parse(args[2]))
         yoloLargeBoxWidthScale,
         yoloLargeBoxHeightScale,
         yoloLargeBoxMinAreaRatio,
+        yoloUseLandmarkBoxRefine: false,
+        yoloLandmarkBoxMinAreaRatio,
+        yoloLandmarkBoxWidthScale,
+        yoloLandmarkBoxHeightScale,
+        yoloLandmarkBoxCenterYOffsetRatio,
+        yoloLandmarkBoxMinOriginalIou,
         yoloUseTiling: false,
         yoloUseFaceOnnxRoiRefine: false,
         yoloFaceOnnxRoiMinAreaRatio,
@@ -878,6 +1092,12 @@ var optimized = await RunCaseAsync(
     yoloLargeBoxWidthScale,
     yoloLargeBoxHeightScale,
     yoloLargeBoxMinAreaRatio,
+    yoloUseLandmarkBoxRefine,
+    yoloLandmarkBoxMinAreaRatio,
+    yoloLandmarkBoxWidthScale,
+    yoloLandmarkBoxHeightScale,
+    yoloLandmarkBoxCenterYOffsetRatio,
+    yoloLandmarkBoxMinOriginalIou,
     yoloUseTiling,
     yoloUseFaceOnnxRoiRefine,
     yoloFaceOnnxRoiMinAreaRatio,
@@ -888,7 +1108,7 @@ var optimized = await RunCaseAsync(
     yoloTileOverlapRatio,
     yoloDebugDump);
 
-if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir))
+if (baseline.HasValue && !CompareCases(input, baseline.Value, optimized, minAvgIou, minBestIou, allowFrameMismatch, dumpCompareDetails, dumpCompareOverlays, compareOverlayDir, dumpCompareCrops, compareCropDir, compareCropPaddingRatio))
     Environment.Exit(2);
 '@ | Set-Content -Encoding UTF8 $program
 
@@ -932,6 +1152,12 @@ $yoloNmsThresholdArg = $YoloNmsThreshold.ToString([System.Globalization.CultureI
 $yoloLargeBoxWidthScaleArg = $YoloLargeBoxWidthScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloLargeBoxHeightScaleArg = $YoloLargeBoxHeightScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloLargeBoxMinAreaRatioArg = $YoloLargeBoxMinAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloUseLandmarkBoxRefineArg = $YoloUseLandmarkBoxRefine.IsPresent.ToString().ToLowerInvariant()
+$yoloLandmarkBoxMinAreaRatioArg = $YoloLandmarkBoxMinAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLandmarkBoxWidthScaleArg = $YoloLandmarkBoxWidthScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLandmarkBoxHeightScaleArg = $YoloLandmarkBoxHeightScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLandmarkBoxCenterYOffsetRatioArg = $YoloLandmarkBoxCenterYOffsetRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloLandmarkBoxMinOriginalIouArg = $YoloLandmarkBoxMinOriginalIou.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloUseTilingArg = $YoloUseTiling.IsPresent.ToString().ToLowerInvariant()
 $yoloUseFaceOnnxRoiRefineArg = $YoloUseFaceOnnxRoiRefine.IsPresent.ToString().ToLowerInvariant()
 $yoloFaceOnnxRoiMinAreaRatioArg = $YoloFaceOnnxRoiMinAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -950,6 +1176,15 @@ if ([string]::IsNullOrWhiteSpace($CompareOverlayDir)) {
 } else {
     $compareOverlayDirArg = Join-Path $repo $CompareOverlayDir
 }
+$dumpCompareCropsArg = $DumpCompareCrops.IsPresent.ToString().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($CompareCropDir)) {
+    $compareCropDirArg = Join-Path $work ("compare-crops-" + $clipStem)
+} elseif ([IO.Path]::IsPathRooted($CompareCropDir)) {
+    $compareCropDirArg = $CompareCropDir
+} else {
+    $compareCropDirArg = Join-Path $repo $CompareCropDir
+}
+$compareCropPaddingRatioArg = $CompareCropPaddingRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 dotnet run --project $project -- `
     $clip `
     $output `
@@ -996,6 +1231,12 @@ dotnet run --project $project -- `
     $yoloLargeBoxWidthScaleArg `
     $yoloLargeBoxHeightScaleArg `
     $yoloLargeBoxMinAreaRatioArg `
+    $yoloUseLandmarkBoxRefineArg `
+    $yoloLandmarkBoxMinAreaRatioArg `
+    $yoloLandmarkBoxWidthScaleArg `
+    $yoloLandmarkBoxHeightScaleArg `
+    $yoloLandmarkBoxCenterYOffsetRatioArg `
+    $yoloLandmarkBoxMinOriginalIouArg `
     $yoloUseTilingArg `
     $yoloUseFaceOnnxRoiRefineArg `
     $yoloFaceOnnxRoiMinAreaRatioArg `
@@ -1007,7 +1248,10 @@ dotnet run --project $project -- `
     $yoloDebugDumpArg `
     $dumpCompareDetailsArg `
     $dumpCompareOverlaysArg `
-    $compareOverlayDirArg
+    $compareOverlayDirArg `
+    $dumpCompareCropsArg `
+    $compareCropDirArg `
+    $compareCropPaddingRatioArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
