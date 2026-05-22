@@ -13,6 +13,7 @@ param(
     [switch]$RunTenMinuteState,
     [switch]$RequireTenMinuteClip,
     [switch]$RequireTenMinuteRun,
+    [switch]$RequireTenMinuteBaselineOnlyRun,
     [switch]$RunGuiSmokeState,
     [switch]$RequireGuiSmokeManualPass
 )
@@ -56,6 +57,9 @@ $profileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
 $cropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $gtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-gt-label-state.ps1"
 $fullGtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-label-state.ps1"
+$fullGtTemplateStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-template-state.ps1"
+$fullGtReviewPackageStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-review-package-state.ps1"
+$fullGtReviewedStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-reviewed-state.ps1"
 $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
@@ -75,6 +79,11 @@ Invoke-YoloVerify "gt-label-state" $gtLabelStateVerify @(
     "-FailReviewCsv", $YoloCropReviewFailCsv
 )
 Invoke-YoloVerify "full-gt-label-state" $fullGtLabelStateVerify @(
+    "-SelfTest"
+)
+Invoke-YoloVerify "full-gt-template-state" $fullGtTemplateStateVerify @()
+Invoke-YoloVerify "full-gt-review-package-state" $fullGtReviewPackageStateVerify @()
+Invoke-YoloVerify "full-gt-reviewed-state" $fullGtReviewedStateVerify @(
     "-SelfTest"
 )
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
@@ -105,6 +114,9 @@ if ($RunTenMinuteState) {
     }
     if ($RequireTenMinuteRun) {
         $tenMinuteArgs += "-RequireRun"
+    }
+    if ($RequireTenMinuteBaselineOnlyRun) {
+        $tenMinuteArgs += "-RequireBaselineOnlyRun"
     }
 
     Invoke-YoloVerify "ten-minute-state" $tenMinuteStateVerify $tenMinuteArgs

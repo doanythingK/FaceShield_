@@ -15,6 +15,16 @@ param(
     [switch]$RunBaseline,
     [switch]$BaselineOnly,
     [switch]$SkipExport,
+    [switch]$DumpDetections,
+    [switch]$DumpCompareDetails,
+    [switch]$DumpCompareOverlays,
+    [string]$CompareOverlayDir = "",
+    [int]$CompareOverlayMaxFrames = 16,
+    [switch]$DumpCompareCrops,
+    [string]$CompareCropDir = "",
+    [double]$CompareCropPaddingRatio = 0.65,
+    [int]$CompareCropMaxOnlyFrames = 16,
+    [int]$CompareCropMaxBoxDiffFrames = 16,
     [switch]$AllowQualityFailure,
     [string]$LogDir = ".tmp\yolo-ten-minute"
 )
@@ -74,7 +84,14 @@ if ($PrepareClipOnly) {
 }
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$logPath = Join-Path $logRoot "yolo-ten-minute-$timestamp.log"
+$modeName = if ($BaselineOnly) {
+    "baseline-only"
+} elseif ($RunBaseline) {
+    "ab"
+} else {
+    "yolo-only"
+}
+$logPath = Join-Path $logRoot "yolo-ten-minute-$modeName-$timestamp.log"
 
 $arguments = @(
     "-SkipTrim",
@@ -106,15 +123,54 @@ if ($SkipExport) {
     $arguments += "-SkipExport"
 }
 
+if ($DumpDetections) {
+    $arguments += "-DumpDetections"
+}
+
+if ($DumpCompareDetails) {
+    $arguments += "-DumpCompareDetails"
+}
+
+if ($DumpCompareOverlays) {
+    $arguments += @(
+        "-DumpCompareOverlays",
+        "-CompareOverlayMaxFrames", "$CompareOverlayMaxFrames"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($CompareOverlayDir)) {
+        $arguments += @("-CompareOverlayDir", $CompareOverlayDir)
+    }
+}
+
+if ($DumpCompareCrops) {
+    $arguments += @(
+        "-DumpCompareCrops",
+        "-CompareCropPaddingRatio", "$CompareCropPaddingRatio",
+        "-CompareCropMaxOnlyFrames", "$CompareCropMaxOnlyFrames",
+        "-CompareCropMaxBoxDiffFrames", "$CompareCropMaxBoxDiffFrames"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($CompareCropDir)) {
+        $arguments += @("-CompareCropDir", $CompareCropDir)
+    }
+}
+
+if (Test-Path $logPath) {
+    Remove-Item -Force -Path $logPath
+}
+
+function Write-RunnerLog {
+    param([string]$Message)
+
+    Add-Content -Encoding UTF8 -Path $logPath -Value $Message
+    Write-Host $Message
+}
+
 $baselineEnabled = $RunBaseline.IsPresent -or $BaselineOnly.IsPresent
-Write-Host "[YoloTenMinuteFull] start smoke log=$logPath, baseline=$baselineEnabled, baselineOnly=$($BaselineOnly.IsPresent), export=$(-not $SkipExport.IsPresent)"
+Write-RunnerLog "[YoloTenMinuteFull] start smoke log=$logPath, baseline=$baselineEnabled, baselineOnly=$($BaselineOnly.IsPresent), export=$(-not $SkipExport.IsPresent)"
 $oldErrorAction = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"
-    if (Test-Path $logPath) {
-        Remove-Item -Force -Path $logPath
-    }
-
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $smoke @arguments 2>&1 | ForEach-Object {
         $line = $_.ToString()
         Add-Content -Encoding UTF8 -Path $logPath -Value $line
@@ -130,4 +186,4 @@ if ($exitCode -ne 0 -and -not $AllowQualityFailure) {
     throw "10-minute YOLO smoke failed with exit code $exitCode. Log: $logPath"
 }
 
-Write-Host "[YoloTenMinuteFull] complete exitCode=$exitCode, log=$logPath"
+Write-RunnerLog "[YoloTenMinuteFull] complete exitCode=$exitCode, log=$logPath"

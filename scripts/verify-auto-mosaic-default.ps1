@@ -17,6 +17,7 @@ param(
     [switch]$RunYoloTenMinuteState,
     [switch]$RequireYoloTenMinuteClip,
     [switch]$RequireYoloTenMinuteRun,
+    [switch]$RequireYoloTenMinuteBaselineOnlyRun,
     [switch]$RunYoloGuiSmokeState,
     [switch]$RequireYoloGuiSmokeManualPass,
     [switch]$RunYoloProfileState,
@@ -304,6 +305,9 @@ if ($RunYoloState) {
     if ($RequireYoloTenMinuteRun) {
         $yoloStateArgs += "-RequireTenMinuteRun"
     }
+    if ($RequireYoloTenMinuteBaselineOnlyRun) {
+        $yoloStateArgs += "-RequireTenMinuteBaselineOnlyRun"
+    }
     if ($RunYoloGuiSmokeState) {
         $yoloStateArgs += "-RunGuiSmokeState"
     }
@@ -361,6 +365,9 @@ if ($RunYoloTenMinuteState -and -not $RunYoloState) {
     }
     if ($RequireYoloTenMinuteRun) {
         $tenMinuteArgs += "-RequireRun"
+    }
+    if ($RequireYoloTenMinuteBaselineOnlyRun) {
+        $tenMinuteArgs += "-RequireBaselineOnlyRun"
     }
 
     $yoloTenMinuteOutput = Invoke-ScriptStep "yolo-ten-minute-state" $yoloTenMinuteStateVerify $tenMinuteArgs

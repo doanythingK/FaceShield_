@@ -5,8 +5,13 @@ param(
     [string]$ClipPath = ".tmp\srcTest-smoke\smoke-0200-600s.mp4",
     [string]$LogPath = ".tmp\yolo-ten-minute\yolo-ten-minute-20260523-000044.log",
     [string]$OutputPath = ".tmp\srcTest-smoke\smoke-0200-600s_blur.mp4",
+    [string]$BaselineOnlyLogPath = "",
+    [string]$BaselineOnlyLogDir = ".tmp\yolo-ten-minute-baseline-smoke",
+    [string]$BaselineOnlyLogPattern = "yolo-ten-minute-baseline-only-*.log",
+    [int]$BaselineOnlyMinFrames = 90,
     [switch]$RequireClip,
-    [switch]$RequireRun
+    [switch]$RequireRun,
+    [switch]$RequireBaselineOnlyRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +23,7 @@ $resolvedSourcePath = if ([IO.Path]::IsPathRooted($SourcePath)) { $SourcePath } 
 $resolvedClipPath = if ([IO.Path]::IsPathRooted($ClipPath)) { $ClipPath } else { Join-Path $repo $ClipPath }
 $resolvedLogPath = if ([IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $repo $LogPath }
 $resolvedOutputPath = if ([IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path $repo $OutputPath }
+$resolvedBaselineOnlyLogDir = if ([IO.Path]::IsPathRooted($BaselineOnlyLogDir)) { $BaselineOnlyLogDir } else { Join-Path $repo $BaselineOnlyLogDir }
 
 foreach ($required in @($resolvedPlanPath, $resolvedRunnerPath, $resolvedSourcePath)) {
     if (-not (Test-Path $required)) {
@@ -61,11 +67,52 @@ function Assert-Match {
     Write-Host "[YoloTenMinuteStateVerify] pass $Name"
 }
 
+function Assert-NotContains {
+    param(
+        [string]$Name,
+        [string]$Text,
+        [string]$Unexpected
+    )
+
+    if ($Text.Contains($Unexpected)) {
+        throw "$Name contains unexpected text: $Unexpected"
+    }
+
+    Write-Host "[YoloTenMinuteStateVerify] pass $Name"
+}
+
+function Resolve-LatestLog {
+    param(
+        [string]$LogPath,
+        [string]$LogDir,
+        [string]$Pattern
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+        return if ([IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $repo $LogPath }
+    }
+
+    if (-not (Test-Path $LogDir)) {
+        throw "Log directory not found: $LogDir"
+    }
+
+    $latest = Get-ChildItem -Path $LogDir -Filter $Pattern -File |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($null -eq $latest) {
+        throw "No log found in $LogDir with pattern $Pattern"
+    }
+
+    return $latest.FullName
+}
+
 Assert-Contains "plan runner marker" $plan "yolo-ten-minute-runner-state: prepared=true"
 Assert-Contains "plan records runner path" $plan "scripts/run-yolo-ten-minute-full.ps1"
 Assert-Contains "plan records ten minute clip" $plan ".tmp/srcTest-smoke/smoke-0200-600s.mp4"
 Assert-Contains "plan records optimized full run" $plan "full-run=yolo-optimized-only-pass"
 Assert-Contains "plan records baseline-only runner support" $plan "baseline-only-runner=short-smoke-pass"
+Assert-Contains "plan records baseline-only log pattern" $plan "baseline-only-log-pattern=.tmp/yolo-ten-minute-baseline-smoke/yolo-ten-minute-baseline-only-*.log"
 Assert-Contains "plan records ten minute log" $plan ".tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log"
 Assert-Contains "plan records ten minute auto total" $plan "autoTotalMs=2536529"
 Assert-Contains "plan records ten minute export total" $plan "exportTotalMs=1375350"
@@ -80,7 +127,12 @@ Assert-Match "runner uses nms 0.45" $runner '\[double\]\$YoloNmsThreshold\s*=\s*
 Assert-Contains "runner can include baseline" $runner "[switch]`$RunBaseline"
 Assert-Contains "runner can run baseline only" $runner "[switch]`$BaselineOnly"
 Assert-Contains "runner can skip export" $runner "[switch]`$SkipExport"
+Assert-Contains "runner can dump detections" $runner "[switch]`$DumpDetections"
+Assert-Contains "runner can dump compare details" $runner "[switch]`$DumpCompareDetails"
+Assert-Contains "runner can dump compare overlays" $runner "[switch]`$DumpCompareOverlays"
+Assert-Contains "runner can dump compare crops" $runner "[switch]`$DumpCompareCrops"
 Assert-Contains "runner can allow quality failure" $runner "[switch]`$AllowQualityFailure"
+Assert-Contains "runner names baseline-only logs" $runner 'yolo-ten-minute-$modeName-$timestamp.log'
 Assert-Contains "runner streams log lines" $runner "ForEach-Object"
 Assert-Contains "runner writes incremental log" $runner "Add-Content -Encoding UTF8 -Path `$logPath"
 Assert-Contains "smoke can skip optimized case" $smoke "[switch]`$SkipOptimized"
@@ -128,6 +180,32 @@ if ($RequireRun) {
     }
 
     Write-Host "[YoloTenMinuteStateVerify] pass ten minute run artifacts"
+}
+
+if ($RequireBaselineOnlyRun) {
+    $resolvedBaselineOnlyLogPath = Resolve-LatestLog $BaselineOnlyLogPath $resolvedBaselineOnlyLogDir $BaselineOnlyLogPattern
+    if (-not (Test-Path $resolvedBaselineOnlyLogPath)) {
+        throw "Required baseline-only run log not found: $resolvedBaselineOnlyLogPath"
+    }
+
+    $baselineLog = Get-Content -Raw -Path $resolvedBaselineOnlyLogPath
+    Assert-Contains "baseline-only log has baseline label" $baselineLog "label=baseline-all-frames"
+    Assert-Contains "baseline-only log has faceonnx detector" $baselineLog "detector=FaceOnnxDetector/CPU"
+    Assert-Contains "baseline-only log completed" $baselineLog "[YoloTenMinuteFull] complete exitCode=0"
+    Assert-NotContains "baseline-only log has no optimized case" $baselineLog "optimized-"
+    Assert-NotContains "baseline-only log has no yolo detector" $baselineLog "detector=YoloFaceOnnxDetector"
+
+    $match = [regex]::Match($baselineLog, "totalFrames=(\d+)")
+    if (-not $match.Success) {
+        throw "baseline-only log missing totalFrames"
+    }
+
+    $frames = [int]$match.Groups[1].Value
+    if ($frames -lt $BaselineOnlyMinFrames) {
+        throw "baseline-only totalFrames $frames is below expected minimum $BaselineOnlyMinFrames"
+    }
+
+    Write-Host "[YoloTenMinuteStateVerify] pass baseline-only run artifacts"
 }
 
 Write-Host "[YoloTenMinuteStateVerify] all requested checks passed"
