@@ -265,7 +265,7 @@ Assert-Contains "plan records ten minute log" $plan ".tmp/yolo-ten-minute/yolo-t
 Assert-Contains "plan records ten minute auto total" $plan "autoTotalMs=2536529"
 Assert-Contains "plan records ten minute export total" $plan "exportTotalMs=1375350"
 Assert-Contains "plan records ten minute direct face frames" $plan "directFaceFrames=8063"
-Assert-Contains "plan keeps ten minute incomplete" $plan "미완료: 10min-full"
+Assert-Contains "plan records ten minute full not required after extended fail" $plan "ten-minute-full=not-required-after-extended-fail"
 
 Assert-Match "runner default is 600 seconds" $runner '\[int\]\$Seconds\s*=\s*600'
 Assert-Contains "runner uses yolo5face profile" $runner '[string]$YoloModelType = "Yolo5Face"'

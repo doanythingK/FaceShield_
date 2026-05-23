@@ -66,6 +66,7 @@ $fullGtReviewedStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-review
 $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
+$manualReadinessStateVerify = Join-Path $repo "scripts\verify-yolo-manual-readiness-state.ps1"
 $guiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $representativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $extendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
@@ -92,6 +93,7 @@ Invoke-YoloVerify "full-gt-reviewed-state" $fullGtReviewedStateVerify @(
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
 Invoke-YoloVerify "distribution-state" $distributionStateVerify @()
 Invoke-YoloVerify "goal-audit-state" $goalAuditStateVerify @()
+Invoke-YoloVerify "manual-readiness-state" $manualReadinessStateVerify @()
 if ($RunRepresentativeGate) {
     Invoke-YoloVerify "representative-gate" $representativeGateVerify @(
         "-QualityClip", $RepresentativeQualityClip,

@@ -23,6 +23,7 @@ param(
     [switch]$RequireYoloTenMinutePartialSpeedCompareRun,
     [switch]$RunYoloGuiSmokeState,
     [switch]$RequireYoloGuiSmokeManualPass,
+    [switch]$RunYoloManualReadinessState,
     [switch]$RunYoloProfileState,
     [switch]$RunYoloConclusionState,
     [switch]$RunYoloDistributionState,
@@ -52,6 +53,7 @@ $yoloExtendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1
 $yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
 $yoloTenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
 $yoloGuiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
+$yoloManualReadinessStateVerify = Join-Path $repo "scripts\verify-yolo-manual-readiness-state.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -146,6 +148,10 @@ if ($RunYoloTenMinuteState -and -not (Test-Path $yoloTenMinuteStateVerify)) {
 
 if ($RunYoloGuiSmokeState -and -not (Test-Path $yoloGuiSmokeStateVerify)) {
     throw "YOLO GUI smoke state verifier not found: $yoloGuiSmokeStateVerify"
+}
+
+if ($RunYoloManualReadinessState -and -not (Test-Path $yoloManualReadinessStateVerify)) {
+    throw "YOLO manual readiness state verifier not found: $yoloManualReadinessStateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -403,6 +409,11 @@ if ($RunYoloGuiSmokeState -and -not $RunYoloState) {
 
     $yoloGuiSmokeOutput = Invoke-ScriptStep "yolo-gui-smoke-state" $yoloGuiSmokeStateVerify $guiSmokeArgs
     Assert-Contains "yolo-gui-smoke-state" $yoloGuiSmokeOutput "\[YoloGuiSmokeVerify\] all requested checks passed"
+}
+
+if ($RunYoloManualReadinessState -and -not $RunYoloState) {
+    $yoloManualReadinessOutput = Invoke-ScriptStep "yolo-manual-readiness-state" $yoloManualReadinessStateVerify @()
+    Assert-Contains "yolo-manual-readiness-state" $yoloManualReadinessOutput "\[YoloManualReadinessVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"

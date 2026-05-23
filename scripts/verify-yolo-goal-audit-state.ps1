@@ -61,7 +61,7 @@ $plan = Read-RepoFile $PlanPath
 $autoVerify = Read-RepoFile $AutoMosaicDefaultVerify
 $yoloState = Read-RepoFile $YoloStateVerify
 
-$marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; complete=false; remaining=full-gt-label,gui-smoke,10min-full"
+$marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=full-gt-label,gui-smoke"
 Assert-Contains "goal audit marker" $plan $marker
 
 foreach ($token in @(
@@ -74,10 +74,11 @@ foreach ($token in @(
     "sample-gt=pass",
     "full-gt-harness=pass",
     "license-source=pass",
+    "manual-readiness=pass",
+    "ten-minute-full=not-required-after-extended-fail",
     "complete=false",
     "full-gt-label",
-    "gui-smoke",
-    "10min-full")) {
+    "gui-smoke")) {
     Assert-Contains "goal audit token $token" $plan $token
 }
 
@@ -145,6 +146,12 @@ Assert-Contains "gui smoke manual negative selftests recorded" $plan "manual-neg
 Assert-Contains "gui smoke manual missing recorded" $plan "manual-checklist=missing"
 Assert-Contains "gui smoke open video step recorded" $plan "open-video"
 Assert-Contains "gui smoke export step recorded" $plan "export"
+Assert-Contains "manual readiness marker recorded" $plan "yolo-manual-readiness-state:"
+Assert-Contains "manual readiness verifier recorded" $plan "verify-yolo-manual-readiness-state.ps1"
+Assert-Contains "manual readiness full gt ready recorded" $plan "full-gt-review-package=ready-pending-human-labels"
+Assert-Contains "manual readiness ai candidate ready recorded" $plan "ai-reviewed-candidate=ready-not-final-gt"
+Assert-Contains "manual readiness gui checklist ready recorded" $plan "gui-checklist=ready-pending-human-smoke"
+Assert-Contains "manual readiness ten minute ready recorded" $plan "ten-minute-artifacts=ready-yolo-output-and-incomplete-faceonnx-baseline"
 Assert-Contains "license source marker recorded" $plan "yolo-license-source-state: checked=2026-05-23"
 Assert-Contains "license source gate recorded" $plan "source-gate=pass"
 Assert-Contains "license bundle marker recorded" $plan "bundle=blocked"
@@ -158,7 +165,8 @@ Assert-Contains "extended export yolo direct frames recorded" $plan "directFaceF
 Assert-Contains "no final recommendation recorded" $plan "recommendation=none"
 Assert-Contains "full gt label still missing" $plan "full-gt-label"
 Assert-Contains "gui smoke still missing" $plan "gui-smoke"
-Assert-Contains "ten minute still unresolved" $plan "10min-full"
+Assert-Contains "ten minute full not required after extended fail" $plan "ten-minute-full=not-required-after-extended-fail"
+Assert-Contains "ten minute full A/B deferred explanation" $plan "다음 추천 후보가 확장 gate를 통과할 때 다시 수행"
 
 Assert-Contains "auto verifier exposes yolo state" $autoVerify "RunYoloState"
 Assert-Contains "auto verifier exposes representative gate" $autoVerify "RunYoloRepresentativeGate"
@@ -173,6 +181,7 @@ Assert-Contains "auto verifier exposes ten minute faceonnx optimized-only requir
 Assert-Contains "auto verifier exposes ten minute partial speed compare requirement" $autoVerify "RequireYoloTenMinutePartialSpeedCompareRun"
 Assert-Contains "auto verifier exposes gui smoke state" $autoVerify "RunYoloGuiSmokeState"
 Assert-Contains "auto verifier exposes gui smoke manual pass" $autoVerify "RequireYoloGuiSmokeManualPass"
+Assert-Contains "auto verifier exposes manual readiness state" $autoVerify "RunYoloManualReadinessState"
 Assert-Contains "yolo state exposes representative gate" $yoloState "RunRepresentativeGate"
 Assert-Contains "yolo state exposes extended gate" $yoloState "RunExtendedGate"
 Assert-Contains "yolo state exposes extended export gate" $yoloState "RunExtendedExportGate"
@@ -185,5 +194,6 @@ Assert-Contains "yolo state exposes ten minute faceonnx optimized-only requireme
 Assert-Contains "yolo state exposes ten minute partial speed compare requirement" $yoloState "RequireTenMinutePartialSpeedCompareRun"
 Assert-Contains "yolo state exposes gui smoke state" $yoloState "RunGuiSmokeState"
 Assert-Contains "yolo state exposes gui smoke manual pass" $yoloState "RequireGuiSmokeManualPass"
+Assert-Contains "yolo state runs manual readiness state" $yoloState "manual-readiness-state"
 
 Write-Host "[YoloGoalAuditVerify] all requested checks passed"
