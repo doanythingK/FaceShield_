@@ -40,11 +40,11 @@ param(
     [string]$YoloCropReviewPassCsv = ".tmp/yolo-crops/test-0900-yolo5face/crop-review.csv",
     [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv",
     [string]$YoloRepresentativeQualityClip = ".tmp/srcTest-smoke/smoke-0600-3s.mp4",
-    [string]$YoloRepresentativeModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$YoloRepresentativeModelPath = "",
     [string]$YoloExtendedQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
-    [string]$YoloExtendedModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$YoloExtendedModelPath = "",
     [string]$YoloExtendedExportQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
-    [string]$YoloExtendedExportModelPath = ".tmp/models/YoloV5Face.onnx"
+    [string]$YoloExtendedExportModelPath = ""
 )
 
 $ErrorActionPreference = "Stop"

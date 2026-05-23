@@ -54,6 +54,14 @@
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
+  <!-- YOLO 모델은 repo에 추적하지 않지만, 로컬 Models\Yolo 배치 시 출력/배포에 포함 -->
+  <ItemGroup>
+    <None Update="Models\Yolo\*.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- NuGet 패키지 -->
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.9" />

@@ -86,6 +86,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$yoloModelResolver = Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1"
+if (Test-Path $yoloModelResolver) {
+    . $yoloModelResolver
+}
 $sourcePath = Join-Path $repo $Source
 if (-not (Test-Path $sourcePath)) {
     throw "Source video not found: $sourcePath"
@@ -1220,7 +1224,16 @@ $yuNetTileOnlyArg = $YuNetTileOnly.IsPresent.ToString().ToLowerInvariant()
 $yuNetTileColumnsArg = $YuNetTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetTileRowsArg = $YuNetTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetTileOverlapRatioArg = $YuNetTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-$yoloModelPathArg = if ([string]::IsNullOrWhiteSpace($YoloModelPath)) { "__none__" } else { (Resolve-Path $YoloModelPath).Path }
+$resolvedYoloModelPath = if (Get-Command Resolve-YoloModelPath -ErrorAction SilentlyContinue) {
+    Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType
+}
+elseif ([string]::IsNullOrWhiteSpace($YoloModelPath)) {
+    ""
+}
+else {
+    (Resolve-Path $YoloModelPath).Path
+}
+$yoloModelPathArg = if ([string]::IsNullOrWhiteSpace($resolvedYoloModelPath)) { "__none__" } else { $resolvedYoloModelPath }
 $yoloInputSizeArg = $YoloInputSize.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloObjectnessThresholdArg = $YoloObjectnessThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloConfidenceThresholdArg = $YoloConfidenceThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)

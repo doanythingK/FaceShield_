@@ -196,6 +196,10 @@ publish/
 # in these scripts will be unencrypted
 PublishScripts/
 
+# Local optional YOLO model files. Keep the folder/docs tracked, but do not
+# commit model weights unless license/distribution has been explicitly cleared.
+Models/Yolo/*.onnx
+
 # NuGet Packages
 *.nupkg
 # NuGet Symbol Packages

@@ -3,7 +3,7 @@ param(
     [string]$Start = "00:02:00",
     [int]$Seconds = 600,
     [string]$Clip = ".tmp\srcTest-smoke\smoke-0200-600s.mp4",
-    [string]$YoloModelPath = ".tmp\models\YoloV5Face.onnx",
+    [string]$YoloModelPath = "",
     [string]$YoloModelType = "Yolo5Face",
     [int]$YoloInputSize = 640,
     [double]$YoloObjectnessThreshold = 0.12,
@@ -33,10 +33,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1")
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $sourcePath = if ([IO.Path]::IsPathRooted($Source)) { $Source } else { Join-Path $repo $Source }
 $clipPath = if ([IO.Path]::IsPathRooted($Clip)) { $Clip } else { Join-Path $repo $Clip }
-$modelPath = if ([IO.Path]::IsPathRooted($YoloModelPath)) { $YoloModelPath } else { Join-Path $repo $YoloModelPath }
+$modelPath = if ($BaselineOnly -or $FaceOnnxOptimizedOnly) { "" } else { Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType -Require }
 $logRoot = if ([IO.Path]::IsPathRooted($LogDir)) { $LogDir } else { Join-Path $repo $LogDir }
 
 if (-not (Test-Path $smoke)) {
@@ -160,7 +161,7 @@ $arguments = @(
 
 if (-not $BaselineOnly -and -not $FaceOnnxOptimizedOnly) {
     $arguments += @(
-    "-YoloModelPath", $YoloModelPath,
+    "-YoloModelPath", $modelPath,
     "-YoloModelType", $YoloModelType,
     "-YoloInputSize", "$YoloInputSize",
     "-YoloObjectnessThreshold", "$YoloObjectnessThreshold",

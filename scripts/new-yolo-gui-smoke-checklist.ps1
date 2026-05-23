@@ -26,7 +26,15 @@ $rows = @(
         evidenceType = "screenshot"
         artifactPath = ""
         evidence = ""
-        notes = "Select YOLO Face ONNX, choose YOLO5Face or YOLOv8-Face, set a model path, and confirm FaceONNX threshold controls remain separate. artifactPath must be a non-empty image file."
+        notes = "Select YOLO Face ONNX, choose YOLO5Face or YOLOv8-Face, and confirm FaceONNX threshold controls remain separate. artifactPath must be a non-empty image file."
+    },
+    [pscustomobject]@{
+        stepId = "download-yolo-model"
+        status = ""
+        evidenceType = "screenshot-or-log"
+        artifactPath = ""
+        evidence = ""
+        notes = "Use the YOLO model download button, or confirm an already-downloaded model is detected, and verify AutoYoloModelPath is populated. artifactPath must be a non-empty image or log file."
     },
     [pscustomobject]@{
         stepId = "run-yolo-auto-detect"

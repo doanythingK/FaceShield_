@@ -3,7 +3,8 @@ param(
     [string]$AutoMosaicDefaultVerify = "scripts/verify-auto-mosaic-default.ps1",
     [string]$YoloStateVerify = "scripts/verify-yolo-state.ps1",
     [string]$YoloManualReadinessVerify = "scripts/verify-yolo-manual-readiness-state.ps1",
-    [string]$YoloManualGateHelper = "scripts/open-yolo-manual-gates.ps1"
+    [string]$YoloManualGateHelper = "scripts/open-yolo-manual-gates.ps1",
+    [string]$YoloManualGateHelperVerify = "scripts/verify-yolo-manual-gate-helper-state.ps1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +65,7 @@ $autoVerify = Read-RepoFile $AutoMosaicDefaultVerify
 $yoloState = Read-RepoFile $YoloStateVerify
 $manualReadinessVerify = Read-RepoFile $YoloManualReadinessVerify
 $manualGateHelper = Read-RepoFile $YoloManualGateHelper
+$manualGateHelperVerify = Read-RepoFile $YoloManualGateHelperVerify
 
 $marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=full-gt-label,gui-smoke"
 Assert-Contains "goal audit marker" $plan $marker
@@ -125,6 +127,9 @@ Assert-Contains "full gt review package verifier recorded" $plan "verify-yolo-fu
 Assert-Contains "full gt reviewed verifier recorded" $plan "verify-yolo-full-gt-reviewed-state.ps1"
 Assert-Contains "full gt candidate verifier recorded" $plan "verify-yolo-full-gt-reviewed-candidate-state.ps1"
 Assert-Contains "full gt manual gate helper recorded" $plan "open-yolo-manual-gates.ps1"
+Assert-Contains "full gt manual gate helper verifier recorded" $plan "verify-yolo-manual-gate-helper-state.ps1"
+Assert-Contains "full gt manual gate helper completed mode recorded" $plan "manual-gate-helper-completed-mode=pass"
+Assert-Contains "full gt manual gate helper completed fixture recorded" $plan "manual-gate-helper-completed-fixture=pass-not-final-gt"
 Assert-Contains "full gt harness selftest recorded" $plan "mode=selftest-pass-and-synthetic-data-pass"
 Assert-Contains "full gt data missing recorded" $plan "gt-data=missing"
 Assert-Contains "full gt harness metrics recorded" $plan "metrics=tp,miss,false-positive,low-iou"
@@ -144,6 +149,7 @@ Assert-Contains "full gt real reviewed gate recorded" $plan "real-reviewed-gate=
 Assert-Contains "gui smoke harness marker recorded" $plan "yolo-gui-smoke-harness-state:"
 Assert-Contains "gui smoke verifier recorded" $plan "verify-yolo-gui-smoke-state.ps1"
 Assert-Contains "gui smoke checklist recorded" $plan "new-yolo-gui-smoke-checklist.ps1"
+Assert-Contains "gui smoke download button source invariant recorded" $plan "download-button-source-invariant=pass"
 Assert-Contains "gui smoke source invariant recorded" $plan "source-invariant=pass"
 Assert-Contains "gui smoke manual evidence schema recorded" $plan "manual-evidence-schema=pass"
 Assert-Contains "gui smoke manual evidence type validation recorded" $plan "manual-evidence-type-validation=pass"
@@ -151,6 +157,7 @@ Assert-Contains "gui smoke manual verifier selftest recorded" $plan "manual-veri
 Assert-Contains "gui smoke manual negative selftests recorded" $plan "manual-negative-selftests=pass"
 Assert-Contains "gui smoke manual missing recorded" $plan "manual-checklist=missing"
 Assert-Contains "gui smoke open video step recorded" $plan "open-video"
+Assert-Contains "gui smoke download model step recorded" $plan "download-yolo-model"
 Assert-Contains "gui smoke export step recorded" $plan "export"
 Assert-Contains "manual readiness marker recorded" $plan "yolo-manual-readiness-state:"
 Assert-Contains "manual readiness verifier recorded" $plan "verify-yolo-manual-readiness-state.ps1"
@@ -212,6 +219,7 @@ Assert-Contains "yolo state allows completed gui smoke" $yoloState "AllowComplet
 Assert-Contains "yolo state exposes full gt prediction log" $yoloState "FullGtPredictionLog"
 Assert-Contains "yolo state exposes full gt quality limits" $yoloState "FullGtMaxFalsePositives"
 Assert-Contains "yolo state runs manual readiness state" $yoloState "manual-readiness-state"
+Assert-Contains "yolo state runs manual gate helper state" $yoloState "manual-gate-helper-state"
 Assert-Contains "yolo state runs full gt candidate state" $yoloState "full-gt-reviewed-candidate-state"
 Assert-Contains "manual readiness invokes reviewed full gt verifier" $manualReadinessVerify "verify-yolo-full-gt-reviewed-state.ps1"
 Assert-Contains "manual readiness requires full frame review" $manualReadinessVerify "RequireFullFrameReview"
@@ -220,5 +228,15 @@ Assert-Contains "manual gate helper opens review index" $manualGateHelper "Revie
 Assert-Contains "manual gate helper verifies ready state" $manualGateHelper "VerifyReady"
 Assert-Contains "manual gate helper verifies completed state" $manualGateHelper "VerifyCompleted"
 Assert-Contains "manual gate helper requires gui manual pass" $manualGateHelper "RequireManualPass"
+Assert-Contains "manual gate helper allows completed full gt" $manualGateHelper "AllowCompletedFullGt"
+Assert-Contains "manual gate helper allows completed gui smoke" $manualGateHelper "AllowCompletedGuiSmoke"
+Assert-Contains "manual gate helper passes completed quality limits" $manualGateHelper "FullGtMaxFalsePositives"
+Assert-Contains "manual gate helper verifier checks ready path" $manualGateHelperVerify "VerifyReady"
+Assert-Contains "manual gate helper verifier checks completed path" $manualGateHelperVerify "VerifyCompleted"
+Assert-Contains "manual gate helper verifier checks pending failure" $manualGateHelperVerify "unexpectedly passed on pending manual files"
+Assert-Contains "manual gate helper verifier checks completed pass" $manualGateHelperVerify "failed on completed manual files"
+Assert-Contains "manual gate helper verifier builds completed fixture" $manualGateHelperVerify "New-CompletedGuiChecklistFixture"
+Assert-Contains "manual gate helper verifier uses AI candidate fixture" $manualGateHelperVerify "full-gt-review-reviewed-candidate.csv"
+Assert-Contains "manual gate helper verifier checks completed fixture pass" $manualGateHelperVerify "completed fixture passes helper"
 
 Write-Host "[YoloGoalAuditVerify] all requested checks passed"

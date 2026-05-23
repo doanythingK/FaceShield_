@@ -1,4 +1,6 @@
 param(
+    [string]$ProjectFile = "FaceShield.csproj",
+    [string]$GitIgnore = ".gitignore",
     [string]$HomeViewModel = "ViewModels/Pages/HomePageViewModel.cs",
     [string]$HomeView = "Views/Pages/HomePageView.axaml",
     [string]$HomeViewCodeBehind = "Views/Pages/HomePageView.axaml.cs",
@@ -9,6 +11,7 @@ param(
     [string]$YoloDetector = "Services/FaceDetection/YoloFaceOnnxDetector.cs",
     [string]$BackendEnum = "Services/FaceDetection/FaceDetectorBackend.cs",
     [string]$YoloModelEnum = "Services/FaceDetection/YoloFaceModelType.cs",
+    [string]$YoloModelResolver = "scripts/resolve-yolo-model-path.ps1",
     [string]$SmokeHarness = "scripts/run-srcTest-smoke.ps1"
 )
 
@@ -41,6 +44,8 @@ function Assert-Match {
     Write-Host "[YoloProfileVerify] pass $Name"
 }
 
+$projectText = Read-RepoFile $ProjectFile
+$gitIgnoreText = Read-RepoFile $GitIgnore
 $homeText = Read-RepoFile $HomeViewModel
 $homeViewText = Read-RepoFile $HomeView
 $homeViewCodeBehindText = Read-RepoFile $HomeViewCodeBehind
@@ -51,6 +56,7 @@ $options = Read-RepoFile $YoloOptions
 $yoloDetectorText = Read-RepoFile $YoloDetector
 $backend = Read-RepoFile $BackendEnum
 $modelEnum = Read-RepoFile $YoloModelEnum
+$yoloModelResolverText = Read-RepoFile $YoloModelResolver
 $smokeHarnessText = Read-RepoFile $SmokeHarness
 
 Assert-Match "backend enum exposes yolo" $backend "YoloFaceOnnx\s*=\s*3"
@@ -67,6 +73,9 @@ Assert-Match "home view shows yolo panel only for yolo backend" $homeViewText "I
 Assert-Match "home view binds yolo model selector" $homeViewText "ItemsSource=""\{Binding YoloModelTypeOptions\}""[\s\S]*SelectedItem=""\{Binding SelectedYoloModelTypeOption\}"""
 Assert-Match "home view binds yolo model path" $homeViewText "Text=""\{Binding AutoYoloModelPath,\s*Mode=TwoWay\}"""
 Assert-Match "home view exposes yolo model picker" $homeViewText "Click=""PickYoloModel_Click"""
+Assert-Match "home view exposes yolo model download button" $homeViewText "Command=""\{Binding DownloadYoloModelCommand\}"""
+Assert-Match "home view binds yolo download progress" $homeViewText "Value=""\{Binding YoloModelDownloadProgress\}"""
+Assert-Match "home view binds yolo download status" $homeViewText "Text=""\{Binding YoloModelDownloadStatus\}"""
 Assert-Match "home view code-behind calls yolo picker" $homeViewCodeBehindText "PickYoloModel_Click[\s\S]*PickYoloModelAsync"
 Assert-Match "home view binds yolo input size" $homeViewText "Value=""\{Binding AutoYoloInputSize,\s*Mode=TwoWay\}"""
 Assert-Match "home view binds yolo tiling toggle" $homeViewText "IsChecked=""\{Binding AutoYoloUseTiling\}"""
@@ -78,6 +87,27 @@ Assert-Match "home view binds yolo objectness slider" $homeViewText "Value=""\{B
 Assert-Match "home view binds yolo confidence slider" $homeViewText "Value=""\{Binding AutoYoloConfidenceThreshold,\s*Mode=TwoWay\}"""
 Assert-Match "home view binds yolo nms slider" $homeViewText "Value=""\{Binding AutoYoloNmsThreshold,\s*Mode=TwoWay\}"""
 Assert-Match "home view keeps faceonnx threshold panels separate" $homeViewText "IsVisible=""\{Binding IsFaceOnnxDetectorSelected\}""[\s\S]*AutoDetectionThreshold[\s\S]*AutoNmsThreshold"
+Assert-Match "project copies solution-local yolo models" $projectText ([regex]::Escape('None Update="Models\Yolo\*.onnx"'))
+Assert-Match "project copies yolo models to output" $projectText "<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>"
+Assert-Match "project copies yolo models to publish" $projectText "<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>"
+Assert-Match "gitignore excludes solution-local yolo models" $gitIgnoreText ([regex]::Escape("Models/Yolo/*.onnx"))
+Assert-Match "home defines solution-local yolo folder" $homeText "DefaultYoloModelDirectory\s*=\s*""Models/Yolo"""
+Assert-Match "home defines yolo5 default model names" $homeText "DefaultYolo5FaceModelFileNames[\s\S]*YoloV5Face\.onnx[\s\S]*Yolo5Face\.onnx"
+Assert-Match "home defines yolov8 default model names" $homeText "DefaultYoloV8FaceModelFileNames[\s\S]*yolov8n-face-lindevs\.onnx[\s\S]*yolov8l-face-lindevs\.onnx"
+Assert-Match "home default profile resolves solution-local model" $homeText "ModelPath\s*=\s*ResolveDefaultYoloModelPath\(modelType\)"
+Assert-Match "home resolves selected or default yolo model path" $homeText "ResolveSelectedYoloModelPath[\s\S]*NormalizeYoloModelPath\(AutoYoloModelPath\)[\s\S]*ResolveDefaultYoloModelPath\(modelType\)"
+Assert-Match "home scans default yolo model directories" $homeText "EnumerateDefaultYoloModelDirectories[\s\S]*AppContext\.BaseDirectory[\s\S]*Directory\.GetCurrentDirectory\(\)"
+Assert-Match "home scans downloaded yolo model directory" $homeText "GetYoloModelDownloadDirectory[\s\S]*LocalApplicationData[\s\S]*Models[\s\S]*Yolo"
+Assert-Match "home downloads yolo model command" $homeText "DownloadYoloModelAsync[\s\S]*HttpCompletionOption\.ResponseHeadersRead"
+Assert-Match "home downloads yolo5 model" $homeText "YoloV5Face\.onnx[\s\S]*huggingface\.co/hayashiLin/deepfacelivemodels/resolve/main/YoloV5Face\.onnx"
+Assert-Match "home downloads yolov8n model" $homeText "yolov8n-face-lindevs\.onnx[\s\S]*github\.com/lindevs/yolov8-face/releases/download/1\.0\.1/yolov8n-face-lindevs\.onnx"
+Assert-Match "home download does not block faceonnx default" $homeText "CanDownloadYoloModel\s*=>\s*IsYoloDetectorSelected\s*&&\s*!IsYoloModelDownloading"
+Assert-Match "factory uses resolved yolo model path" $homeText "var\s+yoloModelPath\s*=\s*ResolveSelectedYoloModelPath\(yoloModelType\)[\s\S]*ModelPath\s*=\s*yoloModelPath"
+Assert-Match "yolo readiness points to solution-local folder" $homeText "DefaultYoloModelDirectory"
+Assert-Match "script yolo model resolver exists" $yoloModelResolverText "function\s+Resolve-YoloModelPath"
+Assert-Match "script resolver prefers solution-local model folder" $yoloModelResolverText "Models\\Yolo"
+Assert-Match "script resolver keeps tmp model fallback" $yoloModelResolverText "\.tmp\\models"
+Assert-Match "smoke harness uses yolo model resolver" $smokeHarnessText "Resolve-YoloModelPath[\s\S]*YoloModelType"
 
 foreach ($field in @(
     "_yoloV8Profile",

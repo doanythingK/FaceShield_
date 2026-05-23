@@ -3,7 +3,7 @@ param(
     [string]$Start = "00:02:00",
     [int]$Seconds = 3,
     [string]$Clip = ".tmp\srcTest-smoke\smoke-0200-partial-speed-3s.mp4",
-    [string]$YoloModelPath = ".tmp\models\YoloV5Face.onnx",
+    [string]$YoloModelPath = "",
     [string]$YoloModelType = "Yolo5Face",
     [int]$YoloInputSize = 640,
     [double]$YoloObjectnessThreshold = 0.12,
@@ -17,8 +17,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1")
 $runner = Join-Path $repo "scripts\run-yolo-ten-minute-full.ps1"
 $clipPath = if ([IO.Path]::IsPathRooted($Clip)) { $Clip } else { Join-Path $repo $Clip }
+$resolvedYoloModelPath = Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType -Require
 $logRoot = if ([IO.Path]::IsPathRooted($LogDir)) { $LogDir } else { Join-Path $repo $LogDir }
 $yoloLogDir = Join-Path $logRoot "yolo"
 $faceOnnxLogDir = Join-Path $logRoot "faceonnx-optimized"
@@ -116,7 +118,7 @@ Invoke-Step "yolo-optimized-only" @(
     "-Clip", $Clip,
     "-SkipClipPrepare",
     "-SkipExport",
-    "-YoloModelPath", $YoloModelPath,
+    "-YoloModelPath", $resolvedYoloModelPath,
     "-YoloModelType", $YoloModelType,
     "-YoloInputSize", "$YoloInputSize",
     "-YoloObjectnessThreshold", "$YoloObjectnessThreshold",

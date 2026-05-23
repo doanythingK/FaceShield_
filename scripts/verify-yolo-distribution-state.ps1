@@ -1,5 +1,7 @@
 param(
-    [string]$PlanPath = "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
+    [string]$PlanPath = "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md",
+    [string]$ProjectFile = "FaceShield.csproj",
+    [string]$GitIgnore = ".gitignore"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +13,10 @@ if (-not (Test-Path $resolvedPlanPath)) {
 }
 
 $plan = Get-Content -Raw -Path $resolvedPlanPath
+$resolvedProjectFile = if ([IO.Path]::IsPathRooted($ProjectFile)) { $ProjectFile } else { Join-Path $repo $ProjectFile }
+$resolvedGitIgnore = if ([IO.Path]::IsPathRooted($GitIgnore)) { $GitIgnore } else { Join-Path $repo $GitIgnore }
+$project = Get-Content -Raw -Path $resolvedProjectFile
+$gitIgnoreText = Get-Content -Raw -Path $resolvedGitIgnore
 
 function Assert-Contains {
     param(
@@ -38,8 +44,23 @@ Assert-Contains "yolo5 source url" "https://huggingface.co/hayashiLin/deepfaceli
 Assert-Contains "yolo5 gpl marker" "gpl-3.0"
 Assert-Contains "bundle policy fixed" "YOLO 모델 번들 금지"
 Assert-Contains "external model path policy" "사용자 지정 외부 모델 경로"
+Assert-Contains "solution-local model path policy" '솔루션 로컬 `Models/Yolo`'
+Assert-Contains "download model path policy" "앱 데이터 다운로드 경로"
+Assert-Contains "download button policy" "다운로드 버튼"
 Assert-Contains "no repo bundling" "no-bundled-yolo-model"
 Assert-Contains "faceonnx remains default" "default=FaceONNX"
+
+if ($project -notmatch [regex]::Escape('None Update="Models\Yolo\*.onnx"')) {
+    throw "Project file does not include solution-local YOLO model copy rule"
+}
+
+Write-Host "[YoloDistributionVerify] pass project solution-local model copy rule"
+
+if ($gitIgnoreText -notmatch [regex]::Escape("Models/Yolo/*.onnx")) {
+    throw ".gitignore does not exclude solution-local YOLO model files"
+}
+
+Write-Host "[YoloDistributionVerify] pass gitignore solution-local model exclusion"
 
 $trackedFiles = & git -C $repo ls-files
 if ($LASTEXITCODE -ne 0) {
@@ -48,6 +69,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $blockedPatterns = @(
     "^\.tmp/models/",
+    "^Models/Yolo/.*\.onnx$",
     "(^|/)YoloV5Face\.onnx$",
     "(^|/)yolov8[nslmx]?-face-lindevs\.onnx$"
 )

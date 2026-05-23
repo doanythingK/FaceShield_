@@ -107,6 +107,17 @@
                        Text="{Binding AutoYoloModelPath, Mode=TwoWay}"
                        Watermark="*.onnx"/>
               <Button Content="찾기" Click="PickYoloModel_Click"/>
+              <Button Content="다운로드"
+                      Command="{Binding DownloadYoloModelCommand}"/>
+            </StackPanel>
+            <StackPanel Spacing="4">
+              <ProgressBar Height="8" Minimum="0" Maximum="100"
+                           Value="{Binding YoloModelDownloadProgress}"
+                           IsVisible="{Binding IsYoloModelDownloading}"/>
+              <TextBlock Text="{Binding YoloModelDownloadStatus}"
+                         FontSize="12"
+                         Opacity="0.7"
+                         TextWrapping="Wrap"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="입력 크기" Width="90" VerticalAlignment="Center"/>

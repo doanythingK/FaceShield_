@@ -181,6 +181,10 @@ Assert-Match "home exposes open workflow" $homeText "StartWorkspace|OpenVideo|Pi
 Assert-Match "home exposes yolo backend selector" $homeText "YOLO Face ONNX[\s\S]*FaceDetectorBackend\.YoloFaceOnnx"
 Assert-Match "home exposes yolo model path" $homeText "AutoYoloModelPath"
 Assert-Match "home view exposes yolo picker" $homeViewText "PickYoloModel_Click"
+Assert-Match "home view exposes yolo downloader" $homeViewText "DownloadYoloModelCommand"
+Assert-Match "home view binds yolo download progress" $homeViewText "YoloModelDownloadProgress"
+Assert-Match "home downloads yolo model" $homeText "DownloadYoloModelAsync[\s\S]*YoloModelDownloadStatus"
+Assert-Match "home stores downloaded yolo model outside repo" $homeText "GetYoloModelDownloadDirectory[\s\S]*LocalApplicationData[\s\S]*FaceShield"
 Assert-Match "workspace runs auto detect" $workspaceText "RunAutoMaskAsync|RunAutoAsync"
 Assert-Match "workspace creates yolo detector factory" $workspaceText "FaceDetectorFactory"
 Assert-Match "workspace exports video" $workspaceText "VideoExportService[\s\S]*Export"
@@ -195,6 +199,7 @@ Assert-Match "state stores yolo v8 profile" $stateText "YoloV8ModelPath"
 $requiredSteps = @(
     "open-video",
     "select-yolo-backend",
+    "download-yolo-model",
     "run-yolo-auto-detect",
     "preview-result",
     "manual-edit",
@@ -205,6 +210,7 @@ $requiredSteps = @(
 $requiredEvidenceTypes = @{
     "open-video" = @("screenshot-or-recording")
     "select-yolo-backend" = @("screenshot")
+    "download-yolo-model" = @("screenshot-or-log")
     "run-yolo-auto-detect" = @("screenshot-or-log")
     "preview-result" = @("screenshot-or-recording")
     "manual-edit" = @("screenshot-or-recording")
@@ -220,6 +226,7 @@ if ($SelfTest) {
     $selfTestArtifacts = @{
         "open-video" = "open-video.png"
         "select-yolo-backend" = "select-yolo-backend.png"
+        "download-yolo-model" = "download-yolo-model.log"
         "run-yolo-auto-detect" = "run-yolo-auto-detect.log"
         "preview-result" = "preview-result.mp4"
         "manual-edit" = "manual-edit.png"
@@ -286,6 +293,7 @@ if (-not (Test-Path $checklistScript)) {
 $checklistScriptText = Get-Content -Raw -Path $checklistScript
 Assert-Contains "checklist has evidence type column" $checklistScriptText "evidenceType"
 Assert-Contains "checklist has artifact path column" $checklistScriptText "artifactPath"
+Assert-Contains "checklist has model download step" $checklistScriptText "download-yolo-model"
 Assert-Contains "checklist requires output file evidence" $checklistScriptText "output-file"
 
 if ($RequireManualPass) {

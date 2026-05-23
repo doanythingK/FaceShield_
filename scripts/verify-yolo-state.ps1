@@ -3,13 +3,13 @@ param(
     [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv",
     [switch]$RunRepresentativeGate,
     [string]$RepresentativeQualityClip = ".tmp/srcTest-smoke/smoke-0600-3s.mp4",
-    [string]$RepresentativeYoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$RepresentativeYoloModelPath = "",
     [switch]$RunExtendedGate,
     [string]$ExtendedQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
-    [string]$ExtendedYoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$ExtendedYoloModelPath = "",
     [switch]$RunExtendedExportGate,
     [string]$ExtendedExportQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
-    [string]$ExtendedExportYoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$ExtendedExportYoloModelPath = "",
     [switch]$RunTenMinuteState,
     [switch]$RequireTenMinuteClip,
     [switch]$RequireTenMinuteRun,
@@ -76,6 +76,7 @@ $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.p
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
 $manualReadinessStateVerify = Join-Path $repo "scripts\verify-yolo-manual-readiness-state.ps1"
+$manualGateHelperStateVerify = Join-Path $repo "scripts\verify-yolo-manual-gate-helper-state.ps1"
 $guiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $representativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $extendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
@@ -103,6 +104,7 @@ Invoke-YoloVerify "full-gt-reviewed-candidate-state" $fullGtReviewedCandidateSta
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
 Invoke-YoloVerify "distribution-state" $distributionStateVerify @()
 Invoke-YoloVerify "goal-audit-state" $goalAuditStateVerify @()
+Invoke-YoloVerify "manual-gate-helper-state" $manualGateHelperStateVerify @()
 $manualReadinessArgs = @()
 if ($AllowCompletedFullGt) {
     $manualReadinessArgs += "-AllowCompletedFullGt"

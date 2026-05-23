@@ -84,6 +84,7 @@ Write-Host "[YoloManualGate] fullGtReviewCsv=$resolvedFullGtReviewCsv"
 Write-Host "[YoloManualGate] fullFrameReviewCsv=$resolvedFullFrameReviewCsv"
 Write-Host "[YoloManualGate] guiChecklistCsv=$resolvedGuiChecklistCsv"
 Write-Host "[YoloManualGate] predictionLog=$resolvedPredictionLog"
+Write-Host "[YoloManualGate] completedManualReadinessCommand=powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-manual-readiness-state.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -FullGtPredictionLog `"$PredictionLog`" -FullGtMinIou $MinIou -FullGtMaxMisses $MaxMisses -FullGtMaxFalsePositives $MaxFalsePositives -FullGtMaxLowIou $MaxLowIou -AllowCompletedFullGt -AllowCompletedGuiSmoke"
 Write-Host "[YoloManualGate] completedFullGtCommand=powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-full-gt-reviewed-state.ps1 -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -PredictionLog `"$PredictionLog`" -RequireFullFrameReview -RequireEvidence -RequireArtifacts -MinIou $MinIou -MaxMisses $MaxMisses -MaxFalsePositives $MaxFalsePositives -MaxLowIou $MaxLowIou"
 Write-Host "[YoloManualGate] completedGuiSmokeCommand=powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-gui-smoke-state.ps1 -ChecklistCsv `"$GuiChecklistCsv`" -RequireManualPass"
 
@@ -100,6 +101,18 @@ if ($VerifyReady) {
 }
 
 if ($VerifyCompleted) {
+    Invoke-RequiredVerifier "manual-readiness-completed-state" $manualReadinessVerifier @(
+        "-FullGtReviewCsv", $resolvedFullGtReviewCsv,
+        "-FullFrameReviewCsv", $resolvedFullFrameReviewCsv,
+        "-GuiChecklistCsv", $resolvedGuiChecklistCsv,
+        "-FullGtPredictionLog", $resolvedPredictionLog,
+        "-FullGtMinIou", "$MinIou",
+        "-FullGtMaxMisses", "$MaxMisses",
+        "-FullGtMaxFalsePositives", "$MaxFalsePositives",
+        "-FullGtMaxLowIou", "$MaxLowIou",
+        "-AllowCompletedFullGt",
+        "-AllowCompletedGuiSmoke"
+    )
     Invoke-RequiredVerifier "full-gt-reviewed-state" $fullGtReviewedVerifier @(
         "-ReviewCsv", $resolvedFullGtReviewCsv,
         "-FullFrameReviewCsv", $resolvedFullFrameReviewCsv,

@@ -1,6 +1,6 @@
 param(
     [string]$QualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
-    [string]$YoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$YoloModelPath = "",
     [string]$YoloModelType = "Yolo5Face",
     [int]$YoloInputSize = 640,
     [double]$YoloObjectnessThreshold = 0.12,
@@ -14,9 +14,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1")
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $resolvedQualityClip = if ([IO.Path]::IsPathRooted($QualityClip)) { $QualityClip } else { Join-Path $repo $QualityClip }
-$resolvedYoloModelPath = if ([IO.Path]::IsPathRooted($YoloModelPath)) { $YoloModelPath } else { Join-Path $repo $YoloModelPath }
+$resolvedYoloModelPath = Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType -Require
 
 if (-not (Test-Path $smoke)) {
     throw "Smoke script not found: $smoke"
@@ -49,7 +50,7 @@ $arguments = @(
     "-Source", $QualityClip,
     "-OptimizedCpuOnly",
     "-ParallelDetectorCount", "$ParallelDetectorCount",
-    "-YoloModelPath", $YoloModelPath,
+    "-YoloModelPath", $resolvedYoloModelPath,
     "-YoloModelType", $YoloModelType,
     "-YoloInputSize", "$YoloInputSize",
     "-YoloObjectnessThreshold", "$YoloObjectnessThreshold",

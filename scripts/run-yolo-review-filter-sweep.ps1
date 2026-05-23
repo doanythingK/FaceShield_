@@ -1,6 +1,6 @@
 param(
     [string[]]$Sources = @(".tmp/srcTest-smoke/smoke-0600-3s.mp4"),
-    [string]$YoloModelPath = ".tmp/models/YoloV5Face.onnx",
+    [string]$YoloModelPath = "",
     [ValidateSet("YoloV8Face", "Yolo5Face")]
     [string]$YoloModelType = "Yolo5Face",
     [int]$YoloInputSize = 640,
@@ -23,15 +23,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1")
 $smokeScript = Join-Path $PSScriptRoot "run-srcTest-smoke.ps1"
 if (-not (Test-Path $smokeScript)) {
     throw "Smoke script not found: $smokeScript"
 }
 
-$modelPath = Join-Path $repo $YoloModelPath
-if (-not (Test-Path $modelPath)) {
-    throw "YOLO model not found: $modelPath"
-}
+$modelPath = Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType -Require
 
 $outDir = Join-Path $repo ".tmp/yolo-sweep"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -118,7 +116,7 @@ function Invoke-SmokeCase {
         "-MinAvgIou", "0",
         "-MinBestIou", "0",
         "-ParallelDetectorCount", $ParallelDetectorCount.ToString([System.Globalization.CultureInfo]::InvariantCulture),
-        "-YoloModelPath", $YoloModelPath,
+        "-YoloModelPath", $modelPath,
         "-YoloModelType", $YoloModelType,
         "-YoloInputSize", $YoloInputSize.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         "-YoloObjectnessThreshold", (Format-Number $YoloObjectnessThreshold),
@@ -175,7 +173,7 @@ function Invoke-SmokeCase {
     $row = [pscustomobject]@{
         Source = $Source
         ModelType = $YoloModelType
-        ModelPath = $YoloModelPath
+        ModelPath = $modelPath
         InputSize = $YoloInputSize
         Objectness = $YoloObjectnessThreshold
         Confidence = $YoloConfidenceThreshold
