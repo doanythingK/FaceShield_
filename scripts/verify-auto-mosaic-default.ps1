@@ -24,10 +24,19 @@ param(
     [switch]$RunYoloGuiSmokeState,
     [switch]$RequireYoloGuiSmokeManualPass,
     [switch]$RunYoloManualReadinessState,
+    [switch]$AllowCompletedYoloFullGt,
+    [switch]$AllowCompletedYoloGuiSmoke,
+    [string]$YoloFullGtPredictionCsv = "",
+    [string]$YoloFullGtPredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [double]$YoloFullGtMinIou = 0.50,
+    [int]$YoloFullGtMaxMisses = 0,
+    [int]$YoloFullGtMaxFalsePositives = 0,
+    [int]$YoloFullGtMaxLowIou = 0,
     [switch]$RunYoloProfileState,
     [switch]$RunYoloConclusionState,
     [switch]$RunYoloDistributionState,
     [switch]$RunYoloCropReview,
+    [switch]$RunYoloFullGtReviewedCandidateState,
     [string]$YoloCropReviewPassCsv = ".tmp/yolo-crops/test-0900-yolo5face/crop-review.csv",
     [string]$YoloCropReviewFailCsv = ".tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv",
     [string]$YoloRepresentativeQualityClip = ".tmp/srcTest-smoke/smoke-0600-3s.mp4",
@@ -48,6 +57,7 @@ $yoloProfileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1
 $yoloConclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $yoloDistributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $yoloCropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
+$yoloFullGtReviewedCandidateStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-reviewed-candidate-state.ps1"
 $yoloRepresentativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $yoloExtendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
@@ -152,6 +162,10 @@ if ($RunYoloGuiSmokeState -and -not (Test-Path $yoloGuiSmokeStateVerify)) {
 
 if ($RunYoloManualReadinessState -and -not (Test-Path $yoloManualReadinessStateVerify)) {
     throw "YOLO manual readiness state verifier not found: $yoloManualReadinessStateVerify"
+}
+
+if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewedCandidateStateVerify)) {
+    throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
@@ -285,6 +299,11 @@ if ($RunYoloCropReview) {
     Assert-Contains "yolo-crop-review" $yoloReviewOutput "\[YoloCropReviewVerify\] all requested checks passed"
 }
 
+if ($RunYoloFullGtReviewedCandidateState -and -not $RunYoloState) {
+    $candidateOutput = Invoke-ScriptStep "yolo-full-gt-reviewed-candidate-state" $yoloFullGtReviewedCandidateStateVerify @()
+    Assert-Contains "yolo-full-gt-reviewed-candidate-state" $candidateOutput "\[YoloFullGtReviewedCandidateVerify\] all requested checks passed"
+}
+
 if ($RunYoloState) {
     $yoloStateArgs = @(
         "-YoloCropReviewPassCsv", $YoloCropReviewPassCsv,
@@ -332,6 +351,24 @@ if ($RunYoloState) {
     if ($RequireYoloGuiSmokeManualPass) {
         $yoloStateArgs += "-RequireGuiSmokeManualPass"
     }
+    if ($AllowCompletedYoloFullGt) {
+        $yoloStateArgs += "-AllowCompletedFullGt"
+    }
+    if ($AllowCompletedYoloGuiSmoke) {
+        $yoloStateArgs += "-AllowCompletedGuiSmoke"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($YoloFullGtPredictionCsv)) {
+        $yoloStateArgs += @("-FullGtPredictionCsv", $YoloFullGtPredictionCsv)
+    }
+    else {
+        $yoloStateArgs += @("-FullGtPredictionLog", $YoloFullGtPredictionLog)
+    }
+    $yoloStateArgs += @(
+        "-FullGtMinIou", "$YoloFullGtMinIou",
+        "-FullGtMaxMisses", "$YoloFullGtMaxMisses",
+        "-FullGtMaxFalsePositives", "$YoloFullGtMaxFalsePositives",
+        "-FullGtMaxLowIou", "$YoloFullGtMaxLowIou"
+    )
 
     $yoloStateOutput = Invoke-ScriptStep "yolo-state" $yoloStateVerify $yoloStateArgs
     Assert-Contains "yolo-state" $yoloStateOutput "\[YoloStateVerify\] all requested checks passed"
@@ -412,7 +449,27 @@ if ($RunYoloGuiSmokeState -and -not $RunYoloState) {
 }
 
 if ($RunYoloManualReadinessState -and -not $RunYoloState) {
-    $yoloManualReadinessOutput = Invoke-ScriptStep "yolo-manual-readiness-state" $yoloManualReadinessStateVerify @()
+    $manualReadinessArgs = @()
+    if ($AllowCompletedYoloFullGt) {
+        $manualReadinessArgs += "-AllowCompletedFullGt"
+    }
+    if ($AllowCompletedYoloGuiSmoke) {
+        $manualReadinessArgs += "-AllowCompletedGuiSmoke"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($YoloFullGtPredictionCsv)) {
+        $manualReadinessArgs += @("-FullGtPredictionCsv", $YoloFullGtPredictionCsv)
+    }
+    else {
+        $manualReadinessArgs += @("-FullGtPredictionLog", $YoloFullGtPredictionLog)
+    }
+    $manualReadinessArgs += @(
+        "-FullGtMinIou", "$YoloFullGtMinIou",
+        "-FullGtMaxMisses", "$YoloFullGtMaxMisses",
+        "-FullGtMaxFalsePositives", "$YoloFullGtMaxFalsePositives",
+        "-FullGtMaxLowIou", "$YoloFullGtMaxLowIou"
+    )
+
+    $yoloManualReadinessOutput = Invoke-ScriptStep "yolo-manual-readiness-state" $yoloManualReadinessStateVerify $manualReadinessArgs
     Assert-Contains "yolo-manual-readiness-state" $yoloManualReadinessOutput "\[YoloManualReadinessVerify\] all requested checks passed"
 }
 

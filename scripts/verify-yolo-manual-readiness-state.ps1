@@ -6,9 +6,19 @@ param(
     [string]$CandidateReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-gt-review-reviewed-candidate.csv",
     [string]$CandidateFullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review-reviewed-candidate.csv",
     [string]$GuiChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
+    [string]$GuiSmokeVerifier = "scripts\verify-yolo-gui-smoke-state.ps1",
+    [string]$FullGtReviewedVerifier = "scripts\verify-yolo-full-gt-reviewed-state.ps1",
+    [string]$FullGtPredictionCsv = "",
+    [string]$FullGtPredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [double]$FullGtMinIou = 0.50,
+    [int]$FullGtMaxMisses = 0,
+    [int]$FullGtMaxFalsePositives = 0,
+    [int]$FullGtMaxLowIou = 0,
     [string]$TenMinuteOutputPath = ".tmp\srcTest-smoke\smoke-0200-600s_blur.mp4",
     [string]$TenMinuteLogPath = ".tmp\yolo-ten-minute\yolo-ten-minute-20260523-000044.log",
-    [string]$IncompleteBaselineFullLogPath = ".tmp\yolo-ten-minute-baseline-full\yolo-ten-minute-baseline-only-20260523-032108.log"
+    [string]$IncompleteBaselineFullLogPath = ".tmp\yolo-ten-minute-baseline-full\yolo-ten-minute-baseline-only-20260523-032108.log",
+    [switch]$AllowCompletedFullGt,
+    [switch]$AllowCompletedGuiSmoke
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,12 +107,16 @@ function Assert-ManualFullGtPackage {
     $unblankLabels = @($reviewRows | Where-Object {
         $null -ne $_.PSObject.Properties["label"] -and -not [string]::IsNullOrWhiteSpace($_.label)
     })
-    if ($unblankLabels.Count -ne 0) {
+    if ($unblankLabels.Count -ne 0 -and -not $AllowCompletedFullGt) {
         throw "manual full GT review CSV should remain unreviewed until a human fills labels: $($unblankLabels.Count) labeled rows"
+    }
+    if ($unblankLabels.Count -ne 0 -and $unblankLabels.Count -ne $reviewRows.Count) {
+        throw "manual full GT review CSV is partially labeled: labeled=$($unblankLabels.Count), rows=$($reviewRows.Count)"
     }
 
     Assert-PathColumnFiles $reviewRows "cropPath" $true
-    Write-Host "[YoloManualReadinessVerify] pass full GT review rows=$($reviewRows.Count), labels=pending"
+    $labelState = if ($unblankLabels.Count -eq 0) { "pending" } else { "completed" }
+    Write-Host "[YoloManualReadinessVerify] pass full GT review rows=$($reviewRows.Count), labels=$labelState"
 
     $frameRows = @(Import-Csv $frameCsv)
     if ($frameRows.Count -lt 1) {
@@ -112,13 +126,46 @@ function Assert-ManualFullGtPackage {
     $reviewedFrameRows = @($frameRows | Where-Object {
         $null -ne $_.PSObject.Properties["missedFaceCount"] -and -not [string]::IsNullOrWhiteSpace($_.missedFaceCount)
     })
-    if ($reviewedFrameRows.Count -ne 0) {
+    if ($reviewedFrameRows.Count -ne 0 -and -not $AllowCompletedFullGt) {
         throw "manual full-frame review CSV should remain pending until a human fills missedFaceCount: $($reviewedFrameRows.Count) reviewed rows"
+    }
+    if ($reviewedFrameRows.Count -ne 0 -and $reviewedFrameRows.Count -ne $frameRows.Count) {
+        throw "manual full-frame review CSV is partially reviewed: reviewed=$($reviewedFrameRows.Count), rows=$($frameRows.Count)"
     }
 
     Assert-PathColumnFiles $frameRows "frameImagePath" $true
     Assert-PathColumnFiles $frameRows "overlayFrameImagePath" $false
-    Write-Host "[YoloManualReadinessVerify] pass full-frame review rows=$($frameRows.Count), status=pending"
+    $frameState = if ($reviewedFrameRows.Count -eq 0) { "pending" } else { "completed" }
+    Write-Host "[YoloManualReadinessVerify] pass full-frame review rows=$($frameRows.Count), status=$frameState"
+
+    if ($labelState -eq "completed" -and $frameState -eq "completed") {
+        $reviewedVerifierPath = Assert-FileNonEmpty "full GT reviewed verifier" $FullGtReviewedVerifier
+        $reviewedArgs = @(
+            "-ReviewCsv", $reviewCsv,
+            "-FullFrameReviewCsv", $frameCsv,
+            "-MinIou", "$FullGtMinIou",
+            "-MaxMisses", "$FullGtMaxMisses",
+            "-MaxFalsePositives", "$FullGtMaxFalsePositives",
+            "-MaxLowIou", "$FullGtMaxLowIou",
+            "-RequireEvidence",
+            "-RequireFullFrameReview",
+            "-RequireArtifacts"
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($FullGtPredictionCsv)) {
+            $reviewedArgs += @("-PredictionCsv", $FullGtPredictionCsv)
+        }
+        else {
+            $reviewedArgs += @("-PredictionLog", $FullGtPredictionLog)
+        }
+
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $reviewedVerifierPath @reviewedArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Full GT reviewed verifier failed with exit code $LASTEXITCODE"
+        }
+
+        Write-Host "[YoloManualReadinessVerify] pass completed full GT reviewed gate"
+    }
 }
 
 function Assert-AiCandidatePackage {
@@ -189,11 +236,20 @@ function Assert-GuiChecklistReady {
     }
 
     $filledStatuses = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_.status) })
-    if ($filledStatuses.Count -ne 0) {
+    if ($filledStatuses.Count -ne 0 -and -not $AllowCompletedGuiSmoke) {
         throw "GUI manual checklist should remain pending until real GUI smoke is performed: $($filledStatuses.Count) filled statuses"
     }
 
-    Write-Host "[YoloManualReadinessVerify] pass GUI manual checklist rows=$($rows.Count), status=pending"
+    if ($filledStatuses.Count -ne 0) {
+        $guiSmokeVerifierPath = Assert-FileNonEmpty "GUI smoke verifier" $GuiSmokeVerifier
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $guiSmokeVerifierPath -ChecklistCsv $checklist -RequireManualPass
+        if ($LASTEXITCODE -ne 0) {
+            throw "GUI smoke verifier failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $statusState = if ($filledStatuses.Count -eq 0) { "pending" } else { "completed" }
+    Write-Host "[YoloManualReadinessVerify] pass GUI manual checklist rows=$($rows.Count), status=$statusState"
 }
 
 function Assert-TenMinuteArtifactsReady {

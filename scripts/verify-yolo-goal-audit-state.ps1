@@ -1,7 +1,9 @@
 param(
     [string]$PlanPath = "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md",
     [string]$AutoMosaicDefaultVerify = "scripts/verify-auto-mosaic-default.ps1",
-    [string]$YoloStateVerify = "scripts/verify-yolo-state.ps1"
+    [string]$YoloStateVerify = "scripts/verify-yolo-state.ps1",
+    [string]$YoloManualReadinessVerify = "scripts/verify-yolo-manual-readiness-state.ps1",
+    [string]$YoloManualGateHelper = "scripts/open-yolo-manual-gates.ps1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,6 +62,8 @@ function Assert-Match {
 $plan = Read-RepoFile $PlanPath
 $autoVerify = Read-RepoFile $AutoMosaicDefaultVerify
 $yoloState = Read-RepoFile $YoloStateVerify
+$manualReadinessVerify = Read-RepoFile $YoloManualReadinessVerify
+$manualGateHelper = Read-RepoFile $YoloManualGateHelper
 
 $marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=full-gt-label,gui-smoke"
 Assert-Contains "goal audit marker" $plan $marker
@@ -119,6 +123,8 @@ Assert-Contains "full gt template verifier recorded" $plan "verify-yolo-full-gt-
 Assert-Contains "full gt review package recorded" $plan "new-yolo-full-gt-review-package.ps1"
 Assert-Contains "full gt review package verifier recorded" $plan "verify-yolo-full-gt-review-package-state.ps1"
 Assert-Contains "full gt reviewed verifier recorded" $plan "verify-yolo-full-gt-reviewed-state.ps1"
+Assert-Contains "full gt candidate verifier recorded" $plan "verify-yolo-full-gt-reviewed-candidate-state.ps1"
+Assert-Contains "full gt manual gate helper recorded" $plan "open-yolo-manual-gates.ps1"
 Assert-Contains "full gt harness selftest recorded" $plan "mode=selftest-pass-and-synthetic-data-pass"
 Assert-Contains "full gt data missing recorded" $plan "gt-data=missing"
 Assert-Contains "full gt harness metrics recorded" $plan "metrics=tp,miss,false-positive,low-iou"
@@ -151,6 +157,8 @@ Assert-Contains "manual readiness verifier recorded" $plan "verify-yolo-manual-r
 Assert-Contains "manual readiness full gt ready recorded" $plan "full-gt-review-package=ready-pending-human-labels"
 Assert-Contains "manual readiness ai candidate ready recorded" $plan "ai-reviewed-candidate=ready-not-final-gt"
 Assert-Contains "manual readiness gui checklist ready recorded" $plan "gui-checklist=ready-pending-human-smoke"
+Assert-Contains "manual readiness completed mode recorded" $plan "completed-mode=AllowCompletedFullGt+AllowCompletedGuiSmoke"
+Assert-Contains "manual readiness completed full gt gate recorded" $plan "completed-full-gt-reviewed-gate=RequireFullFrameReview+RequireArtifacts+RequireEvidence"
 Assert-Contains "manual readiness ten minute ready recorded" $plan "ten-minute-artifacts=ready-yolo-output-and-incomplete-faceonnx-baseline"
 Assert-Contains "license source marker recorded" $plan "yolo-license-source-state: checked=2026-05-23"
 Assert-Contains "license source gate recorded" $plan "source-gate=pass"
@@ -182,6 +190,11 @@ Assert-Contains "auto verifier exposes ten minute partial speed compare requirem
 Assert-Contains "auto verifier exposes gui smoke state" $autoVerify "RunYoloGuiSmokeState"
 Assert-Contains "auto verifier exposes gui smoke manual pass" $autoVerify "RequireYoloGuiSmokeManualPass"
 Assert-Contains "auto verifier exposes manual readiness state" $autoVerify "RunYoloManualReadinessState"
+Assert-Contains "auto verifier allows completed full gt" $autoVerify "AllowCompletedYoloFullGt"
+Assert-Contains "auto verifier allows completed gui smoke" $autoVerify "AllowCompletedYoloGuiSmoke"
+Assert-Contains "auto verifier exposes full gt prediction log" $autoVerify "YoloFullGtPredictionLog"
+Assert-Contains "auto verifier exposes full gt quality limits" $autoVerify "YoloFullGtMaxFalsePositives"
+Assert-Contains "auto verifier exposes full gt candidate state" $autoVerify "RunYoloFullGtReviewedCandidateState"
 Assert-Contains "yolo state exposes representative gate" $yoloState "RunRepresentativeGate"
 Assert-Contains "yolo state exposes extended gate" $yoloState "RunExtendedGate"
 Assert-Contains "yolo state exposes extended export gate" $yoloState "RunExtendedExportGate"
@@ -194,6 +207,18 @@ Assert-Contains "yolo state exposes ten minute faceonnx optimized-only requireme
 Assert-Contains "yolo state exposes ten minute partial speed compare requirement" $yoloState "RequireTenMinutePartialSpeedCompareRun"
 Assert-Contains "yolo state exposes gui smoke state" $yoloState "RunGuiSmokeState"
 Assert-Contains "yolo state exposes gui smoke manual pass" $yoloState "RequireGuiSmokeManualPass"
+Assert-Contains "yolo state allows completed full gt" $yoloState "AllowCompletedFullGt"
+Assert-Contains "yolo state allows completed gui smoke" $yoloState "AllowCompletedGuiSmoke"
+Assert-Contains "yolo state exposes full gt prediction log" $yoloState "FullGtPredictionLog"
+Assert-Contains "yolo state exposes full gt quality limits" $yoloState "FullGtMaxFalsePositives"
 Assert-Contains "yolo state runs manual readiness state" $yoloState "manual-readiness-state"
+Assert-Contains "yolo state runs full gt candidate state" $yoloState "full-gt-reviewed-candidate-state"
+Assert-Contains "manual readiness invokes reviewed full gt verifier" $manualReadinessVerify "verify-yolo-full-gt-reviewed-state.ps1"
+Assert-Contains "manual readiness requires full frame review" $manualReadinessVerify "RequireFullFrameReview"
+Assert-Contains "manual readiness requires full gt artifacts" $manualReadinessVerify "RequireArtifacts"
+Assert-Contains "manual gate helper opens review index" $manualGateHelper "ReviewIndex"
+Assert-Contains "manual gate helper verifies ready state" $manualGateHelper "VerifyReady"
+Assert-Contains "manual gate helper verifies completed state" $manualGateHelper "VerifyCompleted"
+Assert-Contains "manual gate helper requires gui manual pass" $manualGateHelper "RequireManualPass"
 
 Write-Host "[YoloGoalAuditVerify] all requested checks passed"

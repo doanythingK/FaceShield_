@@ -18,7 +18,15 @@ param(
     [switch]$RequireTenMinuteFaceOnnxOptimizedOnlyRun,
     [switch]$RequireTenMinutePartialSpeedCompareRun,
     [switch]$RunGuiSmokeState,
-    [switch]$RequireGuiSmokeManualPass
+    [switch]$RequireGuiSmokeManualPass,
+    [switch]$AllowCompletedFullGt,
+    [switch]$AllowCompletedGuiSmoke,
+    [string]$FullGtPredictionCsv = "",
+    [string]$FullGtPredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [double]$FullGtMinIou = 0.50,
+    [int]$FullGtMaxMisses = 0,
+    [int]$FullGtMaxFalsePositives = 0,
+    [int]$FullGtMaxLowIou = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,6 +71,7 @@ $fullGtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-label-sta
 $fullGtTemplateStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-template-state.ps1"
 $fullGtReviewPackageStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-review-package-state.ps1"
 $fullGtReviewedStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-reviewed-state.ps1"
+$fullGtReviewedCandidateStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-reviewed-candidate-state.ps1"
 $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
@@ -90,10 +99,30 @@ Invoke-YoloVerify "full-gt-review-package-state" $fullGtReviewPackageStateVerify
 Invoke-YoloVerify "full-gt-reviewed-state" $fullGtReviewedStateVerify @(
     "-SelfTest"
 )
+Invoke-YoloVerify "full-gt-reviewed-candidate-state" $fullGtReviewedCandidateStateVerify @()
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
 Invoke-YoloVerify "distribution-state" $distributionStateVerify @()
 Invoke-YoloVerify "goal-audit-state" $goalAuditStateVerify @()
-Invoke-YoloVerify "manual-readiness-state" $manualReadinessStateVerify @()
+$manualReadinessArgs = @()
+if ($AllowCompletedFullGt) {
+    $manualReadinessArgs += "-AllowCompletedFullGt"
+}
+if ($AllowCompletedGuiSmoke) {
+    $manualReadinessArgs += "-AllowCompletedGuiSmoke"
+}
+if (-not [string]::IsNullOrWhiteSpace($FullGtPredictionCsv)) {
+    $manualReadinessArgs += @("-FullGtPredictionCsv", $FullGtPredictionCsv)
+}
+else {
+    $manualReadinessArgs += @("-FullGtPredictionLog", $FullGtPredictionLog)
+}
+$manualReadinessArgs += @(
+    "-FullGtMinIou", "$FullGtMinIou",
+    "-FullGtMaxMisses", "$FullGtMaxMisses",
+    "-FullGtMaxFalsePositives", "$FullGtMaxFalsePositives",
+    "-FullGtMaxLowIou", "$FullGtMaxLowIou"
+)
+Invoke-YoloVerify "manual-readiness-state" $manualReadinessStateVerify $manualReadinessArgs
 if ($RunRepresentativeGate) {
     Invoke-YoloVerify "representative-gate" $representativeGateVerify @(
         "-QualityClip", $RepresentativeQualityClip,

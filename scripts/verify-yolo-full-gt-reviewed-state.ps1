@@ -278,7 +278,7 @@ function Invoke-LabelVerifier {
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $labelVerifier @args
     if ($LASTEXITCODE -ne 0) {
-        throw "Full GT label verifier failed with exit code $LASTEXITCODE"
+        exit $LASTEXITCODE
     }
 }
 
