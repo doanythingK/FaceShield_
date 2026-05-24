@@ -32,9 +32,8 @@ public partial class FramePreviewViewModel : ViewModelBase
     private readonly Stack<byte[]> _maskUndo = new();
     private int _changeStamp;
     private bool _isPlaying;
-    private bool _playbackDecodeActive;
-    private int _queuedPlaybackFrameIndex = -1;
-    private int _lastAppliedPlaybackFrameIndex = -1;
+    private CancellationTokenSource? _playbackCts;
+    private int _playbackRunId;
     private int _currentFrameIndex = -1;
     private bool _maskDirty;
     private Point? _lastDrawPoint;
@@ -448,7 +447,6 @@ public partial class FramePreviewViewModel : ViewModelBase
 
         if (_isPlaying)
         {
-            QueuePlaybackFrame(index);
             return;
         }
 
@@ -502,60 +500,145 @@ public partial class FramePreviewViewModel : ViewModelBase
         await TryLoadExactFallbackAsync(index, stamp);
     }
 
-    public void SetPlaying(bool isPlaying)
+    public void StartPlayback(
+        string videoPath,
+        int startFrameIndex,
+        double fps,
+        int totalFrames,
+        Action<int> onFrameAdvanced,
+        Action onPlaybackEnded)
     {
-        _isPlaying = isPlaying;
-        if (!isPlaying)
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            _queuedPlaybackFrameIndex = -1;
-            _lastAppliedPlaybackFrameIndex = -1;
-        }
-    }
-
-    private void QueuePlaybackFrame(int index)
-    {
-        _queuedPlaybackFrameIndex = index;
-
-        if (_playbackDecodeActive)
+            Dispatcher.UIThread.Post(() => StartPlayback(
+                videoPath,
+                startFrameIndex,
+                fps,
+                totalFrames,
+                onFrameAdvanced,
+                onPlaybackEnded));
             return;
+        }
 
-        _playbackDecodeActive = true;
-        _ = RunPlaybackDecodeLoopAsync();
+        if (string.IsNullOrWhiteSpace(videoPath) || totalFrames <= 0 || startFrameIndex < 0)
+        {
+            onPlaybackEnded();
+            return;
+        }
+
+        PersistCurrentMask();
+        Interlocked.Increment(ref _changeStamp);
+
+        _playbackCts?.Cancel();
+        _playbackCts = new CancellationTokenSource();
+
+        _isPlaying = true;
+        int runId = Interlocked.Increment(ref _playbackRunId);
+        int safeStart = Math.Clamp(startFrameIndex, 0, totalFrames - 1);
+        _currentFrameIndex = safeStart;
+
+        _ = RunSequentialPlaybackAsync(
+            runId,
+            videoPath,
+            safeStart,
+            fps,
+            totalFrames,
+            _playbackCts.Token,
+            onFrameAdvanced,
+            onPlaybackEnded);
     }
 
-    private async Task RunPlaybackDecodeLoopAsync()
+    public void StopPlayback()
     {
-        try
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            while (_isPlaying && _session != null)
+            Dispatcher.UIThread.Post(StopPlayback);
+            return;
+        }
+
+        _isPlaying = false;
+        Interlocked.Increment(ref _playbackRunId);
+
+        if (_playbackCts != null)
+        {
+            try { _playbackCts.Cancel(); }
+            catch { }
+            _playbackCts = null;
+        }
+    }
+
+    private Task RunSequentialPlaybackAsync(
+        int runId,
+        string videoPath,
+        int startFrameIndex,
+        double fps,
+        int totalFrames,
+        CancellationToken ct,
+        Action<int> onFrameAdvanced,
+        Action onPlaybackEnded)
+    {
+        return Task.Run(async () =>
+        {
+            bool endedNaturally = false;
+            double frameMs = fps > 0 ? 1000.0 / fps : 33.333;
+            var clock = Stopwatch.StartNew();
+
+            try
             {
-                int index = _queuedPlaybackFrameIndex;
-                if (index < 0)
-                    break;
+                using var extractor = new FfFrameExtractor(videoPath);
+                extractor.StartSequentialRead(startFrameIndex);
 
-                _queuedPlaybackFrameIndex = -1;
-
-                var exact = await _session.Timeline.GetExactNowAsync(index);
-                if (exact != null &&
-                    _isPlaying &&
-                    index >= _lastAppliedPlaybackFrameIndex)
+                while (!ct.IsCancellationRequested &&
+                       extractor.TryGetNextFrame(ct, out var frame, out int frameIndex))
                 {
-                    _lastAppliedPlaybackFrameIndex = index;
-                    ApplyExactFrame(exact, index);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Playback naturally cancels outstanding frame loads while stopping or seeking.
-        }
-        finally
-        {
-            _playbackDecodeActive = false;
+                    if (frame == null || frameIndex < startFrameIndex)
+                        continue;
 
-            if (_isPlaying && _queuedPlaybackFrameIndex >= 0)
-                QueuePlaybackFrame(_queuedPlaybackFrameIndex);
-        }
+                    if (totalFrames > 0 && frameIndex >= totalFrames)
+                        break;
+
+                    double targetMs = Math.Max(0, frameIndex - startFrameIndex) * frameMs;
+                    double delayMs = targetMs - clock.Elapsed.TotalMilliseconds;
+                    if (delayMs > 1)
+                        await Task.Delay(TimeSpan.FromMilliseconds(delayMs), ct);
+
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (ct.IsCancellationRequested || runId != _playbackRunId || !_isPlaying)
+                            return;
+
+                        ApplyPlaybackFrame(frame, frameIndex);
+                        onFrameAdvanced(frameIndex);
+                    });
+
+                    if (totalFrames > 0 && frameIndex >= totalFrames - 1)
+                    {
+                        endedNaturally = true;
+                        break;
+                    }
+                }
+
+                endedNaturally |= !ct.IsCancellationRequested;
+            }
+            catch (OperationCanceledException)
+            {
+                endedNaturally = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[FramePreview] sequential playback failed: {ex.Message}");
+                endedNaturally = true;
+            }
+
+            if (endedNaturally && !ct.IsCancellationRequested)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (runId == _playbackRunId && _isPlaying)
+                        onPlaybackEnded();
+                });
+            }
+        }, CancellationToken.None);
     }
 
     private void ApplyExactFrame(WriteableBitmap exact, int index, int? expectedStamp = null)
@@ -569,6 +652,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         if (expectedStamp.HasValue && expectedStamp.Value != _changeStamp)
             return;
 
+        _currentFrameIndex = index;
         FrameBitmap = exact;
         _blurredFrame = null;
         _blurredSource = null;
@@ -608,6 +692,50 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
 
         // 3) 프리뷰 갱신
+        RefreshPreview(force: true);
+    }
+
+    private void ApplyPlaybackFrame(WriteableBitmap exact, int index)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyPlaybackFrame(exact, index));
+            return;
+        }
+
+        _currentFrameIndex = index;
+        FrameBitmap = exact;
+        _blurredFrame = null;
+        _blurredSource = null;
+        _maskUndo.Clear();
+        _maskDirty = false;
+
+        WriteableBitmap? providerMask = null;
+        if (_maskProvider != null)
+            providerMask = _maskProvider.GetFinalMask(index);
+
+        if (providerMask == null ||
+            providerMask.PixelSize.Width != exact.PixelSize.Width ||
+            providerMask.PixelSize.Height != exact.PixelSize.Height)
+        {
+            MaskBitmap = null;
+            DetectionRects = Array.Empty<Rect>();
+            PreviewBitmap = exact;
+            return;
+        }
+
+        MaskBitmap = CloneBitmap(providerMask);
+
+        if (_maskProvider is FrameMaskProvider faceProvider &&
+            faceProvider.TryGetFaceMaskData(index, out var faceData))
+        {
+            DetectionRects = faceData.Faces;
+        }
+        else
+        {
+            DetectionRects = Array.Empty<Rect>();
+        }
+
         RefreshPreview(force: true);
     }
 

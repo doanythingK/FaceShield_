@@ -1,5 +1,4 @@
 using Avalonia.Input;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
@@ -71,7 +70,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private TimelineThumbnailProvider? thumbnailProvider;
 
     private bool _disposed;
-    private DispatcherTimer? _playTimer;
 
     // ─────────────────────────────
     // ScrollBar 파생 프로퍼티
@@ -302,15 +300,29 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     public void NotifyPlaybackStopped()
     {
+        if (!IsPlaying)
+            return;
+
         IsPlaying = false;
-        PlaybackStopped?.Invoke();
         PlaybackStateChanged?.Invoke(false);
+        PlaybackStopped?.Invoke();
     }
 
     public void NotifyPlaybackStarted()
     {
+        if (IsPlaying)
+            return;
+
         IsPlaying = true;
         PlaybackStateChanged?.Invoke(true);
+    }
+
+    public void SetPlaybackFrameIndex(int frameIndex)
+    {
+        if (TotalFrames <= 0)
+            return;
+
+        SelectedFrameIndex = Math.Clamp(frameIndex, 0, TotalFrames - 1);
     }
 
     public bool HandleKey(Key key, KeyModifiers modifiers)
@@ -378,46 +390,18 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     private void TogglePlay()
     {
-        EnsurePlayTimer();
-
-        if (_playTimer != null && _playTimer.IsEnabled)
+        if (IsPlaying)
         {
             StopPlay();
             return;
         }
 
-        _playTimer?.Start();
         NotifyPlaybackStarted();
     }
 
     private void StopPlay()
     {
-        if (_playTimer != null)
-            _playTimer.Stop();
-
         NotifyPlaybackStopped();
-    }
-
-    private void EnsurePlayTimer()
-    {
-        if (_playTimer != null)
-            return;
-
-        _playTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(1000.0 / Math.Max(1, Fps))
-        };
-
-        _playTimer.Tick += (_, _) =>
-        {
-            if (SelectedFrameIndex >= TotalFrames - 1)
-            {
-                StopPlay();
-                return;
-            }
-
-            SelectedFrameIndex++;
-        };
     }
     // ─────────────────────────────
     // Dispose
@@ -426,13 +410,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-
-        if (_playTimer != null)
-        {
-            try { _playTimer.Stop(); }
-            catch { }
-            _playTimer = null;
-        }
 
         if (ThumbnailProvider != null)
         {

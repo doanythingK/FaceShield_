@@ -132,7 +132,8 @@ namespace FaceShield.ViewModels.Pages
 
             FrameList.SelectedFrameIndexChanged += index =>
             {
-                FramePreview.OnFrameIndexChanged(index);
+                if (!FrameList.IsPlaying)
+                    FramePreview.OnFrameIndexChanged(index);
             };
             FrameList.PlaybackStopped += () =>
             {
@@ -141,7 +142,20 @@ namespace FaceShield.ViewModels.Pages
             };
             FrameList.PlaybackStateChanged += isPlaying =>
             {
-                FramePreview.SetPlaying(isPlaying);
+                if (isPlaying)
+                {
+                    FramePreview.StartPlayback(
+                        FrameList.VideoPath,
+                        FrameList.SelectedFrameIndex,
+                        FrameList.Fps,
+                        FrameList.TotalFrames,
+                        FrameList.SetPlaybackFrameIndex,
+                        FrameList.NotifyPlaybackStopped);
+                }
+                else
+                {
+                    FramePreview.StopPlayback();
+                }
             };
 
             ToolPanel.UndoRequested += () => FramePreview.Undo();
