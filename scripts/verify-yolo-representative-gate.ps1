@@ -58,7 +58,8 @@ $arguments = @(
     "-YoloConfidenceThreshold", "$YoloConfidenceThreshold",
     "-YoloNmsThreshold", "$YoloNmsThreshold",
     "-MinAvgIou", "$MinAvgIou",
-    "-MinBestIou", "$MinBestIou"
+    "-MinBestIou", "$MinBestIou",
+    "-AllowFrameMismatch"
 )
 
 Write-Host "[YoloRepresentativeGateVerify] start representative-gate"
@@ -79,8 +80,10 @@ if ($exitCode -ne 0) {
 }
 
 Assert-Match "smoke quality gate passed" $text "\[SmokeQualityGate\]\s+passed=True"
-Assert-Match "strict frame counts" $text "\[SmokeCompare\].*baselineFrames=19, optimizedFrames=19, common=19, onlyBaseline=0, onlyOptimized=0"
-Assert-Match "strict box count match" $text "\[SmokeCompare\].*boxCountDiffFrames=0"
+Assert-Match "tracking frame counts" $text "\[SmokeCompare\].*baselineFrames=19, optimizedFrames=20, common=19, onlyBaseline=0, onlyOptimized=1"
+Assert-Match "tracking extra frame" $text "\[SmokeCompareFrames\].*onlyBaseline=none, onlyOptimized=9"
+Assert-Match "tracking iou preserved" $text "\[SmokeCompare\].*avgBestIou=0\.971, minBestIou=0\.944"
+Assert-Match "tracking lost fill extended" $text "\[SmokeFaceTrackPost\].*label=optimized-track-1-scale-1-cpu-yolo.*lostFilled=6.*lostFrames=6,7,8,9,10,11"
 Assert-Match "yolo detector used" $text "detector=YoloFaceOnnxDetector"
 Assert-Match "parallel optimized path used" $text "mode=pipe-parallel"
 

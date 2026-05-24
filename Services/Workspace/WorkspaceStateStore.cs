@@ -310,6 +310,11 @@ namespace FaceShield.Services.Workspace
         public int? YoloV8TileColumns { get; set; }
         public int? YoloV8TileRows { get; set; }
         public double? YoloV8TileOverlapRatio { get; set; }
+        public double? YoloV8DownscaleRatio { get; set; }
+        public int? YoloV8DownscaleQuality { get; set; }
+        public bool? YoloV8AutoTrackingEnabled { get; set; }
+        public int? YoloV8AutoDetectEveryNFrames { get; set; }
+        public int? YoloV8ParallelSessionCount { get; set; }
         public string? Yolo5ModelPath { get; set; }
         public double? Yolo5ObjectnessThreshold { get; set; }
         public double? Yolo5ConfidenceThreshold { get; set; }
@@ -320,6 +325,11 @@ namespace FaceShield.Services.Workspace
         public int? Yolo5TileColumns { get; set; }
         public int? Yolo5TileRows { get; set; }
         public double? Yolo5TileOverlapRatio { get; set; }
+        public double? Yolo5DownscaleRatio { get; set; }
+        public int? Yolo5DownscaleQuality { get; set; }
+        public bool? Yolo5AutoTrackingEnabled { get; set; }
+        public int? Yolo5AutoDetectEveryNFrames { get; set; }
+        public int? Yolo5ParallelSessionCount { get; set; }
     }
 
     public sealed class WorkspaceSnapshot

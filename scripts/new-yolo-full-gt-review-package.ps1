@@ -13,7 +13,9 @@ param(
     [int]$FullFrameScaleWidth = 0,
     [bool]$IncludeCandidateFramesInFullFrameReview = $true,
     [string]$FfmpegPath = "",
-    [string]$FfprobePath = ""
+    [string]$FfprobePath = "",
+    [switch]$Force,
+    [switch]$RefreshIndexOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -269,21 +271,43 @@ function Write-ReviewIndexHtml {
     [void]$builder.AppendLine("<meta name=""viewport"" content=""width=device-width, initial-scale=1"">")
     [void]$builder.AppendLine("<title>YOLO full GT review package</title>")
     [void]$builder.AppendLine("<style>")
-    [void]$builder.AppendLine("body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#f7f7f7;color:#111}h1,h2{margin:0 0 12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:28px}.item{background:#fff;border:1px solid #ddd;padding:8px}.item img{width:100%;height:180px;object-fit:contain;background:#eee}.frame img{height:280px}.meta{font-size:12px;line-height:1.45;word-break:break-word}.muted{color:#555}")
+    [void]$builder.AppendLine("body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#f7f7f7;color:#111}h1,h2{margin:0 0 12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:28px}.item{background:#fff;border:1px solid #ddd;padding:8px}.item img{width:100%;height:180px;object-fit:contain;background:#eee}.frame img{height:280px}.meta{font-size:12px;line-height:1.45;word-break:break-word}.muted{color:#555}.rules{background:#fff;border:1px solid #ddd;margin:16px 0 24px;padding:12px}.rules ul{margin:8px 0 0 20px;padding:0}.rules li{margin:4px 0}.status{font-size:12px;font-weight:600;margin:6px 0 4px}.pending{color:#9a3412}.done{color:#166534}.template{font-family:Consolas,monospace;background:#f3f4f6;padding:4px;margin-top:4px}")
     [void]$builder.AppendLine("</style>")
     [void]$builder.AppendLine("</head>")
     [void]$builder.AppendLine("<body>")
     [void]$builder.AppendLine("<h1>YOLO full GT review package</h1>")
     [void]$builder.AppendLine("<p class=""muted"">Fill full-gt-review.csv for detection crops, then full-frame-review.csv for missed-face scan evidence.</p>")
+    [void]$builder.AppendLine("<section class=""rules"">")
+    [void]$builder.AppendLine("<h2>Input Rules</h2>")
+    [void]$builder.AppendLine("<ul>")
+    [void]$builder.AppendLine("<li><strong>full-gt-review.csv label</strong>: use <code>face</code> for a real visible face and <code>nonface</code> for detector false positives.</li>")
+    [void]$builder.AppendLine("<li><strong>reviewStatus</strong>: use <code>pass</code> only after reviewing the crop or frame, and fill <code>evidenceNotes</code>.</li>")
+    [void]$builder.AppendLine("<li><strong>full-frame-review.csv missedFaceCount</strong>: count visible faces not covered by detection crop rows.</li>")
+    [void]$builder.AppendLine("<li><strong>missedFaceRowsAdded</strong>: add the same number of manual missed-face rows to <code>full-gt-review.csv</code>.</li>")
+    [void]$builder.AppendLine("<li>Each card shows its CSV row key, current pending fields, and suggested entry pattern.</li>")
+    [void]$builder.AppendLine("</ul>")
+    [void]$builder.AppendLine("</section>")
 
     [void]$builder.AppendLine("<h2>Detection crops</h2>")
     [void]$builder.AppendLine("<div class=""grid"">")
     foreach ($row in $CropRows) {
         $relativePath = Convert-ToRelativeImagePath -BaseDir $OutputDir -Path $row.cropPath
+        $missing = @()
+        foreach ($column in @("label", "reviewStatus", "evidenceNotes")) {
+            if ($null -eq $row.PSObject.Properties[$column] -or [string]::IsNullOrWhiteSpace([string]$row.PSObject.Properties[$column].Value)) {
+                $missing += $column
+            }
+        }
+
+        $statusClass = if ($missing.Count -eq 0) { "done" } else { "pending" }
+        $statusText = if ($missing.Count -eq 0) { "complete" } else { "pending: $($missing -join ',')" }
         [void]$builder.AppendLine("<div class=""item"">")
         [void]$builder.AppendLine("<img src=""$(Convert-ToHtmlText $relativePath)"" alt=""crop frame $(Convert-ToHtmlText $row.frame)"">")
+        [void]$builder.AppendLine("<div class=""status $statusClass"">$(Convert-ToHtmlText $statusText)</div>")
         [void]$builder.AppendLine("<div class=""meta"">frame=$(Convert-ToHtmlText $row.frame), pred=$(Convert-ToHtmlText $row.sourcePredictionId), conf=$(Convert-ToHtmlText $row.sourceConfidence)</div>")
         [void]$builder.AppendLine("<div class=""meta muted"">x=$(Convert-ToHtmlText $row.x), y=$(Convert-ToHtmlText $row.y), w=$(Convert-ToHtmlText $row.w), h=$(Convert-ToHtmlText $row.h)</div>")
+        [void]$builder.AppendLine("<div class=""meta template"">CSV key: full-gt-review.csv frame=$(Convert-ToHtmlText $row.frame), sourcePredictionId=$(Convert-ToHtmlText $row.sourcePredictionId)</div>")
+        [void]$builder.AppendLine("<div class=""meta template"">Set: label=face|nonface; reviewStatus=pass; evidenceNotes=visual reason</div>")
         [void]$builder.AppendLine("</div>")
     }
     [void]$builder.AppendLine("</div>")
@@ -298,15 +322,27 @@ function Write-ReviewIndexHtml {
                 $overlayRelativePath = Convert-ToRelativeImagePath -BaseDir $OutputDir -Path $row.overlayFrameImagePath
             }
 
+            $missing = @()
+            foreach ($column in @("missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
+                if ($null -eq $row.PSObject.Properties[$column] -or [string]::IsNullOrWhiteSpace([string]$row.PSObject.Properties[$column].Value)) {
+                    $missing += $column
+                }
+            }
+
+            $statusClass = if ($missing.Count -eq 0) { "done" } else { "pending" }
+            $statusText = if ($missing.Count -eq 0) { "complete" } else { "pending: $($missing -join ',')" }
             [void]$builder.AppendLine("<div class=""item frame"">")
             if (-not [string]::IsNullOrWhiteSpace($overlayRelativePath)) {
                 [void]$builder.AppendLine("<img src=""$(Convert-ToHtmlText $overlayRelativePath)"" alt=""overlay frame $(Convert-ToHtmlText $row.frame)"">")
             }
             [void]$builder.AppendLine("<img src=""$(Convert-ToHtmlText $relativePath)"" alt=""full frame $(Convert-ToHtmlText $row.frame)"">")
+            [void]$builder.AppendLine("<div class=""status $statusClass"">$(Convert-ToHtmlText $statusText)</div>")
             [void]$builder.AppendLine("<div class=""meta"">frame=$(Convert-ToHtmlText $row.frame), detectedCandidateCount=$(Convert-ToHtmlText $row.detectedCandidateCount)</div>")
             if ($null -ne $row.PSObject.Properties["candidateSummary"] -and -not [string]::IsNullOrWhiteSpace($row.candidateSummary)) {
                 [void]$builder.AppendLine("<div class=""meta muted"">$(Convert-ToHtmlText $row.candidateSummary)</div>")
             }
+            [void]$builder.AppendLine("<div class=""meta template"">CSV key: full-frame-review.csv frame=$(Convert-ToHtmlText $row.frame)</div>")
+            [void]$builder.AppendLine("<div class=""meta template"">Set: missedFaceCount=N; missedFaceRowsAdded=N; reviewStatus=pass; evidenceNotes=frame scan reason</div>")
             [void]$builder.AppendLine("</div>")
         }
         [void]$builder.AppendLine("</div>")
@@ -319,13 +355,31 @@ function Write-ReviewIndexHtml {
     return $htmlPath
 }
 
-if ([string]::IsNullOrWhiteSpace($VideoPath)) {
+if (-not $RefreshIndexOnly -and [string]::IsNullOrWhiteSpace($VideoPath)) {
     throw "VideoPath is required."
 }
 
 $resolvedVideo = Resolve-RepoPath $VideoPath
 $resolvedTemplate = Resolve-RepoPath $TemplateCsv
 $resolvedOutputDir = Resolve-RepoPath $OutputDir
+
+if ($RefreshIndexOnly) {
+    $reviewCsv = Join-Path $resolvedOutputDir "full-gt-review.csv"
+    $frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
+    if (-not (Test-Path $reviewCsv)) {
+        throw "Review CSV not found for index refresh: $reviewCsv"
+    }
+
+    $reviewRows = @(Import-Csv $reviewCsv)
+    $frameReviewRows = @()
+    if (Test-Path $frameReviewCsv) {
+        $frameReviewRows = @(Import-Csv $frameReviewCsv)
+    }
+
+    $indexHtml = Write-ReviewIndexHtml -OutputDir $resolvedOutputDir -CropRows $reviewRows -FrameRows $frameReviewRows
+    Write-Host "[YoloFullGtReviewIndex] refreshed path=$indexHtml"
+    return
+}
 
 if (-not (Test-Path $resolvedVideo)) {
     throw "Video not found: $resolvedVideo"
@@ -359,8 +413,17 @@ if ($MaxRows -gt 0) {
     $rows = @($rows | Select-Object -First $MaxRows)
 }
 
-New-Item -ItemType Directory -Force -Path $resolvedOutputDir | Out-Null
 $cropDir = Join-Path $resolvedOutputDir "crops"
+$frameDir = Join-Path $resolvedOutputDir "frames"
+$reviewCsv = Join-Path $resolvedOutputDir "full-gt-review.csv"
+$frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
+$reviewIndex = Join-Path $resolvedOutputDir "review-index.html"
+$existingOutputs = @($reviewCsv, $frameReviewCsv, $reviewIndex, $cropDir, $frameDir) | Where-Object { Test-Path $_ }
+if ($existingOutputs.Count -gt 0 -and -not $Force) {
+    throw "Review package output already exists in $resolvedOutputDir. Pass -Force to overwrite it."
+}
+
+New-Item -ItemType Directory -Force -Path $resolvedOutputDir | Out-Null
 if (Test-Path $cropDir) {
     Remove-Item -Recurse -Force -Path $cropDir
 }
@@ -411,7 +474,6 @@ foreach ($row in $rows) {
     $index++
 }
 
-$reviewCsv = Join-Path $resolvedOutputDir "full-gt-review.csv"
 $reviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $reviewCsv
 
 $frameReviewRows = New-Object System.Collections.Generic.List[object]
@@ -428,7 +490,6 @@ if ($IncludeFullFrameReview) {
         throw "Could not determine video frame count. Pass -VideoFrameCount explicitly."
     }
 
-    $frameDir = Join-Path $resolvedOutputDir "frames"
     if (Test-Path $frameDir) {
         Remove-Item -Recurse -Force -Path $frameDir
     }
@@ -556,7 +617,6 @@ if ($IncludeFullFrameReview) {
         }) | Out-Null
     }
 
-    $frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
     $frameReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $frameReviewCsv
     Write-Host "[YoloFullGtFrameReviewPackage] wrote rows=$($frameReviewRows.Count), frameReviewCsv=$frameReviewCsv, frameDir=$frameDir"
     Write-Host "[YoloFullGtFrameReviewPackage] label instructions: set missedFaceCount, reviewStatus, and evidenceNotes after reviewing frameImagePath; add rows to full-gt-review.csv for each missed face."

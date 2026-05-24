@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using FaceShield.Models.Analysis;
@@ -16,6 +17,9 @@ namespace FaceShield.Services.FaceDetection
     {
         private const int Yolo5FaceAnchorsPerScale = 3;
         private const int Yolo5FaceFeaturesPerAnchor = 16;
+        private static readonly object StatusLock = new();
+        private static string _lastExecutionProviderLabel = "CPU";
+        private static string? _lastExecutionProviderError;
 
         private static readonly (float Width, float Height)[][] Yolo5FaceAnchors =
         {
@@ -38,29 +42,35 @@ namespace FaceShield.Services.FaceDetection
             if (!File.Exists(_options.ModelPath))
                 throw new FileNotFoundException("YOLO face ONNX model was not found.", _options.ModelPath);
 
-            var sessionOptions = new SessionOptions
-            {
-                GraphOptimizationLevel = _options.UseOrtOptimization
-                    ? GraphOptimizationLevel.ORT_ENABLE_ALL
-                    : GraphOptimizationLevel.ORT_DISABLE_ALL
-            };
-
-            if (_options.IntraOpNumThreads.HasValue)
-                sessionOptions.IntraOpNumThreads = _options.IntraOpNumThreads.Value;
-            if (_options.InterOpNumThreads.HasValue)
-                sessionOptions.InterOpNumThreads = _options.InterOpNumThreads.Value;
-            if (_options.UseParallelExecution == true)
-                sessionOptions.ExecutionMode = ExecutionMode.ORT_PARALLEL;
-
+            var sessionOptions = CreateSessionOptions();
+            string? gpuProvider = null;
             if (_options.UseGpu)
-                TryAppendGpuExecutionProvider(sessionOptions);
+                gpuProvider = TryAppendGpuExecutionProvider(sessionOptions);
 
-            _session = new InferenceSession(_options.ModelPath, sessionOptions);
+            if (_options.UseGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
+                UpdateExecutionProviderError("GPU execution provider load failed.");
+
+            try
+            {
+                _session = new InferenceSession(_options.ModelPath, sessionOptions);
+                UpdateExecutionProviderLabel(gpuProvider != null
+                    ? $"GPU:{gpuProvider}"
+                    : _options.UseGpu ? "CPU(가속 실패)" : "CPU");
+                if (gpuProvider != null || !_options.UseGpu)
+                    UpdateExecutionProviderError(null);
+            }
+            catch (Exception ex) when (_options.UseGpu)
+            {
+                _session = new InferenceSession(_options.ModelPath, CreateSessionOptions());
+                UpdateExecutionProviderLabel("CPU(가속 실패)");
+                UpdateExecutionProviderError(ex.Message);
+            }
+
             _inputName = _session.InputMetadata.Keys.First();
 
             var dims = _session.InputMetadata[_inputName].Dimensions;
-            _inputHeight = _options.InputHeight.GetValueOrDefault(ReadInputDimension(dims, 2, 640));
-            _inputWidth = _options.InputWidth.GetValueOrDefault(ReadInputDimension(dims, 3, 640));
+            _inputHeight = ResolveInputDimension(dims, 2, 640, _options.InputHeight);
+            _inputWidth = ResolveInputDimension(dims, 3, 640, _options.InputWidth);
 
             if (_options.DumpDebug)
             {
@@ -197,6 +207,38 @@ namespace FaceShield.Services.FaceDetection
         public void Dispose()
         {
             _session.Dispose();
+        }
+
+        public static string GetLastExecutionProviderLabel()
+        {
+            lock (StatusLock)
+            {
+                return _lastExecutionProviderLabel;
+            }
+        }
+
+        public static string? GetLastExecutionProviderError()
+        {
+            lock (StatusLock)
+            {
+                return _lastExecutionProviderError;
+            }
+        }
+
+        private static void UpdateExecutionProviderLabel(string label)
+        {
+            lock (StatusLock)
+            {
+                _lastExecutionProviderLabel = label;
+            }
+        }
+
+        private static void UpdateExecutionProviderError(string? error)
+        {
+            lock (StatusLock)
+            {
+                _lastExecutionProviderError = error;
+            }
         }
 
         private List<Candidate> DecodeOutputs(
@@ -979,43 +1021,224 @@ namespace FaceShield.Services.FaceDetection
             return union <= 0 ? 0 : intersection / union;
         }
 
-        private static int ReadInputDimension(IReadOnlyList<int> dims, int index, int fallback)
+        private SessionOptions CreateSessionOptions()
         {
-            if (dims.Count <= index || dims[index] <= 0)
-                return fallback;
-            return dims[index];
+            var sessionOptions = new SessionOptions
+            {
+                GraphOptimizationLevel = _options.UseOrtOptimization
+                    ? GraphOptimizationLevel.ORT_ENABLE_ALL
+                    : GraphOptimizationLevel.ORT_DISABLE_ALL
+            };
+
+            if (_options.IntraOpNumThreads.HasValue)
+                sessionOptions.IntraOpNumThreads = _options.IntraOpNumThreads.Value;
+            if (_options.InterOpNumThreads.HasValue)
+                sessionOptions.InterOpNumThreads = _options.InterOpNumThreads.Value;
+            if (_options.UseParallelExecution == true)
+                sessionOptions.ExecutionMode = ExecutionMode.ORT_PARALLEL;
+
+            return sessionOptions;
         }
 
-        private static bool TryAppendGpuExecutionProvider(SessionOptions options)
+        private static int ResolveInputDimension(IReadOnlyList<int> dims, int index, int fallback, int? configured)
         {
-            try
+            if (dims.Count > index && dims[index] > 0)
+                return dims[index];
+            return configured.GetValueOrDefault(fallback);
+        }
+
+        private static string? TryAppendGpuExecutionProvider(SessionOptions options)
+        {
+            if (OperatingSystem.IsWindows())
             {
-                if (OperatingSystem.IsWindows())
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
                 {
-                    var method = typeof(SessionOptions).GetMethods()
-                        .FirstOrDefault(m => m.Name == "AppendExecutionProvider_DML");
-                    if (method == null)
-                        return false;
-
-                    var parameters = method.GetParameters();
-                    if (parameters.Length == 0)
-                        method.Invoke(options, Array.Empty<object>());
-                    else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(int))
-                        method.Invoke(options, new object[] { 0 });
-                    else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(uint))
-                        method.Invoke(options, new object[] { 0u });
-                    else
-                        return false;
-
-                    return true;
+                    UpdateExecutionProviderLabel("GPU:DirectML");
+                    UpdateExecutionProviderError(null);
+                    return "DirectML";
                 }
+
+                UpdateExecutionProviderLabel("CPU(DirectML 로드 실패)");
+                if (GetLastExecutionProviderError() == null)
+                    UpdateExecutionProviderError(BuildDirectMlDiagnostics());
+                return null;
             }
-            catch
+
+            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
             {
-                return false;
+                UpdateExecutionProviderLabel("GPU:DirectML");
+                UpdateExecutionProviderError(null);
+                return "DirectML";
+            }
+
+            return null;
+        }
+
+        private static bool TryAppendExecutionProvider(SessionOptions options, string methodName, string assemblyName)
+        {
+            TryLoadAssemblyFromBaseDir(assemblyName);
+            TryLoadAssembly(assemblyName);
+
+            if (TryInvokeSessionOptionsMethod(options, methodName))
+                return true;
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(t => t != null).Cast<Type>().ToArray();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .Where(m => m.Name == methodName)
+                        .ToArray();
+
+                    foreach (var method in methods)
+                    {
+                        var parameters = method.GetParameters();
+                        try
+                        {
+                            if (parameters.Length == 1 && parameters[0].ParameterType == typeof(SessionOptions))
+                            {
+                                method.Invoke(null, new object?[] { options });
+                                return true;
+                            }
+
+                            if (parameters.Length == 2 && parameters[0].ParameterType == typeof(SessionOptions))
+                            {
+                                var pType = parameters[1].ParameterType;
+                                object? arg = pType == typeof(uint)
+                                    ? 0u
+                                    : pType == typeof(int)
+                                        ? 0
+                                        : null;
+
+                                if (arg == null)
+                                    continue;
+
+                                method.Invoke(null, new object?[] { options, arg });
+                                return true;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
+                            return false;
+                        }
+                    }
+                }
             }
 
             return false;
+        }
+
+        private static void TryLoadAssembly(string assemblyName)
+        {
+            if (AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == assemblyName))
+                return;
+
+            try
+            {
+                Assembly.Load(assemblyName);
+            }
+            catch
+            {
+                // Optional dependency not available.
+            }
+        }
+
+        private static void TryLoadAssemblyFromBaseDir(string assemblyName)
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, $"{assemblyName}.dll");
+            if (!File.Exists(path))
+                return;
+
+            try
+            {
+                Assembly.LoadFrom(path);
+            }
+            catch
+            {
+                // Optional dependency not available.
+            }
+        }
+
+        private static bool TryInvokeSessionOptionsMethod(SessionOptions options, string methodName)
+        {
+            var methods = typeof(SessionOptions)
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Where(m => m.Name == methodName)
+                .ToArray();
+
+            foreach (var method in methods)
+            {
+                var parameters = method.GetParameters();
+                try
+                {
+                    if (parameters.Length == 0)
+                    {
+                        method.Invoke(options, null);
+                        return true;
+                    }
+
+                    if (parameters.Length == 1)
+                    {
+                        var pType = parameters[0].ParameterType;
+                        object? arg = pType == typeof(uint)
+                            ? 0u
+                            : pType == typeof(int)
+                                ? 0
+                                : null;
+
+                        if (arg == null)
+                            continue;
+
+                        method.Invoke(options, new[] { arg });
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateExecutionProviderError(ex.InnerException?.Message ?? ex.Message);
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private static string BuildDirectMlDiagnostics()
+        {
+            string baseDir = AppContext.BaseDirectory;
+            string onnxRuntime = Path.Combine(baseDir, "onnxruntime.dll");
+            string managed = Path.Combine(baseDir, "Microsoft.ML.OnnxRuntime.dll");
+            string sharedProvider = Path.Combine(baseDir, "onnxruntime_providers_shared.dll");
+
+            bool hasManaged = File.Exists(managed);
+            bool hasOnnx = File.Exists(onnxRuntime);
+            bool hasShared = File.Exists(sharedProvider);
+
+            if (!hasManaged && !hasOnnx && !hasShared)
+                return "DirectML 파일 누락(Microsoft.ML.OnnxRuntime.dll/onnxruntime.dll/onnxruntime_providers_shared.dll)";
+            if (!hasOnnx)
+                return "onnxruntime.dll 누락";
+            if (!hasShared)
+                return "onnxruntime_providers_shared.dll 누락";
+            if (!hasManaged)
+                return "Microsoft.ML.OnnxRuntime.dll 누락";
+
+            return "DirectML 초기화 실패(드라이버/권한/런타임 확인)";
         }
 
         private readonly record struct Candidate(float X, float Y, float Width, float Height, float Score, LandmarkBounds? Landmarks);

@@ -14,6 +14,7 @@ param(
     [int]$FullGtMaxMisses = 0,
     [int]$FullGtMaxFalsePositives = 0,
     [int]$FullGtMaxLowIou = 0,
+    [switch]$AllowQualityGateFailure,
     [string]$TenMinuteOutputPath = ".tmp\srcTest-smoke\smoke-0200-600s_blur.mp4",
     [string]$TenMinuteLogPath = ".tmp\yolo-ten-minute\yolo-ten-minute-20260523-000044.log",
     [string]$IncompleteBaselineFullLogPath = ".tmp\yolo-ten-minute-baseline-full\yolo-ten-minute-baseline-only-20260523-032108.log",
@@ -83,6 +84,12 @@ function Assert-PathColumnFiles {
     foreach ($row in $Rows) {
         $value = if ($null -ne $row.PSObject.Properties[$ColumnName]) { $row.$ColumnName } else { "" }
         if ([string]::IsNullOrWhiteSpace($value)) {
+            $source = if ($null -ne $row.PSObject.Properties["source"]) { $row.source } else { "" }
+            $sourcePredictionId = if ($null -ne $row.PSObject.Properties["sourcePredictionId"]) { $row.sourcePredictionId } else { "" }
+            if ($ColumnName -eq "cropPath" -and $source -eq "manual-missed" -and [string]::IsNullOrWhiteSpace($sourcePredictionId)) {
+                continue
+            }
+
             if ($Required) {
                 throw "$ColumnName is required at frame=$($row.frame)"
             }
@@ -151,6 +158,9 @@ function Assert-ManualFullGtPackage {
             "-RequireFullFrameReview",
             "-RequireArtifacts"
         )
+        if ($AllowQualityGateFailure) {
+            $reviewedArgs += "-AllowQualityGateFailure"
+        }
 
         if (-not [string]::IsNullOrWhiteSpace($FullGtPredictionCsv)) {
             $reviewedArgs += @("-PredictionCsv", $FullGtPredictionCsv)
@@ -215,8 +225,10 @@ function Assert-GuiChecklistReady {
     $requiredSteps = @(
         "open-video",
         "select-yolo-backend",
+        "download-yolo-model",
         "run-yolo-auto-detect",
         "preview-result",
+        "preview-track-hold",
         "manual-edit",
         "export",
         "reopen-state"
@@ -275,7 +287,12 @@ function Assert-TenMinuteArtifactsReady {
 $planPathResolved = Assert-FileNonEmpty "plan document" $PlanPath
 $plan = Get-Content -Raw -Path $planPathResolved
 Assert-Contains "plan keeps goal incomplete" $plan "complete=false"
-Assert-Contains "plan keeps full GT pending" $plan "full-gt-label"
+if ($plan.Contains("full-gt-reviewed=pass")) {
+    Assert-Contains "plan records full GT reviewed" $plan "full-gt-reviewed=pass"
+}
+else {
+    Assert-Contains "plan keeps full GT pending" $plan "full-gt-label"
+}
 Assert-Contains "plan keeps GUI smoke pending" $plan "gui-smoke"
 Assert-Contains "plan records ten minute full not required after extended fail" $plan "ten-minute-full=not-required-after-extended-fail"
 

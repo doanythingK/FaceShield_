@@ -136,7 +136,9 @@ namespace FaceShield.Services.Analysis
         public int MaxTrackGap { get; init; } = 8;
         public int MaxFillGap { get; init; } = 5;
         public int MaxLostFillFrames { get; init; } = 3;
+        public int MaxConfirmedTrackHoldFrames { get; init; } = 3;
         public int ConfirmedTrackMinDetections { get; init; } = 3;
+        public bool AllowSmallTrackLostFill { get; init; } = false;
         public int DropShortTrackMaxDetections { get; init; } = 1;
         public int DropShortSmallTrackMaxDetections { get; init; } = 2;
         public float WeakConfidence { get; init; } = 0.50f;

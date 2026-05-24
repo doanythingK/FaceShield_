@@ -31,7 +31,7 @@ namespace FaceShield.ViewModels.Pages
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
         private const int DefaultAutoDetectEveryNFrames = 1;
-        private const int CurrentAutoSettingsVersion = 5;
+        private const int CurrentAutoSettingsVersion = 6;
         private const double DefaultYolo5FaceObjectnessThreshold = 0.12;
         private const double DefaultYolo5FaceConfidenceThreshold = 0.18;
         private const double DefaultYoloNmsThreshold = 0.45;
@@ -245,6 +245,11 @@ namespace FaceShield.ViewModels.Pages
             public int TileColumns { get; init; }
             public int TileRows { get; init; }
             public double TileOverlapRatio { get; init; }
+            public double DownscaleRatio { get; init; }
+            public DownscaleQuality DownscaleQuality { get; init; }
+            public bool AutoTrackingEnabled { get; init; }
+            public int AutoDetectEveryNFrames { get; init; }
+            public int ParallelSessionCount { get; init; }
 
             public static YoloProfileState CreateDefault(YoloFaceModelType modelType)
             {
@@ -259,7 +264,12 @@ namespace FaceShield.ViewModels.Pages
                     TileOnly = false,
                     TileColumns = 2,
                     TileRows = 2,
-                    TileOverlapRatio = 0.15
+                    TileOverlapRatio = 0.15,
+                    DownscaleRatio = 1.0,
+                    DownscaleQuality = DownscaleQuality.BalancedBilinear,
+                    AutoTrackingEnabled = true,
+                    AutoDetectEveryNFrames = DefaultAutoDetectEveryNFrames,
+                    ParallelSessionCount = 2
                 };
             }
         }
@@ -396,6 +406,31 @@ namespace FaceShield.ViewModels.Pages
                 Recents.Add(recent);
 
             TrimRecents();
+        }
+
+        public void ApplyStartupOptions(AppStartupOptions options)
+        {
+            if (options.DetectorBackend.HasValue)
+            {
+                var backend = AutoDetectorBackendOptions.FirstOrDefault(o => o.Backend == options.DetectorBackend.Value);
+                if (backend is not null)
+                    SelectedAutoDetectorBackendOption = backend;
+            }
+
+            if (options.YoloModelType.HasValue)
+            {
+                var modelType = YoloModelTypeOptions.FirstOrDefault(o => o.ModelType == options.YoloModelType.Value);
+                if (modelType is not null)
+                    SelectedYoloModelTypeOption = modelType;
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.YoloModelPath))
+                AutoYoloModelPath = options.YoloModelPath;
+
+            if (!string.IsNullOrWhiteSpace(options.VideoPath))
+                SelectedVideoPath = options.VideoPath;
+
+            PersistAutoSettings();
         }
 
         public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
@@ -548,6 +583,9 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnAutoTrackingEnabledChanged(bool value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             OnPropertyChanged(nameof(IsTrackingOptionsEnabled));
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
@@ -555,6 +593,9 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnAutoDetectEveryNFramesChanged(int value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
@@ -592,18 +633,27 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnSelectedParallelSessionCountChanged(int value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnSelectedDownscaleOptionChanged(DownscaleOption? value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnSelectedDownscaleQualityOptionChanged(DownscaleQualityOption? value)
         {
+            if (_isApplyingYoloProfile)
+                return;
+
             PersistAutoSettings();
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
         }
@@ -687,7 +737,12 @@ namespace FaceShield.ViewModels.Pages
                 TileOnly = AutoYoloTileOnly,
                 TileColumns = AutoYoloTileColumns,
                 TileRows = AutoYoloTileRows,
-                TileOverlapRatio = AutoYoloTileOverlapRatio
+                TileOverlapRatio = AutoYoloTileOverlapRatio,
+                DownscaleRatio = SelectedDownscaleOption?.Ratio ?? 1.0,
+                DownscaleQuality = SelectedDownscaleQualityOption?.Quality ?? DownscaleQuality.BalancedBilinear,
+                AutoTrackingEnabled = AutoTrackingEnabled,
+                AutoDetectEveryNFrames = Math.Max(1, AutoDetectEveryNFrames),
+                ParallelSessionCount = Math.Max(1, SelectedParallelSessionCount)
             };
         }
 
@@ -706,6 +761,16 @@ namespace FaceShield.ViewModels.Pages
                 AutoYoloTileColumns = profile.TileColumns;
                 AutoYoloTileRows = profile.TileRows;
                 AutoYoloTileOverlapRatio = profile.TileOverlapRatio;
+                var downscale = DownscaleOptions.FirstOrDefault(o => Math.Abs(o.Ratio - profile.DownscaleRatio) < 0.0001);
+                if (downscale != null)
+                    SelectedDownscaleOption = downscale;
+                var quality = DownscaleQualityOptions.FirstOrDefault(o => o.Quality == profile.DownscaleQuality);
+                if (quality != null)
+                    SelectedDownscaleQualityOption = quality;
+                AutoTrackingEnabled = profile.AutoTrackingEnabled;
+                AutoDetectEveryNFrames = Math.Max(1, profile.AutoDetectEveryNFrames);
+                SelectedParallelSessionCount = Math.Max(1, profile.ParallelSessionCount);
+                OnPropertyChanged(nameof(IsTrackingOptionsEnabled));
             }
             finally
             {
@@ -865,7 +930,12 @@ namespace FaceShield.ViewModels.Pages
                     TileOnly = saved.Yolo5TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
                     TileColumns = Math.Clamp(saved.Yolo5TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
                     TileRows = Math.Clamp(saved.Yolo5TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
-                    TileOverlapRatio = Math.Clamp(saved.Yolo5TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45)
+                    TileOverlapRatio = Math.Clamp(saved.Yolo5TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45),
+                    DownscaleRatio = ResolveSavedYoloDownscaleRatio(saved.Yolo5DownscaleRatio, useLegacyActiveProfile ? saved.DownscaleRatio : null, defaults.DownscaleRatio),
+                    DownscaleQuality = ResolveSavedYoloDownscaleQuality(saved.Yolo5DownscaleQuality, useLegacyActiveProfile ? saved.DownscaleQuality : null, defaults.DownscaleQuality),
+                    AutoTrackingEnabled = saved.Yolo5AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
+                    AutoDetectEveryNFrames = Math.Max(1, saved.Yolo5AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
+                    ParallelSessionCount = Math.Max(1, saved.Yolo5ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
                 };
             }
 
@@ -880,8 +950,27 @@ namespace FaceShield.ViewModels.Pages
                 TileOnly = saved.YoloV8TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
                 TileColumns = Math.Clamp(saved.YoloV8TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
                 TileRows = Math.Clamp(saved.YoloV8TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
-                TileOverlapRatio = Math.Clamp(saved.YoloV8TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45)
+                TileOverlapRatio = Math.Clamp(saved.YoloV8TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45),
+                DownscaleRatio = ResolveSavedYoloDownscaleRatio(saved.YoloV8DownscaleRatio, useLegacyActiveProfile ? saved.DownscaleRatio : null, defaults.DownscaleRatio),
+                DownscaleQuality = ResolveSavedYoloDownscaleQuality(saved.YoloV8DownscaleQuality, useLegacyActiveProfile ? saved.DownscaleQuality : null, defaults.DownscaleQuality),
+                AutoTrackingEnabled = saved.YoloV8AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
+                AutoDetectEveryNFrames = Math.Max(1, saved.YoloV8AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
+                ParallelSessionCount = Math.Max(1, saved.YoloV8ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
             };
+        }
+
+        private static double ResolveSavedYoloDownscaleRatio(double? savedValue, double? legacyValue, double defaultValue)
+        {
+            double value = savedValue ?? legacyValue ?? defaultValue;
+            return value is 1.0 or 0.75 or 0.5 or 0.33 ? value : defaultValue;
+        }
+
+        private static DownscaleQuality ResolveSavedYoloDownscaleQuality(int? savedValue, int? legacyValue, DownscaleQuality defaultValue)
+        {
+            int value = savedValue ?? legacyValue ?? (int)defaultValue;
+            return Enum.IsDefined(typeof(DownscaleQuality), value)
+                ? (DownscaleQuality)value
+                : defaultValue;
         }
 
         private void ApplySavedAutoSettings()
@@ -1002,6 +1091,11 @@ namespace FaceShield.ViewModels.Pages
                 YoloV8TileColumns = yoloV8Profile.TileColumns,
                 YoloV8TileRows = yoloV8Profile.TileRows,
                 YoloV8TileOverlapRatio = yoloV8Profile.TileOverlapRatio,
+                YoloV8DownscaleRatio = yoloV8Profile.DownscaleRatio,
+                YoloV8DownscaleQuality = (int)yoloV8Profile.DownscaleQuality,
+                YoloV8AutoTrackingEnabled = yoloV8Profile.AutoTrackingEnabled,
+                YoloV8AutoDetectEveryNFrames = yoloV8Profile.AutoDetectEveryNFrames,
+                YoloV8ParallelSessionCount = yoloV8Profile.ParallelSessionCount,
                 Yolo5ModelPath = yolo5Profile.ModelPath,
                 Yolo5ObjectnessThreshold = yolo5Profile.ObjectnessThreshold,
                 Yolo5ConfidenceThreshold = yolo5Profile.ConfidenceThreshold,
@@ -1011,7 +1105,12 @@ namespace FaceShield.ViewModels.Pages
                 Yolo5TileOnly = yolo5Profile.TileOnly,
                 Yolo5TileColumns = yolo5Profile.TileColumns,
                 Yolo5TileRows = yolo5Profile.TileRows,
-                Yolo5TileOverlapRatio = yolo5Profile.TileOverlapRatio
+                Yolo5TileOverlapRatio = yolo5Profile.TileOverlapRatio,
+                Yolo5DownscaleRatio = yolo5Profile.DownscaleRatio,
+                Yolo5DownscaleQuality = (int)yolo5Profile.DownscaleQuality,
+                Yolo5AutoTrackingEnabled = yolo5Profile.AutoTrackingEnabled,
+                Yolo5AutoDetectEveryNFrames = yolo5Profile.AutoDetectEveryNFrames,
+                Yolo5ParallelSessionCount = yolo5Profile.ParallelSessionCount
             });
         }
 
@@ -1536,8 +1635,12 @@ namespace FaceShield.ViewModels.Pages
 
             var since = now - lastAt;
             AutoStatusText = $"마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
-            var accel = FaceOnnxDetector.GetLastExecutionProviderLabel();
-            var accelError = FaceOnnxDetector.GetLastExecutionProviderError();
+            var accel = IsYoloDetectorSelected
+                ? YoloFaceOnnxDetector.GetLastExecutionProviderLabel()
+                : FaceOnnxDetector.GetLastExecutionProviderLabel();
+            var accelError = IsYoloDetectorSelected
+                ? YoloFaceOnnxDetector.GetLastExecutionProviderError()
+                : FaceOnnxDetector.GetLastExecutionProviderError();
             var decode = FfFrameExtractor.GetLastDecodeStatus();
             var decodeError = FfFrameExtractor.GetLastDecodeError();
             var decodeDiag = FfFrameExtractor.GetLastDecodeDiagnostics();

@@ -24,8 +24,13 @@ param(
     [switch]$RunYoloGuiSmokeState,
     [switch]$RequireYoloGuiSmokeManualPass,
     [switch]$RunYoloManualReadinessState,
+    [switch]$RunYoloManualGateSummary,
+    [switch]$RunYoloReadyForHumanGatesState,
+    [string]$YoloManualGateSummaryPath = ".tmp\yolo-manual-gates\manual-gate-summary.md",
+    [string]$YoloEvidenceReportPath = ".tmp\yolo-manual-gates\goal-evidence-report.md",
     [switch]$AllowCompletedYoloFullGt,
     [switch]$AllowCompletedYoloGuiSmoke,
+    [switch]$RequireYoloComplete,
     [string]$YoloFullGtPredictionCsv = "",
     [string]$YoloFullGtPredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
     [double]$YoloFullGtMinIou = 0.50,
@@ -53,6 +58,7 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $trackPostprocessVerify = Join-Path $repo "scripts\verify-face-track-postprocess.ps1"
 $yoloStateVerify = Join-Path $repo "scripts\verify-yolo-state.ps1"
+$yoloCompletionAuditVerify = Join-Path $repo "scripts\verify-yolo-completion-audit-state.ps1"
 $yoloProfileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
 $yoloConclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $yoloDistributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
@@ -64,6 +70,8 @@ $yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-ex
 $yoloTenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
 $yoloGuiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $yoloManualReadinessStateVerify = Join-Path $repo "scripts\verify-yolo-manual-readiness-state.ps1"
+$yoloManualGateHelper = Join-Path $repo "scripts\open-yolo-manual-gates.ps1"
+$yoloReadyForHumanGatesStateVerify = Join-Path $repo "scripts\verify-yolo-ready-for-human-gates-state.ps1"
 
 function Invoke-ScriptStep([string]$Name, [string]$ScriptPath, [string[]]$Arguments) {
     Write-Host "[AutoMosaicVerify] start $Name"
@@ -94,6 +102,30 @@ function Assert-Contains([string]$Name, [string]$Text, [string]$Pattern) {
     if ($Text -notmatch $Pattern) {
         throw "$Name did not contain expected pattern: $Pattern"
     }
+}
+
+if ($RequireYoloComplete) {
+    if (-not (Test-Path $yoloCompletionAuditVerify)) {
+        throw "YOLO completion audit verifier not found: $yoloCompletionAuditVerify"
+    }
+
+    $completeGuardArgs = @(
+        "-MinIou", "$YoloFullGtMinIou",
+        "-MaxMisses", "$YoloFullGtMaxMisses",
+        "-MaxFalsePositives", "$YoloFullGtMaxFalsePositives",
+        "-MaxLowIou", "$YoloFullGtMaxLowIou",
+        "-RequireComplete"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($YoloFullGtPredictionCsv)) {
+        $completeGuardArgs += @("-PredictionCsv", $YoloFullGtPredictionCsv)
+    }
+    else {
+        $completeGuardArgs += @("-PredictionLog", $YoloFullGtPredictionLog)
+    }
+
+    $completeGuardOutput = Invoke-ScriptStep "yolo-require-complete-guard" $yoloCompletionAuditVerify $completeGuardArgs
+    Assert-Contains "yolo-require-complete-guard" $completeGuardOutput "\[YoloCompletionAuditVerify\] all requested checks passed"
+    $RunYoloState = $true
 }
 
 if (-not (Test-Path (Join-Path $repo $QualityClip))) {
@@ -162,6 +194,14 @@ if ($RunYoloGuiSmokeState -and -not (Test-Path $yoloGuiSmokeStateVerify)) {
 
 if ($RunYoloManualReadinessState -and -not (Test-Path $yoloManualReadinessStateVerify)) {
     throw "YOLO manual readiness state verifier not found: $yoloManualReadinessStateVerify"
+}
+
+if ($RunYoloManualGateSummary -and -not (Test-Path $yoloManualGateHelper)) {
+    throw "YOLO manual gate helper not found: $yoloManualGateHelper"
+}
+
+if ($RunYoloReadyForHumanGatesState -and -not (Test-Path $yoloReadyForHumanGatesStateVerify)) {
+    throw "YOLO ready-for-human-gates state verifier not found: $yoloReadyForHumanGatesStateVerify"
 }
 
 if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewedCandidateStateVerify)) {
@@ -309,12 +349,18 @@ if ($RunYoloState) {
         "-YoloCropReviewPassCsv", $YoloCropReviewPassCsv,
         "-YoloCropReviewFailCsv", $YoloCropReviewFailCsv,
         "-RepresentativeQualityClip", $YoloRepresentativeQualityClip,
-        "-RepresentativeYoloModelPath", $YoloRepresentativeModelPath,
         "-ExtendedQualityClip", $YoloExtendedQualityClip,
-        "-ExtendedYoloModelPath", $YoloExtendedModelPath,
-        "-ExtendedExportQualityClip", $YoloExtendedExportQualityClip,
-        "-ExtendedExportYoloModelPath", $YoloExtendedExportModelPath
+        "-ExtendedExportQualityClip", $YoloExtendedExportQualityClip
     )
+    if (-not [string]::IsNullOrWhiteSpace($YoloRepresentativeModelPath)) {
+        $yoloStateArgs += @("-RepresentativeYoloModelPath", $YoloRepresentativeModelPath)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($YoloExtendedModelPath)) {
+        $yoloStateArgs += @("-ExtendedYoloModelPath", $YoloExtendedModelPath)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($YoloExtendedExportModelPath)) {
+        $yoloStateArgs += @("-ExtendedExportYoloModelPath", $YoloExtendedExportModelPath)
+    }
     if ($RunYoloRepresentativeGate) {
         $yoloStateArgs += "-RunRepresentativeGate"
     }
@@ -356,6 +402,9 @@ if ($RunYoloState) {
     }
     if ($AllowCompletedYoloGuiSmoke) {
         $yoloStateArgs += "-AllowCompletedGuiSmoke"
+    }
+    if ($RequireYoloComplete) {
+        $yoloStateArgs += "-RequireComplete"
     }
     if (-not [string]::IsNullOrWhiteSpace($YoloFullGtPredictionCsv)) {
         $yoloStateArgs += @("-FullGtPredictionCsv", $YoloFullGtPredictionCsv)
@@ -471,6 +520,24 @@ if ($RunYoloManualReadinessState -and -not $RunYoloState) {
 
     $yoloManualReadinessOutput = Invoke-ScriptStep "yolo-manual-readiness-state" $yoloManualReadinessStateVerify $manualReadinessArgs
     Assert-Contains "yolo-manual-readiness-state" $yoloManualReadinessOutput "\[YoloManualReadinessVerify\] all requested checks passed"
+}
+
+if ($RunYoloManualGateSummary -and -not $RunYoloState) {
+    $summaryOutput = Invoke-ScriptStep "yolo-manual-gate-summary" $yoloManualGateHelper @(
+        "-WriteSummary",
+        "-SummaryPath", $YoloManualGateSummaryPath
+    )
+    Assert-Contains "yolo-manual-gate-summary" $summaryOutput "\[YoloManualGate\] summaryPath="
+    Assert-Contains "yolo-manual-gate-summary" $summaryOutput "\[YoloManualGate\] all requested checks passed"
+}
+
+if ($RunYoloReadyForHumanGatesState) {
+    $readyOutput = Invoke-ScriptStep "yolo-ready-for-human-gates-state" $yoloReadyForHumanGatesStateVerify @(
+        "-ManualGateSummary", $YoloManualGateSummaryPath,
+        "-EvidenceReport", $YoloEvidenceReportPath
+    )
+    Assert-Contains "yolo-ready-for-human-gates-state" $readyOutput "\[YoloReadyForHumanGatesVerify\] ready=true, remaining=gui-smoke"
+    Assert-Contains "yolo-ready-for-human-gates-state" $readyOutput "\[YoloReadyForHumanGatesVerify\] all requested checks passed"
 }
 
 Write-Host "[AutoMosaicVerify] all requested checks passed"

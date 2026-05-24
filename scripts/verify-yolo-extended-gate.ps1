@@ -79,10 +79,11 @@ if ($exitCode -ne 2) {
 }
 
 Assert-Match "smoke quality gate failed" $text "\[SmokeQualityGate\]\s+passed=False"
-Assert-Match "extended frame counts" $text "\[SmokeCompare\].*baselineFrames=83, optimizedFrames=74, common=69, onlyBaseline=14, onlyOptimized=5"
-Assert-Match "extended iou regression" $text "\[SmokeCompare\].*avgBestIou=0\.778, minBestIou=0\.000"
-Assert-Match "extended coverage regression" $text "\[SmokeCompare\].*avgBaselineCoverage=0\.877, minBaselineCoverage=0\.000"
-Assert-Match "extended box count mismatch" $text "\[SmokeCompare\].*boxCountDiffFrames=14"
+Assert-Match "extended frame counts" $text "\[SmokeCompare\].*baselineFrames=83, optimizedFrames=81, common=70, onlyBaseline=13, onlyOptimized=11"
+Assert-Match "extended iou regression" $text "\[SmokeCompare\].*avgBestIou=0\.770, minBestIou=0\.000"
+Assert-Match "extended coverage regression" $text "\[SmokeCompare\].*avgBaselineCoverage=0\.868, minBaselineCoverage=0\.000"
+Assert-Match "extended box count mismatch" $text "\[SmokeCompare\].*boxCountDiffFrames=15"
+Assert-Match "tracking lost fill extended" $text "\[SmokeFaceTrackPost\].*label=optimized-track-1-scale-1-cpu-yolo.*lostFilled=24.*lostFrames=6,7,8,9,10,11,671,672,673,674,675,676,674,675,676,677,678,679,706,707,708,709,710,711"
 Assert-Match "yolo detector used" $text "detector=YoloFaceOnnxDetector"
 Assert-Match "parallel optimized path used" $text "mode=pipe-parallel"
 

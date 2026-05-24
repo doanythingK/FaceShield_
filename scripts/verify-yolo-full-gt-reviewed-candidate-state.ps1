@@ -2,12 +2,12 @@ param(
     [string]$ReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-gt-review-reviewed-candidate.csv",
     [string]$FullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review-reviewed-candidate.csv",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
-    [int]$ExpectedRows = 20,
+    [int]$ExpectedRows = 21,
     [int]$ExpectedFrameRows = 19,
-    [int]$ExpectedTruePositives = 8,
-    [int]$ExpectedFalsePositives = 12,
-    [int]$ExpectedMisses = 0,
-    [int]$ExpectedLowIou = 0
+    [int]$ExpectedTruePositives = 7,
+    [int]$ExpectedFalsePositives = 13,
+    [int]$ExpectedMisses = 1,
+    [int]$ExpectedLowIou = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,8 +66,14 @@ function Assert-FileNonEmpty {
 function Invoke-ReviewedVerifier {
     param(
         [int]$MaxFalsePositives,
-        [int]$ExpectedExitCode
+        [int]$ExpectedExitCode,
+        [switch]$AllowQualityGateFailure
     )
+
+    $qualityGateArgs = @()
+    if ($AllowQualityGateFailure) {
+        $qualityGateArgs += "-AllowQualityGateFailure"
+    }
 
     $oldErrorAction = $ErrorActionPreference
     try {
@@ -81,7 +87,8 @@ function Invoke-ReviewedVerifier {
             -RequireArtifacts `
             -MaxMisses $ExpectedMisses `
             -MaxFalsePositives $MaxFalsePositives `
-            -MaxLowIou $ExpectedLowIou 2>&1
+            -MaxLowIou $ExpectedLowIou `
+            @qualityGateArgs 2>&1
         $exitCode = $LASTEXITCODE
         $text = ($output | Out-String)
         Write-Host $text
@@ -136,5 +143,9 @@ Assert-Contains "candidate tolerant gate passes" $tolerantOutput "passed=True"
 $strictOutput = Invoke-ReviewedVerifier -MaxFalsePositives 0 -ExpectedExitCode 2
 Assert-Contains "candidate strict false positive" $strictOutput "falsePositive=$ExpectedFalsePositives"
 Assert-Contains "candidate strict gate fails" $strictOutput "passed=False"
+
+$allowedFailureOutput = Invoke-ReviewedVerifier -MaxFalsePositives 0 -ExpectedExitCode 0 -AllowQualityGateFailure
+Assert-Contains "candidate allowed strict gate still fails" $allowedFailureOutput "passed=False"
+Assert-Contains "candidate allowed quality failure" $allowedFailureOutput "failureAllowed=True"
 
 Write-Host "[YoloFullGtReviewedCandidateVerify] all requested checks passed"

@@ -441,7 +441,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             {
                 MaxTrackGap = 8,
                 MaxFillGap = 5,
-                MaxLostFillFrames = 3,
+                MaxLostFillFrames = 6,
+                MaxConfirmedTrackHoldFrames = 8,
+                AllowSmallTrackLostFill = true,
                 WeakConfidence = 0.38f,
                 StrongConfidence = 0.58f,
                 DropShortTrackMaxDetections = yoloDropShortTrackMaxDetections,
@@ -1224,11 +1226,11 @@ $yuNetTileOnlyArg = $YuNetTileOnly.IsPresent.ToString().ToLowerInvariant()
 $yuNetTileColumnsArg = $YuNetTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetTileRowsArg = $YuNetTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yuNetTileOverlapRatioArg = $YuNetTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-$resolvedYoloModelPath = if (Get-Command Resolve-YoloModelPath -ErrorAction SilentlyContinue) {
-    Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType
-}
-elseif ([string]::IsNullOrWhiteSpace($YoloModelPath)) {
+$resolvedYoloModelPath = if ([string]::IsNullOrWhiteSpace($YoloModelPath)) {
     ""
+}
+elseif (Get-Command Resolve-YoloModelPath -ErrorAction SilentlyContinue) {
+    Resolve-YoloModelPath -Repo $repo -YoloModelPath $YoloModelPath -YoloModelType $YoloModelType
 }
 else {
     (Resolve-Path $YoloModelPath).Path

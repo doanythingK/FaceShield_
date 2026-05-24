@@ -446,16 +446,14 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
-                // 자동 마스크 생성 후, 현재 프레임 다시 렌더링 (마스크 반영)
-                if (!exportAfter && FrameList.SelectedFrameIndex >= 0)
-                {
-                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
-                }
-
                 var trackPost = ApplyAutoTemporalFixes();
                 if (detector is IBgraFaceDetector bgraDetector)
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
-                ApplyAutoTemporalSmoothing();
+                if (_autoOptions.UseTracking)
+                {
+                    ApplyAutoTemporalSmoothing();
+                }
+                RefreshAutoPreviewAfterPostProcess(exportAfter);
 
                 if (!exportAfter)
                     await BuildAutoAnomaliesAsync();
@@ -637,7 +635,7 @@ namespace FaceShield.ViewModels.Pages
 
         private FaceTrackPostProcessResult ApplyAutoTemporalFixes()
         {
-            if (_autoOptions.DetectEveryNFrames > 1 && !_autoOptions.UseTracking)
+            if (!_autoOptions.UseTracking)
                 return FaceTrackPostProcessResult.Empty;
 
             var result = new FaceTrackInterpolator().Apply(
@@ -655,6 +653,14 @@ namespace FaceShield.ViewModels.Pages
             }
 
             return result;
+        }
+
+        private void RefreshAutoPreviewAfterPostProcess(bool exportAfter)
+        {
+            if (exportAfter || FrameList.SelectedFrameIndex < 0)
+                return;
+
+            FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
         }
 
         private void RefineAutoFacesWithRoi(
@@ -693,7 +699,9 @@ namespace FaceShield.ViewModels.Pages
                 {
                     MaxTrackGap = SuspiciousNoFaceMaxGap,
                     MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                    MaxLostFillFrames = 3,
+                    MaxLostFillFrames = 6,
+                    MaxConfirmedTrackHoldFrames = SuspiciousNoFaceMaxGap,
+                    AllowSmallTrackLostFill = true,
                     WeakConfidence = 0.38f,
                     StrongConfidence = 0.58f,
                     ShortTrackMaxConfidence = 0.18f,

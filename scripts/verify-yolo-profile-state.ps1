@@ -63,7 +63,7 @@ Assert-Match "backend enum exposes yolo" $backend "YoloFaceOnnx\s*=\s*3"
 Assert-Match "yolo model enum exposes v8" $modelEnum "YoloV8Face\s*=\s*0"
 Assert-Match "yolo model enum exposes yolo5" $modelEnum "Yolo5Face\s*=\s*1"
 
-Assert-Match "settings version is v5" $homeText "CurrentAutoSettingsVersion\s*=\s*5"
+Assert-Match "settings version is v6" $homeText "CurrentAutoSettingsVersion\s*=\s*6"
 Assert-Match "home detector selector keeps faceonnx" $homeText "new AutoDetectorBackendOption\(""FaceONNX"",\s*FaceDetectorBackend\.FaceOnnx\)"
 Assert-Match "home detector selector exposes yolo" $homeText "new AutoDetectorBackendOption\(""YOLO Face ONNX"",\s*FaceDetectorBackend\.YoloFaceOnnx\)"
 Assert-Match "home yolo selector exposes v8" $homeText "new YoloModelTypeOption\(""YOLOv8-Face"",\s*YoloFaceModelType\.YoloV8Face\)"
@@ -73,7 +73,7 @@ Assert-Match "home view shows yolo panel only for yolo backend" $homeViewText "I
 Assert-Match "home view binds yolo model selector" $homeViewText "ItemsSource=""\{Binding YoloModelTypeOptions\}""[\s\S]*SelectedItem=""\{Binding SelectedYoloModelTypeOption\}"""
 Assert-Match "home view binds yolo model path" $homeViewText "Text=""\{Binding AutoYoloModelPath,\s*Mode=TwoWay\}"""
 Assert-Match "home view exposes yolo model picker" $homeViewText "Click=""PickYoloModel_Click"""
-Assert-Match "home view exposes yolo model download button" $homeViewText "Command=""\{Binding DownloadYoloModelCommand\}"""
+Assert-Match "home view exposes yolo model download button in detector row" $homeViewText "SelectedItem=""\{Binding SelectedAutoDetectorBackendOption\}""[\s\S]*Command=""\{Binding DownloadYoloModelCommand\}""[\s\S]*IsVisible=""\{Binding IsYoloDetectorSelected\}"""
 Assert-Match "home view binds yolo download progress" $homeViewText "Value=""\{Binding YoloModelDownloadProgress\}"""
 Assert-Match "home view binds yolo download status" $homeViewText "Text=""\{Binding YoloModelDownloadStatus\}"""
 Assert-Match "home view code-behind calls yolo picker" $homeViewCodeBehindText "PickYoloModel_Click[\s\S]*PickYoloModelAsync"
@@ -102,12 +102,14 @@ Assert-Match "home downloads yolo model command" $homeText "DownloadYoloModelAsy
 Assert-Match "home downloads yolo5 model" $homeText "YoloV5Face\.onnx[\s\S]*huggingface\.co/hayashiLin/deepfacelivemodels/resolve/main/YoloV5Face\.onnx"
 Assert-Match "home downloads yolov8n model" $homeText "yolov8n-face-lindevs\.onnx[\s\S]*github\.com/lindevs/yolov8-face/releases/download/1\.0\.1/yolov8n-face-lindevs\.onnx"
 Assert-Match "home download does not block faceonnx default" $homeText "CanDownloadYoloModel\s*=>\s*IsYoloDetectorSelected\s*&&\s*!IsYoloModelDownloading"
+Assert-Match "home yolo status reads yolo provider" $homeText "IsYoloDetectorSelected[\s\S]*YoloFaceOnnxDetector\.GetLastExecutionProviderLabel\(\)[\s\S]*YoloFaceOnnxDetector\.GetLastExecutionProviderError\(\)"
 Assert-Match "factory uses resolved yolo model path" $homeText "var\s+yoloModelPath\s*=\s*ResolveSelectedYoloModelPath\(yoloModelType\)[\s\S]*ModelPath\s*=\s*yoloModelPath"
 Assert-Match "yolo readiness points to solution-local folder" $homeText "DefaultYoloModelDirectory"
 Assert-Match "script yolo model resolver exists" $yoloModelResolverText "function\s+Resolve-YoloModelPath"
 Assert-Match "script resolver prefers solution-local model folder" $yoloModelResolverText "Models\\Yolo"
 Assert-Match "script resolver keeps tmp model fallback" $yoloModelResolverText "\.tmp\\models"
 Assert-Match "smoke harness uses yolo model resolver" $smokeHarnessText "Resolve-YoloModelPath[\s\S]*YoloModelType"
+Assert-Match "smoke harness keeps faceonnx default without yolo path" $smokeHarnessText '\[string\]::IsNullOrWhiteSpace\(\$YoloModelPath\)[\s\S]*""'
 
 foreach ($field in @(
     "_yoloV8Profile",
@@ -126,10 +128,15 @@ foreach ($property in @(
     "NmsThreshold",
     "InputSize",
     "UseTiling",
-    "TileOnly",
-    "TileColumns",
-    "TileRows",
-    "TileOverlapRatio")) {
+        "TileOnly",
+        "TileColumns",
+        "TileRows",
+        "TileOverlapRatio",
+        "DownscaleRatio",
+        "DownscaleQuality",
+        "AutoTrackingEnabled",
+        "AutoDetectEveryNFrames",
+        "ParallelSessionCount")) {
     Assert-Match "yolo profile property $property" $homeText "public\s+.*\s+$property\s*\{"
 }
 
@@ -144,9 +151,14 @@ foreach ($prefix in @("YoloV8", "Yolo5")) {
         "TileOnly",
         "TileColumns",
         "TileRows",
-        "TileOverlapRatio")) {
+        "TileOverlapRatio",
+        "DownscaleRatio",
+        "DownscaleQuality",
+        "AutoTrackingEnabled",
+        "AutoDetectEveryNFrames",
+        "ParallelSessionCount")) {
         Assert-Match "state has $prefix$suffix" $state "public\s+.*\s+$prefix$suffix\s*\{"
-        Assert-Match "home persists $prefix$suffix" $homeText "$prefix$suffix\s*=\s*yolo"
+        Assert-Match "home persists $prefix$suffix" $homeText "$prefix$suffix\s*=\s*(?:\(int\)\s*)?yolo"
     }
 }
 
@@ -154,6 +166,15 @@ Assert-Match "legacy active yolo profile remains persisted" $state "public\s+.*\
 Assert-Match "home persists active legacy profile" $homeText "YoloModelPath\s*=\s*activeYoloProfile\.ModelPath"
 Assert-Match "home migrates saved yolo5 profile" $homeText "ReadSavedYoloProfile\(saved,\s*YoloFaceModelType\.Yolo5Face"
 Assert-Match "home migrates saved yolo v8 profile" $homeText "ReadSavedYoloProfile\(saved,\s*YoloFaceModelType\.YoloV8Face"
+Assert-Match "home captures yolo auto pipeline profile" $homeText "CaptureCurrentYoloProfile\(\)[\s\S]*DownscaleRatio\s*=\s*SelectedDownscaleOption\?\.Ratio[\s\S]*AutoTrackingEnabled\s*=\s*AutoTrackingEnabled[\s\S]*AutoDetectEveryNFrames\s*=\s*Math\.Max\(1,\s*AutoDetectEveryNFrames\)[\s\S]*ParallelSessionCount\s*=\s*Math\.Max\(1,\s*SelectedParallelSessionCount\)"
+Assert-Match "home applies yolo auto pipeline profile" $homeText "ApplyYoloProfile\(YoloProfileState\s+profile\)[\s\S]*SelectedDownscaleOption\s*=\s*downscale[\s\S]*SelectedDownscaleQualityOption\s*=\s*quality[\s\S]*AutoTrackingEnabled\s*=\s*profile\.AutoTrackingEnabled[\s\S]*AutoDetectEveryNFrames\s*=\s*Math\.Max\(1,\s*profile\.AutoDetectEveryNFrames\)[\s\S]*SelectedParallelSessionCount\s*=\s*Math\.Max\(1,\s*profile\.ParallelSessionCount\)"
+Assert-Match "home reads saved yolo5 auto pipeline profile" $homeText "ResolveSavedYoloDownscaleRatio\(saved\.Yolo5DownscaleRatio[\s\S]*ResolveSavedYoloDownscaleQuality\(saved\.Yolo5DownscaleQuality[\s\S]*Yolo5AutoTrackingEnabled[\s\S]*Yolo5AutoDetectEveryNFrames[\s\S]*Yolo5ParallelSessionCount"
+Assert-Match "home reads saved yolov8 auto pipeline profile" $homeText "ResolveSavedYoloDownscaleRatio\(saved\.YoloV8DownscaleRatio[\s\S]*ResolveSavedYoloDownscaleQuality\(saved\.YoloV8DownscaleQuality[\s\S]*YoloV8AutoTrackingEnabled[\s\S]*YoloV8AutoDetectEveryNFrames[\s\S]*YoloV8ParallelSessionCount"
+Assert-Match "home suppresses tracking restart while applying yolo profile" $homeText "OnAutoTrackingEnabledChanged[\s\S]*if\s*\(_isApplyingYoloProfile\)"
+Assert-Match "home suppresses detect interval restart while applying yolo profile" $homeText "OnAutoDetectEveryNFramesChanged[\s\S]*if\s*\(_isApplyingYoloProfile\)"
+Assert-Match "home suppresses downscale restart while applying yolo profile" $homeText "OnSelectedDownscaleOptionChanged[\s\S]*if\s*\(_isApplyingYoloProfile\)"
+Assert-Match "home suppresses downscale quality restart while applying yolo profile" $homeText "OnSelectedDownscaleQualityOptionChanged[\s\S]*if\s*\(_isApplyingYoloProfile\)"
+Assert-Match "home suppresses parallel restart while applying yolo profile" $homeText "OnSelectedParallelSessionCountChanged[\s\S]*if\s*\(_isApplyingYoloProfile\)"
 
 Assert-Match "auto options choose yolo filter profile" $homeText "FilterProfile\s*=\s*IsYoloDetectorSelected\s*\?\s*FaceFilterProfile\.Yolo\s*:\s*FaceFilterProfile\.FaceOnnx"
 Assert-Match "factory creates yolo detector options" $homeText "FaceDetectorFactoryOptions\.ForYoloFaceOnnx\(new YoloFaceOnnxDetectorOptions"
@@ -168,11 +189,15 @@ Assert-Match "yolo tile-only maps to full-frame switch" $homeText "IncludeFullFr
 Assert-Match "workspace autotune guarded to faceonnx backend" $workspaceText "_detectorFactoryOptions\.Backend\s*==\s*FaceDetectorBackend\.FaceOnnx[\s\S]*DetectorAutoTuner\.TryTune"
 Assert-Match "workspace autotune updates faceonnx options only" $workspaceText "detectorFactoryOptions\s*=\s*detectorFactoryOptions\.WithFaceOnnxOptions\(detectorOptions\)"
 Assert-Match "workspace keeps configured filter profile in run options" $workspaceText "FilterProfile\s*=\s*_autoOptions\.FilterProfile"
-Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
+Assert-Match "workspace tracking toggle gates temporal fixes" $workspaceText "private\s+FaceTrackPostProcessResult\s+ApplyAutoTemporalFixes\(\)[\s\S]*if\s*\(!_autoOptions\.UseTracking\)[\s\S]*return\s+FaceTrackPostProcessResult\.Empty"
+Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText "if\s*\(_autoOptions\.UseTracking\)\s*\{\s*ApplyAutoTemporalSmoothing\(\);\s*\}"
+Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*6[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
 Assert-Match "workspace faceonnx track profile remains default branch" $workspaceText "return\s+new\s+FaceTrackPostProcessOptions[\s\S]*WeakConfidence\s*=\s*TemporalConfidenceWeak[\s\S]*StrongConfidence\s*=\s*TemporalConfidenceStrong"
+Assert-Match "workspace refreshes preview after track postprocess" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*ApplyAutoTemporalSmoothing\(\);[\s\S]*RefreshAutoPreviewAfterPostProcess\(exportAfter\)"
 
 Assert-Match "automask yolo filter profile exists" $autoMaskGeneratorText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MinSmallFaceAreaRatio\s*\*\s*0\.70[\s\S]*2\.7[\s\S]*0\.30f[\s\S]*UseStatsFilter:\s*false"
 Assert-Match "automask faceonnx default uses stats filter" $autoMaskGeneratorText "return\s+new\s+FaceFilterSettings[\s\S]*MaxFaceAspectRatio[\s\S]*SmallFaceConfidenceMin[\s\S]*UseStatsFilter:\s*true"
+Assert-Match "automask yolo detector summary includes provider" $autoMaskGeneratorText "_detector\s+is\s+YoloFaceOnnxDetector[\s\S]*YoloFaceOnnxDetector\.GetLastExecutionProviderLabel\(\)[\s\S]*YoloFaceOnnxDetector\.GetLastExecutionProviderError\(\)"
 
 foreach ($property in @(
     "ObjectnessThreshold",
@@ -205,6 +230,10 @@ foreach ($property in @(
 }
 
 foreach ($method in @(
+    "CreateSessionOptions",
+    "ResolveInputDimension",
+    "GetLastExecutionProviderLabel",
+    "GetLastExecutionProviderError",
     "RunTiles",
     "ApplyLowConfidencePositionFilter",
     "ApplySmallAreaFilter",
@@ -212,6 +241,11 @@ foreach ($method in @(
     "TryRefineFromLandmarks")) {
     Assert-Match "yolo detector uses $method" $yoloDetectorText ([regex]::Escape($method))
 }
+
+Assert-Match "yolo fixed input size prefers model metadata" $yoloDetectorText "ResolveInputDimension\(dims,\s*2,\s*640,\s*_options\.InputHeight\)[\s\S]*ResolveInputDimension\(dims,\s*3,\s*640,\s*_options\.InputWidth\)[\s\S]*dims\[index\]\s*>\s*0[\s\S]*return\s+dims\[index\]"
+Assert-Match "yolo directml provider is loaded like faceonnx" $yoloDetectorText "TryAppendExecutionProvider\(options,\s*""AppendExecutionProvider_DML"",\s*""Microsoft\.ML\.OnnxRuntime\.DirectML""\)"
+Assert-Match "yolo gpu failure falls back to cpu session" $yoloDetectorText "catch\s*\(Exception\s+ex\)\s*when\s*\(_options\.UseGpu\)[\s\S]*new\s+InferenceSession\(_options\.ModelPath,\s*CreateSessionOptions\(\)\)"
+Assert-Match "yolo directml diagnostics recorded" $yoloDetectorText "BuildDirectMlDiagnostics[\s\S]*onnxruntime_providers_shared\.dll"
 
 foreach ($optionUse in @(
     "UseLetterboxResize",
@@ -270,6 +304,9 @@ foreach ($assignment in @(
     "UseSmallAreaFilter\s*=\s*yoloUseSmallAreaFilter",
     "SmallAreaMaxAreaRatio\s*=\s*yoloSmallAreaMaxAreaRatio",
     "DropShortTrackMaxDetections\s*=\s*yoloDropShortTrackMaxDetections",
+    "MaxLostFillFrames\s*=\s*6",
+    "MaxConfirmedTrackHoldFrames\s*=\s*8",
+    "AllowSmallTrackLostFill\s*=\s*true",
     "ShortTrackMaxConfidence\s*=\s*yoloShortTrackMaxConfidence",
     "LowerFrameTrackMaxConfidence\s*=\s*yoloLowerFrameTrackMaxConfidence")) {
     Assert-Match "smoke harness maps $assignment" $smokeHarnessText $assignment

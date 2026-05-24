@@ -1,5 +1,6 @@
 param(
-    [string]$OutputCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv"
+    [string]$OutputCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +10,10 @@ $outputPath = if ([IO.Path]::IsPathRooted($OutputCsv)) { $OutputCsv } else { Joi
 $outputDir = Split-Path -Parent $outputPath
 if (-not [string]::IsNullOrWhiteSpace($outputDir)) {
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+}
+
+if ((Test-Path $outputPath) -and -not $Force) {
+    throw "GUI smoke checklist already exists: $outputPath. Pass -Force to overwrite it."
 }
 
 $rows = @(
@@ -34,7 +39,7 @@ $rows = @(
         evidenceType = "screenshot-or-log"
         artifactPath = ""
         evidence = ""
-        notes = "Use the YOLO model download button, or confirm an already-downloaded model is detected, and verify AutoYoloModelPath is populated. artifactPath must be a non-empty image or log file."
+        notes = "Use the YOLO download button in the detector selector row, or confirm an already-downloaded model is detected, and verify AutoYoloModelPath is populated. artifactPath must be a non-empty image or log file."
     },
     [pscustomobject]@{
         stepId = "run-yolo-auto-detect"
@@ -51,6 +56,14 @@ $rows = @(
         artifactPath = ""
         evidence = ""
         notes = "Scrub or play preview frames and confirm detected faces are masked without obvious flicker on the tested clip. artifactPath must be a non-empty image or video file."
+    },
+    [pscustomobject]@{
+        stepId = "preview-track-hold"
+        status = ""
+        evidenceType = "recording"
+        artifactPath = ""
+        evidence = ""
+        notes = "Play a segment where a previously masked face is briefly missed by the detector and confirm tracking keeps the mosaic visible without off/on flicker. artifactPath must be a non-empty video file."
     },
     [pscustomobject]@{
         stepId = "manual-edit"

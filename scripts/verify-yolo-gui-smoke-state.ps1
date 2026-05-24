@@ -2,6 +2,9 @@ param(
     [string]$ChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
     [string]$HomeViewModel = "ViewModels\Pages\HomePageViewModel.cs",
     [string]$HomeView = "Views\Pages\HomePageView.axaml",
+    [string]$MainWindowViewModel = "ViewModels\MainWindowViewModel.cs",
+    [string]$AppCodeBehind = "App.axaml.cs",
+    [string]$AppStartupOptions = "Models\AppStartupOptions.cs",
     [string]$WorkspaceViewModel = "ViewModels\Pages\WorkspaceViewModel.cs",
     [string]$ToolPanelViewModel = "ViewModels\Workspace\ToolPanelViewModel.cs",
     [string]$StateStore = "Services\Workspace\WorkspaceStateStore.cs",
@@ -68,6 +71,7 @@ function Get-AllowedArtifactExtensions {
     switch ($EvidenceType) {
         "screenshot" { return @(".png", ".jpg", ".jpeg", ".webp", ".bmp") }
         "screenshot-or-recording" { return @(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".mp4", ".mov", ".mkv", ".avi", ".webm") }
+        "recording" { return @(".mp4", ".mov", ".mkv", ".avi", ".webm") }
         "screenshot-or-log" { return @(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".log", ".txt") }
         "output-file" { return @(".mp4", ".mov", ".mkv", ".avi", ".webm") }
         default { throw "Unsupported evidenceType: $EvidenceType" }
@@ -173,6 +177,9 @@ function Assert-ManualChecklist {
 
 $homeText = Read-RepoFile $HomeViewModel
 $homeViewText = Read-RepoFile $HomeView
+$mainWindowText = Read-RepoFile $MainWindowViewModel
+$appText = Read-RepoFile $AppCodeBehind
+$startupOptionsText = Read-RepoFile $AppStartupOptions
 $workspaceText = Read-RepoFile $WorkspaceViewModel
 $toolPanelText = Read-RepoFile $ToolPanelViewModel
 $stateText = Read-RepoFile $StateStore
@@ -181,10 +188,18 @@ Assert-Match "home exposes open workflow" $homeText "StartWorkspace|OpenVideo|Pi
 Assert-Match "home exposes yolo backend selector" $homeText "YOLO Face ONNX[\s\S]*FaceDetectorBackend\.YoloFaceOnnx"
 Assert-Match "home exposes yolo model path" $homeText "AutoYoloModelPath"
 Assert-Match "home view exposes yolo picker" $homeViewText "PickYoloModel_Click"
-Assert-Match "home view exposes yolo downloader" $homeViewText "DownloadYoloModelCommand"
+Assert-Match "home view exposes yolo downloader in detector row" $homeViewText "SelectedItem=""\{Binding SelectedAutoDetectorBackendOption\}""[\s\S]*DownloadYoloModelCommand[\s\S]*IsVisible=""\{Binding IsYoloDetectorSelected\}"""
 Assert-Match "home view binds yolo download progress" $homeViewText "YoloModelDownloadProgress"
 Assert-Match "home downloads yolo model" $homeText "DownloadYoloModelAsync[\s\S]*YoloModelDownloadStatus"
 Assert-Match "home stores downloaded yolo model outside repo" $homeText "GetYoloModelDownloadDirectory[\s\S]*LocalApplicationData[\s\S]*FaceShield"
+Assert-Match "home applies startup smoke options" $homeText "ApplyStartupOptions[\s\S]*SelectedAutoDetectorBackendOption[\s\S]*SelectedYoloModelTypeOption[\s\S]*AutoYoloModelPath[\s\S]*SelectedVideoPath"
+Assert-Match "app forwards desktop startup args" $appText "new MainWindowViewModel\(desktop\.Args\)"
+Assert-Match "main window supports startup manual open" $mainWindowText "OpenStartupWorkspaceAsync[\s\S]*OpenManualWorkspaceCommand\.ExecuteAsync"
+Assert-Match "main window supports startup auto open" $mainWindowText "OpenStartupWorkspaceAsync[\s\S]*OpenAutoWorkspaceCommand\.ExecuteAsync"
+Assert-Contains "startup options support yolo smoke preset" $startupOptionsText "--yolo-smoke"
+Assert-Contains "startup options use srcTest smoke video" $startupOptionsText "srcTest/260102_jp_10.mp4"
+Assert-Contains "startup options use local yolo smoke model" $startupOptionsText ".tmp/models/YoloV5Face.onnx"
+Assert-Contains "startup options support auto open" $startupOptionsText "--open-auto"
 Assert-Match "workspace runs auto detect" $workspaceText "RunAutoMaskAsync|RunAutoAsync"
 Assert-Match "workspace creates yolo detector factory" $workspaceText "FaceDetectorFactory"
 Assert-Match "workspace exports video" $workspaceText "VideoExportService[\s\S]*Export"
@@ -196,12 +211,38 @@ Assert-Match "state stores yolo model path" $stateText "YoloModelPath"
 Assert-Match "state stores yolo5 profile" $stateText "Yolo5ModelPath"
 Assert-Match "state stores yolo v8 profile" $stateText "YoloV8ModelPath"
 
+$checklistScript = Join-Path $repo "scripts\new-yolo-gui-smoke-checklist.ps1"
+if (-not (Test-Path $checklistScript)) {
+    throw "GUI smoke checklist script not found: $checklistScript"
+}
+$evidencePrepScript = Join-Path $repo "scripts\prepare-yolo-gui-smoke-evidence.ps1"
+if (-not (Test-Path $evidencePrepScript)) {
+    throw "GUI smoke evidence prep script not found: $evidencePrepScript"
+}
+$evidencePrepText = Get-Content -Raw -Path $evidencePrepScript
+Assert-Contains "checklist evidence prep keeps manual status blank" $evidencePrepText "does not set status=pass or evidence"
+Assert-Contains "checklist evidence prep records track hold recording" $evidencePrepText "preview-track-hold.mp4"
+Assert-Contains "checklist evidence prep records setter command section" $evidencePrepText "Evidence Setter Commands"
+Assert-Contains "checklist evidence prep records open-video setter" $evidencePrepText "-StepId open-video"
+Assert-Contains "checklist evidence prep records track-hold setter" $evidencePrepText "-StepId preview-track-hold"
+Assert-Contains "checklist evidence prep records reopen-state setter" $evidencePrepText "-StepId reopen-state"
+
+$evidenceSetScript = Join-Path $repo "scripts\set-yolo-gui-smoke-evidence.ps1"
+if (-not (Test-Path $evidenceSetScript)) {
+    throw "GUI smoke evidence setter script not found: $evidenceSetScript"
+}
+$evidenceSetText = Get-Content -Raw -Path $evidenceSetScript
+Assert-Contains "checklist evidence setter validates artifacts" $evidenceSetText "Artifact does not exist"
+Assert-Contains "checklist evidence setter rejects wrong artifact type" $evidenceSetText "extension does not match evidenceType"
+Assert-Contains "checklist evidence setter requires evidence text" $evidenceSetText "Evidence text is required"
+
 $requiredSteps = @(
     "open-video",
     "select-yolo-backend",
     "download-yolo-model",
     "run-yolo-auto-detect",
     "preview-result",
+    "preview-track-hold",
     "manual-edit",
     "export",
     "reopen-state"
@@ -213,6 +254,7 @@ $requiredEvidenceTypes = @{
     "download-yolo-model" = @("screenshot-or-log")
     "run-yolo-auto-detect" = @("screenshot-or-log")
     "preview-result" = @("screenshot-or-recording")
+    "preview-track-hold" = @("recording")
     "manual-edit" = @("screenshot-or-recording")
     "export" = @("output-file")
     "reopen-state" = @("screenshot-or-recording")
@@ -229,6 +271,7 @@ if ($SelfTest) {
         "download-yolo-model" = "download-yolo-model.log"
         "run-yolo-auto-detect" = "run-yolo-auto-detect.log"
         "preview-result" = "preview-result.mp4"
+        "preview-track-hold" = "preview-track-hold.mp4"
         "manual-edit" = "manual-edit.png"
         "export" = "export.mp4"
         "reopen-state" = "reopen-state.png"
@@ -280,20 +323,50 @@ if ($SelfTest) {
         Assert-ManualChecklist -Path $failStatusChecklist -Steps $requiredSteps -EvidenceTypes $requiredEvidenceTypes
     } "step is not pass"
 
+    $noClobberChecklist = Join-Path $selfTestDir "manual-smoke-checklist-no-clobber.csv"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checklistScript -OutputCsv $noClobberChecklist -Force | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "GUI checklist no-clobber fixture creation failed with exit code $LASTEXITCODE"
+    }
+
+    $oldErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $noClobberOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checklistScript -OutputCsv $noClobberChecklist 2>&1
+        $noClobberExitCode = $LASTEXITCODE
+        $noClobberText = ($noClobberOutput | Out-String)
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+    if ($noClobberExitCode -eq 0 -or $noClobberText -notlike "*Pass -Force to overwrite it.*") {
+        throw "GUI checklist no-clobber selftest failed. exitCode=$noClobberExitCode output=$noClobberText"
+    }
+    Write-Host "[YoloGuiSmokeVerify] pass checklist no-clobber selftest"
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checklistScript -OutputCsv $noClobberChecklist -Force | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "GUI checklist force overwrite selftest failed with exit code $LASTEXITCODE"
+    }
+    Write-Host "[YoloGuiSmokeVerify] pass checklist force overwrite selftest"
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $evidenceSetScript -SelfTest | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "GUI evidence setter selftest failed with exit code $LASTEXITCODE"
+    }
+    Write-Host "[YoloGuiSmokeVerify] pass checklist evidence setter selftest"
+
     $ChecklistCsv = $selfTestChecklist
     $RequireManualPass = $true
     Write-Host "[YoloGuiSmokeVerify] selftest checklist=$selfTestChecklist"
-}
-
-$checklistScript = Join-Path $repo "scripts\new-yolo-gui-smoke-checklist.ps1"
-if (-not (Test-Path $checklistScript)) {
-    throw "GUI smoke checklist script not found: $checklistScript"
 }
 
 $checklistScriptText = Get-Content -Raw -Path $checklistScript
 Assert-Contains "checklist has evidence type column" $checklistScriptText "evidenceType"
 Assert-Contains "checklist has artifact path column" $checklistScriptText "artifactPath"
 Assert-Contains "checklist has model download step" $checklistScriptText "download-yolo-model"
+Assert-Contains "checklist has anti-flicker tracking step" $checklistScriptText "preview-track-hold"
+Assert-Contains "checklist records detector miss tracking hold" $checklistScriptText "briefly missed by the detector"
 Assert-Contains "checklist requires output file evidence" $checklistScriptText "output-file"
 
 if ($RequireManualPass) {

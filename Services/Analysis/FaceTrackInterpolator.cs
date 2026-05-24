@@ -325,7 +325,14 @@ namespace FaceShield.Services.Analysis
                     var previous = detections[i - 1];
                     var next = detections[i];
                     int gap = next.FrameIndex - previous.FrameIndex - 1;
-                    if (gap <= 0 || gap > options.MaxFillGap)
+                    if (gap <= 0)
+                        continue;
+
+                    int maxFillGap = options.MaxFillGap;
+                    if (IsConfirmedTrack(track, options))
+                        maxFillGap = Math.Max(maxFillGap, options.MaxConfirmedTrackHoldFrames);
+
+                    if (gap > maxFillGap)
                         continue;
 
                     if (!CanBridge(previous.Bounds, next.Bounds, gap, options))
@@ -387,11 +394,12 @@ namespace FaceShield.Services.Analysis
             foreach (var track in tracks)
             {
                 if (removedTrackIds.Contains(track.Id) ||
-                    track.DetectionCount < options.ConfirmedTrackMinDetections ||
-                    track.MaxConfidence < options.StrongConfidence)
+                    !IsConfirmedTrack(track, options))
                 {
                     continue;
                 }
+                if (!options.AllowSmallTrackLostFill && IsSmallTrack(track, options))
+                    continue;
 
                 var detections = track.Detections;
                 var last = detections[^1];
@@ -446,6 +454,10 @@ namespace FaceShield.Services.Analysis
 
             return filled;
         }
+
+        private static bool IsConfirmedTrack(FaceTrack track, FaceTrackPostProcessOptions options)
+            => track.DetectionCount >= options.ConfirmedTrackMinDetections &&
+                track.MaxConfidence >= options.StrongConfidence;
 
         private static bool CanBridge(Rect previous, Rect next, int gap, FaceTrackPostProcessOptions options)
         {

@@ -86,6 +86,8 @@
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
+            <Button Content="YOLO 다운로드"
+                    Command="{Binding DownloadYoloModelCommand}"/>
           </StackPanel>
 
           <StackPanel Spacing="6" IsVisible="{Binding IsYoloDetectorSelected}">
@@ -107,8 +109,6 @@
                        Text="{Binding AutoYoloModelPath, Mode=TwoWay}"
                        Watermark="*.onnx"/>
               <Button Content="찾기" Click="PickYoloModel_Click"/>
-              <Button Content="다운로드"
-                      Command="{Binding DownloadYoloModelCommand}"/>
             </StackPanel>
             <StackPanel Spacing="4">
               <ProgressBar Height="8" Minimum="0" Maximum="100"

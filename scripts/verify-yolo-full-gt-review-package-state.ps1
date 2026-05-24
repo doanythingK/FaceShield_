@@ -3,7 +3,8 @@ param(
     [string]$TemplateCsv = ".tmp\yolo-full-gt\yolo-detection-smoke-template.csv",
     [string]$OutputDir = ".tmp\yolo-full-gt\review-package-smoke",
     [int]$ExpectedRows = 20,
-    [int]$ExpectedFullFrameRows = 19
+    [int]$ExpectedFullFrameRows = 19,
+    [switch]$ForceRegenerate
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,9 +39,32 @@ function Assert-Column {
     Write-Host "[YoloFullGtReviewPackageVerify] pass column $Name"
 }
 
+function Assert-Contains {
+    param(
+        [string]$Name,
+        [string]$Text,
+        [string]$Expected
+    )
+
+    if (-not $Text.Contains($Expected)) {
+        throw "$Name missing text: $Expected"
+    }
+
+    Write-Host "[YoloFullGtReviewPackageVerify] pass $Name"
+}
+
 if (-not (Test-Path $packageScript)) {
     throw "Review package script not found: $packageScript"
 }
+
+$packageScriptText = Get-Content -Raw -Path $packageScript
+Assert-Contains "package generator exposes Force" $packageScriptText "[switch]`$Force"
+Assert-Contains "package generator exposes RefreshIndexOnly" $packageScriptText "[switch]`$RefreshIndexOnly"
+Assert-Contains "package generator protects existing output" $packageScriptText "Pass -Force to overwrite it."
+Assert-Contains "package generator review index input rules" $packageScriptText "Input Rules"
+Assert-Contains "package generator review index label rule" $packageScriptText "full-gt-review.csv label"
+Assert-Contains "package generator review index csv key" $packageScriptText "CSV key:"
+Assert-Contains "package generator review index pending fields" $packageScriptText "pending:"
 
 $resolvedVideo = Resolve-RepoPath $VideoPath
 $resolvedTemplate = Resolve-RepoPath $TemplateCsv
@@ -54,26 +78,71 @@ if (-not (Test-Path $resolvedTemplate)) {
     throw "Template CSV not found: $resolvedTemplate"
 }
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
-    -VideoPath $resolvedVideo `
-    -TemplateCsv $resolvedTemplate `
-    -OutputDir $resolvedOutputDir `
-    -MaxRows $ExpectedRows `
-    -IncludeFullFrameReview `
-    -MaxFullFrameRows $ExpectedFullFrameRows `
-    -FullFrameScaleWidth 1280
-if ($LASTEXITCODE -ne 0) {
-    throw "Review package generation failed with exit code $LASTEXITCODE"
+$noClobberDir = Join-Path $repo ".tmp\yolo-full-gt\review-package-no-clobber-selftest"
+New-Item -ItemType Directory -Force -Path $noClobberDir | Out-Null
+Set-Content -Encoding UTF8 -Path (Join-Path $noClobberDir "full-gt-review.csv") -Value "sentinel"
+Set-Content -Encoding UTF8 -Path (Join-Path $noClobberDir "full-frame-review.csv") -Value "sentinel"
+Set-Content -Encoding UTF8 -Path (Join-Path $noClobberDir "review-index.html") -Value "sentinel"
+$oldErrorAction = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    $noClobberOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
+        -VideoPath $resolvedVideo `
+        -TemplateCsv $resolvedTemplate `
+        -OutputDir $noClobberDir `
+        -MaxRows 1 `
+        -IncludeFullFrameReview 2>&1
+    $noClobberExitCode = $LASTEXITCODE
+    $noClobberText = ($noClobberOutput | Out-String)
 }
+finally {
+    $ErrorActionPreference = $oldErrorAction
+}
+if ($noClobberExitCode -eq 0) {
+    throw "Review package generator unexpectedly overwrote an existing package without -Force."
+}
+Assert-Contains "package generator no-clobber selftest" $noClobberText "Pass -Force to overwrite it."
 
 $reviewCsv = Join-Path $resolvedOutputDir "full-gt-review.csv"
+$frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
+$reviewIndex = Join-Path $resolvedOutputDir "review-index.html"
+$packageExists = (Test-Path $reviewCsv) -and (Test-Path $frameReviewCsv) -and (Test-Path $reviewIndex)
+$generatedPackage = $false
+if ($ForceRegenerate -or -not $packageExists) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
+        -VideoPath $resolvedVideo `
+        -TemplateCsv $resolvedTemplate `
+        -OutputDir $resolvedOutputDir `
+        -MaxRows $ExpectedRows `
+        -IncludeFullFrameReview `
+        -MaxFullFrameRows $ExpectedFullFrameRows `
+        -FullFrameScaleWidth 1280 `
+        -Force
+    if ($LASTEXITCODE -ne 0) {
+        throw "Review package generation failed with exit code $LASTEXITCODE"
+    }
+
+    $generatedPackage = $true
+}
+else {
+    Write-Host "[YoloFullGtReviewPackageVerify] using existing package: $resolvedOutputDir"
+}
+
 if (-not (Test-Path $reviewCsv)) {
     throw "Review CSV not found: $reviewCsv"
 }
 
 $rows = @(Import-Csv $reviewCsv)
-if ($rows.Count -ne $ExpectedRows) {
-    throw "Review CSV row count expected $ExpectedRows but got $($rows.Count)"
+$predictionRows = @($rows | Where-Object {
+    $null -ne $_.PSObject.Properties["sourcePredictionId"] -and
+    -not [string]::IsNullOrWhiteSpace($_.sourcePredictionId)
+})
+$manualMissRows = @($rows | Where-Object {
+    $null -ne $_.PSObject.Properties["source"] -and
+    $_.source -eq "manual-missed"
+})
+if ($predictionRows.Count -ne $ExpectedRows) {
+    throw "Review CSV prediction row count expected $ExpectedRows but got $($predictionRows.Count); totalRows=$($rows.Count), manualMissRows=$($manualMissRows.Count)"
 }
 
 $first = $rows[0]
@@ -81,7 +150,7 @@ foreach ($column in @("frame", "gtId", "label", "x", "y", "w", "h", "sourcePredi
     Assert-Column $first $column
 }
 
-foreach ($row in $rows) {
+foreach ($row in $predictionRows) {
     if (-not (Test-Path $row.cropPath)) {
         throw "Crop image not found: $($row.cropPath)"
     }
@@ -93,11 +162,10 @@ foreach ($row in $rows) {
 }
 
 $nonBlankLabels = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_.label) })
-if ($nonBlankLabels.Count -ne 0) {
+if ($generatedPackage -and $nonBlankLabels.Count -ne 0) {
     throw "Generated review package should not pre-label rows; nonBlankLabels=$($nonBlankLabels.Count)"
 }
 
-$frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
 if (-not (Test-Path $frameReviewCsv)) {
     throw "Full-frame review CSV not found: $frameReviewCsv"
 }
@@ -149,17 +217,27 @@ $reviewedFrameRows = @($frameRows | Where-Object {
     -not [string]::IsNullOrWhiteSpace($_.reviewStatus) -or
     -not [string]::IsNullOrWhiteSpace($_.evidenceNotes)
 })
-if ($reviewedFrameRows.Count -ne 0) {
+if ($generatedPackage -and $reviewedFrameRows.Count -ne 0) {
     throw "Generated full-frame review package should not pre-review rows; reviewedFrameRows=$($reviewedFrameRows.Count)"
 }
 
-$reviewIndex = Join-Path $resolvedOutputDir "review-index.html"
 if (-not (Test-Path $reviewIndex)) {
     throw "Review index not found: $reviewIndex"
 }
 
 $reviewIndexText = Get-Content -Raw -Path $reviewIndex
-foreach ($text in @("Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv", "-overlay.png", "pred=")) {
+if (-not $reviewIndexText.Contains("Input Rules") -or -not $reviewIndexText.Contains("CSV key:")) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
+        -OutputDir $resolvedOutputDir `
+        -RefreshIndexOnly
+    if ($LASTEXITCODE -ne 0) {
+        throw "Review index refresh failed with exit code $LASTEXITCODE"
+    }
+
+    $reviewIndexText = Get-Content -Raw -Path $reviewIndex
+}
+
+foreach ($text in @("Input Rules", "full-gt-review.csv label", "missedFaceRowsAdded", "CSV key:", "pending:", "Set: label=face|nonface", "Set: missedFaceCount=N", "Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv", "-overlay.png", "pred=")) {
     if (-not $reviewIndexText.Contains($text)) {
         throw "Review index missing text: $text"
     }

@@ -19,14 +19,21 @@ param(
     [switch]$RequireTenMinutePartialSpeedCompareRun,
     [switch]$RunGuiSmokeState,
     [switch]$RequireGuiSmokeManualPass,
+    [string]$GuiChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
+    [string]$GuiEvidenceDir = ".tmp\yolo-gui-smoke\evidence",
+    [string]$GuiEvidenceGuidePath = ".tmp\yolo-gui-smoke\gui-smoke-evidence-guide.md",
     [switch]$AllowCompletedFullGt,
     [switch]$AllowCompletedGuiSmoke,
+    [switch]$RequireComplete,
     [string]$FullGtPredictionCsv = "",
     [string]$FullGtPredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [string]$FullGtReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-gt-review.csv",
+    [string]$FullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review.csv",
     [double]$FullGtMinIou = 0.50,
     [int]$FullGtMaxMisses = 0,
     [int]$FullGtMaxFalsePositives = 0,
-    [int]$FullGtMaxLowIou = 0
+    [int]$FullGtMaxLowIou = 0,
+    [switch]$AllowFullGtQualityGateFailure
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,7 +71,93 @@ function Invoke-YoloVerify {
     Write-Host "[YoloStateVerify] pass $Name"
 }
 
+function New-CompletionAuditArgs {
+    $args = @(
+        "-MinIou", "$FullGtMinIou",
+        "-MaxMisses", "$FullGtMaxMisses",
+        "-MaxFalsePositives", "$FullGtMaxFalsePositives",
+        "-MaxLowIou", "$FullGtMaxLowIou"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($FullGtPredictionCsv)) {
+        $args += @("-PredictionCsv", $FullGtPredictionCsv)
+    }
+    else {
+        $args += @("-PredictionLog", $FullGtPredictionLog)
+    }
+
+    if ($RequireComplete) {
+        $args += "-RequireComplete"
+    }
+    if ($AllowFullGtQualityGateFailure -or $allowFullGtQualityFailureForCurrentState) {
+        $args += "-AllowQualityGateFailure"
+    }
+
+    return $args
+}
+
+function Resolve-RepoPath {
+    param([string]$Path)
+
+    if ([IO.Path]::IsPathRooted($Path)) {
+        return $Path
+    }
+
+    return Join-Path $repo $Path
+}
+
+function Get-CsvValue {
+    param(
+        [object]$Row,
+        [string]$Column
+    )
+
+    if ($null -eq $Row.PSObject.Properties[$Column]) {
+        return ""
+    }
+
+    return [string]$Row.$Column
+}
+
+function Test-CompletedFullGtReview {
+    $reviewPath = Resolve-RepoPath $FullGtReviewCsv
+    $framePath = Resolve-RepoPath $FullFrameReviewCsv
+    if (-not (Test-Path $reviewPath) -or -not (Test-Path $framePath)) {
+        return $false
+    }
+
+    $reviewRows = @(Import-Csv $reviewPath)
+    $frameRows = @(Import-Csv $framePath)
+    if ($reviewRows.Count -eq 0 -or $frameRows.Count -eq 0) {
+        return $false
+    }
+
+    $labeledRows = @($reviewRows | Where-Object {
+        -not [string]::IsNullOrWhiteSpace((Get-CsvValue $_ "label"))
+    })
+    $reviewedFrameRows = @($frameRows | Where-Object {
+        -not [string]::IsNullOrWhiteSpace((Get-CsvValue $_ "missedFaceCount"))
+    })
+
+    return $labeledRows.Count -eq $reviewRows.Count -and
+        $reviewedFrameRows.Count -eq $frameRows.Count
+}
+
+function Test-DocumentedFullGtQualityFailureAllowed {
+    $planPath = Resolve-RepoPath "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
+    if (-not (Test-Path $planPath)) {
+        return $false
+    }
+
+    $plan = Get-Content -Raw -Path $planPath
+    return $plan.Contains("full-gt-quality-failure-allowed=pass") -or
+        $plan.Contains("fullGtQualityGate=fail-documented")
+}
+
 $profileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
+$startupSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-startup-smoke-state.ps1"
+$sweepStateVerify = Join-Path $repo "scripts\verify-yolo-sweep-state.ps1"
+$trackHoldStateVerify = Join-Path $repo "scripts\verify-yolo-track-hold-state.ps1"
 $cropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $gtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-gt-label-state.ps1"
 $fullGtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-full-gt-label-state.ps1"
@@ -75,6 +168,11 @@ $fullGtReviewedCandidateStateVerify = Join-Path $repo "scripts\verify-yolo-full-
 $conclusionStateVerify = Join-Path $repo "scripts\verify-yolo-conclusion-state.ps1"
 $distributionStateVerify = Join-Path $repo "scripts\verify-yolo-distribution-state.ps1"
 $goalAuditStateVerify = Join-Path $repo "scripts\verify-yolo-goal-audit-state.ps1"
+$topLevelRequireCompleteStateVerify = Join-Path $repo "scripts\verify-yolo-top-level-require-complete-state.ps1"
+$completionAuditStateVerify = Join-Path $repo "scripts\verify-yolo-completion-audit-state.ps1"
+$completionFinalizerStateVerify = Join-Path $repo "scripts\verify-yolo-completion-finalizer-state.ps1"
+$guiEvidencePrep = Join-Path $repo "scripts\prepare-yolo-gui-smoke-evidence.ps1"
+$manualPendingReportWriter = Join-Path $repo "scripts\write-yolo-manual-pending-report.ps1"
 $manualReadinessStateVerify = Join-Path $repo "scripts\verify-yolo-manual-readiness-state.ps1"
 $manualGateHelperStateVerify = Join-Path $repo "scripts\verify-yolo-manual-gate-helper-state.ps1"
 $guiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
@@ -83,7 +181,21 @@ $extendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $extendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
 $tenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
 
+$fullGtReviewAlreadyCompleted = Test-CompletedFullGtReview
+$allowCompletedFullGtForCurrentState = $AllowCompletedFullGt -or $fullGtReviewAlreadyCompleted
+$allowFullGtQualityFailureForCurrentState = $AllowFullGtQualityGateFailure -or
+    ($fullGtReviewAlreadyCompleted -and (Test-DocumentedFullGtQualityFailureAllowed))
+
+$completionAuditAlreadyRan = $false
+if ($RequireComplete) {
+    Invoke-YoloVerify "completion-audit-require-complete-guard" $completionAuditStateVerify (New-CompletionAuditArgs)
+    $completionAuditAlreadyRan = $true
+}
+
 Invoke-YoloVerify "profile-state" $profileStateVerify @()
+Invoke-YoloVerify "startup-smoke-state" $startupSmokeStateVerify @()
+Invoke-YoloVerify "sweep-state" $sweepStateVerify @()
+Invoke-YoloVerify "track-hold-state" $trackHoldStateVerify @()
 Invoke-YoloVerify "crop-review" $cropReviewVerify @(
     "-PassReviewCsv", $YoloCropReviewPassCsv,
     "-FailReviewCsv", $YoloCropReviewFailCsv
@@ -104,9 +216,10 @@ Invoke-YoloVerify "full-gt-reviewed-candidate-state" $fullGtReviewedCandidateSta
 Invoke-YoloVerify "conclusion-state" $conclusionStateVerify @()
 Invoke-YoloVerify "distribution-state" $distributionStateVerify @()
 Invoke-YoloVerify "goal-audit-state" $goalAuditStateVerify @()
+Invoke-YoloVerify "top-level-require-complete-state" $topLevelRequireCompleteStateVerify @()
 Invoke-YoloVerify "manual-gate-helper-state" $manualGateHelperStateVerify @()
 $manualReadinessArgs = @()
-if ($AllowCompletedFullGt) {
+if ($allowCompletedFullGtForCurrentState) {
     $manualReadinessArgs += "-AllowCompletedFullGt"
 }
 if ($AllowCompletedGuiSmoke) {
@@ -122,9 +235,32 @@ $manualReadinessArgs += @(
     "-FullGtMinIou", "$FullGtMinIou",
     "-FullGtMaxMisses", "$FullGtMaxMisses",
     "-FullGtMaxFalsePositives", "$FullGtMaxFalsePositives",
-    "-FullGtMaxLowIou", "$FullGtMaxLowIou"
+    "-FullGtMaxLowIou", "$FullGtMaxLowIou",
+    "-FullGtReviewCsv", $FullGtReviewCsv,
+    "-FullFrameReviewCsv", $FullFrameReviewCsv
 )
+if ($allowFullGtQualityFailureForCurrentState) {
+    $manualReadinessArgs += "-AllowQualityGateFailure"
+}
 Invoke-YoloVerify "manual-readiness-state" $manualReadinessStateVerify $manualReadinessArgs
+if (-not $completionAuditAlreadyRan) {
+    Invoke-YoloVerify "completion-audit-state" $completionAuditStateVerify (New-CompletionAuditArgs)
+}
+Invoke-YoloVerify "completion-audit-selftest" $completionAuditStateVerify @(
+    "-SelfTest"
+)
+Invoke-YoloVerify "completion-finalizer-state" $completionFinalizerStateVerify @()
+Invoke-YoloVerify "gui-smoke-evidence-prep" $guiEvidencePrep @(
+    "-ChecklistCsv", $GuiChecklistCsv,
+    "-EvidenceDir", $GuiEvidenceDir,
+    "-GuidePath", $GuiEvidenceGuidePath,
+    "-UpdateChecklist",
+    "-Verify"
+)
+Invoke-YoloVerify "manual-pending-report" $manualPendingReportWriter @(
+    "-GuiChecklistCsv", $GuiChecklistCsv,
+    "-Verify"
+)
 if ($RunRepresentativeGate) {
     Invoke-YoloVerify "representative-gate" $representativeGateVerify @(
         "-QualityClip", $RepresentativeQualityClip,

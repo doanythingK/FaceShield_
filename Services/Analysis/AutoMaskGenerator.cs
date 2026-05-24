@@ -1373,6 +1373,16 @@ namespace FaceShield.Services.Analysis
                 return $"{_detector.GetType().Name}/{provider}";
             }
 
+            if (_detector is YoloFaceOnnxDetector)
+            {
+                string provider = YoloFaceOnnxDetector.GetLastExecutionProviderLabel();
+                string? error = YoloFaceOnnxDetector.GetLastExecutionProviderError();
+                if (!string.IsNullOrWhiteSpace(error))
+                    return $"{_detector.GetType().Name}/{provider}({error})";
+
+                return $"{_detector.GetType().Name}/{provider}";
+            }
+
             return _detector.GetType().Name;
         }
 

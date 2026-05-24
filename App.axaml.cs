@@ -41,13 +41,15 @@ namespace FaceShield
                 // Avoid duplicate validations from both Avalonia and the CommunityToolkit. 
                 // More info: https://docs.avaloniaui.net/docs/guides/development-guides/data-validation#manage-validationplugins
                 DisableAvaloniaDataAnnotationValidation();
-                var mainVm = new MainWindowViewModel();
+                var mainVm = new MainWindowViewModel(desktop.Args);
                 desktop.MainWindow = new MainWindow
                 {
                     DataContext = mainVm,
                 };
 
                 desktop.Exit += (_, _) => mainVm.PersistAppState();
+                if (mainVm.ShouldOpenStartupWorkspace)
+                    Dispatcher.UIThread.Post(async () => await mainVm.OpenStartupWorkspaceAsync());
             }
 
             base.OnFrameworkInitializationCompleted();

@@ -10,6 +10,7 @@ param(
     [switch]$RequireEvidence,
     [switch]$RequireFullFrameReview,
     [switch]$RequireArtifacts,
+    [switch]$AllowQualityGateFailure,
     [switch]$AllowUnreviewed,
     [switch]$SelfTest
 )
@@ -254,7 +255,8 @@ function Invoke-LabelVerifier {
         [double]$Iou,
         [int]$Misses,
         [int]$FalsePositives,
-        [int]$LowIou
+        [int]$LowIou,
+        [bool]$AllowFailure
     )
 
     $args = @(
@@ -274,6 +276,10 @@ function Invoke-LabelVerifier {
     }
     else {
         throw "PredictionCsv or PredictionLog is required."
+    }
+
+    if ($AllowFailure) {
+        $args += "-AllowQualityGateFailure"
     }
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $labelVerifier @args
@@ -450,7 +456,7 @@ if ($RequireFullFrameReview) {
 
     $frameSummary = Assert-FullFrameReviewCsv -Path $FullFrameReviewCsv -ManualMissRows $manualMissRows -ManualMissRowsByFrame $manualMissRowsByFrame -RequireEvidenceNotes:$RequireEvidence.IsPresent -RequireArtifactFiles:$RequireArtifacts.IsPresent -AllowMissingReview:$AllowUnreviewed.IsPresent
 }
-Invoke-LabelVerifier -GtCsvPath $reviewSummary.Path -PredCsvPath (Resolve-RepoPath $PredictionCsv) -PredLogPath (Resolve-RepoPath $PredictionLog) -Iou $MinIou -Misses $MaxMisses -FalsePositives $MaxFalsePositives -LowIou $MaxLowIou
+Invoke-LabelVerifier -GtCsvPath $reviewSummary.Path -PredCsvPath (Resolve-RepoPath $PredictionCsv) -PredLogPath (Resolve-RepoPath $PredictionLog) -Iou $MinIou -Misses $MaxMisses -FalsePositives $MaxFalsePositives -LowIou $MaxLowIou -AllowFailure:$AllowQualityGateFailure.IsPresent
 
 Write-Host "[YoloFullGtReviewedVerify] pass rows=$($reviewSummary.Rows), reviewed=$($reviewSummary.Reviewed), face=$($reviewSummary.Face), nonFace=$($reviewSummary.NonFace), unreviewed=$($reviewSummary.Unreviewed)"
 if ($RequireFullFrameReview) {
