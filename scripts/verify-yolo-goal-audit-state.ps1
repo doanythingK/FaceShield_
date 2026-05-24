@@ -101,8 +101,24 @@ $manualPendingReportWriter = Read-RepoFile $YoloManualPendingReportWriter
 $humanReviewDraftWriter = Read-RepoFile $YoloHumanReviewDraftWriter
 $completionFinalizer = Read-RepoFile $YoloCompletionFinalizer
 
-$marker = "yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; full-gt-reviewed=pass; full-gt-quality-failure-allowed=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=gui-smoke"
-Assert-Contains "goal audit marker" $plan $marker
+$goalAuditMarkerMatch = [regex]::Match($plan, "yolo-goal-audit-state:[^<]+")
+if (-not $goalAuditMarkerMatch.Success) {
+    throw "goal audit marker missing"
+}
+
+$goalAuditMarker = $goalAuditMarkerMatch.Value.Trim()
+Write-Host "[YoloGoalAuditVerify] pass goal audit marker"
+
+$isCompleteMarker = $goalAuditMarker.Contains("complete=true")
+if ($isCompleteMarker) {
+    Assert-Contains "goal audit complete marker" $goalAuditMarker "remaining=none"
+    Assert-Contains "goal audit complete audit marker" $goalAuditMarker "completion-audit=pass-complete"
+}
+else {
+    Assert-Contains "goal audit incomplete marker" $goalAuditMarker "complete=false"
+    Assert-Contains "goal audit incomplete remaining marker" $goalAuditMarker "remaining=gui-smoke"
+    Assert-Contains "goal audit incomplete audit marker" $goalAuditMarker "completion-audit=pass-incomplete"
+}
 
 foreach ($token in @(
     "backend=integrated",
@@ -120,8 +136,6 @@ foreach ($token in @(
     "license-source=pass",
     "manual-readiness=pass",
     "ten-minute-full=not-required-after-extended-fail",
-    "complete=false",
-    "completion-audit=pass-incomplete",
     "top-level-require-complete=fast-fail-guarded",
     "top-level-ready-rerun=pass",
     "evidence-report=pass",
@@ -131,9 +145,7 @@ foreach ($token in @(
     "completion-audit-pending-negative-selftest=pass",
     "top-level-require-complete-negative=pass",
     "completion-finalizer-state=pass",
-    "empty-yolo-model-args=guarded",
-    "full-gt-label",
-    "gui-smoke")) {
+    "empty-yolo-model-args=guarded")) {
     Assert-Contains "goal audit token $token" $plan $token
 }
 
@@ -244,6 +256,14 @@ Assert-Contains "gui smoke evidence guide recorded" $plan "evidence-guide=.tmp/y
 Assert-Contains "gui smoke detector-row download button recorded" $plan 'detector 선택 줄의 `YOLO 다운로드` 버튼'
 Assert-Contains "gui smoke download button source invariant recorded" $plan "download-button-source-invariant=pass"
 Assert-Contains "gui smoke source invariant recorded" $plan "source-invariant=pass"
+Assert-Contains "gui smoke yolo numeric width invariant recorded" $plan "yolo-numeric-width-source-invariant=pass"
+Assert-Contains "gui smoke preview playback queue invariant recorded" $plan "preview-playback-queue-source-invariant=pass"
+Assert-Contains "gui smoke preview cancellation suppression recorded" $plan "preview-cancel-exception-suppressed=pass"
+Assert-Contains "gui smoke lazy thumbnail open invariant recorded" $plan "lazy-thumbnail-open-source-invariant=pass"
+Assert-Contains "gui smoke open video evidence recorded" $plan "open-video-evidence=pass-local-screenshot"
+Assert-Contains "gui smoke detector selection evidence recorded" $plan "select-yolo-backend-evidence=pass-local-screenshot"
+Assert-Contains "gui smoke existing model evidence recorded" $plan "download-yolo-model-evidence=pass-existing-model-path"
+Assert-Contains "gui smoke run auto detect evidence recorded" $plan "run-yolo-auto-detect-evidence=pass-debug-output"
 Assert-Contains "gui smoke manual evidence schema recorded" $plan "manual-evidence-schema=pass"
 Assert-Contains "gui smoke manual evidence type validation recorded" $plan "manual-evidence-type-validation=pass"
 Assert-Contains "gui smoke anti flicker tracking recorded" $plan "anti-flicker-tracking=pass"
@@ -253,7 +273,7 @@ Assert-Contains "gui smoke startup smoke verifier recorded" $plan "verify-yolo-s
 Assert-Contains "gui smoke manual verifier selftest recorded" $plan "manual-verifier-selftest=pass"
 Assert-Contains "gui smoke manual negative selftests recorded" $plan "manual-negative-selftests=pass"
 Assert-Contains "gui smoke checklist no-clobber recorded" $plan "gui-checklist-no-clobber=pass"
-Assert-Contains "gui smoke manual pending recorded" $plan "manual-checklist=pending-human-smoke"
+Assert-Match "gui smoke manual checklist recorded" $plan "manual-checklist=(partial-human-smoke|complete-human-smoke)"
 Assert-Contains "gui smoke open video step recorded" $plan "open-video"
 Assert-Contains "gui smoke download model step recorded" $plan "download-yolo-model"
 Assert-Contains "gui smoke preview track hold step recorded" $plan "preview-track-hold"
@@ -266,8 +286,11 @@ Assert-Contains "startup options parse yolo smoke preset" $appStartupOptions "--
 Assert-Contains "startup options default srcTest video" $appStartupOptions "srcTest/260102_jp_10.mp4"
 Assert-Contains "startup options default yolo model" $appStartupOptions ".tmp/models/YoloV5Face.onnx"
 Assert-Contains "startup options parse auto open" $appStartupOptions "--open-auto"
+Assert-Contains "startup options parse no auto export" $appStartupOptions "--no-auto-export"
+Assert-Contains "startup options parse frame selection" $appStartupOptions "--frame"
 Assert-Contains "app forwards startup args" $appCodeBehind "new MainWindowViewModel(desktop.Args)"
 Assert-Contains "main window runs startup open" $mainWindowViewModel "OpenStartupWorkspaceAsync"
+Assert-Contains "main window applies startup frame" $mainWindowViewModel "_startupFrameIndex"
 Assert-Contains "startup smoke verifier creates runtime harness" $yoloStartupSmokeState "YoloStartupSmokeHarness.csproj"
 Assert-Contains "startup smoke verifier checks VM can start" $yoloStartupSmokeState "CanStartWorkspace"
 Assert-Contains "manual readiness marker recorded" $plan "yolo-manual-readiness-state:"
@@ -363,6 +386,7 @@ Assert-Match "auto verifier skips empty extended yolo model path" $autoVerify 'I
 Assert-Match "auto verifier skips empty extended export yolo model path" $autoVerify 'IsNullOrWhiteSpace\(\$YoloExtendedExportModelPath\)[\s\S]*ExtendedExportYoloModelPath'
 Assert-Contains "auto verifier exposes full gt prediction log" $autoVerify "YoloFullGtPredictionLog"
 Assert-Contains "auto verifier exposes full gt quality limits" $autoVerify "YoloFullGtMaxFalsePositives"
+Assert-Contains "auto verifier exposes full gt quality failure allowance" $autoVerify "AllowFullGtQualityGateFailure"
 Assert-Contains "auto verifier exposes full gt candidate state" $autoVerify "RunYoloFullGtReviewedCandidateState"
 Assert-Contains "top-level verifier has completion audit path" $autoVerify "verify-yolo-completion-audit-state.ps1"
 Assert-Contains "top-level verifier has require complete guard" $autoVerify "yolo-require-complete-guard"

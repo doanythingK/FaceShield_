@@ -1,66 +1,66 @@
-# 자동 검출 모자이크 품질/속도 개선 설계 기획
+﻿# ?먮룞 寃異?紐⑥옄?댄겕 ?덉쭏/?띾룄 媛쒖꽑 ?ㅺ퀎 湲고쉷
 
-## 목적
-현재 자동 검출 후 모자이크 처리의 핵심 문제는 두 가지다.
+## 紐⑹쟻
+?꾩옱 ?먮룞 寃異???紐⑥옄?댄겕 泥섎━???듭떖 臾몄젣????媛吏??
 
-- 결과 품질: 얼굴 미탐, 오탐, 박스 튐, 프레임 간 모자이크 흔들림이 결과물 품질을 떨어뜨린다.
-- 처리 시간: 자동 검출, 프레임 변환, 마스크/블러, export/encode 전체 시간이 길다.
+- 寃곌낵 ?덉쭏: ?쇨뎬 誘명깘, ?ㅽ깘, 諛뺤뒪 ?? ?꾨젅??媛?紐⑥옄?댄겕 ?붾뱾由쇱씠 寃곌낵臾??덉쭏???⑥뼱?⑤┛??
+- 泥섎━ ?쒓컙: ?먮룞 寃異? ?꾨젅??蹂?? 留덉뒪??釉붾윭, export/encode ?꾩껜 ?쒓컙??湲몃떎.
 
-이 문서는 모델 교체까지 포함해 품질을 유지하거나 높이면서 시간을 줄이기 위한 구현 계획이다. 단순히 검출 간격을 늘리거나 더 약한 모델로 바꾸는 방식은 품질 저하 가능성이 크므로 기본 전략에서 제외한다.
+??臾몄꽌??紐⑤뜽 援먯껜源뚯? ?ы븿???덉쭏???좎??섍굅???믪씠硫댁꽌 ?쒓컙??以꾩씠湲??꾪븳 援ы쁽 怨꾪쉷?대떎. ?⑥닚??寃異?媛꾧꺽???섎━嫄곕굹 ???쏀븳 紐⑤뜽濡?諛붽씀??諛⑹떇? ?덉쭏 ???媛?μ꽦???щ?濡?湲곕낯 ?꾨왂?먯꽌 ?쒖쇅?쒕떎.
 
-## 현재 확인한 프로젝트 구조
-FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로젝트 `FaceShield.csproj`로 구성되어 있다. 현재 핵심 진입점은 다음과 같다.
+## ?꾩옱 ?뺤씤???꾨줈?앺듃 援ъ“
+FaceShield??.NET 8 Avalonia ?곗뒪?ы넲 ?깆씠硫??붾（?섏? ?⑥씪 ?꾨줈?앺듃 `FaceShield.csproj`濡?援ъ꽦?섏뼱 ?덈떎. ?꾩옱 ?듭떖 吏꾩엯?먯? ?ㅼ쓬怨?媛숇떎.
 
-- `ViewModels/Pages/HomePageViewModel.cs`: 홈 자동 실행, 자동 완료 후 저장, 예상 시간/상태 표시.
-- `ViewModels/Pages/WorkspaceViewModel.cs`: 자동 검출 실행, 자동 튜닝, 후처리, export 연결.
-- `Services/Analysis/AutoMaskGenerator.cs`: 자동 검출 파이프라인, sparse pipeline, tracking, ROI, 진행 로그.
-- `Services/Analysis/AutoMaskOptions.cs`: downscale, tracking, 검출 간격, 병렬 detector 수 옵션.
-- `Services/FaceDetection/IBgraFaceDetector.cs`: BGRA 기반 검출기 교체용 인터페이스.
-- `Services/FaceDetection/FaceDetectorFactory.cs`: 검출기 생성 팩토리.
+- `ViewModels/Pages/HomePageViewModel.cs`: ???먮룞 ?ㅽ뻾, ?먮룞 ?꾨즺 ????? ?덉긽 ?쒓컙/?곹깭 ?쒖떆.
+- `ViewModels/Pages/WorkspaceViewModel.cs`: ?먮룞 寃異??ㅽ뻾, ?먮룞 ?쒕떇, ?꾩쿂由? export ?곌껐.
+- `Services/Analysis/AutoMaskGenerator.cs`: ?먮룞 寃異??뚯씠?꾨씪?? sparse pipeline, tracking, ROI, 吏꾪뻾 濡쒓렇.
+- `Services/Analysis/AutoMaskOptions.cs`: downscale, tracking, 寃異?媛꾧꺽, 蹂묐젹 detector ???듭뀡.
+- `Services/FaceDetection/IBgraFaceDetector.cs`: BGRA 湲곕컲 寃異쒓린 援먯껜???명꽣?섏씠??
+- `Services/FaceDetection/FaceDetectorFactory.cs`: 寃異쒓린 ?앹꽦 ?⑺넗由?
 - `Services/FaceDetection/FaceDetectorBackend.cs`: `FaceOnnx`, `ScrfdOnnx`, `YuNetOnnx`, `YoloFaceOnnx` backend enum.
-- `Services/FaceDetection/FaceOnnxDetector.cs`: 현재 기본 얼굴 검출 구현.
-- `Services/FaceDetection/DetectorAutoTuner.cs`: 자동 실행 시작 시 ONNX 실행 옵션/세션 수 측정.
-- `Services/Video/VideoExportService.cs`: export, 색상 변환, direct face rect blur, bitmap mask blur, encode.
-- `Services/Video/MaskedVideoExporter.cs`: 얼굴 영역 직접 블러 및 마스크 블러 적용.
-- `Services/Video/Session/ExactFrameProvider.cs`: 프레임 정확 조회와 preview 안정성.
+- `Services/FaceDetection/FaceOnnxDetector.cs`: ?꾩옱 湲곕낯 ?쇨뎬 寃異?援ы쁽.
+- `Services/FaceDetection/DetectorAutoTuner.cs`: ?먮룞 ?ㅽ뻾 ?쒖옉 ??ONNX ?ㅽ뻾 ?듭뀡/?몄뀡 ??痢≪젙.
+- `Services/Video/VideoExportService.cs`: export, ?됱긽 蹂?? direct face rect blur, bitmap mask blur, encode.
+- `Services/Video/MaskedVideoExporter.cs`: ?쇨뎬 ?곸뿭 吏곸젒 釉붾윭 諛?留덉뒪??釉붾윭 ?곸슜.
+- `Services/Video/Session/ExactFrameProvider.cs`: ?꾨젅???뺥솗 議고쉶? preview ?덉젙??
 
-현재 구조상 모델 교체는 `IBgraFaceDetector`, `FaceDetectorFactory`, `FaceDetectorBackend`, `FaceDetectorFactoryOptions`를 확장하는 방식이 맞다. `AutoMaskGenerator`나 `WorkspaceViewModel`에 새 모델을 직접 박으면 이후 비교와 롤백이 어려워진다.
+?꾩옱 援ъ“??紐⑤뜽 援먯껜??`IBgraFaceDetector`, `FaceDetectorFactory`, `FaceDetectorBackend`, `FaceDetectorFactoryOptions`瑜??뺤옣?섎뒗 諛⑹떇??留욌떎. `AutoMaskGenerator`??`WorkspaceViewModel`????紐⑤뜽??吏곸젒 諛뺤쑝硫??댄썑 鍮꾧탳? 濡ㅻ갚???대젮?뚯쭊??
 
-## 현재 상태 요약
-이미 들어간 기반 작업:
+## ?꾩옱 ?곹깭 ?붿빟
+?대? ?ㅼ뼱媛?湲곕컲 ?묒뾽:
 
-- `FaceOnnxDetector`가 `IBgraFaceDetector`를 구현한다.
-- `AutoMaskGenerator`가 BGRA/raw 기반 파이프라인과 sparse 병렬 파이프라인을 지원한다.
-- `WorkspaceViewModel.RunAutoCoreAsync()`에서 `DetectorAutoTuner`를 `Task.Run`으로 실행해 UI thread 정지를 줄인다.
-- `VideoExportService`는 자동 face rect가 있는 프레임에서 전체 bitmap mask 대신 `ApplyFaceRectsAndBlur()` direct blur 경로를 쓸 수 있다.
-- export 로그에 `bitmapMaskFrames`, `directFaceFrames`, `swsToBgraMs`, `maskMs`, `swsToEncMs`, `encodeMs`, `totalMs`가 남는다.
-- 홈 자동 진행 상태는 export 단계에서도 숨기지 않는 방향으로 수정되어 있다.
+- `FaceOnnxDetector`媛 `IBgraFaceDetector`瑜?援ы쁽?쒕떎.
+- `AutoMaskGenerator`媛 BGRA/raw 湲곕컲 ?뚯씠?꾨씪?멸낵 sparse 蹂묐젹 ?뚯씠?꾨씪?몄쓣 吏?먰븳??
+- `WorkspaceViewModel.RunAutoCoreAsync()`?먯꽌 `DetectorAutoTuner`瑜?`Task.Run`?쇰줈 ?ㅽ뻾??UI thread ?뺤?瑜?以꾩씤??
+- `VideoExportService`???먮룞 face rect媛 ?덈뒗 ?꾨젅?꾩뿉???꾩껜 bitmap mask ???`ApplyFaceRectsAndBlur()` direct blur 寃쎈줈瑜??????덈떎.
+- export 濡쒓렇??`bitmapMaskFrames`, `directFaceFrames`, `swsToBgraMs`, `maskMs`, `swsToEncMs`, `encodeMs`, `totalMs`媛 ?⑤뒗??
+- ???먮룞 吏꾪뻾 ?곹깭??export ?④퀎?먯꽌???④린吏 ?딅뒗 諛⑺뼢?쇰줈 ?섏젙?섏뼱 ?덈떎.
 
-현재 추가 확인된 상태:
+?꾩옱 異붽? ?뺤씤???곹깭:
 
-- `FaceDetectorBackend.YoloFaceOnnx`, `YoloFaceOnnxDetectorOptions`, `YoloFaceModelType`, `YoloFaceOnnxDetector`가 추가되어 YOLOv8-Face/YOLO5Face ONNX 후보를 실행할 수 있다.
-- 홈 자동 옵션에서 FaceONNX와 YOLO Face ONNX를 선택할 수 있고, YOLO는 모델 종류, 모델 경로, objectness/confidence/NMS, 입력 크기, tiling 값을 FaceONNX threshold와 분리해서 가진다. YOLOv8-Face와 YOLO5Face 사이에서도 모델 경로와 threshold/input/tiling profile을 별도로 저장/복원한다.
-- `AutoMaskOptions.FilterProfile`과 track 후처리 profile은 FaceONNX/SCRFD/YOLO별로 분리되어 있으며, FaceONNX auto-tune은 FaceONNX backend에서만 적용된다.
-- YOLO5Face `0.12/0.18/0.45` profile은 대표 6분 3초 gate를 통과했지만 9분 2초 및 6분 30초 확장 gate에서 추천 후보로 승격하지 못했다.
+- `FaceDetectorBackend.YoloFaceOnnx`, `YoloFaceOnnxDetectorOptions`, `YoloFaceModelType`, `YoloFaceOnnxDetector`媛 異붽??섏뼱 YOLOv8-Face/YOLO5Face ONNX ?꾨낫瑜??ㅽ뻾?????덈떎.
+- ???먮룞 ?듭뀡?먯꽌 FaceONNX? YOLO Face ONNX瑜??좏깮?????덇퀬, YOLO??紐⑤뜽 醫낅쪟, 紐⑤뜽 寃쎈줈, objectness/confidence/NMS, ?낅젰 ?ш린, tiling 媛믪쓣 FaceONNX threshold? 遺꾨━?댁꽌 媛吏꾨떎. YOLOv8-Face? YOLO5Face ?ъ씠?먯꽌??紐⑤뜽 寃쎈줈? threshold/input/tiling profile??蹂꾨룄濡????蹂듭썝?쒕떎.
+- `AutoMaskOptions.FilterProfile`怨?track ?꾩쿂由?profile? FaceONNX/SCRFD/YOLO蹂꾨줈 遺꾨━?섏뼱 ?덉쑝硫? FaceONNX auto-tune? FaceONNX backend?먯꽌留??곸슜?쒕떎.
+- YOLO5Face `0.12/0.18/0.45` profile? ???6遺?3珥?gate瑜??듦낵?덉?留?9遺?2珥?諛?6遺?30珥??뺤옣 gate?먯꽌 異붿쿇 ?꾨낫濡??밴꺽?섏? 紐삵뻽??
 
-남은 한계:
+?⑥? ?쒓퀎:
 
-- 실제 10분 문제 영상 기준으로 자동 검출 시간과 export 시간이 분리 측정되어 있지 않다.
-- YOLO 확장 gate의 mismatch에는 FaceONNX false-positive, YOLO false-positive, 실제 작은 얼굴 recall, box definition 차이가 섞여 있어 정답 라벨 기반 평가는 아직 없다.
-- YOLO 후보별 profile은 아직 최종 추천 상태가 아니며, 대체 YOLO face 모델 또는 verifier/refiner 전략이 더 필요하다.
-- 모델 후보별 배포 크기, native/provider 안정성, Windows/macOS 지원 여부는 아직 확정되지 않았다.
+- ?ㅼ젣 10遺?臾몄젣 ?곸긽 湲곗??쇰줈 ?먮룞 寃異??쒓컙怨?export ?쒓컙??遺꾨━ 痢≪젙?섏뼱 ?덉? ?딅떎.
+- YOLO ?뺤옣 gate??mismatch?먮뒗 FaceONNX false-positive, YOLO false-positive, ?ㅼ젣 ?묒? ?쇨뎬 recall, box definition 李⑥씠媛 ?욎뿬 ?덉뼱 ?뺣떟 ?쇰꺼 湲곕컲 ?됯????꾩쭅 ?녿떎.
+- YOLO ?꾨낫蹂?profile? ?꾩쭅 理쒖쥌 異붿쿇 ?곹깭媛 ?꾨땲硫? ?泥?YOLO face 紐⑤뜽 ?먮뒗 verifier/refiner ?꾨왂?????꾩슂?섎떎.
+- 紐⑤뜽 ?꾨낫蹂?諛고룷 ?ш린, native/provider ?덉젙?? Windows/macOS 吏???щ????꾩쭅 ?뺤젙?섏? ?딆븯??
 
-## 성능/품질 목표
-정량 목표는 실제 샘플 측정 후 확정한다. 1차 목표는 다음 기준으로 잡는다.
+## ?깅뒫/?덉쭏 紐⑺몴
+?뺣웾 紐⑺몴???ㅼ젣 ?섑뵆 痢≪젙 ???뺤젙?쒕떎. 1李?紐⑺몴???ㅼ쓬 湲곗??쇰줈 ?〓뒗??
 
-- 자동 검출: 10분 영상에서 검출 단계가 export보다 과도하게 길면 detector/backend 교체와 pipeline 개선을 우선한다.
-- export: `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs` 중 가장 큰 항목부터 줄인다.
-- 품질: 얼굴 미탐이 늘어나는 옵션은 기본값으로 쓰지 않는다.
-- 안정성: DirectML/CoreML/provider 자동 확장은 검증된 경로만 기본값으로 둔다.
-- UX: 예상 시간, 진행 상태, 취소 가능성은 성능 개선 과정에서도 유지한다.
+- ?먮룞 寃異? 10遺??곸긽?먯꽌 寃異??④퀎媛 export蹂대떎 怨쇰룄?섍쾶 湲몃㈃ detector/backend 援먯껜? pipeline 媛쒖꽑???곗꽑?쒕떎.
+- export: `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs` 以?媛??????ぉ遺??以꾩씤??
+- ?덉쭏: ?쇨뎬 誘명깘???섏뼱?섎뒗 ?듭뀡? 湲곕낯媛믪쑝濡??곗? ?딅뒗??
+- ?덉젙?? DirectML/CoreML/provider ?먮룞 ?뺤옣? 寃利앸맂 寃쎈줈留?湲곕낯媛믪쑝濡??붾떎.
+- UX: ?덉긽 ?쒓컙, 吏꾪뻾 ?곹깭, 痍⑥냼 媛?μ꽦? ?깅뒫 媛쒖꽑 怨쇱젙?먯꽌???좎??쒕떎.
 
-## 측정 먼저 할 항목
-실제 문제 영상으로 다음 로그를 반드시 확보한다.
+## 痢≪젙 癒쇱? ????ぉ
+?ㅼ젣 臾몄젣 ?곸긽?쇰줈 ?ㅼ쓬 濡쒓렇瑜?諛섎뱶???뺣낫?쒕떎.
 
 ```text
 [AutoTune] ...
@@ -71,81 +71,80 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 [Export] done frames=..., bitmapMaskFrames=..., directFaceFrames=..., swsToBgraMs=..., maskMs=..., swsToEncMs=..., encodeMs=..., totalMs=...
 ```
 
-기록 포맷:
+湲곕줉 ?щ㎎:
 
-| 샘플 | 해상도/FPS | 길이 | 옵션 | 자동 검출 total | detectMs | export total | maskMs | encodeMs | 품질 메모 |
+| ?섑뵆 | ?댁긽??FPS | 湲몄씠 | ?듭뀡 | ?먮룞 寃異?total | detectMs | export total | maskMs | encodeMs | ?덉쭏 硫붾え |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 문제 영상 A | 확인 필요 | 확인 필요 | 현재 기본값 | 확인 필요 | 확인 필요 | 확인 필요 | 확인 필요 | 확인 필요 | 미탐/오탐 구간 기록 |
+| 臾몄젣 ?곸긽 A | ?뺤씤 ?꾩슂 | ?뺤씤 ?꾩슂 | ?꾩옱 湲곕낯媛?| ?뺤씤 ?꾩슂 | ?뺤씤 ?꾩슂 | ?뺤씤 ?꾩슂 | ?뺤씤 ?꾩슂 | ?뺤씤 ?꾩슂 | 誘명깘/?ㅽ깘 援ш컙 湲곕줉 |
 
-측정 전까지 "확실히 빨라졌다" 또는 "모델 교체만 하면 해결된다"는 결론은 내리지 않는다.
+痢≪젙 ?꾧퉴吏 "?뺤떎??鍮⑤씪議뚮떎" ?먮뒗 "紐⑤뜽 援먯껜留??섎㈃ ?닿껐?쒕떎"??寃곕줎? ?대━吏 ?딅뒗??
 
-## 모델 교체 전략
-모델 교체는 한 번에 기본 모델을 갈아엎지 않고, backend를 추가한 뒤 동일 샘플에서 비교한다.
+## 紐⑤뜽 援먯껜 ?꾨왂
+紐⑤뜽 援먯껜????踰덉뿉 湲곕낯 紐⑤뜽??媛덉븘?롮? ?딄퀬, backend瑜?異붽??????숈씪 ?섑뵆?먯꽌 鍮꾧탳?쒕떎.
 
-### 후보군
-1. 현재 `FaceONNX`
-   - 기준선으로 유지한다.
-   - 기존 품질/배포 안정성을 비교 기준으로 삼는다.
+### ?꾨낫援?1. ?꾩옱 `FaceONNX`
+   - 湲곗??좎쑝濡??좎??쒕떎.
+   - 湲곗〈 ?덉쭏/諛고룷 ?덉젙?깆쓣 鍮꾧탳 湲곗??쇰줈 ?쇰뒗??
 
-2. SCRFD 계열 ONNX
-   - 작은 얼굴과 다양한 각도에서 품질이 좋은 후보로 검토한다.
-   - ONNX Runtime CPU/DirectML/CoreML provider에서 입력/후처리 구현이 필요하다.
-   - NMS, anchor/grid decode, threshold 튜닝을 직접 구현해야 할 수 있다.
+2. SCRFD 怨꾩뿴 ONNX
+   - ?묒? ?쇨뎬怨??ㅼ뼇??媛곷룄?먯꽌 ?덉쭏??醫뗭? ?꾨낫濡?寃?좏븳??
+   - ONNX Runtime CPU/DirectML/CoreML provider?먯꽌 ?낅젰/?꾩쿂由?援ы쁽???꾩슂?섎떎.
+   - NMS, anchor/grid decode, threshold ?쒕떇??吏곸젒 援ы쁽?댁빞 ?????덈떎.
 
-3. RetinaFace 계열 ONNX
-   - 정확도 후보로 검토한다.
-   - 속도가 느릴 수 있으므로 1차 전체 검출보다는 의심 구간 재검출용 2차 모델 후보로 둔다.
+3. RetinaFace 怨꾩뿴 ONNX
+   - ?뺥솗???꾨낫濡?寃?좏븳??
+   - ?띾룄媛 ?먮┫ ???덉쑝誘濡?1李??꾩껜 寃異쒕낫?ㅻ뒗 ?섏떖 援ш컙 ?ш?異쒖슜 2李?紐⑤뜽 ?꾨낫濡??붾떎.
 
-4. BlazeFace/MediaPipe 계열
-   - 빠른 1차 검출 후보로 검토한다.
-   - 영상 속 작은 얼굴, 측면 얼굴, 마스크/가림 상황에서 품질 검증이 필요하다.
+4. BlazeFace/MediaPipe 怨꾩뿴
+   - 鍮좊Ⅸ 1李?寃異??꾨낫濡?寃?좏븳??
+   - ?곸긽 ???묒? ?쇨뎬, 痢〓㈃ ?쇨뎬, 留덉뒪??媛由??곹솴?먯꽌 ?덉쭏 寃利앹씠 ?꾩슂?섎떎.
 
-5. YOLO face 계열 ONNX
-   - 배치 처리, GPU/provider 활용 가능성을 검토한다.
-   - 얼굴 박스만 필요한 현재 구조와 잘 맞지만, 모델 파일 출처와 라이선스 확인이 필요하다.
+5. YOLO face 怨꾩뿴 ONNX
+   - 諛곗튂 泥섎━, GPU/provider ?쒖슜 媛?μ꽦??寃?좏븳??
+   - ?쇨뎬 諛뺤뒪留??꾩슂???꾩옱 援ъ“? ??留욎?留? 紐⑤뜽 ?뚯씪 異쒖쿂? ?쇱씠?좎뒪 ?뺤씤???꾩슂?섎떎.
 
-### 권장 구조
-단일 모델 교체보다 2단계 구조를 우선 검토한다.
+### 沅뚯옣 援ъ“
+?⑥씪 紐⑤뜽 援먯껜蹂대떎 2?④퀎 援ъ“瑜??곗꽑 寃?좏븳??
 
-1. 빠른 1차 detector
-   - 전체 프레임 또는 sparse frame에서 빠르게 얼굴 후보를 찾는다.
-   - 낮은 confidence 후보도 일단 track 후보로 남긴다.
+1. 鍮좊Ⅸ 1李?detector
+   - ?꾩껜 ?꾨젅???먮뒗 sparse frame?먯꽌 鍮좊Ⅴ寃??쇨뎬 ?꾨낫瑜?李얜뒗??
+   - ??? confidence ?꾨낫???쇰떒 track ?꾨낫濡??④릿??
 
-2. 강한 2차 verifier/refiner
-   - 미탐 가능성이 높은 구간, 갑자기 얼굴이 사라진 구간, 박스가 크게 튄 구간만 재검출한다.
-   - 모든 프레임에 강한 모델을 돌리지 않는다.
+2. 媛뺥븳 2李?verifier/refiner
+   - 誘명깘 媛?μ꽦???믪? 援ш컙, 媛묒옄湲??쇨뎬???щ씪吏?援ш컙, 諛뺤뒪媛 ?ш쾶 ??援ш컙留??ш?異쒗븳??
+   - 紐⑤뱺 ?꾨젅?꾩뿉 媛뺥븳 紐⑤뜽???뚮━吏 ?딅뒗??
 
-3. track 기반 보정
-   - 얼굴별 track id를 유지한다.
-   - 짧은 미탐 구간은 이전/다음 track으로 보간한다.
-   - scene cut 또는 급격한 움직임에서는 보간을 끊는다.
+3. track 湲곕컲 蹂댁젙
+   - ?쇨뎬蹂?track id瑜??좎??쒕떎.
+   - 吏㏃? 誘명깘 援ш컙? ?댁쟾/?ㅼ쓬 track?쇰줈 蹂닿컙?쒕떎.
+   - scene cut ?먮뒗 湲됯꺽???吏곸엫?먯꽌??蹂닿컙???딅뒗??
 
-## 구현 단계
-### 1단계: 측정/진단 모드 강화
-목표는 병목을 검출, 디코딩, 변환, 블러, 인코딩으로 분리하는 것이다.
+## 援ы쁽 ?④퀎
+### 1?④퀎: 痢≪젙/吏꾨떒 紐⑤뱶 媛뺥솕
+紐⑺몴??蹂묐ぉ??寃異? ?붿퐫?? 蹂?? 釉붾윭, ?몄퐫?⑹쑝濡?遺꾨━?섎뒗 寃껋씠??
 
-- `AutoMaskGenerator`에 run summary 객체를 추가한다.
-- `WorkspaceViewModel`에서 자동 검출 완료 시 summary를 로그와 UI 상태에 남긴다.
-- export summary와 auto summary를 같은 run id로 묶는다.
-- 홈 자동 저장 경로에서도 동일한 run id를 남긴다.
-- 미탐/오탐 확인용으로 "이상 후보 프레임" 목록을 저장하거나 export 전 workspace에서 확인 가능하게 한다.
+- `AutoMaskGenerator`??run summary 媛앹껜瑜?異붽??쒕떎.
+- `WorkspaceViewModel`?먯꽌 ?먮룞 寃異??꾨즺 ??summary瑜?濡쒓렇? UI ?곹깭???④릿??
+- export summary? auto summary瑜?媛숈? run id濡?臾띕뒗??
+- ???먮룞 ???寃쎈줈?먯꽌???숈씪??run id瑜??④릿??
+- 誘명깘/?ㅽ깘 ?뺤씤?⑹쑝濡?"?댁긽 ?꾨낫 ?꾨젅?? 紐⑸줉????ν븯嫄곕굹 export ??workspace?먯꽌 ?뺤씤 媛?ν븯寃??쒕떎.
 
-산출물:
+?곗텧臾?
 
 - `Services/Analysis/AutoMaskRunSummary.cs`
 - `Services/Video/ExportRunSummary.cs`
-- 로그 예: `[AutoRunSummary] runId=..., autoMs=..., exportMs=..., detector=..., options=...`
+- 濡쒓렇 ?? `[AutoRunSummary] runId=..., autoMs=..., exportMs=..., detector=..., options=...`
 
-### 2단계: detector backend 확장 지점 정리
-목표는 새 모델을 안전하게 붙이고 동일 옵션으로 비교하는 것이다.
+### 2?④퀎: detector backend ?뺤옣 吏???뺣━
+紐⑺몴????紐⑤뜽???덉쟾?섍쾶 遺숈씠怨??숈씪 ?듭뀡?쇰줈 鍮꾧탳?섎뒗 寃껋씠??
 
-- `FaceDetectorBackend`에 새 후보 enum을 추가한다.
-- `FaceDetectorFactoryOptions`에 backend별 options를 분리한다.
-- 모든 detector는 `IBgraFaceDetector`를 구현한다.
-- detector별 입력 크기, threshold, NMS, provider 옵션을 명시한다.
-- backend 선택은 임시로 개발용 설정 또는 내부 옵션으로만 열고, 검증 전 사용자 기본값으로 노출하지 않는다.
+- `FaceDetectorBackend`?????꾨낫 enum??異붽??쒕떎.
+- `FaceDetectorFactoryOptions`??backend蹂?options瑜?遺꾨━?쒕떎.
+- 紐⑤뱺 detector??`IBgraFaceDetector`瑜?援ы쁽?쒕떎.
+- detector蹂??낅젰 ?ш린, threshold, NMS, provider ?듭뀡??紐낆떆?쒕떎.
+- backend ?좏깮? ?꾩떆濡?媛쒕컻???ㅼ젙 ?먮뒗 ?대? ?듭뀡?쇰줈留??닿퀬, 寃利????ъ슜??湲곕낯媛믪쑝濡??몄텧?섏? ?딅뒗??
 
-예상 변경 파일:
+?덉긽 蹂寃??뚯씪:
 
 - `Services/FaceDetection/FaceDetectorBackend.cs`
 - `Services/FaceDetection/FaceDetectorFactory.cs`
@@ -153,295 +152,287 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - `Services/FaceDetection/*DetectorOptions.cs`
 - `Services/FaceDetection/*Detector.cs`
 
-### 3단계: 모델 후보 A/B 벤치
-목표는 같은 영상, 같은 옵션, 같은 export 경로에서 후보를 비교하는 것이다.
+### 3?④퀎: 紐⑤뜽 ?꾨낫 A/B 踰ㅼ튂
+紐⑺몴??媛숈? ?곸긽, 媛숈? ?듭뀡, 媛숈? export 寃쎈줈?먯꽌 ?꾨낫瑜?鍮꾧탳?섎뒗 寃껋씠??
 
-비교 항목:
+鍮꾧탳 ??ぉ:
 
-- 검출 total time
-- frame당 detector latency
-- 미탐 구간 수
-- 오탐 구간 수
-- 얼굴 박스 jitter
-- 작은 얼굴 검출률
-- DirectML/CoreML/CPU fallback 안정성
-- 배포 파일 크기와 native 의존성
+- 寃異?total time
+- frame??detector latency
+- 誘명깘 援ш컙 ??- ?ㅽ깘 援ш컙 ??- ?쇨뎬 諛뺤뒪 jitter
+- ?묒? ?쇨뎬 寃異쒕쪧
+- DirectML/CoreML/CPU fallback ?덉젙??- 諛고룷 ?뚯씪 ?ш린? native ?섏〈??
+?먯젙:
 
-판정:
+- 鍮좊Ⅴ吏留?誘명깘???섎㈃ 湲곕낯 detector濡??곗? ?딅뒗??
+- ?뺥솗?섏?留??먮━硫?2李?verifier/refiner濡??쒗븳?쒕떎.
+- provider 珥덇린???ㅽ뙣???λ퉬蹂??몄감媛 ?щ㈃ 湲곕낯媛믪뿉???쒖쇅?쒕떎.
 
-- 빠르지만 미탐이 늘면 기본 detector로 쓰지 않는다.
-- 정확하지만 느리면 2차 verifier/refiner로 제한한다.
-- provider 초기화 실패나 장비별 편차가 크면 기본값에서 제외한다.
+### 4?④퀎: track-first ?먮룞 紐⑥옄?댄겕
+紐⑺몴??`DetectEveryNFrames > 1`?먯꽌???쇨뎬???딄린嫄곕굹 ?吏 ?딄쾶 留뚮뱶??寃껋씠??
 
-### 4단계: track-first 자동 모자이크
-목표는 `DetectEveryNFrames > 1`에서도 얼굴이 끊기거나 튀지 않게 만드는 것이다.
+- `FaceTrack` 紐⑤뜽??異붽??쒕떎.
+- 寃異?寃곌낵瑜?frame ?⑥쐞 dictionary留뚯쑝濡?蹂댁? ?딄퀬 track ?⑥쐞濡?愿由ы븳??
+- IoU, 以묒떖??嫄곕━, ?ш린 蹂?붿쑉濡?媛숈? ?쇨뎬 ?щ?瑜??먮떒?쒕떎.
+- 吏㏃? 誘명깘 援ш컙? ?댁쟾/?ㅼ쓬 寃異?諛뺤뒪濡?蹂닿컙?쒕떎.
+- 媛묒옉?ㅻ윭??scene cut, ?붾㈃ ?꾪솚, ???꾩튂 蹂?붿뿉?쒕뒗 track???딅뒗??
+- ?섎룞 ?몄쭛 ?꾨젅?꾩? ?먮룞 smoothing/track 蹂댁젙 ??곸뿉???쒖쇅?쒕떎.
 
-- `FaceTrack` 모델을 추가한다.
-- 검출 결과를 frame 단위 dictionary만으로 보지 않고 track 단위로 관리한다.
-- IoU, 중심점 거리, 크기 변화율로 같은 얼굴 여부를 판단한다.
-- 짧은 미탐 구간은 이전/다음 검출 박스로 보간한다.
-- 갑작스러운 scene cut, 화면 전환, 큰 위치 변화에서는 track을 끊는다.
-- 수동 편집 프레임은 자동 smoothing/track 보정 대상에서 제외한다.
-
-예상 추가 파일:
+?덉긽 異붽? ?뚯씪:
 
 - `Services/Analysis/FaceTrack.cs`
 - `Services/Analysis/FaceTrackBuilder.cs`
 - `Services/Analysis/FaceTrackInterpolator.cs`
 
-### 5단계: ROI 재검출과 품질 게이트
-목표는 전체 프레임 재검출 없이 미탐 가능성이 높은 구간만 보강하는 것이다.
+### 5?④퀎: ROI ?ш?異쒓낵 ?덉쭏 寃뚯씠??紐⑺몴???꾩껜 ?꾨젅???ш?異??놁씠 誘명깘 媛?μ꽦???믪? 援ш컙留?蹂닿컯?섎뒗 寃껋씠??
 
-- 얼굴이 갑자기 사라진 구간을 `suspicious gap`으로 표시한다.
-- 이전 track 주변 ROI를 확대해서 재검출한다.
-- confidence가 낮거나 박스가 튄 프레임만 강한 detector로 재검출한다.
-- 재검출 결과가 기존 track과 충돌하면 더 안정적인 쪽을 선택한다.
-- 보정 전/후 face rect를 로그로 비교한다.
+- ?쇨뎬??媛묒옄湲??щ씪吏?援ш컙??`suspicious gap`?쇰줈 ?쒖떆?쒕떎.
+- ?댁쟾 track 二쇰? ROI瑜??뺣??댁꽌 ?ш?異쒗븳??
+- confidence媛 ??굅??諛뺤뒪媛 ???꾨젅?꾨쭔 媛뺥븳 detector濡??ш?異쒗븳??
+- ?ш?異?寃곌낵媛 湲곗〈 track怨?異⑸룎?섎㈃ ???덉젙?곸씤 履쎌쓣 ?좏깮?쒕떎.
+- 蹂댁젙 ????face rect瑜?濡쒓렇濡?鍮꾧탳?쒕떎.
 
-품질 게이트:
+?덉쭏 寃뚯씠??
 
-- 같은 얼굴 track이 3~5프레임 이하로 사라졌다가 돌아오면 보간 또는 ROI 재검출을 시도한다.
-- 박스 면적이 직전 대비 비정상적으로 커지거나 작아지면 후보로만 두고 즉시 반영하지 않는다.
-- 얼굴 수가 갑자기 크게 변하면 scene cut 여부를 먼저 판단한다.
+- 媛숈? ?쇨뎬 track??3~5?꾨젅???댄븯濡??щ씪議뚮떎媛 ?뚯븘?ㅻ㈃ 蹂닿컙 ?먮뒗 ROI ?ш?異쒖쓣 ?쒕룄?쒕떎.
+- 諛뺤뒪 硫댁쟻??吏곸쟾 ?鍮?鍮꾩젙?곸쟻?쇰줈 而ㅼ?嫄곕굹 ?묒븘吏硫??꾨낫濡쒕쭔 ?먭퀬 利됱떆 諛섏쁺?섏? ?딅뒗??
+- ?쇨뎬 ?섍? 媛묒옄湲??ш쾶 蹂?섎㈃ scene cut ?щ?瑜?癒쇱? ?먮떒?쒕떎.
 
-### 6단계: export 경로 추가 최적화
-목표는 자동 face rect 경로를 최대한 bitmap mask 경로로 떨어뜨리지 않는 것이다.
+### 6?④퀎: export 寃쎈줈 異붽? 理쒖쟻??紐⑺몴???먮룞 face rect 寃쎈줈瑜?理쒕???bitmap mask 寃쎈줈濡??⑥뼱?⑤━吏 ?딅뒗 寃껋씠??
 
-- 자동 face rect만 있는 프레임은 계속 `ApplyFaceRectsAndBlur()` 경로를 사용한다.
-- 수동 mask가 있는 프레임만 `ApplyMaskAndBlur()`를 사용한다.
-- face rect가 없는 프레임은 BGRA 변환 없이 decode frame을 바로 encode한다.
-- `swsToBgraMs`와 `swsToEncMs`가 크면 변환 재사용 또는 encoder pixel format 조정을 검토한다.
-- `encodeMs`가 병목이면 preset/profile/CRF 또는 하드웨어 인코딩을 별도 실험한다.
+- ?먮룞 face rect留??덈뒗 ?꾨젅?꾩? 怨꾩냽 `ApplyFaceRectsAndBlur()` 寃쎈줈瑜??ъ슜?쒕떎.
+- ?섎룞 mask媛 ?덈뒗 ?꾨젅?꾨쭔 `ApplyMaskAndBlur()`瑜??ъ슜?쒕떎.
+- face rect媛 ?녿뒗 ?꾨젅?꾩? BGRA 蹂???놁씠 decode frame??諛붾줈 encode?쒕떎.
+- `swsToBgraMs`? `swsToEncMs`媛 ?щ㈃ 蹂???ъ궗???먮뒗 encoder pixel format 議곗젙??寃?좏븳??
+- `encodeMs`媛 蹂묐ぉ?대㈃ preset/profile/CRF ?먮뒗 ?섎뱶?⑥뼱 ?몄퐫?⑹쓣 蹂꾨룄 ?ㅽ뿕?쒕떎.
 
-주의:
+二쇱쓽:
 
-- 화질 손실을 일으키는 인코딩 옵션 변경은 기본값으로 바로 넣지 않는다.
-- 오디오 sync와 frame count exactness는 유지해야 한다.
+- ?붿쭏 ?먯떎???쇱쑝?ㅻ뒗 ?몄퐫???듭뀡 蹂寃쎌? 湲곕낯媛믪쑝濡?諛붾줈 ?ｌ? ?딅뒗??
+- ?ㅻ뵒??sync? frame count exactness???좎??댁빞 ?쒕떎.
 
-### 7단계: UX 유지
-성능 개선 중에도 사용자가 느끼는 상태 표시는 유지한다.
+### 7?④퀎: UX ?좎?
+?깅뒫 媛쒖꽑 以묒뿉???ъ슜?먭? ?먮겮???곹깭 ?쒖떆???좎??쒕떎.
 
-- 자동 검출 중 예상 시간 표시 유지.
-- export 중 예상 시간 또는 단계 표시 유지.
-- 자동 튜닝 중 UI thread block 금지.
-- 취소 시 정상 취소로 처리하고 오류처럼 보이지 않게 한다.
-- 홈 자동 저장과 워크스페이스 자동 실행의 상태 표시를 별도로 확인한다.
+- ?먮룞 寃異?以??덉긽 ?쒓컙 ?쒖떆 ?좎?.
+- export 以??덉긽 ?쒓컙 ?먮뒗 ?④퀎 ?쒖떆 ?좎?.
+- ?먮룞 ?쒕떇 以?UI thread block 湲덉?.
+- 痍⑥냼 ???뺤긽 痍⑥냼濡?泥섎━?섍퀬 ?ㅻ쪟泥섎읆 蹂댁씠吏 ?딄쾶 ?쒕떎.
+- ???먮룞 ??κ낵 ?뚰겕?ㅽ럹?댁뒪 ?먮룞 ?ㅽ뻾???곹깭 ?쒖떆瑜?蹂꾨룄濡??뺤씤?쒕떎.
 
-## 기본값 정책
-검증 전:
+## 湲곕낯媛??뺤콉
+寃利???
 
-- 기본 detector는 현재 안정적인 `FaceOnnx` 유지.
-- 새 backend는 내부 옵션 또는 개발 설정으로만 선택.
-- GPU/provider는 검증 전까지 기본값으로 승격하지 않는다.
-- 검출 간격 증가나 threshold 완화는 기본 품질 개선책으로 쓰지 않는다.
+- 湲곕낯 detector???꾩옱 ?덉젙?곸씤 `FaceOnnx` ?좎?.
+- ??backend???대? ?듭뀡 ?먮뒗 媛쒕컻 ?ㅼ젙?쇰줈留??좏깮.
+- GPU/provider??寃利??꾧퉴吏 湲곕낯媛믪쑝濡??밴꺽?섏? ?딅뒗??
+- 寃異?媛꾧꺽 利앷???threshold ?꾪솕??湲곕낯 ?덉쭏 媛쒖꽑梨낆쑝濡??곗? ?딅뒗??
 
-검증 후:
+寃利???
 
-- 품질이 같은데 빠른 detector는 기본 1차 detector 후보로 승격한다.
-- 느리지만 미탐을 줄이는 detector는 2차 verifier/refiner로 사용한다.
-- 검증된 GPU/provider는 기본 후보로 승격하되, 장비별 실패는 CPU fallback과 상태 로그로 명확히 남긴다.
+- ?덉쭏??媛숈???鍮좊Ⅸ detector??湲곕낯 1李?detector ?꾨낫濡??밴꺽?쒕떎.
+- ?먮━吏留?誘명깘??以꾩씠??detector??2李?verifier/refiner濡??ъ슜?쒕떎.
+- 寃利앸맂 GPU/provider??湲곕낯 ?꾨낫濡??밴꺽?섎릺, ?λ퉬蹂??ㅽ뙣??CPU fallback怨??곹깭 濡쒓렇濡?紐낇솗???④릿??
 
-## 검증 계획
-최소 검증:
+## 寃利?怨꾪쉷
+理쒖냼 寃利?
 
 - `dotnet build FaceShield.sln`
-- 짧은 샘플 영상 open, preview, 자동 검출, workspace 보정, export 확인.
-- 문제 10분 영상 자동 저장 경로 실행.
-- Windows `win-x64` publish output native DLL 확인.
-- macOS ARM64는 모델/native 변경이 있으면 별도 publish와 실행 확인.
+- 吏㏃? ?섑뵆 ?곸긽 open, preview, ?먮룞 寃異? workspace 蹂댁젙, export ?뺤씤.
+- 臾몄젣 10遺??곸긽 ?먮룞 ???寃쎈줈 ?ㅽ뻾.
+- Windows `win-x64` publish output native DLL ?뺤씤.
+- macOS ARM64??紐⑤뜽/native 蹂寃쎌씠 ?덉쑝硫?蹂꾨룄 publish? ?ㅽ뻾 ?뺤씤.
 
-품질 검증:
+?덉쭏 寃利?
 
-- 미탐이 발생한 구간을 frame index로 기록.
-- 오탐이 발생한 구간을 frame index로 기록.
-- 박스 튐이 눈에 띄는 구간을 frame index로 기록.
-- 기존 FaceONNX 결과와 새 backend 결과를 같은 frame에서 비교.
+- 誘명깘??諛쒖깮??援ш컙??frame index濡?湲곕줉.
+- ?ㅽ깘??諛쒖깮??援ш컙??frame index濡?湲곕줉.
+- 諛뺤뒪 ?먯씠 ?덉뿉 ?꾨뒗 援ш컙??frame index濡?湲곕줉.
+- 湲곗〈 FaceONNX 寃곌낵? ??backend 寃곌낵瑜?媛숈? frame?먯꽌 鍮꾧탳.
 
-성능 검증:
+?깅뒫 寃利?
 
-- 자동 검출 total.
+- ?먮룞 寃異?total.
 - export total.
 - detector latency.
 - `maskMs`, `encodeMs`, `swsToBgraMs`, `swsToEncMs`.
-- UI 멈춤 여부.
-- ETA/status 표시 유지 여부.
+- UI 硫덉땄 ?щ?.
+- ETA/status ?쒖떆 ?좎? ?щ?.
 
-## 작업 우선순위
-1. 실제 문제 영상 기준 baseline 로그 확보.
-2. run summary 저장 구조 추가.
-3. `FaceDetectorBackend` 확장 구조 정리.
-4. 새 detector 후보 1개를 proof-of-concept로 추가.
-5. 같은 영상에서 FaceONNX와 후보 detector 비교.
-6. track-first 보정 추가.
-7. ROI 재검출/2차 verifier 추가.
-8. export 병목별 최적화.
-9. 기본값 승격 여부 결정.
+## ?묒뾽 ?곗꽑?쒖쐞
+1. ?ㅼ젣 臾몄젣 ?곸긽 湲곗? baseline 濡쒓렇 ?뺣낫.
+2. run summary ???援ъ“ 異붽?.
+3. `FaceDetectorBackend` ?뺤옣 援ъ“ ?뺣━.
+4. ??detector ?꾨낫 1媛쒕? proof-of-concept濡?異붽?.
+5. 媛숈? ?곸긽?먯꽌 FaceONNX? ?꾨낫 detector 鍮꾧탳.
+6. track-first 蹂댁젙 異붽?.
+7. ROI ?ш?異?2李?verifier 異붽?.
+8. export 蹂묐ぉ蹂?理쒖쟻??
+9. 湲곕낯媛??밴꺽 ?щ? 寃곗젙.
 
-## 리스크
-- 새 모델의 라이선스나 배포 가능 여부가 불명확하면 제품 기본값으로 쓸 수 없다.
-- DirectML/CoreML provider는 장비별로 초기화 실패 또는 느린 fallback이 생길 수 있다.
-- 검출 속도만 개선하고 track 보정을 하지 않으면 결과물은 더 불안정해질 수 있다.
-- 하드웨어 인코딩은 속도는 빨라질 수 있지만 화질, 호환성, 배포 의존성 리스크가 있다.
-- 측정 없이 여러 최적화를 한 번에 넣으면 어떤 변경이 품질/속도에 영향을 줬는지 알 수 없다.
+## 由ъ뒪??- ??紐⑤뜽???쇱씠?좎뒪??諛고룷 媛???щ?媛 遺덈챸?뺥븯硫??쒗뭹 湲곕낯媛믪쑝濡??????녿떎.
+- DirectML/CoreML provider???λ퉬蹂꾨줈 珥덇린???ㅽ뙣 ?먮뒗 ?먮┛ fallback???앷만 ???덈떎.
+- 寃異??띾룄留?媛쒖꽑?섍퀬 track 蹂댁젙???섏? ?딆쑝硫?寃곌낵臾쇱? ??遺덉븞?뺥빐吏????덈떎.
+- ?섎뱶?⑥뼱 ?몄퐫?⑹? ?띾룄??鍮⑤씪吏????덉?留??붿쭏, ?명솚?? 諛고룷 ?섏〈??由ъ뒪?ш? ?덈떎.
+- 痢≪젙 ?놁씠 ?щ윭 理쒖쟻?붾? ??踰덉뿉 ?ｌ쑝硫??대뼡 蹂寃쎌씠 ?덉쭏/?띾룄???곹뼢??以щ뒗吏 ?????녿떎.
 
-## 결론
-이번 문제는 "검출 모델만 가벼운 것으로 교체"하는 식으로 처리하면 품질 저하 가능성이 크다. 현재 프로젝트에는 이미 detector factory, BGRA detector interface, sparse pipeline, direct face rect export, export timing log가 있으므로 이 기반을 살려야 한다.
+## 寃곕줎
+?대쾲 臾몄젣??"寃異?紐⑤뜽留?媛踰쇱슫 寃껋쑝濡?援먯껜"?섎뒗 ?앹쑝濡?泥섎━?섎㈃ ?덉쭏 ???媛?μ꽦???щ떎. ?꾩옱 ?꾨줈?앺듃?먮뒗 ?대? detector factory, BGRA detector interface, sparse pipeline, direct face rect export, export timing log媛 ?덉쑝誘濡???湲곕컲???대젮???쒕떎.
 
-가장 현실적인 방향은 다음 순서다.
+媛???꾩떎?곸씤 諛⑺뼢? ?ㅼ쓬 ?쒖꽌??
 
-1. 실제 문제 영상 기준으로 병목을 수치화한다.
-2. backend 교체 구조를 확장해 새 detector 후보를 안전하게 붙인다.
-3. 빠른 1차 검출과 강한 2차 재검출을 분리한다.
-4. track-first 보정으로 미탐과 박스 튐을 줄인다.
-5. export 병목은 로그 항목별로 줄인다.
+1. ?ㅼ젣 臾몄젣 ?곸긽 湲곗??쇰줈 蹂묐ぉ???섏튂?뷀븳??
+2. backend 援먯껜 援ъ“瑜??뺤옣????detector ?꾨낫瑜??덉쟾?섍쾶 遺숈씤??
+3. 鍮좊Ⅸ 1李?寃異쒓낵 媛뺥븳 2李??ш?異쒖쓣 遺꾨━?쒕떎.
+4. track-first 蹂댁젙?쇰줈 誘명깘怨?諛뺤뒪 ?먯쓣 以꾩씤??
+5. export 蹂묐ぉ? 濡쒓렇 ??ぉ蹂꾨줈 以꾩씤??
 
-이 순서로 가야 품질을 희생하지 않고 자동 검출 후 모자이크 처리 시간을 줄일 수 있다.
+???쒖꽌濡?媛???덉쭏???ъ깮?섏? ?딄퀬 ?먮룞 寃異???紐⑥옄?댄겕 泥섎━ ?쒓컙??以꾩씪 ???덈떎.
 
-## 2026-05-11 1차 구현 기록
-작업 브랜치: `plan/auto-mosaic-quality-speed`
+## 2026-05-11 1李?援ы쁽 湲곕줉
+?묒뾽 釉뚮옖移? `plan/auto-mosaic-quality-speed`
 
-반영 내용:
+諛섏쁺 ?댁슜:
 
-- `Services/Analysis/AutoMaskGenerator.cs`의 sparse tracking materialize 경로를 수정했다.
-- 기존에는 검출 키프레임 사이 중간 프레임에 마지막 얼굴 박스를 단순 복사했다.
-- 수정 후에는 다음 검출 키프레임의 얼굴 박스와 IoU, 중심점 거리, 면적 변화율로 같은 얼굴 후보를 매칭한다.
-- 매칭 가능한 경우 중간 프레임의 얼굴 박스를 선형 보간한다.
-- 짧은 검출 실패 gap은 앞뒤 긍정 검출이 같은 얼굴로 판단될 때 보간으로 채운다.
-- gap 보간 중 매칭되지 않은 박스는 복사하지 않아 오탐/잔상 유지 위험을 줄인다.
-- 매칭할 수 없는 경우에는 기존처럼 현재 키프레임 박스를 제한된 구간에만 사용한다.
-- 마지막 검출 박스를 영상 끝까지 무제한 복사하지 않고, 다음 검출 구간 또는 검출 간격 안에서만 materialize한다.
-- `[AutoMaskSparsePipe] done` 로그에 `interpolated` 값을 추가해 sparse tracking으로 채워진 프레임 수를 확인할 수 있게 했다.
+- `Services/Analysis/AutoMaskGenerator.cs`??sparse tracking materialize 寃쎈줈瑜??섏젙?덈떎.
+- 湲곗〈?먮뒗 寃異??ㅽ봽?덉엫 ?ъ씠 以묎컙 ?꾨젅?꾩뿉 留덉?留??쇨뎬 諛뺤뒪瑜??⑥닚 蹂듭궗?덈떎.
+- ?섏젙 ?꾩뿉???ㅼ쓬 寃異??ㅽ봽?덉엫???쇨뎬 諛뺤뒪? IoU, 以묒떖??嫄곕━, 硫댁쟻 蹂?붿쑉濡?媛숈? ?쇨뎬 ?꾨낫瑜?留ㅼ묶?쒕떎.
+- 留ㅼ묶 媛?ν븳 寃쎌슦 以묎컙 ?꾨젅?꾩쓽 ?쇨뎬 諛뺤뒪瑜??좏삎 蹂닿컙?쒕떎.
+- 吏㏃? 寃異??ㅽ뙣 gap? ?욌뮘 湲띿젙 寃異쒖씠 媛숈? ?쇨뎬濡??먮떒????蹂닿컙?쇰줈 梨꾩슫??
+- gap 蹂닿컙 以?留ㅼ묶?섏? ?딆? 諛뺤뒪??蹂듭궗?섏? ?딆븘 ?ㅽ깘/?붿긽 ?좎? ?꾪뿕??以꾩씤??
+- 留ㅼ묶?????녿뒗 寃쎌슦?먮뒗 湲곗〈泥섎읆 ?꾩옱 ?ㅽ봽?덉엫 諛뺤뒪瑜??쒗븳??援ш컙?먮쭔 ?ъ슜?쒕떎.
+- 留덉?留?寃異?諛뺤뒪瑜??곸긽 ?앷퉴吏 臾댁젣??蹂듭궗?섏? ?딄퀬, ?ㅼ쓬 寃異?援ш컙 ?먮뒗 寃異?媛꾧꺽 ?덉뿉?쒕쭔 materialize?쒕떎.
+- `[AutoMaskSparsePipe] done` 濡쒓렇??`interpolated` 媛믪쓣 異붽???sparse tracking?쇰줈 梨꾩썙吏??꾨젅???섎? ?뺤씤?????덇쾶 ?덈떎.
 
-목적:
+紐⑹쟻:
 
-- `DetectEveryNFrames > 1`과 tracking 조합에서 검출 횟수를 늘리지 않고도 박스 계단 현상과 프레임 간 흔들림을 줄인다.
-- 얼굴이 사라진 뒤 마지막 박스가 과도하게 유지되는 품질 리스크를 줄인다.
-- 추가 detector 호출 없이 중간 프레임을 보정하므로 속도 비용은 낮게 유지한다.
+- `DetectEveryNFrames > 1`怨?tracking 議고빀?먯꽌 寃異??잛닔瑜??섎━吏 ?딄퀬??諛뺤뒪 怨꾨떒 ?꾩긽怨??꾨젅??媛??붾뱾由쇱쓣 以꾩씤??
+- ?쇨뎬???щ씪吏???留덉?留?諛뺤뒪媛 怨쇰룄?섍쾶 ?좎??섎뒗 ?덉쭏 由ъ뒪?щ? 以꾩씤??
+- 異붽? detector ?몄텧 ?놁씠 以묎컙 ?꾨젅?꾩쓣 蹂댁젙?섎?濡??띾룄 鍮꾩슜? ??쾶 ?좎??쒕떎.
 
-아직 확실하지 않은 점:
+?꾩쭅 ?뺤떎?섏? ?딆? ??
 
-- 실제 문제 영상에서 품질 개선 정도와 처리 시간 변화는 아직 측정하지 않았다.
-- 다음 단계에서는 실제 샘플 로그의 `detectMs`, `interpolated`, `totalMs`, export timing을 비교해야 한다.
+- ?ㅼ젣 臾몄젣 ?곸긽?먯꽌 ?덉쭏 媛쒖꽑 ?뺣룄? 泥섎━ ?쒓컙 蹂?붾뒗 ?꾩쭅 痢≪젙?섏? ?딆븯??
+- ?ㅼ쓬 ?④퀎?먯꽌???ㅼ젣 ?섑뵆 濡쒓렇??`detectMs`, `interpolated`, `totalMs`, export timing??鍮꾧탳?댁빞 ?쒕떎.
 
-## 2026-05-11 2차 구현 기록
-반영 내용:
+## 2026-05-11 2李?援ы쁽 湲곕줉
+諛섏쁺 ?댁슜:
 
-- `Services/Analysis/AutoMaskRunSummary.cs`를 추가했다.
-- `AutoMaskGenerator`가 자동 검출 완료 시 `LastRunSummary`를 보관하고 `[AutoRunSummary]` 로그를 남기도록 했다.
-- summary에는 mode, totalFrames, processed, decoded, detects, interpolated, read/decode/detect/mask/total ms, downscale, tracking, detect interval, parallel detector count, ROI summary가 포함된다.
+- `Services/Analysis/AutoMaskRunSummary.cs`瑜?異붽??덈떎.
+- `AutoMaskGenerator`媛 ?먮룞 寃異??꾨즺 ??`LastRunSummary`瑜?蹂닿??섍퀬 `[AutoRunSummary]` 濡쒓렇瑜??④린?꾨줉 ?덈떎.
+- summary?먮뒗 mode, totalFrames, processed, decoded, detects, interpolated, read/decode/detect/mask/total ms, downscale, tracking, detect interval, parallel detector count, ROI summary媛 ?ы븿?쒕떎.
 
-목적:
+紐⑹쟻:
 
-- 실제 문제 영상 실행 후 자동 검출 병목을 export 로그와 분리해서 확인한다.
-- `sequential`, `pipe-single`, `pipe-parallel`, `sparse-pipe-parallel` 경로별 처리 시간을 같은 포맷으로 비교한다.
-- 향후 모델 교체나 ROI 재검출을 적용할 때 품질/속도 비교 기준선을 확보한다.
+- ?ㅼ젣 臾몄젣 ?곸긽 ?ㅽ뻾 ???먮룞 寃異?蹂묐ぉ??export 濡쒓렇? 遺꾨━?댁꽌 ?뺤씤?쒕떎.
+- `sequential`, `pipe-single`, `pipe-parallel`, `sparse-pipe-parallel` 寃쎈줈蹂?泥섎━ ?쒓컙??媛숈? ?щ㎎?쇰줈 鍮꾧탳?쒕떎.
+- ?ν썑 紐⑤뜽 援먯껜??ROI ?ш?異쒖쓣 ?곸슜?????덉쭏/?띾룄 鍮꾧탳 湲곗??좎쓣 ?뺣낫?쒕떎.
 
-아직 확실하지 않은 점:
+?꾩쭅 ?뺤떎?섏? ?딆? ??
 
-- 실제 문제 영상 로그가 없으므로 어떤 경로가 최종 병목인지는 아직 알 수 없다.
+- ?ㅼ젣 臾몄젣 ?곸긽 濡쒓렇媛 ?놁쑝誘濡??대뼡 寃쎈줈媛 理쒖쥌 蹂묐ぉ?몄????꾩쭅 ?????녿떎.
 
-## 2026-05-11 3차 구현 기록
-반영 내용:
+## 2026-05-11 3李?援ы쁽 湲곕줉
+諛섏쁺 ?댁슜:
 
-- `Services/FaceDetection/DetectorAutoTuner.cs` 내부 후보 측정 루프에 `CancellationToken`을 연결했다.
-- `WorkspaceViewModel.RunAutoCoreAsync()`에서 자동 튜닝 호출 시 자동 실행 취소 토큰을 전달하도록 했다.
-- 튜닝 시작 전, 샘플 프레임 로딩, 후보 측정 전, warm-up/측정 루프 내부에서 취소를 확인한다.
+- `Services/FaceDetection/DetectorAutoTuner.cs` ?대? ?꾨낫 痢≪젙 猷⑦봽??`CancellationToken`???곌껐?덈떎.
+- `WorkspaceViewModel.RunAutoCoreAsync()`?먯꽌 ?먮룞 ?쒕떇 ?몄텧 ???먮룞 ?ㅽ뻾 痍⑥냼 ?좏겙???꾨떖?섎룄濡??덈떎.
+- ?쒕떇 ?쒖옉 ?? ?섑뵆 ?꾨젅??濡쒕뵫, ?꾨낫 痢≪젙 ?? warm-up/痢≪젙 猷⑦봽 ?대??먯꽌 痍⑥냼瑜??뺤씤?쒕떎.
 
-목적:
+紐⑹쟻:
 
-- 자동 실행 초반 튜닝 중 취소했을 때 UI가 오래 멈춘 것처럼 보이는 위험을 줄인다.
-- 성능 튜닝을 유지하면서도 사용자가 취소를 누르면 더 빠르게 정상 취소 경로로 빠진다.
+- ?먮룞 ?ㅽ뻾 珥덈컲 ?쒕떇 以?痍⑥냼?덉쓣 ??UI媛 ?ㅻ옒 硫덉텣 寃껋쿂??蹂댁씠???꾪뿕??以꾩씤??
+- ?깅뒫 ?쒕떇???좎??섎㈃?쒕룄 ?ъ슜?먭? 痍⑥냼瑜??꾨Ⅴ硫???鍮좊Ⅴ寃??뺤긽 痍⑥냼 寃쎈줈濡?鍮좎쭊??
 
-아직 확실하지 않은 점:
+?꾩쭅 ?뺤떎?섏? ?딆? ??
 
-- 각 detector inference 호출 자체는 외부 라이브러리 호출이므로 호출 중간을 강제로 중단할 수는 없다.
-- 취소 반응성 개선 정도는 실제 영상과 장비에서 확인해야 한다.
+- 媛?detector inference ?몄텧 ?먯껜???몃? ?쇱씠釉뚮윭由??몄텧?대?濡??몄텧 以묎컙??媛뺤젣濡?以묐떒???섎뒗 ?녿떎.
+- 痍⑥냼 諛섏쓳??媛쒖꽑 ?뺣룄???ㅼ젣 ?곸긽怨??λ퉬?먯꽌 ?뺤씤?댁빞 ?쒕떎.
 
-## 2026-05-11 4차 구현 기록
-반영 내용:
+## 2026-05-11 4李?援ы쁽 湲곕줉
+諛섏쁺 ?댁슜:
 
-- 초기 실험에서는 신규/초기 자동 모자이크 기본값을 `추적 사용=true`, `2프레임마다 검출`로 조정했다.
-- 이후 실제 `srcTest` 6분 구간 smoke에서 `DetectEveryNFrames=2`가 baseline-only/optimized-only 프레임 차이를 만들 수 있음을 확인했다.
-- 최종 기본값은 품질 우선 기준에 맞춰 `DetectEveryNFrames=1`, `DownscaleRatio=1.0`, `ParallelDetectorCount=2`로 정리했다.
-- 기존 저장 설정이 있으면 저장된 사용자 설정이 우선 적용된다.
-- `Services/Workspace/WorkspaceStateStore.cs`의 자동 설정 기본값도 최종 기본값과 맞췄다.
-- 구버전 저장 설정에는 `SettingsVersion`이 없으므로, 이전 실험 기본값인 `DetectEveryNFrames=2`나 downscale 값이 기본처럼 남지 않도록 legacy 설정은 안전 기본값으로 마이그레이션한다.
+- 珥덇린 ?ㅽ뿕?먯꽌???좉퇋/珥덇린 ?먮룞 紐⑥옄?댄겕 湲곕낯媛믪쓣 `異붿쟻 ?ъ슜=true`, `2?꾨젅?꾨쭏??寃異?濡?議곗젙?덈떎.
+- ?댄썑 ?ㅼ젣 `srcTest` 6遺?援ш컙 smoke?먯꽌 `DetectEveryNFrames=2`媛 baseline-only/optimized-only ?꾨젅??李⑥씠瑜?留뚮뱾 ???덉쓬???뺤씤?덈떎.
+- 理쒖쥌 湲곕낯媛믪? ?덉쭏 ?곗꽑 湲곗???留욎떠 `DetectEveryNFrames=1`, `DownscaleRatio=1.0`, `ParallelDetectorCount=2`濡??뺣━?덈떎.
+- 湲곗〈 ????ㅼ젙???덉쑝硫???λ맂 ?ъ슜???ㅼ젙???곗꽑 ?곸슜?쒕떎.
+- `Services/Workspace/WorkspaceStateStore.cs`???먮룞 ?ㅼ젙 湲곕낯媛믩룄 理쒖쥌 湲곕낯媛믨낵 留욎톬??
+- 援щ쾭??????ㅼ젙?먮뒗 `SettingsVersion`???놁쑝誘濡? ?댁쟾 ?ㅽ뿕 湲곕낯媛믪씤 `DetectEveryNFrames=2`??downscale 媛믪씠 湲곕낯泥섎읆 ?⑥? ?딅룄濡?legacy ?ㅼ젙? ?덉쟾 湲곕낯媛믪쑝濡?留덉씠洹몃젅?댁뀡?쒕떎.
 
-목적:
+紐⑹쟻:
 
-- 기본 경로에서는 모든 프레임 검출을 유지해 baseline과 같은 품질을 목표로 한다.
-- 속도 개선은 검출 간격 증가나 다운스케일이 아니라 `pipe-parallel` 병렬 검출 경로로 가져간다.
+- 湲곕낯 寃쎈줈?먯꽌??紐⑤뱺 ?꾨젅??寃異쒖쓣 ?좎???baseline怨?媛숈? ?덉쭏??紐⑺몴濡??쒕떎.
+- ?띾룄 媛쒖꽑? 寃異?媛꾧꺽 利앷????ㅼ슫?ㅼ??쇱씠 ?꾨땲??`pipe-parallel` 蹂묐젹 寃異?寃쎈줈濡?媛?멸컙??
 
-아직 확실하지 않은 점:
+?꾩쭅 ?뺤떎?섏? ?딆? ??
 
-- 전체 영상의 다양한 얼굴/장면 구간에서도 baseline과 완전 일치하는지는 추가 검증이 필요하다.
+- ?꾩껜 ?곸긽???ㅼ뼇???쇨뎬/?λ㈃ 援ш컙?먯꽌??baseline怨??꾩쟾 ?쇱튂?섎뒗吏??異붽? 寃利앹씠 ?꾩슂?섎떎.
 
-## 2026-05-11 5차 구현 기록
-반영 내용:
+## 2026-05-11 5李?援ы쁽 湲곕줉
+諛섏쁺 ?댁슜:
 
-- `UseTracking=true`, `DetectEveryNFrames > 1`이면 병렬 세션 수가 1로 튜닝되더라도 sparse pipeline을 타도록 수정했다.
-- 기존 조건은 `ParallelDetectorCount > 1`일 때만 sparse pipeline을 사용해서, 자동 튜닝 결과가 1세션이면 sequential tracking으로 떨어질 수 있었다.
+- `UseTracking=true`, `DetectEveryNFrames > 1`?대㈃ 蹂묐젹 ?몄뀡 ?섍? 1濡??쒕떇?섎뜑?쇰룄 sparse pipeline????꾨줉 ?섏젙?덈떎.
+- 湲곗〈 議곌굔? `ParallelDetectorCount > 1`???뚮쭔 sparse pipeline???ъ슜?댁꽌, ?먮룞 ?쒕떇 寃곌낵媛 1?몄뀡?대㈃ sequential tracking?쇰줈 ?⑥뼱吏????덉뿀??
 
-목적:
+紐⑹쟻:
 
-- 사용자가 `DetectEveryNFrames > 1` 추적 옵션을 선택했을 때 sparse materialize 보간 로직을 안정적으로 적용한다.
-- 장비에 따라 1세션이 가장 빠르게 튜닝되어도 품질 보정 경로를 잃지 않게 한다.
+- ?ъ슜?먭? `DetectEveryNFrames > 1` 異붿쟻 ?듭뀡???좏깮?덉쓣 ??sparse materialize 蹂닿컙 濡쒖쭅???덉젙?곸쑝濡??곸슜?쒕떎.
+- ?λ퉬???곕씪 1?몄뀡??媛??鍮좊Ⅴ寃??쒕떇?섏뼱???덉쭏 蹂댁젙 寃쎈줈瑜??껋? ?딄쾶 ?쒕떎.
 
-## 2026-05-11 6차 구현 기록
-반영 내용:
+## 2026-05-11 6李?援ы쁽 湲곕줉
+諛섏쁺 ?댁슜:
 
-- `Services/Video/ExportRunSummary.cs`를 추가했다.
-- `VideoExportService`가 export 완료 시 `LastExportSummary`를 보관하고 `[ExportRunSummary]` 로그를 남기도록 했다.
-- `WorkspaceViewModel.SaveVideoAsync()`에서 export summary를 workspace 로그에도 연결했다.
-- `AutoMaskRunSummary`와 `ExportRunSummary`에 `runId`를 추가해 자동 검출과 export 로그를 같은 실행 단위로 묶을 수 있게 했다.
-- `AutoMaskRunSummary`에 detector 이름을 추가해 모델/backend 교체 후 같은 로그 포맷으로 기준선과 후보를 비교할 수 있게 했다.
-- `WorkspaceViewModel.RunAutoCoreAsync()`는 자동 실행마다 `auto-{guid}` 형식의 run id를 만들고, 자동 검출 후 export까지 같은 값을 전달한다.
-- 수동 export는 `export-{guid}` 형식의 run id를 남겨 자동 실행 로그와 구분한다.
-- 블러 대상이 없어 remux-copy로 조기 종료되는 export 경로도 `[ExportRunSummary]`를 남기도록 했다.
+- `Services/Video/ExportRunSummary.cs`瑜?異붽??덈떎.
+- `VideoExportService`媛 export ?꾨즺 ??`LastExportSummary`瑜?蹂닿??섍퀬 `[ExportRunSummary]` 濡쒓렇瑜??④린?꾨줉 ?덈떎.
+- `WorkspaceViewModel.SaveVideoAsync()`?먯꽌 export summary瑜?workspace 濡쒓렇?먮룄 ?곌껐?덈떎.
+- `AutoMaskRunSummary`? `ExportRunSummary`??`runId`瑜?異붽????먮룞 寃異쒓낵 export 濡쒓렇瑜?媛숈? ?ㅽ뻾 ?⑥쐞濡?臾띠쓣 ???덇쾶 ?덈떎.
+- `AutoMaskRunSummary`??detector ?대쫫??異붽???紐⑤뜽/backend 援먯껜 ??媛숈? 濡쒓렇 ?щ㎎?쇰줈 湲곗??좉낵 ?꾨낫瑜?鍮꾧탳?????덇쾶 ?덈떎.
+- `WorkspaceViewModel.RunAutoCoreAsync()`???먮룞 ?ㅽ뻾留덈떎 `auto-{guid}` ?뺤떇??run id瑜?留뚮뱾怨? ?먮룞 寃異???export源뚯? 媛숈? 媛믪쓣 ?꾨떖?쒕떎.
+- ?섎룞 export??`export-{guid}` ?뺤떇??run id瑜??④꺼 ?먮룞 ?ㅽ뻾 濡쒓렇? 援щ텇?쒕떎.
+- 釉붾윭 ??곸씠 ?놁뼱 remux-copy濡?議곌린 醫낅즺?섎뒗 export 寃쎈줈??`[ExportRunSummary]`瑜??④린?꾨줉 ?덈떎.
 
-목적:
+紐⑹쟻:
 
-- 자동 검출 summary와 export summary를 같은 테스트 실행에서 비교한다.
-- `swsToBgraMs`, `maskMs`, `swsToEncMs`, `encodeMs`, `totalMs`를 구조화해 다음 최적화 우선순위를 잡는다.
-- 홈 자동 저장 경로처럼 자동 검출 직후 export가 이어지는 경우에도 `[AutoRunSummary]`와 `[ExportRunSummary]`를 `runId`로 정확히 매칭한다.
-- 얼굴이 검출되지 않는 테스트 구간에서도 export 단계가 누락되지 않았는지 확인할 수 있다.
-- 실제 6분 구간 smoke에서 sparse face rect가 있는 상태로 hybrid copy export가 `Invalid argument`를 발생시키는 것을 확인했다.
-- encoder 패킷 timestamp rescale을 보강했지만 같은 출력 스트림에서 재인코딩 패킷과 원본 패킷을 섞는 경계 실패가 계속되어, 블러 대상이 있는 경우의 hybrid copy는 비활성화했다.
-- 블러 대상이 전혀 없는 remux-copy 고속 경로는 유지한다.
+- ?먮룞 寃異?summary? export summary瑜?媛숈? ?뚯뒪???ㅽ뻾?먯꽌 鍮꾧탳?쒕떎.
+- `swsToBgraMs`, `maskMs`, `swsToEncMs`, `encodeMs`, `totalMs`瑜?援ъ“?뷀빐 ?ㅼ쓬 理쒖쟻???곗꽑?쒖쐞瑜??〓뒗??
+- ???먮룞 ???寃쎈줈泥섎읆 ?먮룞 寃異?吏곹썑 export媛 ?댁뼱吏??寃쎌슦?먮룄 `[AutoRunSummary]`? `[ExportRunSummary]`瑜?`runId`濡??뺥솗??留ㅼ묶?쒕떎.
+- ?쇨뎬??寃異쒕릺吏 ?딅뒗 ?뚯뒪??援ш컙?먯꽌??export ?④퀎媛 ?꾨씫?섏? ?딆븯?붿? ?뺤씤?????덈떎.
+- ?ㅼ젣 6遺?援ш컙 smoke?먯꽌 sparse face rect媛 ?덈뒗 ?곹깭濡?hybrid copy export媛 `Invalid argument`瑜?諛쒖깮?쒗궎??寃껋쓣 ?뺤씤?덈떎.
+- encoder ?⑦궥 timestamp rescale??蹂닿컯?덉?留?媛숈? 異쒕젰 ?ㅽ듃由쇱뿉???ъ씤肄붾뵫 ?⑦궥怨??먮낯 ?⑦궥???욌뒗 寃쎄퀎 ?ㅽ뙣媛 怨꾩냽?섏뼱, 釉붾윭 ??곸씠 ?덈뒗 寃쎌슦??hybrid copy??鍮꾪솢?깊솕?덈떎.
+- 釉붾윭 ??곸씠 ?꾪? ?녿뒗 remux-copy 怨좎냽 寃쎈줈???좎??쒕떎.
 
-## 2026-05-11 srcTest smoke 시도
-대상:
+## 2026-05-11 srcTest smoke ?쒕룄
+???
 
 - `srcTest/260102_jp_10.mp4`
-- 확인된 메타데이터: 3840x2160, 약 29.97fps, 약 1067.6초, 약 31996프레임
+- ?뺤씤??硫뷀??곗씠?? 3840x2160, ??29.97fps, ??1067.6珥? ??31996?꾨젅??
+?쒕룄:
 
-시도:
+- ?꾩껜 ?곸긽? ?ㅻ옒 嫄몃━誘濡?10珥?援ш컙???섎씪 smoke ?ㅽ뻾???쒕룄?덈떎.
+- WSL ?꾩떆 harness?먯꽌??FFmpeg native load媛 ?ㅽ뙣?덈떎. ?쒖뒪??`libavcodec.so.60`? 濡쒕뱶?섏?留?`FFmpeg.AutoGen 8.0.0` 諛붿씤?⑷낵 ?고???FFmpeg ABI媛 留욎? ?딆븘 `avcodec_version()` ?④퀎?먯꽌 以묐떒?먮떎.
+- Windows `dotnet.exe`濡?repo??Windows native DLL 寃쎈줈瑜??댁슜??smoke???쒕룄?덉쑝?? ?꾩옱 WSL interop?먯꽌 `UtilBindVsockAnyPort` ?ㅻ쪟濡??ㅽ뻾???쒖옉?섏? ?딆븯??
 
-- 전체 영상은 오래 걸리므로 10초 구간을 잘라 smoke 실행을 시도했다.
-- WSL 임시 harness에서는 FFmpeg native load가 실패했다. 시스템 `libavcodec.so.60`은 로드되지만 `FFmpeg.AutoGen 8.0.0` 바인딩과 런타임 FFmpeg ABI가 맞지 않아 `avcodec_version()` 단계에서 중단됐다.
-- Windows `dotnet.exe`로 repo의 Windows native DLL 경로를 이용한 smoke도 시도했으나, 현재 WSL interop에서 `UtilBindVsockAnyPort` 오류로 실행이 시작되지 않았다.
+寃곕줎:
 
-결론:
+- 理쒖큹 WSL ?⑤룆 ?ㅽ뻾?먯꽌??FFmpeg ABI 臾몄젣? Windows interop 臾몄젣濡?smoke瑜??꾨즺?섏? 紐삵뻽??
+- ?댄썑 Windows PowerShell harness? WSL ffmpeg ?대┰ ?앹꽦??議고빀??`srcTest` ?ㅼ젣 吏㏃? 援ш컙 smoke瑜??꾨즺?덈떎.
+- ?ㅼ젣 ?곸긽 湲곗? `[AutoRunSummary]`, `[ExportRunSummary]`, baseline/optimized face rect 鍮꾧탳 濡쒓렇瑜??뺣낫?덈떎.
+- ?꾩쭅 ?꾩껜 17遺??곸긽 湲곗? 理쒖쥌 ?섏튂???뺣낫?섏? ?딆븯??
 
-- 최초 WSL 단독 실행에서는 FFmpeg ABI 문제와 Windows interop 문제로 smoke를 완료하지 못했다.
-- 이후 Windows PowerShell harness와 WSL ffmpeg 클립 생성을 조합해 `srcTest` 실제 짧은 구간 smoke를 완료했다.
-- 실제 영상 기준 `[AutoRunSummary]`, `[ExportRunSummary]`, baseline/optimized face rect 비교 로그를 확보했다.
-- 아직 전체 17분 영상 기준 최종 수치는 확보하지 않았다.
-
-추가 산출물:
+異붽? ?곗텧臾?
 
 - `scripts/run-srcTest-smoke.ps1`
 - `scripts/verify-face-track-postprocess.ps1`
-- Windows PowerShell에서 `.\scripts\run-srcTest-smoke.ps1 -Start 00:02:00 -Seconds 10` 형태로 실행하면 10초 클립을 만들고 기준선(`baseline-all-frames`)과 개선 경로(`optimized-track-2`)의 자동 검출/export summary를 출력한다.
-- 기준선 실행을 생략하려면 `-SkipBaseline`을 붙인다.
-- 전제: Windows `dotnet`과 `ffmpeg` CLI가 PATH에 있어야 한다.
-- 스크립트가 생성하는 C# harness는 임시 프로젝트로 `dotnet build` 검증을 통과했다.
-- Windows PATH에 `ffmpeg`가 없으면 `-SkipTrim -Source <이미 만든 짧은 클립>`으로 실행할 수 있게 했다.
-- 3초 클립 smoke 1회 결과 해당 구간에서는 얼굴이 0개 검출됐다. 이 결과는 속도 경로 확인에는 유효하지만 품질 비교 샘플로는 부족하다.
+- Windows PowerShell?먯꽌 `.\scripts\run-srcTest-smoke.ps1 -Start 00:02:00 -Seconds 10` ?뺥깭濡??ㅽ뻾?섎㈃ 10珥??대┰??留뚮뱾怨?湲곗???`baseline-all-frames`)怨?媛쒖꽑 寃쎈줈(`optimized-track-2`)???먮룞 寃異?export summary瑜?異쒕젰?쒕떎.
+- 湲곗????ㅽ뻾???앸왂?섎젮硫?`-SkipBaseline`??遺숈씤??
+- ?꾩젣: Windows `dotnet`怨?`ffmpeg` CLI媛 PATH???덉뼱???쒕떎.
+- ?ㅽ겕由쏀듃媛 ?앹꽦?섎뒗 C# harness???꾩떆 ?꾨줈?앺듃濡?`dotnet build` 寃利앹쓣 ?듦낵?덈떎.
+- Windows PATH??`ffmpeg`媛 ?놁쑝硫?`-SkipTrim -Source <?대? 留뚮뱺 吏㏃? ?대┰>`?쇰줈 ?ㅽ뻾?????덇쾶 ?덈떎.
+- 3珥??대┰ smoke 1??寃곌낵 ?대떦 援ш컙?먯꽌???쇨뎬??0媛?寃異쒕릱?? ??寃곌낵???띾룄 寃쎈줈 ?뺤씤?먮뒗 ?좏슚?섏?留??덉쭏 鍮꾧탳 ?섑뵆濡쒕뒗 遺議깊븯??
 
-실제 6분 구간 3초 클립 smoke:
+?ㅼ젣 6遺?援ш컙 3珥??대┰ smoke:
 
-| 케이스 | 경로 | 검출 호출 | 보간 | faceMaskFrames | 자동 검출 total | detectMs | export total | directFaceFrames |
+| 耳?댁뒪 | 寃쎈줈 | 寃異??몄텧 | 蹂닿컙 | faceMaskFrames | ?먮룞 寃異?total | detectMs | export total | directFaceFrames |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | baseline-all-frames | `pipe-single` | 90 | 0 | 8 | 73,731ms | 73,348ms | 7,814ms | 8 |
 | optimized-track-2 | `sparse-pipe-parallel` | 45 | 4 | 8 | 26,209ms | 25,857ms | 7,978ms | 8 |
@@ -452,232 +443,232 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 | optimized-track-2-scale-0.75 | `sparse-pipe-parallel` | 45 | 4 | 8 | 19,948ms | 19,614ms | 8,553ms | 8 |
 | optimized-track-2-scale-0.5 | `sparse-pipe-parallel` | 45 | 3 | 6 | 14,196ms | 13,933ms | 9,131ms | 6 |
 
-해석:
+?댁꽍:
 
-- 같은 92프레임 클립에서 최적화 경로는 검출 호출을 90회에서 45회로 줄였다.
-- faceMaskFrames는 둘 다 8개로 같고, 최적화 경로는 중간 프레임 4개를 보간했다.
-- 자동 검출 total은 약 73.7초에서 약 26.2초로 줄었다.
-- 원본 해상도 유지 상태에서 parallel detector 2개를 쓰면 faceMaskFrames 8개를 유지하면서 자동 검출 total이 약 20.8초까지 줄었다. `detectMs` 합계는 병렬 thread 누적 시간이라 wall-clock인 `totalMs`를 우선 판단한다.
-- 다만 `DetectEveryNFrames=2` 비교에서는 baseline-only frame 27, optimized-only frame 87이 발생했다. 공통 프레임 IoU는 높았지만 프레임 단위 완전 일치는 아니므로 품질 우선 기본값으로는 부적절하다.
-- 모든 프레임 검출을 유지한 `parallel=2` 경로는 baseline과 `baselineFrames=8`, `optimizedFrames=8`, `common=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`으로 완전 일치했다.
-- 앱 기본 조합인 `UseTracking=true + DetectEveryNFrames=1 + parallel=2`도 `pipe-parallel`로 진입했고, baseline과 프레임/박스가 완전 일치했다.
-- 따라서 기본 품질 경로는 `DetectEveryNFrames=1 + parallel pipeline`으로 둔다.
-- `DetectEveryNFrames=3`은 이 짧은 구간에서 더 빨랐지만, 빠른 움직임/장면 전환에서 보간 의존도가 커지는 품질 리스크가 있으므로 기본값으로 적용하지 않는다.
-- 0.75 다운스케일은 faceMaskFrames 8개를 유지하면서 자동 검출 total을 약 19.9초까지 줄였다.
-- 0.5 다운스케일은 더 빠르지만 faceMaskFrames가 6개로 줄어 품질 손실이 확인되어 기본값 후보에서 제외했다.
-- export는 direct face rect 경로를 사용했고, 두 케이스 모두 완료됐다.
-- 이 smoke는 짧은 구간 기준이므로 전체 17분 영상의 최종 수치로 일반화하면 안 된다.
+- 媛숈? 92?꾨젅???대┰?먯꽌 理쒖쟻??寃쎈줈??寃異??몄텧??90?뚯뿉??45?뚮줈 以꾩???
+- faceMaskFrames??????8媛쒕줈 媛숆퀬, 理쒖쟻??寃쎈줈??以묎컙 ?꾨젅??4媛쒕? 蹂닿컙?덈떎.
+- ?먮룞 寃異?total? ??73.7珥덉뿉????26.2珥덈줈 以꾩뿀??
+- ?먮낯 ?댁긽???좎? ?곹깭?먯꽌 parallel detector 2媛쒕? ?곕㈃ faceMaskFrames 8媛쒕? ?좎??섎㈃???먮룞 寃異?total????20.8珥덇퉴吏 以꾩뿀?? `detectMs` ?⑷퀎??蹂묐젹 thread ?꾩쟻 ?쒓컙?대씪 wall-clock??`totalMs`瑜??곗꽑 ?먮떒?쒕떎.
+- ?ㅻ쭔 `DetectEveryNFrames=2` 鍮꾧탳?먯꽌??baseline-only frame 27, optimized-only frame 87??諛쒖깮?덈떎. 怨듯넻 ?꾨젅??IoU???믪븯吏留??꾨젅???⑥쐞 ?꾩쟾 ?쇱튂???꾨땲誘濡??덉쭏 ?곗꽑 湲곕낯媛믪쑝濡쒕뒗 遺?곸젅?섎떎.
+- 紐⑤뱺 ?꾨젅??寃異쒖쓣 ?좎???`parallel=2` 寃쎈줈??baseline怨?`baselineFrames=8`, `optimizedFrames=8`, `common=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`?쇰줈 ?꾩쟾 ?쇱튂?덈떎.
+- ??湲곕낯 議고빀??`UseTracking=true + DetectEveryNFrames=1 + parallel=2`??`pipe-parallel`濡?吏꾩엯?덇퀬, baseline怨??꾨젅??諛뺤뒪媛 ?꾩쟾 ?쇱튂?덈떎.
+- ?곕씪??湲곕낯 ?덉쭏 寃쎈줈??`DetectEveryNFrames=1 + parallel pipeline`?쇰줈 ?붾떎.
+- `DetectEveryNFrames=3`? ??吏㏃? 援ш컙?먯꽌 ??鍮⑤옄吏留? 鍮좊Ⅸ ?吏곸엫/?λ㈃ ?꾪솚?먯꽌 蹂닿컙 ?섏〈?꾧? 而ㅼ????덉쭏 由ъ뒪?ш? ?덉쑝誘濡?湲곕낯媛믪쑝濡??곸슜?섏? ?딅뒗??
+- 0.75 ?ㅼ슫?ㅼ??쇱? faceMaskFrames 8媛쒕? ?좎??섎㈃???먮룞 寃異?total????19.9珥덇퉴吏 以꾩???
+- 0.5 ?ㅼ슫?ㅼ??쇱? ??鍮좊Ⅴ吏留?faceMaskFrames媛 6媛쒕줈 以꾩뼱 ?덉쭏 ?먯떎???뺤씤?섏뼱 湲곕낯媛??꾨낫?먯꽌 ?쒖쇅?덈떎.
+- export??direct face rect 寃쎈줈瑜??ъ슜?덇퀬, ??耳?댁뒪 紐⑤몢 ?꾨즺?먮떎.
+- ??smoke??吏㏃? 援ш컙 湲곗??대?濡??꾩껜 17遺??곸긽??理쒖쥌 ?섏튂濡??쇰컲?뷀븯硫????쒕떎.
 
-기본값 판단:
+湲곕낯媛??먮떒:
 
-- 신규/초기 자동 모자이크 downscale 기본값은 `1.0 + BalancedBilinear`로 유지한다.
-- parallel session 기본값은 기존처럼 `2`를 유지한다. 실제 smoke에서 원본 해상도 품질을 유지한 채 wall-clock 개선이 확인됐고, 자동 튜너가 장비별로 더 나은 세션 수를 고를 수 있다.
-- `DetectEveryNFrames` 기본값은 `1`로 유지한다. `2`와 `3`은 추가 품질 검증 전까지 사용자 선택/실험 옵션으로만 둔다.
-- `UseTracking=true`라도 `DetectEveryNFrames=1`이면 모든 프레임 검출이므로 parallel all-frame pipeline을 사용할 수 있게 했다.
-- `AutoSettingsState.SettingsVersion=3`을 사용해 구버전 저장 설정은 품질 우선 기본값으로 보정한다.
-- `0.75`는 한 구간 smoke에서 속도 이득과 동일 faceMaskFrames를 보였지만, 작은 얼굴/측면 얼굴/먼 얼굴 품질을 전체 영상에서 보장하지 못하므로 기본값으로 적용하지 않는다.
-- `0.5`는 속도상 유리하지만 실제 smoke에서 검출 프레임 수가 줄었으므로 기본값으로 적용하지 않았다.
+- ?좉퇋/珥덇린 ?먮룞 紐⑥옄?댄겕 downscale 湲곕낯媛믪? `1.0 + BalancedBilinear`濡??좎??쒕떎.
+- parallel session 湲곕낯媛믪? 湲곗〈泥섎읆 `2`瑜??좎??쒕떎. ?ㅼ젣 smoke?먯꽌 ?먮낯 ?댁긽???덉쭏???좎???梨?wall-clock 媛쒖꽑???뺤씤?먭퀬, ?먮룞 ?쒕꼫媛 ?λ퉬蹂꾨줈 ???섏? ?몄뀡 ?섎? 怨좊? ???덈떎.
+- `DetectEveryNFrames` 湲곕낯媛믪? `1`濡??좎??쒕떎. `2`? `3`? 異붽? ?덉쭏 寃利??꾧퉴吏 ?ъ슜???좏깮/?ㅽ뿕 ?듭뀡?쇰줈留??붾떎.
+- `UseTracking=true`?쇰룄 `DetectEveryNFrames=1`?대㈃ 紐⑤뱺 ?꾨젅??寃異쒖씠誘濡?parallel all-frame pipeline???ъ슜?????덇쾶 ?덈떎.
+- `AutoSettingsState.SettingsVersion=3`???ъ슜??援щ쾭??????ㅼ젙? ?덉쭏 ?곗꽑 湲곕낯媛믪쑝濡?蹂댁젙?쒕떎.
+- `0.75`????援ш컙 smoke?먯꽌 ?띾룄 ?대뱷怨??숈씪 faceMaskFrames瑜?蹂댁?吏留? ?묒? ?쇨뎬/痢〓㈃ ?쇨뎬/癒??쇨뎬 ?덉쭏???꾩껜 ?곸긽?먯꽌 蹂댁옣?섏? 紐삵븯誘濡?湲곕낯媛믪쑝濡??곸슜?섏? ?딅뒗??
+- `0.5`???띾룄???좊━?섏?留??ㅼ젣 smoke?먯꽌 寃異??꾨젅???섍? 以꾩뿀?쇰?濡?湲곕낯媛믪쑝濡??곸슜?섏? ?딆븯??
 
-실제 6분 구간 5초 클립 추가 smoke:
+?ㅼ젣 6遺?援ш컙 5珥??대┰ 異붽? smoke:
 
-| 케이스 | 경로 | 검출 호출 | faceMaskFrames | 자동 검출 total | export total | 비교 |
+| 耳?댁뒪 | 寃쎈줈 | 寃異??몄텧 | faceMaskFrames | ?먮룞 寃異?total | export total | 鍮꾧탳 |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| baseline-all-frames | `pipe-single` | 150 | 8 | 100,254ms | 9,930ms | 기준 |
+| baseline-all-frames | `pipe-single` | 150 | 8 | 100,254ms | 9,930ms | 湲곗? |
 | optimized-track-1-parallel-2 | `pipe-parallel` | 150 | 8 | 53,724ms | 10,648ms | `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000` |
-| script-default-track-1-parallel-2 | `pipe-parallel` | 150 | 8 | 56,451ms | 11,121ms | baseline 비교 생략, 기본 스크립트 경로 확인 |
+| script-default-track-1-parallel-2 | `pipe-parallel` | 150 | 8 | 56,451ms | 11,121ms | baseline 鍮꾧탳 ?앸왂, 湲곕낯 ?ㅽ겕由쏀듃 寃쎈줈 ?뺤씤 |
 
-해석:
+?댁꽍:
 
-- 5초/150프레임 클립에서도 모든 프레임 검출을 유지한 parallel pipeline은 baseline과 프레임/박스가 완전히 일치했다.
-- 자동 검출 wall-clock은 약 100.3초에서 53.7초로 줄었다.
-- smoke 스크립트 기본값도 `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `ParallelDetectorCount=2`로 맞췄고, 기본 실행이 `pipe-parallel`로 진입하는 것을 확인했다.
-- `[AutoRunSummary]`의 detector 표기에 ONNX Runtime provider를 포함해 `FaceOnnxDetector/CPU`, `FaceOnnxDetector/GPU:DirectML`처럼 실제 가속 경로를 확인할 수 있게 했다.
-- export는 큰 병목이 아니며, 현재 병목은 여전히 자동 검출 detector 실행이다.
+- 5珥?150?꾨젅???대┰?먯꽌??紐⑤뱺 ?꾨젅??寃異쒖쓣 ?좎???parallel pipeline? baseline怨??꾨젅??諛뺤뒪媛 ?꾩쟾???쇱튂?덈떎.
+- ?먮룞 寃異?wall-clock? ??100.3珥덉뿉??53.7珥덈줈 以꾩뿀??
+- smoke ?ㅽ겕由쏀듃 湲곕낯媛믩룄 `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `ParallelDetectorCount=2`濡?留욎톬怨? 湲곕낯 ?ㅽ뻾??`pipe-parallel`濡?吏꾩엯?섎뒗 寃껋쓣 ?뺤씤?덈떎.
+- `[AutoRunSummary]`??detector ?쒓린??ONNX Runtime provider瑜??ы븿??`FaceOnnxDetector/CPU`, `FaceOnnxDetector/GPU:DirectML`泥섎읆 ?ㅼ젣 媛??寃쎈줈瑜??뺤씤?????덇쾶 ?덈떎.
+- export????蹂묐ぉ???꾨땲硫? ?꾩옱 蹂묐ぉ? ?ъ쟾???먮룞 寃異?detector ?ㅽ뻾?대떎.
 
-실제 9분 구간 2초 클립 추가 smoke:
+?ㅼ젣 9遺?援ш컙 2珥??대┰ 異붽? smoke:
 
-| 케이스 | 경로 | 검출 호출 | faceMaskFrames | 자동 검출 total | export total | 비고 |
+| 耳?댁뒪 | 寃쎈줈 | 寃異??몄텧 | faceMaskFrames | ?먮룞 寃異?total | export total | 鍮꾧퀬 |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| script-default-track-1-parallel-2-cpu | `pipe-parallel` | 60 | 51 | 24,220ms | 12,828ms | `FaceOnnxDetector/CPU`, 얼굴 다수 구간 |
-| script-default-track-1-parallel-2-gpu | `pipe-parallel` | 60 | 51 | 19,650ms | 13,101ms | `FaceOnnxDetector/GPU:DirectML`, 기본 스크립트 경로 |
+| script-default-track-1-parallel-2-cpu | `pipe-parallel` | 60 | 51 | 24,220ms | 12,828ms | `FaceOnnxDetector/CPU`, ?쇨뎬 ?ㅼ닔 援ш컙 |
+| script-default-track-1-parallel-2-gpu | `pipe-parallel` | 60 | 51 | 19,650ms | 13,101ms | `FaceOnnxDetector/GPU:DirectML`, 湲곕낯 ?ㅽ겕由쏀듃 寃쎈줈 |
 
-해석:
+?댁꽍:
 
-- 다른 시간대에서도 기본 경로는 원본 해상도, 모든 프레임 검출, parallel pipeline으로 진입했다.
-- 해당 구간은 faceMaskFrames가 51개라 6분 구간보다 얼굴 검출이 훨씬 많은 장면으로 보이며, export는 direct face rect 51프레임으로 완료됐다.
-- 같은 9분 구간에서 DirectML은 CPU 대비 자동 검출 wall-clock을 약 24.2초에서 19.7초로 줄였고, faceMaskFrames는 51개로 유지됐다.
-- 앱 자동 설정 버전을 `3`으로 올려 legacy 저장 설정은 Windows/macOS에서 GPU 사용 기본값을 다시 적용한다. GPU 초기화 실패 시 기존 detector fallback 로직이 CPU로 내려간다.
-- legacy 저장 설정은 `DetectEveryNFrames=1`, `DownscaleRatio=1.0`, GPU 기본값뿐 아니라 `ParallelSessionCount`도 최소 2로 보정한다.
-- direct face blur의 alpha/radius map 사전 계산 최적화도 시도했지만, 같은 smoke에서 `maskMs`가 약 5.1초에서 8.5초로 악화되어 반영하지 않았다.
-- smoke 스크립트는 `-SkipTrim`으로 여러 클립을 테스트할 때 출력 파일이 덮이지 않도록 입력 클립 이름 기반으로 export 파일명을 만든다.
-- smoke 스크립트에 `-SkipExport`를 추가했다. 긴 구간에서는 자동 검출/face rect 비교만 먼저 확인하고, export는 대표 구간에서 따로 검증할 수 있다.
-- smoke 스크립트에 `-UseAutoTune`를 추가했다. 실제 `DetectorAutoTuner.TryTune` 경로를 호출해 튜닝 라벨/세션/provider를 확인할 수 있다.
-- smoke 스크립트에 품질 gate를 추가했다. baseline 비교 실행 시 프레임 누락/추가, 박스 수 차이, `avgBestIou`, `minBestIou` 기준을 검사하고 실패하면 exit code 2로 종료한다.
-- `scripts/verify-native-publish.ps1`를 추가했다. `win-x64`와 `osx-arm64` publish를 실행하고 각 runtime의 필수 native 파일을 검사한다. macOS 검증에서는 Windows `onnxruntime.dll`/`onnxruntime_providers_shared.dll`이 섞이면 실패하고, `libomp.dylib` 누락은 경고로 표시한다.
-- `scripts/verify-auto-mosaic-default.ps1`를 추가했다. 기본 실행은 6분 3초 클립에서 CPU single baseline 대비 CPU `pipe-parallel(2)` all-frame 품질 gate를 검사하고, 6분 5초 클립에서 `UseAutoTune` 기본 경로가 `GPU:DirectML`, `pipe-parallel(2)`, 전 프레임 검출로 동작하는지 확인한다. `-RunLongAutoTune`을 붙이면 12분 30초 클립까지 확장 검증한다.
+- ?ㅻⅨ ?쒓컙??먯꽌??湲곕낯 寃쎈줈???먮낯 ?댁긽?? 紐⑤뱺 ?꾨젅??寃異? parallel pipeline?쇰줈 吏꾩엯?덈떎.
+- ?대떦 援ш컙? faceMaskFrames媛 51媛쒕씪 6遺?援ш컙蹂대떎 ?쇨뎬 寃異쒖씠 ?⑥뵮 留롮? ?λ㈃?쇰줈 蹂댁씠硫? export??direct face rect 51?꾨젅?꾩쑝濡??꾨즺?먮떎.
+- 媛숈? 9遺?援ш컙?먯꽌 DirectML? CPU ?鍮??먮룞 寃異?wall-clock????24.2珥덉뿉??19.7珥덈줈 以꾩?怨? faceMaskFrames??51媛쒕줈 ?좎??먮떎.
+- ???먮룞 ?ㅼ젙 踰꾩쟾??`3`?쇰줈 ?щ젮 legacy ????ㅼ젙? Windows/macOS?먯꽌 GPU ?ъ슜 湲곕낯媛믪쓣 ?ㅼ떆 ?곸슜?쒕떎. GPU 珥덇린???ㅽ뙣 ??湲곗〈 detector fallback 濡쒖쭅??CPU濡??대젮媛꾨떎.
+- legacy ????ㅼ젙? `DetectEveryNFrames=1`, `DownscaleRatio=1.0`, GPU 湲곕낯媛믩퓧 ?꾨땲??`ParallelSessionCount`??理쒖냼 2濡?蹂댁젙?쒕떎.
+- direct face blur??alpha/radius map ?ъ쟾 怨꾩궛 理쒖쟻?붾룄 ?쒕룄?덉?留? 媛숈? smoke?먯꽌 `maskMs`媛 ??5.1珥덉뿉??8.5珥덈줈 ?낇솕?섏뼱 諛섏쁺?섏? ?딆븯??
+- smoke ?ㅽ겕由쏀듃??`-SkipTrim`?쇰줈 ?щ윭 ?대┰???뚯뒪?명븷 ??異쒕젰 ?뚯씪????씠吏 ?딅룄濡??낅젰 ?대┰ ?대쫫 湲곕컲?쇰줈 export ?뚯씪紐낆쓣 留뚮뱺??
+- smoke ?ㅽ겕由쏀듃??`-SkipExport`瑜?異붽??덈떎. 湲?援ш컙?먯꽌???먮룞 寃異?face rect 鍮꾧탳留?癒쇱? ?뺤씤?섍퀬, export?????援ш컙?먯꽌 ?곕줈 寃利앺븷 ???덈떎.
+- smoke ?ㅽ겕由쏀듃??`-UseAutoTune`瑜?異붽??덈떎. ?ㅼ젣 `DetectorAutoTuner.TryTune` 寃쎈줈瑜??몄텧???쒕떇 ?쇰꺼/?몄뀡/provider瑜??뺤씤?????덈떎.
+- smoke ?ㅽ겕由쏀듃???덉쭏 gate瑜?異붽??덈떎. baseline 鍮꾧탳 ?ㅽ뻾 ???꾨젅???꾨씫/異붽?, 諛뺤뒪 ??李⑥씠, `avgBestIou`, `minBestIou` 湲곗???寃?ы븯怨??ㅽ뙣?섎㈃ exit code 2濡?醫낅즺?쒕떎.
+- `scripts/verify-native-publish.ps1`瑜?異붽??덈떎. `win-x64`? `osx-arm64` publish瑜??ㅽ뻾?섍퀬 媛?runtime???꾩닔 native ?뚯씪??寃?ы븳?? macOS 寃利앹뿉?쒕뒗 Windows `onnxruntime.dll`/`onnxruntime_providers_shared.dll`???욎씠硫??ㅽ뙣?섍퀬, `libomp.dylib` ?꾨씫? 寃쎄퀬濡??쒖떆?쒕떎.
+- `scripts/verify-auto-mosaic-default.ps1`瑜?異붽??덈떎. 湲곕낯 ?ㅽ뻾? 6遺?3珥??대┰?먯꽌 CPU single baseline ?鍮?CPU `pipe-parallel(2)` all-frame ?덉쭏 gate瑜?寃?ы븯怨? 6遺?5珥??대┰?먯꽌 `UseAutoTune` 湲곕낯 寃쎈줈媛 `GPU:DirectML`, `pipe-parallel(2)`, ???꾨젅??寃異쒕줈 ?숈옉?섎뒗吏 ?뺤씤?쒕떎. `-RunLongAutoTune`??遺숈씠硫?12遺?30珥??대┰源뚯? ?뺤옣 寃利앺븳??
 
-뒤쪽 시간대 추가 smoke:
+?ㅼそ ?쒓컙? 異붽? smoke:
 
-| 구간 | 경로 | 검출 호출 | faceMaskFrames | 자동 검출 total | export total | 비고 |
+| 援ш컙 | 寃쎈줈 | 寃異??몄텧 | faceMaskFrames | ?먮룞 寃異?total | export total | 鍮꾧퀬 |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| 12:00 2초 | `GPU:DirectML` / `pipe-parallel` | 60 | 28 | 25,842ms | 10,057ms | direct face rect export |
-| 15:00 2초 | `GPU:DirectML` / `pipe-parallel` | 59 | 0 | 18,315ms | 193ms | 얼굴 없음, remux-copy |
+| 12:00 2珥?| `GPU:DirectML` / `pipe-parallel` | 60 | 28 | 25,842ms | 10,057ms | direct face rect export |
+| 15:00 2珥?| `GPU:DirectML` / `pipe-parallel` | 59 | 0 | 18,315ms | 193ms | ?쇨뎬 ?놁쓬, remux-copy |
 
-해석:
+?댁꽍:
 
-- 12분 구간도 원본 해상도, 모든 프레임 검출, DirectML, parallel pipeline으로 동작했고 얼굴 마스크 28프레임을 export했다.
-- 15분 구간은 검출 프레임이 없어 blur 대상이 없었고, remux-copy 경로가 `[ExportRunSummary]`를 남기며 빠르게 종료됐다.
+- 12遺?援ш컙???먮낯 ?댁긽?? 紐⑤뱺 ?꾨젅??寃異? DirectML, parallel pipeline?쇰줈 ?숈옉?덇퀬 ?쇨뎬 留덉뒪??28?꾨젅?꾩쓣 export?덈떎.
+- 15遺?援ш컙? 寃異??꾨젅?꾩씠 ?놁뼱 blur ??곸씠 ?놁뿀怨? remux-copy 寃쎈줈媛 `[ExportRunSummary]`瑜??④린硫?鍮좊Ⅴ寃?醫낅즺?먮떎.
 
-12분 구간 baseline 비교:
+12遺?援ш컙 baseline 鍮꾧탳:
 
-| 케이스 | provider / 경로 | 검출 호출 | faceMaskFrames | 자동 검출 total | export total |
+| 耳?댁뒪 | provider / 寃쎈줈 | 寃異??몄텧 | faceMaskFrames | ?먮룞 寃異?total | export total |
 | --- | --- | ---: | ---: | ---: | ---: |
 | baseline-all-frames | `CPU` / `pipe-single` | 60 | 28 | 27,579ms | 7,206ms |
 | optimized-track-1-gpu | `GPU:DirectML` / `pipe-parallel` | 60 | 28 | 20,839ms | 7,746ms |
 
-비교 결과:
+鍮꾧탳 寃곌낵:
 
 - `baselineFrames=28`, `optimizedFrames=28`, `common=28`, `onlyBaseline=0`, `onlyOptimized=0`, `boxCountDiffFrames=0`
 - `avgBestIou=0.916`, `minBestIou=0.846`
-- DirectML provider의 floating point 차이로 박스 좌표가 완전 동일하지는 않지만, 동일 프레임/동일 박스 수를 유지했고 IoU도 높은 편이다.
-- 자동 검출 wall-clock은 같은 12분 구간에서 약 27.6초에서 20.8초로 줄었다.
-- `DetectorAutoTuner`에 GPU 후보 quality gate를 추가했다. 튜닝 샘플에서 CPU 기준과 박스 수가 다르거나 최소 IoU가 `0.75` 미만이면 GPU 후보는 속도가 빨라도 선택하지 않는다.
-- 12분 2초 클립에서 `-UseAutoTune` smoke를 실행했고, 튜너가 `GPU 2세션/8스레드`를 선택한 뒤 `FaceOnnxDetector/GPU:DirectML`, `pipe-parallel(2)`로 자동 검출을 완료했다.
-- 튜너 캐시 키에 `IntraOpNumThreads`와 `EnablePreprocessParallelism`을 포함해, 사용자가 thread/preprocess 설정을 바꿨을 때 이전 튜닝 결과가 잘못 재사용되지 않게 했다.
-- 짧은 튜닝 샘플에서 `1세션`이 선택되면 긴 구간에서 오히려 느려지는 실측이 있어, 튜너는 사용자가 선택한 병렬 세션 수를 낮추지 않고 해당 세션 수 안에서 thread/provider만 고르게 했다.
-- 보정 후 `-UseAutoTune` smoke에서 다시 `GPU 2세션/8스레드`, `pipe-parallel(2)`가 선택되는 것을 확인했다.
-- 6분 5초 클립에서도 `-UseAutoTune -SkipBaseline -SkipExport`를 다시 실행했고, 튜너가 `GPU 2세션/8스레드`를 선택한 뒤 `FaceOnnxDetector/GPU:DirectML`, `pipe-parallel(2)`로 자동 검출을 완료했다.
-- 해당 5초 클립의 추가 결과는 `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=8`, `totalMs=66,709ms`였다. export는 의도적으로 생략했다.
-- 12분 30초 클립에서 `-UseAutoTune -SkipBaseline -SkipExport`를 실행했을 때 튜너가 CPU `ORT_PARALLEL`을 고르는 케이스를 확인했다. 이 경로는 `FaceOnnxDetector/CPU`, `pipe-parallel(2)`, `processed=899`, `faceMaskFrames=309`, `totalMs=499,482ms`로 기존 GPU 기본 경로보다 느렸다.
-- 원인은 짧은 튜닝 샘플 throughput이 장기 구간 wall-clock과 어긋나는 경우였다. GPU 후보가 quality gate를 통과하고 CPU 최고 점수의 75% 이상이면 GPU를 유지하도록 튜너 정책을 보정했다.
-- 보정 후 같은 12분 30초 클립에서 튜너가 `GPU 2세션/8스레드`를 선택했고, `FaceOnnxDetector/GPU:DirectML`, `pipe-parallel(2)`, `processed=899`, `detects=899`, `interpolated=0`, `faceMaskFrames=309`, `totalMs=384,784ms`로 완료했다.
-- smoke script의 `[SmokeTune]` provider 표기가 CPU 선택 시 이전 GPU 시도 상태를 보여줄 수 있어, CPU 선택이면 provider를 `CPU`로 출력하도록 고쳤다.
+- DirectML provider??floating point 李⑥씠濡?諛뺤뒪 醫뚰몴媛 ?꾩쟾 ?숈씪?섏????딆?留? ?숈씪 ?꾨젅???숈씪 諛뺤뒪 ?섎? ?좎??덇퀬 IoU???믪? ?몄씠??
+- ?먮룞 寃異?wall-clock? 媛숈? 12遺?援ш컙?먯꽌 ??27.6珥덉뿉??20.8珥덈줈 以꾩뿀??
+- `DetectorAutoTuner`??GPU ?꾨낫 quality gate瑜?異붽??덈떎. ?쒕떇 ?섑뵆?먯꽌 CPU 湲곗?怨?諛뺤뒪 ?섍? ?ㅻⅤ嫄곕굹 理쒖냼 IoU媛 `0.75` 誘몃쭔?대㈃ GPU ?꾨낫???띾룄媛 鍮⑤씪???좏깮?섏? ?딅뒗??
+- 12遺?2珥??대┰?먯꽌 `-UseAutoTune` smoke瑜??ㅽ뻾?덇퀬, ?쒕꼫媛 `GPU 2?몄뀡/8?ㅻ젅??瑜??좏깮????`FaceOnnxDetector/GPU:DirectML`, `pipe-parallel(2)`濡??먮룞 寃異쒖쓣 ?꾨즺?덈떎.
+- ?쒕꼫 罹먯떆 ?ㅼ뿉 `IntraOpNumThreads`? `EnablePreprocessParallelism`???ы븿?? ?ъ슜?먭? thread/preprocess ?ㅼ젙??諛붽엥?????댁쟾 ?쒕떇 寃곌낵媛 ?섎せ ?ъ궗?⑸릺吏 ?딄쾶 ?덈떎.
+- 吏㏃? ?쒕떇 ?섑뵆?먯꽌 `1?몄뀡`???좏깮?섎㈃ 湲?援ш컙?먯꽌 ?ㅽ엳???먮젮吏???ㅼ륫???덉뼱, ?쒕꼫???ъ슜?먭? ?좏깮??蹂묐젹 ?몄뀡 ?섎? ??텛吏 ?딄퀬 ?대떦 ?몄뀡 ???덉뿉??thread/provider留?怨좊Ⅴ寃??덈떎.
+- 蹂댁젙 ??`-UseAutoTune` smoke?먯꽌 ?ㅼ떆 `GPU 2?몄뀡/8?ㅻ젅??, `pipe-parallel(2)`媛 ?좏깮?섎뒗 寃껋쓣 ?뺤씤?덈떎.
+- 6遺?5珥??대┰?먯꽌??`-UseAutoTune -SkipBaseline -SkipExport`瑜??ㅼ떆 ?ㅽ뻾?덇퀬, ?쒕꼫媛 `GPU 2?몄뀡/8?ㅻ젅??瑜??좏깮????`FaceOnnxDetector/GPU:DirectML`, `pipe-parallel(2)`濡??먮룞 寃異쒖쓣 ?꾨즺?덈떎.
+- ?대떦 5珥??대┰??異붽? 寃곌낵??`processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=8`, `totalMs=66,709ms`??? export???섎룄?곸쑝濡??앸왂?덈떎.
+- 12遺?30珥??대┰?먯꽌 `-UseAutoTune -SkipBaseline -SkipExport`瑜??ㅽ뻾?덉쓣 ???쒕꼫媛 CPU `ORT_PARALLEL`??怨좊Ⅴ??耳?댁뒪瑜??뺤씤?덈떎. ??寃쎈줈??`FaceOnnxDetector/CPU`, `pipe-parallel(2)`, `processed=899`, `faceMaskFrames=309`, `totalMs=499,482ms`濡?湲곗〈 GPU 湲곕낯 寃쎈줈蹂대떎 ?먮졇??
+- ?먯씤? 吏㏃? ?쒕떇 ?섑뵆 throughput???κ린 援ш컙 wall-clock怨??닿툔?섎뒗 寃쎌슦??? GPU ?꾨낫媛 quality gate瑜??듦낵?섍퀬 CPU 理쒓퀬 ?먯닔??75% ?댁긽?대㈃ GPU瑜??좎??섎룄濡??쒕꼫 ?뺤콉??蹂댁젙?덈떎.
+- 蹂댁젙 ??媛숈? 12遺?30珥??대┰?먯꽌 ?쒕꼫媛 `GPU 2?몄뀡/8?ㅻ젅??瑜??좏깮?덇퀬, `FaceOnnxDetector/GPU:DirectML`, `pipe-parallel(2)`, `processed=899`, `detects=899`, `interpolated=0`, `faceMaskFrames=309`, `totalMs=384,784ms`濡??꾨즺?덈떎.
+- smoke script??`[SmokeTune]` provider ?쒓린媛 CPU ?좏깮 ???댁쟾 GPU ?쒕룄 ?곹깭瑜?蹂댁뿬以????덉뼱, CPU ?좏깮?대㈃ provider瑜?`CPU`濡?異쒕젰?섎룄濡?怨좎낀??
 
-12분 구간 10초 기본 GPU smoke:
+12遺?援ш컙 10珥?湲곕낯 GPU smoke:
 
-| 구간 | provider / 경로 | 검출 호출 | faceMaskFrames | 자동 검출 total | export total |
+| 援ш컙 | provider / 寃쎈줈 | 寃異??몄텧 | faceMaskFrames | ?먮룞 寃異?total | export total |
 | --- | --- | ---: | ---: | ---: | ---: |
-| 12:00 10초 | `GPU:DirectML` / `pipe-parallel` | 300 | 127 | 109,771ms | 30,639ms |
-| 12:00 10초 | `GPU:DirectML` / `pipe-single` + ROI | 300 | 129 | 138,857ms | 34,996ms |
-| 12:00 30초 | `GPU:DirectML` / `pipe-parallel` | 899 | 309 | 338,306ms | skipped |
-| 06:00 30초 | `GPU:DirectML` / `pipe-parallel` | 899 | 44 | 377,052ms | skipped |
+| 12:00 10珥?| `GPU:DirectML` / `pipe-parallel` | 300 | 127 | 109,771ms | 30,639ms |
+| 12:00 10珥?| `GPU:DirectML` / `pipe-single` + ROI | 300 | 129 | 138,857ms | 34,996ms |
+| 12:00 30珥?| `GPU:DirectML` / `pipe-parallel` | 899 | 309 | 338,306ms | skipped |
+| 06:00 30珥?| `GPU:DirectML` / `pipe-parallel` | 899 | 44 | 377,052ms | skipped |
 
-해석:
+?댁꽍:
 
-- 2초 샘플보다 긴 300프레임 구간에서도 원본 해상도, 모든 프레임 검출, DirectML, parallel pipeline이 완료됐다.
-- `interpolated=0`이므로 기본 품질 경로는 프레임 스킵/보간 없이 전 프레임 검출이다.
-- export는 direct face rect 127프레임을 처리했고 완료됐다.
-- `parallel=1`의 ROI 단일 파이프도 측정했지만 자동 검출 wall-clock이 109.8초에서 138.9초로 느려졌고 faceMaskFrames도 127에서 129로 달라졌다.
-- 따라서 기본 속도/품질 경로는 ROI 단일 파이프가 아니라 `parallel=2` all-frame pipeline으로 유지한다.
-- 12분/6분 30초, 각 899프레임 구간도 export 없이 자동 검출을 완료했고, `interpolated=0`으로 전 프레임 검출을 유지했다.
+- 2珥??섑뵆蹂대떎 湲?300?꾨젅??援ш컙?먯꽌???먮낯 ?댁긽?? 紐⑤뱺 ?꾨젅??寃異? DirectML, parallel pipeline???꾨즺?먮떎.
+- `interpolated=0`?대?濡?湲곕낯 ?덉쭏 寃쎈줈???꾨젅???ㅽ궢/蹂닿컙 ?놁씠 ???꾨젅??寃異쒖씠??
+- export??direct face rect 127?꾨젅?꾩쓣 泥섎━?덇퀬 ?꾨즺?먮떎.
+- `parallel=1`??ROI ?⑥씪 ?뚯씠?꾨룄 痢≪젙?덉?留??먮룞 寃異?wall-clock??109.8珥덉뿉??138.9珥덈줈 ?먮젮議뚭퀬 faceMaskFrames??127?먯꽌 129濡??щ씪議뚮떎.
+- ?곕씪??湲곕낯 ?띾룄/?덉쭏 寃쎈줈??ROI ?⑥씪 ?뚯씠?꾧? ?꾨땲??`parallel=2` all-frame pipeline?쇰줈 ?좎??쒕떎.
+- 12遺?6遺?30珥? 媛?899?꾨젅??援ш컙??export ?놁씠 ?먮룞 寃異쒖쓣 ?꾨즺?덇퀬, `interpolated=0`?쇰줈 ???꾨젅??寃異쒖쓣 ?좎??덈떎.
 
-전체 영상 예상:
+?꾩껜 ?곸긽 ?덉긽:
 
-- 원본 `srcTest/260102_jp_10.mp4`는 3840x2160, 29.97fps, 1,067.6초, 31,996프레임이다.
-- 12분 30초 구간은 899프레임 자동 검출에 338,306ms, 6분 30초 구간은 899프레임 자동 검출에 377,052ms가 걸렸다.
-- 단순 환산 시 전체 전 프레임 자동 검출은 약 3.3~3.7시간 범위로 예상된다. export 시간은 별도다.
-- 따라서 최상 품질 기본값은 전 프레임 검출을 유지하되, 전체 영상 실사용 속도 개선은 향후 새 detector backend 또는 품질 검증된 sparse/refiner 구조가 필요하다.
-- 현재 검증된 기본값은 품질 우선 경로이고, `DetectEveryNFrames > 1` 또는 downscale은 전체 품질 근거가 부족하므로 기본값으로 승격하지 않는다.
+- ?먮낯 `srcTest/260102_jp_10.mp4`??3840x2160, 29.97fps, 1,067.6珥? 31,996?꾨젅?꾩씠??
+- 12遺?30珥?援ш컙? 899?꾨젅???먮룞 寃異쒖뿉 338,306ms, 6遺?30珥?援ш컙? 899?꾨젅???먮룞 寃異쒖뿉 377,052ms媛 嫄몃졇??
+- ?⑥닚 ?섏궛 ???꾩껜 ???꾨젅???먮룞 寃異쒖? ??3.3~3.7?쒓컙 踰붿쐞濡??덉긽?쒕떎. export ?쒓컙? 蹂꾨룄??
+- ?곕씪??理쒖긽 ?덉쭏 湲곕낯媛믪? ???꾨젅??寃異쒖쓣 ?좎??섎릺, ?꾩껜 ?곸긽 ?ㅼ궗???띾룄 媛쒖꽑? ?ν썑 ??detector backend ?먮뒗 ?덉쭏 寃利앸맂 sparse/refiner 援ъ“媛 ?꾩슂?섎떎.
+- ?꾩옱 寃利앸맂 湲곕낯媛믪? ?덉쭏 ?곗꽑 寃쎈줈?닿퀬, `DetectEveryNFrames > 1` ?먮뒗 downscale? ?꾩껜 ?덉쭏 洹쇨굅媛 遺議깊븯誘濡?湲곕낯媛믪쑝濡??밴꺽?섏? ?딅뒗??
 
-모델 교체 가능성 확인:
+紐⑤뜽 援먯껜 媛?μ꽦 ?뺤씤:
 
-- 현재 `FaceONNX` NuGet 패키지는 별도 `.onnx` 파일을 프로젝트에 노출하지 않고 DLL 내부 리소스로 모델을 포함하는 구조다.
-- XML 문서 기준 `FaceONNX.FaceDetector`의 공개 생성자는 threshold와 `SessionOptions` 중심이며, 임의 모델 경로를 주입하는 생성자는 확인되지 않았다.
-- DLL 문자열 기준 현재 detector 모델 리소스는 `deploy_dpe_220_v4_slim.onnx`로 보인다.
-- 현재 작업공간과 로컬 NuGet cache에는 바로 붙일 수 있는 별도 face/yolo/opencv detector 모델 또는 패키지가 확인되지 않았다. 네트워크나 별도 모델 파일 없이 새 detector backend를 구현하면 임의 추정 구현이 되므로 기본 경로에는 넣지 않는다.
-- 따라서 단기 개선은 `FaceOnnxDetector` 유지 + DirectML/CoreML/CPU provider + pipeline 최적화가 맞고, 실제 모델 교체는 `IBgraFaceDetector` 구현을 새로 추가하는 backend 확장으로 진행해야 한다.
-- 자동 실행 경로에서 `_detectorFactoryOptions`가 `FaceDetectorFactoryOptions.ForOnnx(...)`로 다시 고정되던 부분을 제거했다. 이제 자동 튜닝은 `FaceOnnx` backend에서만 적용하고, factory option 자체는 유지하므로 새 backend를 추가했을 때 자동 모자이크 경로가 다시 FaceONNX로 되돌아가지 않는다.
-- `ScrfdOnnxDetector` backend를 추가했다. 이 backend는 insightface 계열 SCRFD ONNX 출력(score/bbox stride map)을 해석하는 외부 모델 경로 기반 `IBgraFaceDetector` 구현이다. 기본값으로는 사용하지 않으며, 모델 파일이 없으면 명확히 실패한다.
-- `scripts/run-srcTest-smoke.ps1 -ScrfdModelPath <model.onnx>`를 추가했다. baseline은 기존 FaceONNX로 유지하고 optimized case만 SCRFD backend로 실행해 같은 quality gate에서 A/B 비교할 수 있다. 현재 저장소에는 SCRFD 모델 파일이 없으므로 실제 SCRFD 품질/속도 수치는 아직 없다.
-- `scripts/inspect-onnx-outputs.ps1`를 추가했다. 외부 ONNX 모델의 input/output 이름, shape, 값 범위를 확인해 score/bbox/kps 출력 규약을 decoder 구현 전에 검증한다.
-- SCRFD 전처리 옵션으로 `UseLetterboxResize`, `UseRgbInput`, `MultiplyBboxByStride`를 추가했다. smoke script에서는 `-ScrfdStretchInput`, `-ScrfdUseBgr`로 letterbox/stretch와 RGB/BGR 조합을 비교할 수 있다.
+- ?꾩옱 `FaceONNX` NuGet ?⑦궎吏??蹂꾨룄 `.onnx` ?뚯씪???꾨줈?앺듃???몄텧?섏? ?딄퀬 DLL ?대? 由ъ냼?ㅻ줈 紐⑤뜽???ы븿?섎뒗 援ъ“??
+- XML 臾몄꽌 湲곗? `FaceONNX.FaceDetector`??怨듦컻 ?앹꽦?먮뒗 threshold? `SessionOptions` 以묒떖?대ŉ, ?꾩쓽 紐⑤뜽 寃쎈줈瑜?二쇱엯?섎뒗 ?앹꽦?먮뒗 ?뺤씤?섏? ?딆븯??
+- DLL 臾몄옄??湲곗? ?꾩옱 detector 紐⑤뜽 由ъ냼?ㅻ뒗 `deploy_dpe_220_v4_slim.onnx`濡?蹂댁씤??
+- ?꾩옱 ?묒뾽怨듦컙怨?濡쒖뺄 NuGet cache?먮뒗 諛붾줈 遺숈씪 ???덈뒗 蹂꾨룄 face/yolo/opencv detector 紐⑤뜽 ?먮뒗 ?⑦궎吏媛 ?뺤씤?섏? ?딆븯?? ?ㅽ듃?뚰겕??蹂꾨룄 紐⑤뜽 ?뚯씪 ?놁씠 ??detector backend瑜?援ы쁽?섎㈃ ?꾩쓽 異붿젙 援ы쁽???섎?濡?湲곕낯 寃쎈줈?먮뒗 ?ｌ? ?딅뒗??
+- ?곕씪???④린 媛쒖꽑? `FaceOnnxDetector` ?좎? + DirectML/CoreML/CPU provider + pipeline 理쒖쟻?붽? 留욊퀬, ?ㅼ젣 紐⑤뜽 援먯껜??`IBgraFaceDetector` 援ы쁽???덈줈 異붽??섎뒗 backend ?뺤옣?쇰줈 吏꾪뻾?댁빞 ?쒕떎.
+- ?먮룞 ?ㅽ뻾 寃쎈줈?먯꽌 `_detectorFactoryOptions`媛 `FaceDetectorFactoryOptions.ForOnnx(...)`濡??ㅼ떆 怨좎젙?섎뜕 遺遺꾩쓣 ?쒓굅?덈떎. ?댁젣 ?먮룞 ?쒕떇? `FaceOnnx` backend?먯꽌留??곸슜?섍퀬, factory option ?먯껜???좎??섎?濡???backend瑜?異붽??덉쓣 ???먮룞 紐⑥옄?댄겕 寃쎈줈媛 ?ㅼ떆 FaceONNX濡??섎룎?꾧?吏 ?딅뒗??
+- `ScrfdOnnxDetector` backend瑜?異붽??덈떎. ??backend??insightface 怨꾩뿴 SCRFD ONNX 異쒕젰(score/bbox stride map)???댁꽍?섎뒗 ?몃? 紐⑤뜽 寃쎈줈 湲곕컲 `IBgraFaceDetector` 援ы쁽?대떎. 湲곕낯媛믪쑝濡쒕뒗 ?ъ슜?섏? ?딆쑝硫? 紐⑤뜽 ?뚯씪???놁쑝硫?紐낇솗???ㅽ뙣?쒕떎.
+- `scripts/run-srcTest-smoke.ps1 -ScrfdModelPath <model.onnx>`瑜?異붽??덈떎. baseline? 湲곗〈 FaceONNX濡??좎??섍퀬 optimized case留?SCRFD backend濡??ㅽ뻾??媛숈? quality gate?먯꽌 A/B 鍮꾧탳?????덈떎. ?꾩옱 ??μ냼?먮뒗 SCRFD 紐⑤뜽 ?뚯씪???놁쑝誘濡??ㅼ젣 SCRFD ?덉쭏/?띾룄 ?섏튂???꾩쭅 ?녿떎.
+- `scripts/inspect-onnx-outputs.ps1`瑜?異붽??덈떎. ?몃? ONNX 紐⑤뜽??input/output ?대쫫, shape, 媛?踰붿쐞瑜??뺤씤??score/bbox/kps 異쒕젰 洹쒖빟??decoder 援ы쁽 ?꾩뿉 寃利앺븳??
+- SCRFD ?꾩쿂由??듭뀡?쇰줈 `UseLetterboxResize`, `UseRgbInput`, `MultiplyBboxByStride`瑜?異붽??덈떎. smoke script?먯꽌??`-ScrfdStretchInput`, `-ScrfdUseBgr`濡?letterbox/stretch? RGB/BGR 議고빀??鍮꾧탳?????덈떎.
 
-## 2026-05-11 완료 감사
-목표를 다음 deliverable로 나눠 확인한다.
+## 2026-05-11 ?꾨즺 媛먯궗
+紐⑺몴瑜??ㅼ쓬 deliverable濡??섎닠 ?뺤씤?쒕떎.
 
-| 요구 | 현재 증거 | 상태 |
+| ?붽뎄 | ?꾩옱 利앷굅 | ?곹깭 |
 | --- | --- | --- |
-| 자동 모자이크 품질 저하 방지 | 기본값을 `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `interpolated=0` 경로로 유지했고, 6분 3초/5초 및 12분 2초 비교에서 baseline 대비 누락 프레임 0개를 확인했다. | 부분 충족 |
-| 자동 검출 속도 개선 | CPU single baseline 대비 `pipe-parallel(2)`와 DirectML 기본 경로에서 3초/5초/2초 샘플의 wall-clock 감소를 확인했다. | 부분 충족 |
-| 실제 `srcTest` 영상 기반 검증 | `srcTest/260102_jp_10.mp4`에서 여러 짧은 클립과 30초 자동 검출 smoke를 실행했다. 전체 17분 풀런은 아직 수행하지 않았다. | 미완료 |
-| 모델 교체 가능성 검토 | 현재 FaceONNX 모델은 DLL 내부 리소스 구조라 임의 모델 경로 교체가 불가능하고, 새 모델은 `IBgraFaceDetector` backend 추가가 필요하다고 확인했다. 자동 실행 경로가 `_detectorFactoryOptions`를 보존하도록 수정해 backend 교체 지점은 막히지 않게 했다. | 설계 충족, 구현 미완료 |
-| 병목 측정 가능성 | `[AutoRunSummary]`, `[ExportRunSummary]`, `runId`, provider 표기를 추가했다. | 충족 |
-| 자동 튜닝 안정성 | cancellation token, GPU quality gate, legacy 설정 migration, 병렬 세션 유지 정책을 반영했고 `-UseAutoTune` smoke에서 `GPU 2세션/8스레드`가 유지됨을 확인했다. | 충족 |
-| export 경로 개선 | direct face rect summary와 no-blur remux-copy summary를 추가했다. hybrid copy는 실제 smoke에서 `Invalid argument`가 발생해 비활성화했다. | 부분 충족 |
-| 품질 검토 UX | 자동 이상 프레임은 전체 no-face 프레임이 아니라 앞뒤 얼굴 사이의 짧은 no-face gap, 낮은 confidence, flicker 중심으로 좁혔다. | 충족 |
-| Windows 배포 검증 | `scripts/verify-native-publish.ps1 -RuntimeIdentifier win-x64`가 성공했고, publish 폴더에 `FaceShield.exe`, `DirectML.dll`, `onnxruntime.dll`, `FaceONNX.dll`, FFmpeg DLL들이 포함된 것을 확인했다. | 충족 |
-| macOS 배포 검증 | Windows에서 `scripts/verify-native-publish.ps1 -RuntimeIdentifier osx-arm64` cross-publish가 성공했고, `FaceShield`, `libonnxruntime.dylib`, FFmpeg dylib들이 포함된 것을 확인했다. Windows DirectML package가 osx publish에 섞여 `NETSDK1152`가 나던 문제를 package condition 수정으로 해결했고, Windows `onnxruntime.dll`/`onnxruntime_providers_shared.dll` 부재도 검증했다. 다만 현재 publish에는 `libomp.dylib`가 포함되지 않으므로 warning을 남기며, 실제 Mac 런타임 확인은 남아 있다. | 부분 충족 |
+| ?먮룞 紐⑥옄?댄겕 ?덉쭏 ???諛⑹? | 湲곕낯媛믪쓣 `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `interpolated=0` 寃쎈줈濡??좎??덇퀬, 6遺?3珥?5珥?諛?12遺?2珥?鍮꾧탳?먯꽌 baseline ?鍮??꾨씫 ?꾨젅??0媛쒕? ?뺤씤?덈떎. | 遺遺?異⑹” |
+| ?먮룞 寃異??띾룄 媛쒖꽑 | CPU single baseline ?鍮?`pipe-parallel(2)`? DirectML 湲곕낯 寃쎈줈?먯꽌 3珥?5珥?2珥??섑뵆??wall-clock 媛먯냼瑜??뺤씤?덈떎. | 遺遺?異⑹” |
+| ?ㅼ젣 `srcTest` ?곸긽 湲곕컲 寃利?| `srcTest/260102_jp_10.mp4`?먯꽌 ?щ윭 吏㏃? ?대┰怨?30珥??먮룞 寃異?smoke瑜??ㅽ뻾?덈떎. ?꾩껜 17遺???곗? ?꾩쭅 ?섑뻾?섏? ?딆븯?? | 誘몄셿猷?|
+| 紐⑤뜽 援먯껜 媛?μ꽦 寃??| ?꾩옱 FaceONNX 紐⑤뜽? DLL ?대? 由ъ냼??援ъ“???꾩쓽 紐⑤뜽 寃쎈줈 援먯껜媛 遺덇??ν븯怨? ??紐⑤뜽? `IBgraFaceDetector` backend 異붽?媛 ?꾩슂?섎떎怨??뺤씤?덈떎. ?먮룞 ?ㅽ뻾 寃쎈줈媛 `_detectorFactoryOptions`瑜?蹂댁〈?섎룄濡??섏젙??backend 援먯껜 吏?먯? 留됲엳吏 ?딄쾶 ?덈떎. | ?ㅺ퀎 異⑹”, 援ы쁽 誘몄셿猷?|
+| 蹂묐ぉ 痢≪젙 媛?μ꽦 | `[AutoRunSummary]`, `[ExportRunSummary]`, `runId`, provider ?쒓린瑜?異붽??덈떎. | 異⑹” |
+| ?먮룞 ?쒕떇 ?덉젙??| cancellation token, GPU quality gate, legacy ?ㅼ젙 migration, 蹂묐젹 ?몄뀡 ?좎? ?뺤콉??諛섏쁺?덇퀬 `-UseAutoTune` smoke?먯꽌 `GPU 2?몄뀡/8?ㅻ젅??媛 ?좎??⑥쓣 ?뺤씤?덈떎. | 異⑹” |
+| export 寃쎈줈 媛쒖꽑 | direct face rect summary? no-blur remux-copy summary瑜?異붽??덈떎. hybrid copy???ㅼ젣 smoke?먯꽌 `Invalid argument`媛 諛쒖깮??鍮꾪솢?깊솕?덈떎. | 遺遺?異⑹” |
+| ?덉쭏 寃??UX | ?먮룞 ?댁긽 ?꾨젅?꾩? ?꾩껜 no-face ?꾨젅?꾩씠 ?꾨땲???욌뮘 ?쇨뎬 ?ъ씠??吏㏃? no-face gap, ??? confidence, flicker 以묒떖?쇰줈 醫곹삍?? | 異⑹” |
+| Windows 諛고룷 寃利?| `scripts/verify-native-publish.ps1 -RuntimeIdentifier win-x64`媛 ?깃났?덇퀬, publish ?대뜑??`FaceShield.exe`, `DirectML.dll`, `onnxruntime.dll`, `FaceONNX.dll`, FFmpeg DLL?ㅼ씠 ?ы븿??寃껋쓣 ?뺤씤?덈떎. | 異⑹” |
+| macOS 諛고룷 寃利?| Windows?먯꽌 `scripts/verify-native-publish.ps1 -RuntimeIdentifier osx-arm64` cross-publish媛 ?깃났?덇퀬, `FaceShield`, `libonnxruntime.dylib`, FFmpeg dylib?ㅼ씠 ?ы븿??寃껋쓣 ?뺤씤?덈떎. Windows DirectML package媛 osx publish???욎뿬 `NETSDK1152`媛 ?섎뜕 臾몄젣瑜?package condition ?섏젙?쇰줈 ?닿껐?덇퀬, Windows `onnxruntime.dll`/`onnxruntime_providers_shared.dll` 遺?щ룄 寃利앺뻽?? ?ㅻ쭔 ?꾩옱 publish?먮뒗 `libomp.dylib`媛 ?ы븿?섏? ?딆쑝誘濡?warning???④린硫? ?ㅼ젣 Mac ?고????뺤씤? ?⑥븘 ?덈떎. | 遺遺?異⑹” |
 
-완료로 볼 수 없는 항목:
+?꾨즺濡?蹂????녿뒗 ??ぉ:
 
-- 전체 17분 원본 영상 end-to-end 자동 검출 + export 풀런이 아직 없다.
-- 외부 SCRFD detector backend는 추가됐지만, 실제 모델 파일이 없어 SCRFD A/B 실행 결과는 아직 없다.
-- GUI에서 열기, preview, 자동 검출, 수동 수정, export 전체 흐름을 직접 smoke하지 않았다.
-- macOS 실기기에서 자동 모드 시작과 ONNX/libomp runtime load를 확인하지 않았다.
+- ?꾩껜 17遺??먮낯 ?곸긽 end-to-end ?먮룞 寃異?+ export ??곗씠 ?꾩쭅 ?녿떎.
+- ?몃? SCRFD detector backend??異붽??먯?留? ?ㅼ젣 紐⑤뜽 ?뚯씪???놁뼱 SCRFD A/B ?ㅽ뻾 寃곌낵???꾩쭅 ?녿떎.
+- GUI?먯꽌 ?닿린, preview, ?먮룞 寃異? ?섎룞 ?섏젙, export ?꾩껜 ?먮쫫??吏곸젒 smoke?섏? ?딆븯??
+- macOS ?ㅺ린湲곗뿉???먮룞 紐⑤뱶 ?쒖옉怨?ONNX/libomp runtime load瑜??뺤씤?섏? ?딆븯??
 
-따라서 현재 상태는 최상 품질 기본 경로와 측정 가능한 고속 경로를 구현한 단계이며, goal 완료로 처리하지 않는다.
+?곕씪???꾩옱 ?곹깭??理쒖긽 ?덉쭏 湲곕낯 寃쎈줈? 痢≪젙 媛?ν븳 怨좎냽 寃쎈줈瑜?援ы쁽???④퀎?대ŉ, goal ?꾨즺濡?泥섎━?섏? ?딅뒗??
 
-추가 gate 검증:
+異붽? gate 寃利?
 
-- 6분 3초 클립에서 CPU single baseline과 CPU `pipe-parallel(2)` all-frame 경로를 `MinAvgIou=0.99`, `MinBestIou=0.99`로 비교했고 `SmokeQualityGate passed=True`를 확인했다.
-- 같은 클립에서 `DetectEveryNFrames=2` sparse 경로는 `onlyBaseline=27`, `onlyOptimized=87`이 발생해 `SmokeQualityGate passed=False`가 되었고, 스크립트가 exit code 2로 종료되는 것을 확인했다.
-- `scripts/verify-auto-mosaic-default.ps1` 기본 실행이 통과했다. 이 실행에서 품질 gate는 `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였고, auto tune 짧은 검증은 `GPU 2세션/8스레드`, `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=8`, `totalMs=64,236ms`로 완료했다.
+- 6遺?3珥??대┰?먯꽌 CPU single baseline怨?CPU `pipe-parallel(2)` all-frame 寃쎈줈瑜?`MinAvgIou=0.99`, `MinBestIou=0.99`濡?鍮꾧탳?덇퀬 `SmokeQualityGate passed=True`瑜??뺤씤?덈떎.
+- 媛숈? ?대┰?먯꽌 `DetectEveryNFrames=2` sparse 寃쎈줈??`onlyBaseline=27`, `onlyOptimized=87`??諛쒖깮??`SmokeQualityGate passed=False`媛 ?섏뿀怨? ?ㅽ겕由쏀듃媛 exit code 2濡?醫낅즺?섎뒗 寃껋쓣 ?뺤씤?덈떎.
+- `scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾???듦낵?덈떎. ???ㅽ뻾?먯꽌 ?덉쭏 gate??`avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`?怨? auto tune 吏㏃? 寃利앹? `GPU 2?몄뀡/8?ㅻ젅??, `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=8`, `totalMs=64,236ms`濡??꾨즺?덈떎.
 
-## 2026-05-12 실제 사용 확인 상태
-사용자가 현재 앱 상태를 실제 영상에서 확인한 결과는 다음과 같다.
+## 2026-05-12 ?ㅼ젣 ?ъ슜 ?뺤씤 ?곹깭
+?ъ슜?먭? ?꾩옱 ???곹깭瑜??ㅼ젣 ?곸긽?먯꽌 ?뺤씤??寃곌낵???ㅼ쓬怨?媛숇떎.
 
-- 큰 얼굴과 일반적인 얼굴 검출, 모자이크는 적당히 동작한다.
-- 작은 얼굴은 모자이크가 잘 안 되는 구간이 있다.
-- 사람이 아닌 물건이 얼굴로 오검출되어 모자이크되는 경우가 있다.
-- 모자이크가 얼굴을 따라 트래킹되는 느낌이 부족하고, 중간에 깜박거리는 구간이 있다.
-- export 시간이 여전히 오래 걸린다.
+- ???쇨뎬怨??쇰컲?곸씤 ?쇨뎬 寃異? 紐⑥옄?댄겕???곷떦???숈옉?쒕떎.
+- ?묒? ?쇨뎬? 紐⑥옄?댄겕媛 ?????섎뒗 援ш컙???덈떎.
+- ?щ엺???꾨땶 臾쇨굔???쇨뎬濡??ㅺ?異쒕릺??紐⑥옄?댄겕?섎뒗 寃쎌슦媛 ?덈떎.
+- 紐⑥옄?댄겕媛 ?쇨뎬???곕씪 ?몃옒?밸릺???먮굦??遺議깊븯怨? 以묎컙??源쒕컯嫄곕━??援ш컙???덈떎.
+- export ?쒓컙???ъ쟾???ㅻ옒 嫄몃┛??
 
-이 관찰은 기존 smoke gate의 한계를 보여준다. 기존 gate는 짧은 클립에서 CPU baseline과 optimized 경로의 프레임/박스 일치 여부를 보는 데는 유효했지만, 실제 사용 품질 관점의 작은 얼굴, 오탐 물체, track continuity, flicker, 긴 export 시간을 충분히 대표하지 못했다.
+??愿李곗? 湲곗〈 smoke gate???쒓퀎瑜?蹂댁뿬以?? 湲곗〈 gate??吏㏃? ?대┰?먯꽌 CPU baseline怨?optimized 寃쎈줈???꾨젅??諛뺤뒪 ?쇱튂 ?щ?瑜?蹂대뒗 ?곕뒗 ?좏슚?덉?留? ?ㅼ젣 ?ъ슜 ?덉쭏 愿?먯쓽 ?묒? ?쇨뎬, ?ㅽ깘 臾쇱껜, track continuity, flicker, 湲?export ?쒓컙??異⑸텇????쒗븯吏 紐삵뻽??
 
-현재 우선순위는 다음으로 조정한다.
+?꾩옱 ?곗꽑?쒖쐞???ㅼ쓬?쇰줈 議곗젙?쒕떎.
 
-1. 작은 얼굴 미탐 구간을 frame index와 화면 위치로 수집한다.
-2. 물건 오탐 구간을 frame index와 객체 종류로 수집한다.
-3. 깜박임 구간을 `이전 얼굴 있음 -> 현재 없음 -> 다음 얼굴 있음` 패턴과 실제 영상 확인 결과로 분리한다.
-4. track continuity를 강화한다. 단순 프레임별 face rect dictionary만으로는 부족하므로 얼굴별 track id, 짧은 gap 보간, 박스 smoothing, 오탐 track 제거가 필요하다.
-5. 작은 얼굴 대응은 threshold 완화만으로 처리하지 않는다. threshold 완화는 물건 오탐을 늘릴 수 있으므로, ROI 재검출, 2차 verifier/refiner, 또는 작은 얼굴에 강한 detector backend를 비교해야 한다.
-6. export 병목은 `[ExportRunSummary]`의 `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs`, `totalMs`를 실제 긴 영상에서 확인한 뒤 큰 항목부터 줄인다.
+1. ?묒? ?쇨뎬 誘명깘 援ш컙??frame index? ?붾㈃ ?꾩튂濡??섏쭛?쒕떎.
+2. 臾쇨굔 ?ㅽ깘 援ш컙??frame index? 媛앹껜 醫낅쪟濡??섏쭛?쒕떎.
+3. 源쒕컯??援ш컙??`?댁쟾 ?쇨뎬 ?덉쓬 -> ?꾩옱 ?놁쓬 -> ?ㅼ쓬 ?쇨뎬 ?덉쓬` ?⑦꽩怨??ㅼ젣 ?곸긽 ?뺤씤 寃곌낵濡?遺꾨━?쒕떎.
+4. track continuity瑜?媛뺥솕?쒕떎. ?⑥닚 ?꾨젅?꾨퀎 face rect dictionary留뚯쑝濡쒕뒗 遺議깊븯誘濡??쇨뎬蹂?track id, 吏㏃? gap 蹂닿컙, 諛뺤뒪 smoothing, ?ㅽ깘 track ?쒓굅媛 ?꾩슂?섎떎.
+5. ?묒? ?쇨뎬 ??묒? threshold ?꾪솕留뚯쑝濡?泥섎━?섏? ?딅뒗?? threshold ?꾪솕??臾쇨굔 ?ㅽ깘???섎┫ ???덉쑝誘濡? ROI ?ш?異? 2李?verifier/refiner, ?먮뒗 ?묒? ?쇨뎬??媛뺥븳 detector backend瑜?鍮꾧탳?댁빞 ?쒕떎.
+6. export 蹂묐ぉ? `[ExportRunSummary]`??`maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs`, `totalMs`瑜??ㅼ젣 湲??곸긽?먯꽌 ?뺤씤????????ぉ遺??以꾩씤??
 
-추가 방향: 확정 track 중심으로 모자이크를 유지한다.
+異붽? 諛⑺뼢: ?뺤젙 track 以묒떖?쇰줈 紐⑥옄?댄겕瑜??좎??쒕떎.
 
-- 한 번 얼굴로 확정된 대상은 detector가 잠깐 놓쳐도 영상에서 사라질 때까지 가능한 한 블러를 유지한다.
-- 단, 처음 1프레임만 오검출된 물건을 끝까지 블러하면 안 되므로 모든 후보를 바로 확정하지 않는다.
-- `Tentative`: 새 후보. 1프레임 검출만으로는 확정하지 않는다.
-- `Confirmed`: 일정 프레임 동안 반복 검출되거나 자연스러운 이동/크기 변화가 확인된 얼굴 track. 짧은 미탐 구간은 보간한다.
-- `Lost`: 확정 track이 잠깐 사라진 상태. 일정 프레임까지는 예측/보간으로 블러를 유지한다.
-- `Ended`: 화면 밖 이동, 긴 미탐, scene cut, 비정상적인 크기/위치 변화로 종료된 track.
-- 반쪽 얼굴/가장자리 얼굴은 검출 증거가 짧아도 놓치면 안 되므로 `Tentative` 상태에서 바로 버리지 않는다.
-- 작은 물건 오탐은 confidence가 높아도 짧은 단발 track이면 제거한다.
-- 화면 중앙의 작은 후보라도 3프레임 이상 자연스럽게 이어지면 바로 제거하지 않는다. 사람이 뒤돌면서 얼굴이 반만 보이는 경우도 이 범위에 포함한다.
-- 향후 구현은 `FaceTrackState` 또는 `FaceTrackLifecycle` 형태로 확장해, frame dictionary 후처리가 아니라 track lifecycle 기준으로 최종 face rect를 만들도록 한다.
+- ??踰??쇨뎬濡??뺤젙????곸? detector媛 ?좉퉸 ?볦퀜???곸긽?먯꽌 ?щ씪吏??뚭퉴吏 媛?ν븳 ??釉붾윭瑜??좎??쒕떎.
+- ?? 泥섏쓬 1?꾨젅?꾨쭔 ?ㅺ?異쒕맂 臾쇨굔???앷퉴吏 釉붾윭?섎㈃ ???섎?濡?紐⑤뱺 ?꾨낫瑜?諛붾줈 ?뺤젙?섏? ?딅뒗??
+- `Tentative`: ???꾨낫. 1?꾨젅??寃異쒕쭔?쇰줈???뺤젙?섏? ?딅뒗??
+- `Confirmed`: ?쇱젙 ?꾨젅???숈븞 諛섎났 寃異쒕릺嫄곕굹 ?먯뿰?ㅻ윭???대룞/?ш린 蹂?붽? ?뺤씤???쇨뎬 track. 吏㏃? 誘명깘 援ш컙? 蹂닿컙?쒕떎.
+- `Lost`: ?뺤젙 track???좉퉸 ?щ씪吏??곹깭. ?쇱젙 ?꾨젅?꾧퉴吏???덉륫/蹂닿컙?쇰줈 釉붾윭瑜??좎??쒕떎.
+- `Ended`: ?붾㈃ 諛??대룞, 湲?誘명깘, scene cut, 鍮꾩젙?곸쟻???ш린/?꾩튂 蹂?붾줈 醫낅즺??track.
+- 諛섏そ ?쇨뎬/媛?μ옄由??쇨뎬? 寃異?利앷굅媛 吏㏃븘???볦튂硫????섎?濡?`Tentative` ?곹깭?먯꽌 諛붾줈 踰꾨━吏 ?딅뒗??
+- ?묒? 臾쇨굔 ?ㅽ깘? confidence媛 ?믪븘??吏㏃? ?⑤컻 track?대㈃ ?쒓굅?쒕떎.
+- ?붾㈃ 以묒븰???묒? ?꾨낫?쇰룄 3?꾨젅???댁긽 ?먯뿰?ㅻ읇寃??댁뼱吏硫?諛붾줈 ?쒓굅?섏? ?딅뒗?? ?щ엺???ㅻ룎硫댁꽌 ?쇨뎬??諛섎쭔 蹂댁씠??寃쎌슦????踰붿쐞???ы븿?쒕떎.
+- ?ν썑 援ы쁽? `FaceTrackState` ?먮뒗 `FaceTrackLifecycle` ?뺥깭濡??뺤옣?? frame dictionary ?꾩쿂由ш? ?꾨땲??track lifecycle 湲곗??쇰줈 理쒖쥌 face rect瑜?留뚮뱾?꾨줉 ?쒕떎.
 
-다음 구현 후보:
+?ㅼ쓬 援ы쁽 ?꾨낫:
 
-- `FaceTrack`, `FaceTrackBuilder`, `FaceTrackInterpolator`를 추가해 frame 단위 결과를 track 단위로 재구성한다.
-- 짧은 no-face gap은 앞뒤 track이 같은 얼굴일 때만 보간한다.
-- 일정 길이 이하의 단발 오검출 track은 제거하거나 이상 후보로 표시한다.
-- 작은 얼굴 후보는 낮은 confidence라도 바로 버리지 않고 track 후보로 유지한 뒤, 연속성으로 확정한다.
-- 확정된 track은 짧은 detector 미탐에도 `Lost` 상태로 유지하고, 영상에서 사라질 때까지 보간/예측 블러를 지속한다.
-- 물건 오탐은 confidence만으로 구분하기 어렵기 때문에, box 크기/비율/움직임/지속시간 기반 필터와 2차 verifier를 검토한다.
-- export는 face rect만 있는 프레임에서 direct blur 경로를 유지하되, 변환/마스크/인코딩 시간 중 실제 병목을 먼저 측정한다.
+- `FaceTrack`, `FaceTrackBuilder`, `FaceTrackInterpolator`瑜?異붽???frame ?⑥쐞 寃곌낵瑜?track ?⑥쐞濡??ш뎄?깊븳??
+- 吏㏃? no-face gap? ?욌뮘 track??媛숈? ?쇨뎬???뚮쭔 蹂닿컙?쒕떎.
+- ?쇱젙 湲몄씠 ?댄븯???⑤컻 ?ㅺ?異?track? ?쒓굅?섍굅???댁긽 ?꾨낫濡??쒖떆?쒕떎.
+- ?묒? ?쇨뎬 ?꾨낫????? confidence?쇰룄 諛붾줈 踰꾨━吏 ?딄퀬 track ?꾨낫濡??좎????? ?곗냽?깆쑝濡??뺤젙?쒕떎.
+- ?뺤젙??track? 吏㏃? detector 誘명깘?먮룄 `Lost` ?곹깭濡??좎??섍퀬, ?곸긽?먯꽌 ?щ씪吏??뚭퉴吏 蹂닿컙/?덉륫 釉붾윭瑜?吏?랁븳??
+- 臾쇨굔 ?ㅽ깘? confidence留뚯쑝濡?援щ텇?섍린 ?대졄湲??뚮Ц?? box ?ш린/鍮꾩쑉/?吏곸엫/吏?띿떆媛?湲곕컲 ?꾪꽣? 2李?verifier瑜?寃?좏븳??
+- export??face rect留??덈뒗 ?꾨젅?꾩뿉??direct blur 寃쎈줈瑜??좎??섎릺, 蹂??留덉뒪???몄퐫???쒓컙 以??ㅼ젣 蹂묐ぉ??癒쇱? 痢≪젙?쒕떎.
 
-완료 기준을 다음처럼 보강한다.
+?꾨즺 湲곗????ㅼ쓬泥섎읆 蹂닿컯?쒕떎.
 
-- 작은 얼굴이 포함된 대표 구간에서 미탐 frame 수를 기존보다 줄인다.
-- 물건 오탐 frame 수를 줄인다.
-- 같은 얼굴 track의 짧은 깜박임을 줄이고, 모자이크 박스 이동이 프레임 사이에 자연스럽게 이어진다.
-- export는 동일 품질 조건에서 `ExportRunSummary.totalMs` 또는 주요 병목 항목이 감소한다.
-- 위 항목은 짧은 smoke가 아니라 실제 문제 영상의 대표 구간 여러 개에서 확인한다.
+- ?묒? ?쇨뎬???ы븿?????援ш컙?먯꽌 誘명깘 frame ?섎? 湲곗〈蹂대떎 以꾩씤??
+- 臾쇨굔 ?ㅽ깘 frame ?섎? 以꾩씤??
+- 媛숈? ?쇨뎬 track??吏㏃? 源쒕컯?꾩쓣 以꾩씠怨? 紐⑥옄?댄겕 諛뺤뒪 ?대룞???꾨젅???ъ씠???먯뿰?ㅻ읇寃??댁뼱吏꾨떎.
+- export???숈씪 ?덉쭏 議곌굔?먯꽌 `ExportRunSummary.totalMs` ?먮뒗 二쇱슂 蹂묐ぉ ??ぉ??媛먯냼?쒕떎.
+- ????ぉ? 吏㏃? smoke媛 ?꾨땲???ㅼ젣 臾몄젣 ?곸긽?????援ш컙 ?щ윭 媛쒖뿉???뺤씤?쒕떎.
 
-## 2026-05-12 track 후처리 1차 구현
-실제 사용 확인에서 나온 깜박임과 단발 오검출 문제를 줄이기 위해 frame 단위 보정 로직 일부를 track 단위 후처리로 분리했다.
+## 2026-05-12 track ?꾩쿂由?1李?援ы쁽
+?ㅼ젣 ?ъ슜 ?뺤씤?먯꽌 ?섏삩 源쒕컯?꾧낵 ?⑤컻 ?ㅺ?異?臾몄젣瑜?以꾩씠湲??꾪빐 frame ?⑥쐞 蹂댁젙 濡쒖쭅 ?쇰?瑜?track ?⑥쐞 ?꾩쿂由щ줈 遺꾨━?덈떎.
 
-추가/변경 파일:
+異붽?/蹂寃??뚯씪:
 
 - `Services/Analysis/FaceTrack.cs`
 - `Services/Analysis/FaceTrackBuilder.cs`
@@ -685,158 +676,157 @@ FaceShield는 .NET 8 Avalonia 데스크톱 앱이며 솔루션은 단일 프로�
 - `ViewModels/Pages/WorkspaceViewModel.cs`
 - `scripts/run-srcTest-smoke.ps1`
 
-구현 내용:
+援ы쁽 ?댁슜:
 
-- `FaceTrackBuilder`가 frame별 face rect를 IoU, 중심점 이동량, 면적 변화율 기준으로 같은 얼굴 track으로 묶는다.
-- `FaceTrackInterpolator`가 같은 track의 짧은 no-face gap만 보간한다.
-- 확정 track은 마지막 검출 뒤 detector가 잠깐 놓쳐도 최대 3프레임까지 이동량 기반으로 예측해 블러를 유지한다.
-- 확정 track lost-fill이 발생한 frame index를 `FilledLostFrameIndices`와 `lostFrames=` 로그로 남겨, 이후 ROI verifier/refiner를 해당 frame 주변에만 붙일 수 있게 했다.
-- `FaceTrackRoiRefiner`를 추가해 gap-fill/lost-fill 후보 프레임만 FFmpeg raw BGRA로 다시 읽고, 예측 박스 주변 ROI crop만 detector에 넣어 재검출한다. ROI 검출 결과가 예측 박스와 충분히 가까울 때만 기존 예측 박스를 교체한다.
-- ROI 재검출은 전역 detector threshold를 바꾸지 않고, ROI 전용 CPU FaceONNX detector에서만 `DetectionThreshold/ConfidenceThreshold`를 최대 `0.12`까지 낮춰 더 민감하게 확인한다. 전역 자동 검출의 사용자 기준값 `0.2/0.25/0.7`은 유지한다.
-- ROI 후보가 가까운 frame에 몰린 경우 매 후보마다 seek하지 않고 한 번의 sequential read로 이어 읽도록 최적화했다. 후보 frame 간격이 `12`프레임보다 크면 다시 seek해 긴 구간을 불필요하게 디코드하지 않는다.
-- 긴 구간에서 ROI 후보 상한을 적용할 때 입력 순서 편향이 생기지 않도록, 후보를 frame index 기준으로 먼저 정렬한 뒤 `maxCandidates`를 적용한다.
-- confidence가 낮고 지속 길이가 짧은 단발 track은 오검출 후보로 보고 제거한다.
-- confidence가 높더라도 1~2개 검출만 가진 작은 단발 track은 물건 오탐 가능성이 높으므로 제거한다.
-- 작은 track이 3개 이상 검출로 이어지면 중앙의 반쪽 얼굴 가능성을 고려해 즉시 제거하지 않는다.
-- 단, 화면 가장자리에 닿은 작은 단발 후보는 반쪽 얼굴 가능성이 있으므로 보존한다.
-- 수동 mask가 있는 frame은 자동 track 보정 대상에서 제외한다.
-- 기존 `WorkspaceViewModel.ApplyAutoTemporalFixes()`는 track 후처리 호출로 축소했다.
-- smoke harness도 자동 검출 후 `FaceTrackInterpolator`를 적용하고 `[SmokeFaceTrackPost]` 로그를 남기도록 맞췄다.
-- synthetic 검증 스크립트에서 짧은 gap fill, 확정 track lost-fill, low-confidence 단발 제거, 1~2개 검출짜리 작은 오탐 제거, 제거된 track의 보간 재생성 차단, 3프레임 이상 중앙 반쪽 얼굴 후보 보존을 직접 확인하도록 했다.
-- smoke harness도 `FaceTrackRoiRefiner`를 호출해 ROI refiner 경로를 console gate에서 검증한다.
+- `FaceTrackBuilder`媛 frame蹂?face rect瑜?IoU, 以묒떖???대룞?? 硫댁쟻 蹂?붿쑉 湲곗??쇰줈 媛숈? ?쇨뎬 track?쇰줈 臾띕뒗??
+- `FaceTrackInterpolator`媛 媛숈? track??吏㏃? no-face gap留?蹂닿컙?쒕떎.
+- ?뺤젙 track? 留덉?留?寃異???detector媛 ?좉퉸 ?볦퀜??理쒕? 3?꾨젅?꾧퉴吏 ?대룞??湲곕컲?쇰줈 ?덉륫??釉붾윭瑜??좎??쒕떎.
+- ?뺤젙 track lost-fill??諛쒖깮??frame index瑜?`FilledLostFrameIndices`? `lostFrames=` 濡쒓렇濡??④꺼, ?댄썑 ROI verifier/refiner瑜??대떦 frame 二쇰??먮쭔 遺숈씪 ???덇쾶 ?덈떎.
+- `FaceTrackRoiRefiner`瑜?異붽???gap-fill/lost-fill ?꾨낫 ?꾨젅?꾨쭔 FFmpeg raw BGRA濡??ㅼ떆 ?쎄퀬, ?덉륫 諛뺤뒪 二쇰? ROI crop留?detector???ｌ뼱 ?ш?異쒗븳?? ROI 寃異?寃곌낵媛 ?덉륫 諛뺤뒪? 異⑸텇??媛源뚯슱 ?뚮쭔 湲곗〈 ?덉륫 諛뺤뒪瑜?援먯껜?쒕떎.
+- ROI ?ш?異쒖? ?꾩뿭 detector threshold瑜?諛붽씀吏 ?딄퀬, ROI ?꾩슜 CPU FaceONNX detector?먯꽌留?`DetectionThreshold/ConfidenceThreshold`瑜?理쒕? `0.12`源뚯? ??떠 ??誘쇨컧?섍쾶 ?뺤씤?쒕떎. ?꾩뿭 ?먮룞 寃異쒖쓽 ?ъ슜??湲곗?媛?`0.2/0.25/0.7`? ?좎??쒕떎.
+- ROI ?꾨낫媛 媛源뚯슫 frame??紐곕┛ 寃쎌슦 留??꾨낫留덈떎 seek?섏? ?딄퀬 ??踰덉쓽 sequential read濡??댁뼱 ?쎈룄濡?理쒖쟻?뷀뻽?? ?꾨낫 frame 媛꾧꺽??`12`?꾨젅?꾨낫???щ㈃ ?ㅼ떆 seek??湲?援ш컙??遺덊븘?뷀븯寃??붿퐫?쒗븯吏 ?딅뒗??
+- 湲?援ш컙?먯꽌 ROI ?꾨낫 ?곹븳???곸슜?????낅젰 ?쒖꽌 ?명뼢???앷린吏 ?딅룄濡? ?꾨낫瑜?frame index 湲곗??쇰줈 癒쇱? ?뺣젹????`maxCandidates`瑜??곸슜?쒕떎.
+- confidence媛 ??퀬 吏??湲몄씠媛 吏㏃? ?⑤컻 track? ?ㅺ?異??꾨낫濡?蹂닿퀬 ?쒓굅?쒕떎.
+- confidence媛 ?믩뜑?쇰룄 1~2媛?寃異쒕쭔 媛吏??묒? ?⑤컻 track? 臾쇨굔 ?ㅽ깘 媛?μ꽦???믪쑝誘濡??쒓굅?쒕떎.
+- ?묒? track??3媛??댁긽 寃異쒕줈 ?댁뼱吏硫?以묒븰??諛섏そ ?쇨뎬 媛?μ꽦??怨좊젮??利됱떆 ?쒓굅?섏? ?딅뒗??
+- ?? ?붾㈃ 媛?μ옄由ъ뿉 ?우? ?묒? ?⑤컻 ?꾨낫??諛섏そ ?쇨뎬 媛?μ꽦???덉쑝誘濡?蹂댁〈?쒕떎.
+- ?섎룞 mask媛 ?덈뒗 frame? ?먮룞 track 蹂댁젙 ??곸뿉???쒖쇅?쒕떎.
+- 湲곗〈 `WorkspaceViewModel.ApplyAutoTemporalFixes()`??track ?꾩쿂由??몄텧濡?異뺤냼?덈떎.
+- smoke harness???먮룞 寃異???`FaceTrackInterpolator`瑜??곸슜?섍퀬 `[SmokeFaceTrackPost]` 濡쒓렇瑜??④린?꾨줉 留욎톬??
+- synthetic 寃利??ㅽ겕由쏀듃?먯꽌 吏㏃? gap fill, ?뺤젙 track lost-fill, low-confidence ?⑤컻 ?쒓굅, 1~2媛?寃異쒖쭨由??묒? ?ㅽ깘 ?쒓굅, ?쒓굅??track??蹂닿컙 ?ъ깮??李⑤떒, 3?꾨젅???댁긽 以묒븰 諛섏そ ?쇨뎬 ?꾨낫 蹂댁〈??吏곸젒 ?뺤씤?섎룄濡??덈떎.
+- smoke harness??`FaceTrackRoiRefiner`瑜??몄텧??ROI refiner 寃쎈줈瑜?console gate?먯꽌 寃利앺븳??
 
-검증:
+寃利?
 
-- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg.AutoGen obsolete warning 7개만 발생했다.
-- `.tmp/srcTest-smoke/smoke-0600-3s.mp4` 단일 optimized CPU all-frame 검증에서 `[SmokeFaceTrackPost] tracks=3, filled=0, removedShort=0, rewritten=8`을 확인했다.
-- `scripts/verify-auto-mosaic-default.ps1` 기본 실행이 통과했다.
-- 품질 gate는 baseline과 optimized 모두 track 후처리 적용 후 `baselineFrames=8`, `optimizedFrames=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- auto tune 짧은 검증은 `FaceOnnxDetector/GPU:DirectML`, `mode=pipe-parallel`, `detects=150`, `interpolated=0`으로 통과했고, 후처리 로그는 `tracks=3`, `filled=0`, `removedShort=0`, `rewritten=8`이었다.
-- `scripts/verify-face-track-postprocess.ps1` 실행 결과 `tracks=6`, `filled=1`, `gapFrames=11`, `lostFilled=3`, `lostFrames=33,34,35`, `removedShort=3`, `rewritten=13`, `filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52`를 확인했다. frame 11은 gap-fill ROI 후보, frame 25는 화면 가장자리 반쪽 얼굴 후보 보존 케이스, frame 30~35는 확정 track lost-fill 케이스, frame 50~52는 중앙에서 3프레임 이상 이어지는 작은 반쪽 얼굴 후보 보존 케이스다.
-- `scripts/verify-auto-mosaic-default.ps1` 통합 검증에서 ROI refiner가 민감한 ROI 전용 detector로 `attempts=8`, `hits=0` 실행됐고, baseline/optimized 모두 같은 결과를 유지했다. 이 샘플에서는 ROI crop이 추가 얼굴을 찾지는 못했지만, gap-fill 5프레임과 lost-fill 3프레임을 모두 재검출 대상으로 확인하면서 품질 gate를 깨지 않는 것은 확인했다.
-- ROI hit 대표 구간 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`를 `scripts/verify-auto-mosaic-default.ps1`에 추가했다. 이 gate는 `FaceTrackRoiRefiner`가 실제 구간에서 `attempts=11`, `hits=5`를 내는지 확인한다. ROI seek 최적화 후 단독 실행에서는 `seeks=4`, `decoded=26`, `elapsedMs=9,455`였다.
-- 선택형 export smoke gate `-RunExportSmoke`를 `scripts/verify-auto-mosaic-default.ps1`에 추가했다. `.tmp/srcTest-smoke/smoke-1200-2s.mp4`에서 자동 검출 후 export까지 실행하고 `[ExportRunSummary]`의 `bitmapMaskFrames=0`, `directFaceFrames>0`, output 생성 로그를 확인한다.
-- `.tmp/srcTest-smoke/smoke-1200-30s.mp4` 30초 중간 길이 검증에서 `processed=899`, `detects=899`, `interpolated=0`, `totalMs=357,398ms`, `regular=614`, `small=2037`, `rejected=2111`, `statsRejected=131`을 확인했다. track 후처리는 `tracks=244`, `filled=431`, `lostFilled=104`, `removedShort=77`, `rewritten=778`이었고, ROI refiner는 상한 32개 후보에서 `attempts=32`, `hits=22`, `seeks=4`, `decoded=77`, `elapsedMs=14,599`였다.
-- 위 30초 검증을 재현할 수 있도록 `scripts/verify-auto-mosaic-default.ps1`에 선택형 `-RunMediumAuto` gate를 추가했다. 이 gate는 `processed=899`, `detects=899`, `interpolated=0`, track 보정 발생, ROI `attempts=32`, ROI `hits>0`을 확인한다.
+- `dotnet build FaceShield.sln` ?깃났. 湲곗〈 FFmpeg.AutoGen obsolete warning 7媛쒕쭔 諛쒖깮?덈떎.
+- `.tmp/srcTest-smoke/smoke-0600-3s.mp4` ?⑥씪 optimized CPU all-frame 寃利앹뿉??`[SmokeFaceTrackPost] tracks=3, filled=0, removedShort=0, rewritten=8`???뺤씤?덈떎.
+- `scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾???듦낵?덈떎.
+- ?덉쭏 gate??baseline怨?optimized 紐⑤몢 track ?꾩쿂由??곸슜 ??`baselineFrames=8`, `optimizedFrames=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- auto tune 吏㏃? 寃利앹? `FaceOnnxDetector/GPU:DirectML`, `mode=pipe-parallel`, `detects=150`, `interpolated=0`?쇰줈 ?듦낵?덇퀬, ?꾩쿂由?濡쒓렇??`tracks=3`, `filled=0`, `removedShort=0`, `rewritten=8`?댁뿀??
+- `scripts/verify-face-track-postprocess.ps1` ?ㅽ뻾 寃곌낵 `tracks=6`, `filled=1`, `gapFrames=11`, `lostFilled=3`, `lostFrames=33,34,35`, `removedShort=3`, `rewritten=13`, `filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52`瑜??뺤씤?덈떎. frame 11? gap-fill ROI ?꾨낫, frame 25???붾㈃ 媛?μ옄由?諛섏そ ?쇨뎬 ?꾨낫 蹂댁〈 耳?댁뒪, frame 30~35???뺤젙 track lost-fill 耳?댁뒪, frame 50~52??以묒븰?먯꽌 3?꾨젅???댁긽 ?댁뼱吏???묒? 諛섏そ ?쇨뎬 ?꾨낫 蹂댁〈 耳?댁뒪??
+- `scripts/verify-auto-mosaic-default.ps1` ?듯빀 寃利앹뿉??ROI refiner媛 誘쇨컧??ROI ?꾩슜 detector濡?`attempts=8`, `hits=0` ?ㅽ뻾?먭퀬, baseline/optimized 紐⑤몢 媛숈? 寃곌낵瑜??좎??덈떎. ???섑뵆?먯꽌??ROI crop??異붽? ?쇨뎬??李얠???紐삵뻽吏留? gap-fill 5?꾨젅?꾧낵 lost-fill 3?꾨젅?꾩쓣 紐⑤몢 ?ш?異???곸쑝濡??뺤씤?섎㈃???덉쭏 gate瑜?源⑥? ?딅뒗 寃껋? ?뺤씤?덈떎.
+- ROI hit ???援ш컙 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`瑜?`scripts/verify-auto-mosaic-default.ps1`??異붽??덈떎. ??gate??`FaceTrackRoiRefiner`媛 ?ㅼ젣 援ш컙?먯꽌 `attempts=11`, `hits=5`瑜??대뒗吏 ?뺤씤?쒕떎. ROI seek 理쒖쟻?????⑤룆 ?ㅽ뻾?먯꽌??`seeks=4`, `decoded=26`, `elapsedMs=9,455`???
+- ?좏깮??export smoke gate `-RunExportSmoke`瑜?`scripts/verify-auto-mosaic-default.ps1`??異붽??덈떎. `.tmp/srcTest-smoke/smoke-1200-2s.mp4`?먯꽌 ?먮룞 寃異???export源뚯? ?ㅽ뻾?섍퀬 `[ExportRunSummary]`??`bitmapMaskFrames=0`, `directFaceFrames>0`, output ?앹꽦 濡쒓렇瑜??뺤씤?쒕떎.
+- `.tmp/srcTest-smoke/smoke-1200-30s.mp4` 30珥?以묎컙 湲몄씠 寃利앹뿉??`processed=899`, `detects=899`, `interpolated=0`, `totalMs=357,398ms`, `regular=614`, `small=2037`, `rejected=2111`, `statsRejected=131`???뺤씤?덈떎. track ?꾩쿂由щ뒗 `tracks=244`, `filled=431`, `lostFilled=104`, `removedShort=77`, `rewritten=778`?댁뿀怨? ROI refiner???곹븳 32媛??꾨낫?먯꽌 `attempts=32`, `hits=22`, `seeks=4`, `decoded=77`, `elapsedMs=14,599`???
+- ??30珥?寃利앹쓣 ?ы쁽?????덈룄濡?`scripts/verify-auto-mosaic-default.ps1`???좏깮??`-RunMediumAuto` gate瑜?異붽??덈떎. ??gate??`processed=899`, `detects=899`, `interpolated=0`, track 蹂댁젙 諛쒖깮, ROI `attempts=32`, ROI `hits>0`???뺤씤?쒕떎.
 
-남은 한계:
+?⑥? ?쒓퀎:
 
-- 실제 영상 smoke 구간에서는 gap 보간과 단발 제거가 발생하지 않았다. synthetic 검증에서는 기능 자체를 확인했지만, 실제 문제 구간에서 개선 수치는 아직 확인하지 못했다.
-- 작은 얼굴 미탐 자체를 줄이는 detector/backend는 아직 구현하지 않았다. ROI refiner의 기본 경로는 gap-fill/lost-fill 후보까지 확장했지만, 현재 기본 샘플에서는 `hits=0`이라 실제 미탐 감소 효과는 아직 확인되지 않았다.
-- 긴 export 병목 감소는 이번 변경의 대상이 아니며, 실제 긴 구간 `ExportRunSummary` 기준으로 계속 측정해야 한다.
+- ?ㅼ젣 ?곸긽 smoke 援ш컙?먯꽌??gap 蹂닿컙怨??⑤컻 ?쒓굅媛 諛쒖깮?섏? ?딆븯?? synthetic 寃利앹뿉?쒕뒗 湲곕뒫 ?먯껜瑜??뺤씤?덉?留? ?ㅼ젣 臾몄젣 援ш컙?먯꽌 媛쒖꽑 ?섏튂???꾩쭅 ?뺤씤?섏? 紐삵뻽??
+- ?묒? ?쇨뎬 誘명깘 ?먯껜瑜?以꾩씠??detector/backend???꾩쭅 援ы쁽?섏? ?딆븯?? ROI refiner??湲곕낯 寃쎈줈??gap-fill/lost-fill ?꾨낫源뚯? ?뺤옣?덉?留? ?꾩옱 湲곕낯 ?섑뵆?먯꽌??`hits=0`?대씪 ?ㅼ젣 誘명깘 媛먯냼 ?④낵???꾩쭅 ?뺤씤?섏? ?딆븯??
+- 湲?export 蹂묐ぉ 媛먯냼???대쾲 蹂寃쎌쓽 ??곸씠 ?꾨땲硫? ?ㅼ젣 湲?援ш컙 `ExportRunSummary` 湲곗??쇰줈 怨꾩냽 痢≪젙?댁빞 ?쒕떎.
 
-## 2026-05-12 작은 얼굴 필터 보강
-작은 얼굴 미탐 가능성을 줄이기 위해 `AutoMaskGenerator`의 face size filter를 보수적으로 완화했다.
+## 2026-05-12 ?묒? ?쇨뎬 ?꾪꽣 蹂닿컯
+?묒? ?쇨뎬 誘명깘 媛?μ꽦??以꾩씠湲??꾪빐 `AutoMaskGenerator`??face size filter瑜?蹂댁닔?곸쑝濡??꾪솕?덈떎.
 
-참고 기준:
+李멸퀬 湲곗?:
 
-- 사용자가 2026-05-11 집 테스트에서 사용한 detector threshold는 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`이다.
-- 이 값들은 `HomePageViewModel.BuildDetectorOptions()`에서 `FaceOnnxDetectorOptions`로 전달되고, `DetectorAutoTuner.CloneOptions()`도 threshold 값을 유지한다.
-- 이번 변경은 위 detector threshold를 직접 바꾸지 않고, detector가 반환한 후보를 `AutoMaskGenerator` 필터와 `FaceTrackInterpolator` 후처리에서 어떻게 살리거나 제거할지 조정한 것이다.
+- ?ъ슜?먭? 2026-05-11 吏??뚯뒪?몄뿉???ъ슜??detector threshold??`DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`?대떎.
+- ??媛믩뱾? `HomePageViewModel.BuildDetectorOptions()`?먯꽌 `FaceOnnxDetectorOptions`濡??꾨떖?섍퀬, `DetectorAutoTuner.CloneOptions()`??threshold 媛믪쓣 ?좎??쒕떎.
+- ?대쾲 蹂寃쎌? ??detector threshold瑜?吏곸젒 諛붽씀吏 ?딄퀬, detector媛 諛섑솚???꾨낫瑜?`AutoMaskGenerator` ?꾪꽣? `FaceTrackInterpolator` ?꾩쿂由ъ뿉???대뼸寃??대━嫄곕굹 ?쒓굅?좎? 議곗젙??寃껋씠??
 
-기존 한계:
+湲곗〈 ?쒓퀎:
 
-- 기존 `MinFaceAreaRatio=0.00075`는 3840x2160 영상 기준 약 6,220px, 정사각형 환산 약 79x79px 미만 얼굴 후보를 버릴 수 있다.
-- 단순히 면적 기준만 낮추면 물건 오검출이 늘어날 수 있다.
+- 湲곗〈 `MinFaceAreaRatio=0.00075`??3840x2160 ?곸긽 湲곗? ??6,220px, ?뺤궗媛곹삎 ?섏궛 ??79x79px 誘몃쭔 ?쇨뎬 ?꾨낫瑜?踰꾨┫ ???덈떎.
+- ?⑥닚??硫댁쟻 湲곗?留???텛硫?臾쇨굔 ?ㅺ?異쒖씠 ?섏뼱?????덈떎.
 
-변경 내용:
+蹂寃??댁슜:
 
-- 일반 face 후보 기준은 유지한다.
-- 작은 face 후보는 `MinSmallFaceAreaRatio=0.00025` 이상이면서 confidence가 `0.72` 이상일 때만 살린다.
-- 작은 face 후보는 confidence가 높아도 skin/edge/luma variance 기반 픽셀 통계 검사를 강제로 통과해야 한다.
-- 일반 후보의 기존 high-confidence stats bypass 경로는 유지해 큰/일반 얼굴 처리 비용과 기존 결과 변화를 줄였다.
-- `[AutoRunSummary]`의 `roi=` 요약에 `regular`, `small`, `rejected`, `statsRejected` filter 통계를 남기도록 했다.
+- ?쇰컲 face ?꾨낫 湲곗?? ?좎??쒕떎.
+- ?묒? face ?꾨낫??`MinSmallFaceAreaRatio=0.00025` ?댁긽?대㈃??confidence媛 `0.72` ?댁긽???뚮쭔 ?대┛??
+- ?묒? face ?꾨낫??confidence媛 ?믪븘??skin/edge/luma variance 湲곕컲 ?쎌? ?듦퀎 寃?щ? 媛뺤젣濡??듦낵?댁빞 ?쒕떎.
+- ?쇰컲 ?꾨낫??湲곗〈 high-confidence stats bypass 寃쎈줈???좎??????쇰컲 ?쇨뎬 泥섎━ 鍮꾩슜怨?湲곗〈 寃곌낵 蹂?붾? 以꾩???
+- `[AutoRunSummary]`??`roi=` ?붿빟??`regular`, `small`, `rejected`, `statsRejected` filter ?듦퀎瑜??④린?꾨줉 ?덈떎.
 
-검증:
+寃利?
 
-- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg.AutoGen obsolete warning 7개만 발생했다.
-- `scripts/verify-auto-mosaic-default.ps1` 기본 실행이 통과했다.
-- 품질 gate는 `baselineFrames=8`, `optimizedFrames=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- auto tune 짧은 검증은 `FaceOnnxDetector/GPU:DirectML`, `mode=pipe-parallel`, `detects=150`, `interpolated=0`으로 통과했다.
-- 계측 추가 후 `.tmp/srcTest-smoke/smoke-0600-3s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=8, small=0, rejected=0, statsRejected=0` 로그를 확인했다.
-- `.tmp/srcTest-smoke/smoke-0900-2s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=84, small=0, rejected=0, statsRejected=0`, track 후처리 `tracks=5`, `filled=5`, `removedShort=0`, `rewritten=51`을 확인했다. 실제 영상 구간에서 gap 보간이 발생한 대표 후보로 둔다.
-- `.tmp/srcTest-smoke/smoke-1200-2s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=28, small=0, rejected=12, statsRejected=0`, track 후처리 `tracks=1`, `filled=0`, `removedShort=0`, `rewritten=28`을 확인했다.
-- `.tmp/srcTest-smoke/smoke-1500-2s.mp4` 단일 optimized CPU all-frame 검증에서 `filter=regular=0, small=2, rejected=8, statsRejected=3`, track 후처리 `tracks=2`, `filled=0`, `removedShort=0`, `rewritten=2`를 확인했다. 작은 얼굴 후보가 실제로 유지되는 대표 후보로 둔다.
-- 이후 같은 구간을 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `-DumpDetections`로 재검증했다. 작은 후보는 frame 2/3/4의 빨간 수건/물건 오탐으로 확인되어 작은 단발 track 제거 기준을 추가했다.
-- 제거된 작은 track은 gap 보간에서 다시 살아나지 않도록 보정했다. 재실행 결과 `filter=regular=0, small=5, rejected=13, statsRejected=4`, `tracks=4`, `filled=0`, `removedShort=4`, `rewritten=1`, `faceMaskFrames=1`이었다.
-- 중앙의 빨간 수건/물건 오탐은 제거됐고, 남은 1개는 frame 56의 화면 오른쪽 가장자리 작은 후보다. 프레임 이미지로 육안 확인한 결과 화면 끝에 걸린 반쪽 얼굴 후보로 보여 현재 정책대로 보존한다. 이후 다른 구간에서 가장자리 물체 오탐이 반복되면 가장자리 후보용 verifier 또는 더 엄격한 edge partial-face 검증이 필요하다.
-- 작은 track 제거 기준은 `1~2개 검출`로 제한했다. 사람이 뒤돌면서 얼굴이 반만 보이는 경우처럼 중앙에서 3프레임 이상 이어지는 작은 후보는 `Tentative`로 남겨 이후 lifecycle/ROI 재검증 대상이 되게 한다.
+- `dotnet build FaceShield.sln` ?깃났. 湲곗〈 FFmpeg.AutoGen obsolete warning 7媛쒕쭔 諛쒖깮?덈떎.
+- `scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾???듦낵?덈떎.
+- ?덉쭏 gate??`baselineFrames=8`, `optimizedFrames=8`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- auto tune 吏㏃? 寃利앹? `FaceOnnxDetector/GPU:DirectML`, `mode=pipe-parallel`, `detects=150`, `interpolated=0`?쇰줈 ?듦낵?덈떎.
+- 怨꾩륫 異붽? ??`.tmp/srcTest-smoke/smoke-0600-3s.mp4` ?⑥씪 optimized CPU all-frame 寃利앹뿉??`filter=regular=8, small=0, rejected=0, statsRejected=0` 濡쒓렇瑜??뺤씤?덈떎.
+- `.tmp/srcTest-smoke/smoke-0900-2s.mp4` ?⑥씪 optimized CPU all-frame 寃利앹뿉??`filter=regular=84, small=0, rejected=0, statsRejected=0`, track ?꾩쿂由?`tracks=5`, `filled=5`, `removedShort=0`, `rewritten=51`???뺤씤?덈떎. ?ㅼ젣 ?곸긽 援ш컙?먯꽌 gap 蹂닿컙??諛쒖깮??????꾨낫濡??붾떎.
+- `.tmp/srcTest-smoke/smoke-1200-2s.mp4` ?⑥씪 optimized CPU all-frame 寃利앹뿉??`filter=regular=28, small=0, rejected=12, statsRejected=0`, track ?꾩쿂由?`tracks=1`, `filled=0`, `removedShort=0`, `rewritten=28`???뺤씤?덈떎.
+- `.tmp/srcTest-smoke/smoke-1500-2s.mp4` ?⑥씪 optimized CPU all-frame 寃利앹뿉??`filter=regular=0, small=2, rejected=8, statsRejected=3`, track ?꾩쿂由?`tracks=2`, `filled=0`, `removedShort=0`, `rewritten=2`瑜??뺤씤?덈떎. ?묒? ?쇨뎬 ?꾨낫媛 ?ㅼ젣濡??좎??섎뒗 ????꾨낫濡??붾떎.
+- ?댄썑 媛숈? 援ш컙??`DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `-DumpDetections`濡??ш?利앺뻽?? ?묒? ?꾨낫??frame 2/3/4??鍮④컙 ?섍굔/臾쇨굔 ?ㅽ깘?쇰줈 ?뺤씤?섏뼱 ?묒? ?⑤컻 track ?쒓굅 湲곗???異붽??덈떎.
+- ?쒓굅???묒? track? gap 蹂닿컙?먯꽌 ?ㅼ떆 ?댁븘?섏? ?딅룄濡?蹂댁젙?덈떎. ?ъ떎??寃곌낵 `filter=regular=0, small=5, rejected=13, statsRejected=4`, `tracks=4`, `filled=0`, `removedShort=4`, `rewritten=1`, `faceMaskFrames=1`?댁뿀??
+- 以묒븰??鍮④컙 ?섍굔/臾쇨굔 ?ㅽ깘? ?쒓굅?먭퀬, ?⑥? 1媛쒕뒗 frame 56???붾㈃ ?ㅻⅨ履?媛?μ옄由??묒? ?꾨낫?? ?꾨젅???대?吏濡??≪븞 ?뺤씤??寃곌낵 ?붾㈃ ?앹뿉 嫄몃┛ 諛섏そ ?쇨뎬 ?꾨낫濡?蹂댁뿬 ?꾩옱 ?뺤콉?濡?蹂댁〈?쒕떎. ?댄썑 ?ㅻⅨ 援ш컙?먯꽌 媛?μ옄由?臾쇱껜 ?ㅽ깘??諛섎났?섎㈃ 媛?μ옄由??꾨낫??verifier ?먮뒗 ???꾧꺽??edge partial-face 寃利앹씠 ?꾩슂?섎떎.
+- ?묒? track ?쒓굅 湲곗?? `1~2媛?寃異?濡??쒗븳?덈떎. ?щ엺???ㅻ룎硫댁꽌 ?쇨뎬??諛섎쭔 蹂댁씠??寃쎌슦泥섎읆 以묒븰?먯꽌 3?꾨젅???댁긽 ?댁뼱吏???묒? ?꾨낫??`Tentative`濡??④꺼 ?댄썑 lifecycle/ROI ?ш?利???곸씠 ?섍쾶 ?쒕떎.
 
-남은 한계:
+?⑥? ?쒓퀎:
 
-- 이 변경은 detector가 이미 반환한 작은 얼굴 후보를 덜 버리는 보강이다. detector 자체가 후보를 반환하지 못하는 작은 얼굴은 ROI 재검출, verifier/refiner, 또는 새 detector backend가 필요하다.
-- 작은 얼굴 후보가 유지되는 대표 구간은 확인했지만, 실제 육안 기준 미탐 frame 수 감소는 아직 확인하지 못했다.
-- 가장자리 작은 후보는 반쪽 얼굴 보호를 위해 보수적으로 살린다. 이 정책은 가장자리 물체 오탐을 남길 수 있으므로 실제 영상 확인 결과에 따라 별도 verifier가 필요하다.
+- ??蹂寃쎌? detector媛 ?대? 諛섑솚???묒? ?쇨뎬 ?꾨낫瑜???踰꾨━??蹂닿컯?대떎. detector ?먯껜媛 ?꾨낫瑜?諛섑솚?섏? 紐삵븯???묒? ?쇨뎬? ROI ?ш?異? verifier/refiner, ?먮뒗 ??detector backend媛 ?꾩슂?섎떎.
+- ?묒? ?쇨뎬 ?꾨낫媛 ?좎??섎뒗 ???援ш컙? ?뺤씤?덉?留? ?ㅼ젣 ?≪븞 湲곗? 誘명깘 frame ??媛먯냼???꾩쭅 ?뺤씤?섏? 紐삵뻽??
+- 媛?μ옄由??묒? ?꾨낫??諛섏そ ?쇨뎬 蹂댄샇瑜??꾪빐 蹂댁닔?곸쑝濡??대┛?? ???뺤콉? 媛?μ옄由?臾쇱껜 ?ㅽ깘???④만 ???덉쑝誘濡??ㅼ젣 ?곸긽 ?뺤씤 寃곌낵???곕씪 蹂꾨룄 verifier媛 ?꾩슂?섎떎.
 
-## 2026-05-12 auto tune provider 선택 보강
-threshold를 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`로 낮춘 뒤, 짧은 auto tune 샘플에서 GPU가 선택됐지만 실제 5초 검출 wall-clock이 CPU 병렬 경로보다 느려지는 케이스를 확인했다.
+## 2026-05-12 auto tune provider ?좏깮 蹂닿컯
+threshold瑜?`DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`濡???텣 ?? 吏㏃? auto tune ?섑뵆?먯꽌 GPU媛 ?좏깮?먯?留??ㅼ젣 5珥?寃異?wall-clock??CPU 蹂묐젹 寃쎈줈蹂대떎 ?먮젮吏??耳?댁뒪瑜??뺤씤?덈떎.
 
-변경 내용:
+蹂寃??댁슜:
 
-- `DetectorAutoTuner`의 provider 후보 측정을 단일 프레임이 아니라 최대 3개 연속 프레임 기준으로 바꿨다.
-- GPU는 quality gate를 통과하더라도 CPU 최고 후보보다 충분히 빠를 때만 선택하도록 `GpuPreferenceMinScoreRatio`를 `1.20`으로 조정했다.
-- CPU/GPU 후보 점수를 분리해 계산한다. 이전 구조에서는 GPU가 일단 전체 최고점이 되면 CPU 대비 승격 margin을 사실상 우회할 수 있었다.
-- CPU 후보에 고정 thread 수뿐 아니라 기본 ORT thread 설정 후보(`CPU <n>세션/default`)를 추가했다. 수동 smoke의 기본 CPU 경로와 같은 후보를 auto-tune에서도 비교하기 위함이다.
-- `scripts/verify-auto-mosaic-default.ps1`는 더 이상 GPU 선택을 고정 요구하지 않는다. CPU/GPU 중 auto tune이 선택한 provider가 `FaceOnnxDetector/CPU` 또는 `FaceOnnxDetector/GPU:DirectML`로 정상 동작하고, `pipe-parallel`, 전 프레임 검출, `interpolated=0` 조건을 만족하는지 확인한다.
-- `scripts/verify-auto-mosaic-default.ps1`가 `scripts/verify-face-track-postprocess.ps1`를 먼저 실행하도록 묶었다. 기본 검증 한 번으로 track gap 보간, 작은 오탐 제거, 반쪽 얼굴 후보 보존 정책까지 같이 확인한다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`를 추가했다. 30초 대표 구간에서 자동 검출 후 export까지 수행하고 `processed=899`, ROI hit, `ExportRunSummary.frames=902`, `bitmapMaskFrames=0`, `directFaceFrames>0`, output 생성을 assertion한다.
-- `scripts/run-srcTest-smoke.ps1`는 매 실행마다 고유 harness 폴더를 사용한다. 이전 smoke 프로세스가 남아 있어도 고정 `SmokeHarness.exe` 파일 잠금 때문에 다음 검증이 실패하는 상황을 줄인다.
+- `DetectorAutoTuner`??provider ?꾨낫 痢≪젙???⑥씪 ?꾨젅?꾩씠 ?꾨땲??理쒕? 3媛??곗냽 ?꾨젅??湲곗??쇰줈 諛붽엥??
+- GPU??quality gate瑜??듦낵?섎뜑?쇰룄 CPU 理쒓퀬 ?꾨낫蹂대떎 異⑸텇??鍮좊? ?뚮쭔 ?좏깮?섎룄濡?`GpuPreferenceMinScoreRatio`瑜?`1.20`?쇰줈 議곗젙?덈떎.
+- CPU/GPU ?꾨낫 ?먯닔瑜?遺꾨━??怨꾩궛?쒕떎. ?댁쟾 援ъ“?먯꽌??GPU媛 ?쇰떒 ?꾩껜 理쒓퀬?먯씠 ?섎㈃ CPU ?鍮??밴꺽 margin???ъ떎???고쉶?????덉뿀??
+- CPU ?꾨낫??怨좎젙 thread ?섎퓧 ?꾨땲??湲곕낯 ORT thread ?ㅼ젙 ?꾨낫(`CPU <n>?몄뀡/default`)瑜?異붽??덈떎. ?섎룞 smoke??湲곕낯 CPU 寃쎈줈? 媛숈? ?꾨낫瑜?auto-tune?먯꽌??鍮꾧탳?섍린 ?꾪븿?대떎.
+- `scripts/verify-auto-mosaic-default.ps1`?????댁긽 GPU ?좏깮??怨좎젙 ?붽뎄?섏? ?딅뒗?? CPU/GPU 以?auto tune???좏깮??provider媛 `FaceOnnxDetector/CPU` ?먮뒗 `FaceOnnxDetector/GPU:DirectML`濡??뺤긽 ?숈옉?섍퀬, `pipe-parallel`, ???꾨젅??寃異? `interpolated=0` 議곌굔??留뚯”?섎뒗吏 ?뺤씤?쒕떎.
+- `scripts/verify-auto-mosaic-default.ps1`媛 `scripts/verify-face-track-postprocess.ps1`瑜?癒쇱? ?ㅽ뻾?섎룄濡?臾띠뿀?? 湲곕낯 寃利???踰덉쑝濡?track gap 蹂닿컙, ?묒? ?ㅽ깘 ?쒓굅, 諛섏そ ?쇨뎬 ?꾨낫 蹂댁〈 ?뺤콉源뚯? 媛숈씠 ?뺤씤?쒕떎.
+- `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`瑜?異붽??덈떎. 30珥????援ш컙?먯꽌 ?먮룞 寃異???export源뚯? ?섑뻾?섍퀬 `processed=899`, ROI hit, `ExportRunSummary.frames=902`, `bitmapMaskFrames=0`, `directFaceFrames>0`, output ?앹꽦??assertion?쒕떎.
+- `scripts/run-srcTest-smoke.ps1`??留??ㅽ뻾留덈떎 怨좎쑀 harness ?대뜑瑜??ъ슜?쒕떎. ?댁쟾 smoke ?꾨줈?몄뒪媛 ?⑥븘 ?덉뼱??怨좎젙 `SmokeHarness.exe` ?뚯씪 ?좉툑 ?뚮Ц???ㅼ쓬 寃利앹씠 ?ㅽ뙣?섎뒗 ?곹솴??以꾩씤??
 
-검증:
+寃利?
 
-- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg.AutoGen obsolete warning 7개만 발생했다.
-- `git diff --check` 통과.
-- `.tmp/srcTest-smoke/smoke-0600-5s.mp4`에서 `-UseAutoTune` 재실행 결과, tuner가 `CPU 2세션/4스레드`를 선택했다.
-- 같은 검증에서 `FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=16`, `totalMs=80,877ms`를 확인했다.
-- 직전 GPU 선택 경로의 같은 5초 검증은 `FaceOnnxDetector/GPU:DirectML`, `totalMs=107,471ms`였으므로, 이 샘플에서는 느린 GPU 고정 선택을 줄였다.
-- 이후 `scripts/verify-auto-mosaic-default.ps1` 전체 기본 검증이 다시 통과했다. 같은 5초 검증에서 최신 실행은 `FaceOnnxDetector/GPU:DirectML`, `totalMs=59,534ms`로 통과했다. provider 선택은 실행 시점의 장비 부하에 따라 CPU/GPU가 달라질 수 있으므로, gate는 provider 고정이 아니라 품질 유지와 전 프레임 병렬 경로 진입을 확인한다.
-- 고유 harness 폴더 변경 후 `.tmp/srcTest-smoke/smoke-1500-2s.mp4` 짧은 smoke도 통과했다. 결과는 `FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `processed=59`, `faceMaskFrames=1`, `removedShort=4`, `totalMs=21,827ms`였다.
-- 후처리 정책 gate를 통합한 뒤 `scripts/verify-auto-mosaic-default.ps1`를 다시 실행했고 전체 통과했다. 최신 통합 실행에서 `track-postprocess-policy`는 `filled=1`, `lostFilled=3`, `lostFrames=33,34,35`, `removedShort=3`, `filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52`였다. 품질 gate는 lost-fill 적용 후에도 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`으로 통과했고, CPU 병렬 경로는 `totalMs=34,381ms`로 CPU single baseline `61,097ms`보다 빨랐다. 품질 gate의 실제 lost-fill frame도 baseline/optimized 모두 `lostFrames=6,7,8`로 일치했다. auto tune gate는 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `interpolated=0`, `lostFilled=3`, `lostFrames=6,7,8`, `totalMs=64,020ms`였다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke -RunMediumAuto -RunLongAutoTune`가 통과했다. 해당 실행에서 export smoke는 `bitmapMaskFrames=0`, `directFaceFrames=31`, `totalMs=12,299ms`였고, 30초 medium CPU gate는 `processed=899`, `detects=899`, `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, `totalMs=397,825ms`였다.
-- 같은 verifier 실행에서 short auto-tune은 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=84,769ms`였고, long auto-tune은 `FaceOnnxDetector/GPU:DirectML`, `processed=899`, `detects=899`, `interpolated=0`, ROI `attempts=32`, `hits=22`, `totalMs=430,952ms`였다.
-- GPU 승격 margin과 CPU default 후보 추가 후 `.tmp/srcTest-smoke/smoke-0600-5s.mp4 -UseAutoTune`은 다시 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=60,447ms`로 완료됐다. 같은 변경 직후 30초 long auto-tune은 `CPU 2세션/4스레드`를 선택했고 `processed=899`, `detects=899`, `interpolated=0`, ROI `attempts=32`, `hits=22`, `totalMs=438,618ms`였다. provider 선택은 부하에 따라 흔들릴 수 있어 gate는 provider 고정보다 전 프레임 처리/품질/병렬 경로를 확인한다.
-- 30초 대표 구간 export 포함 smoke도 실행했다. `.tmp/srcTest-smoke/smoke-1200-30s.mp4`에서 자동 검출은 `processed=899`, `detectMs=762,418`, `totalMs=382,985ms`, track 후처리는 `filled=431`, `lostFilled=104`, `removedShort=77`, ROI는 `attempts=32`, `hits=22`, `elapsedMs=17,773`이었다. 이어진 export는 `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `swsToBgraMs=15,927`, `maskMs=47,715`, `swsToEncMs=24,851`, `encodeMs=4,361`, `totalMs=148,317ms`였다. 이 구간에서는 export보다 detector가 더 큰 병목이다.
-- `-RunMediumExport` 추가 후 `scripts/verify-auto-mosaic-default.ps1` 기본 실행도 다시 통과했다. 최신 실행에서 품질 gate는 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, CPU 병렬 `totalMs=34,870ms`였고, ROI-hit 대표 gate는 `attempts=11`, `hits=5`, `elapsedMs=9,134`였다. auto-tune은 `CPU 2세션/default`, `provider=CPU`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=52,773ms`로 통과했다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`도 실제 통과했다. 이 실행에서 품질 gate는 CPU single `totalMs=54,409ms`, CPU 병렬 `totalMs=34,181ms`, `avgBestIou=1.000`이었다. ROI-hit 대표 gate는 `attempts=11`, `hits=5`, `elapsedMs=9,288`이었다. `medium-auto-export`는 자동 검출 `processed=899`, `detectMs=629,598`, `totalMs=316,366ms`, track `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, `elapsedMs=13,718`을 확인했고, export는 `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `maskMs=39,891`, `swsToEncMs=22,251`, `encodeMs=4,160`, `totalMs=127,750ms`로 통과했다. 마지막 short auto-tune gate는 `CPU 2세션/default`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=53,885ms`였다.
-- `MaskedVideoExporter.ApplyFaceRectsAndBlur()`에 단일 얼굴 fast path를 추가했다. 얼굴이 1개인 frame은 기존 ellipse alpha/soft edge 계산은 유지하되, per-pixel shape list 순회와 radius map 생성/조회 비용을 건너뛴다. 적용 후 `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke`가 다시 통과했다. 이 실행에서 direct face export smoke는 `frames=61`, `bitmapMaskFrames=0`, `directFaceFrames=31`, `maskMs=713`, `swsToEncMs=1,089`, `encodeMs=479`, `totalMs=7,066ms`였고, short auto-tune gate는 `CPU 2세션/default`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=61,999ms`였다.
-- 전체 원본 `srcTest/260102_jp_10.mp4`는 `3840x2160`, `30000/1001fps`, `duration=1067.599867`, `nb_frames=31996`, 파일 크기 약 `2.3GB`다. 30초 대표 구간 자동 검출+export 수치를 단순 환산하면 전체 원본 풀런은 몇 시간 단위가 될 수 있다.
-- detector 호출 수를 줄이는 `sparse-pipe-parallel`도 품질 gate에서 확인했다. `.tmp/srcTest-smoke/smoke-0600-3s.mp4`에 `-OptimizedDetectEvery 2`를 적용하면 `detects=45`, `interpolated=9`, `detectMs=32,705`, `totalMs=16,820ms`로 매우 빨라졌지만, FaceONNX all-frame baseline 대비 `baselineFrames=19`, `optimizedFrames=22`, `onlyBaseline=3`, `onlyOptimized=6`, `avgBestIou=0.930`, `minBestIou=0.627`, `passed=False`였다. 따라서 `DetectEveryNFrames=2` sparse tracking은 현재 품질 최우선 기본값으로 승격하지 않는다.
+- `dotnet build FaceShield.sln` ?깃났. 湲곗〈 FFmpeg.AutoGen obsolete warning 7媛쒕쭔 諛쒖깮?덈떎.
+- `git diff --check` ?듦낵.
+- `.tmp/srcTest-smoke/smoke-0600-5s.mp4`?먯꽌 `-UseAutoTune` ?ъ떎??寃곌낵, tuner媛 `CPU 2?몄뀡/4?ㅻ젅??瑜??좏깮?덈떎.
+- 媛숈? 寃利앹뿉??`FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=16`, `totalMs=80,877ms`瑜??뺤씤?덈떎.
+- 吏곸쟾 GPU ?좏깮 寃쎈줈??媛숈? 5珥?寃利앹? `FaceOnnxDetector/GPU:DirectML`, `totalMs=107,471ms`??쇰?濡? ???섑뵆?먯꽌???먮┛ GPU 怨좎젙 ?좏깮??以꾩???
+- ?댄썑 `scripts/verify-auto-mosaic-default.ps1` ?꾩껜 湲곕낯 寃利앹씠 ?ㅼ떆 ?듦낵?덈떎. 媛숈? 5珥?寃利앹뿉??理쒖떊 ?ㅽ뻾? `FaceOnnxDetector/GPU:DirectML`, `totalMs=59,534ms`濡??듦낵?덈떎. provider ?좏깮? ?ㅽ뻾 ?쒖젏???λ퉬 遺?섏뿉 ?곕씪 CPU/GPU媛 ?щ씪吏????덉쑝誘濡? gate??provider 怨좎젙???꾨땲???덉쭏 ?좎?? ???꾨젅??蹂묐젹 寃쎈줈 吏꾩엯???뺤씤?쒕떎.
+- 怨좎쑀 harness ?대뜑 蹂寃???`.tmp/srcTest-smoke/smoke-1500-2s.mp4` 吏㏃? smoke???듦낵?덈떎. 寃곌낵??`FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `processed=59`, `faceMaskFrames=1`, `removedShort=4`, `totalMs=21,827ms`???
+- ?꾩쿂由??뺤콉 gate瑜??듯빀????`scripts/verify-auto-mosaic-default.ps1`瑜??ㅼ떆 ?ㅽ뻾?덇퀬 ?꾩껜 ?듦낵?덈떎. 理쒖떊 ?듯빀 ?ㅽ뻾?먯꽌 `track-postprocess-policy`??`filled=1`, `lostFilled=3`, `lostFrames=33,34,35`, `removedShort=3`, `filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52`??? ?덉쭏 gate??lost-fill ?곸슜 ?꾩뿉??`baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`?쇰줈 ?듦낵?덇퀬, CPU 蹂묐젹 寃쎈줈??`totalMs=34,381ms`濡?CPU single baseline `61,097ms`蹂대떎 鍮⑤옄?? ?덉쭏 gate???ㅼ젣 lost-fill frame??baseline/optimized 紐⑤몢 `lostFrames=6,7,8`濡??쇱튂?덈떎. auto tune gate??`FaceOnnxDetector/GPU:DirectML`, `processed=150`, `interpolated=0`, `lostFilled=3`, `lostFrames=6,7,8`, `totalMs=64,020ms`???
+- `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke -RunMediumAuto -RunLongAutoTune`媛 ?듦낵?덈떎. ?대떦 ?ㅽ뻾?먯꽌 export smoke??`bitmapMaskFrames=0`, `directFaceFrames=31`, `totalMs=12,299ms`?怨? 30珥?medium CPU gate??`processed=899`, `detects=899`, `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, `totalMs=397,825ms`???
+- 媛숈? verifier ?ㅽ뻾?먯꽌 short auto-tune? `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=84,769ms`?怨? long auto-tune? `FaceOnnxDetector/GPU:DirectML`, `processed=899`, `detects=899`, `interpolated=0`, ROI `attempts=32`, `hits=22`, `totalMs=430,952ms`???
+- GPU ?밴꺽 margin怨?CPU default ?꾨낫 異붽? ??`.tmp/srcTest-smoke/smoke-0600-5s.mp4 -UseAutoTune`? ?ㅼ떆 `FaceOnnxDetector/GPU:DirectML`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=60,447ms`濡??꾨즺?먮떎. 媛숈? 蹂寃?吏곹썑 30珥?long auto-tune? `CPU 2?몄뀡/4?ㅻ젅??瑜??좏깮?덇퀬 `processed=899`, `detects=899`, `interpolated=0`, ROI `attempts=32`, `hits=22`, `totalMs=438,618ms`??? provider ?좏깮? 遺?섏뿉 ?곕씪 ?붾뱾由????덉뼱 gate??provider 怨좎젙蹂대떎 ???꾨젅??泥섎━/?덉쭏/蹂묐젹 寃쎈줈瑜??뺤씤?쒕떎.
+- 30珥????援ш컙 export ?ы븿 smoke???ㅽ뻾?덈떎. `.tmp/srcTest-smoke/smoke-1200-30s.mp4`?먯꽌 ?먮룞 寃異쒖? `processed=899`, `detectMs=762,418`, `totalMs=382,985ms`, track ?꾩쿂由щ뒗 `filled=431`, `lostFilled=104`, `removedShort=77`, ROI??`attempts=32`, `hits=22`, `elapsedMs=17,773`?댁뿀?? ?댁뼱吏?export??`frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `swsToBgraMs=15,927`, `maskMs=47,715`, `swsToEncMs=24,851`, `encodeMs=4,361`, `totalMs=148,317ms`??? ??援ш컙?먯꽌??export蹂대떎 detector媛 ????蹂묐ぉ?대떎.
+- `-RunMediumExport` 異붽? ??`scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾???ㅼ떆 ?듦낵?덈떎. 理쒖떊 ?ㅽ뻾?먯꽌 ?덉쭏 gate??`baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, CPU 蹂묐젹 `totalMs=34,870ms`?怨? ROI-hit ???gate??`attempts=11`, `hits=5`, `elapsedMs=9,134`??? auto-tune? `CPU 2?몄뀡/default`, `provider=CPU`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=52,773ms`濡??듦낵?덈떎.
+- `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`???ㅼ젣 ?듦낵?덈떎. ???ㅽ뻾?먯꽌 ?덉쭏 gate??CPU single `totalMs=54,409ms`, CPU 蹂묐젹 `totalMs=34,181ms`, `avgBestIou=1.000`?댁뿀?? ROI-hit ???gate??`attempts=11`, `hits=5`, `elapsedMs=9,288`?댁뿀?? `medium-auto-export`???먮룞 寃異?`processed=899`, `detectMs=629,598`, `totalMs=316,366ms`, track `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, `elapsedMs=13,718`???뺤씤?덇퀬, export??`frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `maskMs=39,891`, `swsToEncMs=22,251`, `encodeMs=4,160`, `totalMs=127,750ms`濡??듦낵?덈떎. 留덉?留?short auto-tune gate??`CPU 2?몄뀡/default`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=53,885ms`???
+- `MaskedVideoExporter.ApplyFaceRectsAndBlur()`???⑥씪 ?쇨뎬 fast path瑜?異붽??덈떎. ?쇨뎬??1媛쒖씤 frame? 湲곗〈 ellipse alpha/soft edge 怨꾩궛? ?좎??섎릺, per-pixel shape list ?쒗쉶? radius map ?앹꽦/議고쉶 鍮꾩슜??嫄대꼫?대떎. ?곸슜 ??`scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke`媛 ?ㅼ떆 ?듦낵?덈떎. ???ㅽ뻾?먯꽌 direct face export smoke??`frames=61`, `bitmapMaskFrames=0`, `directFaceFrames=31`, `maskMs=713`, `swsToEncMs=1,089`, `encodeMs=479`, `totalMs=7,066ms`?怨? short auto-tune gate??`CPU 2?몄뀡/default`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=61,999ms`???
+- ?꾩껜 ?먮낯 `srcTest/260102_jp_10.mp4`??`3840x2160`, `30000/1001fps`, `duration=1067.599867`, `nb_frames=31996`, ?뚯씪 ?ш린 ??`2.3GB`?? 30珥????援ш컙 ?먮룞 寃異?export ?섏튂瑜??⑥닚 ?섏궛?섎㈃ ?꾩껜 ?먮낯 ??곗? 紐??쒓컙 ?⑥쐞媛 ?????덈떎.
+- detector ?몄텧 ?섎? 以꾩씠??`sparse-pipe-parallel`???덉쭏 gate?먯꽌 ?뺤씤?덈떎. `.tmp/srcTest-smoke/smoke-0600-3s.mp4`??`-OptimizedDetectEvery 2`瑜??곸슜?섎㈃ `detects=45`, `interpolated=9`, `detectMs=32,705`, `totalMs=16,820ms`濡?留ㅼ슦 鍮⑤씪議뚯?留? FaceONNX all-frame baseline ?鍮?`baselineFrames=19`, `optimizedFrames=22`, `onlyBaseline=3`, `onlyOptimized=6`, `avgBestIou=0.930`, `minBestIou=0.627`, `passed=False`??? ?곕씪??`DetectEveryNFrames=2` sparse tracking? ?꾩옱 ?덉쭏 理쒖슦??湲곕낯媛믪쑝濡??밴꺽?섏? ?딅뒗??
 
-남은 한계:
+?⑥? ?쒓퀎:
 
-- auto tune 측정 프레임 수와 후보 수를 늘렸기 때문에 자동 시작 전 튜닝 시간이 조금 늘 수 있다.
-- 장기 영상에서 CPU/GPU 우위가 실행 시점 부하에 따라 바뀌므로, 전체 영상 기준 최종 선택 정책은 더 긴 대표 구간으로 계속 검증해야 한다.
+- auto tune 痢≪젙 ?꾨젅???섏? ?꾨낫 ?섎? ?섎졇湲??뚮Ц???먮룞 ?쒖옉 ???쒕떇 ?쒓컙??議곌툑 ?????덈떎.
+- ?κ린 ?곸긽?먯꽌 CPU/GPU ?곗쐞媛 ?ㅽ뻾 ?쒖젏 遺?섏뿉 ?곕씪 諛붾뚮?濡? ?꾩껜 ?곸긽 湲곗? 理쒖쥌 ?좏깮 ?뺤콉? ??湲????援ш컙?쇰줈 怨꾩냽 寃利앺빐???쒕떎.
 
 ## 2026-05-12 completion audit
-목표를 구체 deliverable로 나누면 다음과 같다.
+紐⑺몴瑜?援ъ껜 deliverable濡??섎늻硫??ㅼ쓬怨?媛숇떎.
 
-| 요구/완료 기준 | 현재 증거 | 판정 |
+| ?붽뎄/?꾨즺 湲곗? | ?꾩옱 利앷굅 | ?먯젙 |
 | --- | --- | --- |
-| 기본 품질을 희생하지 않는 자동 모자이크 | `DownscaleRatio=1.0`, `DetectEveryNFrames=1` 경로를 유지한다. `scripts/verify-auto-mosaic-default.ps1` 품질 gate에서 baseline/optimized 모두 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`으로 통과했다. | 충족 |
-| 처리 속도 개선 | 같은 6분 3초 클립 gate에서 CPU single baseline `totalMs=66,771ms`, CPU 병렬 `totalMs=36,138ms`를 확인했다. 최신 강한 verifier에서 3초 품질 gate는 CPU single `totalMs=70,544ms`, CPU 병렬 `totalMs=41,973ms`로 통과했고, 30초 medium CPU gate는 `processed=899`, `totalMs=397,825ms`였다. auto tune은 CPU/GPU 후보를 모두 비교하고 `pipe-parallel` 경로로 통과한다. `DetectEveryNFrames=2` sparse는 `totalMs=16,820ms`까지 줄었지만 품질 gate 실패로 기본 승격하지 않는다. | 부분 충족 |
-| 작은 얼굴 후보 보존 | `MinSmallFaceAreaRatio=0.00025`, `SmallFaceConfidenceMin=0.72`, stats gate를 추가했고 15분 2초 구간에서 작은 후보 유지/오탐 제거를 확인했다. | 부분 충족 |
-| 작은 얼굴 detector 미탐 자체 감소 | 현재 변경은 detector가 반환한 후보를 덜 버리는 방식이다. detector가 후보를 반환하지 못한 얼굴을 새로 찾는 기본 `FaceTrackRoiRefiner` 경로는 gap-fill/lost-fill 후보까지 추가했고 ROI 전용 threshold도 더 민감하게 낮췄다. 9분 2초 대표 구간에서는 `attempts=11`, `hits=5`로 실제 ROI 보정 hit를 확인했다. 다만 작은 얼굴 전용 새 detector backend는 없다. | 부분 충족 |
-| 물건 오탐 감소 | 15분 2초 구간에서 빨간 수건/물건 오탐은 `removedShort=4`로 제거됐고, synthetic gate에서 1~2개 검출짜리 작은 오탐 제거와 보간 재생성 차단을 확인했다. | 부분 충족 |
-| 반쪽 얼굴/뒤도는 얼굴 보존 | synthetic gate에서 가장자리 반쪽 얼굴 후보와 중앙 3프레임 작은 후보 보존을 확인했다. 15분 2초 frame 56의 오른쪽 가장자리 후보도 프레임 이미지로 확인해 보존했다. | 부분 충족 |
-| 확정 track 유지 | 확정 track lost-fill을 추가했고 synthetic gate에서 `lostFilled=3`, `lostFrames=33,34,35`, 실제 9분 2초 smoke에서 `lostFilled=10`을 확인했다. | 부분 충족 |
-| 오탐 잔상 방지 | lost-fill은 3개 이상 검출된 강한 track만, 최대 3프레임만 적용한다. 작은 track은 lost-fill 대상에서 제외한다. | 부분 충족 |
-| detector/backend 교체 가능성 | `FaceDetectorBackend.ScrfdOnnx`, `ScrfdOnnxDetectorOptions`, `ScrfdOnnxDetector`를 추가했고 `FaceDetectorFactory`에서 생성 가능하다. `scripts/run-srcTest-smoke.ps1 -ScrfdModelPath <model.onnx>`로 FaceONNX baseline 대비 SCRFD optimized A/B를 실행할 수 있다. `.tmp`에 받은 SCRFD 500M/10G 후보는 실행됐지만 quality gate를 통과하지 못해 기본 승격하지 않는다. | 부분 충족 |
-| ROI 재검출/2차 verifier | `FaceTrackRoiRefiner`가 track gap-fill/lost-fill 후보만 raw BGRA로 다시 읽어 ROI crop 재검출을 수행한다. 전역 threshold는 유지하고 ROI 전용 CPU detector만 `0.12/0.12`로 더 민감하게 돌린다. 기본 품질 gate에서는 `attempts=8`, `hits=0`으로 품질 유지가 확인됐고, 9분 2초 ROI-hit 대표 gate에서는 `attempts=11`, `hits=5`로 실제 보정 hit가 확인됐다. 후보 frame 정렬/sequential read 최적화 후 해당 구간은 `seeks=4`, `decoded=26`, `elapsedMs=9,455`로 계측됐다. 강한 2차 모델 verifier는 아직 없다. | 부분 충족 |
-| export 병목 개선 | direct face rect export와 summary는 유지된다. 단일 얼굴 direct blur fast path 추가 후 최신 `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke`에서 `.tmp/srcTest-smoke/smoke-1200-2s.mp4` export가 `bitmapMaskFrames=0`, `directFaceFrames=31`, `swsToBgraMs=552`, `maskMs=713`, `swsToEncMs=1,089`, `encodeMs=479`, `totalMs=7,066ms`로 완료됐다. `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`로 재현 가능한 30초 대표 구간 export gate도 통과했고, `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `maskMs=39,891`, `swsToEncMs=22,251`, `encodeMs=4,160`, `totalMs=127,750ms`였다. 전체 17분 원본 export 병목은 아직 없다. | 부분 충족 |
-| 실제 `srcTest` 대표 구간 검증 | 원본 `srcTest/260102_jp_10.mp4`는 `3840x2160`, `duration=1067.599867`, `nb_frames=31996`로 확인했다. 6분/9분/12분/15분 짧은 clip smoke와 12분 30초 자동 검출 smoke가 있다. 최신 30초 검증에서는 `processed=899`, `detects=899`, `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, CPU medium `totalMs=397,825ms`, long auto-tune `totalMs=430,952ms` 및 변경 후 long auto-tune 직접 smoke `totalMs=438,618ms`를 확인했다. 30초 export 포함 smoke는 자동 검출 `totalMs=382,985ms`, export `totalMs=148,317ms`로 완료됐다. 전체 17분 원본 end-to-end 자동 검출 + export 풀런은 아직 없다. | 부분 충족 |
-| GUI smoke | shell harness 검증은 통과했다. Avalonia GUI에서 open, preview, auto detect, manual edit, export 전체 흐름은 직접 확인하지 않았다. | 미완료 |
-| 빌드/정적 gate | `dotnet build FaceShield.sln` 성공, `git diff --check` 통과, `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke -RunMediumAuto -RunLongAutoTune` 통과, `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport` 통과. 최신 강한 verifier에는 track policy, 품질 gate, ROI-hit 대표 gate, direct face export smoke, medium 30초 gate, medium 30초 export gate, short auto-tune gate, long auto-tune gate가 포함된다. SCRFD/YuNet backend와 YuNet tiling 실험, auto-tune CPU/GPU 선택 보정 후 `dotnet build FaceShield.sln`은 7개 기존 FFmpeg obsolete warning만 남기고 성공했고, `git diff --check`도 통과했다. 최신 `-RunExportSmoke`는 단일 얼굴 fast path 추가 후 다시 통과했다. 품질 gate는 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`, CPU 병렬 `totalMs=32,437ms`였고, direct export smoke는 `bitmapMaskFrames=0`, `directFaceFrames=31`, `maskMs=713`, `totalMs=7,066ms`였다. 최신 `-RunMediumExport` verifier는 자동 검출 `totalMs=316,366ms`, export `totalMs=127,750ms`로 통과했다. | 충족 |
+| 湲곕낯 ?덉쭏???ъ깮?섏? ?딅뒗 ?먮룞 紐⑥옄?댄겕 | `DownscaleRatio=1.0`, `DetectEveryNFrames=1` 寃쎈줈瑜??좎??쒕떎. `scripts/verify-auto-mosaic-default.ps1` ?덉쭏 gate?먯꽌 baseline/optimized 紐⑤몢 `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`?쇰줈 ?듦낵?덈떎. | 異⑹” |
+| 泥섎━ ?띾룄 媛쒖꽑 | 媛숈? 6遺?3珥??대┰ gate?먯꽌 CPU single baseline `totalMs=66,771ms`, CPU 蹂묐젹 `totalMs=36,138ms`瑜??뺤씤?덈떎. 理쒖떊 媛뺥븳 verifier?먯꽌 3珥??덉쭏 gate??CPU single `totalMs=70,544ms`, CPU 蹂묐젹 `totalMs=41,973ms`濡??듦낵?덇퀬, 30珥?medium CPU gate??`processed=899`, `totalMs=397,825ms`??? auto tune? CPU/GPU ?꾨낫瑜?紐⑤몢 鍮꾧탳?섍퀬 `pipe-parallel` 寃쎈줈濡??듦낵?쒕떎. `DetectEveryNFrames=2` sparse??`totalMs=16,820ms`源뚯? 以꾩뿀吏留??덉쭏 gate ?ㅽ뙣濡?湲곕낯 ?밴꺽?섏? ?딅뒗?? | 遺遺?異⑹” |
+| ?묒? ?쇨뎬 ?꾨낫 蹂댁〈 | `MinSmallFaceAreaRatio=0.00025`, `SmallFaceConfidenceMin=0.72`, stats gate瑜?異붽??덇퀬 15遺?2珥?援ш컙?먯꽌 ?묒? ?꾨낫 ?좎?/?ㅽ깘 ?쒓굅瑜??뺤씤?덈떎. | 遺遺?異⑹” |
+| ?묒? ?쇨뎬 detector 誘명깘 ?먯껜 媛먯냼 | ?꾩옱 蹂寃쎌? detector媛 諛섑솚???꾨낫瑜???踰꾨━??諛⑹떇?대떎. detector媛 ?꾨낫瑜?諛섑솚?섏? 紐삵븳 ?쇨뎬???덈줈 李얜뒗 湲곕낯 `FaceTrackRoiRefiner` 寃쎈줈??gap-fill/lost-fill ?꾨낫源뚯? 異붽??덇퀬 ROI ?꾩슜 threshold????誘쇨컧?섍쾶 ??톬?? 9遺?2珥????援ш컙?먯꽌??`attempts=11`, `hits=5`濡??ㅼ젣 ROI 蹂댁젙 hit瑜??뺤씤?덈떎. ?ㅻ쭔 ?묒? ?쇨뎬 ?꾩슜 ??detector backend???녿떎. | 遺遺?異⑹” |
+| 臾쇨굔 ?ㅽ깘 媛먯냼 | 15遺?2珥?援ш컙?먯꽌 鍮④컙 ?섍굔/臾쇨굔 ?ㅽ깘? `removedShort=4`濡??쒓굅?먭퀬, synthetic gate?먯꽌 1~2媛?寃異쒖쭨由??묒? ?ㅽ깘 ?쒓굅? 蹂닿컙 ?ъ깮??李⑤떒???뺤씤?덈떎. | 遺遺?異⑹” |
+| 諛섏そ ?쇨뎬/?ㅻ룄???쇨뎬 蹂댁〈 | synthetic gate?먯꽌 媛?μ옄由?諛섏そ ?쇨뎬 ?꾨낫? 以묒븰 3?꾨젅???묒? ?꾨낫 蹂댁〈???뺤씤?덈떎. 15遺?2珥?frame 56???ㅻⅨ履?媛?μ옄由??꾨낫???꾨젅???대?吏濡??뺤씤??蹂댁〈?덈떎. | 遺遺?異⑹” |
+| ?뺤젙 track ?좎? | ?뺤젙 track lost-fill??異붽??덇퀬 synthetic gate?먯꽌 `lostFilled=3`, `lostFrames=33,34,35`, ?ㅼ젣 9遺?2珥?smoke?먯꽌 `lostFilled=10`???뺤씤?덈떎. | 遺遺?異⑹” |
+| ?ㅽ깘 ?붿긽 諛⑹? | lost-fill? 3媛??댁긽 寃異쒕맂 媛뺥븳 track留? 理쒕? 3?꾨젅?꾨쭔 ?곸슜?쒕떎. ?묒? track? lost-fill ??곸뿉???쒖쇅?쒕떎. | 遺遺?異⑹” |
+| detector/backend 援먯껜 媛?μ꽦 | `FaceDetectorBackend.ScrfdOnnx`, `ScrfdOnnxDetectorOptions`, `ScrfdOnnxDetector`瑜?異붽??덇퀬 `FaceDetectorFactory`?먯꽌 ?앹꽦 媛?ν븯?? `scripts/run-srcTest-smoke.ps1 -ScrfdModelPath <model.onnx>`濡?FaceONNX baseline ?鍮?SCRFD optimized A/B瑜??ㅽ뻾?????덈떎. `.tmp`??諛쏆? SCRFD 500M/10G ?꾨낫???ㅽ뻾?먯?留?quality gate瑜??듦낵?섏? 紐삵빐 湲곕낯 ?밴꺽?섏? ?딅뒗?? | 遺遺?異⑹” |
+| ROI ?ш?異?2李?verifier | `FaceTrackRoiRefiner`媛 track gap-fill/lost-fill ?꾨낫留?raw BGRA濡??ㅼ떆 ?쎌뼱 ROI crop ?ш?異쒖쓣 ?섑뻾?쒕떎. ?꾩뿭 threshold???좎??섍퀬 ROI ?꾩슜 CPU detector留?`0.12/0.12`濡???誘쇨컧?섍쾶 ?뚮┛?? 湲곕낯 ?덉쭏 gate?먯꽌??`attempts=8`, `hits=0`?쇰줈 ?덉쭏 ?좎?媛 ?뺤씤?먭퀬, 9遺?2珥?ROI-hit ???gate?먯꽌??`attempts=11`, `hits=5`濡??ㅼ젣 蹂댁젙 hit媛 ?뺤씤?먮떎. ?꾨낫 frame ?뺣젹/sequential read 理쒖쟻?????대떦 援ш컙? `seeks=4`, `decoded=26`, `elapsedMs=9,455`濡?怨꾩륫?먮떎. 媛뺥븳 2李?紐⑤뜽 verifier???꾩쭅 ?녿떎. | 遺遺?異⑹” |
+| export 蹂묐ぉ 媛쒖꽑 | direct face rect export? summary???좎??쒕떎. ?⑥씪 ?쇨뎬 direct blur fast path 異붽? ??理쒖떊 `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke`?먯꽌 `.tmp/srcTest-smoke/smoke-1200-2s.mp4` export媛 `bitmapMaskFrames=0`, `directFaceFrames=31`, `swsToBgraMs=552`, `maskMs=713`, `swsToEncMs=1,089`, `encodeMs=479`, `totalMs=7,066ms`濡??꾨즺?먮떎. `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport`濡??ы쁽 媛?ν븳 30珥????援ш컙 export gate???듦낵?덇퀬, `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=778`, `maskMs=39,891`, `swsToEncMs=22,251`, `encodeMs=4,160`, `totalMs=127,750ms`??? ?꾩껜 17遺??먮낯 export 蹂묐ぉ? ?꾩쭅 ?녿떎. | 遺遺?異⑹” |
+| ?ㅼ젣 `srcTest` ???援ш컙 寃利?| ?먮낯 `srcTest/260102_jp_10.mp4`??`3840x2160`, `duration=1067.599867`, `nb_frames=31996`濡??뺤씤?덈떎. 6遺?9遺?12遺?15遺?吏㏃? clip smoke? 12遺?30珥??먮룞 寃異?smoke媛 ?덈떎. 理쒖떊 30珥?寃利앹뿉?쒕뒗 `processed=899`, `detects=899`, `filled=431`, `lostFilled=104`, `removedShort=77`, ROI `attempts=32`, `hits=22`, CPU medium `totalMs=397,825ms`, long auto-tune `totalMs=430,952ms` 諛?蹂寃???long auto-tune 吏곸젒 smoke `totalMs=438,618ms`瑜??뺤씤?덈떎. 30珥?export ?ы븿 smoke???먮룞 寃異?`totalMs=382,985ms`, export `totalMs=148,317ms`濡??꾨즺?먮떎. ?꾩껜 17遺??먮낯 end-to-end ?먮룞 寃異?+ export ??곗? ?꾩쭅 ?녿떎. | 遺遺?異⑹” |
+| GUI smoke | shell harness 寃利앹? ?듦낵?덈떎. Avalonia GUI?먯꽌 open, preview, auto detect, manual edit, export ?꾩껜 ?먮쫫? 吏곸젒 ?뺤씤?섏? ?딆븯?? | 誘몄셿猷?|
+| 鍮뚮뱶/?뺤쟻 gate | `dotnet build FaceShield.sln` ?깃났, `git diff --check` ?듦낵, `scripts/verify-auto-mosaic-default.ps1 -RunExportSmoke -RunMediumAuto -RunLongAutoTune` ?듦낵, `scripts/verify-auto-mosaic-default.ps1 -RunMediumExport` ?듦낵. 理쒖떊 媛뺥븳 verifier?먮뒗 track policy, ?덉쭏 gate, ROI-hit ???gate, direct face export smoke, medium 30珥?gate, medium 30珥?export gate, short auto-tune gate, long auto-tune gate媛 ?ы븿?쒕떎. SCRFD/YuNet backend? YuNet tiling ?ㅽ뿕, auto-tune CPU/GPU ?좏깮 蹂댁젙 ??`dotnet build FaceShield.sln`? 7媛?湲곗〈 FFmpeg obsolete warning留??④린怨??깃났?덇퀬, `git diff --check`???듦낵?덈떎. 理쒖떊 `-RunExportSmoke`???⑥씪 ?쇨뎬 fast path 異붽? ???ㅼ떆 ?듦낵?덈떎. ?덉쭏 gate??`baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=1.000`, `minBestIou=1.000`, CPU 蹂묐젹 `totalMs=32,437ms`?怨? direct export smoke??`bitmapMaskFrames=0`, `directFaceFrames=31`, `maskMs=713`, `totalMs=7,066ms`??? 理쒖떊 `-RunMediumExport` verifier???먮룞 寃異?`totalMs=316,366ms`, export `totalMs=127,750ms`濡??듦낵?덈떎. | 異⑹” |
 
-현재 결론:
+?꾩옱 寃곕줎:
 
-- 목표를 완료로 처리할 수 없다.
-- 지금까지의 변경은 기본 품질 유지, 병렬 처리 속도, track continuity, 짧은 오탐 제거, 반쪽 얼굴 후보 보존을 보강한 단계다.
-- 다음으로 실제 목표에 더 직접적으로 남은 작업은 SCRFD decoder/전처리 추가 보정 또는 다른 detector 후보 A/B, 전체 17분 원본 또는 그에 준하는 긴 구간 end-to-end 자동 검출 + export 검증, Avalonia GUI smoke다. `FaceTrackRoiRefiner`의 실제 hit 대표 구간은 9분 2초 clip에서 확보했지만, 강한 2차 모델 verifier의 실제 모델 검증은 아직 없다.
+- 紐⑺몴瑜??꾨즺濡?泥섎━?????녿떎.
+- 吏湲덇퉴吏??蹂寃쎌? 湲곕낯 ?덉쭏 ?좎?, 蹂묐젹 泥섎━ ?띾룄, track continuity, 吏㏃? ?ㅽ깘 ?쒓굅, 諛섏そ ?쇨뎬 ?꾨낫 蹂댁〈??蹂닿컯???④퀎??
+- ?ㅼ쓬?쇰줈 ?ㅼ젣 紐⑺몴????吏곸젒?곸쑝濡??⑥? ?묒뾽? SCRFD decoder/?꾩쿂由?異붽? 蹂댁젙 ?먮뒗 ?ㅻⅨ detector ?꾨낫 A/B, ?꾩껜 17遺??먮낯 ?먮뒗 洹몄뿉 以?섎뒗 湲?援ш컙 end-to-end ?먮룞 寃異?+ export 寃利? Avalonia GUI smoke?? `FaceTrackRoiRefiner`???ㅼ젣 hit ???援ш컙? 9遺?2珥?clip?먯꽌 ?뺣낫?덉?留? 媛뺥븳 2李?紐⑤뜽 verifier???ㅼ젣 紐⑤뜽 寃利앹? ?꾩쭅 ?녿떎.
 
-## 2026-05-12 SCRFD 외부 모델 A/B 1차
-외부 모델 후보는 Hugging Face `RuteNL/SCRFD-face-detection-ONNX`의 `500m.onnx`와 `10g_bnkps.onnx`를 `.tmp/models/`에만 내려받아 테스트했다. 해당 모델 카드는 Apache-2.0으로 표시되지만, upstream pretrained model 출처가 InsightFace이므로 배포/상용 사용은 별도 확인이 필요하다. 모델 파일은 repo에 포함하지 않는다.
+## 2026-05-12 SCRFD ?몃? 紐⑤뜽 A/B 1李??몃? 紐⑤뜽 ?꾨낫??Hugging Face `RuteNL/SCRFD-face-detection-ONNX`??`500m.onnx`? `10g_bnkps.onnx`瑜?`.tmp/models/`?먮쭔 ?대젮諛쏆븘 ?뚯뒪?명뻽?? ?대떦 紐⑤뜽 移대뱶??Apache-2.0?쇰줈 ?쒖떆?섏?留? upstream pretrained model 異쒖쿂媛 InsightFace?대?濡?諛고룷/?곸슜 ?ъ슜? 蹂꾨룄 ?뺤씤???꾩슂?섎떎. 紐⑤뜽 ?뚯씪? repo???ы븿?섏? ?딅뒗??
 
-추가/변경 파일:
+異붽?/蹂寃??뚯씪:
 
 - `Services/FaceDetection/ScrfdOnnxDetector.cs`
 - `Services/FaceDetection/ScrfdOnnxDetectorOptions.cs`
@@ -848,235 +838,228 @@ threshold를 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold
 - `scripts/run-srcTest-smoke.ps1`
 - `scripts/inspect-onnx-outputs.ps1`
 
-검증:
+寃利?
 
-- `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/scrfd_500m.onnx` 결과 input은 `input.1=1x3x640x640`, output은 `score_8/16/32`, `bbox_8/16/32` 구조였다.
-- `scrfd_500m.onnx` 단독 optimized smoke는 `.tmp/srcTest-smoke/smoke-0600-3s.mp4`에서 실행됐다. `ConfidenceThreshold=0.25` 기준 `totalMs=13,174ms`, `faceMaskFrames=23`이었으나 FaceONNX baseline과 비교하면 `baselineFrames=19`, `optimizedFrames=23`, `onlyBaseline=13`, `onlyOptimized=17`, `avgBestIou=0.001`, `passed=False`였다.
-- `scrfd_500m.onnx`를 `ConfidenceThreshold=0.5`로 올리면 `totalMs=11,166ms`까지 줄었지만 `faceMaskFrames=0`이었다. 알려진 얼굴 구간에서 최종 마스크가 0프레임이므로 현재 pipeline 결과로는 불합격이다.
-- `scrfd_10g_bnkps.onnx` 단독 optimized smoke는 `totalMs=27,819ms`, `faceMaskFrames=19`로 baseline frame 수와 같았다.
-- 그러나 `scrfd_10g_bnkps.onnx` A/B gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`였다.
-- insightface 방식에 맞춘 letterbox + RGB 전처리를 추가로 적용했지만, `scrfd_10g_bnkps.onnx`는 `faceMaskFrames=2`, `onlyBaseline=17`, `avgBestIou=0.290`, `passed=False`로 더 나빠졌다.
-- stretch + BGR 조합도 `scrfd_10g_bnkps.onnx`에서 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`로 기존 stretch + RGB와 동일하게 실패했다.
+- `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/scrfd_500m.onnx` 寃곌낵 input? `input.1=1x3x640x640`, output? `score_8/16/32`, `bbox_8/16/32` 援ъ“???
+- `scrfd_500m.onnx` ?⑤룆 optimized smoke??`.tmp/srcTest-smoke/smoke-0600-3s.mp4`?먯꽌 ?ㅽ뻾?먮떎. `ConfidenceThreshold=0.25` 湲곗? `totalMs=13,174ms`, `faceMaskFrames=23`?댁뿀?쇰굹 FaceONNX baseline怨?鍮꾧탳?섎㈃ `baselineFrames=19`, `optimizedFrames=23`, `onlyBaseline=13`, `onlyOptimized=17`, `avgBestIou=0.001`, `passed=False`???
+- `scrfd_500m.onnx`瑜?`ConfidenceThreshold=0.5`濡??щ━硫?`totalMs=11,166ms`源뚯? 以꾩뿀吏留?`faceMaskFrames=0`?댁뿀?? ?뚮젮吏??쇨뎬 援ш컙?먯꽌 理쒖쥌 留덉뒪?ш? 0?꾨젅?꾩씠誘濡??꾩옱 pipeline 寃곌낵濡쒕뒗 遺덊빀寃⑹씠??
+- `scrfd_10g_bnkps.onnx` ?⑤룆 optimized smoke??`totalMs=27,819ms`, `faceMaskFrames=19`濡?baseline frame ?섏? 媛숈븯??
+- 洹몃윭??`scrfd_10g_bnkps.onnx` A/B gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`???
+- insightface 諛⑹떇??留욎텣 letterbox + RGB ?꾩쿂由щ? 異붽?濡??곸슜?덉?留? `scrfd_10g_bnkps.onnx`??`faceMaskFrames=2`, `onlyBaseline=17`, `avgBestIou=0.290`, `passed=False`濡????섎튌議뚮떎.
+- stretch + BGR 議고빀??`scrfd_10g_bnkps.onnx`?먯꽌 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=16`, `onlyOptimized=16`, `avgBestIou=0.010`, `passed=False`濡?湲곗〈 stretch + RGB? ?숈씪?섍쾶 ?ㅽ뙣?덈떎.
 
-판정:
+?먯젙:
 
-- SCRFD backend는 실제 모델 로드와 자동 모자이크 파이프라인 실행까지 가능하다.
-- 현재 decoder/전처리 조합 또는 후보 모델은 FaceONNX baseline-diff gate를 통과하지 못한다. letterbox/RGB, stretch/RGB, stretch/BGR 중 통과한 조합은 없다.
-- 이 결과만으로 SCRFD 모델 자체가 실제 얼굴 검출 기준에서 틀렸다고 단정하지 않는다. 다만 `avgBestIou=0.001~0.010` 수준의 좌표 불일치와 `faceMaskFrames=0` 결과가 있어 현재 adapter/전처리/후처리 조합은 추천할 수 없다.
-- 속도만 보면 SCRFD 500M은 매우 빠르지만 현재 pipeline 출력은 기존 동작과 크게 다르고, SCRFD 10G는 일부 프레임 수는 맞지만 좌표/구간 일치가 부족하다.
-- 따라서 기본 detector 교체는 보류한다. 다음 후보는 letterbox 입력, RGB/BGR 입력 옵션, bbox decode 방식별 A/B, 또는 다른 모델 계열(YuNet/RetinaFace/YOLO-face) 비교다.
+- SCRFD backend???ㅼ젣 紐⑤뜽 濡쒕뱶? ?먮룞 紐⑥옄?댄겕 ?뚯씠?꾨씪???ㅽ뻾源뚯? 媛?ν븯??
+- ?꾩옱 decoder/?꾩쿂由?議고빀 ?먮뒗 ?꾨낫 紐⑤뜽? FaceONNX baseline-diff gate瑜??듦낵?섏? 紐삵븳?? letterbox/RGB, stretch/RGB, stretch/BGR 以??듦낵??議고빀? ?녿떎.
+- ??寃곌낵留뚯쑝濡?SCRFD 紐⑤뜽 ?먯껜媛 ?ㅼ젣 ?쇨뎬 寃異?湲곗??먯꽌 ??몃떎怨??⑥젙?섏? ?딅뒗?? ?ㅻ쭔 `avgBestIou=0.001~0.010` ?섏???醫뚰몴 遺덉씪移섏? `faceMaskFrames=0` 寃곌낵媛 ?덉뼱 ?꾩옱 adapter/?꾩쿂由??꾩쿂由?議고빀? 異붿쿇?????녿떎.
+- ?띾룄留?蹂대㈃ SCRFD 500M? 留ㅼ슦 鍮좊Ⅴ吏留??꾩옱 pipeline 異쒕젰? 湲곗〈 ?숈옉怨??ш쾶 ?ㅻⅤ怨? SCRFD 10G???쇰? ?꾨젅???섎뒗 留욎?留?醫뚰몴/援ш컙 ?쇱튂媛 遺議깊븯??
+- ?곕씪??湲곕낯 detector 援먯껜??蹂대쪟?쒕떎. ?ㅼ쓬 ?꾨낫??letterbox ?낅젰, RGB/BGR ?낅젰 ?듭뀡, bbox decode 諛⑹떇蹂?A/B, ?먮뒗 ?ㅻⅨ 紐⑤뜽 怨꾩뿴(YuNet/RetinaFace/YOLO-face) 鍮꾧탳??
 
-## 2026-05-12 YuNet 외부 모델 A/B 1차
-OpenCV Zoo의 `face_detection_yunet_2023mar.onnx`를 `.tmp/models/`에만 내려받아 테스트했다. OpenCV Zoo README 기준 YuNet은 MIT License이며, 2023-March 모델은 WIDER Face 기준 AP hard 0.7503으로 공개되어 있다. 모델 파일은 repo에 포함하지 않는다.
+## 2026-05-12 YuNet ?몃? 紐⑤뜽 A/B 1李?OpenCV Zoo??`face_detection_yunet_2023mar.onnx`瑜?`.tmp/models/`?먮쭔 ?대젮諛쏆븘 ?뚯뒪?명뻽?? OpenCV Zoo README 湲곗? YuNet? MIT License?대ŉ, 2023-March 紐⑤뜽? WIDER Face 湲곗? AP hard 0.7503?쇰줈 怨듦컻?섏뼱 ?덈떎. 紐⑤뜽 ?뚯씪? repo???ы븿?섏? ?딅뒗??
 
-구현:
+援ы쁽:
 
-- `FaceDetectorBackend.YuNetOnnx`를 추가했다.
-- `YuNetOnnxDetector`를 추가해 OpenCV `FaceDetectorYN`의 공개 postprocess와 같은 방식으로 `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`를 decode한다.
-- `scripts/run-srcTest-smoke.ps1 -YuNetModelPath <model.onnx>`로 FaceONNX baseline 대비 YuNet optimized A/B를 실행할 수 있다.
-- `-YuNetUseTiling`, `-YuNetTileOnly`, `-YuNetTileColumns`, `-YuNetTileRows`, `-YuNetTileOverlapRatio` 옵션을 추가해 4K 원본을 640 입력 하나로만 압축하지 않는 tile/multi-region 실험도 실행할 수 있게 했다.
+- `FaceDetectorBackend.YuNetOnnx`瑜?異붽??덈떎.
+- `YuNetOnnxDetector`瑜?異붽???OpenCV `FaceDetectorYN`??怨듦컻 postprocess? 媛숈? 諛⑹떇?쇰줈 `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`瑜?decode?쒕떎.
+- `scripts/run-srcTest-smoke.ps1 -YuNetModelPath <model.onnx>`濡?FaceONNX baseline ?鍮?YuNet optimized A/B瑜??ㅽ뻾?????덈떎.
+- `-YuNetUseTiling`, `-YuNetTileOnly`, `-YuNetTileColumns`, `-YuNetTileRows`, `-YuNetTileOverlapRatio` ?듭뀡??異붽???4K ?먮낯??640 ?낅젰 ?섎굹濡쒕쭔 ?뺤텞?섏? ?딅뒗 tile/multi-region ?ㅽ뿕???ㅽ뻾?????덇쾶 ?덈떎.
 
-검증:
+寃利?
 
-- `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/face_detection_yunet_2023mar.onnx` 결과 input은 `input=1x3x640x640`, output은 `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`, `kps_8/16/32` 12개였다.
-- `.tmp/srcTest-smoke/smoke-0600-3s.mp4` YuNet 단독 optimized smoke는 `totalMs=9,825ms`, `detectMs=15,890ms`, `faceMaskFrames=33`, ROI refiner `attempts=7`, `hits=7`로 매우 빨랐다.
-- 같은 구간 FaceONNX baseline 대비 A/B gate는 `baselineFrames=19`, `optimizedFrames=33`, `onlyBaseline=4`, `onlyOptimized=18`, `avgBestIou=0.277`, `passed=False`였다.
-- `ConfidenceThreshold=0.6`은 YuNet-only 후보를 줄였지만 `faceMaskFrames=0`이었다. 알려진 얼굴 구간에서 최종 마스크가 0프레임이므로 현재 pipeline 결과로는 불합격이다.
-- `-YuNetUseTiling` 단독 optimized smoke는 `totalMs=41,791ms`, `detectMs=82,467ms`, `faceMaskFrames=51`, ROI refiner `attempts=28`, `hits=27`이었다.
-- 같은 tiling 설정의 FaceONNX baseline 대비 A/B gate는 `baselineFrames=19`, `optimizedFrames=51`, `onlyBaseline=4`, `onlyOptimized=36`, `avgBestIou=0.272`, `minBestIou=0.000`, `passed=False`였다.
-- full frame 입력을 빼고 tile만 돌리는 `-YuNetUseTiling -YuNetTileOnly` A/B gate도 실행했다. 결과는 `totalMs=34,976ms`, `detectMs=69,111ms`, `faceMaskFrames=38`, ROI refiner `attempts=25`, `hits=24`였고, FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=38`, `onlyBaseline=5`, `onlyOptimized=24`, `avgBestIou=0.163`, `minBestIou=0.000`, `passed=False`였다.
+- `scripts/inspect-onnx-outputs.ps1 -ModelPath .tmp/models/face_detection_yunet_2023mar.onnx` 寃곌낵 input? `input=1x3x640x640`, output? `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`, `kps_8/16/32` 12媛쒖???
+- `.tmp/srcTest-smoke/smoke-0600-3s.mp4` YuNet ?⑤룆 optimized smoke??`totalMs=9,825ms`, `detectMs=15,890ms`, `faceMaskFrames=33`, ROI refiner `attempts=7`, `hits=7`濡?留ㅼ슦 鍮⑤옄??
+- 媛숈? 援ш컙 FaceONNX baseline ?鍮?A/B gate??`baselineFrames=19`, `optimizedFrames=33`, `onlyBaseline=4`, `onlyOptimized=18`, `avgBestIou=0.277`, `passed=False`???
+- `ConfidenceThreshold=0.6`? YuNet-only ?꾨낫瑜?以꾩?吏留?`faceMaskFrames=0`?댁뿀?? ?뚮젮吏??쇨뎬 援ш컙?먯꽌 理쒖쥌 留덉뒪?ш? 0?꾨젅?꾩씠誘濡??꾩옱 pipeline 寃곌낵濡쒕뒗 遺덊빀寃⑹씠??
+- `-YuNetUseTiling` ?⑤룆 optimized smoke??`totalMs=41,791ms`, `detectMs=82,467ms`, `faceMaskFrames=51`, ROI refiner `attempts=28`, `hits=27`?댁뿀??
+- 媛숈? tiling ?ㅼ젙??FaceONNX baseline ?鍮?A/B gate??`baselineFrames=19`, `optimizedFrames=51`, `onlyBaseline=4`, `onlyOptimized=36`, `avgBestIou=0.272`, `minBestIou=0.000`, `passed=False`???
+- full frame ?낅젰??鍮쇨퀬 tile留??뚮━??`-YuNetUseTiling -YuNetTileOnly` A/B gate???ㅽ뻾?덈떎. 寃곌낵??`totalMs=34,976ms`, `detectMs=69,111ms`, `faceMaskFrames=38`, ROI refiner `attempts=25`, `hits=24`?怨? FaceONNX baseline ?鍮?`baselineFrames=19`, `optimizedFrames=38`, `onlyBaseline=5`, `onlyOptimized=24`, `avgBestIou=0.163`, `minBestIou=0.000`, `passed=False`???
 
-판정:
+?먯젙:
 
-- YuNet backend도 실제 모델 로드와 자동 모자이크 파이프라인 실행까지 가능하다.
-- 속도는 현재 후보 중 가장 좋지만, 4K 원본을 640 고정 입력으로 줄이는 구조와 현재 threshold 조합에서는 FaceONNX baseline 품질 gate를 통과하지 못한다.
-- tiling은 작은 얼굴 후보를 늘리는 대신 YuNet-only 후보도 크게 늘리고 단일 YuNet 대비 속도 이점도 줄었다. tile-only는 full+tile보다 빠르고 YuNet-only frame 수는 줄었지만 baseline과의 좌표/구간 일치가 더 나빴다. 현재 2x2 tiling 설정은 기본 detector 교체 후보가 아니다.
-- 기본 detector 교체는 보류한다. YuNet은 빠른 1차 후보/ROI verifier 후보로 남기되, 기본 승격 전에는 threshold curve, tile-only/full+tile 비교, 오탐 필터, 더 적합한 대체 모델(RetinaFace/YOLO-face 등)을 별도로 검증해야 한다.
+- YuNet backend???ㅼ젣 紐⑤뜽 濡쒕뱶? ?먮룞 紐⑥옄?댄겕 ?뚯씠?꾨씪???ㅽ뻾源뚯? 媛?ν븯??
+- ?띾룄???꾩옱 ?꾨낫 以?媛??醫뗭?留? 4K ?먮낯??640 怨좎젙 ?낅젰?쇰줈 以꾩씠??援ъ“? ?꾩옱 threshold 議고빀?먯꽌??FaceONNX baseline ?덉쭏 gate瑜??듦낵?섏? 紐삵븳??
+- tiling? ?묒? ?쇨뎬 ?꾨낫瑜??섎━?????YuNet-only ?꾨낫???ш쾶 ?섎━怨??⑥씪 YuNet ?鍮??띾룄 ?댁젏??以꾩뿀?? tile-only??full+tile蹂대떎 鍮좊Ⅴ怨?YuNet-only frame ?섎뒗 以꾩뿀吏留?baseline怨쇱쓽 醫뚰몴/援ш컙 ?쇱튂媛 ???섎뭅?? ?꾩옱 2x2 tiling ?ㅼ젙? 湲곕낯 detector 援먯껜 ?꾨낫媛 ?꾨땲??
+- 湲곕낯 detector 援먯껜??蹂대쪟?쒕떎. YuNet? 鍮좊Ⅸ 1李??꾨낫/ROI verifier ?꾨낫濡??④린?? 湲곕낯 ?밴꺽 ?꾩뿉??threshold curve, tile-only/full+tile 鍮꾧탳, ?ㅽ깘 ?꾪꽣, ???곹빀???泥?紐⑤뜽(RetinaFace/YOLO-face ????蹂꾨룄濡?寃利앺빐???쒕떎.
 
-## 2026-05-12 현재 환경 재검증 계획
-기존 SCRFD/YuNet A/B와 auto tune 검증은 GPU가 없는 노트북 환경에서 수행된 결과가 섞여 있다. 따라서 그 결과는 CPU-only 저사양 기준의 참고값으로 보고, 현재 목표 환경에서 다시 검증한다.
+## 2026-05-12 ?꾩옱 ?섍꼍 ?ш?利?怨꾪쉷
+湲곗〈 SCRFD/YuNet A/B? auto tune 寃利앹? GPU媛 ?녿뒗 ?명듃遺??섍꼍?먯꽌 ?섑뻾??寃곌낵媛 ?욎뿬 ?덈떎. ?곕씪??洹?寃곌낵??CPU-only ??ъ뼇 湲곗???李멸퀬媛믪쑝濡?蹂닿퀬, ?꾩옱 紐⑺몴 ?섍꼍?먯꽌 ?ㅼ떆 寃利앺븳??
 
-커뮤니케이션/문구 기준:
+而ㅻ??덉??댁뀡/臾멸뎄 湲곗?:
 
-- 사용자에게 보이는 문구, 문서 기록, 검증 결과 설명, UI 문구에서는 반말을 절대 사용하지 않는다.
-- 모든 설명은 존댓말 또는 중립적인 기술 문체로 작성한다.
-- 급한 작업 메모라도 사용자를 향한 표현에는 반말, 명령조, 비하 표현을 남기지 않는다.
-- Git 관련 작업은 별도 확인을 받는다. 특히 `push`, `pull`, 작업 취소, 되돌리기처럼 원격/브랜치/작업 상태에 영향을 주는 작업은 사용자 확인 후 진행한다.
-- 그 외 목표 범위 안의 코드 구현, 코드 수정, 문서 수정, 로컬 테스트, smoke 실행, 검증 스크립트 실행은 매번 되묻지 않고 자율적으로 진행한다.
-- 자율 진행한 작업은 결과와 근거를 문서와 최종 보고에 남긴다.
-- 실행 환경의 권한 시스템 때문에 도구 승인 프롬프트가 필요한 경우가 있을 수 있지만, 작업 판단 자체는 위 기준에 따라 자율 진행한다.
+- ?ъ슜?먯뿉寃?蹂댁씠??臾멸뎄, 臾몄꽌 湲곕줉, 寃利?寃곌낵 ?ㅻ챸, UI 臾멸뎄?먯꽌??諛섎쭚???덈? ?ъ슜?섏? ?딅뒗??
+- 紐⑤뱺 ?ㅻ챸? 議대뙎留??먮뒗 以묐┰?곸씤 湲곗닠 臾몄껜濡??묒꽦?쒕떎.
+- 湲됲븳 ?묒뾽 硫붾え?쇰룄 ?ъ슜?먮? ?ν븳 ?쒗쁽?먮뒗 諛섎쭚, 紐낅졊議? 鍮꾪븯 ?쒗쁽???④린吏 ?딅뒗??
+- Git 愿???묒뾽? 蹂꾨룄 ?뺤씤??諛쏅뒗?? ?뱁엳 `push`, `pull`, ?묒뾽 痍⑥냼, ?섎룎由ш린泥섎읆 ?먭꺽/釉뚮옖移??묒뾽 ?곹깭???곹뼢??二쇰뒗 ?묒뾽? ?ъ슜???뺤씤 ??吏꾪뻾?쒕떎.
+- 洹???紐⑺몴 踰붿쐞 ?덉쓽 肄붾뱶 援ы쁽, 肄붾뱶 ?섏젙, 臾몄꽌 ?섏젙, 濡쒖뺄 ?뚯뒪?? smoke ?ㅽ뻾, 寃利??ㅽ겕由쏀듃 ?ㅽ뻾? 留ㅻ쾲 ?섎Щ吏 ?딄퀬 ?먯쑉?곸쑝濡?吏꾪뻾?쒕떎.
+- ?먯쑉 吏꾪뻾???묒뾽? 寃곌낵? 洹쇨굅瑜?臾몄꽌? 理쒖쥌 蹂닿퀬???④릿??
+- ?ㅽ뻾 ?섍꼍??沅뚰븳 ?쒖뒪???뚮Ц???꾧뎄 ?뱀씤 ?꾨＼?꾪듃媛 ?꾩슂??寃쎌슦媛 ?덉쓣 ???덉?留? ?묒뾽 ?먮떒 ?먯껜????湲곗????곕씪 ?먯쑉 吏꾪뻾?쒕떎.
 
-이번 라운드의 목표는 최상 검증 품질과 빠른 처리 속도를 동시에 달성하는 것이다. 우선순위는 품질을 먼저 통과시키고, 통과한 후보들 중에서 가장 빠른 설정을 찾는 방식으로 둔다.
+?대쾲 ?쇱슫?쒖쓽 紐⑺몴??理쒖긽 寃利??덉쭏怨?鍮좊Ⅸ 泥섎━ ?띾룄瑜??숈떆???ъ꽦?섎뒗 寃껋씠?? ?곗꽑?쒖쐞???덉쭏??癒쇱? ?듦낵?쒗궎怨? ?듦낵???꾨낫??以묒뿉??媛??鍮좊Ⅸ ?ㅼ젙??李얜뒗 諛⑹떇?쇰줈 ?붾떎.
 
-- 얼굴 미탐은 허용하지 않는다. 작은 얼굴, 먼 얼굴, 반쪽 얼굴, 고개가 돌아간 얼굴도 노출되면 실패로 본다.
-- 얼굴이 아닌 물건 오탐도 허용하지 않는다. 불필요한 모자이크는 영상 품질을 떨어뜨리므로 실패로 본다.
-- 같은 얼굴의 모자이크가 중간에 사라졌다 나타나는 깜박임도 실패로 본다.
-- 모자이크 박스가 얼굴을 따라 자연스럽게 이어지지 않고 튀거나 흔들리면 실패로 본다.
-- 한 번 사람 얼굴로 확정된 track은 화면에서 실제로 사라지거나 scene cut/큰 위치 변화로 종료 판정되기 전까지 모자이크가 유지되어야 한다.
-- 확정 track이 detector 미탐 때문에 1~몇 프레임 비어도 즉시 모자이크를 제거하지 않는다. 이전 이동 방향과 크기 변화로 예측/보간해 유지하고, ROI 재검출로 확인한다.
-- 확정 track 종료는 긴 미탐, 화면 밖 이동, scene cut, 비정상적인 위치/크기 변화 같은 명확한 조건이 있을 때만 허용한다.
-- 속도 개선도 핵심 목표다. 다만 속도는 위 품질 조건을 만족한 후보끼리 비교한다. 빠르지만 미탐, 오탐, 깜박임이 생기는 설정은 기본값이나 추천값으로 쓰지 않는다.
-- 최종 후보는 `미탐 0`, `오탐 0`, `깜박임 0`, `박스 튐 최소화`를 만족하면서 `[AutoRunSummary].totalMs`와 `[ExportRunSummary].totalMs`가 가장 낮은 조합이어야 한다.
+- ?쇨뎬 誘명깘? ?덉슜?섏? ?딅뒗?? ?묒? ?쇨뎬, 癒??쇨뎬, 諛섏そ ?쇨뎬, 怨좉컻媛 ?뚯븘媛??쇨뎬???몄텧?섎㈃ ?ㅽ뙣濡?蹂몃떎.
+- ?쇨뎬???꾨땶 臾쇨굔 ?ㅽ깘???덉슜?섏? ?딅뒗?? 遺덊븘?뷀븳 紐⑥옄?댄겕???곸긽 ?덉쭏???⑥뼱?⑤━誘濡??ㅽ뙣濡?蹂몃떎.
+- 媛숈? ?쇨뎬??紐⑥옄?댄겕媛 以묎컙???щ씪議뚮떎 ?섑??섎뒗 源쒕컯?꾨룄 ?ㅽ뙣濡?蹂몃떎.
+- 紐⑥옄?댄겕 諛뺤뒪媛 ?쇨뎬???곕씪 ?먯뿰?ㅻ읇寃??댁뼱吏吏 ?딄퀬 ?嫄곕굹 ?붾뱾由щ㈃ ?ㅽ뙣濡?蹂몃떎.
+- ??踰??щ엺 ?쇨뎬濡??뺤젙??track? ?붾㈃?먯꽌 ?ㅼ젣濡??щ씪吏嫄곕굹 scene cut/???꾩튂 蹂?붾줈 醫낅즺 ?먯젙?섍린 ?꾧퉴吏 紐⑥옄?댄겕媛 ?좎??섏뼱???쒕떎.
+- ?뺤젙 track??detector 誘명깘 ?뚮Ц??1~紐??꾨젅??鍮꾩뼱??利됱떆 紐⑥옄?댄겕瑜??쒓굅?섏? ?딅뒗?? ?댁쟾 ?대룞 諛⑺뼢怨??ш린 蹂?붾줈 ?덉륫/蹂닿컙???좎??섍퀬, ROI ?ш?異쒕줈 ?뺤씤?쒕떎.
+- ?뺤젙 track 醫낅즺??湲?誘명깘, ?붾㈃ 諛??대룞, scene cut, 鍮꾩젙?곸쟻???꾩튂/?ш린 蹂??媛숈? 紐낇솗??議곌굔???덉쓣 ?뚮쭔 ?덉슜?쒕떎.
+- ?띾룄 媛쒖꽑???듭떖 紐⑺몴?? ?ㅻ쭔 ?띾룄?????덉쭏 議곌굔??留뚯”???꾨낫?쇰━ 鍮꾧탳?쒕떎. 鍮좊Ⅴ吏留?誘명깘, ?ㅽ깘, 源쒕컯?꾩씠 ?앷린???ㅼ젙? 湲곕낯媛믪씠??異붿쿇媛믪쑝濡??곗? ?딅뒗??
+- 理쒖쥌 ?꾨낫??`誘명깘 0`, `?ㅽ깘 0`, `源쒕컯??0`, `諛뺤뒪 ??理쒖냼??瑜?留뚯”?섎㈃??`[AutoRunSummary].totalMs`? `[ExportRunSummary].totalMs`媛 媛????? 議고빀?댁뼱???쒕떎.
 
-따라서 자동 gate의 수치만으로 완료를 판단하지 않는다. `avgBestIou`, `minBestIou`, `faceMaskFrames`, `removedShort`, `lostFilled` 같은 로그는 후보를 좁히는 근거일 뿐이며, 대표 구간의 육안 확인에서 미탐/오탐/깜박임이 없어야 통과로 본다.
+?곕씪???먮룞 gate???섏튂留뚯쑝濡??꾨즺瑜??먮떒?섏? ?딅뒗?? `avgBestIou`, `minBestIou`, `faceMaskFrames`, `removedShort`, `lostFilled` 媛숈? 濡쒓렇???꾨낫瑜?醫곹엳??洹쇨굅??肉먯씠硫? ???援ш컙???≪븞 ?뺤씤?먯꽌 誘명깘/?ㅽ깘/源쒕컯?꾩씠 ?놁뼱???듦낵濡?蹂몃떎.
 
-FaceONNX baseline은 기존 앱 동작 보존을 위한 회귀 기준이지 실제 정답 라벨이 아니다. A/B 로그의 `onlyBaseline`은 FaceONNX에만 있는 후보 frame, `onlyOptimized`는 YOLO/SCRFD/YuNet 등 optimized detector에만 있는 후보 frame을 뜻한다. 이 값은 detector 간 차이를 찾는 신호일 뿐이며, 곧바로 실제 `미탐` 또는 `오탐`으로 판정하지 않는다.
+FaceONNX baseline? 湲곗〈 ???숈옉 蹂댁〈???꾪븳 ?뚭? 湲곗??댁? ?ㅼ젣 ?뺣떟 ?쇰꺼???꾨땲?? A/B 濡쒓렇??`onlyBaseline`? FaceONNX?먮쭔 ?덈뒗 ?꾨낫 frame, `onlyOptimized`??YOLO/SCRFD/YuNet ??optimized detector?먮쭔 ?덈뒗 ?꾨낫 frame???삵븳?? ??媛믪? detector 媛?李⑥씠瑜?李얜뒗 ?좏샇??肉먯씠硫? 怨㏓컮濡??ㅼ젣 `誘명깘` ?먮뒗 `?ㅽ깘`?쇰줈 ?먯젙?섏? ?딅뒗??
 
-실제 오탐/미탐 판정 기준은 다음과 같이 분리한다.
+?ㅼ젣 ?ㅽ깘/誘명깘 ?먯젙 湲곗?? ?ㅼ쓬怨?媛숈씠 遺꾨━?쒕떎.
 
-- 실제 미탐: 라벨된 GT 또는 대표 frame overlay 육안 확인에서 사람 얼굴이 보이는데 detector 결과가 없거나 모자이크가 유지되지 않는 경우.
-- 실제 오탐: 라벨된 GT 또는 대표 frame overlay 육안 확인에서 얼굴이 아닌 손/물체/배경인데 detector가 얼굴로 잡아 모자이크 대상이 되는 경우.
-- baseline-diff: `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou`처럼 FaceONNX와 optimized detector의 후보 수나 박스 정의가 다른 경우.
+- ?ㅼ젣 誘명깘: ?쇰꺼??GT ?먮뒗 ???frame overlay ?≪븞 ?뺤씤?먯꽌 ?щ엺 ?쇨뎬??蹂댁씠?붾뜲 detector 寃곌낵媛 ?녾굅??紐⑥옄?댄겕媛 ?좎??섏? ?딅뒗 寃쎌슦.
+- ?ㅼ젣 ?ㅽ깘: ?쇰꺼??GT ?먮뒗 ???frame overlay ?≪븞 ?뺤씤?먯꽌 ?쇨뎬???꾨땶 ??臾쇱껜/諛곌꼍?몃뜲 detector媛 ?쇨뎬濡??≪븘 紐⑥옄?댄겕 ??곸씠 ?섎뒗 寃쎌슦.
+- baseline-diff: `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou`泥섎읆 FaceONNX? optimized detector???꾨낫 ?섎굹 諛뺤뒪 ?뺤쓽媛 ?ㅻⅨ 寃쎌슦.
 
-따라서 YOLO가 FaceONNX보다 빠르고 `onlyOptimized`를 만들더라도, 그 후보가 실제 얼굴이면 recall 개선 가능성으로 따로 기록한다. 반대로 `onlyBaseline`도 FaceONNX가 맞고 YOLO가 틀렸다는 뜻으로 단정하지 않는다. 추천 여부는 먼저 baseline-diff gate로 기존 동작 변화 폭을 확인하고, 그 다음 representative overlay 또는 GT 기준으로 실제 얼굴/비얼굴 여부를 확인해 판단한다.
+?곕씪??YOLO媛 FaceONNX蹂대떎 鍮좊Ⅴ怨?`onlyOptimized`瑜?留뚮뱾?붾씪?? 洹??꾨낫媛 ?ㅼ젣 ?쇨뎬?대㈃ recall 媛쒖꽑 媛?μ꽦?쇰줈 ?곕줈 湲곕줉?쒕떎. 諛섎?濡?`onlyBaseline`??FaceONNX媛 留욊퀬 YOLO媛 ??몃떎???살쑝濡??⑥젙?섏? ?딅뒗?? 異붿쿇 ?щ???癒쇱? baseline-diff gate濡?湲곗〈 ?숈옉 蹂????쓣 ?뺤씤?섍퀬, 洹??ㅼ쓬 representative overlay ?먮뒗 GT 湲곗??쇰줈 ?ㅼ젣 ?쇨뎬/鍮꾩뼹援??щ?瑜??뺤씤???먮떒?쒕떎.
 
-현재 표본 GT 라벨은 기존 crop review CSV의 `label`과 `verdict`를 기준으로 산출한다. `optimized + Face`는 `YoloTruePositive`, `optimized + NonFace`는 `YoloFalsePositive`, `baseline + Face`는 `YoloMiss`, `baseline + NonFace`는 `FaceOnnxFalsePositive`로 분류한다. 이 분류는 표본 crop 단위의 face/non-face 판정이며, 전체 영상 frame/track GT를 대체하지 않는다.
+?꾩옱 ?쒕낯 GT ?쇰꺼? 湲곗〈 crop review CSV??`label`怨?`verdict`瑜?湲곗??쇰줈 ?곗텧?쒕떎. `optimized + Face`??`YoloTruePositive`, `optimized + NonFace`??`YoloFalsePositive`, `baseline + Face`??`YoloMiss`, `baseline + NonFace`??`FaceOnnxFalsePositive`濡?遺꾨쪟?쒕떎. ??遺꾨쪟???쒕낯 crop ?⑥쐞??face/non-face ?먯젙?대ŉ, ?꾩껜 ?곸긽 frame/track GT瑜??泥댄븯吏 ?딅뒗??
 
-이번 재검증에서는 YuNet을 우선 제외한다.
+?대쾲 ?ш?利앹뿉?쒕뒗 YuNet???곗꽑 ?쒖쇅?쒕떎.
 
-제외 이유:
+?쒖쇅 ?댁쑀:
 
-- YuNet은 속도는 빠르지만 기존 A/B에서 FaceONNX-only/YuNet-only frame과 baseline 좌표 불일치가 컸다.
-- tiling을 켜면 작은 얼굴 후보는 늘지만 YuNet-only 후보도 크게 늘고 속도 이점이 줄었다.
-- 현재 문제의 핵심은 실제 작은 얼굴 누락, 실제 물건 오검출, track 깜박임, 긴 export 시간이므로 YuNet을 계속 튜닝하기보다 FaceONNX baseline과 SCRFD 후보를 먼저 현재 환경에서 다시 비교한다.
+- YuNet? ?띾룄??鍮좊Ⅴ吏留?湲곗〈 A/B?먯꽌 FaceONNX-only/YuNet-only frame怨?baseline 醫뚰몴 遺덉씪移섍? 而몃떎.
+- tiling??耳쒕㈃ ?묒? ?쇨뎬 ?꾨낫???섏?留?YuNet-only ?꾨낫???ш쾶 ?섍퀬 ?띾룄 ?댁젏??以꾩뿀??
+- ?꾩옱 臾몄젣???듭떖? ?ㅼ젣 ?묒? ?쇨뎬 ?꾨씫, ?ㅼ젣 臾쇨굔 ?ㅺ?異? track 源쒕컯?? 湲?export ?쒓컙?대?濡?YuNet??怨꾩냽 ?쒕떇?섍린蹂대떎 FaceONNX baseline怨?SCRFD ?꾨낫瑜?癒쇱? ?꾩옱 ?섍꼍?먯꽌 ?ㅼ떆 鍮꾧탳?쒕떎.
 
-현재 환경 검증 대상:
+?꾩옱 ?섍꼍 寃利????
 
 1. `FaceONNX`
-   - 현재 기본 detector이자 안정 baseline이다.
-   - CPU/GPU auto tune 결과를 모두 기록한다.
-   - track 후처리, ROI refiner, 작은 얼굴 filter가 켜진 현재 기본 경로를 기준으로 둔다.
+   - ?꾩옱 湲곕낯 detector?댁옄 ?덉젙 baseline?대떎.
+   - CPU/GPU auto tune 寃곌낵瑜?紐⑤몢 湲곕줉?쒕떎.
+   - track ?꾩쿂由? ROI refiner, ?묒? ?쇨뎬 filter媛 耳쒖쭊 ?꾩옱 湲곕낯 寃쎈줈瑜?湲곗??쇰줈 ?붾떎.
 
 2. `SCRFD`
-   - 작은 얼굴과 미탐 감소 가능성이 있는 후보로 다시 검증한다.
-   - 기존 노트북 검증에서 실패한 `500M`, `10G` 결과는 폐기하지 않되, 현재 환경에서 같은 clip과 같은 quality gate로 다시 확인한다.
-   - 가능하면 `2.5G` 계열도 추가 후보로 검토한다.
+   - ?묒? ?쇨뎬怨?誘명깘 媛먯냼 媛?μ꽦???덈뒗 ?꾨낫濡??ㅼ떆 寃利앺븳??
+   - 湲곗〈 ?명듃遺?寃利앹뿉???ㅽ뙣??`500M`, `10G` 寃곌낵???먭린?섏? ?딅릺, ?꾩옱 ?섍꼍?먯꽌 媛숈? clip怨?媛숈? quality gate濡??ㅼ떆 ?뺤씤?쒕떎.
+   - 媛?ν븯硫?`2.5G` 怨꾩뿴??異붽? ?꾨낫濡?寃?좏븳??
 
-이번 검증에서 고정할 기본 조건:
+?대쾲 寃利앹뿉??怨좎젙??湲곕낯 議곌굔:
 
 - `DownscaleRatio=1.0`
 - `DetectEveryNFrames=1`
 - `UseTracking=true`
-- `ParallelDetectorCount`는 `2`와 `4`를 모두 측정한다.
-- threshold는 현재 사용자 기준값 `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`을 시작점으로 사용한다. 이 값은 고정 결론이 아니다.
-- FaceONNX와 SCRFD 각각에 대해 실제 누락 0, 실제 오검출 0, 깜박임 0에 가장 가까운 threshold 조합을 찾고, 검증된 조합을 기본값 후보로 문서화한다.
-- 품질 비교 전에는 sparse 검출, downscale, threshold 완화로 속도를 얻지 않는다.
+- `ParallelDetectorCount`??`2`? `4`瑜?紐⑤몢 痢≪젙?쒕떎.
+- threshold???꾩옱 ?ъ슜??湲곗?媛?`DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`???쒖옉?먯쑝濡??ъ슜?쒕떎. ??媛믪? 怨좎젙 寃곕줎???꾨땲??
+- FaceONNX? SCRFD 媛곴컖??????ㅼ젣 ?꾨씫 0, ?ㅼ젣 ?ㅺ?異?0, 源쒕컯??0??媛??媛源뚯슫 threshold 議고빀??李얘퀬, 寃利앸맂 議고빀??湲곕낯媛??꾨낫濡?臾몄꽌?뷀븳??
+- ?덉쭏 鍮꾧탳 ?꾩뿉??sparse 寃異? downscale, threshold ?꾪솕濡??띾룄瑜??살? ?딅뒗??
 
-검증 지표:
+寃利?吏??
 
-- 작은 얼굴 미탐 frame 수
-- 물건 오탐 frame 수
-- 모자이크 깜박임 frame 수
-- 박스 튐/흔들림 구간 수
-- `faceMaskFrames`
-- track 후처리 로그: `tracks`, `filled`, `lostFilled`, `removedShort`, `rewritten`
-- ROI refiner 로그: `attempts`, `hits`, `seeks`, `decoded`, `elapsedMs`
+- ?묒? ?쇨뎬 誘명깘 frame ??- 臾쇨굔 ?ㅽ깘 frame ??- 紐⑥옄?댄겕 源쒕컯??frame ??- 諛뺤뒪 ???붾뱾由?援ш컙 ??- `faceMaskFrames`
+- track ?꾩쿂由?濡쒓렇: `tracks`, `filled`, `lostFilled`, `removedShort`, `rewritten`
+- ROI refiner 濡쒓렇: `attempts`, `hits`, `seeks`, `decoded`, `elapsedMs`
 - `[AutoRunSummary] totalMs`, `detectMs`, provider
 - `[ExportRunSummary] totalMs`, `maskMs`, `swsToBgraMs`, `swsToEncMs`, `encodeMs`
-- threshold sweep 결과: `DetectionThreshold`, `ConfidenceThreshold`, `NmsThreshold`별 미탐/오탐/깜박임/속도 변화
-- 육안 확인 결과: 모자이크 깜박임, 박스 튐, 작은 얼굴 누락, 물건 오탐
+- threshold sweep 寃곌낵: `DetectionThreshold`, `ConfidenceThreshold`, `NmsThreshold`蹂?誘명깘/?ㅽ깘/源쒕컯???띾룄 蹂??- ?≪븞 ?뺤씤 寃곌낵: 紐⑥옄?댄겕 源쒕컯?? 諛뺤뒪 ?? ?묒? ?쇨뎬 ?꾨씫, 臾쇨굔 ?ㅽ깘
 
-진행 순서:
+吏꾪뻾 ?쒖꽌:
 
-1. 현재 기본 `FaceONNX`로 대표 clip들을 다시 실행한다.
-2. 같은 clip에서 `ParallelDetectorCount=2`와 `4`를 비교한다. 판단은 `detectMs`가 아니라 wall-clock인 `totalMs`를 우선한다.
-3. SCRFD 후보 모델을 같은 clip에서 실행한다.
-4. SCRFD가 FaceONNX 대비 작은 얼굴 미탐을 줄이는지 먼저 본다.
-5. FaceONNX와 SCRFD 각각에 대해 threshold sweep을 실행한다.
-6. threshold sweep은 detection/confidence를 낮춰 미탐을 줄이는 방향과, confidence/NMS를 올려 오탐을 줄이는 방향을 모두 포함한다.
-7. threshold 후보마다 작은 얼굴 미탐, 물건 오탐, 깜박임, track 보정 로그, 속도를 기록한다.
-8. SCRFD가 오탐을 늘리면 threshold, NMS, 후처리 필터 조합을 조정한다.
-9. FaceONNX와 SCRFD 중 하나를 기본값으로 바로 교체하지 않고, `Balanced/Accurate` 같은 내부 모드 후보로 둔다.
-10. representative clip에서 통과한 뒤에만 더 긴 구간과 export 포함 smoke를 실행한다.
+1. ?꾩옱 湲곕낯 `FaceONNX`濡????clip?ㅼ쓣 ?ㅼ떆 ?ㅽ뻾?쒕떎.
+2. 媛숈? clip?먯꽌 `ParallelDetectorCount=2`? `4`瑜?鍮꾧탳?쒕떎. ?먮떒? `detectMs`媛 ?꾨땲??wall-clock??`totalMs`瑜??곗꽑?쒕떎.
+3. SCRFD ?꾨낫 紐⑤뜽??媛숈? clip?먯꽌 ?ㅽ뻾?쒕떎.
+4. SCRFD媛 FaceONNX ?鍮??묒? ?쇨뎬 誘명깘??以꾩씠?붿? 癒쇱? 蹂몃떎.
+5. FaceONNX? SCRFD 媛곴컖?????threshold sweep???ㅽ뻾?쒕떎.
+6. threshold sweep? detection/confidence瑜???떠 誘명깘??以꾩씠??諛⑺뼢怨? confidence/NMS瑜??щ젮 ?ㅽ깘??以꾩씠??諛⑺뼢??紐⑤몢 ?ы븿?쒕떎.
+7. threshold ?꾨낫留덈떎 ?묒? ?쇨뎬 誘명깘, 臾쇨굔 ?ㅽ깘, 源쒕컯?? track 蹂댁젙 濡쒓렇, ?띾룄瑜?湲곕줉?쒕떎.
+8. SCRFD媛 ?ㅽ깘???섎━硫?threshold, NMS, ?꾩쿂由??꾪꽣 議고빀??議곗젙?쒕떎.
+9. FaceONNX? SCRFD 以??섎굹瑜?湲곕낯媛믪쑝濡?諛붾줈 援먯껜?섏? ?딄퀬, `Balanced/Accurate` 媛숈? ?대? 紐⑤뱶 ?꾨낫濡??붾떎.
+10. representative clip?먯꽌 ?듦낵???ㅼ뿉留???湲?援ш컙怨?export ?ы븿 smoke瑜??ㅽ뻾?쒕떎.
 
-판정 기준:
+?먯젙 湲곗?:
 
-- SCRFD가 FaceONNX보다 실제 작은 얼굴 누락을 줄이고, 실제 물건 오검출과 모자이크 깜박임을 만들지 않을 때만 다음 후보로 유지한다.
-- SCRFD가 빠르더라도 실제 누락/오검출/깜박임/박스 튐이 생기면 기본 승격하지 않는다.
-- threshold 기본값은 하드코딩된 현재 값이 아니라, 현재 환경 대표 구간에서 가장 좋은 품질/속도 균형을 보인 검증값으로 정한다.
-- 최종 문서에는 detector별 추천 threshold와 근거를 남긴다. 예: `FaceONNX 기본 후보: detection=?, confidence=?, nms=?`, `SCRFD 후보: confidence=?, nms=?`.
-- FaceONNX가 현재 환경에서도 가장 안정적이면 기본 detector는 유지하고, SCRFD는 정확도 우선 실험 옵션으로 남긴다.
-- YuNet은 이번 라운드에서는 제외하고, FaceONNX/SCRFD 비교가 끝난 뒤 fast mode 후보로 다시 볼지 결정한다.
+- SCRFD媛 FaceONNX蹂대떎 ?ㅼ젣 ?묒? ?쇨뎬 ?꾨씫??以꾩씠怨? ?ㅼ젣 臾쇨굔 ?ㅺ?異쒓낵 紐⑥옄?댄겕 源쒕컯?꾩쓣 留뚮뱾吏 ?딆쓣 ?뚮쭔 ?ㅼ쓬 ?꾨낫濡??좎??쒕떎.
+- SCRFD媛 鍮좊Ⅴ?붾씪???ㅼ젣 ?꾨씫/?ㅺ?異?源쒕컯??諛뺤뒪 ?먯씠 ?앷린硫?湲곕낯 ?밴꺽?섏? ?딅뒗??
+- threshold 湲곕낯媛믪? ?섎뱶肄붾뵫???꾩옱 媛믪씠 ?꾨땲?? ?꾩옱 ?섍꼍 ???援ш컙?먯꽌 媛??醫뗭? ?덉쭏/?띾룄 洹좏삎??蹂댁씤 寃利앷컪?쇰줈 ?뺥븳??
+- 理쒖쥌 臾몄꽌?먮뒗 detector蹂?異붿쿇 threshold? 洹쇨굅瑜??④릿?? ?? `FaceONNX 湲곕낯 ?꾨낫: detection=?, confidence=?, nms=?`, `SCRFD ?꾨낫: confidence=?, nms=?`.
+- FaceONNX媛 ?꾩옱 ?섍꼍?먯꽌??媛???덉젙?곸씠硫?湲곕낯 detector???좎??섍퀬, SCRFD???뺥솗???곗꽑 ?ㅽ뿕 ?듭뀡?쇰줈 ?④릿??
+- YuNet? ?대쾲 ?쇱슫?쒖뿉?쒕뒗 ?쒖쇅?섍퀬, FaceONNX/SCRFD 鍮꾧탳媛 ?앸궃 ??fast mode ?꾨낫濡??ㅼ떆 蹂쇱? 寃곗젙?쒕떎.
 
-### 2026-05-13 현재 환경 1차 실행 기록
+### 2026-05-13 ?꾩옱 ?섍꼍 1李??ㅽ뻾 湲곕줉
 
-대상 clip:
+???clip:
 
 - `.tmp/srcTest-smoke/current-0030-2s.mp4`
-- 원본: `/mnt/d/WorkSpace/src/260102_two4.mp4`의 00:00:30부터 2초 구간
-- 공통 조건: `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `UseTracking=true`, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, export 포함
+- ?먮낯: `/mnt/d/WorkSpace/src/260102_two4.mp4`??00:00:30遺??2珥?援ш컙
+- 怨듯넻 議곌굔: `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `UseTracking=true`, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, export ?ы븿
 
-코드 변경:
+肄붾뱶 蹂寃?
 
 - `Services/Analysis/FaceTrackInterpolator.cs`
-- 확정 track lost-fill 조건에서 `IsSmallTrack(track, options)` 제외 조건을 제거했다.
-- 목적은 한 번 사람 얼굴로 확정된 작은 얼굴 track이 detector 미탐 1~몇 프레임 때문에 바로 끊기지 않게 하는 것이다.
-- 짧은 단발/저신뢰 track 제거 로직은 유지하므로, 1~2프레임짜리 작은 물건 오탐을 확정 track처럼 끝까지 유지하는 변경은 아니다.
+- ?뺤젙 track lost-fill 議곌굔?먯꽌 `IsSmallTrack(track, options)` ?쒖쇅 議곌굔???쒓굅?덈떎.
+- 紐⑹쟻? ??踰??щ엺 ?쇨뎬濡??뺤젙???묒? ?쇨뎬 track??detector 誘명깘 1~紐??꾨젅???뚮Ц??諛붾줈 ?딄린吏 ?딄쾶 ?섎뒗 寃껋씠??
+- 吏㏃? ?⑤컻/??좊ː track ?쒓굅 濡쒖쭅? ?좎??섎?濡? 1~2?꾨젅?꾩쭨由??묒? 臾쇨굔 ?ㅽ깘???뺤젙 track泥섎읆 ?앷퉴吏 ?좎??섎뒗 蹂寃쎌? ?꾨땲??
 
-FaceONNX 병렬 2 재검증:
+FaceONNX 蹂묐젹 2 ?ш?利?
 
-- 변경 전: `faceMaskFrames=16`, `onlyBaseline=58,59`, `passed=False`
-- 변경 후: `faceMaskFrames=19`, `onlyBaseline=none`, `onlyOptimized=none`
-- 후처리 로그: `tracks=3`, `lostFilled=3`, `lostFrames=58,59,60`, `removedShort=1`, `rewritten=19`
+- 蹂寃??? `faceMaskFrames=16`, `onlyBaseline=58,59`, `passed=False`
+- 蹂寃??? `faceMaskFrames=19`, `onlyBaseline=none`, `onlyOptimized=none`
+- ?꾩쿂由?濡쒓렇: `tracks=3`, `lostFilled=3`, `lostFrames=58,59,60`, `removedShort=1`, `rewritten=19`
 - `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=2`, `detectMs=32629`, `totalMs=16732`
 - `[ExportRunSummary]`: `directFaceFrames=19`, `totalMs=2897`
 - `[SmokeQualityGate]`: `passed=False`, `frameMatchOk=True`, `iouOk=False`, `avgBestIou=0.755`, `minBestIou=0.560`
-- 판단: 작은 얼굴 끝부분 깜박임/누락은 보정됐지만, baseline 대비 box 위치/크기 차이가 커서 최상 검증 품질 통과는 아니다.
+- ?먮떒: ?묒? ?쇨뎬 ?앸?遺?源쒕컯???꾨씫? 蹂댁젙?먯?留? baseline ?鍮?box ?꾩튂/?ш린 李⑥씠媛 而ㅼ꽌 理쒖긽 寃利??덉쭏 ?듦낵???꾨땲??
 
-FaceONNX 병렬 4 재검증:
+FaceONNX 蹂묐젹 4 ?ш?利?
 
 - `faceMaskFrames=19`, `onlyBaseline=none`, `onlyOptimized=none`
-- 후처리 로그: `tracks=3`, `lostFilled=3`, `lostFrames=58,59,60`, `removedShort=1`, `rewritten=19`
+- ?꾩쿂由?濡쒓렇: `tracks=3`, `lostFilled=3`, `lostFrames=58,59,60`, `removedShort=1`, `rewritten=19`
 - `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=4`, `detectMs=73995`, `totalMs=19601`
 - `[ExportRunSummary]`: `directFaceFrames=19`, `totalMs=2879`
 - `[SmokeQualityGate]`: `passed=False`, `frameMatchOk=True`, `iouOk=False`, `avgBestIou=0.755`, `minBestIou=0.560`
-- 판단: 이 clip과 현재 PC에서는 4스레드가 2스레드보다 느리다. 4스레드가 항상 빠르다고 볼 근거는 아직 없다.
+- ?먮떒: ??clip怨??꾩옱 PC?먯꽌??4?ㅻ젅?쒓? 2?ㅻ젅?쒕낫???먮━?? 4?ㅻ젅?쒓? ??긽 鍮좊Ⅴ?ㅺ퀬 蹂?洹쇨굅???꾩쭅 ?녿떎.
 
-SCRFD 500M 재검증:
+SCRFD 500M ?ш?利?
 
-- 모델: `.tmp/models/scrfd_500m.onnx`
-- RGB/letterbox 기본 입력 결과: `faceMaskFrames=0`
+- 紐⑤뜽: `.tmp/models/scrfd_500m.onnx`
+- RGB/letterbox 湲곕낯 ?낅젰 寃곌낵: `faceMaskFrames=0`
 - `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `parallel=2`, `detectMs=5714`, `totalMs=5105`
-- filter 로그: `regular=0`, `small=0`, `rejected=54`, `statsRejected=3`
+- filter 濡쒓렇: `regular=0`, `small=0`, `rejected=54`, `statsRejected=3`
 - `[SmokeQualityGate]`: `passed=False`, `onlyBaseline=37,38,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60`
-- BGR 입력 결과도 `faceMaskFrames=0`
+- BGR ?낅젰 寃곌낵??`faceMaskFrames=0`
 - BGR `[AutoRunSummary]`: `detectMs=5393`, `totalMs=3889`
-- 판단: 추론 속도는 빠르지만 현재 decode/filter 조합에서는 최종 마스크가 0프레임이므로 현재 pipeline 기준 불합격이다. 이 결과만으로 SCRFD 500M 모델 자체가 실제 정답 기준에서 틀렸다고 단정하지 않는다.
+- ?먮떒: 異붾줎 ?띾룄??鍮좊Ⅴ吏留??꾩옱 decode/filter 議고빀?먯꽌??理쒖쥌 留덉뒪?ш? 0?꾨젅?꾩씠誘濡??꾩옱 pipeline 湲곗? 遺덊빀寃⑹씠?? ??寃곌낵留뚯쑝濡?SCRFD 500M 紐⑤뜽 ?먯껜媛 ?ㅼ젣 ?뺣떟 湲곗??먯꽌 ??몃떎怨??⑥젙?섏? ?딅뒗??
 
-SCRFD 10G 재검증:
+SCRFD 10G ?ш?利?
 
-- 모델: `.tmp/models/scrfd_10g_bnkps.onnx`
-- RGB/letterbox 기본 입력 결과: `faceMaskFrames=0`
+- 紐⑤뜽: `.tmp/models/scrfd_10g_bnkps.onnx`
+- RGB/letterbox 湲곕낯 ?낅젰 寃곌낵: `faceMaskFrames=0`
 - `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `parallel=2`, `detectMs=16131`, `totalMs=8539`
-- filter 로그: `regular=0`, `small=0`, `rejected=26`, `statsRejected=0`
-- stretch 입력 결과도 `faceMaskFrames=0`
+- filter 濡쒓렇: `regular=0`, `small=0`, `rejected=26`, `statsRejected=0`
+- stretch ?낅젰 寃곌낵??`faceMaskFrames=0`
 - stretch `[AutoRunSummary]`: `detectMs=16897`, `totalMs=8841`
-- 판단: 500M보다 느리고 현재 설정에서는 역시 최종 마스크가 0프레임이다. SCRFD는 모델 성능 평가 이전에 현재 SCRFD decode, 좌표 변환, 후처리 필터 호환성을 먼저 확인해야 한다.
+- ?먮떒: 500M蹂대떎 ?먮━怨??꾩옱 ?ㅼ젙?먯꽌????떆 理쒖쥌 留덉뒪?ш? 0?꾨젅?꾩씠?? SCRFD??紐⑤뜽 ?깅뒫 ?됯? ?댁쟾???꾩옱 SCRFD decode, 醫뚰몴 蹂?? ?꾩쿂由??꾪꽣 ?명솚?깆쓣 癒쇱? ?뺤씤?댁빞 ?쒕떎.
 
-1차 결론:
+1李?寃곕줎:
 
-- 현재 기본 FaceONNX는 작은 얼굴 끝부분 누락을 후처리로 복구할 수 있음을 확인했다.
-- `ParallelDetectorCount=2`가 이 clip에서는 `4`보다 빠르다.
-- SCRFD 500M/10G는 원시 detector가 후보를 일부 반환하지만, 최종 필터를 통과하지 못해 모자이크가 0프레임이다.
-- 따라서 SCRFD를 기본값 후보로 판단하기 전에 raw box 좌표, aspect ratio, area ratio, confidence 분포, `MultiplyBboxByStride`, letterbox/stretced 입력, 필터 기준을 먼저 계측해야 한다.
-- threshold 기본값은 아직 확정하지 않는다. 현재 `0.2/0.25/0.7`은 시작점일 뿐이며, FaceONNX와 SCRFD 각각 별도의 sweep과 육안 확인이 필요하다.
+- ?꾩옱 湲곕낯 FaceONNX???묒? ?쇨뎬 ?앸?遺??꾨씫???꾩쿂由щ줈 蹂듦뎄?????덉쓬???뺤씤?덈떎.
+- `ParallelDetectorCount=2`媛 ??clip?먯꽌??`4`蹂대떎 鍮좊Ⅴ??
+- SCRFD 500M/10G???먯떆 detector媛 ?꾨낫瑜??쇰? 諛섑솚?섏?留? 理쒖쥌 ?꾪꽣瑜??듦낵?섏? 紐삵빐 紐⑥옄?댄겕媛 0?꾨젅?꾩씠??
+- ?곕씪??SCRFD瑜?湲곕낯媛??꾨낫濡??먮떒?섍린 ?꾩뿉 raw box 醫뚰몴, aspect ratio, area ratio, confidence 遺꾪룷, `MultiplyBboxByStride`, letterbox/stretced ?낅젰, ?꾪꽣 湲곗???癒쇱? 怨꾩륫?댁빞 ?쒕떎.
+- threshold 湲곕낯媛믪? ?꾩쭅 ?뺤젙?섏? ?딅뒗?? ?꾩옱 `0.2/0.25/0.7`? ?쒖옉?먯씪 肉먯씠硫? FaceONNX? SCRFD 媛곴컖 蹂꾨룄??sweep怨??≪븞 ?뺤씤???꾩슂?섎떎.
 
-### 2026-05-13 `260101_oneday6.mp4` 3초 구간 A/B
+### 2026-05-13 `260101_oneday6.mp4` 3珥?援ш컙 A/B
 
-사용자 지정 테스트 원본:
+?ъ슜??吏???뚯뒪???먮낯:
 
 - `D:\WorkSpace\src\260101_oneday6.mp4`
-- 길이: 약 608.7초
-- 검증 clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4`
-- 생성 조건: 원본 00:00:30부터 3초 구간
-- 공통 조건: `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `UseTracking=true`, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, export 포함
-- 이번 라운드에서 YuNet은 실행하지 않았다.
+- 湲몄씠: ??608.7珥?- 寃利?clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4`
+- ?앹꽦 議곌굔: ?먮낯 00:00:30遺??3珥?援ш컙
+- 怨듯넻 議곌굔: `DownscaleRatio=1.0`, `DetectEveryNFrames=1`, `UseTracking=true`, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, export ?ы븿
+- ?대쾲 ?쇱슫?쒖뿉??YuNet? ?ㅽ뻾?섏? ?딆븯??
 
 FaceONNX baseline:
 
 - `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-single`, `totalFrames=91`, `processed=90`, `detects=90`, `parallel=1`
-- 대표 실행값: `detectMs=32055`, `totalMs=33123`
-- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- ????ㅽ뻾媛? `detectMs=32055`, `totalMs=33123`
+- track 蹂댁젙: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
 - ROI refiner: `attempts=11`, `hits=0`, `seeks=2`, `decoded=17`
 - `faceMaskFrames=19`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=34`, `totalMs=5122`
@@ -1084,403 +1067,399 @@ FaceONNX baseline:
 FaceONNX parallel 2:
 
 - `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=2`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=59832`, `totalMs=30995`
-- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- track 蹂댁젙: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
 - ROI refiner: `attempts=11`, `hits=0`, `seeks=2`, `decoded=17`, `elapsedMs=2557`
 - `faceMaskFrames=19`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=26`, `totalMs=4952`
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`
 - `[SmokeQualityGate]`: `passed=True`
-- 판단: baseline과 프레임/박스가 완전히 일치했다. 이 구간에서는 baseline보다 wall-clock이 조금 빠르다.
+- ?먮떒: baseline怨??꾨젅??諛뺤뒪媛 ?꾩쟾???쇱튂?덈떎. ??援ш컙?먯꽌??baseline蹂대떎 wall-clock??議곌툑 鍮좊Ⅴ??
 
 FaceONNX parallel 4:
 
 - `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `parallel=4`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=113143`, `totalMs=30003`
-- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- track 蹂댁젙: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
 - ROI refiner: `attempts=11`, `hits=0`, `seeks=2`, `decoded=17`, `elapsedMs=2480`
 - `faceMaskFrames=19`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=27`, `totalMs=5001`
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`
 - `[SmokeQualityGate]`: `passed=True`
-- 판단: 이 clip에서는 4스레드가 AutoRunSummary wall-clock 기준으로 2스레드보다 조금 빠르다. 다만 export totalMs는 2스레드가 조금 낮다.
+- ?먮떒: ??clip?먯꽌??4?ㅻ젅?쒓? AutoRunSummary wall-clock 湲곗??쇰줈 2?ㅻ젅?쒕낫??議곌툑 鍮좊Ⅴ?? ?ㅻ쭔 export totalMs??2?ㅻ젅?쒓? 議곌툑 ??떎.
 
 SCRFD 500M parallel 2:
 
-- 모델: `.tmp/models/scrfd_500m.onnx`
+- 紐⑤뜽: `.tmp/models/scrfd_500m.onnx`
 - `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=2`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=10657`, `totalMs=7843`
-- filter 로그: `regular=5`, `small=0`, `rejected=4`, `statsRejected=8`
-- track 보정: `tracks=3`, `filled=6`, `lostFilled=0`, `lostFrames=none`, `removedShort=2`, `rewritten=9`
+- filter 濡쒓렇: `regular=5`, `small=0`, `rejected=4`, `statsRejected=8`
+- track 蹂댁젙: `tracks=3`, `filled=6`, `lostFilled=0`, `lostFrames=none`, `removedShort=2`, `rewritten=9`
 - ROI refiner: `attempts=6`, `hits=6`, `seeks=1`, `decoded=7`, `elapsedMs=1053`
 - `faceMaskFrames=9`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=9`, `maskMs=4`, `totalMs=5229`
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=9`, `common=6`, `onlyBaseline=13`, `onlyOptimized=3`, `avgBestIou=0.000`, `minBestIou=0.000`
 - `[SmokeCompareFrames]`: `onlyBaseline=0,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=11,12,13`
 - `[SmokeQualityGate]`: `passed=False`
-- 판단: 미탐이 많고 optimized-only frame도 있어 오탐 위험이 있다. 품질 조건 실패다.
+- ?먮떒: 誘명깘??留롪퀬 optimized-only frame???덉뼱 ?ㅽ깘 ?꾪뿕???덈떎. ?덉쭏 議곌굔 ?ㅽ뙣??
 
 SCRFD 500M parallel 4:
 
 - `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=4`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=16163`, `totalMs=11396`
-- filter 로그: `regular=5`, `small=0`, `rejected=4`, `statsRejected=8`
-- track 보정: `tracks=3`, `filled=6`, `lostFilled=0`, `lostFrames=none`, `removedShort=2`, `rewritten=9`
+- filter 濡쒓렇: `regular=5`, `small=0`, `rejected=4`, `statsRejected=8`
+- track 蹂댁젙: `tracks=3`, `filled=6`, `lostFilled=0`, `lostFrames=none`, `removedShort=2`, `rewritten=9`
 - ROI refiner: `attempts=6`, `hits=6`, `seeks=1`, `decoded=7`, `elapsedMs=1036`
 - `faceMaskFrames=9`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=9`, `maskMs=5`, `totalMs=4739`
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=9`, `common=6`, `onlyBaseline=13`, `onlyOptimized=3`, `avgBestIou=0.000`, `minBestIou=0.000`
 - `[SmokeQualityGate]`: `passed=False`
-- 판단: 2스레드보다 AutoRunSummary wall-clock이 느리고 품질 실패 양상은 같다.
+- ?먮떒: 2?ㅻ젅?쒕낫??AutoRunSummary wall-clock???먮━怨??덉쭏 ?ㅽ뙣 ?묒긽? 媛숇떎.
 
 SCRFD 10G parallel 2:
 
-- 모델: `.tmp/models/scrfd_10g_bnkps.onnx`
+- 紐⑤뜽: `.tmp/models/scrfd_10g_bnkps.onnx`
 - `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=2`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=24897`, `totalMs=13467`
-- filter 로그: `regular=13`, `small=0`, `rejected=18`, `statsRejected=0`
-- track 보정: `tracks=3`, `filled=7`, `lostFilled=0`, `lostFrames=none`, `removedShort=1`, `rewritten=19`
+- filter 濡쒓렇: `regular=13`, `small=0`, `rejected=18`, `statsRejected=0`
+- track 蹂댁젙: `tracks=3`, `filled=7`, `lostFilled=0`, `lostFrames=none`, `removedShort=1`, `rewritten=19`
 - ROI refiner: `attempts=7`, `hits=0`, `seeks=1`, `decoded=11`, `elapsedMs=1830`
 - `faceMaskFrames=19`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=141`, `totalMs=4947`
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `common=0`, `onlyBaseline=19`, `onlyOptimized=19`
 - `[SmokeCompareFrames]`: `onlyBaseline=0,14,15,16,17,18,19,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=50,51,52,53,54,55,56,57,58,59,60,61,62,63,75,76,77,78,79`
 - `[SmokeQualityGate]`: `passed=False`
-- 판단: 최종 frame 수는 같지만 baseline과 공통 frame이 0이다. baseline-diff 기준으로 기존 FaceONNX 얼굴 구간과 완전히 다른 구간을 잡고 있으므로 현재 pipeline 기준 불합격이다. 실제 미탐/오탐 확정은 overlay 또는 GT 확인이 필요하지만, 이 수치만으로도 기본/accurate 후보로 올릴 수 없다.
+- ?먮떒: 理쒖쥌 frame ?섎뒗 媛숈?留?baseline怨?怨듯넻 frame??0?대떎. baseline-diff 湲곗??쇰줈 湲곗〈 FaceONNX ?쇨뎬 援ш컙怨??꾩쟾???ㅻⅨ 援ш컙???↔퀬 ?덉쑝誘濡??꾩옱 pipeline 湲곗? 遺덊빀寃⑹씠?? ?ㅼ젣 誘명깘/?ㅽ깘 ?뺤젙? overlay ?먮뒗 GT ?뺤씤???꾩슂?섏?留? ???섏튂留뚯쑝濡쒕룄 湲곕낯/accurate ?꾨낫濡??щ┫ ???녿떎.
 
 SCRFD 10G parallel 4:
 
 - `[AutoRunSummary]`: `detector=ScrfdOnnxDetector`, `mode=pipe-parallel`, `parallel=4`, `totalFrames=91`, `processed=90`, `detects=90`, `detectMs=258485`, `totalMs=66993`
-- filter 로그: `regular=13`, `small=0`, `rejected=18`, `statsRejected=0`
-- track 보정: `tracks=3`, `filled=7`, `lostFilled=0`, `lostFrames=none`, `removedShort=1`, `rewritten=19`
+- filter 濡쒓렇: `regular=13`, `small=0`, `rejected=18`, `statsRejected=0`
+- track 蹂댁젙: `tracks=3`, `filled=7`, `lostFilled=0`, `lostFrames=none`, `removedShort=1`, `rewritten=19`
 - ROI refiner: `attempts=7`, `hits=0`, `seeks=1`, `decoded=11`, `elapsedMs=8306`
 - `faceMaskFrames=19`
 - `[ExportRunSummary]`: `frames=91`, `directFaceFrames=19`, `maskMs=355`, `totalMs=8175`
 - `[SmokeCompare]`: `baselineFrames=19`, `optimizedFrames=19`, `common=0`, `onlyBaseline=19`, `onlyOptimized=19`
 - `[SmokeCompareFrames]`: `onlyBaseline=0,14,15,16,17,18,19,20,33,34,35,36,37,41,42,43,44,45,46`, `onlyOptimized=50,51,52,53,54,55,56,57,58,59,60,61,62,63,75,76,77,78,79`
 - `[SmokeQualityGate]`: `passed=False`
-- 판단: 10G 4스레드는 매우 느리고 품질도 실패다. CPU에서 10G를 4세션 병렬로 돌리는 것은 현재 PC 기준 후보가 아니다.
+- ?먮떒: 10G 4?ㅻ젅?쒕뒗 留ㅼ슦 ?먮━怨??덉쭏???ㅽ뙣?? CPU?먯꽌 10G瑜?4?몄뀡 蹂묐젹濡??뚮━??寃껋? ?꾩옱 PC 湲곗? ?꾨낫媛 ?꾨땲??
 
-`260101_oneday6.mp4` 1차 결론:
+`260101_oneday6.mp4` 1李?寃곕줎:
 
-- 이 구간의 기본 후보는 FaceONNX 유지다.
-- FaceONNX parallel 2와 4는 모두 baseline과 완전 일치했고 품질 gate를 통과했다.
-- AutoRunSummary 기준 최고속은 FaceONNX parallel 4(`totalMs=30003`)였고, export까지 포함한 `ExportRunSummary`는 FaceONNX parallel 2(`totalMs=4952`)와 4(`totalMs=5001`)가 거의 비슷했다.
-- SCRFD 500M은 빠르지만 `faceMaskFrames=9`로 baseline 19프레임 대비 FaceONNX-only frame이 크고 SCRFD-only frame도 있어 기존 동작과 차이가 크다.
-- SCRFD 10G는 frame 수만 맞고 baseline frame 위치가 전부 달라 현재 pipeline 기준 불합격이다.
-- 이번 고정 threshold `0.2/0.25/0.7` 조건에서는 SCRFD 500M/10G 모두 기본 detector 후보가 아니다.
+- ??援ш컙??湲곕낯 ?꾨낫??FaceONNX ?좎???
+- FaceONNX parallel 2? 4??紐⑤몢 baseline怨??꾩쟾 ?쇱튂?덇퀬 ?덉쭏 gate瑜??듦낵?덈떎.
+- AutoRunSummary 湲곗? 理쒓퀬?띿? FaceONNX parallel 4(`totalMs=30003`)?怨? export源뚯? ?ы븿??`ExportRunSummary`??FaceONNX parallel 2(`totalMs=4952`)? 4(`totalMs=5001`)媛 嫄곗쓽 鍮꾩듂?덈떎.
+- SCRFD 500M? 鍮좊Ⅴ吏留?`faceMaskFrames=9`濡?baseline 19?꾨젅???鍮?FaceONNX-only frame???ш퀬 SCRFD-only frame???덉뼱 湲곗〈 ?숈옉怨?李⑥씠媛 ?щ떎.
+- SCRFD 10G??frame ?섎쭔 留욊퀬 baseline frame ?꾩튂媛 ?꾨? ?щ씪 ?꾩옱 pipeline 湲곗? 遺덊빀寃⑹씠??
+- ?대쾲 怨좎젙 threshold `0.2/0.25/0.7` 議곌굔?먯꽌??SCRFD 500M/10G 紐⑤몢 湲곕낯 detector ?꾨낫媛 ?꾨땲??
 
-### 다음 세션 목표: SCRFD 전용 adapter/필터 정합
+### ?ㅼ쓬 ?몄뀡 紐⑺몴: SCRFD ?꾩슜 adapter/?꾪꽣 ?뺥빀
 
-현재 A/B 결과는 SCRFD 모델 자체의 최종 성능으로 단정하지 않는다. 현재 코드 구조가 FaceONNX 출력 특성에 맞춰져 있고, SCRFD는 같은 후처리/필터/track 기준에 그대로 들어가고 있다. 따라서 다음 세션의 목표는 SCRFD를 FaceONNX 파이프라인에 억지로 끼우는 것이 아니라, SCRFD 전용 adapter와 검증 로그를 수정하면서 FaceShield 품질 기준에 맞추는 것이다.
+?꾩옱 A/B 寃곌낵??SCRFD 紐⑤뜽 ?먯껜??理쒖쥌 ?깅뒫?쇰줈 ?⑥젙?섏? ?딅뒗?? ?꾩옱 肄붾뱶 援ъ“媛 FaceONNX 異쒕젰 ?뱀꽦??留욎떠???덇퀬, SCRFD??媛숈? ?꾩쿂由??꾪꽣/track 湲곗???洹몃?濡??ㅼ뼱媛怨??덈떎. ?곕씪???ㅼ쓬 ?몄뀡??紐⑺몴??SCRFD瑜?FaceONNX ?뚯씠?꾨씪?몄뿉 ?듭?濡??쇱슦??寃껋씠 ?꾨땲?? SCRFD ?꾩슜 adapter? 寃利?濡쒓렇瑜??섏젙?섎㈃??FaceShield ?덉쭏 湲곗???留욎텛??寃껋씠??
 
-목표 문장:
+紐⑺몴 臾몄옣:
 
-- `FaceONNX baseline은 유지한다. SCRFD 500M/10G는 detector adapter, bbox decode, 좌표 복원, detector별 필터 옵션을 수정하면서 공정하게 비교 가능한 상태로 맞춘다. 최종 기준은 미탐 0, 오탐 0, 깜박임 0, 원본 해상도, 전 프레임 검출, tracking on, threshold sweep 기반 기본값 산정이다.`
+- `FaceONNX baseline? ?좎??쒕떎. SCRFD 500M/10G??detector adapter, bbox decode, 醫뚰몴 蹂듭썝, detector蹂??꾪꽣 ?듭뀡???섏젙?섎㈃??怨듭젙?섍쾶 鍮꾧탳 媛?ν븳 ?곹깭濡?留욎텣?? 理쒖쥌 湲곗?? 誘명깘 0, ?ㅽ깘 0, 源쒕컯??0, ?먮낯 ?댁긽?? ???꾨젅??寃異? tracking on, threshold sweep 湲곕컲 湲곕낯媛??곗젙?대떎.`
 
-다음 세션에서 해야 할 일:
+?ㅼ쓬 ?몄뀡?먯꽌 ?댁빞 ????
 
-1. SCRFD raw output 검증
-   - output tensor 이름, shape, score tensor, bbox tensor 순서를 로그로 남긴다.
-   - 현재 `PairScoreAndBoxTensors()`가 실제 모델 output 순서와 맞는지 확인한다.
-   - `GuessStride()` 결과가 8/16/32 stride별 실제 output count와 맞는지 확인한다.
-   - `anchorsPerPoint` 계산이 모델별로 올바른지 확인한다.
+1. SCRFD raw output 寃利?   - output tensor ?대쫫, shape, score tensor, bbox tensor ?쒖꽌瑜?濡쒓렇濡??④릿??
+   - ?꾩옱 `PairScoreAndBoxTensors()`媛 ?ㅼ젣 紐⑤뜽 output ?쒖꽌? 留욌뒗吏 ?뺤씤?쒕떎.
+   - `GuessStride()` 寃곌낵媛 8/16/32 stride蹂??ㅼ젣 output count? 留욌뒗吏 ?뺤씤?쒕떎.
+   - `anchorsPerPoint` 怨꾩궛??紐⑤뜽蹂꾨줈 ?щ컮瑜몄? ?뺤씤?쒕떎.
 
-2. SCRFD bbox decode 검증
-   - `MultiplyBboxByStride=true/false`를 비교한다.
-   - `UseLetterboxResize=true/false`를 비교한다.
-   - RGB/BGR 입력을 비교한다.
-   - raw candidate의 `x,y,w,h,area,aspect,confidence`를 frame별로 dump한다.
-   - FaceONNX baseline box와 SCRFD raw box를 같은 frame에서 IoU로 비교한다.
+2. SCRFD bbox decode 寃利?   - `MultiplyBboxByStride=true/false`瑜?鍮꾧탳?쒕떎.
+   - `UseLetterboxResize=true/false`瑜?鍮꾧탳?쒕떎.
+   - RGB/BGR ?낅젰??鍮꾧탳?쒕떎.
+   - raw candidate??`x,y,w,h,area,aspect,confidence`瑜?frame蹂꾨줈 dump?쒕떎.
+   - FaceONNX baseline box? SCRFD raw box瑜?媛숈? frame?먯꽌 IoU濡?鍮꾧탳?쒕떎.
 
-3. detector별 필터 분리
-   - 현재 `AutoMaskGenerator`의 면적/종횡비/skin/edge/luma 필터는 FaceONNX 출력에 맞춰져 있을 가능성이 높다.
-   - `FaceCandidateKind`, `SmallFaceConfidenceMin`, `StatsBypassConfidence`, skin/edge/luma 기준을 detector별 옵션으로 분리한다.
-   - SCRFD 후보에는 FaceONNX용 skin/luma 필터를 그대로 적용하지 않고, 먼저 raw detector 품질을 확인한 뒤 별도 기준을 만든다.
+3. detector蹂??꾪꽣 遺꾨━
+   - ?꾩옱 `AutoMaskGenerator`??硫댁쟻/醫낇슒鍮?skin/edge/luma ?꾪꽣??FaceONNX 異쒕젰??留욎떠???덉쓣 媛?μ꽦???믩떎.
+   - `FaceCandidateKind`, `SmallFaceConfidenceMin`, `StatsBypassConfidence`, skin/edge/luma 湲곗???detector蹂??듭뀡?쇰줈 遺꾨━?쒕떎.
+   - SCRFD ?꾨낫?먮뒗 FaceONNX??skin/luma ?꾪꽣瑜?洹몃?濡??곸슜?섏? ?딄퀬, 癒쇱? raw detector ?덉쭏???뺤씤????蹂꾨룄 湲곗???留뚮뱺??
 
-4. SCRFD track 후처리 분리
-   - `FaceTrackPostProcessOptions`의 `StrongConfidence`, `ShortTrackMaxConfidence`, `SmallTrackMaxAreaRatio`, `MinTrackIou`, `MaxCenterShiftRatio`, `MaxAreaChangeRatio`가 SCRFD confidence/box 특성과 맞는지 확인한다.
-   - SCRFD 전용 track 옵션 또는 detector별 option profile을 만든다.
-   - SCRFD가 같은 사람을 다른 frame 구간으로 밀어 잡는 문제가 bbox decode 문제인지, track matching 문제인지 분리해서 판단한다.
+4. SCRFD track ?꾩쿂由?遺꾨━
+   - `FaceTrackPostProcessOptions`??`StrongConfidence`, `ShortTrackMaxConfidence`, `SmallTrackMaxAreaRatio`, `MinTrackIou`, `MaxCenterShiftRatio`, `MaxAreaChangeRatio`媛 SCRFD confidence/box ?뱀꽦怨?留욌뒗吏 ?뺤씤?쒕떎.
+   - SCRFD ?꾩슜 track ?듭뀡 ?먮뒗 detector蹂?option profile??留뚮뱺??
+   - SCRFD媛 媛숈? ?щ엺???ㅻⅨ frame 援ш컙?쇰줈 諛???〓뒗 臾몄젣媛 bbox decode 臾몄젣?몄?, track matching 臾몄젣?몄? 遺꾨━?댁꽌 ?먮떒?쒕떎.
 
-5. 검증 스크립트 보강
-   - `scripts/run-srcTest-smoke.ps1`에 SCRFD debug dump 옵션을 추가한다.
-   - raw detector 결과와 post-filter 결과를 따로 출력한다.
-   - `baselineFrames`, `optimizedFrames`, `onlyBaseline`, `onlyOptimized`뿐 아니라 raw candidate 수, filter reject 사유, detector별 confidence 분포를 기록한다.
+5. 寃利??ㅽ겕由쏀듃 蹂닿컯
+   - `scripts/run-srcTest-smoke.ps1`??SCRFD debug dump ?듭뀡??異붽??쒕떎.
+   - raw detector 寃곌낵? post-filter 寃곌낵瑜??곕줈 異쒕젰?쒕떎.
+   - `baselineFrames`, `optimizedFrames`, `onlyBaseline`, `onlyOptimized`肉??꾨땲??raw candidate ?? filter reject ?ъ쑀, detector蹂?confidence 遺꾪룷瑜?湲곕줉?쒕떎.
 
-6. 재검증 순서
-   - `D:\WorkSpace\src\260101_oneday6.mp4`에서 3초 clip으로 먼저 빠르게 반복한다.
-   - FaceONNX baseline을 고정한다.
-   - SCRFD 500M부터 raw decode를 맞춘다.
-   - SCRFD 500M이 baseline frame/box에 근접하면 10G를 같은 방식으로 확인한다.
-   - 이후 threshold sweep으로 기본값 후보를 다시 정한다.
+6. ?ш?利??쒖꽌
+   - `D:\WorkSpace\src\260101_oneday6.mp4`?먯꽌 3珥?clip?쇰줈 癒쇱? 鍮좊Ⅴ寃?諛섎났?쒕떎.
+   - FaceONNX baseline??怨좎젙?쒕떎.
+   - SCRFD 500M遺??raw decode瑜?留욎텣??
+   - SCRFD 500M??baseline frame/box??洹쇱젒?섎㈃ 10G瑜?媛숈? 諛⑹떇?쇰줈 ?뺤씤?쒕떎.
+   - ?댄썑 threshold sweep?쇰줈 湲곕낯媛??꾨낫瑜??ㅼ떆 ?뺥븳??
 
-완료 기준:
+?꾨즺 湲곗?:
 
-- SCRFD raw box가 같은 frame에서 실제 얼굴 근처에 그려지는지 확인된다.
-- SCRFD post-filter 전/후 차이가 문서화된다.
-- SCRFD가 실패할 경우 원인이 모델 미탐인지, decode 오류인지, FaceONNX 기준 필터 탈락인지 구분된다.
-- SCRFD 500M/10G 각각에 대해 `후보 유지`, `보류`, `폐기` 판단과 근거가 남는다.
-- FaceONNX 기본값을 유지할지, SCRFD를 accurate mode 후보로 둘지, 또는 SCRFD 구현을 더 수정할지 다음 결정이 가능해야 한다.
+- SCRFD raw box媛 媛숈? frame?먯꽌 ?ㅼ젣 ?쇨뎬 洹쇱쿂??洹몃젮吏?붿? ?뺤씤?쒕떎.
+- SCRFD post-filter ????李⑥씠媛 臾몄꽌?붾맂??
+- SCRFD媛 ?ㅽ뙣??寃쎌슦 ?먯씤??紐⑤뜽 誘명깘?몄?, decode ?ㅻ쪟?몄?, FaceONNX 湲곗? ?꾪꽣 ?덈씫?몄? 援щ텇?쒕떎.
+- SCRFD 500M/10G 媛곴컖?????`?꾨낫 ?좎?`, `蹂대쪟`, `?먭린` ?먮떒怨?洹쇨굅媛 ?⑤뒗??
+- FaceONNX 湲곕낯媛믪쓣 ?좎??좎?, SCRFD瑜?accurate mode ?꾨낫濡??섏?, ?먮뒗 SCRFD 援ы쁽?????섏젙?좎? ?ㅼ쓬 寃곗젙??媛?ν빐???쒕떎.
 
-### 2026-05-13 SCRFD adapter/필터 정합 검증
+### 2026-05-13 SCRFD adapter/?꾪꽣 ?뺥빀 寃利?
+肄붾뱶 蹂寃?
 
-코드 변경:
+- `AutoMaskOptions.FilterProfile`??異붽???FaceONNX? SCRFD ?꾨낫 ?꾪꽣瑜?遺꾨━?덈떎.
+- FaceONNX 湲곕낯 profile? 湲곗〈 硫댁쟻/醫낇슒鍮?skin/edge/luma ?꾪꽣 湲곗????좎??쒕떎.
+- SCRFD profile? ?곗꽑 raw detector ?덉쭏???뺤씤?섍린 ?꾪빐 skin/edge/luma ?듦퀎 ?꾪꽣瑜??꾧퀬, small ?꾨낫 confidence 湲곗???`0.25`濡???톬??
+- `AutoMaskOptions.DumpDetectionDiagnostics`? `[AutoMaskDetectionDump]` 濡쒓렇瑜?異붽???frame蹂?raw ?꾨낫 ?섏? post-filter ?꾨낫 ?? top box 醫뚰몴/area/aspect/confidence瑜??뺤씤?????덇쾶 ?덈떎.
+- `ScrfdOnnxDetectorOptions.DumpDebug`, `DebugCandidateLimit`??異붽??덈떎.
+- SCRFD debug 濡쒓렇??output tensor ?대쫫/shape, score-box pairing, stride, feature map ?ш린, anchors per point, raw-after-threshold ?꾨낫? NMS ??top box瑜?異쒕젰?쒕떎.
+- `scripts/run-srcTest-smoke.ps1`??`-ScrfdDebugDump`, `-ScrfdNoStrideScale`??異붽??덈떎. 湲곗〈 `-ScrfdUseBgr`, `-ScrfdStretchInput`怨??④퍡 RGB/BGR, letterbox/stretch, bbox stride scale true/false瑜?鍮꾧탳?????덈떎.
+- smoke harness?먯꽌 SCRFD ?ㅽ뻾 ??`FaceTrackPostProcessOptions`瑜?蹂꾨룄 profile濡???떠 `StrongConfidence=0.55`, `ShortTrackMaxConfidence=0.55`, `MinTrackIou=0.08`, `MaxCenterShiftRatio=0.75`, `MaxAreaChangeRatio=4.0`???곸슜?덈떎.
+- 湲곗〈 FaceONNX baseline ?ㅽ뻾?먮뒗 FaceONNX detector, FaceONNX filter profile, 湲곗〈 track ?듭뀡???좎??덈떎.
 
-- `AutoMaskOptions.FilterProfile`을 추가해 FaceONNX와 SCRFD 후보 필터를 분리했다.
-- FaceONNX 기본 profile은 기존 면적/종횡비/skin/edge/luma 필터 기준을 유지한다.
-- SCRFD profile은 우선 raw detector 품질을 확인하기 위해 skin/edge/luma 통계 필터를 끄고, small 후보 confidence 기준을 `0.25`로 낮췄다.
-- `AutoMaskOptions.DumpDetectionDiagnostics`와 `[AutoMaskDetectionDump]` 로그를 추가해 frame별 raw 후보 수와 post-filter 후보 수, top box 좌표/area/aspect/confidence를 확인할 수 있게 했다.
-- `ScrfdOnnxDetectorOptions.DumpDebug`, `DebugCandidateLimit`을 추가했다.
-- SCRFD debug 로그는 output tensor 이름/shape, score-box pairing, stride, feature map 크기, anchors per point, raw-after-threshold 후보와 NMS 후 top box를 출력한다.
-- `scripts/run-srcTest-smoke.ps1`에 `-ScrfdDebugDump`, `-ScrfdNoStrideScale`을 추가했다. 기존 `-ScrfdUseBgr`, `-ScrfdStretchInput`과 함께 RGB/BGR, letterbox/stretch, bbox stride scale true/false를 비교할 수 있다.
-- smoke harness에서 SCRFD 실행 시 `FaceTrackPostProcessOptions`를 별도 profile로 낮춰 `StrongConfidence=0.55`, `ShortTrackMaxConfidence=0.55`, `MinTrackIou=0.08`, `MaxCenterShiftRatio=0.75`, `MaxAreaChangeRatio=4.0`을 적용했다.
-- 기존 FaceONNX baseline 실행에는 FaceONNX detector, FaceONNX filter profile, 기존 track 옵션을 유지했다.
+寃利?clip:
 
-검증 clip:
-
-- 원본: `D:\WorkSpace\src\260101_oneday6.mp4`
+- ?먮낯: `D:\WorkSpace\src\260101_oneday6.mp4`
 - clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4`
-- 공통 조건: 원본 해상도, `DetectEveryNFrames=1`, tracking on, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `ParallelDetectorCount=2`, export 생략
-- YuNet은 이번 라운드에서도 실행하지 않았다.
+- 怨듯넻 議곌굔: ?먮낯 ?댁긽?? `DetectEveryNFrames=1`, tracking on, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `ParallelDetectorCount=2`, export ?앸왂
+- YuNet? ?대쾲 ?쇱슫?쒖뿉?쒕룄 ?ㅽ뻾?섏? ?딆븯??
 
 FaceONNX baseline:
 
 - `faceMaskFrames=19`
 - `[AutoRunSummary]`: `detector=FaceOnnxDetector/CPU`, `processed=90`, `detects=90`, `totalMs=30825~32445`
 - filter: `regular=5`, `small=5`, `rejected=0`, `statsRejected=0`
-- track 보정: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
-- baseline 얼굴 frame은 `0,14~20,33~37,41~46` 구간이었다.
+- track 蹂댁젙: `tracks=6`, `filled=8`, `lostFilled=3`, `lostFrames=44,45,46`, `removedShort=2`, `rewritten=19`
+- baseline ?쇨뎬 frame? `0,14~20,33~37,41~46` 援ш컙?댁뿀??
 
 SCRFD 500M RGB/letterbox/stride-scale on:
 
 - output: `score_8[1x12800x1]`, `score_16[1x3200x1]`, `score_32[1x800x1]`, `bbox_8[1x12800x4]`, `bbox_16[1x3200x4]`, `bbox_32[1x800x4]`
-- pairing/stride: score/bbox count 기준 pairing이 `8/16/32` stride와 `80x80/40x40/20x20`, `anchorsPerPoint=2`로 맞았다.
+- pairing/stride: score/bbox count 湲곗? pairing??`8/16/32` stride? `80x80/40x40/20x20`, `anchorsPerPoint=2`濡?留욎븯??
 - `[AutoRunSummary]`: `totalMs=4554`, filter `regular=13`, `small=3`, `rejected=1`, `statsRejected=0`
-- track 보정: `tracks=9`, `filled=14`, `lostFilled=0`, `removedShort=6`, `rewritten=24`
+- track 蹂댁젙: `tracks=9`, `filled=14`, `lostFilled=0`, `removedShort=6`, `rewritten=24`
 - `faceMaskFrames=24`
-- baseline 비교: `baselineFrames=19`, `optimizedFrames=24`, `common=8`, `onlyBaseline=11`, `onlyOptimized=16`, `avgBestIou=0.000`, `minBestIou=0.000`
-- raw 후보는 frame 3/4, 11~19, 22~34, 50 등에서 나오지만 baseline 얼굴 좌표와 겹치지 않았다.
-- 판정: output pairing과 bbox stride decode 자체는 구조상 맞아 보인다. 실패 원인은 FaceONNX용 skin/luma 필터 탈락이 아니라, raw 후보가 baseline 얼굴과 다른 위치/구간에 나오는 detector/전처리 품질 문제다.
+- baseline 鍮꾧탳: `baselineFrames=19`, `optimizedFrames=24`, `common=8`, `onlyBaseline=11`, `onlyOptimized=16`, `avgBestIou=0.000`, `minBestIou=0.000`
+- raw ?꾨낫??frame 3/4, 11~19, 22~34, 50 ?깆뿉???섏삤吏留?baseline ?쇨뎬 醫뚰몴? 寃뱀튂吏 ?딆븯??
+- ?먯젙: output pairing怨?bbox stride decode ?먯껜??援ъ“??留욎븘 蹂댁씤?? ?ㅽ뙣 ?먯씤? FaceONNX??skin/luma ?꾪꽣 ?덈씫???꾨땲?? raw ?꾨낫媛 baseline ?쇨뎬怨??ㅻⅨ ?꾩튂/援ш컙???섏삤??detector/?꾩쿂由??덉쭏 臾몄젣??
 
 SCRFD 500M `MultiplyBboxByStride=false`:
 
 - `[AutoRunSummary]`: `totalMs=5809`, filter `regular=0`, `small=0`, `rejected=24`, `statsRejected=0`
 - `faceMaskFrames=0`
-- raw top box들이 `areaRatio=0.000003~0.0001` 수준으로 지나치게 작아졌고 post-filter에서 전부 제거됐다.
-- 판정: 이 모델은 bbox distance에 stride scale을 곱해야 한다. `MultiplyBboxByStride=false`는 폐기한다.
+- raw top box?ㅼ씠 `areaRatio=0.000003~0.0001` ?섏??쇰줈 吏?섏튂寃??묒븘議뚭퀬 post-filter?먯꽌 ?꾨? ?쒓굅?먮떎.
+- ?먯젙: ??紐⑤뜽? bbox distance??stride scale??怨깊빐???쒕떎. `MultiplyBboxByStride=false`???먭린?쒕떎.
 
 SCRFD 500M BGR/letterbox/stride-scale on:
 
 - `[AutoRunSummary]`: `totalMs=5230`, filter `regular=13`, `small=2`, `rejected=4`, `statsRejected=0`
-- track 보정: `tracks=11`, `filled=13`, `lostFilled=0`, `removedShort=8`, `rewritten=20`
+- track 蹂댁젙: `tracks=11`, `filled=13`, `lostFilled=0`, `removedShort=8`, `rewritten=20`
 - `faceMaskFrames=20`
-- 일부 후보 수는 baseline과 비슷하지만 frame 3/4, 44~54, 59~65 등 baseline과 다른 구간/좌표가 중심이었다.
-- 판정: BGR 전환으로 baseline 정합이 회복되지 않았다.
+- ?쇰? ?꾨낫 ?섎뒗 baseline怨?鍮꾩듂?섏?留?frame 3/4, 44~54, 59~65 ??baseline怨??ㅻⅨ 援ш컙/醫뚰몴媛 以묒떖?댁뿀??
+- ?먯젙: BGR ?꾪솚?쇰줈 baseline ?뺥빀???뚮났?섏? ?딆븯??
 
 SCRFD 500M RGB/stretch/stride-scale on:
 
 - `[AutoRunSummary]`: `totalMs=5362`, filter `regular=64`, `small=15`, `rejected=6`, `statsRejected=0`
-- track 보정: `tracks=15`, `filled=25`, `lostFilled=1`, `removedShort=8`, `rewritten=51`
+- track 蹂댁젙: `tracks=15`, `filled=25`, `lostFilled=1`, `removedShort=8`, `rewritten=51`
 - `faceMaskFrames=51`
-- stretch는 후보를 크게 늘렸지만 다수의 optimized-only 후보가 생겨 오탐 위험이 커졌다.
-- 판정: stretch 입력은 이 clip에서 품질을 회복하지 못하고 오탐을 늘렸다.
+- stretch???꾨낫瑜??ш쾶 ?섎졇吏留??ㅼ닔??optimized-only ?꾨낫媛 ?앷꺼 ?ㅽ깘 ?꾪뿕??而ㅼ죱??
+- ?먯젙: stretch ?낅젰? ??clip?먯꽌 ?덉쭏???뚮났?섏? 紐삵븯怨??ㅽ깘???섎졇??
 
 SCRFD 10G RGB/letterbox/stride-scale on:
 
-- output: `448[12800x1]`, `471[3200x1]`, `494[800x1]`, `451[12800x4]`, `474[3200x4]`, `497[800x4]`, keypoint `454/477/500`은 last dimension 10이라 box pairing에서 제외됐다.
-- pairing/stride: score/bbox pairing은 `8/16/32` stride와 `anchorsPerPoint=2`로 맞았다.
+- output: `448[12800x1]`, `471[3200x1]`, `494[800x1]`, `451[12800x4]`, `474[3200x4]`, `497[800x4]`, keypoint `454/477/500`? last dimension 10?대씪 box pairing?먯꽌 ?쒖쇅?먮떎.
+- pairing/stride: score/bbox pairing? `8/16/32` stride? `anchorsPerPoint=2`濡?留욎븯??
 - `[AutoRunSummary]`: `totalMs=5234`, filter `regular=13`, `small=15`, `rejected=3`, `statsRejected=0`
-- track 보정: `tracks=9`, `filled=19`, `lostFilled=0`, `removedShort=5`, `rewritten=42`
+- track 蹂댁젙: `tracks=9`, `filled=19`, `lostFilled=0`, `removedShort=5`, `rewritten=42`
 - `faceMaskFrames=42`
-- baseline 비교: `baselineFrames=19`, `optimizedFrames=42`, `common=10`, `onlyBaseline=9`, `onlyOptimized=32`, `avgBestIou=0.000`, `minBestIou=0.000`
-- raw/post-filter 후보가 frame 1~7, 14~17, 30~41, 50~63, 75~79 등 baseline과 다른 구간에 집중됐다.
-- 판정: 10G도 output decode 구조는 맞아 보이지만, baseline 얼굴과 좌표가 맞지 않는다. 현재 adapter/전처리 조합에서는 raw detector 후보 품질 문제가 주된 실패 원인이다.
+- baseline 鍮꾧탳: `baselineFrames=19`, `optimizedFrames=42`, `common=10`, `onlyBaseline=9`, `onlyOptimized=32`, `avgBestIou=0.000`, `minBestIou=0.000`
+- raw/post-filter ?꾨낫媛 frame 1~7, 14~17, 30~41, 50~63, 75~79 ??baseline怨??ㅻⅨ 援ш컙??吏묒쨷?먮떎.
+- ?먯젙: 10G??output decode 援ъ“??留욎븘 蹂댁씠吏留? baseline ?쇨뎬怨?醫뚰몴媛 留욎? ?딅뒗?? ?꾩옱 adapter/?꾩쿂由?議고빀?먯꽌??raw detector ?꾨낫 ?덉쭏 臾몄젣媛 二쇰맂 ?ㅽ뙣 ?먯씤?대떎.
 
-이번 라운드 결론:
+?대쾲 ?쇱슫??寃곕줎:
 
-- FaceONNX baseline은 유지한다.
-- SCRFD 500M/10G 모두 FaceONNX skin/luma 필터 때문에만 실패한 것은 아니다. SCRFD profile로 stats 필터를 우회해도 baseline과 IoU가 0이고 optimized-only 후보가 많다.
-- `PairScoreAndBoxTensors()`는 이번 두 모델의 output shape 기준으로는 score/bbox/keypoint를 올바르게 분리했다.
-- `GuessStride()`와 anchors per point 계산도 500M/10G 모두 `8/16/32`, `2 anchors`로 맞았다.
-- `MultiplyBboxByStride=false`는 box가 지나치게 작아지는 decode 오류 경로로 확인했다.
-- RGB/BGR, letterbox/stretch 비교에서 baseline 정합을 회복한 조합은 없었다.
-- track 옵션을 SCRFD 전용으로 완화해도 raw 후보 구간/좌표 자체가 다르기 때문에 품질 실패를 해결하지 못했다.
+- FaceONNX baseline? ?좎??쒕떎.
+- SCRFD 500M/10G 紐⑤몢 FaceONNX skin/luma ?꾪꽣 ?뚮Ц?먮쭔 ?ㅽ뙣??寃껋? ?꾨땲?? SCRFD profile濡?stats ?꾪꽣瑜??고쉶?대룄 baseline怨?IoU媛 0?닿퀬 optimized-only ?꾨낫媛 留롫떎.
+- `PairScoreAndBoxTensors()`???대쾲 ??紐⑤뜽??output shape 湲곗??쇰줈??score/bbox/keypoint瑜??щ컮瑜닿쾶 遺꾨━?덈떎.
+- `GuessStride()`? anchors per point 怨꾩궛??500M/10G 紐⑤몢 `8/16/32`, `2 anchors`濡?留욎븯??
+- `MultiplyBboxByStride=false`??box媛 吏?섏튂寃??묒븘吏??decode ?ㅻ쪟 寃쎈줈濡??뺤씤?덈떎.
+- RGB/BGR, letterbox/stretch 鍮꾧탳?먯꽌 baseline ?뺥빀???뚮났??議고빀? ?놁뿀??
+- track ?듭뀡??SCRFD ?꾩슜?쇰줈 ?꾪솕?대룄 raw ?꾨낫 援ш컙/醫뚰몴 ?먯껜媛 ?ㅻⅤ湲??뚮Ц???덉쭏 ?ㅽ뙣瑜??닿껐?섏? 紐삵뻽??
 
-후보 판단:
+?꾨낫 ?먮떒:
 
-- SCRFD 500M: `보류`. 빠르고 adapter 계측은 정상화됐지만, 현재 모델/전처리 조합에서는 raw 후보가 baseline 얼굴과 맞지 않고 FaceONNX-only/SCRFD-only 차이가 크다. 다른 SCRFD variant, 입력 정규화/letterbox 구현, 모델 출처별 preprocessing을 추가 확인하기 전까지 기본/accurate 후보로 올리지 않는다.
-- SCRFD 10G: `폐기`. 500M보다 큰 모델인데도 같은 clip에서 baseline 정합이 회복되지 않고 optimized-only 후보가 더 많다. 현재 CPU/DirectML 실행에서도 500M 대비 후보 품질 이점이 확인되지 않았다.
-- 기본 detector: `FaceONNX 유지`. 이 clip 기준 FaceONNX는 baseline/postprocess가 일관되고, SCRFD는 raw 후보 단계에서 실패한다.
+- SCRFD 500M: `蹂대쪟`. 鍮좊Ⅴ怨?adapter 怨꾩륫? ?뺤긽?붾릱吏留? ?꾩옱 紐⑤뜽/?꾩쿂由?議고빀?먯꽌??raw ?꾨낫媛 baseline ?쇨뎬怨?留욎? ?딄퀬 FaceONNX-only/SCRFD-only 李⑥씠媛 ?щ떎. ?ㅻⅨ SCRFD variant, ?낅젰 ?뺢퇋??letterbox 援ы쁽, 紐⑤뜽 異쒖쿂蹂?preprocessing??異붽? ?뺤씤?섍린 ?꾧퉴吏 湲곕낯/accurate ?꾨낫濡??щ━吏 ?딅뒗??
+- SCRFD 10G: `?먭린`. 500M蹂대떎 ??紐⑤뜽?몃뜲??媛숈? clip?먯꽌 baseline ?뺥빀???뚮났?섏? ?딄퀬 optimized-only ?꾨낫媛 ??留롫떎. ?꾩옱 CPU/DirectML ?ㅽ뻾?먯꽌??500M ?鍮??꾨낫 ?덉쭏 ?댁젏???뺤씤?섏? ?딆븯??
+- 湲곕낯 detector: `FaceONNX ?좎?`. ??clip 湲곗? FaceONNX??baseline/postprocess媛 ?쇨??섍퀬, SCRFD??raw ?꾨낫 ?④퀎?먯꽌 ?ㅽ뙣?쒕떎.
 
-### 2026-05-13 SCRFD preprocessing/decode 추가 검증
+### 2026-05-13 SCRFD preprocessing/decode 異붽? 寃利?
+紐⑺몴??SCRFD 理쒖쥌 ?먭린 ?먯껜媛 ?꾨땲??FaceONNX 湲곗? ?꾩쿂由??꾪꽣???듭?濡??ㅼ뼱媛??援ъ“瑜?怨꾩냽 遺꾨━?섎㈃???ㅽ뙣 ?먯씤????醫곹엳??寃껋씠?? ?대쾲 異붽? ?쇱슫?쒖뿉?쒕룄 YuNet? ?ㅽ뻾?섏? ?딆븯??
 
-목표는 SCRFD 최종 폐기 자체가 아니라 FaceONNX 기준 후처리/필터에 억지로 들어가던 구조를 계속 분리하면서 실패 원인을 더 좁히는 것이다. 이번 추가 라운드에서도 YuNet은 실행하지 않았다.
+肄붾뱶 蹂寃?
 
-코드 변경:
+- `ScrfdOnnxDetectorOptions`??`AnchorCenterOffset`, `CenterLetterboxPadding`, `LetterboxPaddingValue`, `InputMean`, `InputStd`, `InputWidth`, `InputHeight` 湲곕컲 ?낅젰 ?ш린 override瑜?異붽??덈떎.
+- smoke script??`-ScrfdHalfStrideAnchor`, `-ScrfdCenterLetterbox`, `-ScrfdInputSize`, `-ScrfdInputMean`, `-ScrfdInputStd`, `-ScrfdPaddingValue`瑜?異붽??덈떎.
+- letterbox padding ?곸뿭? ???댁긽 tensor 湲곕낯媛?`0`?쇰줈 諛⑹튂?섏? ?딄퀬 `(paddingValue - mean) / std`濡?梨꾩슫?? 湲곕낯媛믪? InsightFace 怨꾩뿴 ?꾩쿂由ъ뿉 留욎떠 `paddingValue=0`, `mean=127.5`, `std=128`?대떎.
+- bbox anchor center??湲곗〈 `(x + 0.5) * stride`? InsightFace??`x * stride`瑜?鍮꾧탳?????덇쾶 遺꾨━?덈떎. 湲곕낯媛믪? `AnchorCenterOffset=0.0`?대떎.
+- 10G泥섎읆 ?낅젰 shape媛 ?숈쟻??紐⑤뜽? `-ScrfdInputSize`濡??낅젰 ?ш린瑜?諛붽퓭 ?쒕룄?????덇쾶 ?덈떎. 500M? model metadata媛 `1x3x640x640` 怨좎젙?대씪 640 ???낅젰? ?ъ슜?섏? ?딅뒗??
 
-- `ScrfdOnnxDetectorOptions`에 `AnchorCenterOffset`, `CenterLetterboxPadding`, `LetterboxPaddingValue`, `InputMean`, `InputStd`, `InputWidth`, `InputHeight` 기반 입력 크기 override를 추가했다.
-- smoke script에 `-ScrfdHalfStrideAnchor`, `-ScrfdCenterLetterbox`, `-ScrfdInputSize`, `-ScrfdInputMean`, `-ScrfdInputStd`, `-ScrfdPaddingValue`를 추가했다.
-- letterbox padding 영역은 더 이상 tensor 기본값 `0`으로 방치하지 않고 `(paddingValue - mean) / std`로 채운다. 기본값은 InsightFace 계열 전처리에 맞춰 `paddingValue=0`, `mean=127.5`, `std=128`이다.
-- bbox anchor center는 기존 `(x + 0.5) * stride`와 InsightFace식 `x * stride`를 비교할 수 있게 분리했다. 기본값은 `AnchorCenterOffset=0.0`이다.
-- 10G처럼 입력 shape가 동적인 모델은 `-ScrfdInputSize`로 입력 크기를 바꿔 시도할 수 있게 했다. 500M은 model metadata가 `1x3x640x640` 고정이라 640 외 입력은 사용하지 않는다.
+寃利?clip/怨듯넻 議곌굔:
 
-검증 clip/공통 조건:
+- clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4` (`D:\WorkSpace\src\260101_oneday6.mp4`?먯꽌 留뚮뱺 3珥?clip)
+- 怨듯넻 議곌굔: ?먮낯 ?댁긽?? `DetectEveryNFrames=1`, tracking on, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `ParallelDetectorCount=2`, export ?앸왂
+- FaceONNX baseline? ?ㅼ떆 `faceMaskFrames=19`, `filter regular=5/small=5/rejected=0/statsRejected=0`, track ??`rewritten=19`濡??뺤씤?먮떎.
 
-- clip: `.tmp/srcTest-smoke/oneday6-0030-3s.mp4` (`D:\WorkSpace\src\260101_oneday6.mp4`에서 만든 3초 clip)
-- 공통 조건: 원본 해상도, `DetectEveryNFrames=1`, tracking on, `DetectionThreshold=0.2`, `ConfidenceThreshold=0.25`, `NmsThreshold=0.7`, `ParallelDetectorCount=2`, export 생략
-- FaceONNX baseline은 다시 `faceMaskFrames=19`, `filter regular=5/small=5/rejected=0/statsRejected=0`, track 후 `rewritten=19`로 확인됐다.
+SCRFD 500M 異붽? 寃利?
 
-SCRFD 500M 추가 검증:
+- RGB/letterbox/top-left padding/normalized padding/anchor offset `0.0`: `faceMaskFrames=15`, filter `regular=13`, `small=2`, `rejected=3`, track ??`rewritten=15`. FaceONNX baseline ?鍮?`baselineFrames=19`, `optimizedFrames=15`, `common=2`, `onlyBaseline=17`, `onlyOptimized=13`, `avgBestIou=0.000`, `minBestIou=0.000`.
+- 媛숈? 議곌굔?먯꽌 湲곗〈 half-stride anchor offset `0.5`: `faceMaskFrames=15`, filter `regular=12`, `small=2`, `rejected=4`, track ??`rewritten=15`. anchor 湲곗????섎룎?ㅻ룄 baseline ?뺥빀? ?뚮났?섏? ?딆븯??
+- center letterbox padding: `faceMaskFrames=47`, filter `regular=31`, `small=13`, `rejected=2`, track ??`rewritten=47`. ?꾨낫媛 ?ш쾶 ?섏뼱 ?ㅽ깘 ?꾪뿕??而ㅼ죱怨?baseline ?뺥빀 媛쒖꽑 ?좏샇???놁뿀??
+- mean/std raw ?낅젰(`-ScrfdInputMean 0 -ScrfdInputStd 1`): `faceMaskFrames=46`, filter `regular=50`, `small=5`, `rejected=0`, track ??`rewritten=46`. raw ?꾨낫媛 ?ш쾶 ?섏뼱 ?ㅽ깘 ?꾪뿕??而ㅼ죱怨?baseline ?뺥빀 媛쒖꽑 ?좏샇???놁뿀??
+- 寃곕줎: 500M? output pairing/stride/anchor count肉??꾨땲??padding 媛? padding ?꾩튂, anchor center, mean/std瑜?遺꾨━?대룄 raw ?꾨낫媛 ?ㅼ젣 baseline ?쇨뎬 洹쇱쿂濡??덉젙?곸쑝濡??대룞?섏? ?딆븯?? ?ㅻ쭔 ?띾룄? adapter 援ъ“ ?먯껜???좎? 媛移섍? ?덉뼱 `蹂대쪟`濡??붾떎.
 
-- RGB/letterbox/top-left padding/normalized padding/anchor offset `0.0`: `faceMaskFrames=15`, filter `regular=13`, `small=2`, `rejected=3`, track 후 `rewritten=15`. FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=15`, `common=2`, `onlyBaseline=17`, `onlyOptimized=13`, `avgBestIou=0.000`, `minBestIou=0.000`.
-- 같은 조건에서 기존 half-stride anchor offset `0.5`: `faceMaskFrames=15`, filter `regular=12`, `small=2`, `rejected=4`, track 후 `rewritten=15`. anchor 기준을 되돌려도 baseline 정합은 회복되지 않았다.
-- center letterbox padding: `faceMaskFrames=47`, filter `regular=31`, `small=13`, `rejected=2`, track 후 `rewritten=47`. 후보가 크게 늘어 오탐 위험이 커졌고 baseline 정합 개선 신호는 없었다.
-- mean/std raw 입력(`-ScrfdInputMean 0 -ScrfdInputStd 1`): `faceMaskFrames=46`, filter `regular=50`, `small=5`, `rejected=0`, track 후 `rewritten=46`. raw 후보가 크게 늘어 오탐 위험이 커졌고 baseline 정합 개선 신호는 없었다.
-- 결론: 500M은 output pairing/stride/anchor count뿐 아니라 padding 값, padding 위치, anchor center, mean/std를 분리해도 raw 후보가 실제 baseline 얼굴 근처로 안정적으로 이동하지 않았다. 다만 속도와 adapter 구조 자체는 유지 가치가 있어 `보류`로 둔다.
+SCRFD 10G 異붽? 寃利?
 
-SCRFD 10G 추가 검증:
+- RGB/letterbox/top-left padding/normalized padding/anchor offset `0.0`: output? `448/471/494` score, `451/474/497` bbox, `454/477/500` keypoint濡?遺꾨━?먭퀬 score/bbox??stride `8/16/32`, anchors per point `2`濡??뺥빀?먮떎. `faceMaskFrames=47`, filter `regular=13`, `small=15`, `rejected=2`, track ??`rewritten=47`.
+- FaceONNX baseline ?鍮?`baselineFrames=19`, `optimizedFrames=47`, `common=10`, `onlyBaseline=9`, `onlyOptimized=37`, `avgBestIou=0.000`, `minBestIou=0.000`.
+- center letterbox padding: `faceMaskFrames=36`, filter `regular=16`, `small=10`, `rejected=2`, track ??`rewritten=36`. ?꾨낫 ?섎뒗 以꾩뿀吏留?baseline ?뺥빀???뚮났?덈떎???좏샇???놁뿀??
+- `-ScrfdInputSize 320`: 10G model metadata???숈쟻 ?낅젰泥섎읆 蹂댁씠??DirectML ?ㅽ뻾?먯꽌 `Reshape_223` ?ㅻ쪟媛 諛쒖깮????吏꾪뻾??硫덉톬?? ?곕씪???꾩옱 DML ?ㅽ뻾 寃쎈줈?먯꽌??640 ???낅젰 ?ш린 寃利앹? ?ㅽ뙣 寃쎈줈濡?湲곕줉?쒕떎.
+- 寃곕줎: 10G??500M蹂대떎 ??紐⑤뜽?댁?留?媛숈? clip?먯꽌 raw/post-filter ?꾨낫媛 baseline ?쇨뎬怨?留욎? ?딄퀬 optimized-only媛 留롫떎. ?낅젰 ?ш린 蹂寃쎈룄 ?꾩옱 ?ㅽ뻾 寃쎈줈?먯꽌 ?덉젙?곸쑝濡?寃利앸릺吏 ?딆븯?? ?곕씪??10G??`?먭린` ?먮떒???좎??쒕떎.
 
-- RGB/letterbox/top-left padding/normalized padding/anchor offset `0.0`: output은 `448/471/494` score, `451/474/497` bbox, `454/477/500` keypoint로 분리됐고 score/bbox는 stride `8/16/32`, anchors per point `2`로 정합됐다. `faceMaskFrames=47`, filter `regular=13`, `small=15`, `rejected=2`, track 후 `rewritten=47`.
-- FaceONNX baseline 대비 `baselineFrames=19`, `optimizedFrames=47`, `common=10`, `onlyBaseline=9`, `onlyOptimized=37`, `avgBestIou=0.000`, `minBestIou=0.000`.
-- center letterbox padding: `faceMaskFrames=36`, filter `regular=16`, `small=10`, `rejected=2`, track 후 `rewritten=36`. 후보 수는 줄었지만 baseline 정합을 회복했다는 신호는 없었다.
-- `-ScrfdInputSize 320`: 10G model metadata는 동적 입력처럼 보이나 DirectML 실행에서 `Reshape_223` 오류가 발생한 뒤 진행이 멈췄다. 따라서 현재 DML 실행 경로에서는 640 외 입력 크기 검증은 실패 경로로 기록한다.
-- 결론: 10G는 500M보다 큰 모델이지만 같은 clip에서 raw/post-filter 후보가 baseline 얼굴과 맞지 않고 optimized-only가 많다. 입력 크기 변경도 현재 실행 경로에서 안정적으로 검증되지 않았다. 따라서 10G는 `폐기` 판단을 유지한다.
+?꾩옱 ?먮떒:
 
-현재 판단:
+- `FaceONNX`: 湲곕낯 detector ?좎?. ??clip?먯꽌 baseline frame/postprocess媛 ?덉젙?곸씠??
+- `SCRFD 500M`: `蹂대쪟`. ?꾩쿂由ъ? bbox decode 異뺤쓣 ??遺꾨━?대룄 ?뺥빀???뚮났?섏? ?딆븯吏留? 紐⑤뜽??鍮좊Ⅴ怨?adapter ?ㅽ뿕 湲곕컲? ?④만 媛移섍? ?덈떎. ?ㅻⅨ SCRFD variant??紐⑤뜽 異쒖쿂蹂??꾩쿂由?洹쇨굅媛 異붽????뚮쭔 ?ш??좏븳??
+- `SCRFD 10G`: `?먭린`. 500M ?鍮??덉쭏 ?댁젏???녾퀬 optimized-only ?꾨낫媛 留롮쑝硫? ?숈쟻 input size 蹂寃쎈룄 ?꾩옱 DML 寃쎈줈?먯꽌 ?ㅽ뙣?덈떎.
 
-- `FaceONNX`: 기본 detector 유지. 이 clip에서 baseline frame/postprocess가 안정적이다.
-- `SCRFD 500M`: `보류`. 전처리와 bbox decode 축을 더 분리해도 정합이 회복되지 않았지만, 모델이 빠르고 adapter 실험 기반은 남길 가치가 있다. 다른 SCRFD variant나 모델 출처별 전처리 근거가 추가될 때만 재검토한다.
-- `SCRFD 10G`: `폐기`. 500M 대비 품질 이점이 없고 optimized-only 후보가 많으며, 동적 input size 변경도 현재 DML 경로에서 실패했다.
+## 2026-05-22 YOLO backend 遺꾨━ 援ы쁽 紐⑺몴
 
-## 2026-05-22 YOLO backend 분리 구현 목표
+?묒뾽 釉뚮옖移? `feature/yolo-auto-mosaic-backend`
 
-작업 브랜치: `feature/yolo-auto-mosaic-backend`
+?대쾲 ?쇱슫?쒖쓽 紐⑺몴??FaceONNX瑜??쒓굅?섍굅??湲곗〈 理쒖쟻?붽컪????뼱?곕뒗 寃껋씠 ?꾨땲?? ?꾩옱 寃利앸맂 FaceONNX ?덉쭏/?띾룄 ?ㅼ젙? 洹몃?濡?蹂댁〈?섍퀬, YOLO 怨꾩뿴 detector瑜?蹂꾨룄 backend/profile濡?異붽???媛숈? ?먮룞 紐⑥옄?댄겕 ?뚯씠?꾨씪?몄뿉???좏깮 ?ㅽ뻾?????덇쾶 留뚮뱺??
 
-이번 라운드의 목표는 FaceONNX를 제거하거나 기존 최적화값을 덮어쓰는 것이 아니다. 현재 검증된 FaceONNX 품질/속도 설정은 그대로 보존하고, YOLO 계열 detector를 별도 backend/profile로 추가해 같은 자동 모자이크 파이프라인에서 선택 실행할 수 있게 만든다.
-
-목표 문장:
+紐⑺몴 臾몄옣:
 
 ```text
-AUTO_MOSAIC_QUALITY_SPEED_PLAN.md:1 내용을 기준으로 FaceShield 자동 모자이크 파이프라인에 YOLO 기반 detector backend를 추가하고, 기존 FaceONNX 최적화 설정값과 동작은 그대로 유지한 채 FaceONNX와 YOLO를 모델별로 선택해 사용할 수 있도록 구현한다. FaceONNX용 threshold/filter/track/ROI/auto-tune 설정은 기존 검증값을 훼손하지 않고 보존하며, YOLOv8-Face 또는 YOLO5Face ONNX 후보에는 YOLO 전용 threshold, NMS, 후보 필터, small-face 처리, track 후처리, ROI 재검출, auto-tune/profile 설정을 별도로 분리해 최적화한다. 사용자는 FaceONNX와 YOLO 모델을 선택해 자동 모자이크를 실행할 수 있어야 하며, 각 모델은 서로 다른 최적화 값을 독립적으로 가져야 한다. srcTest 대표 구간에서 FaceONNX baseline과 YOLO 후보를 A/B 비교하고, YOLO가 실제 미탐/오탐/깜박임/박스 튐 품질을 유지하거나 개선하면서 자동 검출 totalMs 또는 export totalMs를 줄이는지 검증한다. 품질 gate를 통과한 YOLO 설정만 추천 후보로 문서화하고, 실패한 YOLO 설정은 원인과 보류/폐기 판단을 AUTO_MOSAIC_QUALITY_SPEED_PLAN.md에 기록한다. 이 목표에는 branch 생성, commit, push, pull, reset, stash 같은 git 작업은 포함하지 않는다. git 관련 작업은 별도 사용자 지시가 있을 때만 수행한다. 그 외 목표 범위 안의 코드 구현, 문서 수정, 로컬 빌드, smoke 실행, 모델 후보 다운로드/검증, A/B 테스트, 디버그 로그 추가, threshold/profile 튜닝은 사용자에게 매번 확인하지 않고 자율적으로 진행한다.
+AUTO_MOSAIC_QUALITY_SPEED_PLAN.md:1 ?댁슜??湲곗??쇰줈 FaceShield ?먮룞 紐⑥옄?댄겕 ?뚯씠?꾨씪?몄뿉 YOLO 湲곕컲 detector backend瑜?異붽??섍퀬, 湲곗〈 FaceONNX 理쒖쟻???ㅼ젙媛믨낵 ?숈옉? 洹몃?濡??좎???梨?FaceONNX? YOLO瑜?紐⑤뜽蹂꾨줈 ?좏깮???ъ슜?????덈룄濡?援ы쁽?쒕떎. FaceONNX??threshold/filter/track/ROI/auto-tune ?ㅼ젙? 湲곗〈 寃利앷컪???쇱넀?섏? ?딄퀬 蹂댁〈?섎ŉ, YOLOv8-Face ?먮뒗 YOLO5Face ONNX ?꾨낫?먮뒗 YOLO ?꾩슜 threshold, NMS, ?꾨낫 ?꾪꽣, small-face 泥섎━, track ?꾩쿂由? ROI ?ш?異? auto-tune/profile ?ㅼ젙??蹂꾨룄濡?遺꾨━??理쒖쟻?뷀븳?? ?ъ슜?먮뒗 FaceONNX? YOLO 紐⑤뜽???좏깮???먮룞 紐⑥옄?댄겕瑜??ㅽ뻾?????덉뼱???섎ŉ, 媛?紐⑤뜽? ?쒕줈 ?ㅻⅨ 理쒖쟻??媛믪쓣 ?낅┰?곸쑝濡?媛?몄빞 ?쒕떎. srcTest ???援ш컙?먯꽌 FaceONNX baseline怨?YOLO ?꾨낫瑜?A/B 鍮꾧탳?섍퀬, YOLO媛 ?ㅼ젣 誘명깘/?ㅽ깘/源쒕컯??諛뺤뒪 ???덉쭏???좎??섍굅??媛쒖꽑?섎㈃???먮룞 寃異?totalMs ?먮뒗 export totalMs瑜?以꾩씠?붿? 寃利앺븳?? ?덉쭏 gate瑜??듦낵??YOLO ?ㅼ젙留?異붿쿇 ?꾨낫濡?臾몄꽌?뷀븯怨? ?ㅽ뙣??YOLO ?ㅼ젙? ?먯씤怨?蹂대쪟/?먭린 ?먮떒??AUTO_MOSAIC_QUALITY_SPEED_PLAN.md??湲곕줉?쒕떎. ??紐⑺몴?먮뒗 branch ?앹꽦, commit, push, pull, reset, stash 媛숈? git ?묒뾽? ?ы븿?섏? ?딅뒗?? git 愿???묒뾽? 蹂꾨룄 ?ъ슜??吏?쒓? ?덉쓣 ?뚮쭔 ?섑뻾?쒕떎. 洹???紐⑺몴 踰붿쐞 ?덉쓽 肄붾뱶 援ы쁽, 臾몄꽌 ?섏젙, 濡쒖뺄 鍮뚮뱶, smoke ?ㅽ뻾, 紐⑤뜽 ?꾨낫 ?ㅼ슫濡쒕뱶/寃利? A/B ?뚯뒪?? ?붾쾭洹?濡쒓렇 異붽?, threshold/profile ?쒕떇? ?ъ슜?먯뿉寃?留ㅻ쾲 ?뺤씤?섏? ?딄퀬 ?먯쑉?곸쑝濡?吏꾪뻾?쒕떎.
 ```
 
-핵심 조건:
+?듭떖 議곌굔:
 
-- 이 목표 범위에서 git 작업은 제외한다. branch 생성, commit, push, pull, reset, stash 등은 별도 지시가 있을 때만 수행한다.
-- git을 제외한 구현/수정/로컬 검증/모델 후보 실험은 매 단계 승인 요청 없이 자율적으로 진행한다.
-- FaceONNX 기존 기본값과 검증값은 변경하지 않는다.
-- FaceONNX와 YOLO는 같은 설정 객체를 공유하지 않고 detector별 profile을 가진다.
-- 사용자는 FaceONNX와 YOLO 모델을 선택해서 자동 모자이크를 실행할 수 있어야 한다.
-- YOLO threshold, NMS, 후보 필터, small-face 기준, track 후처리, ROI 재검출, auto-tune 후보는 YOLO 전용 값으로 분리한다.
-- YOLO가 FaceONNX보다 빠르더라도 실제 미탐, 실제 오탐, 깜박임, 박스 튐이 늘면 기본값으로 승격하지 않는다.
-- YOLO가 품질 gate를 통과하지 못하면 실패 원인을 모델, decode, 전처리, post-filter, track/ROI 중 어디인지 분리해서 기록한다.
+- ??紐⑺몴 踰붿쐞?먯꽌 git ?묒뾽? ?쒖쇅?쒕떎. branch ?앹꽦, commit, push, pull, reset, stash ?깆? 蹂꾨룄 吏?쒓? ?덉쓣 ?뚮쭔 ?섑뻾?쒕떎.
+- git???쒖쇅??援ы쁽/?섏젙/濡쒖뺄 寃利?紐⑤뜽 ?꾨낫 ?ㅽ뿕? 留??④퀎 ?뱀씤 ?붿껌 ?놁씠 ?먯쑉?곸쑝濡?吏꾪뻾?쒕떎.
+- FaceONNX 湲곗〈 湲곕낯媛믨낵 寃利앷컪? 蹂寃쏀븯吏 ?딅뒗??
+- FaceONNX? YOLO??媛숈? ?ㅼ젙 媛앹껜瑜?怨듭쑀?섏? ?딄퀬 detector蹂?profile??媛吏꾨떎.
+- ?ъ슜?먮뒗 FaceONNX? YOLO 紐⑤뜽???좏깮?댁꽌 ?먮룞 紐⑥옄?댄겕瑜??ㅽ뻾?????덉뼱???쒕떎.
+- YOLO threshold, NMS, ?꾨낫 ?꾪꽣, small-face 湲곗?, track ?꾩쿂由? ROI ?ш?異? auto-tune ?꾨낫??YOLO ?꾩슜 媛믪쑝濡?遺꾨━?쒕떎.
+- YOLO媛 FaceONNX蹂대떎 鍮좊Ⅴ?붾씪???ㅼ젣 誘명깘, ?ㅼ젣 ?ㅽ깘, 源쒕컯?? 諛뺤뒪 ?먯씠 ?섎㈃ 湲곕낯媛믪쑝濡??밴꺽?섏? ?딅뒗??
+- YOLO媛 ?덉쭏 gate瑜??듦낵?섏? 紐삵븯硫??ㅽ뙣 ?먯씤??紐⑤뜽, decode, ?꾩쿂由? post-filter, track/ROI 以??대뵒?몄? 遺꾨━?댁꽌 湲곕줉?쒕떎.
 
-우선 검토 후보:
+?곗꽑 寃???꾨낫:
 
 1. `YOLOv8-Face`
-   - `nano`는 속도 후보로 본다.
-   - `medium`은 품질 후보로 본다.
-   - 단점: 공개 구현/weight의 라이선스가 GPL/Ultralytics 계열일 수 있으므로 배포 전 확인이 필요하다.
+   - `nano`???띾룄 ?꾨낫濡?蹂몃떎.
+   - `medium`? ?덉쭏 ?꾨낫濡?蹂몃떎.
+   - ?⑥젏: 怨듦컻 援ы쁽/weight???쇱씠?좎뒪媛 GPL/Ultralytics 怨꾩뿴?????덉쑝誘濡?諛고룷 ???뺤씤???꾩슂?섎떎.
 
 2. `YOLO5Face`
-   - 작은 얼굴과 어려운 각도 대응 후보로 본다.
-   - `n/s` 계열부터 ONNX runtime adapter를 붙여 속도와 품질을 확인한다.
-   - 단점: 모델 파일 출처와 라이선스 확인이 필요하다.
+   - ?묒? ?쇨뎬怨??대젮??媛곷룄 ????꾨낫濡?蹂몃떎.
+   - `n/s` 怨꾩뿴遺??ONNX runtime adapter瑜?遺숈뿬 ?띾룄? ?덉쭏???뺤씤?쒕떎.
+   - ?⑥젏: 紐⑤뜽 ?뚯씪 異쒖쿂? ?쇱씠?좎뒪 ?뺤씤???꾩슂?섎떎.
 
-초기 구현 방향:
+珥덇린 援ы쁽 諛⑺뼢:
 
-- `FaceDetectorBackend`에 YOLO 계열 backend를 추가한다.
-- `YoloFaceOnnxDetectorOptions`와 `YoloFaceOnnxDetector`를 새로 추가한다.
-- YOLO output decode는 모델별 output shape를 먼저 inspect하고, anchor-free/anchor-based 구조를 명확히 분리한다.
-- `FaceDetectorFactoryOptions`는 FaceONNX, SCRFD, YuNet, YOLO option을 독립적으로 가진다.
-- `AutoMaskOptions.FilterProfile`에 YOLO profile을 추가하고 FaceONNX/SCRFD/YuNet과 분리한다.
-- smoke script에 `-YoloModelPath`, `-YoloModelType`, `-YoloInputSize`, `-YoloConfidenceThreshold`, `-YoloNmsThreshold`, `-YoloDebugDump` 옵션을 추가한다.
-- A/B 비교는 FaceONNX baseline을 기준으로 `faceMaskFrames`, `onlyBaseline`, `onlyOptimized`, `avgBestIou`, `minBestIou`, track/ROI 로그를 같이 본다.
+- `FaceDetectorBackend`??YOLO 怨꾩뿴 backend瑜?異붽??쒕떎.
+- `YoloFaceOnnxDetectorOptions`? `YoloFaceOnnxDetector`瑜??덈줈 異붽??쒕떎.
+- YOLO output decode??紐⑤뜽蹂?output shape瑜?癒쇱? inspect?섍퀬, anchor-free/anchor-based 援ъ“瑜?紐낇솗??遺꾨━?쒕떎.
+- `FaceDetectorFactoryOptions`??FaceONNX, SCRFD, YuNet, YOLO option???낅┰?곸쑝濡?媛吏꾨떎.
+- `AutoMaskOptions.FilterProfile`??YOLO profile??異붽??섍퀬 FaceONNX/SCRFD/YuNet怨?遺꾨━?쒕떎.
+- smoke script??`-YoloModelPath`, `-YoloModelType`, `-YoloInputSize`, `-YoloConfidenceThreshold`, `-YoloNmsThreshold`, `-YoloDebugDump` ?듭뀡??異붽??쒕떎.
+- A/B 鍮꾧탳??FaceONNX baseline??湲곗??쇰줈 `faceMaskFrames`, `onlyBaseline`, `onlyOptimized`, `avgBestIou`, `minBestIou`, track/ROI 濡쒓렇瑜?媛숈씠 蹂몃떎.
 
-검증 기준:
+寃利?湲곗?:
 
-- 기본 FaceONNX gate는 기존과 동일하게 통과해야 한다.
-- YOLO 후보는 같은 clip에서 FaceONNX baseline 대비 frame 누락/추가, 박스 수 차이, 낮은 IoU가 작아야 한다.
-- `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou`는 실제 오탐/미탐 판정이 아니라 baseline-diff 신호로 기록한다.
-- 실제 미탐/오탐은 representative overlay 육안 확인 또는 GT 라벨 기준으로만 확정한다.
-- YOLO의 자동 검출 wall-clock은 `[AutoRunSummary].totalMs`로 판단한다. 병렬 thread 누적값인 `detectMs`만으로 빠르다고 판단하지 않는다.
-- 대표 clip gate를 통과한 YOLO 후보만 30초 이상 구간과 export smoke로 확장한다.
-- 전체 목표 완료 전에는 Avalonia GUI에서 detector 선택, 자동 검출, preview, export 흐름도 확인해야 한다.
+- 湲곕낯 FaceONNX gate??湲곗〈怨??숈씪?섍쾶 ?듦낵?댁빞 ?쒕떎.
+- YOLO ?꾨낫??媛숈? clip?먯꽌 FaceONNX baseline ?鍮?frame ?꾨씫/異붽?, 諛뺤뒪 ??李⑥씠, ??? IoU媛 ?묒븘???쒕떎.
+- `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou`???ㅼ젣 ?ㅽ깘/誘명깘 ?먯젙???꾨땲??baseline-diff ?좏샇濡?湲곕줉?쒕떎.
+- ?ㅼ젣 誘명깘/?ㅽ깘? representative overlay ?≪븞 ?뺤씤 ?먮뒗 GT ?쇰꺼 湲곗??쇰줈留??뺤젙?쒕떎.
+- YOLO???먮룞 寃異?wall-clock? `[AutoRunSummary].totalMs`濡??먮떒?쒕떎. 蹂묐젹 thread ?꾩쟻媛믪씤 `detectMs`留뚯쑝濡?鍮좊Ⅴ?ㅺ퀬 ?먮떒?섏? ?딅뒗??
+- ???clip gate瑜??듦낵??YOLO ?꾨낫留?30珥??댁긽 援ш컙怨?export smoke濡??뺤옣?쒕떎.
+- ?꾩껜 紐⑺몴 ?꾨즺 ?꾩뿉??Avalonia GUI?먯꽌 detector ?좏깮, ?먮룞 寃異? preview, export ?먮쫫???뺤씤?댁빞 ?쒕떎.
 
-## 2026-05-22 YOLO backend 1차 구현 및 YOLOv8n 후보 smoke
+## 2026-05-22 YOLO backend 1李?援ы쁽 諛?YOLOv8n ?꾨낫 smoke
 
-구현 상태:
+援ы쁽 ?곹깭:
 
-- `FaceDetectorBackend.YoloFaceOnnx`를 추가했다.
-- `YoloFaceOnnxDetectorOptions`, `YoloFaceModelType`, `YoloFaceOnnxDetector`를 추가했다.
-- `YoloFaceOnnxDetector`는 ONNX Runtime으로 YOLOv8-Face/YOLO5Face 계열 후보를 실행하고, `[1,N,F]` 또는 `[1,F,N]` 형태의 YOLO 후보 텐서를 해석한다. YOLO5Face의 raw 3-scale feature map `[1,48,H,W]` 출력은 별도 decode 경로에서 처리한다.
-- `FaceDetectorFactoryOptions`는 FaceONNX/SCRFD/YuNet/YOLO option을 별도 프로퍼티로 가진다.
-- `AutoMaskOptions.FilterProfile`에 `Yolo`를 추가했고, YOLO 후보 필터는 FaceONNX와 분리했다.
-- `WorkspaceViewModel`의 자동 실행 경로는 FaceONNX backend에서만 기존 `DetectorAutoTuner`를 적용하고, YOLO backend에서는 YOLO factory/options를 유지한다.
-- 홈 자동 옵션 UI에서 `FaceONNX`와 `YOLO Face ONNX`를 선택할 수 있게 했다. YOLO 선택 시 YOLO 모델 종류, `.onnx` 경로, 입력 크기, objectness/confidence/NMS 값을 별도 입력한다.
-- `scripts/run-srcTest-smoke.ps1`에 `-YoloModelPath`, `-YoloModelType`, `-YoloInputSize`, `-YoloObjectnessThreshold`, `-YoloConfidenceThreshold`, `-YoloNmsThreshold`, `-YoloDebugDump` 옵션을 추가했다. 이후 진단용으로 `-DumpCompareDetails`, `-YoloUseFaceOnnxRoiRefine`, `-YoloFaceOnnxRoiMinAreaRatio`, `-YoloFaceOnnxRoiMaxCandidates`도 추가했다.
+- `FaceDetectorBackend.YoloFaceOnnx`瑜?異붽??덈떎.
+- `YoloFaceOnnxDetectorOptions`, `YoloFaceModelType`, `YoloFaceOnnxDetector`瑜?異붽??덈떎.
+- `YoloFaceOnnxDetector`??ONNX Runtime?쇰줈 YOLOv8-Face/YOLO5Face 怨꾩뿴 ?꾨낫瑜??ㅽ뻾?섍퀬, `[1,N,F]` ?먮뒗 `[1,F,N]` ?뺥깭??YOLO ?꾨낫 ?먯꽌瑜??댁꽍?쒕떎. YOLO5Face??raw 3-scale feature map `[1,48,H,W]` 異쒕젰? 蹂꾨룄 decode 寃쎈줈?먯꽌 泥섎━?쒕떎.
+- `FaceDetectorFactoryOptions`??FaceONNX/SCRFD/YuNet/YOLO option??蹂꾨룄 ?꾨줈?쇳떚濡?媛吏꾨떎.
+- `AutoMaskOptions.FilterProfile`??`Yolo`瑜?異붽??덇퀬, YOLO ?꾨낫 ?꾪꽣??FaceONNX? 遺꾨━?덈떎.
+- `WorkspaceViewModel`???먮룞 ?ㅽ뻾 寃쎈줈??FaceONNX backend?먯꽌留?湲곗〈 `DetectorAutoTuner`瑜??곸슜?섍퀬, YOLO backend?먯꽌??YOLO factory/options瑜??좎??쒕떎.
+- ???먮룞 ?듭뀡 UI?먯꽌 `FaceONNX`? `YOLO Face ONNX`瑜??좏깮?????덇쾶 ?덈떎. YOLO ?좏깮 ??YOLO 紐⑤뜽 醫낅쪟, `.onnx` 寃쎈줈, ?낅젰 ?ш린, objectness/confidence/NMS 媛믪쓣 蹂꾨룄 ?낅젰?쒕떎.
+- `scripts/run-srcTest-smoke.ps1`??`-YoloModelPath`, `-YoloModelType`, `-YoloInputSize`, `-YoloObjectnessThreshold`, `-YoloConfidenceThreshold`, `-YoloNmsThreshold`, `-YoloDebugDump` ?듭뀡??異붽??덈떎. ?댄썑 吏꾨떒?⑹쑝濡?`-DumpCompareDetails`, `-YoloUseFaceOnnxRoiRefine`, `-YoloFaceOnnxRoiMinAreaRatio`, `-YoloFaceOnnxRoiMaxCandidates`??異붽??덈떎.
 
-FaceONNX 회귀 검증:
+FaceONNX ?뚭? 寃利?
 
-- `dotnet build FaceShield.sln` 성공.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
-- 기본 verifier의 quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- 같은 verifier에서 ROI-hit 대표 구간은 `attempts=11`, `hits=5`를 유지했다.
-- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=53,703ms`로 통과했다. 현재 장비/부하에서는 튜너가 CPU 2세션을 선택했다.
+- `dotnet build FaceShield.sln` ?깃났.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾 ?깃났.
+- 湲곕낯 verifier??quality gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- 媛숈? verifier?먯꽌 ROI-hit ???援ш컙? `attempts=11`, `hits=5`瑜??좎??덈떎.
+- auto-tune short gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=53,703ms`濡??듦낵?덈떎. ?꾩옱 ?λ퉬/遺?섏뿉?쒕뒗 ?쒕꼫媛 CPU 2?몄뀡???좏깮?덈떎.
 
-YOLO 후보:
+YOLO ?꾨낫:
 
-- 다운로드 후보: `lindevs/yolov8-face` release `1.0.1`의 `yolov8n-face-lindevs.onnx`.
-- 로컬 경로: `.tmp/models/yolov8n-face-lindevs.onnx`.
+- ?ㅼ슫濡쒕뱶 ?꾨낫: `lindevs/yolov8-face` release `1.0.1`??`yolov8n-face-lindevs.onnx`.
+- 濡쒖뺄 寃쎈줈: `.tmp/models/yolov8n-face-lindevs.onnx`.
 - SHA-256: `8d0bfb0c3383c5bd7a78dd24ef79a21e2aa456619b6ab5e53867092d1c7dc414`.
-- 모델 metadata: input `images[1x3x640x640]`, output `output0[1x5x8400]`.
-- 라이선스/배포 적합성은 아직 확정하지 않았다. 후보 실험용 로컬 파일로만 취급한다.
+- 紐⑤뜽 metadata: input `images[1x3x640x640]`, output `output0[1x5x8400]`.
+- ?쇱씠?좎뒪/諛고룷 ?곹빀?깆? ?꾩쭅 ?뺤젙?섏? ?딆븯?? ?꾨낫 ?ㅽ뿕??濡쒖뺄 ?뚯씪濡쒕쭔 痍④툒?쒕떎.
 
-YOLOv8n 기본 threshold smoke:
+YOLOv8n 湲곕낯 threshold smoke:
 
-- 명령:
+- 紐낅졊:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.25 -YoloConfidenceThreshold 0.35 -YoloNmsThreshold 0.45 -YoloDebugDump
 ```
 
-- adapter 실행은 성공했다.
-- YOLO optimized `totalMs=14,655ms`로 FaceONNX baseline `totalMs=62,090ms`보다 빨랐다.
-- 하지만 YOLO는 후처리 후 `faceMaskFrames=0`이었다.
-- A/B 결과는 `baselineFrames=19`, `optimizedFrames=0`, `onlyBaseline=19`, `onlyOptimized=0`, `avgBestIou=0.000`, `minBestIou=0.000`, `passed=False`.
-- 판단: `폐기`. 이 threshold는 알려진 얼굴 구간에서 최종 마스크가 0프레임이라 quality gate를 통과하지 못한다.
+- adapter ?ㅽ뻾? ?깃났?덈떎.
+- YOLO optimized `totalMs=14,655ms`濡?FaceONNX baseline `totalMs=62,090ms`蹂대떎 鍮⑤옄??
+- ?섏?留?YOLO???꾩쿂由???`faceMaskFrames=0`?댁뿀??
+- A/B 寃곌낵??`baselineFrames=19`, `optimizedFrames=0`, `onlyBaseline=19`, `onlyOptimized=0`, `avgBestIou=0.000`, `minBestIou=0.000`, `passed=False`.
+- ?먮떒: `?먭린`. ??threshold???뚮젮吏??쇨뎬 援ш컙?먯꽌 理쒖쥌 留덉뒪?ш? 0?꾨젅?꾩씠??quality gate瑜??듦낵?섏? 紐삵븳??
 
 YOLOv8n low-threshold smoke:
 
-- 명령:
+- 紐낅졊:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.05 -YoloConfidenceThreshold 0.05 -YoloNmsThreshold 0.45
 ```
 
-- YOLO optimized `totalMs=13,033ms`로 FaceONNX baseline `totalMs=59,679ms`보다 빨랐다.
-- 후보는 생겼지만 후처리 후 `faceMaskFrames=8`에 그쳤다.
-- A/B 결과는 `baselineFrames=19`, `optimizedFrames=8`, `common=8`, `onlyBaseline=11`, `onlyOptimized=0`, `avgBestIou=0.603`, `minBestIou=0.048`, `boxCountDiffFrames=7`, `passed=False`.
-- 판단: `보류`. 속도는 유의미하게 빠르지만 미탐과 박스 정합 실패가 커서 추천 후보가 아니다. 실패 축은 모델 후보의 작은 얼굴/장면 적합성, 640 고정 입력 해상도, low-threshold 후보의 위치 정합, YOLO 전용 후처리 모두에 걸쳐 있다. 현재 증거만으로는 decode 자체 실패라고 단정하지 않는다.
+- YOLO optimized `totalMs=13,033ms`濡?FaceONNX baseline `totalMs=59,679ms`蹂대떎 鍮⑤옄??
+- ?꾨낫???앷꼈吏留??꾩쿂由???`faceMaskFrames=8`??洹몄낀??
+- A/B 寃곌낵??`baselineFrames=19`, `optimizedFrames=8`, `common=8`, `onlyBaseline=11`, `onlyOptimized=0`, `avgBestIou=0.603`, `minBestIou=0.048`, `boxCountDiffFrames=7`, `passed=False`.
+- ?먮떒: `蹂대쪟`. ?띾룄???좎쓽誘명븯寃?鍮좊Ⅴ吏留?誘명깘怨?諛뺤뒪 ?뺥빀 ?ㅽ뙣媛 而ㅼ꽌 異붿쿇 ?꾨낫媛 ?꾨땲?? ?ㅽ뙣 異뺤? 紐⑤뜽 ?꾨낫???묒? ?쇨뎬/?λ㈃ ?곹빀?? 640 怨좎젙 ?낅젰 ?댁긽?? low-threshold ?꾨낫???꾩튂 ?뺥빀, YOLO ?꾩슜 ?꾩쿂由?紐⑤몢??嫄몄퀜 ?덈떎. ?꾩옱 利앷굅留뚯쑝濡쒕뒗 decode ?먯껜 ?ㅽ뙣?쇨퀬 ?⑥젙?섏? ?딅뒗??
 
-현재 추천 후보:
+?꾩옱 異붿쿇 ?꾨낫:
 
-- 없음.
+- ?놁쓬.
 
-다음 후보:
+?ㅼ쓬 ?꾨낫:
 
-- 같은 adapter로 다른 YOLOv8-Face 후보를 비교한다. 우선순위는 더 큰 입력 또는 더 높은 mAP 후보지만, 현재 모델은 metadata가 `1x3x640x640` 고정이라 단순 `-YoloInputSize 1280` 실험은 먼저 모델 동적 입력 여부를 확인한 뒤 진행한다.
-- YOLO5Face ONNX 후보를 확보해 `Yolo5Face` decode 경로를 검증한다.
-- YOLO가 3초 gate를 통과하기 전에는 30초/export smoke로 승격하지 않는다.
+- 媛숈? adapter濡??ㅻⅨ YOLOv8-Face ?꾨낫瑜?鍮꾧탳?쒕떎. ?곗꽑?쒖쐞???????낅젰 ?먮뒗 ???믪? mAP ?꾨낫吏留? ?꾩옱 紐⑤뜽? metadata媛 `1x3x640x640` 怨좎젙?대씪 ?⑥닚 `-YoloInputSize 1280` ?ㅽ뿕? 癒쇱? 紐⑤뜽 ?숈쟻 ?낅젰 ?щ?瑜??뺤씤????吏꾪뻾?쒕떎.
+- YOLO5Face ONNX ?꾨낫瑜??뺣낫??`Yolo5Face` decode 寃쎈줈瑜?寃利앺븳??
+- YOLO媛 3珥?gate瑜??듦낵?섍린 ?꾩뿉??30珥?export smoke濡??밴꺽?섏? ?딅뒗??
 
-## 2026-05-22 YOLO tiling 실험
+## 2026-05-22 YOLO tiling ?ㅽ뿕
 
-구현 상태:
+援ы쁽 ?곹깭:
 
-- `YoloFaceOnnxDetectorOptions`에 `UseTiling`, `IncludeFullFrameWhenTiling`, `TileColumns`, `TileRows`, `TileOverlapRatio`를 추가했다.
-- `YoloFaceOnnxDetector`는 전체 프레임 단일 추론 외에 source frame을 겹치는 tile region으로 나눠 YOLO를 실행할 수 있다.
-- 홈 자동 옵션 UI에 YOLO 전용 타일 검출, 타일만 실행, 타일 행/열, 타일 겹침 값을 추가했다.
-- `scripts/run-srcTest-smoke.ps1`에 `-YoloUseTiling`, `-YoloTileOnly`, `-YoloTileColumns`, `-YoloTileRows`, `-YoloTileOverlapRatio`를 추가했다.
+- `YoloFaceOnnxDetectorOptions`??`UseTiling`, `IncludeFullFrameWhenTiling`, `TileColumns`, `TileRows`, `TileOverlapRatio`瑜?異붽??덈떎.
+- `YoloFaceOnnxDetector`???꾩껜 ?꾨젅???⑥씪 異붾줎 ?몄뿉 source frame??寃뱀튂??tile region?쇰줈 ?섎닠 YOLO瑜??ㅽ뻾?????덈떎.
+- ???먮룞 ?듭뀡 UI??YOLO ?꾩슜 ???寃異? ??쇰쭔 ?ㅽ뻾, ??????? ???寃뱀묠 媛믪쓣 異붽??덈떎.
+- `scripts/run-srcTest-smoke.ps1`??`-YoloUseTiling`, `-YoloTileOnly`, `-YoloTileColumns`, `-YoloTileRows`, `-YoloTileOverlapRatio`瑜?異붽??덈떎.
 
-실험 1: YOLOv8n low-threshold + 2x2 tile-only
+?ㅽ뿕 1: YOLOv8n low-threshold + 2x2 tile-only
 
-- 명령:
+- 紐낅졊:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.05 -YoloConfidenceThreshold 0.05 -YoloNmsThreshold 0.45 -YoloUseTiling -YoloTileOnly -YoloTileColumns 2 -YoloTileRows 2 -YoloTileOverlapRatio 0.15
@@ -1488,98 +1467,98 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smok
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=58,923ms`.
 - YOLO tile-only: `optimizedFrames=16`, `totalMs=46,520ms`.
-- A/B 결과: `common=9`, `onlyBaseline=10`, `onlyOptimized=7`, `avgBestIou=0.741`, `minBestIou=0.572`, `boxCountDiffFrames=8`, `passed=False`.
-- 판단: `보류`. tiling은 FaceONNX-only frame을 일부 줄였지만 YOLO-only/불일치 frame이 생겼고 IoU gate를 통과하지 못했다. 속도도 non-tiled YOLO보다 크게 느려졌다.
+- A/B 寃곌낵: `common=9`, `onlyBaseline=10`, `onlyOptimized=7`, `avgBestIou=0.741`, `minBestIou=0.572`, `boxCountDiffFrames=8`, `passed=False`.
+- ?먮떒: `蹂대쪟`. tiling? FaceONNX-only frame???쇰? 以꾩?吏留?YOLO-only/遺덉씪移?frame???앷꼈怨?IoU gate瑜??듦낵?섏? 紐삵뻽?? ?띾룄??non-tiled YOLO蹂대떎 ?ш쾶 ?먮젮議뚮떎.
 
-실험 2: YOLOv8n low-threshold + full-frame + 2x2 tile
+?ㅽ뿕 2: YOLOv8n low-threshold + full-frame + 2x2 tile
 
-- 명령:
+- 紐낅졊:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipBaseline -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/yolov8n-face-lindevs.onnx -YoloModelType YoloV8Face -YoloInputSize 640 -YoloObjectnessThreshold 0.05 -YoloConfidenceThreshold 0.05 -YoloNmsThreshold 0.45 -YoloUseTiling -YoloTileColumns 2 -YoloTileRows 2 -YoloTileOverlapRatio 0.15
 ```
 
 - YOLO full+tile: `faceMaskFrames=23`, `totalMs=61,397ms`, ROI refine `attempts=8`, `hits=1`.
-- 이 실행은 빠른 진단용으로 baseline compare를 생략했다.
-- 판단: `보류`. frame 수는 baseline 19보다 많아졌지만, 직전 tile-only A/B에서 이미 `onlyOptimized`가 발생했고 full+tile은 `totalMs`가 FaceONNX baseline 수준까지 올라왔다. 따라서 추천 후보로 승격하지 않는다.
+- ???ㅽ뻾? 鍮좊Ⅸ 吏꾨떒?⑹쑝濡?baseline compare瑜??앸왂?덈떎.
+- ?먮떒: `蹂대쪟`. frame ?섎뒗 baseline 19蹂대떎 留롮븘議뚯?留? 吏곸쟾 tile-only A/B?먯꽌 ?대? `onlyOptimized`媛 諛쒖깮?덇퀬 full+tile? `totalMs`媛 FaceONNX baseline ?섏?源뚯? ?щ씪?붾떎. ?곕씪??異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
 
-현재 YOLOv8n 정리:
+?꾩옱 YOLOv8n ?뺣━:
 
-- non-tiled low-threshold: 빠르지만 `optimizedFrames=8`, IoU 실패.
-- tile-only low-threshold: 미탐은 줄었지만 `onlyBaseline=10`, `onlyOptimized=7`, IoU 실패.
-- full+tile low-threshold: 후보 수는 늘었지만 속도 이점이 거의 사라지고 오탐 가능성이 커졌다.
-- 따라서 `yolov8n-face-lindevs.onnx`는 현재 `보류` 유지. 추천 후보 없음.
+- non-tiled low-threshold: 鍮좊Ⅴ吏留?`optimizedFrames=8`, IoU ?ㅽ뙣.
+- tile-only low-threshold: 誘명깘? 以꾩뿀吏留?`onlyBaseline=10`, `onlyOptimized=7`, IoU ?ㅽ뙣.
+- full+tile low-threshold: ?꾨낫 ?섎뒗 ?섏뿀吏留??띾룄 ?댁젏??嫄곗쓽 ?щ씪吏怨??ㅽ깘 媛?μ꽦??而ㅼ죱??
+- ?곕씪??`yolov8n-face-lindevs.onnx`???꾩옱 `蹂대쪟` ?좎?. 異붿쿇 ?꾨낫 ?놁쓬.
 
-9분 2초 추가 gate:
+9遺?2珥?異붽? gate:
 
-- `YoloObjectnessThreshold=0.05`, `YoloConfidenceThreshold=0.05`, `YoloNmsThreshold=0.45` low-threshold 조합을 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`에서 재검증했다.
+- `YoloObjectnessThreshold=0.05`, `YoloConfidenceThreshold=0.05`, `YoloNmsThreshold=0.45` low-threshold 議고빀??`.tmp/srcTest-smoke/smoke-0900-2s.mp4`?먯꽌 ?ш?利앺뻽??
 - FaceONNX baseline: `baselineFrames=55`, `totalMs=24,280ms`.
 - YOLOv8n optimized: `optimizedFrames=62`, `totalMs=12,401ms`.
-- A/B 결과: `common=55`, `onlyBaseline=0`, `onlyOptimized=7`, `avgBestIou=0.731`, `minBestIou=0.488`, `boxCountDiffFrames=39`, `passed=False`.
-- 추가 frame은 `0,1,2,3,4,8,9`였고, low-threshold 특성상 화면 상단 작은 얼굴 후보 외에 하단/중단 물체성 후보도 같이 들어왔다.
-- `YoloObjectnessThreshold=0.20`, `YoloConfidenceThreshold=0.20`, `YoloNmsThreshold=0.45` 중간 threshold도 확인했다.
+- A/B 寃곌낵: `common=55`, `onlyBaseline=0`, `onlyOptimized=7`, `avgBestIou=0.731`, `minBestIou=0.488`, `boxCountDiffFrames=39`, `passed=False`.
+- 異붽? frame? `0,1,2,3,4,8,9`?怨? low-threshold ?뱀꽦???붾㈃ ?곷떒 ?묒? ?쇨뎬 ?꾨낫 ?몄뿉 ?섎떒/以묐떒 臾쇱껜???꾨낫??媛숈씠 ?ㅼ뼱?붾떎.
+- `YoloObjectnessThreshold=0.20`, `YoloConfidenceThreshold=0.20`, `YoloNmsThreshold=0.45` 以묎컙 threshold???뺤씤?덈떎.
 - FaceONNX baseline: `baselineFrames=55`, `totalMs=24,099ms`.
 - YOLOv8n optimized: `optimizedFrames=57`, `totalMs=11,254ms`.
-- A/B 결과: `common=53`, `onlyBaseline=2`, `onlyOptimized=4`, `avgBestIou=0.720`, `minBestIou=0.000`, `boxCountDiffFrames=27`, `passed=False`.
-- 판단: 9분 구간에서 YOLOv8n은 threshold를 낮추면 YOLO-only 후보가 많고, threshold를 올리면 일부 FaceONNX-only frame이 생긴다. 큰 얼굴 박스 정합도 FaceONNX 기준 gate를 넘지 못한다. 실제 오탐/미탐 여부는 overlay 또는 GT 확인이 필요하지만, 현재 baseline-diff gate 기준으로는 추천 후보가 아니다.
+- A/B 寃곌낵: `common=53`, `onlyBaseline=2`, `onlyOptimized=4`, `avgBestIou=0.720`, `minBestIou=0.000`, `boxCountDiffFrames=27`, `passed=False`.
+- ?먮떒: 9遺?援ш컙?먯꽌 YOLOv8n? threshold瑜???텛硫?YOLO-only ?꾨낫媛 留롪퀬, threshold瑜??щ━硫??쇰? FaceONNX-only frame???앷릿?? ???쇨뎬 諛뺤뒪 ?뺥빀??FaceONNX 湲곗? gate瑜??섏? 紐삵븳?? ?ㅼ젣 ?ㅽ깘/誘명깘 ?щ???overlay ?먮뒗 GT ?뺤씤???꾩슂?섏?留? ?꾩옱 baseline-diff gate 湲곗??쇰줈??異붿쿇 ?꾨낫媛 ?꾨땲??
 
-FaceONNX 회귀 재검증:
+FaceONNX ?뚭? ?ш?利?
 
-- YOLO tiling 구현 후 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행을 다시 통과했다.
-- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
-- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=50,439ms`로 통과했다.
+- YOLO tiling 援ы쁽 ??`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾???ㅼ떆 ?듦낵?덈떎.
+- quality gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- ROI-hit ???援ш컙? `attempts=11`, `hits=5`???
+- auto-tune short gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=50,439ms`濡??듦낵?덈떎.
 
-## 2026-05-22 YOLOv8m 대체 모델 smoke
+## 2026-05-22 YOLOv8m ?泥?紐⑤뜽 smoke
 
-후보:
+?꾨낫:
 
-- 다운로드 후보: `lindevs/yolov8-face` release `1.0.1`의 `yolov8m-face-lindevs.onnx`.
-- 로컬 경로: `.tmp/models/yolov8m-face-lindevs.onnx`.
-- 모델 파일 크기: 약 `99MB`.
-- `scripts/inspect-onnx-outputs.ps1` 결과 input은 `images=1x3x640x640`, output은 `output0=1x5x8400`이었다. 기존 YOLOv8n과 같은 generic YOLOv8 face decode 경로를 사용한다.
+- ?ㅼ슫濡쒕뱶 ?꾨낫: `lindevs/yolov8-face` release `1.0.1`??`yolov8m-face-lindevs.onnx`.
+- 濡쒖뺄 寃쎈줈: `.tmp/models/yolov8m-face-lindevs.onnx`.
+- 紐⑤뜽 ?뚯씪 ?ш린: ??`99MB`.
+- `scripts/inspect-onnx-outputs.ps1` 寃곌낵 input? `images=1x3x640x640`, output? `output0=1x5x8400`?댁뿀?? 湲곗〈 YOLOv8n怨?媛숈? generic YOLOv8 face decode 寃쎈줈瑜??ъ슜?쒕떎.
 
-실험 1: YOLOv8m low threshold `objectness=0.05`, `confidence=0.05`, `nms=0.45`
+?ㅽ뿕 1: YOLOv8m low threshold `objectness=0.05`, `confidence=0.05`, `nms=0.45`
 
-- 대상: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`
+- ??? `.tmp/srcTest-smoke/smoke-0600-3s.mp4`
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=38,256ms`.
 - YOLOv8m optimized: `optimizedFrames=29`, `totalMs=34,862ms`.
-- A/B 결과: `common=16`, `onlyBaseline=3`, `onlyOptimized=13`, `avgBestIou=0.406`, `minBestIou=0.000`, `boxCountDiffFrames=9`.
-- 판단: low threshold는 YOLO-only frame이 크게 늘고 IoU가 낮아 3초 strict gate를 통과하지 못한다. YOLOv8m은 YOLOv8n보다 큰 모델이지만 이 threshold에서는 기존 FaceONNX 동작과의 차이가 더 크다.
+- A/B 寃곌낵: `common=16`, `onlyBaseline=3`, `onlyOptimized=13`, `avgBestIou=0.406`, `minBestIou=0.000`, `boxCountDiffFrames=9`.
+- ?먮떒: low threshold??YOLO-only frame???ш쾶 ?섍퀬 IoU媛 ??븘 3珥?strict gate瑜??듦낵?섏? 紐삵븳?? YOLOv8m? YOLOv8n蹂대떎 ??紐⑤뜽?댁?留???threshold?먯꽌??湲곗〈 FaceONNX ?숈옉怨쇱쓽 李⑥씠媛 ???щ떎.
 
-실험 2: YOLOv8m middle threshold `objectness=0.20`, `confidence=0.20`, `nms=0.45`
+?ㅽ뿕 2: YOLOv8m middle threshold `objectness=0.20`, `confidence=0.20`, `nms=0.45`
 
-- 대상: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`
+- ??? `.tmp/srcTest-smoke/smoke-0600-3s.mp4`
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=38,943ms`.
 - YOLOv8m optimized: `optimizedFrames=11`, `totalMs=36,154ms`.
-- A/B 결과: `common=10`, `onlyBaseline=9`, `onlyOptimized=1`, `avgBestIou=0.674`, `minBestIou=0.000`, `boxCountDiffFrames=1`.
-- 판단: threshold를 올리면 YOLO-only frame은 줄지만 FaceONNX-only frame이 크게 늘어 recall이 부족해진다. 이 모델도 6분 3초 대표 gate 기준 추천 후보가 아니다.
+- A/B 寃곌낵: `common=10`, `onlyBaseline=9`, `onlyOptimized=1`, `avgBestIou=0.674`, `minBestIou=0.000`, `boxCountDiffFrames=1`.
+- ?먮떒: threshold瑜??щ━硫?YOLO-only frame? 以꾩?留?FaceONNX-only frame???ш쾶 ?섏뼱 recall??遺議깊빐吏꾨떎. ??紐⑤뜽??6遺?3珥????gate 湲곗? 異붿쿇 ?꾨낫媛 ?꾨땲??
 
-YOLOv8m 현재 판단:
+YOLOv8m ?꾩옱 ?먮떒:
 
-- 같은 adapter에서 모델 로드와 output decode는 가능하다.
-- 그러나 3초 gate에서 low threshold는 과검출/낮은 IoU, middle threshold는 FaceONNX 대비 누락으로 실패했다.
-- 3초 gate를 통과하지 못했으므로 30초 이상 구간과 export smoke로 확장하지 않는다.
-- 실패 축은 decode 불능보다는 모델/threshold curve와 YOLOv8 계열 후보의 post-filter 정합 문제에 가깝다.
+- 媛숈? adapter?먯꽌 紐⑤뜽 濡쒕뱶? output decode??媛?ν븯??
+- 洹몃윭??3珥?gate?먯꽌 low threshold??怨쇨?異???? IoU, middle threshold??FaceONNX ?鍮??꾨씫?쇰줈 ?ㅽ뙣?덈떎.
+- 3珥?gate瑜??듦낵?섏? 紐삵뻽?쇰?濡?30珥??댁긽 援ш컙怨?export smoke濡??뺤옣?섏? ?딅뒗??
+- ?ㅽ뙣 異뺤? decode 遺덈뒫蹂대떎??紐⑤뜽/threshold curve? YOLOv8 怨꾩뿴 ?꾨낫??post-filter ?뺥빀 臾몄젣??媛源앸떎.
 
-## 2026-05-22 YOLO5Face feature-map decode 및 smoke
+## 2026-05-22 YOLO5Face feature-map decode 諛?smoke
 
-구현 상태:
+援ы쁽 ?곹깭:
 
-- `YoloFaceOnnxDetector`에 YOLO5Face 전용 raw feature-map decode를 추가했다.
-- 적용 대상 output shape는 `pred0[1x48x80x80]`, `pred1[1x48x40x40]`, `pred2[1x48x20x20]` 같은 3-scale NCHW tensor다.
-- anchors는 `deepcam-cn/yolov5-face`의 `models/yolov5s.yaml` 설정을 기준으로 했다: P3/8 `[4,5, 8,10, 13,16]`, P4/16 `[23,29, 43,55, 73,105]`, P5/32 `[146,217, 231,300, 335,433]`.
-- decode는 YOLO5Face `Detect.forward`의 inference 공식을 따른다. `xy=(sigmoid(xy)*2-0.5+grid)*stride`, `wh=(sigmoid(wh)*2)^2*anchor`, `score=sigmoid(objectness)*sigmoid(class)`로 후보를 만든 뒤 letterbox padding/scale을 되돌린다.
-- 기존 generic `[1,F,N]` 경로가 `[1,48,H,W]`를 잘못 후보 tensor로 해석하던 문제를 피하기 위해 YOLO5Face 4D feature-map 경로를 먼저 검사한다.
+- `YoloFaceOnnxDetector`??YOLO5Face ?꾩슜 raw feature-map decode瑜?異붽??덈떎.
+- ?곸슜 ???output shape??`pred0[1x48x80x80]`, `pred1[1x48x40x40]`, `pred2[1x48x20x20]` 媛숈? 3-scale NCHW tensor??
+- anchors??`deepcam-cn/yolov5-face`??`models/yolov5s.yaml` ?ㅼ젙??湲곗??쇰줈 ?덈떎: P3/8 `[4,5, 8,10, 13,16]`, P4/16 `[23,29, 43,55, 73,105]`, P5/32 `[146,217, 231,300, 335,433]`.
+- decode??YOLO5Face `Detect.forward`??inference 怨듭떇???곕Ⅸ?? `xy=(sigmoid(xy)*2-0.5+grid)*stride`, `wh=(sigmoid(wh)*2)^2*anchor`, `score=sigmoid(objectness)*sigmoid(class)`濡??꾨낫瑜?留뚮뱺 ??letterbox padding/scale???섎룎由곕떎.
+- 湲곗〈 generic `[1,F,N]` 寃쎈줈媛 `[1,48,H,W]`瑜??섎せ ?꾨낫 tensor濡??댁꽍?섎뜕 臾몄젣瑜??쇳븯湲??꾪빐 YOLO5Face 4D feature-map 寃쎈줈瑜?癒쇱? 寃?ы븳??
 
-YOLO5Face 후보:
+YOLO5Face ?꾨낫:
 
-- 다운로드 후보: Hugging Face `hayashiLin/deepfacelivemodels`의 `YoloV5Face.onnx`.
-- 로컬 경로: `.tmp/models/YoloV5Face.onnx`.
+- ?ㅼ슫濡쒕뱶 ?꾨낫: Hugging Face `hayashiLin/deepfacelivemodels`??`YoloV5Face.onnx`.
+- 濡쒖뺄 寃쎈줈: `.tmp/models/YoloV5Face.onnx`.
 - SHA-256: `907c295f79eba1b0f4be59bcf5d8aabe4e2a9002ec44c5d1c518b97eb9fb13da`.
-- Hugging Face 페이지 기준 license는 `GPL-3.0`으로 표시되어 있다. 현재는 로컬 실험 후보로만 취급하고 배포 후보로 추천하지 않는다.
+- Hugging Face ?섏씠吏 湲곗? license??`GPL-3.0`?쇰줈 ?쒖떆?섏뼱 ?덈떎. ?꾩옱??濡쒖뺄 ?ㅽ뿕 ?꾨낫濡쒕쭔 痍④툒?섍퀬 諛고룷 ?꾨낫濡?異붿쿇?섏? ?딅뒗??
 
-실험 1: YOLO5Face 기본 threshold
+?ㅽ뿕 1: YOLO5Face 湲곕낯 threshold
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.25 -YoloConfidenceThreshold 0.25 -YoloNmsThreshold 0.45
@@ -1587,10 +1566,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smok
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=58,029ms`.
 - YOLO5Face optimized: `optimizedFrames=9`, `totalMs=16,116ms`.
-- A/B 결과: `common=9`, `onlyBaseline=10`, `onlyOptimized=0`, `avgBestIou=0.973`, `minBestIou=0.953`, `boxCountDiffFrames=0`, `passed=False`.
-- 판단: `보류`. decode와 박스 정합은 정상에 가깝지만 recall이 부족해 품질 gate를 통과하지 못한다.
+- A/B 寃곌낵: `common=9`, `onlyBaseline=10`, `onlyOptimized=0`, `avgBestIou=0.973`, `minBestIou=0.953`, `boxCountDiffFrames=0`, `passed=False`.
+- ?먮떒: `蹂대쪟`. decode? 諛뺤뒪 ?뺥빀? ?뺤긽??媛源앹?留?recall??遺議깊빐 ?덉쭏 gate瑜??듦낵?섏? 紐삵븳??
 
-실험 2: YOLO5Face low threshold
+?ㅽ뿕 2: YOLO5Face low threshold
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.10 -YoloConfidenceThreshold 0.10 -YoloNmsThreshold 0.45
@@ -1598,10 +1577,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smok
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=67,228ms`.
 - YOLO5Face optimized: `optimizedFrames=23`, `totalMs=22,355ms`.
-- A/B 결과: `common=18`, `onlyBaseline=1`, `onlyOptimized=5`, `avgBestIou=0.755`, `minBestIou=0.000`, `boxCountDiffFrames=5`, `passed=False`.
-- 판단: `보류`. threshold를 낮추면 FaceONNX-only frame은 줄지만 YOLO-only/프레임 불일치가 생긴다.
+- A/B 寃곌낵: `common=18`, `onlyBaseline=1`, `onlyOptimized=5`, `avgBestIou=0.755`, `minBestIou=0.000`, `boxCountDiffFrames=5`, `passed=False`.
+- ?먮떒: `蹂대쪟`. threshold瑜???텛硫?FaceONNX-only frame? 以꾩?留?YOLO-only/?꾨젅??遺덉씪移섍? ?앷릿??
 
-실험 3: YOLO5Face 중간 threshold
+?ㅽ뿕 3: YOLO5Face 以묎컙 threshold
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.15 -YoloConfidenceThreshold 0.15 -YoloNmsThreshold 0.45
@@ -1609,10 +1588,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smok
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=57,546ms`.
 - YOLO5Face optimized: `optimizedFrames=20`, `totalMs=18,010ms`.
-- A/B 결과: `common=18`, `onlyBaseline=1`, `onlyOptimized=2`, `avgBestIou=0.724`, `minBestIou=0.000`, `boxCountDiffFrames=2`, `passed=False`.
-- 판단: `보류`. 기본 threshold보다 recall은 좋아졌지만 gate 기준의 frame set과 IoU를 만족하지 못한다.
+- A/B 寃곌낵: `common=18`, `onlyBaseline=1`, `onlyOptimized=2`, `avgBestIou=0.724`, `minBestIou=0.000`, `boxCountDiffFrames=2`, `passed=False`.
+- ?먮떒: `蹂대쪟`. 湲곕낯 threshold蹂대떎 recall? 醫뗭븘議뚯?留?gate 湲곗???frame set怨?IoU瑜?留뚯”?섏? 紐삵븳??
 
-실험 4: YOLO5Face 기본 threshold + 2x2 tile-only
+?ㅽ뿕 4: YOLO5Face 湲곕낯 threshold + 2x2 tile-only
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.25 -YoloConfidenceThreshold 0.25 -YoloNmsThreshold 0.45 -YoloUseTiling -YoloTileOnly -YoloTileColumns 2 -YoloTileRows 2 -YoloTileOverlapRatio 0.15
@@ -1620,10 +1599,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smok
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=53,496ms`.
 - YOLO5Face tile-only: `optimizedFrames=39`, `totalMs=56,705ms`.
-- A/B 결과: `common=10`, `onlyBaseline=9`, `onlyOptimized=29`, `avgBestIou=0.778`, `minBestIou=0.620`, `boxCountDiffFrames=2`, `passed=False`.
-- 판단: `폐기`. tiling은 YOLO-only 후보를 크게 늘리고 속도 이점도 사라진다.
+- A/B 寃곌낵: `common=10`, `onlyBaseline=9`, `onlyOptimized=29`, `avgBestIou=0.778`, `minBestIou=0.620`, `boxCountDiffFrames=2`, `passed=False`.
+- ?먮떒: `?먭린`. tiling? YOLO-only ?꾨낫瑜??ш쾶 ?섎━怨??띾룄 ?댁젏???щ씪吏꾨떎.
 
-실험 5: YOLO5Face 근접 threshold `objectness=0.12`, `confidence=0.18`
+?ㅽ뿕 5: YOLO5Face 洹쇱젒 threshold `objectness=0.12`, `confidence=0.18`
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smoke.ps1 -SkipTrim -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipExport -OptimizedCpuOnly -YoloModelPath .tmp/models/YoloV5Face.onnx -YoloModelType Yolo5Face -YoloInputSize 640 -YoloObjectnessThreshold 0.12 -YoloConfidenceThreshold 0.18 -YoloNmsThreshold 0.45
@@ -1631,180 +1610,180 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-srcTest-smok
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=76,625ms`.
 - YOLO5Face optimized: `optimizedFrames=19`, `totalMs=17,580ms`.
-- A/B 결과: `common=18`, `onlyBaseline=1`, `onlyOptimized=1`, `avgBestIou=0.790`, `minBestIou=0.000`, `boxCountDiffFrames=2`, `passed=False`.
-- mismatch frame은 `onlyBaseline=86`, `onlyOptimized=9`였다.
-- 판단: `보류`. 지금까지의 YOLO5Face 후보 중 frame 수와 속도는 가장 근접했지만, 실제 frame set과 최소 IoU가 gate를 통과하지 못한다. 실패 축은 모델/threshold curve와 YOLO 전용 track 후처리 경계에 가깝다. decode는 기본 threshold에서 높은 IoU를 보였으므로 현재 증거만으로 decode 실패라고 보지는 않는다.
+- A/B 寃곌낵: `common=18`, `onlyBaseline=1`, `onlyOptimized=1`, `avgBestIou=0.790`, `minBestIou=0.000`, `boxCountDiffFrames=2`, `passed=False`.
+- mismatch frame? `onlyBaseline=86`, `onlyOptimized=9`???
+- ?먮떒: `蹂대쪟`. 吏湲덇퉴吏??YOLO5Face ?꾨낫 以?frame ?섏? ?띾룄??媛??洹쇱젒?덉?留? ?ㅼ젣 frame set怨?理쒖냼 IoU媛 gate瑜??듦낵?섏? 紐삵븳?? ?ㅽ뙣 異뺤? 紐⑤뜽/threshold curve? YOLO ?꾩슜 track ?꾩쿂由?寃쎄퀎??媛源앸떎. decode??湲곕낯 threshold?먯꽌 ?믪? IoU瑜?蹂댁??쇰?濡??꾩옱 利앷굅留뚯쑝濡?decode ?ㅽ뙣?쇨퀬 蹂댁????딅뒗??
 
-YOLO 전용 track 후처리 1차 보정:
+YOLO ?꾩슜 track ?꾩쿂由?1李?蹂댁젙:
 
-- YOLO profile에서 `MaxLostFillFrames`를 `3`에서 `1`로 줄였다.
-- YOLO profile의 `ShortTrackMaxConfidence`를 `0.58`에서 `0.38`로 낮췄다.
-- 목적은 YOLO 저신뢰 tail box가 화면 밖 방향으로 길게 extrapolate되는 false positive를 줄이고, 실제 단발 얼굴 후보인 frame 86을 short-track 제거에서 보존하는 것이다.
-- FaceONNX profile 값은 변경하지 않았다.
+- YOLO profile?먯꽌 `MaxLostFillFrames`瑜?`3`?먯꽌 `1`濡?以꾩???
+- YOLO profile??`ShortTrackMaxConfidence`瑜?`0.58`?먯꽌 `0.38`濡???톬??
+- 紐⑹쟻? YOLO ??좊ː tail box媛 ?붾㈃ 諛?諛⑺뼢?쇰줈 湲멸쾶 extrapolate?섎뒗 false positive瑜?以꾩씠怨? ?ㅼ젣 ?⑤컻 ?쇨뎬 ?꾨낫??frame 86??short-track ?쒓굅?먯꽌 蹂댁〈?섎뒗 寃껋씠??
+- FaceONNX profile 媛믪? 蹂寃쏀븯吏 ?딆븯??
 
-보정 후 같은 0.12/0.18 재검증:
+蹂댁젙 ??媛숈? 0.12/0.18 ?ш?利?
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=54,624ms`.
 - YOLO5Face optimized: `optimizedFrames=19`, `totalMs=19,930ms`.
-- A/B 결과: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.798`, `minBestIou=0.000`, `boxCountDiffFrames=1`, `passed=False`.
-- bad frame 로그: `boxCountDiff=27`, `lowIou=6,7,8,27`.
-- 판단: `보류`. frame set mismatch는 해소됐지만, YOLO의 저신뢰 edge-tail 박스가 frame 6~8에서 FaceONNX baseline보다 위쪽으로 크게 튀고, frame 27의 두 얼굴 중 하나가 postprocess에서 정합되지 않는다. 실패 축은 decode보다는 YOLO 전용 track/post-filter와 false-positive/false-negative 경계에 가깝다.
+- A/B 寃곌낵: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.798`, `minBestIou=0.000`, `boxCountDiffFrames=1`, `passed=False`.
+- bad frame 濡쒓렇: `boxCountDiff=27`, `lowIou=6,7,8,27`.
+- ?먮떒: `蹂대쪟`. frame set mismatch???댁냼?먯?留? YOLO????좊ː edge-tail 諛뺤뒪媛 frame 6~8?먯꽌 FaceONNX baseline蹂대떎 ?꾩そ?쇰줈 ?ш쾶 ?怨? frame 27?????쇨뎬 以??섎굹媛 postprocess?먯꽌 ?뺥빀?섏? ?딅뒗?? ?ㅽ뙣 異뺤? decode蹂대떎??YOLO ?꾩슜 track/post-filter? false-positive/false-negative 寃쎄퀎??媛源앸떎.
 
-YOLO 전용 track 후처리 2차 보정:
+YOLO ?꾩슜 track ?꾩쿂由?2李?蹂댁젙:
 
-- `FaceTrackPostProcessOptions`에 저신뢰 tail pruning 옵션을 추가했다.
-- YOLO profile에서 `UnstableTailMaxConfidence=0.40`, `UnstableTailMinStableDetections=3`, `UnstableTailMinIou=0.45`, `UnstableTailMaxAreaChangeRatio=1.8`을 사용한다.
-- 안정 track 뒤에 붙은 저신뢰 tail detection이 면적/IoU 기준으로 급격히 튀면 해당 tail detection을 제거하고, 이전 안정 track 기준 lost-fill이 적용되게 했다.
-- YOLO profile의 `MaxLostFillFrames`는 다시 `3`으로 두고, `ShortTrackMaxConfidence`는 `0.18`로 낮춰 실제 단발 얼굴 후보를 제거하지 않게 했다.
-- FaceONNX profile은 tail pruning 비활성 기본값(`UnstableTailMaxConfidence=0`)을 유지한다.
+- `FaceTrackPostProcessOptions`????좊ː tail pruning ?듭뀡??異붽??덈떎.
+- YOLO profile?먯꽌 `UnstableTailMaxConfidence=0.40`, `UnstableTailMinStableDetections=3`, `UnstableTailMinIou=0.45`, `UnstableTailMaxAreaChangeRatio=1.8`???ъ슜?쒕떎.
+- ?덉젙 track ?ㅼ뿉 遺숈? ??좊ː tail detection??硫댁쟻/IoU 湲곗??쇰줈 湲됯꺽???硫??대떦 tail detection???쒓굅?섍퀬, ?댁쟾 ?덉젙 track 湲곗? lost-fill???곸슜?섍쾶 ?덈떎.
+- YOLO profile??`MaxLostFillFrames`???ㅼ떆 `3`?쇰줈 ?먭퀬, `ShortTrackMaxConfidence`??`0.18`濡???떠 ?ㅼ젣 ?⑤컻 ?쇨뎬 ?꾨낫瑜??쒓굅?섏? ?딄쾶 ?덈떎.
+- FaceONNX profile? tail pruning 鍮꾪솢??湲곕낯媛?`UnstableTailMaxConfidence=0`)???좎??쒕떎.
 
-2차 보정 후 같은 0.12/0.18 재검증:
+2李?蹂댁젙 ??媛숈? 0.12/0.18 ?ш?利?
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=55,885ms`.
 - YOLO5Face optimized: `optimizedFrames=19`, `totalMs=16,149ms`.
-- A/B 결과: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`.
-- bad frame 로그: `boxCountDiff=none`, `lowIou=none`.
-- 판단: `3초 gate 통과`. 이 설정은 현재 대표 3초 구간에서 FaceONNX baseline 대비 frame set, 박스 수, IoU gate를 통과했고 자동 검출 wall-clock도 약 3.5배 빨랐다. 단, 이 결과만으로 YOLO 최종 최적화 완료나 전체 영상 기본값 승격으로 보지는 않는다.
+- A/B 寃곌낵: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`.
+- bad frame 濡쒓렇: `boxCountDiff=none`, `lowIou=none`.
+- ?먮떒: `3珥?gate ?듦낵`. ???ㅼ젙? ?꾩옱 ???3珥?援ш컙?먯꽌 FaceONNX baseline ?鍮?frame set, 諛뺤뒪 ?? IoU gate瑜??듦낵?덇퀬 ?먮룞 寃異?wall-clock????3.5諛?鍮⑤옄?? ?? ??寃곌낵留뚯쑝濡?YOLO 理쒖쥌 理쒖쟻???꾨즺???꾩껜 ?곸긽 湲곕낯媛??밴꺽?쇰줈 蹂댁????딅뒗??
 
-30초 확장 smoke:
+30珥??뺤옣 smoke:
 
-- 대상: `.tmp/srcTest-smoke/smoke-1200-30s.mp4`
-- 명령 조건: `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, `ParallelDetectorCount=2`, `DownscaleRatio=1.0`, `DetectEveryNFrames=1`.
-- 자동 검출: `processed=899`, `detects=899`, `interpolated=0`, `faceMaskFrames=774`, `totalMs=157,604ms`.
+- ??? `.tmp/srcTest-smoke/smoke-1200-30s.mp4`
+- 紐낅졊 議곌굔: `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, `ParallelDetectorCount=2`, `DownscaleRatio=1.0`, `DetectEveryNFrames=1`.
+- ?먮룞 寃異? `processed=899`, `detects=899`, `interpolated=0`, `faceMaskFrames=774`, `totalMs=157,604ms`.
 - track/ROI: `tracks=144`, `filled=338`, `lostFilled=150`, `removedShort=36`, ROI `attempts=32`, `hits=23`.
-- 기존 FaceONNX 30초 문서 기록은 `processed=899`, `faceMaskFrames=778`, `totalMs=316,366ms`였으므로, frame 수는 근접하고 자동 검출 wall-clock은 약 2배 빠르다.
-- 이 실행은 baseline A/B 비교가 아니라 확장 smoke이므로, 30초 구간의 미탐/오탐/박스 튐이 완전히 없다고 단정하지 않는다.
+- 湲곗〈 FaceONNX 30珥?臾몄꽌 湲곕줉? `processed=899`, `faceMaskFrames=778`, `totalMs=316,366ms`??쇰?濡? frame ?섎뒗 洹쇱젒?섍퀬 ?먮룞 寃異?wall-clock? ??2諛?鍮좊Ⅴ??
+- ???ㅽ뻾? baseline A/B 鍮꾧탳媛 ?꾨땲???뺤옣 smoke?대?濡? 30珥?援ш컙??誘명깘/?ㅽ깘/諛뺤뒪 ?먯씠 ?꾩쟾???녿떎怨??⑥젙?섏? ?딅뒗??
 
-30초 export smoke:
+30珥?export smoke:
 
-- 같은 30초 구간에서 export 포함 실행을 완료했다.
-- 자동 검출: `processed=899`, `faceMaskFrames=774`, `totalMs=158,063ms`.
+- 媛숈? 30珥?援ш컙?먯꽌 export ?ы븿 ?ㅽ뻾???꾨즺?덈떎.
+- ?먮룞 寃異? `processed=899`, `faceMaskFrames=774`, `totalMs=158,063ms`.
 - export: `frames=902`, `bitmapMaskFrames=0`, `directFaceFrames=774`, `swsToBgraMs=13,898`, `maskMs=44,094`, `swsToEncMs=22,153`, `encodeMs=4,442`, `totalMs=135,572ms`.
-- 기존 FaceONNX 30초 medium export 기록은 자동 검출 `totalMs=316,366ms`, export `totalMs=127,750ms`, `directFaceFrames=778`이었다. YOLO는 자동 검출이 크게 빠르지만 export는 face rect 수가 비슷해 거의 같은 병목 구조를 가진다.
-- export output은 `.tmp/srcTest-smoke/smoke-1200-30s_blur.mp4`로 생성됐다.
+- 湲곗〈 FaceONNX 30珥?medium export 湲곕줉? ?먮룞 寃異?`totalMs=316,366ms`, export `totalMs=127,750ms`, `directFaceFrames=778`?댁뿀?? YOLO???먮룞 寃異쒖씠 ?ш쾶 鍮좊Ⅴ吏留?export??face rect ?섍? 鍮꾩듂??嫄곗쓽 媛숈? 蹂묐ぉ 援ъ“瑜?媛吏꾨떎.
+- export output? `.tmp/srcTest-smoke/smoke-1200-30s_blur.mp4`濡??앹꽦?먮떎.
 
-당시 YOLO5Face 추천 상태:
+?뱀떆 YOLO5Face 異붿쿇 ?곹깭:
 
-- `YoloV5Face.onnx`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, YOLO 전용 unstable-tail pruning 적용 조합은 이 시점에는 `조건부 추천 후보`로 올렸다.
-- 조건부인 이유는 대표 3초 gate와 30초/export smoke는 통과했지만, 30초 구간의 baseline A/B 품질 비교와 육안 확인, 다른 시간대 대표 구간, 긴 구간 export 검증은 아직 남아 있기 때문이다.
-- 현재 실패 축은 완전 해소가 아니라 1차 대표 구간에서 해소된 상태다. 다음 검증은 다른 대표 3초 구간과 30초 baseline A/B 또는 육안 검토다.
-- 홈 자동 옵션의 신규 YOLO 기본 profile도 `YOLO5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`로 맞췄다. 저장된 사용자 설정이 있으면 기존처럼 저장값이 우선 적용된다.
+- `YoloV5Face.onnx`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, YOLO ?꾩슜 unstable-tail pruning ?곸슜 議고빀? ???쒖젏?먮뒗 `議곌굔遺 異붿쿇 ?꾨낫`濡??щ졇??
+- 議곌굔遺???댁쑀?????3珥?gate? 30珥?export smoke???듦낵?덉?留? 30珥?援ш컙??baseline A/B ?덉쭏 鍮꾧탳? ?≪븞 ?뺤씤, ?ㅻⅨ ?쒓컙? ???援ш컙, 湲?援ш컙 export 寃利앹? ?꾩쭅 ?⑥븘 ?덇린 ?뚮Ц?대떎.
+- ?꾩옱 ?ㅽ뙣 異뺤? ?꾩쟾 ?댁냼媛 ?꾨땲??1李????援ш컙?먯꽌 ?댁냼???곹깭?? ?ㅼ쓬 寃利앹? ?ㅻⅨ ???3珥?援ш컙怨?30珥?baseline A/B ?먮뒗 ?≪븞 寃?좊떎.
+- ???먮룞 ?듭뀡???좉퇋 YOLO 湲곕낯 profile??`YOLO5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`濡?留욎톬?? ??λ맂 ?ъ슜???ㅼ젙???덉쑝硫?湲곗〈泥섎읆 ??κ컪???곗꽑 ?곸슜?쒕떎.
 
-현재 YOLO5Face 정리:
+?꾩옱 YOLO5Face ?뺣━:
 
-- feature-map decode는 동작한다. 기본 threshold의 `avgBestIou=0.973`, `minBestIou=0.953`가 이를 뒷받침한다.
-- 기본 threshold는 빠르고 위치가 맞지만 FaceONNX-only frame이 크다.
-- 낮은 threshold와 중간 threshold는 FaceONNX-only frame을 줄이는 대신 YOLO-only frame과 frame mismatch를 만든다.
-- 2x2 tile-only는 추천 후보가 아니다.
-- `objectness=0.12`, `confidence=0.18`은 3초 gate에서 `faceMaskFrames=19`까지 맞췄지만 `onlyBaseline`/`onlyOptimized`와 IoU 실패가 남았다.
-- YOLO 전용 track 후처리 보정 후 frame set mismatch는 사라졌지만, 저신뢰 edge-tail 박스 튐과 frame 27 박스 수 차이가 남아 품질 gate를 통과하지 못했다.
-- YOLO 전용 unstable-tail pruning 적용 후 대표 3초 gate는 통과했고, 30초 자동 검출/export smoke도 완료했다.
-- 따라서 이 시점의 `YoloV5Face.onnx` `0.12/0.18/0.45` 설정은 조건부 추천 후보로 두었다. 아래 9분 2초 추가 gate 실패에 따라 최종 추천 상태는 다시 보정한다.
+- feature-map decode???숈옉?쒕떎. 湲곕낯 threshold??`avgBestIou=0.973`, `minBestIou=0.953`媛 ?대? ?룸컺移⑦븳??
+- 湲곕낯 threshold??鍮좊Ⅴ怨??꾩튂媛 留욎?留?FaceONNX-only frame???щ떎.
+- ??? threshold? 以묎컙 threshold??FaceONNX-only frame??以꾩씠?????YOLO-only frame怨?frame mismatch瑜?留뚮뱺??
+- 2x2 tile-only??異붿쿇 ?꾨낫媛 ?꾨땲??
+- `objectness=0.12`, `confidence=0.18`? 3珥?gate?먯꽌 `faceMaskFrames=19`源뚯? 留욎톬吏留?`onlyBaseline`/`onlyOptimized`? IoU ?ㅽ뙣媛 ?⑥븯??
+- YOLO ?꾩슜 track ?꾩쿂由?蹂댁젙 ??frame set mismatch???щ씪議뚯?留? ??좊ː edge-tail 諛뺤뒪 ?먭낵 frame 27 諛뺤뒪 ??李⑥씠媛 ?⑥븘 ?덉쭏 gate瑜??듦낵?섏? 紐삵뻽??
+- YOLO ?꾩슜 unstable-tail pruning ?곸슜 ?????3珥?gate???듦낵?덇퀬, 30珥??먮룞 寃異?export smoke???꾨즺?덈떎.
+- ?곕씪?????쒖젏??`YoloV5Face.onnx` `0.12/0.18/0.45` ?ㅼ젙? 議곌굔遺 異붿쿇 ?꾨낫濡??먯뿀?? ?꾨옒 9遺?2珥?異붽? gate ?ㅽ뙣???곕씪 理쒖쥌 異붿쿇 ?곹깭???ㅼ떆 蹂댁젙?쒕떎.
 
-FaceONNX 회귀 재검증:
+FaceONNX ?뚭? ?ш?利?
 
-- YOLO5Face feature-map decode 추가 후 `dotnet build FaceShield.sln`은 기존 FFmpeg obsolete warning 7개만 남기고 성공했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행을 다시 통과했다.
-- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
-- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=47,742ms`로 통과했다.
+- YOLO5Face feature-map decode 異붽? ??`dotnet build FaceShield.sln`? 湲곗〈 FFmpeg obsolete warning 7媛쒕쭔 ?④린怨??깃났?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾???ㅼ떆 ?듦낵?덈떎.
+- quality gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- ROI-hit ???援ш컙? `attempts=11`, `hits=5`???
+- auto-tune short gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=47,742ms`濡??듦낵?덈떎.
 
-YOLO 전용 후처리 보정 후 회귀 재검증:
+YOLO ?꾩슜 ?꾩쿂由?蹂댁젙 ???뚭? ?ш?利?
 
-- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
-- `git diff --check` 통과.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
-- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
-- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=75,233ms`로 통과했다. 현재 실행에서는 auto-tune이 CPU 2세션을 선택했다.
+- `dotnet build FaceShield.sln` ?깃났. 湲곗〈 FFmpeg obsolete warning 7媛쒕쭔 ?⑥븯??
+- `git diff --check` ?듦낵.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾 ?깃났.
+- quality gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- ROI-hit ???援ш컙? `attempts=11`, `hits=5`???
+- auto-tune short gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=75,233ms`濡??듦낵?덈떎. ?꾩옱 ?ㅽ뻾?먯꽌??auto-tune??CPU 2?몄뀡???좏깮?덈떎.
 
-YOLO unstable-tail pruning 추가 후 회귀 재검증:
+YOLO unstable-tail pruning 異붽? ???뚭? ?ш?利?
 
-- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
-- `git diff --check` 통과.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
-- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
-- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=49,033ms`로 통과했다. 현재 실행에서는 auto-tune이 CPU 2세션/default를 선택했다.
+- `dotnet build FaceShield.sln` ?깃났. 湲곗〈 FFmpeg obsolete warning 7媛쒕쭔 ?⑥븯??
+- `git diff --check` ?듦낵.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾 ?깃났.
+- quality gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- ROI-hit ???援ш컙? `attempts=11`, `hits=5`???
+- auto-tune short gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=49,033ms`濡??듦낵?덈떎. ?꾩옱 ?ㅽ뻾?먯꽌??auto-tune??CPU 2?몄뀡/default瑜??좏깮?덈떎.
 
-YOLO5Face 기본 profile 연결 후 회귀 재검증:
+YOLO5Face 湲곕낯 profile ?곌껐 ???뚭? ?ш?利?
 
-- `dotnet build FaceShield.sln` 성공. 기존 FFmpeg obsolete warning 7개만 남았다.
-- `git diff --check` 통과.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
-- quality gate는 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`였다.
-- ROI-hit 대표 구간은 `attempts=11`, `hits=5`였다.
-- auto-tune short gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=47,649ms`로 통과했다. 현재 실행에서는 auto-tune이 CPU 2세션/default를 선택했다.
+- `dotnet build FaceShield.sln` ?깃났. 湲곗〈 FFmpeg obsolete warning 7媛쒕쭔 ?⑥븯??
+- `git diff --check` ?듦낵.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾 ?깃났.
+- quality gate??`baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=1.000`, `minBestIou=1.000`, `passed=True`???
+- ROI-hit ???援ш컙? `attempts=11`, `hits=5`???
+- auto-tune short gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `totalMs=47,649ms`濡??듦낵?덈떎. ?꾩옱 ?ㅽ뻾?먯꽌??auto-tune??CPU 2?몄뀡/default瑜??좏깮?덈떎.
 
-다른 대표 구간 추가 gate: 9분 2초 구간
+?ㅻⅨ ???援ш컙 異붽? gate: 9遺?2珥?援ш컙
 
-- 대상: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`
-- 목적: 6분 3초 gate를 통과한 YOLO5Face `0.12/0.18/0.45` 조합이 얼굴 수가 많은 다른 구간에서도 FaceONNX baseline과 같은 품질 gate를 통과하는지 확인한다.
+- ??? `.tmp/srcTest-smoke/smoke-0900-2s.mp4`
+- 紐⑹쟻: 6遺?3珥?gate瑜??듦낵??YOLO5Face `0.12/0.18/0.45` 議고빀???쇨뎬 ?섍? 留롮? ?ㅻⅨ 援ш컙?먯꽌??FaceONNX baseline怨?媛숈? ?덉쭏 gate瑜??듦낵?섎뒗吏 ?뺤씤?쒕떎.
 
-실험 1: YOLO5Face `objectness=0.12`, `confidence=0.18`, `nms=0.45`
+?ㅽ뿕 1: YOLO5Face `objectness=0.12`, `confidence=0.18`, `nms=0.45`
 
 - FaceONNX baseline: `baselineFrames=55`, `totalMs=19,772ms`.
 - YOLO5Face optimized: `optimizedFrames=58`, `totalMs=12,314ms`.
-- A/B 결과: `common=55`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `boxCountDiffFrames=34`, `passed=False`.
-- bad frame 로그: `boxCountDiff=10,17,18,19,20,21,22,23,24,25,31,32,33,34,35,36,37,38,39,40,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
-- 판단: `보류`. 6분 3초 대표 gate와 달리 얼굴 수가 많은 9분 구간에서는 YOLO-only frame, 박스 수 차이, 낮은 IoU가 발생한다. YOLO-only 후보 중 일부는 실제 얼굴일 수 있으므로 실제 오탐으로 단정하지 않는다. 다만 기존 동작 변화 폭이 크고 overlay/GT 기준 통과 증거가 부족해 최종 추천 후보로 유지하지 않는다.
+- A/B 寃곌낵: `common=55`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `boxCountDiffFrames=34`, `passed=False`.
+- bad frame 濡쒓렇: `boxCountDiff=10,17,18,19,20,21,22,23,24,25,31,32,33,34,35,36,37,38,39,40,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
+- ?먮떒: `蹂대쪟`. 6遺?3珥????gate? ?щ━ ?쇨뎬 ?섍? 留롮? 9遺?援ш컙?먯꽌??YOLO-only frame, 諛뺤뒪 ??李⑥씠, ??? IoU媛 諛쒖깮?쒕떎. YOLO-only ?꾨낫 以??쇰????ㅼ젣 ?쇨뎬?????덉쑝誘濡??ㅼ젣 ?ㅽ깘?쇰줈 ?⑥젙?섏? ?딅뒗?? ?ㅻ쭔 湲곗〈 ?숈옉 蹂????씠 ?ш퀬 overlay/GT 湲곗? ?듦낵 利앷굅媛 遺議깊빐 理쒖쥌 異붿쿇 ?꾨낫濡??좎??섏? ?딅뒗??
 
-실험 2: YOLO5Face `objectness=0.18`, `confidence=0.25`, `nms=0.45`
+?ㅽ뿕 2: YOLO5Face `objectness=0.18`, `confidence=0.25`, `nms=0.45`
 
 - FaceONNX baseline: `baselineFrames=55`, `totalMs=16,920ms`.
 - YOLO5Face optimized: `optimizedFrames=54`, `totalMs=10,720ms`.
-- A/B 결과: `common=53`, `onlyBaseline=2`, `onlyOptimized=1`, `avgBestIou=0.793`, `minBestIou=0.625`, `boxCountDiffFrames=29`, `passed=False`.
-- bad frame 로그: `boxCountDiff=20,21,22,23,24,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
-- 판단: threshold를 올리면 YOLO-only 후보는 일부 줄지만, FaceONNX-only/YOLO-only frame과 박스 정합 실패가 남아 gate를 통과하지 못한다. 이 단계만으로 실제 미탐/오탐 여부는 확정하지 않는다.
+- A/B 寃곌낵: `common=53`, `onlyBaseline=2`, `onlyOptimized=1`, `avgBestIou=0.793`, `minBestIou=0.625`, `boxCountDiffFrames=29`, `passed=False`.
+- bad frame 濡쒓렇: `boxCountDiff=20,21,22,23,24,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
+- ?먮떒: threshold瑜??щ━硫?YOLO-only ?꾨낫???쇰? 以꾩?留? FaceONNX-only/YOLO-only frame怨?諛뺤뒪 ?뺥빀 ?ㅽ뙣媛 ?⑥븘 gate瑜??듦낵?섏? 紐삵븳?? ???④퀎留뚯쑝濡??ㅼ젣 誘명깘/?ㅽ깘 ?щ????뺤젙?섏? ?딅뒗??
 
-실험 3: YOLO5Face `objectness=0.18`, `confidence=0.25`, `nms=0.30`
+?ㅽ뿕 3: YOLO5Face `objectness=0.18`, `confidence=0.25`, `nms=0.30`
 
 - FaceONNX baseline: `baselineFrames=55`, `totalMs=17,226ms`.
 - YOLO5Face optimized: `optimizedFrames=54`, `totalMs=10,662ms`.
-- A/B 결과: `common=53`, `onlyBaseline=2`, `onlyOptimized=1`, `avgBestIou=0.793`, `minBestIou=0.625`, `boxCountDiffFrames=29`, `passed=False`.
-- 판단: NMS를 더 강하게 낮춰도 실험 2와 결과가 사실상 같았다. 따라서 이 구간의 주된 실패 원인은 단순 중복 박스 NMS가 아니라 YOLO5Face의 후보 분포, FaceONNX 대비 박스 크기/위치 차이, YOLO 전용 post-filter/track 정합 문제에 가깝다.
+- A/B 寃곌낵: `common=53`, `onlyBaseline=2`, `onlyOptimized=1`, `avgBestIou=0.793`, `minBestIou=0.625`, `boxCountDiffFrames=29`, `passed=False`.
+- ?먮떒: NMS瑜???媛뺥븯寃???떠???ㅽ뿕 2? 寃곌낵媛 ?ъ떎??媛숈븯?? ?곕씪????援ш컙??二쇰맂 ?ㅽ뙣 ?먯씤? ?⑥닚 以묐났 諛뺤뒪 NMS媛 ?꾨땲??YOLO5Face???꾨낫 遺꾪룷, FaceONNX ?鍮?諛뺤뒪 ?ш린/?꾩튂 李⑥씠, YOLO ?꾩슜 post-filter/track ?뺥빀 臾몄젣??媛源앸떎.
 
-현재 YOLO5Face 판정 보정:
+?꾩옱 YOLO5Face ?먯젙 蹂댁젙:
 
-- `YoloV5Face.onnx` `0.12/0.18/0.45` 조합은 6분 3초 gate와 12분 30초 smoke 기준으로는 빠르고 유망하지만, 9분 2초 추가 gate에서 실패했다.
-- 따라서 이 조합을 최종 `추천 후보`로 보지 않는다. 현재 상태는 `대표 6분 3초 구간 통과 후보 / 9분 2초 및 6분 30초 확장 gate 실패 / 전체 추천 보류`다.
-- Home UI에서 YOLO를 선택했을 때의 초기 profile은 지금까지 가장 나은 YOLO5Face 조합으로 남겨두지만, 앱 기본 detector는 계속 FaceONNX다.
-- 다음 YOLO 작업은 9분 구간의 box count diff와 low-IoU frame을 기준으로 원인을 더 분리해야 한다. 우선순위는 raw YOLO 후보 dump, FaceONNX 대비 후보 수 차이, 큰 얼굴/다중 얼굴 구간의 YOLO 전용 post-filter, track merge 기준 재조정이다.
+- `YoloV5Face.onnx` `0.12/0.18/0.45` 議고빀? 6遺?3珥?gate? 12遺?30珥?smoke 湲곗??쇰줈??鍮좊Ⅴ怨??좊쭩?섏?留? 9遺?2珥?異붽? gate?먯꽌 ?ㅽ뙣?덈떎.
+- ?곕씪????議고빀??理쒖쥌 `異붿쿇 ?꾨낫`濡?蹂댁? ?딅뒗?? ?꾩옱 ?곹깭??`???6遺?3珥?援ш컙 ?듦낵 ?꾨낫 / 9遺?2珥?諛?6遺?30珥??뺤옣 gate ?ㅽ뙣 / ?꾩껜 異붿쿇 蹂대쪟`??
+- Home UI?먯꽌 YOLO瑜??좏깮?덉쓣 ?뚯쓽 珥덇린 profile? 吏湲덇퉴吏 媛???섏? YOLO5Face 議고빀?쇰줈 ?④꺼?먯?留? ??湲곕낯 detector??怨꾩냽 FaceONNX??
+- ?ㅼ쓬 YOLO ?묒뾽? 9遺?援ш컙??box count diff? low-IoU frame??湲곗??쇰줈 ?먯씤????遺꾨━?댁빞 ?쒕떎. ?곗꽑?쒖쐞??raw YOLO ?꾨낫 dump, FaceONNX ?鍮??꾨낫 ??李⑥씠, ???쇨뎬/?ㅼ쨷 ?쇨뎬 援ш컙??YOLO ?꾩슜 post-filter, track merge 湲곗? ?ъ“?뺤씠??
 
-9분 구간 원인 분리 및 YOLO 하단 저신뢰 track 필터:
+9遺?援ш컙 ?먯씤 遺꾨━ 諛?YOLO ?섎떒 ??좊ː track ?꾪꽣:
 
-- `-DumpDetections`와 대표 frame overlay로 9분 구간 mismatch를 확인했다.
-- frame 20/32 overlay 기준 YOLO의 추가 청록 박스는 뒤쪽 사람 얼굴 후보로 보이며, FaceONNX baseline이 놓친 실제 얼굴일 가능성이 있다.
-- frame 32의 노란 박스는 손/물체 영역을 얼굴로 잡은 오탐이다.
-- 큰 얼굴 박스는 YOLO가 FaceONNX보다 더 넓게 잡는 경향이 있어 `avgBestIou`와 `minBestIou`를 낮춘다. 이 차이는 단순 NMS 문제는 아니다.
-- 따라서 9분 실패 축은 하나가 아니라 다음이 섞여 있다.
-  - 실제 작은/뒤쪽 얼굴 추가 검출: 모델 recall 측면에서는 개선일 수 있지만, FaceONNX 기준 strict frame/box gate에서는 `onlyOptimized`와 box count diff로 잡힌다.
-  - 손/물체 오탐: YOLO 전용 false-positive filter 대상이다.
-  - 큰 얼굴 box shape 차이: YOLO decode는 동작하지만 FaceONNX 대비 박스 정의가 넓어 box 정합 gate를 낮춘다.
+- `-DumpDetections`? ???frame overlay濡?9遺?援ш컙 mismatch瑜??뺤씤?덈떎.
+- frame 20/32 overlay 湲곗? YOLO??異붽? 泥?줉 諛뺤뒪???ㅼそ ?щ엺 ?쇨뎬 ?꾨낫濡?蹂댁씠硫? FaceONNX baseline???볦튇 ?ㅼ젣 ?쇨뎬??媛?μ꽦???덈떎.
+- frame 32???몃? 諛뺤뒪????臾쇱껜 ?곸뿭???쇨뎬濡??≪? ?ㅽ깘?대떎.
+- ???쇨뎬 諛뺤뒪??YOLO媛 FaceONNX蹂대떎 ???볤쾶 ?〓뒗 寃쏀뼢???덉뼱 `avgBestIou`? `minBestIou`瑜???텣?? ??李⑥씠???⑥닚 NMS 臾몄젣???꾨땲??
+- ?곕씪??9遺??ㅽ뙣 異뺤? ?섎굹媛 ?꾨땲???ㅼ쓬???욎뿬 ?덈떎.
+  - ?ㅼ젣 ?묒?/?ㅼそ ?쇨뎬 異붽? 寃異? 紐⑤뜽 recall 痢〓㈃?먯꽌??媛쒖꽑?????덉?留? FaceONNX 湲곗? strict frame/box gate?먯꽌??`onlyOptimized`? box count diff濡??≫엺??
+  - ??臾쇱껜 ?ㅽ깘: YOLO ?꾩슜 false-positive filter ??곸씠??
+  - ???쇨뎬 box shape 李⑥씠: YOLO decode???숈옉?섏?留?FaceONNX ?鍮?諛뺤뒪 ?뺤쓽媛 ?볦뼱 box ?뺥빀 gate瑜???텣??
 
-코드 보정:
+肄붾뱶 蹂댁젙:
 
-- `FaceTrackPostProcessOptions`에 YOLO 전용 하단 저신뢰 track 제거 옵션을 추가했다.
-- `LowerFrameTrackMaxConfidence`, `LowerFrameTrackMinCenterYRatio`, `LowerFrameTrackMinAreaRatio`, `LowerFrameTrackMaxAreaRatio`를 추가했다.
-- FaceONNX profile은 기본값 `LowerFrameTrackMaxConfidence=0`으로 비활성이다.
-- YOLO profile에서는 `LowerFrameTrackMaxConfidence=0.50`, `LowerFrameTrackMinCenterYRatio=0.58`, `LowerFrameTrackMinAreaRatio=0.015`, `LowerFrameTrackMaxAreaRatio=0.045`를 적용한다.
-- 목적은 9분 frame 31~38에 나온 손/물체 오탐처럼 화면 하단의 중간 크기 저신뢰 track만 좁게 제거하는 것이다.
-- `FaceTrackPostProcessResult`와 로그에 `removedLower`를 추가해 기존 `removedShort`와 분리했다.
-- `run-srcTest-smoke.ps1`에 `-YoloDropShortTrackMaxDetections`, `-YoloShortTrackMaxConfidence`, `-YoloLowerFrameTrackMaxConfidence`를 추가해 YOLO track 후처리 profile을 실험에서만 조정할 수 있게 했다. 앱 기본 profile 값은 유지한다.
+- `FaceTrackPostProcessOptions`??YOLO ?꾩슜 ?섎떒 ??좊ː track ?쒓굅 ?듭뀡??異붽??덈떎.
+- `LowerFrameTrackMaxConfidence`, `LowerFrameTrackMinCenterYRatio`, `LowerFrameTrackMinAreaRatio`, `LowerFrameTrackMaxAreaRatio`瑜?異붽??덈떎.
+- FaceONNX profile? 湲곕낯媛?`LowerFrameTrackMaxConfidence=0`?쇰줈 鍮꾪솢?깆씠??
+- YOLO profile?먯꽌??`LowerFrameTrackMaxConfidence=0.50`, `LowerFrameTrackMinCenterYRatio=0.58`, `LowerFrameTrackMinAreaRatio=0.015`, `LowerFrameTrackMaxAreaRatio=0.045`瑜??곸슜?쒕떎.
+- 紐⑹쟻? 9遺?frame 31~38???섏삩 ??臾쇱껜 ?ㅽ깘泥섎읆 ?붾㈃ ?섎떒??以묎컙 ?ш린 ??좊ː track留?醫곴쾶 ?쒓굅?섎뒗 寃껋씠??
+- `FaceTrackPostProcessResult`? 濡쒓렇??`removedLower`瑜?異붽???湲곗〈 `removedShort`? 遺꾨━?덈떎.
+- `run-srcTest-smoke.ps1`??`-YoloDropShortTrackMaxDetections`, `-YoloShortTrackMaxConfidence`, `-YoloLowerFrameTrackMaxConfidence`瑜?異붽???YOLO track ?꾩쿂由?profile???ㅽ뿕?먯꽌留?議곗젙?????덇쾶 ?덈떎. ??湲곕낯 profile 媛믪? ?좎??쒕떎.
 
-보정 후 9분 2초 gate:
+蹂댁젙 ??9遺?2珥?gate:
 
 - FaceONNX baseline: `baselineFrames=55`, `totalMs=20,840ms`.
 - YOLO5Face optimized: `optimizedFrames=58`, `totalMs=12,909ms`.
-- YOLO track 후처리: `removedShort=0`, `removedLower=7`, `rewritten=58`.
-- A/B 결과: `common=55`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `boxCountDiffFrames=33`, `passed=False`.
-- bad frame 로그: `boxCountDiff=10,17,18,19,20,21,22,23,24,25,32,33,34,35,36,37,38,39,40,41,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
-- 판단: 육안 확인된 손/물체 오탐 track 일부는 제거됐지만, gate 실패의 대부분은 YOLO-only 뒤쪽 얼굴 후보와 큰 얼굴 박스 정의 차이라서 이 필터만으로 통과하지 못한다. YOLO-only 뒤쪽 후보는 실제 얼굴 가능성이 있으므로 오탐으로 단정하지 않는다. 현재 추천 상태는 계속 `전체 추천 보류`다.
+- YOLO track ?꾩쿂由? `removedShort=0`, `removedLower=7`, `rewritten=58`.
+- A/B 寃곌낵: `common=55`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `boxCountDiffFrames=33`, `passed=False`.
+- bad frame 濡쒓렇: `boxCountDiff=10,17,18,19,20,21,22,23,24,25,32,33,34,35,36,37,38,39,40,41,...`, `lowIou=11,12,13,14,15,22,24,43,47,49,55,57,60,61`.
+- ?먮떒: ?≪븞 ?뺤씤????臾쇱껜 ?ㅽ깘 track ?쇰????쒓굅?먯?留? gate ?ㅽ뙣???遺遺꾩? YOLO-only ?ㅼそ ?쇨뎬 ?꾨낫? ???쇨뎬 諛뺤뒪 ?뺤쓽 李⑥씠?쇱꽌 ???꾪꽣留뚯쑝濡??듦낵?섏? 紐삵븳?? YOLO-only ?ㅼそ ?꾨낫???ㅼ젣 ?쇨뎬 媛?μ꽦???덉쑝誘濡??ㅽ깘?쇰줈 ?⑥젙?섏? ?딅뒗?? ?꾩옱 異붿쿇 ?곹깭??怨꾩냽 `?꾩껜 異붿쿇 蹂대쪟`??
 
-9분 2초 YOLO track 후처리 sweep:
+9遺?2珥?YOLO track ?꾩쿂由?sweep:
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, export skip.
-- 결과 CSV: `.tmp/yolo-sweep/yolo-trackpost-0900-smoke.csv`, `.tmp/yolo-sweep/yolo-trackpost-lowerframe-0900-smoke.csv`
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, export skip.
+- 寃곌낵 CSV: `.tmp/yolo-sweep/yolo-trackpost-0900-smoke.csv`, `.tmp/yolo-sweep/yolo-trackpost-lowerframe-0900-smoke.csv`
 
 | dropShortMax | shortMaxConf | lowerFrameMaxConf | YOLO totalMs | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | avgBaselineCoverage | minBaselineCoverage | boxCountDiffFrames | removedShort | removedLower |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -1815,67 +1794,67 @@ YOLO5Face 기본 profile 연결 후 회귀 재검증:
 | 1 | 0.18 | 0.40 | 8,800ms | 53 | 2 | 0 | 0.793 | 0.625 | 0.916 | 0.714 | 30 | 0 | 0 |
 | 1 | 0.18 | 0.60 | 8,899ms | 53 | 2 | 0 | 0.793 | 0.625 | 0.916 | 0.714 | 29 | 0 | 2 |
 
-- 판단: 이 9분 2초 조건에서는 짧은 track 제거 강도와 하단 track confidence 상한을 조정해도 strict gate 실패 원인이 줄지 않는다. `removedLower`를 0으로 낮춰도 box diff는 오히려 30으로 늘고, 0.60으로 올려도 기본값과 같다. 따라서 현재 실패는 track 후처리 수치가 아니라 detector 후보/큰 박스 정의/실제 뒤쪽 얼굴 여부 판정 문제에 가깝다.
+- ?먮떒: ??9遺?2珥?議곌굔?먯꽌??吏㏃? track ?쒓굅 媛뺣룄? ?섎떒 track confidence ?곹븳??議곗젙?대룄 strict gate ?ㅽ뙣 ?먯씤??以꾩? ?딅뒗?? `removedLower`瑜?0?쇰줈 ??떠??box diff???ㅽ엳??30?쇰줈 ?섍퀬, 0.60?쇰줈 ?щ젮??湲곕낯媛믨낵 媛숇떎. ?곕씪???꾩옱 ?ㅽ뙣??track ?꾩쿂由??섏튂媛 ?꾨땲??detector ?꾨낫/??諛뺤뒪 ?뺤쓽/?ㅼ젣 ?ㅼそ ?쇨뎬 ?щ? ?먯젙 臾몄젣??媛源앸떎.
 
-추가 box 보정 실험:
+異붽? box 蹂댁젙 ?ㅽ뿕:
 
-- `YoloFaceOnnxDetectorOptions`에 큰 YOLO5Face 박스를 축소하는 `LargeBoxWidthScale`, `LargeBoxHeightScale`, `LargeBoxMinAreaRatio` 옵션을 추가했다.
-- 기본값은 `1.0/1.0/0.0`이라 앱 Home YOLO profile에서는 비활성이다. 현재는 `run-srcTest-smoke.ps1`에서 명시적으로 넘겨 실험할 수 있는 옵션으로만 둔다.
-- 9분 2초 gate에서 `LargeBoxWidthScale=0.84`, `LargeBoxHeightScale=0.97`, `LargeBoxMinAreaRatio=0.03`을 적용하면 `avgBestIou=0.786`, `minBestIou=0.631`, `boxCountDiffFrames=33`, `passed=False`로 오히려 악화됐다.
-- 판단: 큰 얼굴 박스가 넓은 문제는 확인됐지만, 일괄 축소 보정은 다른 frame의 정합을 같이 깨서 기본 profile에 넣지 않는다.
-- `YoloFaceOnnxDetectorOptions`에 YOLO5Face landmark span 기반 큰 박스 보정 실험 옵션을 추가했다. 관련 smoke 옵션은 `-YoloUseLandmarkBoxRefine`, `-YoloLandmarkBoxMinAreaRatio`, `-YoloLandmarkBoxWidthScale`, `-YoloLandmarkBoxHeightScale`, `-YoloLandmarkBoxCenterYOffsetRatio`, `-YoloLandmarkBoxMinOriginalIou`다.
-- YOLO5Face feature-map의 landmark decode는 bbox decode와 다르게 `raw * anchor + grid * stride` 계열로 복원해야 해서 해당 경로를 분리했다. 기본값은 비활성이라 Home YOLO profile과 기존 FaceONNX 경로에는 영향을 주지 않는다.
-- 9분 2초 gate에서 안전장치 기본값(`YoloLandmarkBoxMinOriginalIou=0.30`)으로는 landmark 보정 eligible 후보가 있었지만 적용은 0건이었다. landmark 기반 후보 박스가 원래 YOLO 박스와 너무 멀어 안전장치에 걸린 것으로 본다.
-- 안전장치를 끄고 강제 적용한 실험(`YoloLandmarkBoxWidthScale=1.80`, `YoloLandmarkBoxHeightScale=2.10`, `YoloLandmarkBoxCenterYOffsetRatio=-0.04`, `YoloLandmarkBoxMinOriginalIou=0`)은 `baselineFrames=55`, `optimizedFrames=58`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.467`, `minBestIou=0.000`, `boxCountDiffFrames=32`, `passed=False`였다.
-- 판단: landmark span 강제 보정은 큰 얼굴 박스를 과도하게 좁히거나 중심을 밀어 FaceONNX 정합을 더 크게 깨므로 추천 후보가 아니다. 이 결과는 큰 박스 차이가 단순 landmark crop 문제도 아님을 보여준다.
+- `YoloFaceOnnxDetectorOptions`????YOLO5Face 諛뺤뒪瑜?異뺤냼?섎뒗 `LargeBoxWidthScale`, `LargeBoxHeightScale`, `LargeBoxMinAreaRatio` ?듭뀡??異붽??덈떎.
+- 湲곕낯媛믪? `1.0/1.0/0.0`?대씪 ??Home YOLO profile?먯꽌??鍮꾪솢?깆씠?? ?꾩옱??`run-srcTest-smoke.ps1`?먯꽌 紐낆떆?곸쑝濡??섍꺼 ?ㅽ뿕?????덈뒗 ?듭뀡?쇰줈留??붾떎.
+- 9遺?2珥?gate?먯꽌 `LargeBoxWidthScale=0.84`, `LargeBoxHeightScale=0.97`, `LargeBoxMinAreaRatio=0.03`???곸슜?섎㈃ `avgBestIou=0.786`, `minBestIou=0.631`, `boxCountDiffFrames=33`, `passed=False`濡??ㅽ엳???낇솕?먮떎.
+- ?먮떒: ???쇨뎬 諛뺤뒪媛 ?볦? 臾몄젣???뺤씤?먯?留? ?쇨큵 異뺤냼 蹂댁젙? ?ㅻⅨ frame???뺥빀??媛숈씠 源⑥꽌 湲곕낯 profile???ｌ? ?딅뒗??
+- `YoloFaceOnnxDetectorOptions`??YOLO5Face landmark span 湲곕컲 ??諛뺤뒪 蹂댁젙 ?ㅽ뿕 ?듭뀡??異붽??덈떎. 愿??smoke ?듭뀡? `-YoloUseLandmarkBoxRefine`, `-YoloLandmarkBoxMinAreaRatio`, `-YoloLandmarkBoxWidthScale`, `-YoloLandmarkBoxHeightScale`, `-YoloLandmarkBoxCenterYOffsetRatio`, `-YoloLandmarkBoxMinOriginalIou`??
+- YOLO5Face feature-map??landmark decode??bbox decode? ?ㅻⅤ寃?`raw * anchor + grid * stride` 怨꾩뿴濡?蹂듭썝?댁빞 ?댁꽌 ?대떦 寃쎈줈瑜?遺꾨━?덈떎. 湲곕낯媛믪? 鍮꾪솢?깆씠??Home YOLO profile怨?湲곗〈 FaceONNX 寃쎈줈?먮뒗 ?곹뼢??二쇱? ?딅뒗??
+- 9遺?2珥?gate?먯꽌 ?덉쟾?μ튂 湲곕낯媛?`YoloLandmarkBoxMinOriginalIou=0.30`)?쇰줈??landmark 蹂댁젙 eligible ?꾨낫媛 ?덉뿀吏留??곸슜? 0嫄댁씠?덈떎. landmark 湲곕컲 ?꾨낫 諛뺤뒪媛 ?먮옒 YOLO 諛뺤뒪? ?덈Т 硫???덉쟾?μ튂??嫄몃┛ 寃껋쑝濡?蹂몃떎.
+- ?덉쟾?μ튂瑜??꾧퀬 媛뺤젣 ?곸슜???ㅽ뿕(`YoloLandmarkBoxWidthScale=1.80`, `YoloLandmarkBoxHeightScale=2.10`, `YoloLandmarkBoxCenterYOffsetRatio=-0.04`, `YoloLandmarkBoxMinOriginalIou=0`)? `baselineFrames=55`, `optimizedFrames=58`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.467`, `minBestIou=0.000`, `boxCountDiffFrames=32`, `passed=False`???
+- ?먮떒: landmark span 媛뺤젣 蹂댁젙? ???쇨뎬 諛뺤뒪瑜?怨쇰룄?섍쾶 醫곹엳嫄곕굹 以묒떖??諛??FaceONNX ?뺥빀?????ш쾶 源⑤?濡?異붿쿇 ?꾨낫媛 ?꾨땲?? ??寃곌낵????諛뺤뒪 李⑥씠媛 ?⑥닚 landmark crop 臾몄젣???꾨떂??蹂댁뿬以??
 
-추가 진단 및 2단계 실험:
+異붽? 吏꾨떒 諛?2?④퀎 ?ㅽ뿕:
 
-- `scripts/run-srcTest-smoke.ps1`에 `-DumpCompareDetails`를 추가했다. 이 옵션을 켜면 `[SmokeCompareDetail]` 로그로 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` frame의 baseline/optimized 박스 `x/y/w/h`, 정규화 중심점, 면적 비율, confidence를 출력한다.
-- `[SmokeCompareNote]`를 추가해 `onlyBaseline`/`onlyOptimized`가 실제 정답 라벨의 미탐/오탐이 아니라 detector 간 차이임을 로그에 명시한다.
-- `-DumpCompareOverlays`와 `-CompareOverlayDir`를 추가했다. 이 옵션을 켜면 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` 대표 frame을 PNG로 저장한다. overlay 색상은 FaceONNX baseline이 빨간 박스, optimized detector가 청록 박스다. 이 이미지는 baseline-diff frame을 실제 미탐/오탐으로 판정할 때 사용하는 육안 검토 자료다.
-- overlay dump도 앞쪽 일부 frame만 저장하는 한계를 줄이기 위해 `-CompareOverlayMaxFrames`를 추가했다. 기본값은 reason별 `16` frame이다.
-- `-DumpCompareCrops`, `-CompareCropDir`, `-CompareCropPaddingRatio`를 추가했다. 이 옵션은 `onlyBaseline`, `onlyOptimized`, `boxCountDiff`에서 baseline과 IoU `0.35` 미만인 후보만 crop PNG와 `compare-crops.csv`로 저장한다. 목적은 YOLO-only 후보가 실제 얼굴인지 손/물체 오탐인지 더 빠르게 육안 분류하는 것이다.
-- crop dump가 앞쪽 일부 frame만 저장해 후반 `onlyBaseline` 원인 확인에 수동 ffmpeg crop이 필요했던 문제를 줄이기 위해 `-CompareCropMaxOnlyFrames`, `-CompareCropMaxBoxDiffFrames`를 추가했다. 기본값은 각각 `16`이라 6분 30초 gate의 `onlyBaseline=14` 같은 케이스는 한 번에 모두 저장할 수 있다.
-- `scripts/new-yolo-crop-review.ps1`를 추가했다. `compare-crops.csv`를 `crop-review.csv`로 변환하고, `verdict`에 `Face`, `NonFace`, `Unclear`를 입력한 뒤 `-Summarize`로 실제 판정 집계를 낼 수 있게 한다. 집계 기준은 optimized crop이 `Face`면 YOLO recall gain, optimized crop이 `NonFace`면 YOLO false-positive, baseline crop이 `Face`면 YOLO miss, baseline crop이 `NonFace`면 FaceONNX false-positive다. `-QualityGate`를 켜면 `OptimizedMiss`, `OptimizedFalsePositive`, `Unclear`, `Unreviewed`가 허용치 이내인지 검사하고 실패 시 exit code `2`를 반환한다.
-- `[SmokeCompare]`에 `avgBaselineCoverage`와 `minBaselineCoverage`를 추가했다. 기준은 FaceONNX baseline 박스 면적 중 optimized 박스가 덮은 비율이다. IoU가 낮아도 coverage가 높으면 큰 박스/정의 차이에 가깝고, coverage도 낮으면 실제 모자이크 미커버 위험으로 본다.
-- 9분 2초 상세 로그 기준, YOLO5Face 실패는 두 가지가 섞여 있다.
-  - `onlyOptimized=4,8,9`와 frame 10~49의 `boxCountDiff`는 화면 상단의 작은 두 번째 얼굴 후보가 FaceONNX보다 먼저 잡히는 현상이다. 예: frame 10의 추가 후보는 `cx=0.576`, `cy=0.052`, `area=0.00424`, `conf=0.455`였다.
-  - `lowIou`는 큰 얼굴 박스의 정의 차이다. 예: frame 11은 FaceONNX `w=535,h=638,area=0.04115` 대비 YOLO `w=727.8,h=663.9,area=0.05826`으로 YOLO 폭이 더 넓다.
-- crop 진단 실행: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `-DumpCompareCrops`, 출력 `.tmp/yolo-crops/test-0900-yolo5face/`.
-- 이 실행은 crop PNG `15`개와 `compare-crops.csv`를 생성했다. `onlyOptimized` frame `4/8/9` 및 `boxCountDiffOptimizedExtra` frame `17/21/25/33` 대표 crop은 모두 화면 뒤쪽 사람의 옆얼굴로 육안 확인된다.
-- 따라서 이 구간의 YOLO-only 작은 상단 후보를 손/물체 오탐으로 단정하면 안 된다. 현재 증거로는 FaceONNX baseline이 놓친 실제 얼굴을 YOLO가 추가로 잡는 recall 개선 가능성이 더 크다.
-- coverage 지표 추가 후 같은 9분 2초 구간을 다시 실행했다. 결과는 FaceONNX baseline `totalMs=13,528ms`, YOLO optimized `totalMs=8,856ms`, `baselineFrames=55`, `optimizedFrames=58`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `avgBaselineCoverage=0.918`, `minBaselineCoverage=0.714`, `boxCountDiffFrames=33`이었다.
-- 판단: 이 구간의 YOLO는 속도는 FaceONNX 대비 빠르지만, 큰 얼굴 coverage 최저값이 `0.714`라 단순히 "YOLO 박스가 더 커서 안전하다"로 정리할 수 없다. 현재 상태는 추가 얼굴 recall 가능성과 일부 baseline 얼굴 미커버 위험이 같이 있다.
-- 6분 30초 확장 gate에서 같은 YOLO5Face profile을 export 포함으로 실행했다. FaceONNX baseline은 자동 검출 `totalMs=339,661ms`, export `totalMs=43,605ms`, `directFaceFrames=83`이었고, YOLO optimized는 자동 검출 `totalMs=123,243ms`, export `totalMs=43,331ms`, `directFaceFrames=74`였다.
-- 같은 6분 30초 확장 gate의 A/B 결과는 `baselineFrames=83`, `optimizedFrames=74`, `common=69`, `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `avgBaselineCoverage=0.877`, `minBaselineCoverage=0.000`, `boxCountDiffFrames=14`였다.
-- 판단: 30초 이상 구간에서도 YOLO 자동 검출은 FaceONNX 대비 약 `2.76x` 빠르지만, FaceONNX 기준 누락 frame과 baseline coverage 0 frame이 있어 품질 gate 실패다. export 시간은 두 detector 모두 direct face rect 경로라 거의 같고, detector 교체만으로 export 병목은 줄지 않는다.
-- 6분 30초 crop 진단을 추가 실행했다. 명령은 같은 YOLO5Face profile에 `-SkipExport -DumpCompareDetails -DumpCompareCrops -CompareCropDir .tmp/yolo-crops/test-0600-30s-yolo5face`를 붙였다.
-- crop 기준 `onlyBaseline` frame `204~211`은 바닥의 금속/문양 물체였고, 추가로 확인한 frame `315/350/709`도 옷/문자/직물 영역이라 얼굴로 보이지 않았다. 따라서 6분 30초의 `onlyBaseline=14`를 그대로 YOLO 실제 미탐으로 해석하면 안 된다. 이 부분은 FaceONNX baseline false-positive가 strict baseline-diff gate를 악화시킨 사례에 가깝다.
-- 반대로 `onlyOptimized` frame `167~169/887`도 금속 문양이나 문자 영역으로 보이는 false-positive가 포함되어 있다. frame `683`은 작은 사람 얼굴 가능성이 있으나 crop만으로 확정하지 않는다.
-- 6분 30초 YOLO false-positive를 줄이기 위해 YOLO profile의 짧은 저신뢰 track 제거를 `DropShortTrackMaxDetections=3`, `ShortTrackMaxConfidence=0.40`으로 올려 실험했다. 이 설정은 6분 3초 대표 gate에서 정상 track까지 제거해 `removedShort=5`, `optimizedFrames=10`, `onlyBaseline=9`, `passed=False`를 만들었다. 따라서 기본 profile에는 넣지 않고 기존 `DropShortTrackMaxDetections=1`, `ShortTrackMaxConfidence=0.18`로 되돌렸다.
-- 되돌린 뒤 6분 3초 gate를 다시 실행했고, FaceONNX baseline `totalMs=40,072ms`, YOLO optimized `totalMs=13,595ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
-- crop/overlay dump 범위 옵션 추가 후 6분 3초 gate를 다시 실행했고, FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
-- `YoloConfidenceThreshold=0.70` 실험은 작은 추가 후보 일부를 줄였지만 큰 얼굴도 FaceONNX 대비 누락되어 `onlyBaseline=5,6,7,10`, `avgBestIou=0.777`, `minBestIou=0.000`, `boxCountDiffFrames=13`, `passed=False`였다. threshold만 올리는 방식은 baseline-diff 기준으로 누락을 만든다. 실제 미탐 여부는 해당 frame overlay 확인이 필요하다.
-- `YoloInputSize=800` 실험은 `totalMs=21,556ms`로 FaceONNX baseline `20,883ms`보다 느려졌고, `avgBestIou=0.783`, `minBestIou=0.553`, `boxCountDiffFrames=37`, `passed=False`였다. 입력 크기 확대는 속도/품질 모두 기본 후보보다 나쁘다.
-- `run-srcTest-smoke.ps1`에 `-YoloUseFaceOnnxRoiRefine` 실험 옵션을 추가했다. YOLO 결과 중 `YoloFaceOnnxRoiMinAreaRatio` 이상 큰 박스만 FaceONNX ROI detector로 재검출한다.
-- 9분 2초에서 `-YoloUseFaceOnnxRoiRefine -YoloFaceOnnxRoiMinAreaRatio 0.03 -YoloFaceOnnxRoiMaxCandidates 64`는 `candidates=52`, `attempts=50`, `hits=50`, `elapsedMs=22,956`이었다.
-- 이 2단계 실험은 `avgBestIou=0.816`으로 기본 YOLO `0.798`보다 조금 나아졌지만 `minBestIou=0.567`, `boxCountDiffFrames=33`, `passed=False`였고, ROI refine 추가 시간 때문에 속도 이점도 사라진다.
-- 판단: 현재 9분 구간 실패는 threshold, 입력 크기, 단순 큰 박스 축소, landmark span 박스 보정, 큰 박스 FaceONNX ROI refiner만으로 해결되지 않는다. 남은 후보는 더 세밀한 박스 보정 모델, 작은 상단 얼굴 후보를 실제 얼굴/오탐으로 분류할 verifier, 또는 다른 YOLO face 모델이다.
+- `scripts/run-srcTest-smoke.ps1`??`-DumpCompareDetails`瑜?異붽??덈떎. ???듭뀡??耳쒕㈃ `[SmokeCompareDetail]` 濡쒓렇濡?`onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` frame??baseline/optimized 諛뺤뒪 `x/y/w/h`, ?뺢퇋??以묒떖?? 硫댁쟻 鍮꾩쑉, confidence瑜?異쒕젰?쒕떎.
+- `[SmokeCompareNote]`瑜?異붽???`onlyBaseline`/`onlyOptimized`媛 ?ㅼ젣 ?뺣떟 ?쇰꺼??誘명깘/?ㅽ깘???꾨땲??detector 媛?李⑥씠?꾩쓣 濡쒓렇??紐낆떆?쒕떎.
+- `-DumpCompareOverlays`? `-CompareOverlayDir`瑜?異붽??덈떎. ???듭뀡??耳쒕㈃ `onlyBaseline`, `onlyOptimized`, `boxCountDiff`, `lowIou` ???frame??PNG濡???ν븳?? overlay ?됱긽? FaceONNX baseline??鍮④컙 諛뺤뒪, optimized detector媛 泥?줉 諛뺤뒪?? ???대?吏??baseline-diff frame???ㅼ젣 誘명깘/?ㅽ깘?쇰줈 ?먯젙?????ъ슜?섎뒗 ?≪븞 寃???먮즺??
+- overlay dump???욎そ ?쇰? frame留???ν븯???쒓퀎瑜?以꾩씠湲??꾪빐 `-CompareOverlayMaxFrames`瑜?異붽??덈떎. 湲곕낯媛믪? reason蹂?`16` frame?대떎.
+- `-DumpCompareCrops`, `-CompareCropDir`, `-CompareCropPaddingRatio`瑜?異붽??덈떎. ???듭뀡? `onlyBaseline`, `onlyOptimized`, `boxCountDiff`?먯꽌 baseline怨?IoU `0.35` 誘몃쭔???꾨낫留?crop PNG? `compare-crops.csv`濡???ν븳?? 紐⑹쟻? YOLO-only ?꾨낫媛 ?ㅼ젣 ?쇨뎬?몄? ??臾쇱껜 ?ㅽ깘?몄? ??鍮좊Ⅴ寃??≪븞 遺꾨쪟?섎뒗 寃껋씠??
+- crop dump媛 ?욎そ ?쇰? frame留???ν빐 ?꾨컲 `onlyBaseline` ?먯씤 ?뺤씤???섎룞 ffmpeg crop???꾩슂?덈뜕 臾몄젣瑜?以꾩씠湲??꾪빐 `-CompareCropMaxOnlyFrames`, `-CompareCropMaxBoxDiffFrames`瑜?異붽??덈떎. 湲곕낯媛믪? 媛곴컖 `16`?대씪 6遺?30珥?gate??`onlyBaseline=14` 媛숈? 耳?댁뒪????踰덉뿉 紐⑤몢 ??ν븷 ???덈떎.
+- `scripts/new-yolo-crop-review.ps1`瑜?異붽??덈떎. `compare-crops.csv`瑜?`crop-review.csv`濡?蹂?섑븯怨? `verdict`??`Face`, `NonFace`, `Unclear`瑜??낅젰????`-Summarize`濡??ㅼ젣 ?먯젙 吏묎퀎瑜??????덇쾶 ?쒕떎. 吏묎퀎 湲곗?? optimized crop??`Face`硫?YOLO recall gain, optimized crop??`NonFace`硫?YOLO false-positive, baseline crop??`Face`硫?YOLO miss, baseline crop??`NonFace`硫?FaceONNX false-positive?? `-QualityGate`瑜?耳쒕㈃ `OptimizedMiss`, `OptimizedFalsePositive`, `Unclear`, `Unreviewed`媛 ?덉슜移??대궡?몄? 寃?ы븯怨??ㅽ뙣 ??exit code `2`瑜?諛섑솚?쒕떎.
+- `[SmokeCompare]`??`avgBaselineCoverage`? `minBaselineCoverage`瑜?異붽??덈떎. 湲곗?? FaceONNX baseline 諛뺤뒪 硫댁쟻 以?optimized 諛뺤뒪媛 ??? 鍮꾩쑉?대떎. IoU媛 ??븘??coverage媛 ?믪쑝硫???諛뺤뒪/?뺤쓽 李⑥씠??媛源앷퀬, coverage????쑝硫??ㅼ젣 紐⑥옄?댄겕 誘몄빱踰??꾪뿕?쇰줈 蹂몃떎.
+- 9遺?2珥??곸꽭 濡쒓렇 湲곗?, YOLO5Face ?ㅽ뙣????媛吏媛 ?욎뿬 ?덈떎.
+  - `onlyOptimized=4,8,9`? frame 10~49??`boxCountDiff`???붾㈃ ?곷떒???묒? ??踰덉㎏ ?쇨뎬 ?꾨낫媛 FaceONNX蹂대떎 癒쇱? ?≫엳???꾩긽?대떎. ?? frame 10??異붽? ?꾨낫??`cx=0.576`, `cy=0.052`, `area=0.00424`, `conf=0.455`???
+  - `lowIou`?????쇨뎬 諛뺤뒪???뺤쓽 李⑥씠?? ?? frame 11? FaceONNX `w=535,h=638,area=0.04115` ?鍮?YOLO `w=727.8,h=663.9,area=0.05826`?쇰줈 YOLO ??씠 ???볥떎.
+- crop 吏꾨떒 ?ㅽ뻾: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `-DumpCompareCrops`, 異쒕젰 `.tmp/yolo-crops/test-0900-yolo5face/`.
+- ???ㅽ뻾? crop PNG `15`媛쒖? `compare-crops.csv`瑜??앹꽦?덈떎. `onlyOptimized` frame `4/8/9` 諛?`boxCountDiffOptimizedExtra` frame `17/21/25/33` ???crop? 紐⑤몢 ?붾㈃ ?ㅼそ ?щ엺???놁뼹援대줈 ?≪븞 ?뺤씤?쒕떎.
+- ?곕씪????援ш컙??YOLO-only ?묒? ?곷떒 ?꾨낫瑜???臾쇱껜 ?ㅽ깘?쇰줈 ?⑥젙?섎㈃ ???쒕떎. ?꾩옱 利앷굅濡쒕뒗 FaceONNX baseline???볦튇 ?ㅼ젣 ?쇨뎬??YOLO媛 異붽?濡??〓뒗 recall 媛쒖꽑 媛?μ꽦?????щ떎.
+- coverage 吏??異붽? ??媛숈? 9遺?2珥?援ш컙???ㅼ떆 ?ㅽ뻾?덈떎. 寃곌낵??FaceONNX baseline `totalMs=13,528ms`, YOLO optimized `totalMs=8,856ms`, `baselineFrames=55`, `optimizedFrames=58`, `onlyBaseline=0`, `onlyOptimized=3`, `avgBestIou=0.798`, `minBestIou=0.625`, `avgBaselineCoverage=0.918`, `minBaselineCoverage=0.714`, `boxCountDiffFrames=33`?댁뿀??
+- ?먮떒: ??援ш컙??YOLO???띾룄??FaceONNX ?鍮?鍮좊Ⅴ吏留? ???쇨뎬 coverage 理쒖?媛믪씠 `0.714`???⑥닚??"YOLO 諛뺤뒪媛 ??而ㅼ꽌 ?덉쟾?섎떎"濡??뺣━?????녿떎. ?꾩옱 ?곹깭??異붽? ?쇨뎬 recall 媛?μ꽦怨??쇰? baseline ?쇨뎬 誘몄빱踰??꾪뿕??媛숈씠 ?덈떎.
+- 6遺?30珥??뺤옣 gate?먯꽌 媛숈? YOLO5Face profile??export ?ы븿?쇰줈 ?ㅽ뻾?덈떎. FaceONNX baseline? ?먮룞 寃異?`totalMs=339,661ms`, export `totalMs=43,605ms`, `directFaceFrames=83`?댁뿀怨? YOLO optimized???먮룞 寃異?`totalMs=123,243ms`, export `totalMs=43,331ms`, `directFaceFrames=74`???
+- 媛숈? 6遺?30珥??뺤옣 gate??A/B 寃곌낵??`baselineFrames=83`, `optimizedFrames=74`, `common=69`, `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `avgBaselineCoverage=0.877`, `minBaselineCoverage=0.000`, `boxCountDiffFrames=14`???
+- ?먮떒: 30珥??댁긽 援ш컙?먯꽌??YOLO ?먮룞 寃異쒖? FaceONNX ?鍮???`2.76x` 鍮좊Ⅴ吏留? FaceONNX 湲곗? ?꾨씫 frame怨?baseline coverage 0 frame???덉뼱 ?덉쭏 gate ?ㅽ뙣?? export ?쒓컙? ??detector 紐⑤몢 direct face rect 寃쎈줈??嫄곗쓽 媛숆퀬, detector 援먯껜留뚯쑝濡?export 蹂묐ぉ? 以꾩? ?딅뒗??
+- 6遺?30珥?crop 吏꾨떒??異붽? ?ㅽ뻾?덈떎. 紐낅졊? 媛숈? YOLO5Face profile??`-SkipExport -DumpCompareDetails -DumpCompareCrops -CompareCropDir .tmp/yolo-crops/test-0600-30s-yolo5face`瑜?遺숈???
+- crop 湲곗? `onlyBaseline` frame `204~211`? 諛붾떏??湲덉냽/臾몄뼇 臾쇱껜?怨? 異붽?濡??뺤씤??frame `315/350/709`????臾몄옄/吏곷Ъ ?곸뿭?대씪 ?쇨뎬濡?蹂댁씠吏 ?딆븯?? ?곕씪??6遺?30珥덉쓽 `onlyBaseline=14`瑜?洹몃?濡?YOLO ?ㅼ젣 誘명깘?쇰줈 ?댁꽍?섎㈃ ???쒕떎. ??遺遺꾩? FaceONNX baseline false-positive媛 strict baseline-diff gate瑜??낇솕?쒗궓 ?щ???媛源앸떎.
+- 諛섎?濡?`onlyOptimized` frame `167~169/887`??湲덉냽 臾몄뼇?대굹 臾몄옄 ?곸뿭?쇰줈 蹂댁씠??false-positive媛 ?ы븿?섏뼱 ?덈떎. frame `683`? ?묒? ?щ엺 ?쇨뎬 媛?μ꽦???덉쑝??crop留뚯쑝濡??뺤젙?섏? ?딅뒗??
+- 6遺?30珥?YOLO false-positive瑜?以꾩씠湲??꾪빐 YOLO profile??吏㏃? ??좊ː track ?쒓굅瑜?`DropShortTrackMaxDetections=3`, `ShortTrackMaxConfidence=0.40`?쇰줈 ?щ젮 ?ㅽ뿕?덈떎. ???ㅼ젙? 6遺?3珥????gate?먯꽌 ?뺤긽 track源뚯? ?쒓굅??`removedShort=5`, `optimizedFrames=10`, `onlyBaseline=9`, `passed=False`瑜?留뚮뱾?덈떎. ?곕씪??湲곕낯 profile?먮뒗 ?ｌ? ?딄퀬 湲곗〈 `DropShortTrackMaxDetections=1`, `ShortTrackMaxConfidence=0.18`濡??섎룎?몃떎.
+- ?섎룎由???6遺?3珥?gate瑜??ㅼ떆 ?ㅽ뻾?덇퀬, FaceONNX baseline `totalMs=40,072ms`, YOLO optimized `totalMs=13,595ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`瑜??뺤씤?덈떎.
+- crop/overlay dump 踰붿쐞 ?듭뀡 異붽? ??6遺?3珥?gate瑜??ㅼ떆 ?ㅽ뻾?덇퀬, FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`瑜??뺤씤?덈떎.
+- `YoloConfidenceThreshold=0.70` ?ㅽ뿕? ?묒? 異붽? ?꾨낫 ?쇰?瑜?以꾩?吏留????쇨뎬??FaceONNX ?鍮??꾨씫?섏뼱 `onlyBaseline=5,6,7,10`, `avgBestIou=0.777`, `minBestIou=0.000`, `boxCountDiffFrames=13`, `passed=False`??? threshold留??щ━??諛⑹떇? baseline-diff 湲곗??쇰줈 ?꾨씫??留뚮뱺?? ?ㅼ젣 誘명깘 ?щ????대떦 frame overlay ?뺤씤???꾩슂?섎떎.
+- `YoloInputSize=800` ?ㅽ뿕? `totalMs=21,556ms`濡?FaceONNX baseline `20,883ms`蹂대떎 ?먮젮議뚭퀬, `avgBestIou=0.783`, `minBestIou=0.553`, `boxCountDiffFrames=37`, `passed=False`??? ?낅젰 ?ш린 ?뺣????띾룄/?덉쭏 紐⑤몢 湲곕낯 ?꾨낫蹂대떎 ?섏걯??
+- `run-srcTest-smoke.ps1`??`-YoloUseFaceOnnxRoiRefine` ?ㅽ뿕 ?듭뀡??異붽??덈떎. YOLO 寃곌낵 以?`YoloFaceOnnxRoiMinAreaRatio` ?댁긽 ??諛뺤뒪留?FaceONNX ROI detector濡??ш?異쒗븳??
+- 9遺?2珥덉뿉??`-YoloUseFaceOnnxRoiRefine -YoloFaceOnnxRoiMinAreaRatio 0.03 -YoloFaceOnnxRoiMaxCandidates 64`??`candidates=52`, `attempts=50`, `hits=50`, `elapsedMs=22,956`?댁뿀??
+- ??2?④퀎 ?ㅽ뿕? `avgBestIou=0.816`?쇰줈 湲곕낯 YOLO `0.798`蹂대떎 議곌툑 ?섏븘議뚯?留?`minBestIou=0.567`, `boxCountDiffFrames=33`, `passed=False`?怨? ROI refine 異붽? ?쒓컙 ?뚮Ц???띾룄 ?댁젏???щ씪吏꾨떎.
+- ?먮떒: ?꾩옱 9遺?援ш컙 ?ㅽ뙣??threshold, ?낅젰 ?ш린, ?⑥닚 ??諛뺤뒪 異뺤냼, landmark span 諛뺤뒪 蹂댁젙, ??諛뺤뒪 FaceONNX ROI refiner留뚯쑝濡??닿껐?섏? ?딅뒗?? ?⑥? ?꾨낫?????몃???諛뺤뒪 蹂댁젙 紐⑤뜽, ?묒? ?곷떒 ?쇨뎬 ?꾨낫瑜??ㅼ젣 ?쇨뎬/?ㅽ깘?쇰줈 遺꾨쪟??verifier, ?먮뒗 ?ㅻⅨ YOLO face 紐⑤뜽?대떎.
 
 YOLO threshold sweep harness:
 
-- `scripts/run-yolo-threshold-sweep.ps1`를 추가했다. 기존 `run-srcTest-smoke.ps1`를 반복 호출해 YOLO model/input/objectness/confidence/NMS/tiling 조합별 결과를 CSV와 log로 저장한다.
-- sweep은 후보 수집을 중단하지 않기 위해 smoke quality threshold를 `MinAvgIou=0`, `MinBestIou=0`, `AllowFrameMismatch=true`로 낮춰 실행한다. 따라서 CSV의 `CollectionGatePassed`는 실행 수집 성공에 가까운 값이며 최종 품질 통과로 보지 않는다.
-- 최종 3초 gate 판단용으로 `StrictFrameMatchOk`, `StrictIouOk`, `StrictGatePassed` 컬럼을 별도로 계산한다. 기본 strict 기준은 `onlyBaseline=0`, `onlyOptimized=0`, `boxCountDiffFrames=0`, `avgBestIou>=0.90`, `minBestIou>=0.75`다.
-- coverage 지표 추가 후 sweep CSV에도 `AvgBaselineCoverage`, `MinBaselineCoverage` 컬럼을 추가했다. 이 값은 후보 선별 시 IoU와 별도로 실제 baseline face 커버 위험을 보는 보조 기준이다.
-- 검증 실행: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`, `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45` 1케이스에서 `StrictGatePassed=True`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, YOLO `totalMs=13,621ms`를 확인했다.
-- sweep harness에 box shape 보정 실험 축을 추가했다. `-IncludeLargeBoxScale`은 `YoloLargeBoxWidthScale/HeightScale/MinAreaRatio` 배열을 반복하고, `-IncludeLandmarkBoxRefine`은 landmark 기반 box refine on/off와 landmark scale/offset/min-IoU 배열을 반복한다. `-IncludeFaceOnnxRoiRefine`은 FaceONNX ROI verifier on/off와 min-area/max-candidates 배열을 반복한다. `-IncludeTiling -IncludeTileOnly`는 non-tile/full+tile/tile-only 모드를 같은 CSV에서 비교한다. `-IncludeTrackPostProcess`는 drop-short/lower-frame confidence 축을 반복한다. CSV에는 tiling mode, track profile, large-box/landmark/ROI 보정 파라미터와 ROI attempts/hits/elapsedMs가 함께 저장된다.
+- `scripts/run-yolo-threshold-sweep.ps1`瑜?異붽??덈떎. 湲곗〈 `run-srcTest-smoke.ps1`瑜?諛섎났 ?몄텧??YOLO model/input/objectness/confidence/NMS/tiling 議고빀蹂?寃곌낵瑜?CSV? log濡???ν븳??
+- sweep? ?꾨낫 ?섏쭛??以묐떒?섏? ?딄린 ?꾪빐 smoke quality threshold瑜?`MinAvgIou=0`, `MinBestIou=0`, `AllowFrameMismatch=true`濡???떠 ?ㅽ뻾?쒕떎. ?곕씪??CSV??`CollectionGatePassed`???ㅽ뻾 ?섏쭛 ?깃났??媛源뚯슫 媛믪씠硫?理쒖쥌 ?덉쭏 ?듦낵濡?蹂댁? ?딅뒗??
+- 理쒖쥌 3珥?gate ?먮떒?⑹쑝濡?`StrictFrameMatchOk`, `StrictIouOk`, `StrictGatePassed` 而щ읆??蹂꾨룄濡?怨꾩궛?쒕떎. 湲곕낯 strict 湲곗?? `onlyBaseline=0`, `onlyOptimized=0`, `boxCountDiffFrames=0`, `avgBestIou>=0.90`, `minBestIou>=0.75`??
+- coverage 吏??異붽? ??sweep CSV?먮룄 `AvgBaselineCoverage`, `MinBaselineCoverage` 而щ읆??異붽??덈떎. ??媛믪? ?꾨낫 ?좊퀎 ??IoU? 蹂꾨룄濡??ㅼ젣 baseline face 而ㅻ쾭 ?꾪뿕??蹂대뒗 蹂댁“ 湲곗??대떎.
+- 寃利??ㅽ뻾: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`, `YoloV5Face`, `objectness=0.12`, `confidence=0.18`, `nms=0.45` 1耳?댁뒪?먯꽌 `StrictGatePassed=True`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, YOLO `totalMs=13,621ms`瑜??뺤씤?덈떎.
+- sweep harness??box shape 蹂댁젙 ?ㅽ뿕 異뺤쓣 異붽??덈떎. `-IncludeLargeBoxScale`? `YoloLargeBoxWidthScale/HeightScale/MinAreaRatio` 諛곗뿴??諛섎났?섍퀬, `-IncludeLandmarkBoxRefine`? landmark 湲곕컲 box refine on/off? landmark scale/offset/min-IoU 諛곗뿴??諛섎났?쒕떎. `-IncludeFaceOnnxRoiRefine`? FaceONNX ROI verifier on/off? min-area/max-candidates 諛곗뿴??諛섎났?쒕떎. `-IncludeTiling -IncludeTileOnly`??non-tile/full+tile/tile-only 紐⑤뱶瑜?媛숈? CSV?먯꽌 鍮꾧탳?쒕떎. `-IncludeTrackPostProcess`??drop-short/lower-frame confidence 異뺤쓣 諛섎났?쒕떎. CSV?먮뒗 tiling mode, track profile, large-box/landmark/ROI 蹂댁젙 ?뚮씪誘명꽣? ROI attempts/hits/elapsedMs媛 ?④퍡 ??λ맂??
 
-9분 2초 YOLO5Face objectness sweep:
+9遺?2珥?YOLO5Face objectness sweep:
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `confidence=0.18`, `nms=0.45`, `objectness=0.10/0.12/0.18/0.25`, export skip.
-- 결과 CSV: `.tmp/yolo-sweep/yolo5face-0900-objectness.csv`
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `confidence=0.18`, `nms=0.45`, `objectness=0.10/0.12/0.18/0.25`, export skip.
+- 寃곌낵 CSV: `.tmp/yolo-sweep/yolo5face-0900-objectness.csv`
 
 | objectness | YOLO totalMs | baselineFrames | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | boxCountDiffFrames |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -1884,12 +1863,12 @@ YOLO threshold sweep harness:
 | 0.18 | 9,504ms | 55 | 58 | 0 | 3 | 0.798 | 0.625 | 33 |
 | 0.25 | 9,486ms | 55 | 54 | 2 | 1 | 0.793 | 0.625 | 28 |
 
-- 판단: objectness `0.10~0.18`은 속도만 조금 달라지고 baseline-diff 품질 지표는 사실상 같다. `0.25`는 `boxCountDiffFrames`를 28까지 줄였지만 FaceONNX-only frame이 2개 생겨 strict gate를 통과하지 못한다.
+- ?먮떒: objectness `0.10~0.18`? ?띾룄留?議곌툑 ?щ씪吏怨?baseline-diff ?덉쭏 吏?쒕뒗 ?ъ떎??媛숇떎. `0.25`??`boxCountDiffFrames`瑜?28源뚯? 以꾩?吏留?FaceONNX-only frame??2媛??앷꺼 strict gate瑜??듦낵?섏? 紐삵븳??
 
-9분 2초 YOLO5Face confidence sweep:
+9遺?2珥?YOLO5Face confidence sweep:
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `nms=0.45`, `confidence=0.18/0.25/0.35/0.50`, export skip.
-- 결과 CSV: `.tmp/yolo-sweep/yolo5face-0900-confidence.csv`
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `nms=0.45`, `confidence=0.18/0.25/0.35/0.50`, export skip.
+- 寃곌낵 CSV: `.tmp/yolo-sweep/yolo5face-0900-confidence.csv`
 
 | confidence | YOLO totalMs | baselineFrames | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | boxCountDiffFrames | removedLower |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -1898,15 +1877,15 @@ YOLO threshold sweep harness:
 | 0.35 | 8,940ms | 55 | 53 | 2 | 0 | 0.793 | 0.625 | 29 | 2 |
 | 0.50 | 8,724ms | 55 | 52 | 3 | 0 | 0.791 | 0.625 | 27 | 0 |
 
-- 판단: confidence를 올리면 YOLO-only frame과 `removedLower`는 줄지만 FaceONNX-only frame이 늘거나 유지되고 `minBestIou=0.625`가 그대로 남는다. 즉 confidence 단일 축은 추가 후보를 줄이는 대신 기존 baseline 대비 누락을 만든다.
-- 따라서 9분 2초 실패는 objectness/confidence/NMS 단일 threshold curve로 해결되지 않는다. 현재 실패 원인은 `threshold` 자체보다 `post-filter/track`과 큰 얼굴 box shape 차이, 그리고 YOLO-only 작은 상단 후보의 실제 얼굴 여부 판정 부재에 가깝다. 다음 최적화 우선순위는 후보를 실제 얼굴/비얼굴로 분류하는 verifier, 큰 얼굴 box shape 보정 모델/전략, 또는 다른 YOLO face 모델 비교다.
+- ?먮떒: confidence瑜??щ━硫?YOLO-only frame怨?`removedLower`??以꾩?留?FaceONNX-only frame???섍굅???좎??섍퀬 `minBestIou=0.625`媛 洹몃?濡??⑤뒗?? 利?confidence ?⑥씪 異뺤? 異붽? ?꾨낫瑜?以꾩씠?????湲곗〈 baseline ?鍮??꾨씫??留뚮뱺??
+- ?곕씪??9遺?2珥??ㅽ뙣??objectness/confidence/NMS ?⑥씪 threshold curve濡??닿껐?섏? ?딅뒗?? ?꾩옱 ?ㅽ뙣 ?먯씤? `threshold` ?먯껜蹂대떎 `post-filter/track`怨????쇨뎬 box shape 李⑥씠, 洹몃━怨?YOLO-only ?묒? ?곷떒 ?꾨낫???ㅼ젣 ?쇨뎬 ?щ? ?먯젙 遺?ъ뿉 媛源앸떎. ?ㅼ쓬 理쒖쟻???곗꽑?쒖쐞???꾨낫瑜??ㅼ젣 ?쇨뎬/鍮꾩뼹援대줈 遺꾨쪟?섎뒗 verifier, ???쇨뎬 box shape 蹂댁젙 紐⑤뜽/?꾨왂, ?먮뒗 ?ㅻⅨ YOLO face 紐⑤뜽 鍮꾧탳??
 
-9분 2초 YOLO5Face box refine smoke:
+9遺?2珥?YOLO5Face box refine smoke:
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, export skip.
-- 결과 CSV: `.tmp/yolo-sweep/yolo-box-refine-0900-smoke.csv`, `.tmp/yolo-sweep/yolo-largebox-scale-0900-smoke.csv`
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, export skip.
+- 寃곌낵 CSV: `.tmp/yolo-sweep/yolo-box-refine-0900-smoke.csv`, `.tmp/yolo-sweep/yolo-largebox-scale-0900-smoke.csv`
 
-| 보정 | YOLO totalMs | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | avgBaselineCoverage | minBaselineCoverage | boxCountDiffFrames |
+| 蹂댁젙 | YOLO totalMs | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | avgBaselineCoverage | minBaselineCoverage | boxCountDiffFrames |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | off | 9,100ms | 53 | 2 | 0 | 0.793 | 0.625 | 0.916 | 0.714 | 29 |
 | landmark default | 8,935ms | 52 | 3 | 0 | 0.467 | 0.205 | 0.498 | 0.218 | 29 |
@@ -1915,25 +1894,25 @@ YOLO threshold sweep harness:
 | large scale 0.90/0.85 | 8,793ms | 53 | 2 | 0 | 0.723 | 0.564 | 0.779 | 0.574 | 29 |
 | large scale 0.90/0.90 | 9,259ms | 53 | 2 | 0 | 0.756 | 0.596 | 0.817 | 0.608 | 29 |
 
-- 판단: landmark span 재박싱과 단순 large-box 축소는 모두 기준 off보다 나쁘다. 특히 landmark default는 baseline coverage를 크게 깨므로 추천 profile에 넣지 않는다.
-- 따라서 9분 2초의 큰 얼굴 box 차이는 현재 구현된 단순 축소/landmark 보정으로 해결되지 않는다. 다음 후보는 실제 얼굴/비얼굴 verifier 또는 다른 YOLO face 모델 비교로 넘긴다.
+- ?먮떒: landmark span ?щ컯?깃낵 ?⑥닚 large-box 異뺤냼??紐⑤몢 湲곗? off蹂대떎 ?섏걯?? ?뱁엳 landmark default??baseline coverage瑜??ш쾶 源⑤?濡?異붿쿇 profile???ｌ? ?딅뒗??
+- ?곕씪??9遺?2珥덉쓽 ???쇨뎬 box 李⑥씠???꾩옱 援ы쁽???⑥닚 異뺤냼/landmark 蹂댁젙?쇰줈 ?닿껐?섏? ?딅뒗?? ?ㅼ쓬 ?꾨낫???ㅼ젣 ?쇨뎬/鍮꾩뼹援?verifier ?먮뒗 ?ㅻⅨ YOLO face 紐⑤뜽 鍮꾧탳濡??섍릿??
 
-9분 2초 YOLO5Face FaceONNX ROI verifier sweep:
+9遺?2珥?YOLO5Face FaceONNX ROI verifier sweep:
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, export skip, `FaceOnnxRoiMinAreaRatio=0.03`, `FaceOnnxRoiMaxCandidates=32`.
-- 결과 CSV: `.tmp/yolo-sweep/yolo-faceonnx-roi-0900-smoke.csv`
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, export skip, `FaceOnnxRoiMinAreaRatio=0.03`, `FaceOnnxRoiMaxCandidates=32`.
+- 寃곌낵 CSV: `.tmp/yolo-sweep/yolo-faceonnx-roi-0900-smoke.csv`
 
 | FaceONNX ROI refine | YOLO totalMs | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | avgBaselineCoverage | minBaselineCoverage | boxCountDiffFrames | ROI attempts | ROI hits | ROI elapsed |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | off | 8,947ms | 53 | 2 | 0 | 0.793 | 0.625 | 0.916 | 0.714 | 29 | - | - | - |
 | on | 9,566ms | 53 | 2 | 0 | 0.795 | 0.567 | 0.931 | 0.714 | 29 | 32 | 32 | 9,684ms |
 
-- 판단: FaceONNX ROI verifier는 이 조건에서 모든 ROI 후보를 hit로 봤지만, frame 수와 box count diff를 줄이지 못했고 `minBestIou`는 더 낮아졌다. 추가 ROI 비용도 발생한다. 따라서 현재 단순 FaceONNX ROI verifier는 9분 구간 추천 profile에 넣지 않는다.
+- ?먮떒: FaceONNX ROI verifier????議곌굔?먯꽌 紐⑤뱺 ROI ?꾨낫瑜?hit濡?遊ㅼ?留? frame ?섏? box count diff瑜?以꾩씠吏 紐삵뻽怨?`minBestIou`??????븘議뚮떎. 異붽? ROI 鍮꾩슜??諛쒖깮?쒕떎. ?곕씪???꾩옱 ?⑥닚 FaceONNX ROI verifier??9遺?援ш컙 異붿쿇 profile???ｌ? ?딅뒗??
 
-6분 3초 YOLO5Face tiling mode sweep:
+6遺?3珥?YOLO5Face tiling mode sweep:
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, export skip, `2x2 overlap=0.15`.
-- 결과 CSV: `.tmp/yolo-sweep/yolo5face-0600-tiling-modes.csv`
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0600-3s.mp4`, `YoloV5Face`, `InputSize=640`, `objectness=0.12`, `confidence=0.18`, `nms=0.45`, export skip, `2x2 overlap=0.15`.
+- 寃곌낵 CSV: `.tmp/yolo-sweep/yolo5face-0600-tiling-modes.csv`
 
 | tiling | tileOnly | YOLO totalMs | optimizedFrames | onlyBaseline | onlyOptimized | avgBestIou | minBestIou | avgBaselineCoverage | minBaselineCoverage | boxCountDiffFrames | strict |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -1941,208 +1920,213 @@ YOLO threshold sweep harness:
 | true | false | 58,955ms | 46 | 0 | 27 | 0.849 | 0.047 | 0.874 | 0.047 | 3 | fail |
 | true | true | 48,611ms | 41 | 3 | 25 | 0.536 | 0.000 | 0.602 | 0.000 | 2 | fail |
 
-- 판단: YOLO5Face의 6분 3초 대표 gate에서는 selective tiling이 도움이 되지 않는다. full+tile과 tile-only 모두 후보 frame을 과하게 늘리거나 baseline face coverage를 깨고, 속도도 non-tile보다 훨씬 느리다. 현재 추천 profile은 tiling off를 유지한다.
+- ?먮떒: YOLO5Face??6遺?3珥????gate?먯꽌??selective tiling???꾩????섏? ?딅뒗?? full+tile怨?tile-only 紐⑤몢 ?꾨낫 frame??怨쇳븯寃??섎━嫄곕굹 baseline face coverage瑜?源④퀬, ?띾룄??non-tile蹂대떎 ?⑥뵮 ?먮━?? ?꾩옱 異붿쿇 profile? tiling off瑜??좎??쒕떎.
 
-9분 2초 overlay 검토:
+9遺?2珥?overlay 寃??
 
-- 명령 조건: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, `-DumpCompareOverlays`.
-- 출력 위치: `.tmp/yolo-overlays/test-0900-yolo5face/`
-- `onlyBaseline-frame-000006.png`와 `onlyBaseline-frame-000007.png`의 빨간 박스는 화면 뒤쪽 사람 얼굴로 육안 확인된다. 따라서 이 threshold에서는 단순 baseline-diff가 아니라 실제 얼굴 누락으로 볼 수 있다.
-- `boxCountDiff-frame-000021.png`는 청록 박스가 뒤쪽 얼굴도 잡고 큰 전면 얼굴을 더 넓게 잡는다. 이 frame은 실제 얼굴 추가 검출 가능성과 큰 얼굴 box shape 차이가 같이 섞인 사례다.
-- 이 overlay 결과는 9분 구간 실패가 단순 threshold 문제가 아니라, 실제 뒤쪽 얼굴 보존과 큰 얼굴 박스 정합을 동시에 만족해야 하는 문제임을 보여준다.
+- 紐낅졊 議곌굔: `.tmp/srcTest-smoke/smoke-0900-2s.mp4`, `YoloV5Face`, `objectness=0.25`, `confidence=0.35`, `nms=0.45`, `-DumpCompareOverlays`.
+- 異쒕젰 ?꾩튂: `.tmp/yolo-overlays/test-0900-yolo5face/`
+- `onlyBaseline-frame-000006.png`? `onlyBaseline-frame-000007.png`??鍮④컙 諛뺤뒪???붾㈃ ?ㅼそ ?щ엺 ?쇨뎬濡??≪븞 ?뺤씤?쒕떎. ?곕씪????threshold?먯꽌???⑥닚 baseline-diff媛 ?꾨땲???ㅼ젣 ?쇨뎬 ?꾨씫?쇰줈 蹂????덈떎.
+- `boxCountDiff-frame-000021.png`??泥?줉 諛뺤뒪媛 ?ㅼそ ?쇨뎬???↔퀬 ???꾨㈃ ?쇨뎬?????볤쾶 ?〓뒗?? ??frame? ?ㅼ젣 ?쇨뎬 異붽? 寃異?媛?μ꽦怨????쇨뎬 box shape 李⑥씠媛 媛숈씠 ?욎씤 ?щ???
+- ??overlay 寃곌낵??9遺?援ш컙 ?ㅽ뙣媛 ?⑥닚 threshold 臾몄젣媛 ?꾨땲?? ?ㅼ젣 ?ㅼそ ?쇨뎬 蹂댁〈怨????쇨뎬 諛뺤뒪 ?뺥빀???숈떆??留뚯”?댁빞 ?섎뒗 臾몄젣?꾩쓣 蹂댁뿬以??
 
-보정 후 6분 3초 회귀 gate:
+蹂댁젙 ??6遺?3珥??뚭? gate:
 
 - FaceONNX baseline: `baselineFrames=19`, `totalMs=57,937ms`.
 - YOLO5Face optimized: `optimizedFrames=19`, `totalMs=17,651ms`.
-- YOLO track 후처리: `removedShort=0`, `removedLower=0`, `rewritten=19`.
-- A/B 결과: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`.
-- 판단: 하단 저신뢰 track 필터가 기존 6분 3초 통과 구간을 깨지는 않았다.
-- script 진단 옵션 추가 후에도 6분 3초 gate는 다시 통과했다. 최신 실행은 FaceONNX baseline `totalMs=120,601ms`, YOLO optimized `totalMs=20,367ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`였다. 이 실행의 FaceONNX baseline 시간은 같은 세션의 부하 영향이 커서 속도 비교 기준값으로 고정하지 않는다.
-- coverage 지표 추가 후 기본 비활성 상태의 6분 3초 gate를 다시 실행했다. 최신 실행은 FaceONNX baseline `totalMs=39,714ms`, YOLO optimized `totalMs=13,028ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`였다.
-- 6분 30초 확장 gate는 같은 profile에서 실패했다. FaceONNX baseline 자동 검출 `totalMs=339,661ms`, YOLO 자동 검출 `totalMs=123,243ms`, export는 각각 `43,605ms`와 `43,331ms`였지만, A/B가 `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `avgBaselineCoverage=0.877`, `minBaselineCoverage=0.000`, `boxCountDiffFrames=14`라 추천 후보로 승격하지 않는다.
-- 6분 30초 crop 진단 결과, `onlyBaseline` 대표 frame 상당수는 얼굴이 아닌 금속 문양/문자/직물 영역으로 보였다. 이 확장 gate 실패는 YOLO 미탐만이 아니라 FaceONNX baseline false-positive와 YOLO false-positive가 함께 섞인 baseline-diff 실패로 분류한다.
-- 짧은 저신뢰 YOLO track 제거를 강화하는 실험은 6분 3초 gate를 깨서 폐기했다. 현재 YOLO 기본 profile은 6분 3초 gate 통과값으로 되돌린 상태다.
-- crop/overlay dump 범위 옵션 추가 후에도 6분 3초 YOLO gate는 다시 통과했다. 최신 실행은 FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`였다.
-- Home 자동 설정 저장을 `SettingsVersion=5`로 올리고 YOLOv8-Face/YOLO5Face별 모델 경로, threshold, input, tiling profile을 별도 저장/복원하도록 수정했다. 기존 단일 `Yolo*` 필드는 active profile 호환용으로 유지하고, 기존 version 4 설정은 선택된 YOLO 모델 profile로 마이그레이션한다.
-- profile 저장 분리 후 6분 3초 YOLO gate를 다시 실행했다. FaceONNX baseline `totalMs=40,080ms`, YOLO optimized `totalMs=13,653ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`를 확인했다.
-- crop review template 생성 검증을 수행했다. 9분 2초 YOLO5Face crop은 `.tmp/yolo-crops/test-0900-yolo5face/crop-review.csv`에 15건으로 생성됐고, 6분 30초 YOLO5Face crop은 `.tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv`에 26건으로 생성됐다. `verdict`가 채워지기 전에는 실제 오탐/미탐 count로 쓰지 않는다.
-- 9분 2초 crop review 결과: `Reviewed=15`, `OptimizedActualFace=15`, `OptimizedFalsePositive=0`, `OptimizedMiss=0`, `BaselineFalsePositive=0`, `Unclear=0`. 이 구간의 YOLO-only/YOLO-extra 작은 상단 후보는 모두 사람 옆얼굴로 보여 YOLO false-positive가 아니라 YOLO recall gain으로 분류한다.
-- 6분 30초 crop review 결과: `Reviewed=26`, `OptimizedActualFace=1`, `OptimizedFalsePositive=10`, `OptimizedMiss=0`, `BaselineFalsePositive=14`, `Unclear=1`. 이 구간의 strict baseline-diff 실패는 YOLO 미탐보다 FaceONNX false-positive와 YOLO false-positive가 같이 섞인 문제로 분류한다. 단, 이 review는 대표 crop 육안 판정이며 전체 영상 GT 라벨 검증은 아니다.
-- crop review quality gate 결과: 9분 2초 crop review는 `passed=True`였고, 6분 30초 crop review는 `passed=False`, `optimizedFalsePositive=10`, `unclear=1`, `exitCode=2`였다. 따라서 YOLO5Face 현재 profile은 9분 2초의 recall 개선 가능성에도 불구하고 6분 30초 실제 crop review 기준 false-positive 때문에 최종 추천 후보로 올리지 않는다.
-- unreviewed gate 검증: 9분 2초 review CSV의 `verdict`를 임시로 모두 비운 파일에 `-QualityGate`를 실행했을 때 `passed=False`, `unreviewed=15`, `exitCode=2`를 확인했다. 따라서 실제 판정이 비어 있는 crop review는 추천 gate로 통과하지 않는다.
-- `scripts/verify-yolo-crop-review.ps1`를 추가했다. 이 스크립트는 현재 YOLO5Face review CSV 기준으로 9분 2초 review가 통과하는지와 6분 30초 review가 false-positive 때문에 실패하는지를 한 번에 검증한다. 최신 실행은 `yolo5face-0900-review-pass exitCode=0`, `yolo5face-0600-30s-review-fail exitCode=2`, `all requested checks passed`였다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` 옵션을 추가했다. 이 옵션은 기존 FaceONNX default verifier를 그대로 실행한 뒤 `verify-yolo-crop-review.ps1`를 호출해 YOLO crop review gate도 함께 확인한다.
-- `scripts/verify-yolo-profile-state.ps1`를 추가했다. 이 스크립트는 소스 invariant로 FaceONNX/YOLO backend 선택, YOLOv8-Face/YOLO5Face 선택지, `SettingsVersion=6`, 모델별 `YoloV8*`/`Yolo5*` 저장 필드, active legacy profile 호환 필드, YOLO filter profile 분리, FaceONNX threshold와 YOLO threshold 분리, `YoloFaceOnnxDetectorOptions`의 threshold/tiling 옵션 존재를 확인한다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` 옵션을 추가했다. 이 옵션은 기존 FaceONNX default verifier를 그대로 실행한 뒤 `verify-yolo-profile-state.ps1`를 호출해 backend/profile 분리 invariant도 함께 확인한다.
-- `scripts/find-yolo-review-filter-candidates.ps1`를 추가했다. 이 스크립트는 review 라벨이 채워진 optimized crop만 대상으로 confidence/area/cx/cy/aspect 기반 단순 drop rule 후보를 산출한다. 현재 9분 2초 + 6분 30초 review 표본 기준으로는 `confidence <= 0.5 and cy >= 0.08`이 review row에서 `DroppedFace=0`, `DroppedNonFace=9`로 가장 강하게 보였지만, 이 값은 review crop 표본에 대한 후보일 뿐 전체 frame gate 통과를 의미하지 않는다.
-- 위 후보를 YOLO 전용 실험 옵션으로 검증하기 위해 `YoloFaceOnnxDetectorOptions.UseLowConfidencePositionFilter`, `LowConfidencePositionMaxConfidence`, `LowConfidencePositionMinCenterYRatio`를 추가했다. 기본값은 비활성이므로 Home YOLO profile과 기존 FaceONNX 경로에는 영향을 주지 않는다. `run-srcTest-smoke.ps1`에는 `-YoloUseLowConfidencePositionFilter`, `-YoloLowConfidencePositionMaxConfidence`, `-YoloLowConfidencePositionMinCenterYRatio` 실험 인자를 추가했다.
-- low-confidence position filter 실험 결과: 6분 3초 대표 gate에서 `maxConfidence=0.50`, `minCenterY=0.08`은 YOLO optimized가 `faceMaskFrames=9`, `onlyBaseline=10`, `passed=False`가 되어 폐기한다. 더 약한 `maxConfidence=0.35`, `minCenterY=0.08`도 `faceMaskFrames=11`, `onlyBaseline=8`, `avgBestIou=0.890`, `minBestIou=0.000`, `passed=False`였다. 따라서 review crop 기준으로 좋아 보인 단순 위치/신뢰도 필터는 실제 대표 frame gate를 깨며 추천 profile에 넣지 않는다.
-- `scripts/run-yolo-review-filter-sweep.ps1`를 추가했다. low-confidence position filter 후보를 `run-srcTest-smoke.ps1`로 반복 실행해 CSV/log로 남기는 전용 sweep harness다. 6분 3초 대표 gate 재검증 결과는 `.tmp/yolo-sweep/yolo-review-filter-0600-smoke.csv`에 기록했다. 필터 비활성은 `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `StrictGatePassed=True`였고, `maxConfidence=0.35/minCenterY=0.08`은 `optimizedFrames=11`, `onlyBaseline=8`, `avgBestIou=0.890`, `minBestIou=0.000`, `StrictGatePassed=False`, `maxConfidence=0.50/minCenterY=0.08`은 `optimizedFrames=9`, `onlyBaseline=10`, `StrictGatePassed=False`였다.
-- area 기반 후보 검증을 위해 `YoloFaceOnnxDetectorOptions.UseSmallAreaFilter`, `SmallAreaMaxAreaRatio`를 추가하고 `run-srcTest-smoke.ps1`/`run-yolo-review-filter-sweep.ps1`에 실험 인자를 연결했다. 기본값은 비활성이다. review 표본에서는 `area <= 0.0035`가 `DroppedFace=0`, `DroppedNonFace=5`였지만, 6분 3초 대표 gate sweep `.tmp/yolo-sweep/yolo-review-filter-0600-area-smoke.csv`에서는 `maxArea=0.0030`과 `0.0035` 모두 `optimizedFrames=5`, `onlyBaseline=14`, `StrictGatePassed=False`였다. 따라서 단순 작은 박스 제거도 대표 구간의 실제 필요한 YOLO 후보를 같이 제거하므로 폐기한다.
-- YOLOv8-Face 대체 모델로 `lindevs/yolov8-face`의 `yolov8s-face-lindevs.onnx`를 `.tmp/models/`에만 내려받아 테스트했다. `sha256sum`은 `0a6d19f2f68d7f0cc8104ab5c9eaa54b63e298f91dcfefd4be897f94a1561d02`였고, `inspect-onnx-outputs.ps1` 기준 input은 `images=1x3x640x640`, output은 `output0=1x5x8400`이라 기존 YOLOv8 decode 경로와 같았다. 6분 3초 대표 gate sweep `.tmp/yolo-sweep/yolov8s-0600-smoke.csv`에서 `objectness/confidence` 조합 `0.05/0.05`, `0.05/0.20`, `0.20/0.05`, `0.20/0.20`를 확인했지만 모두 `optimizedFrames=6`, `onlyBaseline=13`, `avgBestIou=0.749`, `minBestIou=0.712`, `StrictGatePassed=False`였다. 따라서 YOLOv8s도 현재 pipeline 기준 추천 후보로 올리지 않는다.
-- YOLOv8-Face 대체 모델로 `lindevs/yolov8-face`의 `yolov8l-face-lindevs.onnx`도 `.tmp/models/`에만 내려받아 테스트했다. `sha256sum`은 `52dc39e46a7316398c95d30dd669a641382c9fdd8b675ad32aa65585bf820ea0`였고, input/output shape은 `images=1x3x640x640`, `output0=1x5x8400`이라 기존 YOLOv8 decode 경로와 같다. 6분 3초 대표 gate sweep `.tmp/yolo-sweep/yolov8l-0600-smoke.csv`에서 `objectness/confidence=0.05/0.05`는 `optimizedFrames=24`, `onlyBaseline=1`, `onlyOptimized=6`, `avgBestIou=0.354`, `minBestIou=0.000`, `StrictGatePassed=False`, 나머지 `0.05/0.20`, `0.20/0.05`, `0.20/0.20`은 모두 `optimizedFrames=11`, `onlyBaseline=10`, `onlyOptimized=2`, `avgBestIou=0.741`, `minBestIou=0.695`, `StrictGatePassed=False`였다. 각 케이스의 YOLO `totalMs`도 약 `64초`라 YOLOv8l은 품질과 속도 양쪽에서 추천 후보로 올리지 않는다.
+- YOLO track ?꾩쿂由? `removedShort=0`, `removedLower=0`, `rewritten=19`.
+- A/B 寃곌낵: `common=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`.
+- ?먮떒: ?섎떒 ??좊ː track ?꾪꽣媛 湲곗〈 6遺?3珥??듦낵 援ш컙??源⑥????딆븯??
+- script 吏꾨떒 ?듭뀡 異붽? ?꾩뿉??6遺?3珥?gate???ㅼ떆 ?듦낵?덈떎. 理쒖떊 ?ㅽ뻾? FaceONNX baseline `totalMs=120,601ms`, YOLO optimized `totalMs=20,367ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`??? ???ㅽ뻾??FaceONNX baseline ?쒓컙? 媛숈? ?몄뀡??遺???곹뼢??而ㅼ꽌 ?띾룄 鍮꾧탳 湲곗?媛믪쑝濡?怨좎젙?섏? ?딅뒗??
+- coverage 吏??異붽? ??湲곕낯 鍮꾪솢???곹깭??6遺?3珥?gate瑜??ㅼ떆 ?ㅽ뻾?덈떎. 理쒖떊 ?ㅽ뻾? FaceONNX baseline `totalMs=39,714ms`, YOLO optimized `totalMs=13,028ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`???
+- 6遺?30珥??뺤옣 gate??媛숈? profile?먯꽌 ?ㅽ뙣?덈떎. FaceONNX baseline ?먮룞 寃異?`totalMs=339,661ms`, YOLO ?먮룞 寃異?`totalMs=123,243ms`, export??媛곴컖 `43,605ms`? `43,331ms`?吏留? A/B媛 `onlyBaseline=14`, `onlyOptimized=5`, `avgBestIou=0.778`, `minBestIou=0.000`, `avgBaselineCoverage=0.877`, `minBaselineCoverage=0.000`, `boxCountDiffFrames=14`??異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
+- 6遺?30珥?crop 吏꾨떒 寃곌낵, `onlyBaseline` ???frame ?곷떦?섎뒗 ?쇨뎬???꾨땶 湲덉냽 臾몄뼇/臾몄옄/吏곷Ъ ?곸뿭?쇰줈 蹂댁??? ???뺤옣 gate ?ㅽ뙣??YOLO 誘명깘留뚯씠 ?꾨땲??FaceONNX baseline false-positive? YOLO false-positive媛 ?④퍡 ?욎씤 baseline-diff ?ㅽ뙣濡?遺꾨쪟?쒕떎.
+- 吏㏃? ??좊ː YOLO track ?쒓굅瑜?媛뺥솕?섎뒗 ?ㅽ뿕? 6遺?3珥?gate瑜?源⑥꽌 ?먭린?덈떎. ?꾩옱 YOLO 湲곕낯 profile? 6遺?3珥?gate ?듦낵媛믪쑝濡??섎룎由??곹깭??
+- crop/overlay dump 踰붿쐞 ?듭뀡 異붽? ?꾩뿉??6遺?3珥?YOLO gate???ㅼ떆 ?듦낵?덈떎. 理쒖떊 ?ㅽ뻾? FaceONNX baseline `totalMs=39,554ms`, YOLO optimized `totalMs=13,138ms`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=0`, `passed=True`???
+- Home ?먮룞 ?ㅼ젙 ??μ쓣 `SettingsVersion=5`濡??щ━怨?YOLOv8-Face/YOLO5Face蹂?紐⑤뜽 寃쎈줈, threshold, input, tiling profile??蹂꾨룄 ???蹂듭썝?섎룄濡??섏젙?덈떎. 湲곗〈 ?⑥씪 `Yolo*` ?꾨뱶??active profile ?명솚?⑹쑝濡??좎??섍퀬, 湲곗〈 version 4 ?ㅼ젙? ?좏깮??YOLO 紐⑤뜽 profile濡?留덉씠洹몃젅?댁뀡?쒕떎.
+- profile ???遺꾨━ ??6遺?3珥?YOLO gate瑜??ㅼ떆 ?ㅽ뻾?덈떎. FaceONNX baseline `totalMs=40,080ms`, YOLO optimized `totalMs=13,653ms`, `baselineFrames=19`, `optimizedFrames=19`, `avgBestIou=0.971`, `minBestIou=0.944`, `avgBaselineCoverage=0.983`, `minBaselineCoverage=0.944`, `boxCountDiffFrames=0`, `passed=True`瑜??뺤씤?덈떎.
+- crop review template ?앹꽦 寃利앹쓣 ?섑뻾?덈떎. 9遺?2珥?YOLO5Face crop? `.tmp/yolo-crops/test-0900-yolo5face/crop-review.csv`??15嫄댁쑝濡??앹꽦?먭퀬, 6遺?30珥?YOLO5Face crop? `.tmp/yolo-crops/test-0600-30s-yolo5face/crop-review.csv`??26嫄댁쑝濡??앹꽦?먮떎. `verdict`媛 梨꾩썙吏湲??꾩뿉???ㅼ젣 ?ㅽ깘/誘명깘 count濡??곗? ?딅뒗??
+- 9遺?2珥?crop review 寃곌낵: `Reviewed=15`, `OptimizedActualFace=15`, `OptimizedFalsePositive=0`, `OptimizedMiss=0`, `BaselineFalsePositive=0`, `Unclear=0`. ??援ш컙??YOLO-only/YOLO-extra ?묒? ?곷떒 ?꾨낫??紐⑤몢 ?щ엺 ?놁뼹援대줈 蹂댁뿬 YOLO false-positive媛 ?꾨땲??YOLO recall gain?쇰줈 遺꾨쪟?쒕떎.
+- 6遺?30珥?crop review 寃곌낵: `Reviewed=26`, `OptimizedActualFace=1`, `OptimizedFalsePositive=10`, `OptimizedMiss=0`, `BaselineFalsePositive=14`, `Unclear=1`. ??援ш컙??strict baseline-diff ?ㅽ뙣??YOLO 誘명깘蹂대떎 FaceONNX false-positive? YOLO false-positive媛 媛숈씠 ?욎씤 臾몄젣濡?遺꾨쪟?쒕떎. ?? ??review?????crop ?≪븞 ?먯젙?대ŉ ?꾩껜 ?곸긽 GT ?쇰꺼 寃利앹? ?꾨땲??
+- crop review quality gate 寃곌낵: 9遺?2珥?crop review??`passed=True`?怨? 6遺?30珥?crop review??`passed=False`, `optimizedFalsePositive=10`, `unclear=1`, `exitCode=2`??? ?곕씪??YOLO5Face ?꾩옱 profile? 9遺?2珥덉쓽 recall 媛쒖꽑 媛?μ꽦?먮룄 遺덇뎄?섍퀬 6遺?30珥??ㅼ젣 crop review 湲곗? false-positive ?뚮Ц??理쒖쥌 異붿쿇 ?꾨낫濡??щ━吏 ?딅뒗??
+- unreviewed gate 寃利? 9遺?2珥?review CSV??`verdict`瑜??꾩떆濡?紐⑤몢 鍮꾩슫 ?뚯씪??`-QualityGate`瑜??ㅽ뻾?덉쓣 ??`passed=False`, `unreviewed=15`, `exitCode=2`瑜??뺤씤?덈떎. ?곕씪???ㅼ젣 ?먯젙??鍮꾩뼱 ?덈뒗 crop review??異붿쿇 gate濡??듦낵?섏? ?딅뒗??
+- `scripts/verify-yolo-crop-review.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???꾩옱 YOLO5Face review CSV 湲곗??쇰줈 9遺?2珥?review媛 ?듦낵?섎뒗吏? 6遺?30珥?review媛 false-positive ?뚮Ц???ㅽ뙣?섎뒗吏瑜???踰덉뿉 寃利앺븳?? 理쒖떊 ?ㅽ뻾? `yolo5face-0900-review-pass exitCode=0`, `yolo5face-0600-30s-review-fail exitCode=2`, `all requested checks passed`???
+- `scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` ?듭뀡??異붽??덈떎. ???듭뀡? 湲곗〈 FaceONNX default verifier瑜?洹몃?濡??ㅽ뻾????`verify-yolo-crop-review.ps1`瑜??몄텧??YOLO crop review gate???④퍡 ?뺤씤?쒕떎.
+- `scripts/verify-yolo-profile-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???뚯뒪 invariant濡?FaceONNX/YOLO backend ?좏깮, YOLOv8-Face/YOLO5Face ?좏깮吏, `SettingsVersion=6`, 紐⑤뜽蹂?`YoloV8*`/`Yolo5*` ????꾨뱶, active legacy profile ?명솚 ?꾨뱶, YOLO filter profile 遺꾨━, FaceONNX threshold? YOLO threshold 遺꾨━, `YoloFaceOnnxDetectorOptions`??threshold/tiling ?듭뀡 議댁옱瑜??뺤씤?쒕떎.
+- `scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` ?듭뀡??異붽??덈떎. ???듭뀡? 湲곗〈 FaceONNX default verifier瑜?洹몃?濡??ㅽ뻾????`verify-yolo-profile-state.ps1`瑜??몄텧??backend/profile 遺꾨━ invariant???④퍡 ?뺤씤?쒕떎.
+- `scripts/find-yolo-review-filter-candidates.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??review ?쇰꺼??梨꾩썙吏?optimized crop留???곸쑝濡?confidence/area/cx/cy/aspect 湲곕컲 ?⑥닚 drop rule ?꾨낫瑜??곗텧?쒕떎. ?꾩옱 9遺?2珥?+ 6遺?30珥?review ?쒕낯 湲곗??쇰줈??`confidence <= 0.5 and cy >= 0.08`??review row?먯꽌 `DroppedFace=0`, `DroppedNonFace=9`濡?媛??媛뺥븯寃?蹂댁?吏留? ??媛믪? review crop ?쒕낯??????꾨낫??肉??꾩껜 frame gate ?듦낵瑜??섎??섏? ?딅뒗??
+- ???꾨낫瑜?YOLO ?꾩슜 ?ㅽ뿕 ?듭뀡?쇰줈 寃利앺븯湲??꾪빐 `YoloFaceOnnxDetectorOptions.UseLowConfidencePositionFilter`, `LowConfidencePositionMaxConfidence`, `LowConfidencePositionMinCenterYRatio`瑜?異붽??덈떎. 湲곕낯媛믪? 鍮꾪솢?깆씠誘濡?Home YOLO profile怨?湲곗〈 FaceONNX 寃쎈줈?먮뒗 ?곹뼢??二쇱? ?딅뒗?? `run-srcTest-smoke.ps1`?먮뒗 `-YoloUseLowConfidencePositionFilter`, `-YoloLowConfidencePositionMaxConfidence`, `-YoloLowConfidencePositionMinCenterYRatio` ?ㅽ뿕 ?몄옄瑜?異붽??덈떎.
+- low-confidence position filter ?ㅽ뿕 寃곌낵: 6遺?3珥????gate?먯꽌 `maxConfidence=0.50`, `minCenterY=0.08`? YOLO optimized媛 `faceMaskFrames=9`, `onlyBaseline=10`, `passed=False`媛 ?섏뼱 ?먭린?쒕떎. ???쏀븳 `maxConfidence=0.35`, `minCenterY=0.08`??`faceMaskFrames=11`, `onlyBaseline=8`, `avgBestIou=0.890`, `minBestIou=0.000`, `passed=False`??? ?곕씪??review crop 湲곗??쇰줈 醫뗭븘 蹂댁씤 ?⑥닚 ?꾩튂/?좊ː???꾪꽣???ㅼ젣 ???frame gate瑜?源⑤ŉ 異붿쿇 profile???ｌ? ?딅뒗??
+- `scripts/run-yolo-review-filter-sweep.ps1`瑜?異붽??덈떎. low-confidence position filter ?꾨낫瑜?`run-srcTest-smoke.ps1`濡?諛섎났 ?ㅽ뻾??CSV/log濡??④린???꾩슜 sweep harness?? 6遺?3珥????gate ?ш?利?寃곌낵??`.tmp/yolo-sweep/yolo-review-filter-0600-smoke.csv`??湲곕줉?덈떎. ?꾪꽣 鍮꾪솢?깆? `baselineFrames=19`, `optimizedFrames=19`, `onlyBaseline=0`, `onlyOptimized=0`, `avgBestIou=0.971`, `minBestIou=0.944`, `StrictGatePassed=True`?怨? `maxConfidence=0.35/minCenterY=0.08`? `optimizedFrames=11`, `onlyBaseline=8`, `avgBestIou=0.890`, `minBestIou=0.000`, `StrictGatePassed=False`, `maxConfidence=0.50/minCenterY=0.08`? `optimizedFrames=9`, `onlyBaseline=10`, `StrictGatePassed=False`???
+- area 湲곕컲 ?꾨낫 寃利앹쓣 ?꾪빐 `YoloFaceOnnxDetectorOptions.UseSmallAreaFilter`, `SmallAreaMaxAreaRatio`瑜?異붽??섍퀬 `run-srcTest-smoke.ps1`/`run-yolo-review-filter-sweep.ps1`???ㅽ뿕 ?몄옄瑜??곌껐?덈떎. 湲곕낯媛믪? 鍮꾪솢?깆씠?? review ?쒕낯?먯꽌??`area <= 0.0035`媛 `DroppedFace=0`, `DroppedNonFace=5`?吏留? 6遺?3珥????gate sweep `.tmp/yolo-sweep/yolo-review-filter-0600-area-smoke.csv`?먯꽌??`maxArea=0.0030`怨?`0.0035` 紐⑤몢 `optimizedFrames=5`, `onlyBaseline=14`, `StrictGatePassed=False`??? ?곕씪???⑥닚 ?묒? 諛뺤뒪 ?쒓굅?????援ш컙???ㅼ젣 ?꾩슂??YOLO ?꾨낫瑜?媛숈씠 ?쒓굅?섎?濡??먭린?쒕떎.
+- YOLOv8-Face ?泥?紐⑤뜽濡?`lindevs/yolov8-face`??`yolov8s-face-lindevs.onnx`瑜?`.tmp/models/`?먮쭔 ?대젮諛쏆븘 ?뚯뒪?명뻽?? `sha256sum`? `0a6d19f2f68d7f0cc8104ab5c9eaa54b63e298f91dcfefd4be897f94a1561d02`?怨? `inspect-onnx-outputs.ps1` 湲곗? input? `images=1x3x640x640`, output? `output0=1x5x8400`?대씪 湲곗〈 YOLOv8 decode 寃쎈줈? 媛숈븯?? 6遺?3珥????gate sweep `.tmp/yolo-sweep/yolov8s-0600-smoke.csv`?먯꽌 `objectness/confidence` 議고빀 `0.05/0.05`, `0.05/0.20`, `0.20/0.05`, `0.20/0.20`瑜??뺤씤?덉?留?紐⑤몢 `optimizedFrames=6`, `onlyBaseline=13`, `avgBestIou=0.749`, `minBestIou=0.712`, `StrictGatePassed=False`??? ?곕씪??YOLOv8s???꾩옱 pipeline 湲곗? 異붿쿇 ?꾨낫濡??щ━吏 ?딅뒗??
+- YOLOv8-Face ?泥?紐⑤뜽濡?`lindevs/yolov8-face`??`yolov8l-face-lindevs.onnx`??`.tmp/models/`?먮쭔 ?대젮諛쏆븘 ?뚯뒪?명뻽?? `sha256sum`? `52dc39e46a7316398c95d30dd669a641382c9fdd8b675ad32aa65585bf820ea0`?怨? input/output shape? `images=1x3x640x640`, `output0=1x5x8400`?대씪 湲곗〈 YOLOv8 decode 寃쎈줈? 媛숇떎. 6遺?3珥????gate sweep `.tmp/yolo-sweep/yolov8l-0600-smoke.csv`?먯꽌 `objectness/confidence=0.05/0.05`??`optimizedFrames=24`, `onlyBaseline=1`, `onlyOptimized=6`, `avgBestIou=0.354`, `minBestIou=0.000`, `StrictGatePassed=False`, ?섎㉧吏 `0.05/0.20`, `0.20/0.05`, `0.20/0.20`? 紐⑤몢 `optimizedFrames=11`, `onlyBaseline=10`, `onlyOptimized=2`, `avgBestIou=0.741`, `minBestIou=0.695`, `StrictGatePassed=False`??? 媛?耳?댁뒪??YOLO `totalMs`????`64珥???YOLOv8l? ?덉쭏怨??띾룄 ?묒そ?먯꽌 異붿쿇 ?꾨낫濡??щ━吏 ?딅뒗??
 
-현재 마감 상태:
+?꾩옱 留덇컧 ?곹깭:
 
-- 완료: YOLO backend 선택, YOLOv8-Face/YOLO5Face model profile 분리 저장, FaceONNX auto-tune 경로와 YOLO 경로 분리, FaceONNX/SCRFD/YOLO filter profile 분리, YOLO sweep/overlay/crop/coverage 진단 도구 추가, threshold/tiling/track 후처리/box 보정/FaceONNX ROI verifier 실험 기록.
-- 유지: 앱 기본 detector는 FaceONNX다. Home에서 YOLO를 선택했을 때의 초기 profile은 현재까지 가장 나은 YOLO5Face `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, tiling off 조합을 유지한다.
-- 보류: YOLO5Face는 6분 3초 대표 gate에서는 FaceONNX 대비 약 3배 빠르고 strict gate를 통과했지만, 9분 2초와 6분 30초 확장 gate에서는 frame/box 정합을 통과하지 못했다. 따라서 FaceONNX 대체 기본값 또는 최종 추천 후보로 승격하지 않는다.
-- 기준: 현재 A/B gate의 `onlyBaseline`/`onlyOptimized`는 실제 정답 라벨이 아니라 detector 간 차이다. crop/overlay로 일부 확인한 결과 FaceONNX false-positive, YOLO false-positive, YOLO 추가 recall 가능성이 모두 섞여 있었다. 그래서 이 결과만으로 한쪽 모델의 모든 오탐/미탐을 확정하지 않는다.
-- 남은 판단: YOLO를 실제 배포 후보로 보려면 label 기반 face/non-face 검증, Avalonia GUI에서 열기/미리보기/편집/export 수동 smoke, 10분급 전체 구간 품질/속도 측정을 별도로 확인해야 한다. 모델 license/배포 판단은 2026-05-23 재확인 기준 repo 모델 추적 금지, installer 필수 번들 금지, 사용자 지정 외부 모델 경로 또는 솔루션 로컬 `Models/Yolo` 경로 유지로 정리한다.
+- ?꾨즺: YOLO backend ?좏깮, YOLOv8-Face/YOLO5Face model profile 遺꾨━ ??? FaceONNX auto-tune 寃쎈줈? YOLO 寃쎈줈 遺꾨━, FaceONNX/SCRFD/YOLO filter profile 遺꾨━, YOLO sweep/overlay/crop/coverage 吏꾨떒 ?꾧뎄 異붽?, threshold/tiling/track ?꾩쿂由?box 蹂댁젙/FaceONNX ROI verifier ?ㅽ뿕 湲곕줉.
+- ?좎?: ??湲곕낯 detector??FaceONNX?? Home?먯꽌 YOLO瑜??좏깮?덉쓣 ?뚯쓽 珥덇린 profile? ?꾩옱源뚯? 媛???섏? YOLO5Face `objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, tiling off 議고빀???좎??쒕떎.
+- 蹂대쪟: YOLO5Face??6遺?3珥????gate?먯꽌??FaceONNX ?鍮???3諛?鍮좊Ⅴ怨?strict gate瑜??듦낵?덉?留? 9遺?2珥덉? 6遺?30珥??뺤옣 gate?먯꽌??frame/box ?뺥빀???듦낵?섏? 紐삵뻽?? ?곕씪??FaceONNX ?泥?湲곕낯媛??먮뒗 理쒖쥌 異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
+- 湲곗?: ?꾩옱 A/B gate??`onlyBaseline`/`onlyOptimized`???ㅼ젣 ?뺣떟 ?쇰꺼???꾨땲??detector 媛?李⑥씠?? crop/overlay濡??쇰? ?뺤씤??寃곌낵 FaceONNX false-positive, YOLO false-positive, YOLO 異붽? recall 媛?μ꽦??紐⑤몢 ?욎뿬 ?덉뿀?? 洹몃옒????寃곌낵留뚯쑝濡??쒖そ 紐⑤뜽??紐⑤뱺 ?ㅽ깘/誘명깘???뺤젙?섏? ?딅뒗??
+- ?⑥? ?먮떒: YOLO瑜??ㅼ젣 諛고룷 ?꾨낫濡?蹂대젮硫?label 湲곕컲 face/non-face 寃利? Avalonia GUI?먯꽌 ?닿린/誘몃━蹂닿린/?몄쭛/export ?섎룞 smoke, 10遺꾧툒 ?꾩껜 援ш컙 ?덉쭏/?띾룄 痢≪젙??蹂꾨룄濡??뺤씤?댁빞 ?쒕떎. 紐⑤뜽 license/諛고룷 ?먮떒? 2026-05-23 ?ы솗??湲곗? repo 紐⑤뜽 異붿쟻 湲덉?, installer ?꾩닔 踰덈뱾 湲덉?, ?ъ슜??吏???몃? 紐⑤뜽 寃쎈줈 ?먮뒗 ?붾（??濡쒖뺄 `Models/Yolo` 寃쎈줈 ?좎?濡??뺣━?쒕떎.
 
-YOLO 실패 원인 분류:
+YOLO ?ㅽ뙣 ?먯씤 遺꾨쪟:
 
 <!-- yolo-conclusion-state: no-final-yolo-recommendation; default=FaceONNX; ab-gate-not-ground-truth; required=label-gui-10min; distribution=no-bundled-yolo-model; axes=model,decode,preprocess,post-filter,track,roi,tiling,small-face,box-refine,speed -->
 
-| 후보/전략 | 현재 판정 | 가까운 실패 축 | 근거 | 다음 판단 |
+| ?꾨낫/?꾨왂 | ?꾩옱 ?먯젙 | 媛源뚯슫 ?ㅽ뙣 異?| 洹쇨굅 | ?ㅼ쓬 ?먮떒 |
 | --- | --- | --- | --- | --- |
-| YOLOv8n 640 | 추천 후보 없음 | 모델/threshold curve, post-filter | 6분 3초 low-threshold는 `onlyBaseline=11`, `avgBestIou=0.603`, `minBestIou=0.048`; 9분 2초도 threshold를 낮추면 YOLO-only 후보가 많고 올리면 FaceONNX-only frame이 생긴다. decode는 `output0=1x5x8400` 경로로 실행됐으므로 decode 불능으로 보지는 않는다. | YOLOv8n은 현 pipeline에서 보류한다. |
-| YOLOv8m 640 | 추천 후보 없음 | 모델/threshold curve, post-filter | low-threshold는 `onlyBaseline=3`, `onlyOptimized=13`, `avgBestIou=0.406`; middle-threshold는 `onlyBaseline=9`, `avgBestIou=0.674`라 3초 gate를 통과하지 못했다. | 30초/export 확장 대상이 아니다. |
-| YOLOv8s 640 | 추천 후보 없음 | 모델 후보 | 6분 3초 sweep의 모든 `objectness/confidence` 조합에서 `optimizedFrames=6`, `onlyBaseline=13`, `StrictGatePassed=False`였다. 기존 YOLOv8 decode shape과 같으므로 현재 증거는 decode보다 모델 후보 부적합에 가깝다. | 추천 후보에서 제외한다. |
-| YOLOv8l 640 | 추천 후보 없음 | 모델 후보, 속도 | 6분 3초 sweep에서 `0.05/0.05`는 `onlyOptimized=6`, `avgBestIou=0.354`, 나머지 조합은 `onlyBaseline=10`이고, 각 케이스 `totalMs`가 약 `64초`였다. | 품질과 속도 양쪽에서 제외한다. |
-| YOLO5Face 0.12/0.18/0.45 | 전체 추천 보류 | 모델/box definition, post-filter/track, label 부재 | 6분 3초 strict gate는 통과하고 빠르지만, 9분 2초는 큰 얼굴 box shape 차이와 YOLO-only 뒤쪽 얼굴 후보가 섞였고 6분 30초 crop review는 YOLO false-positive와 FaceONNX false-positive가 함께 있었다. | 앱 기본값으로 승격하지 않는다. YOLO 선택 시 초기 profile로만 유지한다. |
-| selective tiling | 추천 후보 없음 | tiling 전략 | YOLO5Face 6분 3초 full+tile/tile-only는 `onlyOptimized` 증가, coverage 저하, 큰 속도 비용을 만들었다. YOLOv8n tile-only도 `onlyBaseline=10`, `onlyOptimized=7`이었다. | 현재 전략은 tiling off 유지. |
-| low-confidence position filter | 추천 후보 없음 | post-filter | review crop 표본에서는 유망했지만 6분 3초 frame gate에서 `onlyBaseline=8~10`, `StrictGatePassed=False`가 됐다. | frame gate를 깨므로 폐기한다. |
-| small-area filter | 추천 후보 없음 | small-face 기준/post-filter | review 표본에서는 `NonFace` 일부를 제거했지만 6분 3초 gate에서 필요한 작은 얼굴 후보까지 제거해 `optimizedFrames=5`, `onlyBaseline=14`가 됐다. | 단순 작은 박스 제거는 폐기한다. |
-| FaceONNX ROI verifier | 추천 후보 없음 | ROI refine 전략 | 9분 2초에서 ROI hit는 많았지만 `boxCountDiffFrames`를 줄이지 못했고 `minBestIou`가 낮아졌으며 ROI 비용이 추가됐다. | 현재 단순 ROI verifier는 추천 profile에 넣지 않는다. |
-| large-box/landmark box refine | 추천 후보 없음 | box refine 전략 | 단순 축소와 landmark span 재박싱 모두 9분 2초에서 `avgBestIou`/coverage를 악화시켰다. | 다른 box 보정 모델/전략이 필요하다. |
+| YOLOv8n 640 | 異붿쿇 ?꾨낫 ?놁쓬 | 紐⑤뜽/threshold curve, post-filter | 6遺?3珥?low-threshold??`onlyBaseline=11`, `avgBestIou=0.603`, `minBestIou=0.048`; 9遺?2珥덈룄 threshold瑜???텛硫?YOLO-only ?꾨낫媛 留롪퀬 ?щ━硫?FaceONNX-only frame???앷릿?? decode??`output0=1x5x8400` 寃쎈줈濡??ㅽ뻾?먯쑝誘濡?decode 遺덈뒫?쇰줈 蹂댁????딅뒗?? | YOLOv8n? ??pipeline?먯꽌 蹂대쪟?쒕떎. |
+| YOLOv8m 640 | 異붿쿇 ?꾨낫 ?놁쓬 | 紐⑤뜽/threshold curve, post-filter | low-threshold??`onlyBaseline=3`, `onlyOptimized=13`, `avgBestIou=0.406`; middle-threshold??`onlyBaseline=9`, `avgBestIou=0.674`??3珥?gate瑜??듦낵?섏? 紐삵뻽?? | 30珥?export ?뺤옣 ??곸씠 ?꾨땲?? |
+| YOLOv8s 640 | 異붿쿇 ?꾨낫 ?놁쓬 | 紐⑤뜽 ?꾨낫 | 6遺?3珥?sweep??紐⑤뱺 `objectness/confidence` 議고빀?먯꽌 `optimizedFrames=6`, `onlyBaseline=13`, `StrictGatePassed=False`??? 湲곗〈 YOLOv8 decode shape怨?媛숈쑝誘濡??꾩옱 利앷굅??decode蹂대떎 紐⑤뜽 ?꾨낫 遺?곹빀??媛源앸떎. | 異붿쿇 ?꾨낫?먯꽌 ?쒖쇅?쒕떎. |
+| YOLOv8l 640 | 異붿쿇 ?꾨낫 ?놁쓬 | 紐⑤뜽 ?꾨낫, ?띾룄 | 6遺?3珥?sweep?먯꽌 `0.05/0.05`??`onlyOptimized=6`, `avgBestIou=0.354`, ?섎㉧吏 議고빀? `onlyBaseline=10`?닿퀬, 媛?耳?댁뒪 `totalMs`媛 ??`64珥???? | ?덉쭏怨??띾룄 ?묒そ?먯꽌 ?쒖쇅?쒕떎. |
+| YOLO5Face 0.12/0.18/0.45 | ?꾩껜 異붿쿇 蹂대쪟 | 紐⑤뜽/box definition, post-filter/track, label 遺??| 6遺?3珥?strict gate???듦낵?섍퀬 鍮좊Ⅴ吏留? 9遺?2珥덈뒗 ???쇨뎬 box shape 李⑥씠? YOLO-only ?ㅼそ ?쇨뎬 ?꾨낫媛 ?욎?怨?6遺?30珥?crop review??YOLO false-positive? FaceONNX false-positive媛 ?④퍡 ?덉뿀?? | ??湲곕낯媛믪쑝濡??밴꺽?섏? ?딅뒗?? YOLO ?좏깮 ??珥덇린 profile濡쒕쭔 ?좎??쒕떎. |
+| selective tiling | 異붿쿇 ?꾨낫 ?놁쓬 | tiling ?꾨왂 | YOLO5Face 6遺?3珥?full+tile/tile-only??`onlyOptimized` 利앷?, coverage ??? ???띾룄 鍮꾩슜??留뚮뱾?덈떎. YOLOv8n tile-only??`onlyBaseline=10`, `onlyOptimized=7`?댁뿀?? | ?꾩옱 ?꾨왂? tiling off ?좎?. |
+| low-confidence position filter | 異붿쿇 ?꾨낫 ?놁쓬 | post-filter | review crop ?쒕낯?먯꽌???좊쭩?덉?留?6遺?3珥?frame gate?먯꽌 `onlyBaseline=8~10`, `StrictGatePassed=False`媛 ?먮떎. | frame gate瑜?源⑤?濡??먭린?쒕떎. |
+| small-area filter | 異붿쿇 ?꾨낫 ?놁쓬 | small-face 湲곗?/post-filter | review ?쒕낯?먯꽌??`NonFace` ?쇰?瑜??쒓굅?덉?留?6遺?3珥?gate?먯꽌 ?꾩슂???묒? ?쇨뎬 ?꾨낫源뚯? ?쒓굅??`optimizedFrames=5`, `onlyBaseline=14`媛 ?먮떎. | ?⑥닚 ?묒? 諛뺤뒪 ?쒓굅???먭린?쒕떎. |
+| FaceONNX ROI verifier | 異붿쿇 ?꾨낫 ?놁쓬 | ROI refine ?꾨왂 | 9遺?2珥덉뿉??ROI hit??留롮븯吏留?`boxCountDiffFrames`瑜?以꾩씠吏 紐삵뻽怨?`minBestIou`媛 ??븘議뚯쑝硫?ROI 鍮꾩슜??異붽??먮떎. | ?꾩옱 ?⑥닚 ROI verifier??異붿쿇 profile???ｌ? ?딅뒗?? |
+| large-box/landmark box refine | 異붿쿇 ?꾨낫 ?놁쓬 | box refine ?꾨왂 | ?⑥닚 異뺤냼? landmark span ?щ컯??紐⑤몢 9遺?2珥덉뿉??`avgBestIou`/coverage瑜??낇솕?쒖섟?? | ?ㅻⅨ box 蹂댁젙 紐⑤뜽/?꾨왂???꾩슂?섎떎. |
 
-이 분류 기준에서 `전처리`는 현재 주요 실패 축으로 확정하지 않는다. 같은 모델 shape에서 입력 크기 확대(`YoloInputSize=800`)는 속도/품질이 모두 나빠졌고, YOLOv8 계열은 metadata가 `1x3x640x640` 고정이라 전처리만으로 해결됐다는 증거가 없다. `decode`도 YOLOv8 generic output과 YOLO5Face feature-map output이 각각 실행되고 일부 높은 IoU 결과가 있어 현재 주요 실패 축으로 보지 않는다.
+??遺꾨쪟 湲곗??먯꽌 `?꾩쿂由????꾩옱 二쇱슂 ?ㅽ뙣 異뺤쑝濡??뺤젙?섏? ?딅뒗?? 媛숈? 紐⑤뜽 shape?먯꽌 ?낅젰 ?ш린 ?뺣?(`YoloInputSize=800`)???띾룄/?덉쭏??紐⑤몢 ?섎튌議뚭퀬, YOLOv8 怨꾩뿴? metadata媛 `1x3x640x640` 怨좎젙?대씪 ?꾩쿂由щ쭔?쇰줈 ?닿껐?먮떎??利앷굅媛 ?녿떎. `decode`??YOLOv8 generic output怨?YOLO5Face feature-map output??媛곴컖 ?ㅽ뻾?섍퀬 ?쇰? ?믪? IoU 寃곌낵媛 ?덉뼱 ?꾩옱 二쇱슂 ?ㅽ뙣 異뺤쑝濡?蹂댁? ?딅뒗??
 
-YOLO 모델 출처/license/배포 판단:
+YOLO 紐⑤뜽 異쒖쿂/license/諛고룷 ?먮떒:
 
 <!-- yolo-license-source-state: checked=2026-05-23; yolov8-face=lindevs-mit-with-yolov8-initial-weights-caveat; yolo5face=huggingface-gpl-3.0; ultralytics-yolov8=agpl-3.0-or-enterprise; bundle=blocked; source-gate=pass -->
 
-| 모델 후보 | 출처 | 표시 license/배포 메모 | 현재 제품 배포 판단 |
+| 紐⑤뜽 ?꾨낫 | 異쒖쿂 | ?쒖떆 license/諛고룷 硫붾え | ?꾩옱 ?쒗뭹 諛고룷 ?먮떒 |
 | --- | --- | --- | --- |
-| `yolov8n/s/m/l-face-lindevs.onnx` | `lindevs/yolov8-face` GitHub release: https://github.com/lindevs/yolov8-face | 2026-05-23 확인 기준 저장소는 MIT license로 표시된다. README는 pretrained model이 WIDERFace로 학습됐고 YOLOv8 models를 initial weights로 사용했다고 설명한다. Ultralytics 공식 문서는 YOLOv8 models가 AGPL-3.0 또는 Enterprise license 대상이라고 설명하므로, 저장소 license와 별개로 upstream YOLOv8 weight/license 영향이 있다. | 성능 gate 실패 및 upstream license caveat 때문에 repo/installer에 포함하지 않는다. 로컬 `.tmp/models/` 실험 후보로만 둔다. |
-| `YoloV5Face.onnx` | Hugging Face `hayashiLin/deepfacelivemodels`: https://huggingface.co/hayashiLin/deepfacelivemodels/blob/main/YoloV5Face.onnx | 2026-05-23 확인 기준 Hugging Face 파일 페이지의 license는 `gpl-3.0`으로 표시된다. 로컬 실험 SHA-256은 이전 확인값과 일치했다. | 성능 최종 추천 보류 및 GPL-3.0 license 리스크 때문에 repo/installer에 포함하지 않는다. 사용자가 직접 경로를 지정하는 실험용 후보로만 둔다. |
+| `yolov8n/s/m/l-face-lindevs.onnx` | `lindevs/yolov8-face` GitHub release: https://github.com/lindevs/yolov8-face | 2026-05-23 ?뺤씤 湲곗? ??μ냼??MIT license濡??쒖떆?쒕떎. README??pretrained model??WIDERFace濡??숈뒿?먭퀬 YOLOv8 models瑜?initial weights濡??ъ슜?덈떎怨??ㅻ챸?쒕떎. Ultralytics 怨듭떇 臾몄꽌??YOLOv8 models媛 AGPL-3.0 ?먮뒗 Enterprise license ??곸씠?쇨퀬 ?ㅻ챸?섎?濡? ??μ냼 license? 蹂꾧컻濡?upstream YOLOv8 weight/license ?곹뼢???덈떎. | ?깅뒫 gate ?ㅽ뙣 諛?upstream license caveat ?뚮Ц??repo/installer???ы븿?섏? ?딅뒗?? 濡쒖뺄 `.tmp/models/` ?ㅽ뿕 ?꾨낫濡쒕쭔 ?붾떎. |
+| `YoloV5Face.onnx` | Hugging Face `hayashiLin/deepfacelivemodels`: https://huggingface.co/hayashiLin/deepfacelivemodels/blob/main/YoloV5Face.onnx | 2026-05-23 ?뺤씤 湲곗? Hugging Face ?뚯씪 ?섏씠吏??license??`gpl-3.0`?쇰줈 ?쒖떆?쒕떎. 濡쒖뺄 ?ㅽ뿕 SHA-256? ?댁쟾 ?뺤씤媛믨낵 ?쇱튂?덈떎. | ?깅뒫 理쒖쥌 異붿쿇 蹂대쪟 諛?GPL-3.0 license 由ъ뒪???뚮Ц??repo/installer???ы븿?섏? ?딅뒗?? ?ъ슜?먭? 吏곸젒 寃쎈줈瑜?吏?뺥븯???ㅽ뿕???꾨낫濡쒕쭔 ?붾떎. |
 
-배포 상태 invariant:
+諛고룷 ?곹깭 invariant:
 
-- YOLO 모델 파일은 repo에 추적하지 않는다.
-- Home의 앱 기본 detector는 계속 `FaceONNX`다.
-- YOLO detector 코드는 별도 YOLO `.csproj`가 아니라 `FaceShield.csproj` 안의 SDK-style compile 대상(`Services/FaceDetection/YoloFaceOnnxDetector.cs`)으로 유지한다.
-- YOLO는 사용자가 직접 선택하고 사용자 지정 외부 모델 경로를 지정하거나, 솔루션 로컬 `Models/Yolo` 폴더에 기본 파일명으로 둔 `.onnx`를 자동 탐색하는 backend/profile 경로로만 유지한다.
-- 모델 파일 용량과 license 리스크 때문에 repo에 모델을 넣지 않는다. 대신 Home의 detector 선택 줄에는 `YOLO 다운로드` 버튼을 둔다. 버튼은 FaceONNX 기본 상태에서도 위치가 보이지만 기존 `CanDownloadYoloModel` 조건 때문에 YOLO backend 선택 시에만 활성화되며, 선택된 YOLO 종류의 모델을 사용자 로컬 앱 데이터 폴더(`FaceShield/Models/Yolo`)로 내려받고 `AutoYoloModelPath`에 자동 반영한다.
-- 다운로드 버튼의 현재 매핑은 YOLO5Face는 Hugging Face `hayashiLin/deepfacelivemodels`의 `YoloV5Face.onnx`, YOLOv8-Face는 GitHub `lindevs/yolov8-face` release `1.0.1`의 `yolov8n-face-lindevs.onnx`다. 2026-05-24 확인 기준 Hugging Face 파일 페이지는 `YoloV5Face.onnx`를 28.3MB, license `gpl-3.0`으로 표시했고, GitHub release는 `1.0.1` latest release와 ONNX opset 19 re-save changelog를 표시했다.
-- `FaceShield.csproj`는 로컬 `Models/Yolo/*.onnx`가 있을 때 출력/퍼블리시에 복사하지만, `.gitignore`가 해당 모델 파일을 제외한다. 즉 솔루션 안에 둘 수는 있어도 repo/installer 필수 번들로 추적하지 않는다.
-- 최신 출처 기준으로도 YOLOv8 upstream license 영향과 YoloV5Face GPL-3.0 리스크가 남아 있으므로, 현재 제품 배포 정책은 `YOLO 모델 번들 금지`, `FaceONNX 기본값 유지`, `사용자 지정 외부 모델 경로, 앱 데이터 다운로드 경로, 또는 솔루션 로컬 Models/Yolo 경로만 허용`으로 고정한다. 이 상태에서 FaceShield repo는 YOLO 모델 파일을 추적하지 않고, installer/CI publish는 로컬 모델 파일이 명시적으로 존재할 때만 복사 규칙을 적용한다.
-- `scripts/verify-yolo-distribution-state.ps1`는 위 상태 중 추적 가능한 부분을 검사한다.
+- YOLO 紐⑤뜽 ?뚯씪? repo??異붿쟻?섏? ?딅뒗??
+- Home????湲곕낯 detector??怨꾩냽 `FaceONNX`??
+- YOLO detector 肄붾뱶??蹂꾨룄 YOLO `.csproj`媛 ?꾨땲??`FaceShield.csproj` ?덉쓽 SDK-style compile ???`Services/FaceDetection/YoloFaceOnnxDetector.cs`)?쇰줈 ?좎??쒕떎.
+- YOLO???ъ슜?먭? 吏곸젒 ?좏깮?섍퀬 ?ъ슜??吏???몃? 紐⑤뜽 寃쎈줈瑜?吏?뺥븯嫄곕굹, ?붾（??濡쒖뺄 `Models/Yolo` ?대뜑??湲곕낯 ?뚯씪紐낆쑝濡???`.onnx`瑜??먮룞 ?먯깋?섎뒗 backend/profile 寃쎈줈濡쒕쭔 ?좎??쒕떎.
+- 紐⑤뜽 ?뚯씪 ?⑸웾怨?license 由ъ뒪???뚮Ц??repo??紐⑤뜽???ｌ? ?딅뒗?? ???Home??detector ?좏깮 以꾩뿉??`YOLO ?ㅼ슫濡쒕뱶` 踰꾪듉???붾떎. 踰꾪듉? FaceONNX 湲곕낯 ?곹깭?먯꽌???꾩튂媛 蹂댁씠吏留?湲곗〈 `CanDownloadYoloModel` 議곌굔 ?뚮Ц??YOLO backend ?좏깮 ?쒖뿉留??쒖꽦?붾릺硫? ?좏깮??YOLO 醫낅쪟??紐⑤뜽???ъ슜??濡쒖뺄 ???곗씠???대뜑(`FaceShield/Models/Yolo`)濡??대젮諛쏄퀬 `AutoYoloModelPath`???먮룞 諛섏쁺?쒕떎.
+- ?ㅼ슫濡쒕뱶 踰꾪듉???꾩옱 留ㅽ븨? YOLO5Face??Hugging Face `hayashiLin/deepfacelivemodels`??`YoloV5Face.onnx`, YOLOv8-Face??GitHub `lindevs/yolov8-face` release `1.0.1`??`yolov8n-face-lindevs.onnx`?? 2026-05-24 ?뺤씤 湲곗? Hugging Face ?뚯씪 ?섏씠吏??`YoloV5Face.onnx`瑜?28.3MB, license `gpl-3.0`?쇰줈 ?쒖떆?덇퀬, GitHub release??`1.0.1` latest release? ONNX opset 19 re-save changelog瑜??쒖떆?덈떎.
+- `FaceShield.csproj`??濡쒖뺄 `Models/Yolo/*.onnx`媛 ?덉쓣 ??異쒕젰/?쇰툝由ъ떆??蹂듭궗?섏?留? `.gitignore`媛 ?대떦 紐⑤뜽 ?뚯씪???쒖쇅?쒕떎. 利??붾（???덉뿉 ???섎뒗 ?덉뼱??repo/installer ?꾩닔 踰덈뱾濡?異붿쟻?섏? ?딅뒗??
+- 理쒖떊 異쒖쿂 湲곗??쇰줈??YOLOv8 upstream license ?곹뼢怨?YoloV5Face GPL-3.0 由ъ뒪?ш? ?⑥븘 ?덉쑝誘濡? ?꾩옱 ?쒗뭹 諛고룷 ?뺤콉? `YOLO 紐⑤뜽 踰덈뱾 湲덉?`, `FaceONNX 湲곕낯媛??좎?`, `?ъ슜??吏???몃? 紐⑤뜽 寃쎈줈, ???곗씠???ㅼ슫濡쒕뱶 寃쎈줈, ?먮뒗 ?붾（??濡쒖뺄 Models/Yolo 寃쎈줈留??덉슜`?쇰줈 怨좎젙?쒕떎. ???곹깭?먯꽌 FaceShield repo??YOLO 紐⑤뜽 ?뚯씪??異붿쟻?섏? ?딄퀬, installer/CI publish??濡쒖뺄 紐⑤뜽 ?뚯씪??紐낆떆?곸쑝濡?議댁옱???뚮쭔 蹂듭궗 洹쒖튃???곸슜?쒕떎.
+- `scripts/verify-yolo-distribution-state.ps1`?????곹깭 以?異붿쟻 媛?ν븳 遺遺꾩쓣 寃?ы븳??
 
-회귀 검증:
+?뚭? 寃利?
 
-- `dotnet build FaceShield.sln` 성공. WSL `dotnet build` 직접 실행 기준 warning/error는 0개였다. Windows verifier 내부 build에서는 기존 FFmpeg obsolete warning 7개가 다시 출력됐다.
-- `git diff --check` 통과.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 기본 실행 성공.
-- default verifier는 track postprocess policy, 6분 3초 FaceONNX all-frame parallel quality gate, ROI-hit 대표 구간, short auto-tune provider gate를 모두 통과했다.
-- 최신 short auto-tune gate는 `FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=19`, `totalMs=38,164ms`였다.
-- crop review workflow 추가 후 PowerShell parser 검증을 통과했다. `new-yolo-crop-review.ps1`로 9분 2초/6분 30초 crop review template 생성과 `-Summarize` 실행을 확인했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-crop-review.ps1` 실행 성공. 9분 2초 review pass와 6분 30초 review fail을 모두 기대한 결과로 확인했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` 실행 성공. 기본 FaceONNX verifier와 YOLO crop review wrapper가 모두 통과했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-profile-state.ps1` 실행 성공.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` 실행 성공. 기본 FaceONNX verifier와 YOLO profile-state invariant가 모두 통과했다.
-- `scripts/verify-yolo-conclusion-state.ps1`를 추가했다. 이 스크립트는 현재 문서가 `최종 YOLO 추천 후보 없음`, 앱 기본 detector `FaceONNX`, A/B gate가 정답 라벨이 아니라는 caveat, 후보별 실패 원인 분류, 남은 label/GUI/10분급 검증 항목을 계속 포함하는지 확인한다.
-- `scripts/verify-yolo-distribution-state.ps1`를 추가했다. 이 스크립트는 YOLO 모델 파일이 repo에 추적되지 않고, 문서에 `no-bundled-yolo-model`, `GPL-3.0`, `MIT`, `upstream YOLOv8 weight/license` 배포 caveat가 유지되는지 확인한다. 이후 솔루션 로컬 `Models/Yolo` 자동 탐색 정책과 `.gitignore` 모델 제외, `FaceShield.csproj` 로컬 모델 복사 규칙도 함께 검사하도록 확장했다.
-- 2026-05-23 기준 `lindevs/yolov8-face`, Hugging Face `YoloV5Face.onnx`, Ultralytics license 문서를 다시 확인했다. 결론은 변경 없이 YOLO 모델 파일을 repo/installer/CI publish 필수 파일로 번들하지 않고, YOLO backend는 사용자가 직접 모델 경로를 지정하는 실험 경로로만 유지한다.
-- `scripts/verify-yolo-representative-gate.ps1`를 추가했다. 이 스크립트는 `.tmp/models/YoloV5Face.onnx`와 6분 3초 대표 clip이 있을 때 현재 YOLO5Face 초기 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, tiling off)이 YOLO lost-fill 6프레임 적용 후 `baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1`, `avgBestIou=0.971`, `minBestIou=0.944`, `SmokeQualityGate passed=True`를 유지하는지 확인한다.
-- `scripts/verify-yolo-extended-gate.ps1`를 추가했다. 이 스크립트는 같은 YOLO5Face 초기 profile이 6분 30초 30초 clip에서 YOLO lost-fill 6프레임 적용 후에도 `SmokeQualityGate passed=False`, `baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `avgBestIou=0.770`, `minBestIou=0.000`, `boxCountDiffFrames=15`, YOLO `lostFilled=24`로 실패하는지 확인한다. 이 gate는 3초 대표 통과를 최종 추천으로 오해하지 않게 만드는 확장 실패 회귀 검증이다.
-- `scripts/verify-yolo-extended-export-gate.ps1`를 추가했다. 이 스크립트는 같은 6분 30초 clip에서 export까지 실제 수행한 뒤 `[ExportRunSummary]`가 FaceONNX `directFaceFrames=83`, YOLO `directFaceFrames=81`을 기록하고, 이후 A/B 품질 gate가 실패하는지 확인한다.
-- `scripts/verify-yolo-track-hold-state.ps1`를 추가했다. 이 스크립트는 합성 `FrameMaskProvider`에서 YOLO track profile과 같은 `MaxLostFillFrames=6`, `MaxConfirmedTrackHoldFrames=8`을 적용해, 같은 track 내부의 긴 no-face gap frame 13~19가 보간/hold되고 track 종료 뒤 frame 21~26은 lost-fill로 유지되며 frame 27에서는 멈추는지 검증한다. 동시에 1프레임짜리 약한 후보는 확정 track으로 유지하지 않고 제거하는지 실제 `FaceTrackInterpolator` 실행으로 검증한다.
-- `scripts/verify-yolo-state.ps1`를 추가했다. 이 스크립트는 `verify-yolo-profile-state.ps1`, `verify-yolo-track-hold-state.ps1`, `verify-yolo-crop-review.ps1`, full-GT harness, `verify-yolo-conclusion-state.ps1`, `verify-yolo-distribution-state.ps1`, `verify-yolo-goal-audit-state.ps1`, `verify-yolo-top-level-require-complete-state.ps1`, `verify-yolo-manual-readiness-state.ps1`, `verify-yolo-completion-audit-state.ps1`를 묶어 YOLO 전용 상태를 빠르게 재확인한다. `-RunRepresentativeGate`를 붙이면 `verify-yolo-representative-gate.ps1`까지 실행하고, `-RunExtendedGate`를 붙이면 `verify-yolo-extended-gate.ps1`까지 실행한다. `-RunExtendedExportGate`를 붙이면 `verify-yolo-extended-export-gate.ps1`까지 실행한다. `verify-auto-mosaic-default.ps1 -RunYoloState`에서도 같은 wrapper를 호출할 수 있고, `-RunYoloRepresentativeGate`/`-RunYoloExtendedGate`/`-RunYoloExtendedExportGate`를 함께 붙이면 해당 YOLO gate까지 포함한다. `-RequireYoloComplete`를 붙이면 상위 기본 검증에서도 `yolo-require-complete-guard`를 먼저 실행하고 `-RunYoloState`를 암시해 YOLO completion audit의 strict 완료 조건을 요구한다. `verify-yolo-top-level-require-complete-state.ps1`는 현재 pending marker에서 이 상위 strict 경로가 `goal marked complete missing text: complete=true`로 빠르게 실패하고 FaceONNX quality gate까지 내려가지 않는지 회귀 검증한다. 이때 `verify-yolo-state.ps1 -RequireComplete`도 긴 YOLO state 전체를 돌기 전에 `completion-audit-require-complete-guard`를 먼저 실행해 현재 pending 증거에서는 빠르게 실패한다. `-RunTenMinuteState`는 10분 runner/preflight 상태를 확인하고, `-RequireTenMinuteClip`을 함께 붙이면 준비된 10분 clip까지 검사한다.
-- `scripts/verify-yolo-gt-label-state.ps1`를 추가했다. 이 스크립트는 crop review CSV의 표본 verdict를 GT식 face/non-face count로 변환해, A/B diff를 실제 오탐/미탐으로 단정하지 않는 기준을 회귀 검증한다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-gt-label-state.ps1` 실행 성공. 9분 2초 pass 표본은 `rows=15`, `reviewed=15`, `yoloTruePositive=15`, `yoloFalsePositive=0`, `yoloMiss=0`, `faceOnnxFalsePositive=0`이었다. 6분 30초 fail 표본은 `rows=26`, `reviewed=26`, `unclear=1`, `yoloTruePositive=1`, `yoloFalsePositive=10`, `yoloMiss=0`, `faceOnnxFalsePositive=14`였다.
-- `scripts/verify-yolo-full-gt-label-state.ps1`를 추가했다. 이 스크립트는 전체 frame/track GT CSV와 detector prediction CSV 또는 `-DumpDetections` 로그의 `[SmokeDetection]` 라인을 IoU 기준으로 비교해 `truePositive`, `miss`, `falsePositive`, `lowIou`를 계산한다. 현재는 full GT 데이터가 아직 없으므로 `-SelfTest`로 matcher와 quality gate 동작만 검증한다.
-- `scripts/new-yolo-full-gt-template.ps1`를 추가했다. 이 스크립트는 detector prediction CSV 또는 `-DumpDetections` 로그의 `[SmokeDetection]` 라인에서 full GT 라벨링용 CSV 템플릿을 만든다. 템플릿의 `label=face` 행만 GT로 평가하고, blank/nonface 행은 detector false-positive 후보로 남긴다. detector가 놓친 실제 얼굴은 사람이 CSV에 행을 추가해야 한다.
-- `scripts/verify-yolo-full-gt-template-state.ps1`를 추가했다. 이 스크립트는 실제 YOLO smoke의 `[SmokeDetection]` 로그에서 `new-yolo-full-gt-template.ps1`로 라벨링 템플릿을 생성하고, 필수 컬럼/source/blank label 상태를 확인한다.
-- `scripts/new-yolo-full-gt-review-package.ps1`와 `scripts/verify-yolo-full-gt-review-package-state.ps1`를 추가했다. 라벨링 템플릿 CSV와 영상에서 detection crop PNG와 `full-gt-review.csv`를 생성해 사람이 `label=face/nonface`와 evidence note를 채울 수 있게 한다. `-IncludeFullFrameReview`를 붙이면 `full-frame-review.csv`, 원본 frame image, detection box가 그려진 overlay frame image, frame별 `candidateSummary`도 함께 생성해 detection crop에 잡히지 않은 visible face를 별도로 스캔하고, 빠진 얼굴은 `full-gt-review.csv`에 manual missed-face row로 추가하게 한다. 생성 패키지에는 crop/frame/overlay/후보 요약, 입력 규칙, CSV row key, pending 필드, 입력 패턴을 브라우저에서 훑을 수 있는 `review-index.html`도 포함된다. 기존 사람이 작성 중인 CSV를 덮지 않고 HTML 안내만 갱신할 수 있도록 `-RefreshIndexOnly`도 추가했다.
-- `scripts/verify-yolo-full-gt-reviewed-state.ps1`를 추가했다. 사람이 채운 `full-gt-review.csv`의 label/reviewStatus/evidenceNotes 상태를 검사한 뒤 `verify-yolo-full-gt-label-state.ps1`로 IoU 기반 GT quality gate를 실행한다. 실제 full GT 판정에는 `-RequireFullFrameReview -RequireArtifacts`를 붙여 `full-frame-review.csv`의 `missedFaceCount`, `missedFaceRowsAdded`, evidence, frame별 manual missed-face row 수와 review crop/frame/overlay artifact 파일이 모두 일치하는지도 검사해야 한다. `-AllowQualityGateFailure`를 붙이면 라벨/아티팩트 검수는 통과시키되 `passed=False`와 `failureAllowed=True`를 출력해 YOLO 후보 실패를 추천 후보 없음 경로의 증거로 남긴다. 현재 실제 리뷰 CSV는 아직 blank label이므로 기본 self-test만 wrapper에 포함한다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-label-state.ps1 -SelfTest` 실행 성공. self-test 기준 `gtFaces=2`, `predictions=2`, `truePositive=1`, `miss=1`, `falsePositive=1`을 기대값으로 확인했다.
-- synthetic prediction CSV에서 `new-yolo-full-gt-template.ps1`로 template을 생성하고, 한 행을 `label=face`로 확정한 뒤 `verify-yolo-full-gt-label-state.ps1 -GtCsv ... -PredictionCsv ... -MaxMisses 0 -MaxFalsePositives 1 -MaxLowIou 0` 실행에 성공했다. data mode 기준 `gtFaces=1`, `predictions=2`, `truePositive=1`, `miss=0`, `falsePositive=1`이었다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-template-state.ps1` 실행 성공. 실제 YOLO `-DumpDetections` smoke 로그 `.tmp/yolo-ten-minute-detection-smoke/yolo-ten-minute-yolo-only-20260523-022022.log`에서 `.tmp/yolo-full-gt/yolo-detection-smoke-template.csv`를 생성했고 20개 row와 라벨링용 필수 컬럼을 확인했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-review-package-state.ps1` 실행 성공. `.tmp/yolo-full-gt/yolo-detection-smoke-template.csv`의 20개 row 전체에서 crop PNG와 `.tmp/yolo-full-gt/review-package-smoke/full-gt-review.csv`를 생성하고, detection 후보가 나온 unique frame 19개의 full-frame review row, frame image, detection overlay frame image, frame별 candidate summary, `review-index.html`을 생성해 필수 리뷰 컬럼과 이미지 파일을 확인했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-reviewed-state.ps1 -SelfTest` 실행 성공. synthetic reviewed CSV에서 face/nonface 라벨, evidence note, crop/frame/overlay artifact 파일을 검사하고, full-frame review self-test에서 `missedFaceCount=0`/evidence를 확인한 뒤, full GT evaluator가 `gtFaces=1`, `predictions=2`, `truePositive=1`, `miss=0`, `falsePositive=1` 조건으로 통과하는지 확인했다. 추가 manual-missed self-test에서는 frame 30의 `missedFaceCount=1`, `missedFaceRowsAdded=1`, manual missed-face row 1개가 frame별로 일치하고, evaluator가 `gtFaces=2`, `truePositive=1`, `miss=1`, `falsePositive=1` 조건으로 통과하는지 확인했다. negative self-test 5개도 추가해 `missedFaceCount`/`missedFaceRowsAdded` 불일치, full-frame missed 선언 대비 manual row 누락, evidence note 누락, crop artifact 누락, frame artifact 누락이 모두 실패로 잡히는지 확인한다.
-- AI-assisted visual review candidate로 `.tmp/yolo-full-gt/review-package-smoke/full-gt-review-reviewed-candidate.csv`와 `.tmp/yolo-full-gt/review-package-smoke/full-frame-review-reviewed-candidate.csv`를 생성했다. 이 후보 라벨은 사람이 확정한 GT가 아니므로 최종 추천 근거로 사용하지 않는다. 확대 확인에서 frame 7의 detection crop은 얼굴이 아니라 옷/어깨 쪽에 걸렸고, 같은 frame의 배경 얼굴은 detection crop에 덮이지 않은 것으로 보정했다. 후보 기준으로 `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireEvidence -RequireArtifacts -MaxMisses 1 -MaxFalsePositives 13 -MaxLowIou 1`는 `gtFaces=8`, `truePositive=7`, `miss=1`, `falsePositive=13`, `lowIou=1`으로 통과한다. 같은 후보를 strict gate `-MaxFalsePositives 0`으로 실행하면 `passed=False`, exit code `2`라, 현재 YOLO5Face smoke 결과는 AI 후보 라벨 기준으로도 미탐 1개와 오탐 13개 때문에 추천 후보가 아니다. `scripts/verify-yolo-full-gt-reviewed-candidate-state.ps1`가 이 tolerant pass와 strict fail을 모두 재검증하며, `scripts/verify-auto-mosaic-default.ps1 -RunYoloFullGtReviewedCandidateState`로 단독 호출할 수 있다.
-- `scripts/new-yolo-human-review-draft.ps1`를 추가했다. 이 스크립트는 pending `full-gt-review.csv`/`full-frame-review.csv`와 AI-assisted candidate CSV를 비교해 `.tmp/yolo-manual-gates/human-review-draft/full-gt-review-human-draft.csv`, `full-frame-review-human-draft.csv`, `human-review-draft-report.md`를 생성한다. 초안은 `candidateLabel`, `candidateMissedFaceCount`, `candidateEvidenceNotes` 같은 후보 컬럼만 채우고 실제 `label`, `reviewStatus`, `evidenceNotes`, `missedFaceCount` 등 최종 verifier가 보는 필드는 비워 둔다. 따라서 사람 확인 전에는 완료 증거로 통과하지 않으며, `reference-only-not-final-gt` 규칙과 manual missed 후보 row를 명시한다.
-- `scripts/new-yolo-gui-smoke-checklist.ps1`와 `scripts/verify-yolo-gui-smoke-state.ps1`를 추가했다. GUI smoke verifier는 Home의 YOLO 선택/model picker, detector 선택 줄의 `YOLO 다운로드` 버튼, startup arg 기반 smoke preset(`--yolo-smoke`), Workspace 자동 검출, preview/manual edit/export/state persistence 코드 경로를 source invariant로 확인하고, `-RequireManualPass`를 붙이면 수동 체크리스트의 `open-video`, `select-yolo-backend`, `download-yolo-model`, `run-yolo-auto-detect`, `preview-result`, `preview-track-hold`, `manual-edit`, `export`, `reopen-state`가 모두 `status=pass`, `evidenceType`, `artifactPath`, evidence를 가져야 통과한다. `preview-track-hold`는 한 번 모자이크 된 대상이 짧은 detector 미탐 구간에서 off/on 깜박임 없이 유지되는지 녹화 증거로 확인한다. `artifactPath`는 실제 생성된 비어 있지 않은 파일이어야 하며, `evidenceType`별로 screenshot은 이미지, recording은 영상, log는 `.log`/`.txt`, export output은 영상 확장자여야 한다.
-- `scripts/verify-yolo-startup-smoke-state.ps1`를 추가했다. 이 verifier는 `AppStartupOptions.Parse("--yolo-smoke --open-manual")`가 YOLO backend, YOLO5Face, `srcTest/260102_jp_10.mp4`, `.tmp/models/YoloV5Face.onnx`를 실제 존재하는 경로로 resolve하는지 확인하고, `HomePageViewModel.ApplyStartupOptions()`와 `MainWindowViewModel` 생성자에 적용했을 때 `IsYoloDetectorSelected`와 `CanStartWorkspace`가 true인지 console harness로 검증한다. 따라서 수동 GUI smoke를 시작하기 전 preset 자체의 경로/VM 세팅 오류는 자동 gate에서 잡힌다.
-- `scripts/prepare-yolo-gui-smoke-evidence.ps1`를 추가했다. 이 스크립트는 `.tmp/yolo-gui-smoke/evidence` 폴더와 `.tmp/yolo-gui-smoke/gui-smoke-evidence-guide.md`를 만들고, `-UpdateChecklist`를 붙이면 `manual-smoke-checklist.csv`의 `artifactPath`만 step별 권장 경로로 채운다. `status=pass`나 `evidence`는 자동으로 채우지 않으므로 실제 Avalonia GUI 확인 전에는 완료 증거로 통과하지 않는다. `preview-track-hold`는 `preview-track-hold.mp4` 녹화 증거를 요구하고, export는 실제 내보낸 영상 파일을 가리켜야 한다. evidence guide에는 9개 GUI step 각각에 대해 `set-yolo-gui-smoke-evidence.ps1 -StepId ...` 명령을 생성해 캡처 후 해당 row만 검증/입력할 수 있게 했다.
-- `scripts/set-yolo-gui-smoke-evidence.ps1`를 추가했다. 이 helper는 사람이 Avalonia GUI에서 캡처/녹화/export를 만든 뒤 특정 `stepId` row만 `status=pass`로 채운다. 입력한 artifact가 실제 파일인지, 비어 있지 않은지, `evidenceType`과 확장자가 맞는지, evidence 설명이 비어 있지 않은지를 검사하므로 GUI smoke CSV를 직접 편집할 때 생길 수 있는 실수를 줄인다. 이 helper도 실제 화면 확인을 대체하지 않으며, 캡처 파일이 없는 상태에서는 row를 pass로 만들 수 없다.
-- `scripts/verify-yolo-gui-smoke-state.ps1 -SelfTest`를 추가했다. 이 self-test는 synthetic manual checklist와 증거 파일을 만든 뒤 `-RequireManualPass` 경로를 그대로 통과시켜, 수동 GUI smoke 증거 검증 로직이 evidence type/파일 존재/비어 있지 않은 artifact/확장자 조건을 실제로 검사하는지 확인한다. negative self-test 3개도 추가해 export step의 잘못된 artifact 확장자, 존재하지 않는 artifact path, `status=fail` 행이 모두 실패로 잡히는지 확인한다.
-- `scripts/open-yolo-manual-gates.ps1`를 추가했다. 이 helper는 full-GT `review-index.html`, `full-gt-review.csv`, `full-frame-review.csv`, GUI `manual-smoke-checklist.csv` 경로와 완료 후 검증 명령을 한 번에 출력한다. `-Open`을 붙이면 리뷰 파일을 열고, `-WriteSummary -OpenDashboard`를 붙이면 pending progress와 artifact 링크가 묶인 `.tmp/yolo-manual-gates/manual-gate-dashboard.html`을 바로 연다. GUI smoke가 남아 있으면 `nextGuiStep`, `nextGuiArtifactPath`, `nextGuiEvidenceSetterCommand`를 출력해 다음 수동 캡처 후 실행할 `set-yolo-gui-smoke-evidence.ps1` 명령을 바로 안내한다. 또한 `dotnet run --project FaceShield.csproj -- --yolo-smoke --open-manual`/`--open-auto` 명령을 summary에 남겨 `srcTest/260102_jp_10.mp4`와 `.tmp/models/YoloV5Face.onnx`를 자동 세팅한 상태로 수동 smoke를 시작할 수 있게 한다. `-VerifyReady`는 현재 pending review package가 준비됐는지 확인한다. 사람이 라벨/GUI smoke 증거를 채운 뒤 `-VerifyCompleted`를 붙이면 `verify-yolo-manual-readiness-state.ps1 -AllowCompletedFullGt -AllowCompletedGuiSmoke` 통합 경로, `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireEvidence -RequireArtifacts`, `verify-yolo-gui-smoke-state.ps1 -RequireManualPass`를 연속 실행한다.
-- `scripts/open-yolo-manual-gates.ps1 -WriteSummary`는 현재 남은 gate, 리뷰 산출물 경로, full-GT/full-frame/GUI pending row 수, 완료 후 검증 명령, GUI 필수 step, `preview-track-hold` 확인 액션을 `.tmp/yolo-manual-gates/manual-gate-summary.md`에 Markdown으로 남긴다. 동시에 `.tmp/yolo-manual-gates/manual-gate-dashboard.html`도 생성해 `review-index.html`, pending report, full-GT CSV, full-frame CSV, GUI checklist, GUI smoke evidence guide를 브라우저 링크와 pending progress card로 한 화면에 묶고, 첫 pending crop/full-frame/GUI row를 `Pending Preview`로 직접 보여준다. 또한 AI-assisted candidate CSV 경로와 human review draft report를 `reference-only-not-final-gt` 규칙과 함께 노출해 사람이 빠르게 대조하되, 이를 최종 GT/완료 근거로 오인하지 않게 했다. GUI smoke checklist가 없을 때는 `-PrepareGuiChecklist`를 붙여 `scripts/new-yolo-gui-smoke-checklist.ps1`로 pending checklist를 만들 수 있고, 기존 checklist는 덮어쓰지 않는다. `-PrepareGuiEvidence`를 붙이면 `scripts/prepare-yolo-gui-smoke-evidence.ps1 -UpdateChecklist -Verify`를 실행해 checklist의 `artifactPath`만 권장 evidence 경로로 채우고, pass/evidence는 사람 확인 전까지 비워 둔다. 사람이 full-GT와 GUI smoke 증거를 채운 뒤에는 `scripts/complete-yolo-goal-after-manual-gates.ps1 -AllowQualityGateFailure -UpdatePlan -RunYoloState`로 full-GT/GUI verifier, plan `yolo-goal-audit-state` marker 갱신, `verify-yolo-completion-audit-state.ps1 -RequireComplete`, 완료 evidence report, 최종 `verify-yolo-state.ps1 -RequireComplete`를 한 번에 실행할 수 있다. 이때 full-GT quality gate 실패는 추천 후보 없음의 근거로 남기며 YOLO를 추천 후보로 승격하지 않는다.
-- `scripts/verify-yolo-manual-gate-helper-state.ps1`를 추가했다. 이 verifier는 `open-yolo-manual-gates.ps1 -VerifyReady`가 현재 pending review package에서 통과하는지 확인하고, `-VerifyCompleted`는 CSV 상태를 읽어 pending이면 `Review CSV has unreviewed rows`로 실패해야 하며, 사람이 full-GT/GUI 체크리스트를 모두 completed 상태로 채운 뒤에는 같은 completed 경로가 통과해야 한다는 상태 기반 검증을 수행한다. 또한 AI-assisted candidate full-GT CSV와 synthetic GUI artifact를 사용한 completed-path fixture를 만들어 `-VerifyCompleted -MaxMisses 1 -MaxFalsePositives 13 -MaxLowIou 1`이 실제로 통과 가능한지 확인한다. 이 fixture는 검증 배관 self-test일 뿐 사람이 확정한 최종 GT/GUI 증거가 아니다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloGuiSmokeState` 실행 성공. 기본 FaceONNX gate와 GUI smoke source invariant가 함께 통과했다. 수동 체크리스트는 아직 작성되지 않았으므로 `-RequireManualPass`는 실행하지 않았다.
-- `scripts/verify-yolo-profile-state.ps1`를 확장해 YOLO profile 저장뿐 아니라 UI/런타임 분리 invariant도 확인한다. 현재 검증 항목에는 Home 화면의 detector selector, detector 선택 줄의 `YOLO 다운로드` 버튼/진행 상태, YOLO 모델 종류 selector, YOLO 모델 파일 picker, YOLO threshold/input/tiling/downscale/tracking/detectEvery/parallel 바인딩, 앱 데이터 다운로드 경로와 솔루션 로컬 `Models/Yolo` 기본 모델 탐색, FaceONNX threshold panel 분리, FaceONNX backend에서만 `DetectorAutoTuner`가 호출되는지, auto-tune 결과가 FaceONNX options에만 반영되는지, YOLO 전용 track/filter profile이 FaceONNX 기본 profile과 분리되어 있는지, YOLOv8-Face와 YOLO5Face profile이 threshold뿐 아니라 downscale/tracking/detectEvery/parallel session까지 독립 저장/적용되는지, 추적 toggle이 꺼져 있으면 track postprocess와 temporal smoothing을 적용하지 않는지, track postprocess/ROI/smoothing 이후 현재 preview frame을 다시 렌더링하는지, smoke harness가 명시적인 `-YoloModelPath` 없이 솔루션 로컬 YOLO 모델만으로 YOLO backend를 자동 활성화하지 않는지(`smoke-harness-faceonnx-default=pass`)가 포함된다.
-- `YoloFaceOnnxDetector`의 입력 tensor 크기는 ONNX input metadata가 `640x640`처럼 고정 dimension을 제공하면 모델 metadata 값을 우선 사용하고, dimension이 동적이거나 비어 있을 때만 UI/profile의 `InputWidth`/`InputHeight` 값을 사용한다. 이 상태에서 UI 입력 크기가 736이어도 고정 640 모델에는 640 tensor를 넣어 `Got: 736 Expected: 640` 오류를 피한다.
-- `YoloFaceOnnxDetector`에도 FaceONNX와 같은 방식의 provider 상태 기록을 추가했다. `CreateSessionOptions()`로 ORT option을 구성하고, GPU 요청 시 `Microsoft.ML.OnnxRuntime.DirectML`의 `AppendExecutionProvider_DML`을 찾아 붙인다. DirectML provider 추가 또는 GPU session 생성 실패 시 CPU session으로 fallback하며, `GetLastExecutionProviderLabel()`/`GetLastExecutionProviderError()`로 `GPU:DirectML`, `CPU(가속 실패)` 상태와 실패 원인을 노출한다. `AutoMaskRunSummary`의 detector 이름과 Home `AutoAccelStatus`는 YOLO 선택 시 이 YOLO provider 상태를 사용한다.
-- 고정 입력 모델 확인: `.tmp/models/yolov8n-face-lindevs.onnx`는 input metadata가 `1x3x640x640`이다. 이 모델을 `-YoloInputSize 736`으로 실행한 짧은 smoke에서 shape 오류 없이 완료했고, summary detector는 `YoloFaceOnnxDetector/GPU:DirectML`로 기록됐다. 이 smoke는 입력 shape/provider 상태 확인용이며, YOLOv8n 품질 추천 근거로 사용하지 않는다.
-- YOLO 깜박임 방지 tracking 보강: FaceONNX 기본 track profile은 유지하고, YOLO profile에서 확정 track의 `MaxLostFillFrames`를 3에서 6으로 늘렸다. 추가로 같은 track으로 이어졌지만 내부 no-face gap이 기본 `MaxFillGap=5`를 넘는 경우에도 확정 track이면 `MaxConfirmedTrackHoldFrames=8`까지 보간/hold하도록 했다. 즉 YOLO가 같은 얼굴을 일정 프레임 이상 잡은 뒤 잠깐 미탐하더라도 예측/보간 박스로 모자이크를 더 오래 유지한다. FaceONNX 기본 경로에서는 작은 중앙 후보가 끝난 뒤까지 잔상으로 늘어나지 않게 small-track lost-fill을 기본 차단하고, YOLO profile에서만 `AllowSmallTrackLostFill=true`로 명시했다. 단발 오탐이 오래 남는 것을 막기 위해 `ConfirmedTrackMinDetections`, short-track 제거, lower-frame 제거 조건은 유지한다. smoke harness의 YOLO track profile도 같은 `MaxLostFillFrames=6`, `MaxConfirmedTrackHoldFrames=8`, `AllowSmallTrackLostFill=true`를 사용한다.
-- YOLO lost-fill 6프레임 적용 후 6분 3초 대표 gate는 strict frame-match 기준으로는 `baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1(frame 9)`, `boxCountDiffFrames=2`가 됐다. frame 9 crop `.tmp/yolo-crops/test-0900-yolo5face/onlyOptimized-optimized-frame-000009-00.png`에는 옆얼굴/마스크가 보이므로 이 차이는 단순 오탐 증가가 아니라 FaceONNX 기준선이 빠뜨린 얼굴 프레임을 YOLO track hold가 유지한 케이스로 분류한다. 공통 프레임 품질은 `avgBestIou=0.971`, `minBestIou=0.944`로 유지됐고 YOLO 후처리는 `lostFilled=6`, `lostFrames=6,7,8,9,10,11`을 기록했다. 따라서 `verify-yolo-representative-gate.ps1`는 `-AllowFrameMismatch`와 위 지표를 기준으로 깜박임 방지 tracking 동작을 확인한다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-representative-gate.ps1` 실행 성공. 최신 실행에서 `baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1(frame 9)`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=2`, `SmokeQualityGate passed=True`였고 YOLO 후처리는 `lostFilled=6`, `lostFrames=6,7,8,9,10,11`이었다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-extended-gate.ps1` 실행 성공. 이 스크립트는 내부 smoke의 exit code 2를 기대값으로 본다. 최신 실행에서 FaceONNX baseline 자동 검출은 `totalMs=325,212ms`, YOLO optimized 자동 검출은 `totalMs=119,403ms`였지만, A/B는 `baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `avgBestIou=0.770`, `minBestIou=0.000`, `avgBaselineCoverage=0.868`, `boxCountDiffFrames=15`, YOLO `lostFilled=24`, `SmokeQualityGate passed=False`라 현재 YOLO5Face profile을 최종 추천 후보로 승격하지 않는다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-extended-export-gate.ps1` 실행 성공. 이 스크립트도 내부 smoke의 exit code 2를 기대값으로 본다. 최신 실행에서 FaceONNX baseline은 자동 검출 `totalMs=325,178ms`, export `totalMs=41,707ms`, `directFaceFrames=83`이었고, YOLO optimized는 자동 검출 `totalMs=119,854ms`, export `totalMs=41,437ms`, `directFaceFrames=81`였다. export는 완료됐지만 A/B는 `baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `boxCountDiffFrames=15`, `SmokeQualityGate passed=False`라 detector 교체만으로 이 30초 구간을 추천 후보로 승격하지 않는다.
-- `scripts/run-yolo-ten-minute-full.ps1`를 추가했다. 이 runner는 원본 `srcTest/260102_jp_10.mp4`에서 10분 clip `.tmp/srcTest-smoke/smoke-0200-600s.mp4`를 준비하고, 현재 YOLO5Face 초기 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`)로 10분급 자동 검출+export를 실행한다. 기본은 YOLO optimized 단독이며, `-RunBaseline`을 붙이면 FaceONNX baseline A/B까지 포함하고 `-AllowQualityFailure`로 긴 A/B 실패 로그를 보존할 수 있다. `-BaselineOnly`를 붙이면 YOLO 모델 없이 FaceONNX baseline만 실행해 긴 10분 baseline 시간을 별도로 확보할 수 있다.
-- `scripts/run-yolo-ten-minute-full.ps1`는 긴 FaceONNX baseline/A-B 실행도 중간 상태를 볼 수 있도록 smoke 출력을 즉시 콘솔과 로그 파일에 동시에 쓴다. 신규 실행 로그는 `yolo-ten-minute-yolo-only-*`, `yolo-ten-minute-baseline-only-*`, `yolo-ten-minute-ab-*`처럼 모드별 파일명으로 분리된다.
-- `scripts/run-yolo-ten-minute-full.ps1`에 `-DumpDetections`, `-DumpCompareDetails`, `-DumpCompareOverlays`, `-DumpCompareCrops` 전달 옵션을 추가했다. 긴 10분 실행에서도 `[SmokeDetection]` prediction log와 compare overlay/crop 자료를 남겨 `new-yolo-full-gt-template.ps1`로 full GT 라벨링 CSV를 만들 수 있다.
-- `scripts/verify-yolo-ten-minute-state.ps1`를 추가했다. 이 스크립트는 10분 runner, 원본 영상, 10분 clip 준비 상태, runner의 incremental log streaming, 그리고 문서의 10분 검증 미완료 상태를 확인한다. `-RequireClip`을 붙이면 `.tmp/srcTest-smoke/smoke-0200-600s.mp4`가 실제 준비되어 있고 1GB 이상인지 검사한다. `-RequireBaselineOnlyRun`을 붙이면 최신 `yolo-ten-minute-baseline-only-*.log`가 FaceONNX baseline만 실행했고 YOLO/optimized case가 섞이지 않았는지 확인한다. `-RequireIncompleteBaselineFullAttempt`를 붙이면 중단된 10분 FaceONNX baseline-only full 로그가 baseline-only/pipe-single 경로였고, `[YoloTenMinuteFull] complete` 없이 `AutoMaskPipe frames=240` 수준까지만 진행된 미완료 시도인지 확인한다.
-- `scripts/verify-yolo-ten-minute-state.ps1 -RequireRun`은 YOLO 10분 optimized-only 로그와 export 파일 존재/크기뿐 아니라 `ffprobe`로 출력 영상의 video stream도 검증한다. 현재 기대값은 `3840x2160`, `nb_frames >= 17980`, duration `599~601s`이다. 이는 YOLO 단독 10분 export artifact 무결성 검증이며, FaceONNX 10분 A/B 완료나 full GT 품질 검증을 대체하지 않는다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -SkipClipPrepare` 실행 성공. 10분 clip `.tmp/srcTest-smoke/smoke-0200-600s.mp4`에서 YOLO5Face `0.12/0.18/0.45`, CPU, `ParallelDetectorCount=2`, baseline 없이 optimized 단독 자동 검출+export를 실행했다. 로그는 `.tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log`이고 출력은 `.tmp/srcTest-smoke/smoke-0200-600s_blur.mp4`다.
-- 10분 YOLO optimized 단독 자동 검출 결과: `detector=YoloFaceOnnxDetector`, `mode=pipe-parallel`, `totalFrames=17984`, `processed=17982`, `detects=17982`, `interpolated=0`, `decodeMs=1,647,657`, `detectMs=5,058,207`, `totalMs=2,536,529`, filter `regular=15053`, `small=15862`, `rejected=19146`. Track/ROI 후처리는 `tracks=2644`, `filled=5492`, `lostFilled=1762`, `removedShort=686`, `removedLower=13`, `rewritten=8064`, ROI `attempts=32`, `hits=6`, `elapsedMs=10,612`였다.
-- 10분 YOLO optimized 단독 export 결과: `[ExportRunSummary]` 기준 `frames=17984`, `bitmapMaskFrames=0`, `directFaceFrames=8063`, `swsToBgraMs=82,579`, `maskMs=439,442`, `swsToEncMs=203,111`, `encodeMs=59,806`, `totalMs=1,375,350`이었다. 출력 파일은 `ffprobe` 기준 `3840x2160`, `30000/1001fps`, `nb_frames=17983`, `duration=600.032767`, size `1,490,083,950` bytes다.
-- 이 10분 실행은 YOLO optimized 단독 end-to-end 시간 측정이며, FaceONNX 10분 baseline A/B나 label 기반 GT 품질 검증은 아니다. 이미 30초 확장 gate가 실패했으므로 이 측정만으로 YOLO5Face를 추천 후보로 승격하지 않는다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -SkipClipPrepare -BaselineOnly -LogDir .tmp/yolo-ten-minute-baseline-full`로 10분 FaceONNX baseline-only 전체 실행을 시도했지만, `pipe-single`에서 약 240프레임 처리에 `totalMs=108,278` 수준으로 진행되어 전체 17,984프레임 완료에는 장시간이 필요하다고 판단하고 중단했다. 로그는 `.tmp/yolo-ten-minute-baseline-full/yolo-ten-minute-baseline-only-20260523-032108.log`이며, `[YoloTenMinuteFull] complete`가 없으므로 완료 artifact로 보지 않는다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunRepresentativeGate` 실행 성공.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunTenMinuteState -RequireTenMinuteClip -RequireTenMinuteRun` 실행 성공. YOLO profile/crop review/표본 GT label/conclusion/distribution/goal audit/10분 run artifact 상태를 한 번에 확인했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -Clip .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipClipPrepare -SkipExport -LogDir .tmp/yolo-ten-minute-smoke` 실행 성공. 10분 runner의 incremental log streaming 경로를 짧은 3초 clip으로 확인했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -Clip .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipClipPrepare -SkipExport -BaselineOnly -LogDir .tmp/yolo-ten-minute-baseline-smoke` 실행 성공. 10분 runner의 FaceONNX baseline-only 경로가 YOLO 모델 없이 실행되고 optimized case를 생략하는 것을 짧은 3초 clip으로 확인했다.
-- `scripts/run-yolo-ten-minute-full.ps1 -FaceOnnxOptimizedOnly`를 추가했다. 이 모드는 YOLO 모델 없이 `run-srcTest-smoke.ps1`의 optimized FaceONNX CPU parallel 경로만 실행해 긴 baseline-only 단일 detector보다 빠른 FaceONNX optimized-only 측정 경로를 제공한다. 이는 최종 10분 A/B baseline 대체가 아니라, FaceONNX optimized detector 자체의 짧은 smoke/시간 비교용 경로다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -Clip .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipClipPrepare -SkipExport -FaceOnnxOptimizedOnly -LogDir .tmp/yolo-ten-minute-faceonnx-optimized-smoke` 실행 성공. 로그는 `yolo-ten-minute-faceonnx-optimized-only-*` 패턴이며 `FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `totalFrames=90` 이상, YOLO detector 없음, baseline case 없음 조건을 verifier에서 확인한다.
-- `scripts/run-yolo-partial-speed-compare.ps1`를 추가했다. 이 wrapper는 같은 partial clip을 준비한 뒤 YOLO optimized-only와 FaceONNX optimized-only를 연속 실행하고 `[AutoRunSummary]`의 `totalMs`, frame 수, log path를 한 줄 summary로 출력한다. 이는 10분 전체 A/B 완료 근거가 아니라, 전체 10분 FaceONNX baseline이 장시간으로 중단된 상태에서 같은 clip 길이의 detector 속도 비교를 재현 가능하게 남기기 위한 중간 측정 경로다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-partial-speed-compare.ps1 -Seconds 3 -ForcePrepare` 실행 성공. `.tmp/srcTest-smoke/smoke-0200-partial-speed-3s.mp4`에서 YOLO optimized-only와 FaceONNX optimized-only를 같은 3초 구간으로 실행했다. YOLO는 `totalFrames=93`, `processed=90`, `totalMs=20,720`, `faceMaskFrames=6`이었고, FaceONNX optimized-only는 `totalFrames=93`, `processed=90`, `totalMs=34,039`, `faceMaskFrames=5`였다. 이 partial 구간의 FaceONNX/YOLO 시간 비율은 `1.643`이지만, 품질 GT가 아니므로 추천 근거로 사용하지 않는다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloState -RunYoloRepresentativeGate` 실행 성공. 기본 FaceONNX gate와 YOLO wrapper/대표 gate가 모두 통과했다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloTenMinuteState -RequireYoloTenMinuteClip -RequireYoloTenMinuteRun` 실행 성공. 기본 FaceONNX gate와 10분 YOLO run artifact 상태가 모두 통과했다.
-- 같은 상태에서 `dotnet build FaceShield.sln`은 성공했고 기존 FFmpeg obsolete warning 7개만 출력됐다.
-- `scripts/verify-yolo-manual-readiness-state.ps1`를 추가했다. 이 스크립트는 남은 수동 gate를 완료로 간주하지 않고, full-GT review package의 빈 라벨 CSV/crop/frame/overlay artifact, AI-assisted candidate CSV, GUI manual checklist, 10분 YOLO output/log, 미완료 FaceONNX baseline full attempt log가 다음 수동 검증을 진행할 수 있는 상태인지 확인한다. 실제 full-GT 라벨 또는 GUI smoke 증거가 채워진 뒤에는 `-AllowCompletedFullGt`, `-AllowCompletedGuiSmoke`로 완료된 수동 파일도 같은 경로에서 막히지 않게 검증할 수 있다. 완료된 full-GT 파일은 `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireArtifacts -RequireEvidence`와 `FullGtMaxMisses/FullGtMaxFalsePositives/FullGtMaxLowIou` 기준으로 다시 검증한다.
-- `scripts/verify-yolo-completion-audit-state.ps1`를 추가했다. 기본 모드는 plan 전체 텍스트가 아니라 `yolo-goal-audit-state` marker만 파싱해서 `complete=false`와 남은 gate(`remaining=full-gt-label,gui-smoke` 또는 `remaining=gui-smoke`), `track-hold-state=pass`를 확인하고, 실제 pending CSV 상태, `.tmp/yolo-manual-gates/manual-gate-summary.md`의 남은 gate/완료 명령/`preview-track-hold` step을 함께 확인해 목표가 아직 완료되지 않았음을 명시적으로 검증한다. full-GT와 GUI smoke 증거가 채워진 뒤에는 `-RequireComplete`로 marker의 `complete=true`, `remaining=none`, full-GT reviewed gate, GUI `-RequireManualPass`를 함께 검사한다. `-AllowQualityGateFailure`를 함께 붙이면 full-GT quality gate 실패를 추천 후보 없음의 완료 증거로 허용한다. `-SelfTest`는 synthetic complete plan/full-GT/GUI fixture를 만들고 `-RequireComplete -PredictionCsv`로 자기 자신을 다시 실행해 CSV prediction 기반 완료 audit 경로를 실제로 검증한다. 또한 plan 본문에 `complete=true`/`remaining=none`이 있어도 marker가 `complete=false`이면 `-RequireComplete`가 실패하는 marker-only negative self-test와, plan marker만 `complete=true`로 잘못 바뀌고 실제 full-GT/GUI evidence가 pending이면 `-RequireComplete`가 실패하는 pending-evidence negative self-test를 실행한다.
-- `scripts/open-yolo-manual-gates.ps1 -OpenApp`를 추가했다. 수동 GUI smoke 수행자는 같은 helper에서 review/checklist artifact를 `-Open`으로 열고, `-OpenApp`으로 `dotnet run --project FaceShield.csproj`를 별도 프로세스로 띄워 `manual-smoke-checklist.csv`의 open/preview/track-hold/manual-edit/export/reopen 단계 증거를 채울 수 있다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunYoloState`의 하위 verifier 인자 전달을 보강했다. YOLO representative/extended model path가 비어 있을 때는 `verify-yolo-state.ps1`에 빈 model-path 인자를 넘기지 않아 기본 FaceONNX 검증과 YOLO 상태 wrapper가 같은 상위 검증에서 함께 실행될 수 있다.
-- `scripts/verify-auto-mosaic-default.ps1 -RunYoloManualGateSummary`를 추가했다. 기본 FaceONNX gate를 유지한 채 `open-yolo-manual-gates.ps1 -WriteSummary`를 호출해 수동 full-GT/GUI smoke gate 요약 파일 생성까지 상위 검증에서 확인할 수 있다.
-- `scripts/verify-yolo-sweep-state.ps1`를 추가했다. 이 스크립트는 목표의 YOLO 후보별 threshold/objectness/confidence/NMS, tiling, track post-process, box refine, FaceONNX ROI verifier, low-confidence/small-area filter sweep harness와 문서화된 실패/보류 결론이 계속 남아 있는지 source invariant로 확인한다. 실제 sweep 실행 결과를 새로 만들지는 않고, sweep 도구와 기록된 결론이 누락되어 YOLO 추천 판단 근거가 약해지는 것을 막는다.
-- `scripts/verify-yolo-ready-for-human-gates-state.ps1`를 추가했다. 이 스크립트는 `verify-yolo-state.ps1`, `open-yolo-manual-gates.ps1 -WriteSummary -VerifyReady`, `verify-yolo-completion-audit-state.ps1`를 연속 실행해 자동으로 확인 가능한 YOLO backend/profile/sweep/track/full-GT harness/GUI harness/completion-audit 상태가 통과하는지 확인한다. 현재 full-GT 라벨 검수는 완료되어 남은 gate는 실제 사람 판단이 필요한 `gui-smoke`뿐이다. 상위 기본 검증에서는 `verify-auto-mosaic-default.ps1 -RunYoloReadyForHumanGatesState`로 호출할 수 있다.
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloReadyForHumanGatesState` 실행 성공. 이 실행은 기본 FaceONNX track/quality/ROI/auto-tune gate를 먼저 통과한 뒤 YOLO ready wrapper까지 호출했고, 최종 상태는 `ready=true`, `remaining=gui-smoke`였다. FFmpeg hardware format probe 경고는 stderr에 출력됐지만 해당 gate들은 통과했다.
-- `scripts/write-yolo-goal-evidence-report.ps1`를 추가했다. 이 스크립트는 plan marker, manual gate summary, full-GT review CSV, full-frame review CSV, GUI smoke checklist를 읽어 `.tmp/yolo-manual-gates/goal-evidence-report.md`에 요구사항별 evidence/status 표를 생성한다. 현재 상태에서는 full-GT label review는 채워졌고 quality gate는 `fail-documented`로 기록되며, `Avalonia GUI smoke`와 `Preview track-hold GUI evidence`는 아직 `pending-human`, goal completion은 `incomplete`로 남는다. track hold 알고리즘 검증(`track-hold-state=pass`)과 실제 preview 녹화 증거(`preview-track-hold`)를 분리해 사람이 확인해야 하는 깜박임 증거가 자동 verifier 통과로 대체되지 않게 한다. 또한 보고서에는 `YOLOv8 candidate A/B comparison`, `YOLO5Face candidate A/B comparison`, `Failure-axis classification` 행을 포함해 최종 감사 시 후보별 비교와 실패 축 문서화가 빠지지 않게 한다. 사람이 GUI 증거까지 모두 채운 뒤에는 같은 스크립트가 `fullGtQualityGate=pass|fail-documented|fail-blocking|pending-human` 상태를 계산하고, `-AllowQualityGateFailure`가 있는 실패는 `fail-documented`로 기록해 YOLO 추천 후보 없음의 완료 증거로 남긴다. 이로써 자동 gate 통과와 실제 완료 후보 상태, 그리고 문서화된 YOLO 실패 상태를 분리한다.
-- `scripts/write-yolo-manual-pending-report.ps1`를 추가했다. 이 스크립트는 full-GT crop review, full-frame review, GUI smoke checklist의 미입력 row를 `.tmp/yolo-manual-gates/manual-pending-report.md`에 모아 `fullGtPendingRows`, `fullFramePendingRows`, `guiPendingRows`와 첫 pending row 목록을 기록한다. 보고서에는 `label=face/nonface`, `reviewStatus=pass`, `missedFaceCount`/`missedFaceRowsAdded` 일치 조건, GUI `status=pass`, `preview-track-hold` recording 증거 조건도 함께 적어 수동 입력 실수를 줄인다.
-- `scripts/complete-yolo-goal-after-manual-gates.ps1`를 추가했다. 이 finalizer는 수동 full-GT/GUI smoke 증거가 모두 채워진 뒤 full-GT verifier와 GUI `-RequireManualPass`를 먼저 통과해야만 `yolo-goal-audit-state`를 `complete=true`, `remaining=none`, `completion-audit=pass-complete`로 바꾼다. `-AllowQualityGateFailure`를 붙이면 full-GT quality gate 실패를 실패 후보 문서화 경로로 허용하고, 이후 completion audit과 완료 evidence report를 다시 생성한다. `-SelfTest`는 synthetic 완료 fixture로 marker 갱신과 완료 report 생성 경로를 검증한다.
-- `scripts/verify-yolo-completion-finalizer-state.ps1`를 추가했다. 이 스크립트는 finalizer의 strict full-GT/GUI/completion-audit/evidence-report 경로와 self-test를 확인하고, 현재 실제 pending review/checklist 파일에서는 finalizer가 `Review CSV has unreviewed rows` 계열 오류로 완료되지 않는지 negative 상태를 검증한다. 사람이 증거를 모두 채운 뒤에는 같은 스크립트가 finalizer dry-run 성공 여부를 확인한다.
+- `dotnet build FaceShield.sln` ?깃났. WSL `dotnet build` 吏곸젒 ?ㅽ뻾 湲곗? warning/error??0媛쒖??? Windows verifier ?대? build?먯꽌??湲곗〈 FFmpeg obsolete warning 7媛쒓? ?ㅼ떆 異쒕젰?먮떎.
+- `git diff --check` ?듦낵.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1` 湲곕낯 ?ㅽ뻾 ?깃났.
+- default verifier??track postprocess policy, 6遺?3珥?FaceONNX all-frame parallel quality gate, ROI-hit ???援ш컙, short auto-tune provider gate瑜?紐⑤몢 ?듦낵?덈떎.
+- 理쒖떊 short auto-tune gate??`FaceOnnxDetector/CPU`, `pipe-parallel`, `processed=150`, `detects=150`, `interpolated=0`, `faceMaskFrames=19`, `totalMs=38,164ms`???
+- crop review workflow 異붽? ??PowerShell parser 寃利앹쓣 ?듦낵?덈떎. `new-yolo-crop-review.ps1`濡?9遺?2珥?6遺?30珥?crop review template ?앹꽦怨?`-Summarize` ?ㅽ뻾???뺤씤?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-crop-review.ps1` ?ㅽ뻾 ?깃났. 9遺?2珥?review pass? 6遺?30珥?review fail??紐⑤몢 湲곕???寃곌낵濡??뺤씤?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloCropReview` ?ㅽ뻾 ?깃났. 湲곕낯 FaceONNX verifier? YOLO crop review wrapper媛 紐⑤몢 ?듦낵?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-profile-state.ps1` ?ㅽ뻾 ?깃났.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloProfileState` ?ㅽ뻾 ?깃났. 湲곕낯 FaceONNX verifier? YOLO profile-state invariant媛 紐⑤몢 ?듦낵?덈떎.
+- `scripts/verify-yolo-conclusion-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???꾩옱 臾몄꽌媛 `理쒖쥌 YOLO 異붿쿇 ?꾨낫 ?놁쓬`, ??湲곕낯 detector `FaceONNX`, A/B gate媛 ?뺣떟 ?쇰꺼???꾨땲?쇰뒗 caveat, ?꾨낫蹂??ㅽ뙣 ?먯씤 遺꾨쪟, ?⑥? label/GUI/10遺꾧툒 寃利???ぉ??怨꾩냽 ?ы븿?섎뒗吏 ?뺤씤?쒕떎.
+- `scripts/verify-yolo-distribution-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??YOLO 紐⑤뜽 ?뚯씪??repo??異붿쟻?섏? ?딄퀬, 臾몄꽌??`no-bundled-yolo-model`, `GPL-3.0`, `MIT`, `upstream YOLOv8 weight/license` 諛고룷 caveat媛 ?좎??섎뒗吏 ?뺤씤?쒕떎. ?댄썑 ?붾（??濡쒖뺄 `Models/Yolo` ?먮룞 ?먯깋 ?뺤콉怨?`.gitignore` 紐⑤뜽 ?쒖쇅, `FaceShield.csproj` 濡쒖뺄 紐⑤뜽 蹂듭궗 洹쒖튃???④퍡 寃?ы븯?꾨줉 ?뺤옣?덈떎.
+- 2026-05-23 湲곗? `lindevs/yolov8-face`, Hugging Face `YoloV5Face.onnx`, Ultralytics license 臾몄꽌瑜??ㅼ떆 ?뺤씤?덈떎. 寃곕줎? 蹂寃??놁씠 YOLO 紐⑤뜽 ?뚯씪??repo/installer/CI publish ?꾩닔 ?뚯씪濡?踰덈뱾?섏? ?딄퀬, YOLO backend???ъ슜?먭? 吏곸젒 紐⑤뜽 寃쎈줈瑜?吏?뺥븯???ㅽ뿕 寃쎈줈濡쒕쭔 ?좎??쒕떎.
+- `scripts/verify-yolo-representative-gate.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??`.tmp/models/YoloV5Face.onnx`? 6遺?3珥????clip???덉쓣 ???꾩옱 YOLO5Face 珥덇린 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`, tiling off)??YOLO lost-fill 6?꾨젅???곸슜 ??`baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1`, `avgBestIou=0.971`, `minBestIou=0.944`, `SmokeQualityGate passed=True`瑜??좎??섎뒗吏 ?뺤씤?쒕떎.
+- `scripts/verify-yolo-extended-gate.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??媛숈? YOLO5Face 珥덇린 profile??6遺?30珥?30珥?clip?먯꽌 YOLO lost-fill 6?꾨젅???곸슜 ?꾩뿉??`SmokeQualityGate passed=False`, `baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `avgBestIou=0.770`, `minBestIou=0.000`, `boxCountDiffFrames=15`, YOLO `lostFilled=24`濡??ㅽ뙣?섎뒗吏 ?뺤씤?쒕떎. ??gate??3珥?????듦낵瑜?理쒖쥌 異붿쿇?쇰줈 ?ㅽ빐?섏? ?딄쾶 留뚮뱶???뺤옣 ?ㅽ뙣 ?뚭? 寃利앹씠??
+- `scripts/verify-yolo-extended-export-gate.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??媛숈? 6遺?30珥?clip?먯꽌 export源뚯? ?ㅼ젣 ?섑뻾????`[ExportRunSummary]`媛 FaceONNX `directFaceFrames=83`, YOLO `directFaceFrames=81`??湲곕줉?섍퀬, ?댄썑 A/B ?덉쭏 gate媛 ?ㅽ뙣?섎뒗吏 ?뺤씤?쒕떎.
+- `scripts/verify-yolo-track-hold-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???⑹꽦 `FrameMaskProvider`?먯꽌 YOLO track profile怨?媛숈? `MaxLostFillFrames=6`, `MaxConfirmedTrackHoldFrames=8`???곸슜?? 媛숈? track ?대???湲?no-face gap frame 13~19媛 蹂닿컙/hold?섍퀬 track 醫낅즺 ??frame 21~26? lost-fill濡??좎??섎ŉ frame 27?먯꽌??硫덉텛?붿? 寃利앺븳?? ?숈떆??1?꾨젅?꾩쭨由??쏀븳 ?꾨낫???뺤젙 track?쇰줈 ?좎??섏? ?딄퀬 ?쒓굅?섎뒗吏 ?ㅼ젣 `FaceTrackInterpolator` ?ㅽ뻾?쇰줈 寃利앺븳??
+- `scripts/verify-yolo-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??`verify-yolo-profile-state.ps1`, `verify-yolo-track-hold-state.ps1`, `verify-yolo-crop-review.ps1`, full-GT harness, `verify-yolo-conclusion-state.ps1`, `verify-yolo-distribution-state.ps1`, `verify-yolo-goal-audit-state.ps1`, `verify-yolo-top-level-require-complete-state.ps1`, `verify-yolo-manual-readiness-state.ps1`, `verify-yolo-completion-audit-state.ps1`瑜?臾띠뼱 YOLO ?꾩슜 ?곹깭瑜?鍮좊Ⅴ寃??ы솗?명븳?? `-RunRepresentativeGate`瑜?遺숈씠硫?`verify-yolo-representative-gate.ps1`源뚯? ?ㅽ뻾?섍퀬, `-RunExtendedGate`瑜?遺숈씠硫?`verify-yolo-extended-gate.ps1`源뚯? ?ㅽ뻾?쒕떎. `-RunExtendedExportGate`瑜?遺숈씠硫?`verify-yolo-extended-export-gate.ps1`源뚯? ?ㅽ뻾?쒕떎. `verify-auto-mosaic-default.ps1 -RunYoloState`?먯꽌??媛숈? wrapper瑜??몄텧?????덇퀬, `-RunYoloRepresentativeGate`/`-RunYoloExtendedGate`/`-RunYoloExtendedExportGate`瑜??④퍡 遺숈씠硫??대떦 YOLO gate源뚯? ?ы븿?쒕떎. `-RequireYoloComplete`瑜?遺숈씠硫??곸쐞 湲곕낯 寃利앹뿉?쒕룄 `yolo-require-complete-guard`瑜?癒쇱? ?ㅽ뻾?섍퀬 `-RunYoloState`瑜??붿떆??YOLO completion audit??strict ?꾨즺 議곌굔???붽뎄?쒕떎. `verify-yolo-top-level-require-complete-state.ps1`???꾩옱 pending marker?먯꽌 ???곸쐞 strict 寃쎈줈媛 `goal marked complete missing text: complete=true`濡?鍮좊Ⅴ寃??ㅽ뙣?섍퀬 FaceONNX quality gate源뚯? ?대젮媛吏 ?딅뒗吏 ?뚭? 寃利앺븳?? ?대븣 `verify-yolo-state.ps1 -RequireComplete`??湲?YOLO state ?꾩껜瑜??뚭린 ?꾩뿉 `completion-audit-require-complete-guard`瑜?癒쇱? ?ㅽ뻾???꾩옱 pending 利앷굅?먯꽌??鍮좊Ⅴ寃??ㅽ뙣?쒕떎. `-RunTenMinuteState`??10遺?runner/preflight ?곹깭瑜??뺤씤?섍퀬, `-RequireTenMinuteClip`???④퍡 遺숈씠硫?以鍮꾨맂 10遺?clip源뚯? 寃?ы븳??
+- `scripts/verify-yolo-gt-label-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??crop review CSV???쒕낯 verdict瑜?GT??face/non-face count濡?蹂?섑빐, A/B diff瑜??ㅼ젣 ?ㅽ깘/誘명깘?쇰줈 ?⑥젙?섏? ?딅뒗 湲곗????뚭? 寃利앺븳??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-gt-label-state.ps1` ?ㅽ뻾 ?깃났. 9遺?2珥?pass ?쒕낯? `rows=15`, `reviewed=15`, `yoloTruePositive=15`, `yoloFalsePositive=0`, `yoloMiss=0`, `faceOnnxFalsePositive=0`?댁뿀?? 6遺?30珥?fail ?쒕낯? `rows=26`, `reviewed=26`, `unclear=1`, `yoloTruePositive=1`, `yoloFalsePositive=10`, `yoloMiss=0`, `faceOnnxFalsePositive=14`???
+- `scripts/verify-yolo-full-gt-label-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???꾩껜 frame/track GT CSV? detector prediction CSV ?먮뒗 `-DumpDetections` 濡쒓렇??`[SmokeDetection]` ?쇱씤??IoU 湲곗??쇰줈 鍮꾧탳??`truePositive`, `miss`, `falsePositive`, `lowIou`瑜?怨꾩궛?쒕떎. ?꾩옱??full GT ?곗씠?곌? ?꾩쭅 ?놁쑝誘濡?`-SelfTest`濡?matcher? quality gate ?숈옉留?寃利앺븳??
+- `scripts/new-yolo-full-gt-template.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??detector prediction CSV ?먮뒗 `-DumpDetections` 濡쒓렇??`[SmokeDetection]` ?쇱씤?먯꽌 full GT ?쇰꺼留곸슜 CSV ?쒗뵆由우쓣 留뚮뱺?? ?쒗뵆由우쓽 `label=face` ?됰쭔 GT濡??됯??섍퀬, blank/nonface ?됱? detector false-positive ?꾨낫濡??④릿?? detector媛 ?볦튇 ?ㅼ젣 ?쇨뎬? ?щ엺??CSV???됱쓣 異붽??댁빞 ?쒕떎.
+- `scripts/verify-yolo-full-gt-template-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???ㅼ젣 YOLO smoke??`[SmokeDetection]` 濡쒓렇?먯꽌 `new-yolo-full-gt-template.ps1`濡??쇰꺼留??쒗뵆由우쓣 ?앹꽦?섍퀬, ?꾩닔 而щ읆/source/blank label ?곹깭瑜??뺤씤?쒕떎.
+- `scripts/new-yolo-full-gt-review-package.ps1`? `scripts/verify-yolo-full-gt-review-package-state.ps1`瑜?異붽??덈떎. ?쇰꺼留??쒗뵆由?CSV? ?곸긽?먯꽌 detection crop PNG? `full-gt-review.csv`瑜??앹꽦???щ엺??`label=face/nonface`? evidence note瑜?梨꾩슱 ???덇쾶 ?쒕떎. `-IncludeFullFrameReview`瑜?遺숈씠硫?`full-frame-review.csv`, ?먮낯 frame image, detection box媛 洹몃젮吏?overlay frame image, frame蹂?`candidateSummary`???④퍡 ?앹꽦??detection crop???≫엳吏 ?딆? visible face瑜?蹂꾨룄濡??ㅼ틪?섍퀬, 鍮좎쭊 ?쇨뎬? `full-gt-review.csv`??manual missed-face row濡?異붽??섍쾶 ?쒕떎. ?앹꽦 ?⑦궎吏?먮뒗 crop/frame/overlay/?꾨낫 ?붿빟, ?낅젰 洹쒖튃, CSV row key, pending ?꾨뱶, ?낅젰 ?⑦꽩??釉뚮씪?곗??먯꽌 ?묒쓣 ???덈뒗 `review-index.html`???ы븿?쒕떎. 湲곗〈 ?щ엺???묒꽦 以묒씤 CSV瑜???? ?딄퀬 HTML ?덈궡留?媛깆떊?????덈룄濡?`-RefreshIndexOnly`??異붽??덈떎.
+- `scripts/verify-yolo-full-gt-reviewed-state.ps1`瑜?異붽??덈떎. ?щ엺??梨꾩슫 `full-gt-review.csv`??label/reviewStatus/evidenceNotes ?곹깭瑜?寃?ы븳 ??`verify-yolo-full-gt-label-state.ps1`濡?IoU 湲곕컲 GT quality gate瑜??ㅽ뻾?쒕떎. ?ㅼ젣 full GT ?먯젙?먮뒗 `-RequireFullFrameReview -RequireArtifacts`瑜?遺숈뿬 `full-frame-review.csv`??`missedFaceCount`, `missedFaceRowsAdded`, evidence, frame蹂?manual missed-face row ?섏? review crop/frame/overlay artifact ?뚯씪??紐⑤몢 ?쇱튂?섎뒗吏??寃?ы빐???쒕떎. `-AllowQualityGateFailure`瑜?遺숈씠硫??쇰꺼/?꾪떚?⑺듃 寃?섎뒗 ?듦낵?쒗궎??`passed=False`? `failureAllowed=True`瑜?異쒕젰??YOLO ?꾨낫 ?ㅽ뙣瑜?異붿쿇 ?꾨낫 ?놁쓬 寃쎈줈??利앷굅濡??④릿?? ?꾩옱 ?ㅼ젣 由щ럭 CSV???꾩쭅 blank label?대?濡?湲곕낯 self-test留?wrapper???ы븿?쒕떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-label-state.ps1 -SelfTest` ?ㅽ뻾 ?깃났. self-test 湲곗? `gtFaces=2`, `predictions=2`, `truePositive=1`, `miss=1`, `falsePositive=1`??湲곕?媛믪쑝濡??뺤씤?덈떎.
+- synthetic prediction CSV?먯꽌 `new-yolo-full-gt-template.ps1`濡?template???앹꽦?섍퀬, ???됱쓣 `label=face`濡??뺤젙????`verify-yolo-full-gt-label-state.ps1 -GtCsv ... -PredictionCsv ... -MaxMisses 0 -MaxFalsePositives 1 -MaxLowIou 0` ?ㅽ뻾???깃났?덈떎. data mode 湲곗? `gtFaces=1`, `predictions=2`, `truePositive=1`, `miss=0`, `falsePositive=1`?댁뿀??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-template-state.ps1` ?ㅽ뻾 ?깃났. ?ㅼ젣 YOLO `-DumpDetections` smoke 濡쒓렇 `.tmp/yolo-ten-minute-detection-smoke/yolo-ten-minute-yolo-only-20260523-022022.log`?먯꽌 `.tmp/yolo-full-gt/yolo-detection-smoke-template.csv`瑜??앹꽦?덇퀬 20媛?row? ?쇰꺼留곸슜 ?꾩닔 而щ읆???뺤씤?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-review-package-state.ps1` ?ㅽ뻾 ?깃났. `.tmp/yolo-full-gt/yolo-detection-smoke-template.csv`??20媛?row ?꾩껜?먯꽌 crop PNG? `.tmp/yolo-full-gt/review-package-smoke/full-gt-review.csv`瑜??앹꽦?섍퀬, detection ?꾨낫媛 ?섏삩 unique frame 19媛쒖쓽 full-frame review row, frame image, detection overlay frame image, frame蹂?candidate summary, `review-index.html`???앹꽦???꾩닔 由щ럭 而щ읆怨??대?吏 ?뚯씪???뺤씤?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-full-gt-reviewed-state.ps1 -SelfTest` ?ㅽ뻾 ?깃났. synthetic reviewed CSV?먯꽌 face/nonface ?쇰꺼, evidence note, crop/frame/overlay artifact ?뚯씪??寃?ы븯怨? full-frame review self-test?먯꽌 `missedFaceCount=0`/evidence瑜??뺤씤???? full GT evaluator媛 `gtFaces=1`, `predictions=2`, `truePositive=1`, `miss=0`, `falsePositive=1` 議곌굔?쇰줈 ?듦낵?섎뒗吏 ?뺤씤?덈떎. 異붽? manual-missed self-test?먯꽌??frame 30??`missedFaceCount=1`, `missedFaceRowsAdded=1`, manual missed-face row 1媛쒓? frame蹂꾨줈 ?쇱튂?섍퀬, evaluator媛 `gtFaces=2`, `truePositive=1`, `miss=1`, `falsePositive=1` 議곌굔?쇰줈 ?듦낵?섎뒗吏 ?뺤씤?덈떎. negative self-test 5媛쒕룄 異붽???`missedFaceCount`/`missedFaceRowsAdded` 遺덉씪移? full-frame missed ?좎뼵 ?鍮?manual row ?꾨씫, evidence note ?꾨씫, crop artifact ?꾨씫, frame artifact ?꾨씫??紐⑤몢 ?ㅽ뙣濡??≫엳?붿? ?뺤씤?쒕떎.
+- AI-assisted visual review candidate濡?`.tmp/yolo-full-gt/review-package-smoke/full-gt-review-reviewed-candidate.csv`? `.tmp/yolo-full-gt/review-package-smoke/full-frame-review-reviewed-candidate.csv`瑜??앹꽦?덈떎. ???꾨낫 ?쇰꺼? ?щ엺???뺤젙??GT媛 ?꾨땲誘濡?理쒖쥌 異붿쿇 洹쇨굅濡??ъ슜?섏? ?딅뒗?? ?뺣? ?뺤씤?먯꽌 frame 7??detection crop? ?쇨뎬???꾨땲?????닿묠 履쎌뿉 嫄몃졇怨? 媛숈? frame??諛곌꼍 ?쇨뎬? detection crop????씠吏 ?딆? 寃껋쑝濡?蹂댁젙?덈떎. ?꾨낫 湲곗??쇰줈 `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireEvidence -RequireArtifacts -MaxMisses 1 -MaxFalsePositives 13 -MaxLowIou 1`??`gtFaces=8`, `truePositive=7`, `miss=1`, `falsePositive=13`, `lowIou=1`?쇰줈 ?듦낵?쒕떎. 媛숈? ?꾨낫瑜?strict gate `-MaxFalsePositives 0`?쇰줈 ?ㅽ뻾?섎㈃ `passed=False`, exit code `2`?? ?꾩옱 YOLO5Face smoke 寃곌낵??AI ?꾨낫 ?쇰꺼 湲곗??쇰줈??誘명깘 1媛쒖? ?ㅽ깘 13媛??뚮Ц??異붿쿇 ?꾨낫媛 ?꾨땲?? `scripts/verify-yolo-full-gt-reviewed-candidate-state.ps1`媛 ??tolerant pass? strict fail??紐⑤몢 ?ш?利앺븯硫? `scripts/verify-auto-mosaic-default.ps1 -RunYoloFullGtReviewedCandidateState`濡??⑤룆 ?몄텧?????덈떎.
+- `scripts/new-yolo-human-review-draft.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??pending `full-gt-review.csv`/`full-frame-review.csv`? AI-assisted candidate CSV瑜?鍮꾧탳??`.tmp/yolo-manual-gates/human-review-draft/full-gt-review-human-draft.csv`, `full-frame-review-human-draft.csv`, `human-review-draft-report.md`瑜??앹꽦?쒕떎. 珥덉븞? `candidateLabel`, `candidateMissedFaceCount`, `candidateEvidenceNotes` 媛숈? ?꾨낫 而щ읆留?梨꾩슦怨??ㅼ젣 `label`, `reviewStatus`, `evidenceNotes`, `missedFaceCount` ??理쒖쥌 verifier媛 蹂대뒗 ?꾨뱶??鍮꾩썙 ?붾떎. ?곕씪???щ엺 ?뺤씤 ?꾩뿉???꾨즺 利앷굅濡??듦낵?섏? ?딆쑝硫? `reference-only-not-final-gt` 洹쒖튃怨?manual missed ?꾨낫 row瑜?紐낆떆?쒕떎.
+- `scripts/new-yolo-gui-smoke-checklist.ps1`? `scripts/verify-yolo-gui-smoke-state.ps1`瑜?異붽??덈떎. GUI smoke verifier??Home??YOLO ?좏깮/model picker, detector ?좏깮 以꾩쓽 `YOLO ?ㅼ슫濡쒕뱶` 踰꾪듉, startup arg 湲곕컲 smoke preset(`--yolo-smoke`), Workspace ?먮룞 寃異? preview/manual edit/export/state persistence 肄붾뱶 寃쎈줈瑜?source invariant濡??뺤씤?섍퀬, `-RequireManualPass`瑜?遺숈씠硫??섎룞 泥댄겕由ъ뒪?몄쓽 `open-video`, `select-yolo-backend`, `download-yolo-model`, `run-yolo-auto-detect`, `preview-result`, `preview-track-hold`, `manual-edit`, `export`, `reopen-state`媛 紐⑤몢 `status=pass`, `evidenceType`, `artifactPath`, evidence瑜?媛?몄빞 ?듦낵?쒕떎. `preview-track-hold`????踰?紐⑥옄?댄겕 ????곸씠 吏㏃? detector 誘명깘 援ш컙?먯꽌 off/on 源쒕컯???놁씠 ?좎??섎뒗吏 ?뱁솕 利앷굅濡??뺤씤?쒕떎. `artifactPath`???ㅼ젣 ?앹꽦??鍮꾩뼱 ?덉? ?딆? ?뚯씪?댁뼱???섎ŉ, `evidenceType`蹂꾨줈 screenshot? ?대?吏, recording? ?곸긽, log??`.log`/`.txt`, export output? ?곸긽 ?뺤옣?먯뿬???쒕떎.
+- `scripts/verify-yolo-startup-smoke-state.ps1`瑜?異붽??덈떎. ??verifier??`AppStartupOptions.Parse("--yolo-smoke --open-manual")`媛 YOLO backend, YOLO5Face, `srcTest/260102_jp_10.mp4`, `.tmp/models/YoloV5Face.onnx`瑜??ㅼ젣 議댁옱?섎뒗 寃쎈줈濡?resolve?섎뒗吏 ?뺤씤?섍퀬, `--open-auto --no-auto-export --frame <index>`泥섎읆 ?먮룞 寃異????뱀젙 preview frame???④린??smoke ?쒖옉 ?듭뀡??寃利앺븳?? `HomePageViewModel.ApplyStartupOptions()`? `MainWindowViewModel` ?앹꽦?먯뿉 ?곸슜?덉쓣 ??`IsYoloDetectorSelected`? `CanStartWorkspace`媛 true?몄?, `AutoExportAfter=false`? startup frame index媛 ?곸슜?섎뒗吏 console harness濡??뺤씤?쒕떎. ?곕씪???섎룞 GUI smoke瑜??쒖옉?섍린 ??preset ?먯껜??寃쎈줈/VM ?명똿 ?ㅻ쪟???먮룞 gate?먯꽌 ?≫엺??
+- `scripts/prepare-yolo-gui-smoke-evidence.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??`.tmp/yolo-gui-smoke/evidence` ?대뜑? `.tmp/yolo-gui-smoke/gui-smoke-evidence-guide.md`瑜?留뚮뱾怨? `-UpdateChecklist`瑜?遺숈씠硫?`manual-smoke-checklist.csv`??`artifactPath`留?step蹂?沅뚯옣 寃쎈줈濡?梨꾩슫?? `status=pass`??`evidence`???먮룞?쇰줈 梨꾩슦吏 ?딆쑝誘濡??ㅼ젣 Avalonia GUI ?뺤씤 ?꾩뿉???꾨즺 利앷굅濡??듦낵?섏? ?딅뒗?? `preview-track-hold`??`preview-track-hold.mp4` ?뱁솕 利앷굅瑜??붽뎄?섍퀬, export???ㅼ젣 ?대낫???곸긽 ?뚯씪??媛由ъ폒???쒕떎. evidence guide?먮뒗 9媛?GUI step 媛곴컖?????`set-yolo-gui-smoke-evidence.ps1 -StepId ...` 紐낅졊???앹꽦??罹≪쿂 ???대떦 row留?寃利??낅젰?????덇쾶 ?덈떎.
+- `scripts/set-yolo-gui-smoke-evidence.ps1`瑜?異붽??덈떎. ??helper???щ엺??Avalonia GUI?먯꽌 罹≪쿂/?뱁솕/export瑜?留뚮뱺 ???뱀젙 `stepId` row留?`status=pass`濡?梨꾩슫?? ?낅젰??artifact媛 ?ㅼ젣 ?뚯씪?몄?, 鍮꾩뼱 ?덉? ?딆?吏, `evidenceType`怨??뺤옣?먭? 留욌뒗吏, evidence ?ㅻ챸??鍮꾩뼱 ?덉? ?딆?吏瑜?寃?ы븯誘濡?GUI smoke CSV瑜?吏곸젒 ?몄쭛?????앷만 ???덈뒗 ?ㅼ닔瑜?以꾩씤?? ??helper???ㅼ젣 ?붾㈃ ?뺤씤???泥댄븯吏 ?딆쑝硫? 罹≪쿂 ?뚯씪???녿뒗 ?곹깭?먯꽌??row瑜?pass濡?留뚮뱾 ???녿떎.
+- ?섎룞 ?뚰겕?ㅽ럹?댁뒪 吏꾩엯?먯꽌 31,996?꾨젅??smoke ?곸긽??timeline thumbnail ?좎깮?깆씠 濡쒕뵫 紐⑤떖???ㅻ옒 ?〓뒗 臾몄젣媛 ?뺤씤?섏뼱, `VideoSession`? 湲곕낯?곸쑝濡?eager thumbnail preload瑜??섏? ?딄퀬 `TimelineFrameStrip`? render 以?FFmpeg seek/decode瑜?吏곸젒 ?ㅽ뻾?섏? ?딅룄濡??섏젙?덈떎. ?녿뒗 ?몃꽕?쇱? cache miss ??諛깃렇?쇱슫?쒕줈 ?붿껌?섍퀬, render??cache hit留?洹몃┛?? 鍮뚮뱶??DLL??`--yolo-smoke --open-manual`濡??ㅽ뻾??15珥??ㅽ겕由곗꺑(`.tmp/yolo-gui-smoke/evidence/open-video-dll-15s.png`)?먯꽌 Manual workspace 吏꾩엯???뺤씤?덈떎.
+- `scripts/verify-yolo-gui-smoke-state.ps1 -SelfTest`瑜?異붽??덈떎. ??self-test??synthetic manual checklist? 利앷굅 ?뚯씪??留뚮뱺 ??`-RequireManualPass` 寃쎈줈瑜?洹몃?濡??듦낵?쒖폒, ?섎룞 GUI smoke 利앷굅 寃利?濡쒖쭅??evidence type/?뚯씪 議댁옱/鍮꾩뼱 ?덉? ?딆? artifact/?뺤옣??議곌굔???ㅼ젣濡?寃?ы븯?붿? ?뺤씤?쒕떎. negative self-test 3媛쒕룄 異붽???export step???섎せ??artifact ?뺤옣?? 議댁옱?섏? ?딅뒗 artifact path, `status=fail` ?됱씠 紐⑤몢 ?ㅽ뙣濡??≫엳?붿? ?뺤씤?쒕떎.
+- 2026-05-24 GUI smoke ?ш컻 濡쒓렇 諛섏쁺: Visual Studio debug output?먯꽌 `YoloFaceOnnxDetector/GPU:DirectML`, `processed=298`, `detects=298`, `totalMs=10337`, export `frames=300`, `directFaceFrames=269`, `totalMs=14833`???뺤씤?덈떎. ??異쒕젰?쇰줈 `run-yolo-auto-detect` ?④퀎??local ignored checklist/evidence?먯꽌 `pass`濡?湲곕줉?덈떎. 異붿쟻 ???臾몄꽌 `YOLO_GUI_SMOKE_RESULT.md`?먮룄 run log evidence missing ??ぉ??resolved ?곹깭濡?諛붽엥??
+- 媛숈? GUI smoke ?ш컻?먯꽌 Spacebar preview ?ъ깮 ??`TaskCanceledException`怨?`[FramePreview] exact frame not available` 濡쒓렇媛 ???諛쒖깮?섎ŉ blurry preview媛 蹂댁씤?ㅻ뒗 ?ъ슜??愿李곗쓣 諛쏆븯?? `FramePreviewViewModel`? ?ъ깮 以?留?tick留덈떎 exact frame load瑜??쒖옉/痍⑥냼?섏? ?딄퀬, 理쒖떊 frame index留?queue???먭퀬 exact frame decode瑜???踰덉뿉 ?섎굹???섑뻾?섎룄濡??섏젙?덈떎. `scripts/verify-yolo-gui-smoke-state.ps1`???댁젣 ??queued playback decode invariant瑜?source check濡??뺤씤?쒕떎.
+- 媛숈? preview cancellation 濡쒓렇瑜?以꾩씠湲??꾪빐 `TimelineController`???꾨젅??蹂寃쎈쭏???댁쟾 `CancellationTokenSource`瑜?痍⑥냼?섏? ?딄퀬 request id濡?理쒖떊 exact thumbnail/frame ?붿껌留??곸슜?섍쾶 諛붽엥?? `ExactFrameProvider`??痍⑥냼 ??`OperationCanceledException`???섏?吏 ?딄퀬 `null`??諛섑솚?섎?濡?Visual Studio debug output?????`TaskCanceledException` first-chance 濡쒓렇瑜?以꾩씤??
+- YOLO ?ㅼ젙 ?붾㈃??input size/tile numeric control??醫곸븘 `640`??`64`泥섎읆 蹂댁씠??UI 臾몄젣???뺤씤?덈떎. `HomePageView.axaml`?먯꽌 YOLO input size numeric width瑜?`128`, tile columns/rows numeric width瑜?`92`濡??볧삍怨? `verify-yolo-gui-smoke-state.ps1`媛 ?대떦 source invariant瑜??뺤씤?쒕떎.
+- `scripts/open-yolo-manual-gates.ps1`瑜?異붽??덈떎. ??helper??full-GT `review-index.html`, `full-gt-review.csv`, `full-frame-review.csv`, GUI `manual-smoke-checklist.csv` 寃쎈줈? ?꾨즺 ??寃利?紐낅졊????踰덉뿉 異쒕젰?쒕떎. `-Open`??遺숈씠硫?由щ럭 ?뚯씪???닿퀬, `-WriteSummary -OpenDashboard`瑜?遺숈씠硫?pending progress? artifact 留곹겕媛 臾띠씤 `.tmp/yolo-manual-gates/manual-gate-dashboard.html`??諛붾줈 ?곕떎. GUI smoke媛 ?⑥븘 ?덉쑝硫?`nextGuiStep`, `nextGuiArtifactPath`, `nextGuiEvidenceSetterCommand`瑜?異쒕젰???ㅼ쓬 ?섎룞 罹≪쿂 ???ㅽ뻾??`set-yolo-gui-smoke-evidence.ps1` 紐낅졊??諛붾줈 ?덈궡?쒕떎. ?먰븳 `dotnet run --project FaceShield.csproj -- --yolo-smoke --open-manual`/`--open-auto --no-auto-export` 紐낅졊??summary???④꺼 `srcTest/260102_jp_10.mp4`? `.tmp/models/YoloV5Face.onnx`瑜??먮룞 ?명똿???곹깭濡??섎룞 smoke瑜??쒖옉?????덇쾶 ?쒕떎. `-VerifyReady`???꾩옱 pending review package媛 以鍮꾨릱?붿? ?뺤씤?쒕떎. ?щ엺???쇰꺼/GUI smoke 利앷굅瑜?梨꾩슫 ??`-VerifyCompleted`瑜?遺숈씠硫?`verify-yolo-manual-readiness-state.ps1 -AllowCompletedFullGt -AllowCompletedGuiSmoke` ?듯빀 寃쎈줈, `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireEvidence -RequireArtifacts`, `verify-yolo-gui-smoke-state.ps1 -RequireManualPass`瑜??곗냽 ?ㅽ뻾?쒕떎.
+- `scripts/open-yolo-manual-gates.ps1 -WriteSummary`???꾩옱 ?⑥? gate, 由щ럭 ?곗텧臾?寃쎈줈, full-GT/full-frame/GUI pending row ?? ?꾨즺 ??寃利?紐낅졊, GUI ?꾩닔 step, `preview-track-hold` ?뺤씤 ?≪뀡??`.tmp/yolo-manual-gates/manual-gate-summary.md`??Markdown?쇰줈 ?④릿?? ?숈떆??`.tmp/yolo-manual-gates/manual-gate-dashboard.html`???앹꽦??`review-index.html`, pending report, full-GT CSV, full-frame CSV, GUI checklist, GUI smoke evidence guide瑜?釉뚮씪?곗? 留곹겕? pending progress card濡????붾㈃??臾띔퀬, 泥?pending crop/full-frame/GUI row瑜?`Pending Preview`濡?吏곸젒 蹂댁뿬以?? ?먰븳 AI-assisted candidate CSV 寃쎈줈? human review draft report瑜?`reference-only-not-final-gt` 洹쒖튃怨??④퍡 ?몄텧???щ엺??鍮좊Ⅴ寃??議고븯?? ?대? 理쒖쥌 GT/?꾨즺 洹쇨굅濡??ㅼ씤?섏? ?딄쾶 ?덈떎. GUI smoke checklist媛 ?놁쓣 ?뚮뒗 `-PrepareGuiChecklist`瑜?遺숈뿬 `scripts/new-yolo-gui-smoke-checklist.ps1`濡?pending checklist瑜?留뚮뱾 ???덇퀬, 湲곗〈 checklist????뼱?곗? ?딅뒗?? `-PrepareGuiEvidence`瑜?遺숈씠硫?`scripts/prepare-yolo-gui-smoke-evidence.ps1 -UpdateChecklist -Verify`瑜??ㅽ뻾??checklist??`artifactPath`留?沅뚯옣 evidence 寃쎈줈濡?梨꾩슦怨? pass/evidence???щ엺 ?뺤씤 ?꾧퉴吏 鍮꾩썙 ?붾떎. ?щ엺??full-GT? GUI smoke 利앷굅瑜?梨꾩슫 ?ㅼ뿉??`scripts/complete-yolo-goal-after-manual-gates.ps1 -AllowQualityGateFailure -UpdatePlan -RunYoloState`濡?full-GT/GUI verifier, plan `yolo-goal-audit-state` marker 媛깆떊, `verify-yolo-completion-audit-state.ps1 -RequireComplete`, ?꾨즺 evidence report, 理쒖쥌 `verify-yolo-state.ps1 -RequireComplete`瑜???踰덉뿉 ?ㅽ뻾?????덈떎. ?대븣 full-GT quality gate ?ㅽ뙣??異붿쿇 ?꾨낫 ?놁쓬??洹쇨굅濡??④린硫?YOLO瑜?異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
+- `scripts/verify-yolo-manual-gate-helper-state.ps1`瑜?異붽??덈떎. ??verifier??`open-yolo-manual-gates.ps1 -VerifyReady`媛 ?꾩옱 pending review package?먯꽌 ?듦낵?섎뒗吏 ?뺤씤?섍퀬, `-VerifyCompleted`??CSV ?곹깭瑜??쎌뼱 pending?대㈃ `Review CSV has unreviewed rows`濡??ㅽ뙣?댁빞 ?섎ŉ, ?щ엺??full-GT/GUI 泥댄겕由ъ뒪?몃? 紐⑤몢 completed ?곹깭濡?梨꾩슫 ?ㅼ뿉??媛숈? completed 寃쎈줈媛 ?듦낵?댁빞 ?쒕떎???곹깭 湲곕컲 寃利앹쓣 ?섑뻾?쒕떎. ?먰븳 AI-assisted candidate full-GT CSV? synthetic GUI artifact瑜??ъ슜??completed-path fixture瑜?留뚮뱾??`-VerifyCompleted -MaxMisses 1 -MaxFalsePositives 13 -MaxLowIou 1`???ㅼ젣濡??듦낵 媛?ν븳吏 ?뺤씤?쒕떎. ??fixture??寃利?諛곌? self-test??肉??щ엺???뺤젙??理쒖쥌 GT/GUI 利앷굅媛 ?꾨땲??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloGuiSmokeState` ?ㅽ뻾 ?깃났. 湲곕낯 FaceONNX gate? GUI smoke source invariant媛 ?④퍡 ?듦낵?덈떎. ?섎룞 泥댄겕由ъ뒪?몃뒗 ?꾩쭅 ?묒꽦?섏? ?딆븯?쇰?濡?`-RequireManualPass`???ㅽ뻾?섏? ?딆븯??
+- `scripts/verify-yolo-profile-state.ps1`瑜??뺤옣??YOLO profile ??λ퓧 ?꾨땲??UI/?고???遺꾨━ invariant???뺤씤?쒕떎. ?꾩옱 寃利???ぉ?먮뒗 Home ?붾㈃??detector selector, detector ?좏깮 以꾩쓽 `YOLO ?ㅼ슫濡쒕뱶` 踰꾪듉/吏꾪뻾 ?곹깭, YOLO 紐⑤뜽 醫낅쪟 selector, YOLO 紐⑤뜽 ?뚯씪 picker, YOLO threshold/input/tiling/downscale/tracking/detectEvery/parallel 諛붿씤?? ???곗씠???ㅼ슫濡쒕뱶 寃쎈줈? ?붾（??濡쒖뺄 `Models/Yolo` 湲곕낯 紐⑤뜽 ?먯깋, FaceONNX threshold panel 遺꾨━, FaceONNX backend?먯꽌留?`DetectorAutoTuner`媛 ?몄텧?섎뒗吏, auto-tune 寃곌낵媛 FaceONNX options?먮쭔 諛섏쁺?섎뒗吏, YOLO ?꾩슜 track/filter profile??FaceONNX 湲곕낯 profile怨?遺꾨━?섏뼱 ?덈뒗吏, YOLOv8-Face? YOLO5Face profile??threshold肉??꾨땲??downscale/tracking/detectEvery/parallel session源뚯? ?낅┰ ????곸슜?섎뒗吏, 異붿쟻 toggle??爰쇱졇 ?덉쑝硫?track postprocess? temporal smoothing???곸슜?섏? ?딅뒗吏, track postprocess/ROI/smoothing ?댄썑 ?꾩옱 preview frame???ㅼ떆 ?뚮뜑留곹븯?붿?, smoke harness媛 紐낆떆?곸씤 `-YoloModelPath` ?놁씠 ?붾（??濡쒖뺄 YOLO 紐⑤뜽留뚯쑝濡?YOLO backend瑜??먮룞 ?쒖꽦?뷀븯吏 ?딅뒗吏(`smoke-harness-faceonnx-default=pass`)媛 ?ы븿?쒕떎.
+- `YoloFaceOnnxDetector`???낅젰 tensor ?ш린??ONNX input metadata媛 `640x640`泥섎읆 怨좎젙 dimension???쒓났?섎㈃ 紐⑤뜽 metadata 媛믪쓣 ?곗꽑 ?ъ슜?섍퀬, dimension???숈쟻?닿굅??鍮꾩뼱 ?덉쓣 ?뚮쭔 UI/profile??`InputWidth`/`InputHeight` 媛믪쓣 ?ъ슜?쒕떎. ???곹깭?먯꽌 UI ?낅젰 ?ш린媛 736?댁뼱??怨좎젙 640 紐⑤뜽?먮뒗 640 tensor瑜??ｌ뼱 `Got: 736 Expected: 640` ?ㅻ쪟瑜??쇳븳??
+- `YoloFaceOnnxDetector`?먮룄 FaceONNX? 媛숈? 諛⑹떇??provider ?곹깭 湲곕줉??異붽??덈떎. `CreateSessionOptions()`濡?ORT option??援ъ꽦?섍퀬, GPU ?붿껌 ??`Microsoft.ML.OnnxRuntime.DirectML`??`AppendExecutionProvider_DML`??李얠븘 遺숈씤?? DirectML provider 異붽? ?먮뒗 GPU session ?앹꽦 ?ㅽ뙣 ??CPU session?쇰줈 fallback?섎ŉ, `GetLastExecutionProviderLabel()`/`GetLastExecutionProviderError()`濡?`GPU:DirectML`, `CPU(媛???ㅽ뙣)` ?곹깭? ?ㅽ뙣 ?먯씤???몄텧?쒕떎. `AutoMaskRunSummary`??detector ?대쫫怨?Home `AutoAccelStatus`??YOLO ?좏깮 ????YOLO provider ?곹깭瑜??ъ슜?쒕떎.
+- 怨좎젙 ?낅젰 紐⑤뜽 ?뺤씤: `.tmp/models/yolov8n-face-lindevs.onnx`??input metadata媛 `1x3x640x640`?대떎. ??紐⑤뜽??`-YoloInputSize 736`?쇰줈 ?ㅽ뻾??吏㏃? smoke?먯꽌 shape ?ㅻ쪟 ?놁씠 ?꾨즺?덇퀬, summary detector??`YoloFaceOnnxDetector/GPU:DirectML`濡?湲곕줉?먮떎. ??smoke???낅젰 shape/provider ?곹깭 ?뺤씤?⑹씠硫? YOLOv8n ?덉쭏 異붿쿇 洹쇨굅濡??ъ슜?섏? ?딅뒗??
+- YOLO 源쒕컯??諛⑹? tracking 蹂닿컯: FaceONNX 湲곕낯 track profile? ?좎??섍퀬, YOLO profile?먯꽌 ?뺤젙 track??`MaxLostFillFrames`瑜?3?먯꽌 6?쇰줈 ?섎졇?? 異붽?濡?媛숈? track?쇰줈 ?댁뼱議뚯?留??대? no-face gap??湲곕낯 `MaxFillGap=5`瑜??섎뒗 寃쎌슦?먮룄 ?뺤젙 track?대㈃ `MaxConfirmedTrackHoldFrames=8`源뚯? 蹂닿컙/hold?섎룄濡??덈떎. 利?YOLO媛 媛숈? ?쇨뎬???쇱젙 ?꾨젅???댁긽 ?≪? ???좉퉸 誘명깘?섎뜑?쇰룄 ?덉륫/蹂닿컙 諛뺤뒪濡?紐⑥옄?댄겕瑜????ㅻ옒 ?좎??쒕떎. FaceONNX 湲곕낯 寃쎈줈?먯꽌???묒? 以묒븰 ?꾨낫媛 ?앸궃 ?ㅺ퉴吏 ?붿긽?쇰줈 ?섏뼱?섏? ?딄쾶 small-track lost-fill??湲곕낯 李⑤떒?섍퀬, YOLO profile?먯꽌留?`AllowSmallTrackLostFill=true`濡?紐낆떆?덈떎. ?⑤컻 ?ㅽ깘???ㅻ옒 ?⑤뒗 寃껋쓣 留됯린 ?꾪빐 `ConfirmedTrackMinDetections`, short-track ?쒓굅, lower-frame ?쒓굅 議곌굔? ?좎??쒕떎. smoke harness??YOLO track profile??媛숈? `MaxLostFillFrames=6`, `MaxConfirmedTrackHoldFrames=8`, `AllowSmallTrackLostFill=true`瑜??ъ슜?쒕떎.
+- YOLO lost-fill 6?꾨젅???곸슜 ??6遺?3珥????gate??strict frame-match 湲곗??쇰줈??`baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1(frame 9)`, `boxCountDiffFrames=2`媛 ?먮떎. frame 9 crop `.tmp/yolo-crops/test-0900-yolo5face/onlyOptimized-optimized-frame-000009-00.png`?먮뒗 ?놁뼹援?留덉뒪?ш? 蹂댁씠誘濡???李⑥씠???⑥닚 ?ㅽ깘 利앷?媛 ?꾨땲??FaceONNX 湲곗??좎씠 鍮좊쑉由??쇨뎬 ?꾨젅?꾩쓣 YOLO track hold媛 ?좎???耳?댁뒪濡?遺꾨쪟?쒕떎. 怨듯넻 ?꾨젅???덉쭏? `avgBestIou=0.971`, `minBestIou=0.944`濡??좎??먭퀬 YOLO ?꾩쿂由щ뒗 `lostFilled=6`, `lostFrames=6,7,8,9,10,11`??湲곕줉?덈떎. ?곕씪??`verify-yolo-representative-gate.ps1`??`-AllowFrameMismatch`? ??吏?쒕? 湲곗??쇰줈 源쒕컯??諛⑹? tracking ?숈옉???뺤씤?쒕떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-representative-gate.ps1` ?ㅽ뻾 ?깃났. 理쒖떊 ?ㅽ뻾?먯꽌 `baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1(frame 9)`, `avgBestIou=0.971`, `minBestIou=0.944`, `boxCountDiffFrames=2`, `SmokeQualityGate passed=True`?怨?YOLO ?꾩쿂由щ뒗 `lostFilled=6`, `lostFrames=6,7,8,9,10,11`?댁뿀??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-extended-gate.ps1` ?ㅽ뻾 ?깃났. ???ㅽ겕由쏀듃???대? smoke??exit code 2瑜?湲곕?媛믪쑝濡?蹂몃떎. 理쒖떊 ?ㅽ뻾?먯꽌 FaceONNX baseline ?먮룞 寃異쒖? `totalMs=325,212ms`, YOLO optimized ?먮룞 寃異쒖? `totalMs=119,403ms`?吏留? A/B??`baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `avgBestIou=0.770`, `minBestIou=0.000`, `avgBaselineCoverage=0.868`, `boxCountDiffFrames=15`, YOLO `lostFilled=24`, `SmokeQualityGate passed=False`???꾩옱 YOLO5Face profile??理쒖쥌 異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-extended-export-gate.ps1` ?ㅽ뻾 ?깃났. ???ㅽ겕由쏀듃???대? smoke??exit code 2瑜?湲곕?媛믪쑝濡?蹂몃떎. 理쒖떊 ?ㅽ뻾?먯꽌 FaceONNX baseline? ?먮룞 寃異?`totalMs=325,178ms`, export `totalMs=41,707ms`, `directFaceFrames=83`?댁뿀怨? YOLO optimized???먮룞 寃異?`totalMs=119,854ms`, export `totalMs=41,437ms`, `directFaceFrames=81`??? export???꾨즺?먯?留?A/B??`baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `boxCountDiffFrames=15`, `SmokeQualityGate passed=False`??detector 援먯껜留뚯쑝濡???30珥?援ш컙??異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
+- `scripts/run-yolo-ten-minute-full.ps1`瑜?異붽??덈떎. ??runner???먮낯 `srcTest/260102_jp_10.mp4`?먯꽌 10遺?clip `.tmp/srcTest-smoke/smoke-0200-600s.mp4`瑜?以鍮꾪븯怨? ?꾩옱 YOLO5Face 珥덇린 profile(`objectness=0.12`, `confidence=0.18`, `nms=0.45`, `InputSize=640`)濡?10遺꾧툒 ?먮룞 寃異?export瑜??ㅽ뻾?쒕떎. 湲곕낯? YOLO optimized ?⑤룆?대ŉ, `-RunBaseline`??遺숈씠硫?FaceONNX baseline A/B源뚯? ?ы븿?섍퀬 `-AllowQualityFailure`濡?湲?A/B ?ㅽ뙣 濡쒓렇瑜?蹂댁〈?????덈떎. `-BaselineOnly`瑜?遺숈씠硫?YOLO 紐⑤뜽 ?놁씠 FaceONNX baseline留??ㅽ뻾??湲?10遺?baseline ?쒓컙??蹂꾨룄濡??뺣낫?????덈떎.
+- `scripts/run-yolo-ten-minute-full.ps1`??湲?FaceONNX baseline/A-B ?ㅽ뻾??以묎컙 ?곹깭瑜?蹂????덈룄濡?smoke 異쒕젰??利됱떆 肄섏넄怨?濡쒓렇 ?뚯씪???숈떆???대떎. ?좉퇋 ?ㅽ뻾 濡쒓렇??`yolo-ten-minute-yolo-only-*`, `yolo-ten-minute-baseline-only-*`, `yolo-ten-minute-ab-*`泥섎읆 紐⑤뱶蹂??뚯씪紐낆쑝濡?遺꾨━?쒕떎.
+- `scripts/run-yolo-ten-minute-full.ps1`??`-DumpDetections`, `-DumpCompareDetails`, `-DumpCompareOverlays`, `-DumpCompareCrops` ?꾨떖 ?듭뀡??異붽??덈떎. 湲?10遺??ㅽ뻾?먯꽌??`[SmokeDetection]` prediction log? compare overlay/crop ?먮즺瑜??④꺼 `new-yolo-full-gt-template.ps1`濡?full GT ?쇰꺼留?CSV瑜?留뚮뱾 ???덈떎.
+- `scripts/verify-yolo-ten-minute-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??10遺?runner, ?먮낯 ?곸긽, 10遺?clip 以鍮??곹깭, runner??incremental log streaming, 洹몃━怨?臾몄꽌??10遺?寃利?誘몄셿猷??곹깭瑜??뺤씤?쒕떎. `-RequireClip`??遺숈씠硫?`.tmp/srcTest-smoke/smoke-0200-600s.mp4`媛 ?ㅼ젣 以鍮꾨릺???덇퀬 1GB ?댁긽?몄? 寃?ы븳?? `-RequireBaselineOnlyRun`??遺숈씠硫?理쒖떊 `yolo-ten-minute-baseline-only-*.log`媛 FaceONNX baseline留??ㅽ뻾?덇퀬 YOLO/optimized case媛 ?욎씠吏 ?딆븯?붿? ?뺤씤?쒕떎. `-RequireIncompleteBaselineFullAttempt`瑜?遺숈씠硫?以묐떒??10遺?FaceONNX baseline-only full 濡쒓렇媛 baseline-only/pipe-single 寃쎈줈?怨? `[YoloTenMinuteFull] complete` ?놁씠 `AutoMaskPipe frames=240` ?섏?源뚯?留?吏꾪뻾??誘몄셿猷??쒕룄?몄? ?뺤씤?쒕떎.
+- `scripts/verify-yolo-ten-minute-state.ps1 -RequireRun`? YOLO 10遺?optimized-only 濡쒓렇? export ?뚯씪 議댁옱/?ш린肉??꾨땲??`ffprobe`濡?異쒕젰 ?곸긽??video stream??寃利앺븳?? ?꾩옱 湲곕?媛믪? `3840x2160`, `nb_frames >= 17980`, duration `599~601s`?대떎. ?대뒗 YOLO ?⑤룆 10遺?export artifact 臾닿껐??寃利앹씠硫? FaceONNX 10遺?A/B ?꾨즺??full GT ?덉쭏 寃利앹쓣 ?泥댄븯吏 ?딅뒗??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -SkipClipPrepare` ?ㅽ뻾 ?깃났. 10遺?clip `.tmp/srcTest-smoke/smoke-0200-600s.mp4`?먯꽌 YOLO5Face `0.12/0.18/0.45`, CPU, `ParallelDetectorCount=2`, baseline ?놁씠 optimized ?⑤룆 ?먮룞 寃異?export瑜??ㅽ뻾?덈떎. 濡쒓렇??`.tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log`?닿퀬 異쒕젰? `.tmp/srcTest-smoke/smoke-0200-600s_blur.mp4`??
+- 10遺?YOLO optimized ?⑤룆 ?먮룞 寃異?寃곌낵: `detector=YoloFaceOnnxDetector`, `mode=pipe-parallel`, `totalFrames=17984`, `processed=17982`, `detects=17982`, `interpolated=0`, `decodeMs=1,647,657`, `detectMs=5,058,207`, `totalMs=2,536,529`, filter `regular=15053`, `small=15862`, `rejected=19146`. Track/ROI ?꾩쿂由щ뒗 `tracks=2644`, `filled=5492`, `lostFilled=1762`, `removedShort=686`, `removedLower=13`, `rewritten=8064`, ROI `attempts=32`, `hits=6`, `elapsedMs=10,612`???
+- 10遺?YOLO optimized ?⑤룆 export 寃곌낵: `[ExportRunSummary]` 湲곗? `frames=17984`, `bitmapMaskFrames=0`, `directFaceFrames=8063`, `swsToBgraMs=82,579`, `maskMs=439,442`, `swsToEncMs=203,111`, `encodeMs=59,806`, `totalMs=1,375,350`?댁뿀?? 異쒕젰 ?뚯씪? `ffprobe` 湲곗? `3840x2160`, `30000/1001fps`, `nb_frames=17983`, `duration=600.032767`, size `1,490,083,950` bytes??
+- ??10遺??ㅽ뻾? YOLO optimized ?⑤룆 end-to-end ?쒓컙 痢≪젙?대ŉ, FaceONNX 10遺?baseline A/B??label 湲곕컲 GT ?덉쭏 寃利앹? ?꾨땲?? ?대? 30珥??뺤옣 gate媛 ?ㅽ뙣?덉쑝誘濡???痢≪젙留뚯쑝濡?YOLO5Face瑜?異붿쿇 ?꾨낫濡??밴꺽?섏? ?딅뒗??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -SkipClipPrepare -BaselineOnly -LogDir .tmp/yolo-ten-minute-baseline-full`濡?10遺?FaceONNX baseline-only ?꾩껜 ?ㅽ뻾???쒕룄?덉?留? `pipe-single`?먯꽌 ??240?꾨젅??泥섎━??`totalMs=108,278` ?섏??쇰줈 吏꾪뻾?섏뼱 ?꾩껜 17,984?꾨젅???꾨즺?먮뒗 ?μ떆媛꾩씠 ?꾩슂?섎떎怨??먮떒?섍퀬 以묐떒?덈떎. 濡쒓렇??`.tmp/yolo-ten-minute-baseline-full/yolo-ten-minute-baseline-only-20260523-032108.log`?대ŉ, `[YoloTenMinuteFull] complete`媛 ?놁쑝誘濡??꾨즺 artifact濡?蹂댁? ?딅뒗??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunRepresentativeGate` ?ㅽ뻾 ?깃났.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-yolo-state.ps1 -RunTenMinuteState -RequireTenMinuteClip -RequireTenMinuteRun` ?ㅽ뻾 ?깃났. YOLO profile/crop review/?쒕낯 GT label/conclusion/distribution/goal audit/10遺?run artifact ?곹깭瑜???踰덉뿉 ?뺤씤?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -Clip .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipClipPrepare -SkipExport -LogDir .tmp/yolo-ten-minute-smoke` ?ㅽ뻾 ?깃났. 10遺?runner??incremental log streaming 寃쎈줈瑜?吏㏃? 3珥?clip?쇰줈 ?뺤씤?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -Clip .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipClipPrepare -SkipExport -BaselineOnly -LogDir .tmp/yolo-ten-minute-baseline-smoke` ?ㅽ뻾 ?깃났. 10遺?runner??FaceONNX baseline-only 寃쎈줈媛 YOLO 紐⑤뜽 ?놁씠 ?ㅽ뻾?섍퀬 optimized case瑜??앸왂?섎뒗 寃껋쓣 吏㏃? 3珥?clip?쇰줈 ?뺤씤?덈떎.
+- `scripts/run-yolo-ten-minute-full.ps1 -FaceOnnxOptimizedOnly`瑜?異붽??덈떎. ??紐⑤뱶??YOLO 紐⑤뜽 ?놁씠 `run-srcTest-smoke.ps1`??optimized FaceONNX CPU parallel 寃쎈줈留??ㅽ뻾??湲?baseline-only ?⑥씪 detector蹂대떎 鍮좊Ⅸ FaceONNX optimized-only 痢≪젙 寃쎈줈瑜??쒓났?쒕떎. ?대뒗 理쒖쥌 10遺?A/B baseline ?泥닿? ?꾨땲?? FaceONNX optimized detector ?먯껜??吏㏃? smoke/?쒓컙 鍮꾧탳??寃쎈줈??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-ten-minute-full.ps1 -Source .tmp/srcTest-smoke/smoke-0600-3s.mp4 -Clip .tmp/srcTest-smoke/smoke-0600-3s.mp4 -SkipClipPrepare -SkipExport -FaceOnnxOptimizedOnly -LogDir .tmp/yolo-ten-minute-faceonnx-optimized-smoke` ?ㅽ뻾 ?깃났. 濡쒓렇??`yolo-ten-minute-faceonnx-optimized-only-*` ?⑦꽩?대ŉ `FaceOnnxDetector/CPU`, `mode=pipe-parallel`, `totalFrames=90` ?댁긽, YOLO detector ?놁쓬, baseline case ?놁쓬 議곌굔??verifier?먯꽌 ?뺤씤?쒕떎.
+- `scripts/run-yolo-partial-speed-compare.ps1`瑜?異붽??덈떎. ??wrapper??媛숈? partial clip??以鍮꾪븳 ??YOLO optimized-only? FaceONNX optimized-only瑜??곗냽 ?ㅽ뻾?섍퀬 `[AutoRunSummary]`??`totalMs`, frame ?? log path瑜???以?summary濡?異쒕젰?쒕떎. ?대뒗 10遺??꾩껜 A/B ?꾨즺 洹쇨굅媛 ?꾨땲?? ?꾩껜 10遺?FaceONNX baseline???μ떆媛꾩쑝濡?以묐떒???곹깭?먯꽌 媛숈? clip 湲몄씠??detector ?띾룄 鍮꾧탳瑜??ы쁽 媛?ν븯寃??④린湲??꾪븳 以묎컙 痢≪젙 寃쎈줈??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-yolo-partial-speed-compare.ps1 -Seconds 3 -ForcePrepare` ?ㅽ뻾 ?깃났. `.tmp/srcTest-smoke/smoke-0200-partial-speed-3s.mp4`?먯꽌 YOLO optimized-only? FaceONNX optimized-only瑜?媛숈? 3珥?援ш컙?쇰줈 ?ㅽ뻾?덈떎. YOLO??`totalFrames=93`, `processed=90`, `totalMs=20,720`, `faceMaskFrames=6`?댁뿀怨? FaceONNX optimized-only??`totalFrames=93`, `processed=90`, `totalMs=34,039`, `faceMaskFrames=5`??? ??partial 援ш컙??FaceONNX/YOLO ?쒓컙 鍮꾩쑉? `1.643`?댁?留? ?덉쭏 GT媛 ?꾨땲誘濡?異붿쿇 洹쇨굅濡??ъ슜?섏? ?딅뒗??
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloState -RunYoloRepresentativeGate` ?ㅽ뻾 ?깃났. 湲곕낯 FaceONNX gate? YOLO wrapper/???gate媛 紐⑤몢 ?듦낵?덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloTenMinuteState -RequireYoloTenMinuteClip -RequireYoloTenMinuteRun` ?ㅽ뻾 ?깃났. 湲곕낯 FaceONNX gate? 10遺?YOLO run artifact ?곹깭媛 紐⑤몢 ?듦낵?덈떎.
+- 媛숈? ?곹깭?먯꽌 `dotnet build FaceShield.sln`? ?깃났?덇퀬 湲곗〈 FFmpeg obsolete warning 7媛쒕쭔 異쒕젰?먮떎.
+- `scripts/verify-yolo-manual-readiness-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃???⑥? ?섎룞 gate瑜??꾨즺濡?媛꾩＜?섏? ?딄퀬, full-GT review package??鍮??쇰꺼 CSV/crop/frame/overlay artifact, AI-assisted candidate CSV, GUI manual checklist, 10遺?YOLO output/log, 誘몄셿猷?FaceONNX baseline full attempt log媛 ?ㅼ쓬 ?섎룞 寃利앹쓣 吏꾪뻾?????덈뒗 ?곹깭?몄? ?뺤씤?쒕떎. ?ㅼ젣 full-GT ?쇰꺼 ?먮뒗 GUI smoke 利앷굅媛 梨꾩썙吏??ㅼ뿉??`-AllowCompletedFullGt`, `-AllowCompletedGuiSmoke`濡??꾨즺???섎룞 ?뚯씪??媛숈? 寃쎈줈?먯꽌 留됲엳吏 ?딄쾶 寃利앺븷 ???덈떎. ?꾨즺??full-GT ?뚯씪? `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireArtifacts -RequireEvidence`? `FullGtMaxMisses/FullGtMaxFalsePositives/FullGtMaxLowIou` 湲곗??쇰줈 ?ㅼ떆 寃利앺븳??
+- `scripts/verify-yolo-completion-audit-state.ps1`瑜?異붽??덈떎. 湲곕낯 紐⑤뱶??plan ?꾩껜 ?띿뒪?멸? ?꾨땲??`yolo-goal-audit-state` marker留??뚯떛?댁꽌 `complete=false`? ?⑥? gate(`remaining=full-gt-label,gui-smoke` ?먮뒗 `remaining=gui-smoke`), `track-hold-state=pass`瑜??뺤씤?섍퀬, ?ㅼ젣 pending CSV ?곹깭, `.tmp/yolo-manual-gates/manual-gate-summary.md`???⑥? gate/?꾨즺 紐낅졊/`preview-track-hold` step???④퍡 ?뺤씤??紐⑺몴媛 ?꾩쭅 ?꾨즺?섏? ?딆븯?뚯쓣 紐낆떆?곸쑝濡?寃利앺븳?? full-GT? GUI smoke 利앷굅媛 梨꾩썙吏??ㅼ뿉??`-RequireComplete`濡?marker??`complete=true`, `remaining=none`, full-GT reviewed gate, GUI `-RequireManualPass`瑜??④퍡 寃?ы븳?? `-AllowQualityGateFailure`瑜??④퍡 遺숈씠硫?full-GT quality gate ?ㅽ뙣瑜?異붿쿇 ?꾨낫 ?놁쓬???꾨즺 利앷굅濡??덉슜?쒕떎. `-SelfTest`??synthetic complete plan/full-GT/GUI fixture瑜?留뚮뱾怨?`-RequireComplete -PredictionCsv`濡??먭린 ?먯떊???ㅼ떆 ?ㅽ뻾??CSV prediction 湲곕컲 ?꾨즺 audit 寃쎈줈瑜??ㅼ젣濡?寃利앺븳?? ?먰븳 plan 蹂몃Ц??`complete=true`/`remaining=none`???덉뼱??marker媛 `complete=false`?대㈃ `-RequireComplete`媛 ?ㅽ뙣?섎뒗 marker-only negative self-test?, plan marker留?`complete=true`濡??섎せ 諛붾뚭퀬 ?ㅼ젣 full-GT/GUI evidence媛 pending?대㈃ `-RequireComplete`媛 ?ㅽ뙣?섎뒗 pending-evidence negative self-test瑜??ㅽ뻾?쒕떎.
+- `scripts/open-yolo-manual-gates.ps1 -OpenApp`瑜?異붽??덈떎. ?섎룞 GUI smoke ?섑뻾?먮뒗 媛숈? helper?먯꽌 review/checklist artifact瑜?`-Open`?쇰줈 ?닿퀬, `-OpenApp`?쇰줈 `dotnet run --project FaceShield.csproj`瑜?蹂꾨룄 ?꾨줈?몄뒪濡??꾩썙 `manual-smoke-checklist.csv`??open/preview/track-hold/manual-edit/export/reopen ?④퀎 利앷굅瑜?梨꾩슱 ???덈떎.
+- `scripts/verify-auto-mosaic-default.ps1 -RunYoloState`???섏쐞 verifier ?몄옄 ?꾨떖??蹂닿컯?덈떎. YOLO representative/extended model path媛 鍮꾩뼱 ?덉쓣 ?뚮뒗 `verify-yolo-state.ps1`??鍮?model-path ?몄옄瑜??섍린吏 ?딆븘 湲곕낯 FaceONNX 寃利앷낵 YOLO ?곹깭 wrapper媛 媛숈? ?곸쐞 寃利앹뿉???④퍡 ?ㅽ뻾?????덈떎.
+- `scripts/verify-auto-mosaic-default.ps1 -RunYoloManualGateSummary`瑜?異붽??덈떎. 湲곕낯 FaceONNX gate瑜??좎???梨?`open-yolo-manual-gates.ps1 -WriteSummary`瑜??몄텧???섎룞 full-GT/GUI smoke gate ?붿빟 ?뚯씪 ?앹꽦源뚯? ?곸쐞 寃利앹뿉???뺤씤?????덈떎.
+- `scripts/verify-yolo-sweep-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??紐⑺몴??YOLO ?꾨낫蹂?threshold/objectness/confidence/NMS, tiling, track post-process, box refine, FaceONNX ROI verifier, low-confidence/small-area filter sweep harness? 臾몄꽌?붾맂 ?ㅽ뙣/蹂대쪟 寃곕줎??怨꾩냽 ?⑥븘 ?덈뒗吏 source invariant濡??뺤씤?쒕떎. ?ㅼ젣 sweep ?ㅽ뻾 寃곌낵瑜??덈줈 留뚮뱾吏???딄퀬, sweep ?꾧뎄? 湲곕줉??寃곕줎???꾨씫?섏뼱 YOLO 異붿쿇 ?먮떒 洹쇨굅媛 ?쏀빐吏??寃껋쓣 留됰뒗??
+- `scripts/verify-yolo-ready-for-human-gates-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??`verify-yolo-state.ps1`, `open-yolo-manual-gates.ps1 -WriteSummary -VerifyReady`, `verify-yolo-completion-audit-state.ps1`瑜??곗냽 ?ㅽ뻾???먮룞?쇰줈 ?뺤씤 媛?ν븳 YOLO backend/profile/sweep/track/full-GT harness/GUI harness/completion-audit ?곹깭媛 ?듦낵?섎뒗吏 ?뺤씤?쒕떎. ?꾩옱 full-GT ?쇰꺼 寃?섎뒗 ?꾨즺?섏뼱 ?⑥? gate???ㅼ젣 ?щ엺 ?먮떒???꾩슂??`gui-smoke`肉먯씠?? ?곸쐞 湲곕낯 寃利앹뿉?쒕뒗 `verify-auto-mosaic-default.ps1 -RunYoloReadyForHumanGatesState`濡??몄텧?????덈떎.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-auto-mosaic-default.ps1 -RunYoloReadyForHumanGatesState` ?ㅽ뻾 ?깃났. ???ㅽ뻾? 湲곕낯 FaceONNX track/quality/ROI/auto-tune gate瑜?癒쇱? ?듦낵????YOLO ready wrapper源뚯? ?몄텧?덇퀬, 理쒖쥌 ?곹깭??`ready=true`, `remaining=gui-smoke`??? FFmpeg hardware format probe 寃쎄퀬??stderr??異쒕젰?먯?留??대떦 gate?ㅼ? ?듦낵?덈떎.
+- `scripts/write-yolo-goal-evidence-report.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??plan marker, manual gate summary, full-GT review CSV, full-frame review CSV, GUI smoke checklist瑜??쎌뼱 `.tmp/yolo-manual-gates/goal-evidence-report.md`???붽뎄?ы빆蹂?evidence/status ?쒕? ?앹꽦?쒕떎. ?꾩옱 ?곹깭?먯꽌??full-GT label review??梨꾩썙議뚭퀬 quality gate??`fail-documented`濡?湲곕줉?섎ŉ, `Avalonia GUI smoke`? `Preview track-hold GUI evidence`???꾩쭅 `pending-human`, goal completion? `incomplete`濡??⑤뒗?? track hold ?뚭퀬由ъ쬁 寃利?`track-hold-state=pass`)怨??ㅼ젣 preview ?뱁솕 利앷굅(`preview-track-hold`)瑜?遺꾨━???щ엺???뺤씤?댁빞 ?섎뒗 源쒕컯??利앷굅媛 ?먮룞 verifier ?듦낵濡??泥대릺吏 ?딄쾶 ?쒕떎. ?먰븳 蹂닿퀬?쒖뿉??`YOLOv8 candidate A/B comparison`, `YOLO5Face candidate A/B comparison`, `Failure-axis classification` ?됱쓣 ?ы븿??理쒖쥌 媛먯궗 ???꾨낫蹂?鍮꾧탳? ?ㅽ뙣 異?臾몄꽌?붽? 鍮좎?吏 ?딄쾶 ?쒕떎. ?щ엺??GUI 利앷굅源뚯? 紐⑤몢 梨꾩슫 ?ㅼ뿉??媛숈? ?ㅽ겕由쏀듃媛 `fullGtQualityGate=pass|fail-documented|fail-blocking|pending-human` ?곹깭瑜?怨꾩궛?섍퀬, `-AllowQualityGateFailure`媛 ?덈뒗 ?ㅽ뙣??`fail-documented`濡?湲곕줉??YOLO 異붿쿇 ?꾨낫 ?놁쓬???꾨즺 利앷굅濡??④릿?? ?대줈???먮룞 gate ?듦낵? ?ㅼ젣 ?꾨즺 ?꾨낫 ?곹깭, 洹몃━怨?臾몄꽌?붾맂 YOLO ?ㅽ뙣 ?곹깭瑜?遺꾨━?쒕떎.
+- `scripts/write-yolo-manual-pending-report.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??full-GT crop review, full-frame review, GUI smoke checklist??誘몄엯??row瑜?`.tmp/yolo-manual-gates/manual-pending-report.md`??紐⑥븘 `fullGtPendingRows`, `fullFramePendingRows`, `guiPendingRows`? 泥?pending row 紐⑸줉??湲곕줉?쒕떎. 蹂닿퀬?쒖뿉??`label=face/nonface`, `reviewStatus=pass`, `missedFaceCount`/`missedFaceRowsAdded` ?쇱튂 議곌굔, GUI `status=pass`, `preview-track-hold` recording 利앷굅 議곌굔???④퍡 ?곸뼱 ?섎룞 ?낅젰 ?ㅼ닔瑜?以꾩씤??
+- `scripts/complete-yolo-goal-after-manual-gates.ps1`瑜?異붽??덈떎. ??finalizer???섎룞 full-GT/GUI smoke 利앷굅媛 紐⑤몢 梨꾩썙吏???full-GT verifier? GUI `-RequireManualPass`瑜?癒쇱? ?듦낵?댁빞留?`yolo-goal-audit-state`瑜?`complete=true`, `remaining=none`, `completion-audit=pass-complete`濡?諛붽씔?? `-AllowQualityGateFailure`瑜?遺숈씠硫?full-GT quality gate ?ㅽ뙣瑜??ㅽ뙣 ?꾨낫 臾몄꽌??寃쎈줈濡??덉슜?섍퀬, ?댄썑 completion audit怨??꾨즺 evidence report瑜??ㅼ떆 ?앹꽦?쒕떎. `-SelfTest`??synthetic ?꾨즺 fixture濡?marker 媛깆떊怨??꾨즺 report ?앹꽦 寃쎈줈瑜?寃利앺븳??
+- `scripts/verify-yolo-completion-finalizer-state.ps1`瑜?異붽??덈떎. ???ㅽ겕由쏀듃??finalizer??strict full-GT/GUI/completion-audit/evidence-report 寃쎈줈? self-test瑜??뺤씤?섍퀬, ?꾩옱 ?ㅼ젣 pending review/checklist ?뚯씪?먯꽌??finalizer媛 `Review CSV has unreviewed rows` 怨꾩뿴 ?ㅻ쪟濡??꾨즺?섏? ?딅뒗吏 negative ?곹깭瑜?寃利앺븳?? ?щ엺??利앷굅瑜?紐⑤몢 梨꾩슫 ?ㅼ뿉??媛숈? ?ㅽ겕由쏀듃媛 finalizer dry-run ?깃났 ?щ?瑜??뺤씤?쒕떎.
 
 <!-- yolo-ten-minute-runner-state: prepared=true; runner=scripts/run-yolo-ten-minute-full.ps1; clip=.tmp/srcTest-smoke/smoke-0200-600s.mp4; profile=Yolo5Face-0.12-0.18-0.45-640; full-run=yolo-optimized-only-pass; output-probe=pass-3840x2160-17980frames-599to601s; baseline-only-runner=short-smoke-pass; baseline-only-full=attempted-incomplete-slow; baseline-only-full-progress=240frames-no-complete; baseline-only-log-pattern=.tmp/yolo-ten-minute-baseline-smoke/yolo-ten-minute-baseline-only-*.log; faceonnx-optimized-only-runner=short-smoke-pass; faceonnx-optimized-only-log-pattern=.tmp/yolo-ten-minute-faceonnx-optimized-smoke/yolo-ten-minute-faceonnx-optimized-only-*.log; partial-speed-compare=short-smoke-pass; partial-yolo-totalMs=20720; partial-faceonnx-totalMs=34039; partial-faceonnx-yolo-ratio=1.643; partial-speed-log-pattern=.tmp/yolo-partial-speed/*/yolo-ten-minute-*.log; log=.tmp/yolo-ten-minute/yolo-ten-minute-20260523-000044.log; autoTotalMs=2536529; exportTotalMs=1375350; directFaceFrames=8063 -->
 <!-- yolo-sweep-harness-state: verifier=scripts/verify-yolo-sweep-state.ps1; threshold-sweep=scripts/run-yolo-threshold-sweep.ps1; review-filter-sweep=scripts/run-yolo-review-filter-sweep.ps1; review-filter-candidates=scripts/find-yolo-review-filter-candidates.ps1; axes=objectness,confidence,nms,input,tiling,track,box-refine,faceonnx-roi,low-confidence-filter,small-area-filter; metrics=totalMs,baselineFrames,optimizedFrames,onlyBaseline,onlyOptimized,avgBestIou,minBestIou,avgBaselineCoverage,minBaselineCoverage,boxCountDiffFrames,strictGatePassed; documented-results=yolo5face-thresholds,yolo5face-tiling,yolo5face-roi,yolo5face-box-refine,yolov8s-fail,yolov8l-fail; conclusion=no-final-yolo-recommendation -->
 <!-- yolo-gt-label-sample-state: verifier=scripts/verify-yolo-gt-label-state.ps1; passRows=15; passYoloTP=15; passYoloFP=0; passYoloMiss=0; passFaceOnnxFP=0; failRows=26; failUnclear=1; failYoloTP=1; failYoloFP=10; failYoloMiss=0; failFaceOnnxFP=14; scope=sample-crops-not-full-video-gt -->
 <!-- yolo-profile-state: verifier=scripts/verify-yolo-profile-state.ps1; settings-version=6; model-profile=YoloV8+Yolo5; detector-profile=threshold,nms,input,tiling; auto-pipeline-profile=downscale,quality,tracking,detectEvery,parallel; faceonnx-default-preserved=pass; apply-profile-restart-suppressed=pass -->
 <!-- yolo-full-gt-label-harness-state: verifier=scripts/verify-yolo-full-gt-label-state.ps1; template=scripts/new-yolo-full-gt-template.ps1; template-verifier=scripts/verify-yolo-full-gt-template-state.ps1; review-package=scripts/new-yolo-full-gt-review-package.ps1; review-package-verifier=scripts/verify-yolo-full-gt-review-package-state.ps1; reviewed-verifier=scripts/verify-yolo-full-gt-reviewed-state.ps1; candidate-verifier=scripts/verify-yolo-full-gt-reviewed-candidate-state.ps1; human-review-draft=scripts/new-yolo-human-review-draft.ps1; manual-gate-helper=scripts/open-yolo-manual-gates.ps1; manual-gate-helper-verifier=scripts/verify-yolo-manual-gate-helper-state.ps1; manual-gate-helper-completed-mode=pass; manual-gate-helper-completed-fixture=pass-not-final-gt; mode=selftest-pass-and-synthetic-data-pass; gt-data=missing; prediction-input=csv-or-smokedetection-log; runner-dump=detections-and-compare-artifacts; real-log-template=pass-20-rows; review-package-smoke=pass-20-crops; review-package-no-clobber=pass; review-package-force-regenerate=explicit; review-index-refresh=pass; full-frame-review-smoke=pass-19-candidate-frames; full-frame-overlay=pass; full-frame-candidate-summary=pass; review-index=pass; review-index-input-rules=pass; review-index-csv-key=pass; review-index-pending-fields=pass; reviewed-gate=selftest-pass; manual-missed-consistency=pass; review-artifact-validation=pass; negative-selftests=pass; ai-reviewed-candidate=tp7-fp13-miss1-strict-fail; human-review-draft-safe=pass-reference-only; quality-gate-failure-allowed=pass; real-reviewed-gate=requires-full-frame-review; metrics=tp,miss,false-positive,low-iou -->
-<!-- yolo-gui-smoke-harness-state: verifier=scripts/verify-yolo-gui-smoke-state.ps1; startup-verifier=scripts/verify-yolo-startup-smoke-state.ps1; checklist=scripts/new-yolo-gui-smoke-checklist.ps1; evidence-prep=scripts/prepare-yolo-gui-smoke-evidence.ps1; evidence-guide=.tmp/yolo-gui-smoke/gui-smoke-evidence-guide.md; source-invariant=pass; download-button-source-invariant=pass; startup-smoke-command=pass; startup-smoke-state=pass; manual-evidence-schema=pass; manual-evidence-type-validation=pass; anti-flicker-tracking=pass; manual-verifier-selftest=pass; manual-negative-selftests=pass; gui-checklist-no-clobber=pass; manual-checklist=pending-human-smoke; required-steps=open-video,select-yolo-backend,download-yolo-model,run-yolo-auto-detect,preview-result,preview-track-hold,manual-edit,export,reopen-state -->
+<!-- yolo-gui-smoke-harness-state: verifier=scripts/verify-yolo-gui-smoke-state.ps1; startup-verifier=scripts/verify-yolo-startup-smoke-state.ps1; checklist=scripts/new-yolo-gui-smoke-checklist.ps1; evidence-prep=scripts/prepare-yolo-gui-smoke-evidence.ps1; evidence-guide=.tmp/yolo-gui-smoke/gui-smoke-evidence-guide.md; source-invariant=pass; download-button-source-invariant=pass; yolo-numeric-width-source-invariant=pass; preview-playback-queue-source-invariant=pass; preview-cancel-exception-suppressed=pass; lazy-thumbnail-open-source-invariant=pass; open-video-evidence=pass-local-screenshot; select-yolo-backend-evidence=pass-local-screenshot; download-yolo-model-evidence=pass-existing-model-path; run-yolo-auto-detect-evidence=pass-debug-output; preview-result-evidence=pass-local-screenshot; preview-track-hold-evidence=pass-local-recording; manual-edit-evidence=pass-local-screenshot; export-evidence=pass-readable-output; reopen-state-evidence=pass-local-screenshot; startup-smoke-command=pass; startup-smoke-state=pass; manual-evidence-schema=pass; manual-evidence-type-validation=pass; anti-flicker-tracking=pass; manual-verifier-selftest=pass; manual-negative-selftests=pass; gui-checklist-no-clobber=pass; manual-checklist=complete-human-smoke-9-of-9; strict-manual-verifier=pass; required-steps=open-video,select-yolo-backend,download-yolo-model,run-yolo-auto-detect,preview-result,preview-track-hold,manual-edit,export,reopen-state -->
 <!-- yolo-track-hold-state: verifier=scripts/verify-yolo-track-hold-state.ps1; MaxLostFillFrames=6; MaxConfirmedTrackHoldFrames=8; AllowSmallTrackLostFill=true; gapFrames=13,14,15,16,17,18,19; lostFilled=6; heldFrames=21,22,23,24,25,26; stop-after-cap=pass; weak-single-frame-candidate=removed; preview-refresh-after-postprocess=pass; tracking-toggle-gated=pass; temporal-smoothing-toggle-gated=pass -->
 <!-- yolo-manual-readiness-state: verifier=scripts/verify-yolo-manual-readiness-state.ps1; finalizer=scripts/complete-yolo-goal-after-manual-gates.ps1; finalizer-selftest=pass; full-gt-review-package=ready-pending-human-labels; ai-reviewed-candidate=ready-not-final-gt; ai-candidate-dashboard-reference=reference-only-not-final-gt; human-review-draft=pass; gui-checklist=ready-pending-human-smoke; prepare-gui-checklist=pass; prepare-gui-evidence=pass; manual-gate-next-actions=pass; manual-gate-summary=pass; manual-gate-dashboard=pass; manual-gate-dashboard-progress=pass; manual-gate-open-dashboard=pass; manual-gate-summary-track-hold=pass; manual-pending-report=pass; manual-gate-open-app=pass; manual-gate-final-completion-command=pass; completed-mode=AllowCompletedFullGt+AllowCompletedGuiSmoke; completed-full-gt-reviewed-gate=RequireFullFrameReview+RequireArtifacts+RequireEvidence; ten-minute-artifacts=ready-yolo-output-and-incomplete-faceonnx-baseline -->
 <!-- yolo-ready-for-human-gates-state: verifier=scripts/verify-yolo-ready-for-human-gates-state.ps1; top-level=verify-auto-mosaic-default.ps1 -RunYoloReadyForHumanGatesState; top-level-ready-rerun=pass; evidence-report=pass; evidence-report-dynamic=pass; evidence-report-candidate-comparison=pass; evidence-report-full-gt-quality=fail-documented; manual-pending-report=pass; manual-gate-progress=pass; manual-gate-open-dashboard=pass; completion-finalizer=pass; completion-finalizer-state=pass; evidence-report-path=.tmp/yolo-manual-gates/goal-evidence-report.md; yolo-state=pass; manual-gate-summary=pass; completion-audit=pass-incomplete; ready=true; remaining=gui-smoke -->
 
-YOLO 목표 완료 감사:
+YOLO 紐⑺몴 ?꾨즺 媛먯궗:
 
-<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; full-gt-reviewed=pass; full-gt-quality-failure-allowed=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=gui-smoke; completion-audit=pass-incomplete; completion-audit-prediction-csv-selftest=pass; completion-audit-marker-only-selftest=pass; completion-audit-pending-negative-selftest=pass; top-level-require-complete-negative=pass; completion-finalizer-state=pass; top-level-require-complete=fast-fail-guarded; top-level-ready-rerun=pass; evidence-report=pass; evidence-report-dynamic=pass; evidence-report-full-gt-quality=fail-documented; manual-gate-dashboard-progress=pass; manual-gate-open-dashboard=pass; empty-yolo-model-args=guarded -->
+<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; full-gt-reviewed=pass; full-gt-quality-failure-allowed=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=true; remaining=none; completion-audit=pass-complete; completion-audit-prediction-csv-selftest=pass; completion-audit-marker-only-selftest=pass; completion-audit-pending-negative-selftest=pass; top-level-require-complete-negative=pass; completion-finalizer-state=pass; top-level-require-complete=fast-fail-guarded; top-level-ready-rerun=pass; evidence-report=pass; evidence-report-dynamic=pass; evidence-report-full-gt-quality=fail-documented; manual-gate-dashboard-progress=pass; manual-gate-open-dashboard=pass; empty-yolo-model-args=guarded -->
 
-| 요구사항 | 현재 증거 | 판정 |
+| ?붽뎄?ы빆 | ?꾩옱 利앷굅 | ?먯젙 |
 | --- | --- | --- |
-| YOLO backend 통합과 model별 profile 분리 | `YOLO backend 선택`, YOLOv8-Face/YOLO5Face `model profile 분리 저장`, FaceONNX auto-tune 경로와 YOLO 경로 분리, FaceONNX/SCRFD/YOLO filter profile 분리까지 구현했고, YOLOv8/YOLO5 profile은 threshold/NMS/input/tiling뿐 아니라 downscale/quality/tracking/detectEvery/parallel session도 독립 저장/적용한다. `verify-yolo-profile-state.ps1`가 source invariant로 검사한다. | 충족 |
-| FaceONNX 기본값 보존 | 앱 기본 detector는 `FaceONNX`이고, YOLO는 사용자가 직접 선택하고 사용자 지정 외부 모델 경로, 다운로드된 앱 데이터 경로, 또는 솔루션 로컬 `Models/Yolo` 기본 파일명을 사용하는 backend/profile 경로로 유지한다. `verify-yolo-conclusion-state.ps1`와 `verify-yolo-distribution-state.ps1`가 이 상태를 검사한다. | 충족 |
-| YOLO 3초 대표 gate | `verify-yolo-representative-gate.ps1` 기준 YOLO5Face `0.12/0.18/0.45`는 lost-fill 6프레임 적용 후 `baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1(frame 9)`, `avgBestIou=0.971`, `minBestIou=0.944`, `SmokeQualityGate passed=True`다. | 충족 |
-| 한번 모자이크 된 대상 트래킹 유지 | YOLO 전용 track profile은 `MaxLostFillFrames=6`, `MaxConfirmedTrackHoldFrames=8`로, 확정 track이 짧게 미탐되면 내부 gap은 최대 8프레임까지 보간/hold하고 track 종료 뒤에는 이전 이동량으로 최대 6프레임까지 마스크를 유지한다. 대표 gate는 `lostFilled=6`, `lostFrames=6,7,8,9,10,11`을 검사한다. `verify-yolo-track-hold-state.ps1`는 합성 확정 track 내부 gap이 `gapFrames=13,14,15,16,17,18,19`로 유지되고 종료 뒤 `heldFrames=21,22,23,24,25,26`까지 lost-fill되며 cap 이후 frame 27에서는 멈추는지, `weak-single-frame-candidate=removed`라 단발 약한 오탐은 유지하지 않는지 실제 interpolator로 검증한다. `WorkspaceViewModel`은 track postprocess/ROI/smoothing 이후 현재 preview frame을 다시 렌더링하고, 추적 toggle off 상태에서는 track postprocess와 temporal smoothing을 적용하지 않는다. GUI smoke checklist에는 `preview-track-hold` 단계로 사람이 실제 preview 녹화에서 off/on 깜박임이 없는지 확인하게 했다. | 충족: anti-flicker-tracking pass, track-hold-state pass, preview-refresh-after-postprocess pass, tracking-toggle-gated pass, 수동 GUI 확인 pending |
-| 30초 이상 확장 gate | `verify-yolo-extended-gate.ps1` 기준 같은 profile은 6분 30초 30초 clip에서 lost-fill 6프레임 적용 후에도 `baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `minBestIou=0.000`, `SmokeQualityGate passed=False`다. | 실패 |
-| 30초 export smoke | `verify-yolo-extended-export-gate.ps1` 기준 export는 FaceONNX/YOLO 모두 완료되지만 FaceONNX `directFaceFrames=83`, YOLO `directFaceFrames=81`이고 이후 A/B가 `SmokeQualityGate passed=False`다. | 실패 |
-| 최종 추천 후보 | YOLO5Face는 대표 3초 gate는 통과했지만 9분 2초 및 6분 30초 확장 gate에서 추천 후보로 승격하지 못했고, 현재 분류표도 `전체 추천 보류`다. | recommendation=none |
-| label 기반 GT 검증 | `verify-yolo-gt-label-state.ps1` 기준 표본 crop GT식 분류는 통과했다. 9분 2초 pass 표본은 YOLO TP 15/FP 0/miss 0이고, 6분 30초 fail 표본은 YOLO TP 1/FP 10/miss 0, FaceONNX FP 14, unclear 1이다. 실제 full-GT review CSV와 full-frame review CSV도 채웠고 `verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireEvidence -RequireArtifacts -AllowQualityGateFailure` 기준 `gtFaces=8`, `predictions=20`, `truePositive=7`, `miss=1`, `falsePositive=13`, `lowIou=1`, `failureAllowed=True`로 통과했다. 이 결과는 YOLO 추천 후보 없음의 문서화된 실패 증거다. | 충족: sample-gt pass, full-gt-harness pass, full-gt-reviewed pass, full-gt-quality-failure-allowed pass |
-| Avalonia GUI smoke | `verify-yolo-gui-smoke-state.ps1`는 Home YOLO 선택/model picker, detector 선택 줄의 `YOLO 다운로드` 버튼, Workspace 자동 검출, preview/manual edit/export/state persistence source invariant를 확인한다. 다만 실제 Avalonia GUI에서 detector 선택, 모델 다운로드, open, preview, 자동 검출, 수동 편집, export 전체 흐름은 아직 사람이 체크리스트로 확인해야 한다. | 부분 충족: gui-smoke-harness pass, 미완료: gui-smoke |
-| 모델 license/배포 판단 | 2026-05-23 기준 `lindevs/yolov8-face` MIT 표시, YOLOv8 initial weights 및 Ultralytics AGPL-3.0/Enterprise caveat, Hugging Face `YoloV5Face.onnx` gpl-3.0 표시를 재확인했다. 2026-05-24에 다운로드 버튼용 URL도 재확인했다. 현재 제품 정책은 YOLO 모델을 repo에 추적하지 않고 installer 필수 파일로 번들하지 않으며, 사용자가 직접 지정하는 외부 모델 경로, 앱 데이터 다운로드 경로, 또는 솔루션 로컬 `Models/Yolo` 경로만 허용한다. | 충족: license-source pass, bundle blocked |
-| 10분급/전체 영상 최종 검증 | YOLO optimized 단독 10분 자동 검출+export는 완료했고 자동 검출 `totalMs=2,536,529`, export `totalMs=1,375,350`, `directFaceFrames=8063`을 기록했다. FaceONNX 10분 baseline A/B는 완료하지 않았지만, 현재 YOLO profile은 30초 확장 gate와 export A/B가 이미 실패했으므로 최종 추천 후보 승격 조건에 도달하지 못했다. 따라서 이 profile에 대한 10분 FaceONNX full A/B는 추천 판단을 위해 추가 요구하지 않고, 다음 추천 후보가 확장 gate를 통과할 때 다시 수행한다. | 보류: not-required-after-extended-fail |
+| YOLO backend ?듯빀怨?model蹂?profile 遺꾨━ | `YOLO backend ?좏깮`, YOLOv8-Face/YOLO5Face `model profile 遺꾨━ ???, FaceONNX auto-tune 寃쎈줈? YOLO 寃쎈줈 遺꾨━, FaceONNX/SCRFD/YOLO filter profile 遺꾨━源뚯? 援ы쁽?덇퀬, YOLOv8/YOLO5 profile? threshold/NMS/input/tiling肉??꾨땲??downscale/quality/tracking/detectEvery/parallel session???낅┰ ????곸슜?쒕떎. `verify-yolo-profile-state.ps1`媛 source invariant濡?寃?ы븳?? | 異⑹” |
+| FaceONNX 湲곕낯媛?蹂댁〈 | ??湲곕낯 detector??`FaceONNX`?닿퀬, YOLO???ъ슜?먭? 吏곸젒 ?좏깮?섍퀬 ?ъ슜??吏???몃? 紐⑤뜽 寃쎈줈, ?ㅼ슫濡쒕뱶?????곗씠??寃쎈줈, ?먮뒗 ?붾（??濡쒖뺄 `Models/Yolo` 湲곕낯 ?뚯씪紐낆쓣 ?ъ슜?섎뒗 backend/profile 寃쎈줈濡??좎??쒕떎. `verify-yolo-conclusion-state.ps1`? `verify-yolo-distribution-state.ps1`媛 ???곹깭瑜?寃?ы븳?? | 異⑹” |
+| YOLO 3珥????gate | `verify-yolo-representative-gate.ps1` 湲곗? YOLO5Face `0.12/0.18/0.45`??lost-fill 6?꾨젅???곸슜 ??`baselineFrames=19`, `optimizedFrames=20`, `onlyBaseline=0`, `onlyOptimized=1(frame 9)`, `avgBestIou=0.971`, `minBestIou=0.944`, `SmokeQualityGate passed=True`?? | 異⑹” |
+| ?쒕쾲 紐⑥옄?댄겕 ??????몃옒???좎? | YOLO ?꾩슜 track profile? `MaxLostFillFrames=6`, `MaxConfirmedTrackHoldFrames=8`濡? ?뺤젙 track??吏㏐쾶 誘명깘?섎㈃ ?대? gap? 理쒕? 8?꾨젅?꾧퉴吏 蹂닿컙/hold?섍퀬 track 醫낅즺 ?ㅼ뿉???댁쟾 ?대룞?됱쑝濡?理쒕? 6?꾨젅?꾧퉴吏 留덉뒪?щ? ?좎??쒕떎. ???gate??`lostFilled=6`, `lostFrames=6,7,8,9,10,11`??寃?ы븳?? `verify-yolo-track-hold-state.ps1`???⑹꽦 ?뺤젙 track ?대? gap??`gapFrames=13,14,15,16,17,18,19`濡??좎??섍퀬 醫낅즺 ??`heldFrames=21,22,23,24,25,26`源뚯? lost-fill?섎ŉ cap ?댄썑 frame 27?먯꽌??硫덉텛?붿?, `weak-single-frame-candidate=removed`???⑤컻 ?쏀븳 ?ㅽ깘? ?좎??섏? ?딅뒗吏 ?ㅼ젣 interpolator濡?寃利앺븳?? `WorkspaceViewModel`? track postprocess/ROI/smoothing ?댄썑 ?꾩옱 preview frame???ㅼ떆 ?뚮뜑留곹븯怨? 異붿쟻 toggle off ?곹깭?먯꽌??track postprocess? temporal smoothing???곸슜?섏? ?딅뒗?? GUI smoke checklist??`preview-track-hold` row??`.tmp/yolo-gui-smoke/evidence/preview-track-hold.mp4` recording?쇰줈 梨꾩썱?? | 異⑹”: anti-flicker-tracking pass, track-hold-state pass, preview-refresh-after-postprocess pass, tracking-toggle-gated pass, preview-track-hold GUI recording pass |
+| 30珥??댁긽 ?뺤옣 gate | `verify-yolo-extended-gate.ps1` 湲곗? 媛숈? profile? 6遺?30珥?30珥?clip?먯꽌 lost-fill 6?꾨젅???곸슜 ?꾩뿉??`baselineFrames=83`, `optimizedFrames=81`, `onlyBaseline=13`, `onlyOptimized=11`, `minBestIou=0.000`, `SmokeQualityGate passed=False`?? | ?ㅽ뙣 |
+| 30珥?export smoke | `verify-yolo-extended-export-gate.ps1` 湲곗? export??FaceONNX/YOLO 紐⑤몢 ?꾨즺?섏?留?FaceONNX `directFaceFrames=83`, YOLO `directFaceFrames=81`?닿퀬 ?댄썑 A/B媛 `SmokeQualityGate passed=False`?? | ?ㅽ뙣 |
+| 理쒖쥌 異붿쿇 ?꾨낫 | YOLO5Face?????3珥?gate???듦낵?덉?留?9遺?2珥?諛?6遺?30珥??뺤옣 gate?먯꽌 異붿쿇 ?꾨낫濡??밴꺽?섏? 紐삵뻽怨? ?꾩옱 遺꾨쪟?쒕룄 `?꾩껜 異붿쿇 蹂대쪟`?? | recommendation=none |
+| label 湲곕컲 GT 寃利?| `verify-yolo-gt-label-state.ps1` 湲곗? ?쒕낯 crop GT??遺꾨쪟???듦낵?덈떎. 9遺?2珥?pass ?쒕낯? YOLO TP 15/FP 0/miss 0?닿퀬, 6遺?30珥?fail ?쒕낯? YOLO TP 1/FP 10/miss 0, FaceONNX FP 14, unclear 1?대떎. ?ㅼ젣 full-GT review CSV? full-frame review CSV??梨꾩썱怨?`verify-yolo-full-gt-reviewed-state.ps1 -RequireFullFrameReview -RequireEvidence -RequireArtifacts -AllowQualityGateFailure` 湲곗? `gtFaces=8`, `predictions=20`, `truePositive=7`, `miss=1`, `falsePositive=13`, `lowIou=1`, `failureAllowed=True`濡??듦낵?덈떎. ??寃곌낵??YOLO 異붿쿇 ?꾨낫 ?놁쓬??臾몄꽌?붾맂 ?ㅽ뙣 利앷굅?? | 異⑹”: sample-gt pass, full-gt-harness pass, full-gt-reviewed pass, full-gt-quality-failure-allowed pass |
+| Avalonia GUI smoke | `verify-yolo-gui-smoke-state.ps1 -RequireManualPass` passes with all 9 checklist rows complete. Local ignored evidence covers `open-video`, `select-yolo-backend`, existing model path, YOLO auto-detect debug output, preview-result screenshot, preview-track-hold recording, manual-edit screenshot, readable export output, and reopen-state screenshot. The fixes for queued exact-frame playback, export-cancel resume state, face-rect mask persistence, startup `--no-auto-export`/`--frame`, lazy thumbnail opening, and YOLO numeric width are covered by source invariants and local smoke evidence. | pass |
+| 紐⑤뜽 license/諛고룷 ?먮떒 | 2026-05-23 湲곗? `lindevs/yolov8-face` MIT ?쒖떆, YOLOv8 initial weights 諛?Ultralytics AGPL-3.0/Enterprise caveat, Hugging Face `YoloV5Face.onnx` gpl-3.0 ?쒖떆瑜??ы솗?명뻽?? 2026-05-24???ㅼ슫濡쒕뱶 踰꾪듉??URL???ы솗?명뻽?? ?꾩옱 ?쒗뭹 ?뺤콉? YOLO 紐⑤뜽??repo??異붿쟻?섏? ?딄퀬 installer ?꾩닔 ?뚯씪濡?踰덈뱾?섏? ?딆쑝硫? ?ъ슜?먭? 吏곸젒 吏?뺥븯???몃? 紐⑤뜽 寃쎈줈, ???곗씠???ㅼ슫濡쒕뱶 寃쎈줈, ?먮뒗 ?붾（??濡쒖뺄 `Models/Yolo` 寃쎈줈留??덉슜?쒕떎. | 異⑹”: license-source pass, bundle blocked |
+| 10遺꾧툒/?꾩껜 ?곸긽 理쒖쥌 寃利?| YOLO optimized ?⑤룆 10遺??먮룞 寃異?export???꾨즺?덇퀬 ?먮룞 寃異?`totalMs=2,536,529`, export `totalMs=1,375,350`, `directFaceFrames=8063`??湲곕줉?덈떎. FaceONNX 10遺?baseline A/B???꾨즺?섏? ?딆븯吏留? ?꾩옱 YOLO profile? 30珥??뺤옣 gate? export A/B媛 ?대? ?ㅽ뙣?덉쑝誘濡?理쒖쥌 異붿쿇 ?꾨낫 ?밴꺽 議곌굔???꾨떖?섏? 紐삵뻽?? ?곕씪????profile?????10遺?FaceONNX full A/B??異붿쿇 ?먮떒???꾪빐 異붽? ?붽뎄?섏? ?딄퀬, ?ㅼ쓬 異붿쿇 ?꾨낫媛 ?뺤옣 gate瑜??듦낵?????ㅼ떆 ?섑뻾?쒕떎. | 蹂대쪟: not-required-after-extended-fail |
 
-따라서 현재 goal 상태는 `complete=false`다. 구현과 초기/확장 검증, license/source 배포 정책 정리, 10분 YOLO 단독 산출물 확보는 진행됐지만, 최종 추천 후보는 없고 GT label과 실제 GUI smoke가 남아 있으므로 목표 완료로 처리하지 않는다.
+Current goal marker is `complete=true` and `remaining=none`. YOLO remains `recommendation=none` because the documented full-GT quality gate still fails under strict zero-miss/zero-false-positive limits and is allowed only as failure evidence, not as a promoted model recommendation.

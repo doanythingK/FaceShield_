@@ -2,6 +2,7 @@
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using FaceShield.Enums.Workspace;
 using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
@@ -31,6 +32,9 @@ public partial class FramePreviewViewModel : ViewModelBase
     private readonly Stack<byte[]> _maskUndo = new();
     private int _changeStamp;
     private bool _isPlaying;
+    private bool _playbackDecodeActive;
+    private int _queuedPlaybackFrameIndex = -1;
+    private int _lastAppliedPlaybackFrameIndex = -1;
     private int _currentFrameIndex = -1;
     private bool _maskDirty;
     private Point? _lastDrawPoint;
@@ -428,6 +432,12 @@ public partial class FramePreviewViewModel : ViewModelBase
     /// </summary>
     public async void OnFrameIndexChanged(int index)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnFrameIndexChanged(index));
+            return;
+        }
+
         if (_session == null)
             return;
         if (index < 0)
@@ -435,6 +445,12 @@ public partial class FramePreviewViewModel : ViewModelBase
 
         PersistCurrentMask();
         _currentFrameIndex = index;
+
+        if (_isPlaying)
+        {
+            QueuePlaybackFrame(index);
+            return;
+        }
 
         int stamp = Interlocked.Increment(ref _changeStamp);
 
@@ -465,11 +481,17 @@ public partial class FramePreviewViewModel : ViewModelBase
             return;
         }
 
-        ApplyExactFrame(exact, index);
+        ApplyExactFrame(exact, index, stamp);
     }
 
     public async void OnPlaybackStopped(int index)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnPlaybackStopped(index));
+            return;
+        }
+
         if (_session == null)
             return;
         if (index < 0)
@@ -483,10 +505,70 @@ public partial class FramePreviewViewModel : ViewModelBase
     public void SetPlaying(bool isPlaying)
     {
         _isPlaying = isPlaying;
+        if (!isPlaying)
+        {
+            _queuedPlaybackFrameIndex = -1;
+            _lastAppliedPlaybackFrameIndex = -1;
+        }
     }
 
-    private void ApplyExactFrame(WriteableBitmap exact, int index)
+    private void QueuePlaybackFrame(int index)
     {
+        _queuedPlaybackFrameIndex = index;
+
+        if (_playbackDecodeActive)
+            return;
+
+        _playbackDecodeActive = true;
+        _ = RunPlaybackDecodeLoopAsync();
+    }
+
+    private async Task RunPlaybackDecodeLoopAsync()
+    {
+        try
+        {
+            while (_isPlaying && _session != null)
+            {
+                int index = _queuedPlaybackFrameIndex;
+                if (index < 0)
+                    break;
+
+                _queuedPlaybackFrameIndex = -1;
+
+                var exact = await _session.Timeline.GetExactNowAsync(index);
+                if (exact != null &&
+                    _isPlaying &&
+                    index >= _lastAppliedPlaybackFrameIndex)
+                {
+                    _lastAppliedPlaybackFrameIndex = index;
+                    ApplyExactFrame(exact, index);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Playback naturally cancels outstanding frame loads while stopping or seeking.
+        }
+        finally
+        {
+            _playbackDecodeActive = false;
+
+            if (_isPlaying && _queuedPlaybackFrameIndex >= 0)
+                QueuePlaybackFrame(_queuedPlaybackFrameIndex);
+        }
+    }
+
+    private void ApplyExactFrame(WriteableBitmap exact, int index, int? expectedStamp = null)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyExactFrame(exact, index, expectedStamp));
+            return;
+        }
+
+        if (expectedStamp.HasValue && expectedStamp.Value != _changeStamp)
+            return;
+
         FrameBitmap = exact;
         _blurredFrame = null;
         _blurredSource = null;
@@ -557,7 +639,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         if (exact == null || stamp != _changeStamp)
             return;
 
-        ApplyExactFrame(exact, index);
+        ApplyExactFrame(exact, index, stamp);
     }
 
     private void MarkDirty(Point from, Point to, int radius, int width, int height)

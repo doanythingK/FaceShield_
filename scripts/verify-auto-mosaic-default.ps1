@@ -37,6 +37,7 @@ param(
     [int]$YoloFullGtMaxMisses = 0,
     [int]$YoloFullGtMaxFalsePositives = 0,
     [int]$YoloFullGtMaxLowIou = 0,
+    [switch]$AllowFullGtQualityGateFailure,
     [switch]$RunYoloProfileState,
     [switch]$RunYoloConclusionState,
     [switch]$RunYoloDistributionState,
@@ -121,6 +122,9 @@ if ($RequireYoloComplete) {
     }
     else {
         $completeGuardArgs += @("-PredictionLog", $YoloFullGtPredictionLog)
+    }
+    if ($AllowFullGtQualityGateFailure) {
+        $completeGuardArgs += "-AllowQualityGateFailure"
     }
 
     $completeGuardOutput = Invoke-ScriptStep "yolo-require-complete-guard" $yoloCompletionAuditVerify $completeGuardArgs
@@ -406,6 +410,9 @@ if ($RunYoloState) {
     if ($RequireYoloComplete) {
         $yoloStateArgs += "-RequireComplete"
     }
+    if ($AllowFullGtQualityGateFailure) {
+        $yoloStateArgs += "-AllowFullGtQualityGateFailure"
+    }
     if (-not [string]::IsNullOrWhiteSpace($YoloFullGtPredictionCsv)) {
         $yoloStateArgs += @("-FullGtPredictionCsv", $YoloFullGtPredictionCsv)
     }
@@ -504,6 +511,9 @@ if ($RunYoloManualReadinessState -and -not $RunYoloState) {
     }
     if ($AllowCompletedYoloGuiSmoke) {
         $manualReadinessArgs += "-AllowCompletedGuiSmoke"
+    }
+    if ($AllowFullGtQualityGateFailure) {
+        $manualReadinessArgs += "-AllowQualityGateFailure"
     }
     if (-not [string]::IsNullOrWhiteSpace($YoloFullGtPredictionCsv)) {
         $manualReadinessArgs += @("-FullGtPredictionCsv", $YoloFullGtPredictionCsv)

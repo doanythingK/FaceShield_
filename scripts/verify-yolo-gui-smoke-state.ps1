@@ -6,9 +6,16 @@ param(
     [string]$AppCodeBehind = "App.axaml.cs",
     [string]$AppStartupOptions = "Models\AppStartupOptions.cs",
     [string]$WorkspaceViewModel = "ViewModels\Pages\WorkspaceViewModel.cs",
+    [string]$FramePreviewViewModel = "ViewModels\Workspace\FramePreviewViewModel.cs",
     [string]$ToolPanelViewModel = "ViewModels\Workspace\ToolPanelViewModel.cs",
     [string]$StateStore = "Services\Workspace\WorkspaceStateStore.cs",
+    [string]$ExactFrameProvider = "Services\Video\Session\ExactFrameProvider.cs",
+    [string]$TimelineController = "Services\Video\Session\TimelineController.cs",
+    [string]$VideoSession = "Services\Video\Session\VideoSession.cs",
+    [string]$TimelineFrameStrip = "Controls\TimelineFrameStrip.cs",
+    [string]$TimelineThumbnailProvider = "Services\Video\TimelineThumbnailProvider.cs",
     [switch]$RequireManualPass,
+    [switch]$AllowPartialManualPass,
     [switch]$SelfTest
 )
 
@@ -128,7 +135,8 @@ function Assert-ManualChecklist {
     param(
         [string]$Path,
         [string[]]$Steps,
-        [hashtable]$EvidenceTypes
+        [hashtable]$EvidenceTypes,
+        [switch]$AllowPartial
     )
 
     $resolvedChecklist = Resolve-RepoPath $Path
@@ -149,7 +157,12 @@ function Assert-ManualChecklist {
             }
         }
 
-        if ($row.status.Trim().ToLowerInvariant() -ne "pass") {
+        $status = $row.status.Trim().ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($status) -and $AllowPartial) {
+            continue
+        }
+
+        if ($status -ne "pass") {
             throw "Manual GUI smoke step is not pass: $step status=$($row.status)"
         }
 
@@ -181,8 +194,14 @@ $mainWindowText = Read-RepoFile $MainWindowViewModel
 $appText = Read-RepoFile $AppCodeBehind
 $startupOptionsText = Read-RepoFile $AppStartupOptions
 $workspaceText = Read-RepoFile $WorkspaceViewModel
+$framePreviewText = Read-RepoFile $FramePreviewViewModel
 $toolPanelText = Read-RepoFile $ToolPanelViewModel
 $stateText = Read-RepoFile $StateStore
+$exactFrameProviderText = Read-RepoFile $ExactFrameProvider
+$timelineControllerText = Read-RepoFile $TimelineController
+$videoSessionText = Read-RepoFile $VideoSession
+$timelineFrameStripText = Read-RepoFile $TimelineFrameStrip
+$timelineThumbnailProviderText = Read-RepoFile $TimelineThumbnailProvider
 
 Assert-Match "home exposes open workflow" $homeText "StartWorkspace|OpenVideo|PickVideo"
 Assert-Match "home exposes yolo backend selector" $homeText "YOLO Face ONNX[\s\S]*FaceDetectorBackend\.YoloFaceOnnx"
@@ -190,20 +209,40 @@ Assert-Match "home exposes yolo model path" $homeText "AutoYoloModelPath"
 Assert-Match "home view exposes yolo picker" $homeViewText "PickYoloModel_Click"
 Assert-Match "home view exposes yolo downloader in detector row" $homeViewText "SelectedItem=""\{Binding SelectedAutoDetectorBackendOption\}""[\s\S]*DownloadYoloModelCommand[\s\S]*IsVisible=""\{Binding IsYoloDetectorSelected\}"""
 Assert-Match "home view binds yolo download progress" $homeViewText "YoloModelDownloadProgress"
+Assert-Match "home view widens yolo input numeric control" $homeViewText 'NumericUpDown\s+Width="128"[\s\S]*AutoYoloInputSize'
+Assert-Match "home view widens yolo tile numeric controls" $homeViewText 'NumericUpDown\s+Width="92"[\s\S]*AutoYoloTileColumns[\s\S]*NumericUpDown\s+Width="92"[\s\S]*AutoYoloTileRows'
 Assert-Match "home downloads yolo model" $homeText "DownloadYoloModelAsync[\s\S]*YoloModelDownloadStatus"
 Assert-Match "home stores downloaded yolo model outside repo" $homeText "GetYoloModelDownloadDirectory[\s\S]*LocalApplicationData[\s\S]*FaceShield"
 Assert-Match "home applies startup smoke options" $homeText "ApplyStartupOptions[\s\S]*SelectedAutoDetectorBackendOption[\s\S]*SelectedYoloModelTypeOption[\s\S]*AutoYoloModelPath[\s\S]*SelectedVideoPath"
+Assert-Match "home applies startup auto export option" $homeText "ApplyStartupOptions[\s\S]*AutoExportAfter"
 Assert-Match "app forwards desktop startup args" $appText "new MainWindowViewModel\(desktop\.Args\)"
 Assert-Match "main window supports startup manual open" $mainWindowText "OpenStartupWorkspaceAsync[\s\S]*OpenManualWorkspaceCommand\.ExecuteAsync"
 Assert-Match "main window supports startup auto open" $mainWindowText "OpenStartupWorkspaceAsync[\s\S]*OpenAutoWorkspaceCommand\.ExecuteAsync"
+Assert-Match "main window applies startup frame after workspace open" $mainWindowText "_startupFrameIndex[\s\S]*CurrentPage\s+is\s+WorkspaceViewModel[\s\S]*SelectedFrameIndex\s*=\s*Math\.Clamp"
 Assert-Contains "startup options support yolo smoke preset" $startupOptionsText "--yolo-smoke"
 Assert-Contains "startup options use srcTest smoke video" $startupOptionsText "srcTest/260102_jp_10.mp4"
 Assert-Contains "startup options use local yolo smoke model" $startupOptionsText ".tmp/models/YoloV5Face.onnx"
 Assert-Contains "startup options support auto open" $startupOptionsText "--open-auto"
+Assert-Contains "startup options support no auto export" $startupOptionsText "--no-auto-export"
+Assert-Contains "startup options support frame selection" $startupOptionsText "--frame"
 Assert-Match "workspace runs auto detect" $workspaceText "RunAutoMaskAsync|RunAutoAsync"
 Assert-Match "workspace creates yolo detector factory" $workspaceText "FaceDetectorFactory"
 Assert-Match "workspace exports video" $workspaceText "VideoExportService[\s\S]*Export"
 Assert-Match "workspace persists state" $workspaceText "PersistWorkspaceState"
+Assert-Match "workspace marks detection complete before export cancel path" $workspaceText '_autoCompleted\s*=\s*true;\s*_autoResumeIndex\s*=\s*0;[\s\S]*if\s*\(exportAfter\)[\s\S]*SaveVideoAsync'
+Assert-Match "workspace keeps completed detection state when export is canceled" $workspaceText 'if\s*\(!exported\)[\s\S]*PersistWorkspaceState\(includePreviewMask:\s*false\)[\s\S]*return\s+false;'
+Assert-Match "workspace loads initial selected frame after session init on UI thread" $workspaceText '_sessionInitialized\s*&&\s*FrameList\.SelectedFrameIndex\s*>=\s*0[\s\S]*Dispatcher\.UIThread\.Post[\s\S]*FramePreview\.OnFrameIndexChanged\(FrameList\.SelectedFrameIndex\)'
+Assert-Match "workspace state restores face rect masks" $stateText 'FaceMasks[\s\S]*SetFaceRects'
+Assert-Match "workspace state saves face rect masks" $stateText 'GetFaceMaskEntries\(\)[\s\S]*FaceMasks'
+Assert-Match "frame preview queues playback frame decode" $framePreviewText '_queuedPlaybackFrameIndex[\s\S]*QueuePlaybackFrame[\s\S]*RunPlaybackDecodeLoopAsync'
+Assert-Match "frame preview avoids exact-frame cancellation flood while playing" $framePreviewText 'if\s*\(_isPlaying\)[\s\S]*QueuePlaybackFrame\(index\)[\s\S]*return;'
+Assert-Match "frame preview decodes one playback frame at a time" $framePreviewText '_playbackDecodeActive[\s\S]*if\s*\(_playbackDecodeActive\)[\s\S]*return;[\s\S]*_playbackDecodeActive\s*=\s*true'
+Assert-Match "exact frame provider returns null instead of cancellation exception" $exactFrameProviderText 'ct\.IsCancellationRequested[\s\S]*return\s+null[\s\S]*Task\.Run\(\(\)\s*=>\s*_extractor\.GetFrameByIndex\(frameIndex\)\)'
+Assert-Match "timeline controller uses request ids instead of canceling every preview frame" $timelineControllerText '_exactRequestId[\s\S]*Interlocked\.Increment\(ref\s+_exactRequestId\)[\s\S]*Volatile\.Read\(ref\s+_exactRequestId\)'
+Assert-Match "video session defaults to lazy thumbnail preload" $videoSessionText 'eagerThumbnailCount\s*=\s*0[\s\S]*done\s*<\s*preloadLimit'
+Assert-Match "timeline render avoids synchronous thumbnail decode" $timelineFrameStripText 'TryGetCachedThumbnail\(frame[\s\S]*RequestThumbnail\(provider,\s*frame\)'
+Assert-Match "timeline requests missing thumbnails off render path" $timelineFrameStripText 'private\s+void\s+RequestThumbnail[\s\S]*Task\.Run[\s\S]*provider\.GetThumbnail\(frame\)'
+Assert-Contains "thumbnail provider exposes cache-only lookup" $timelineThumbnailProviderText "TryGetCachedThumbnail"
 Assert-Match "tool panel supports manual mode" $toolPanelText "SetManual|EditMode\.Manual"
 Assert-Match "tool panel supports brush" $toolPanelText "SetBrush|EditMode\.Brush"
 Assert-Match "tool panel supports eraser" $toolPanelText "SetEraser|EditMode\.Eraser"
@@ -375,6 +414,10 @@ if ($RequireManualPass) {
     if ($SelfTest) {
         Write-Host "[YoloGuiSmokeVerify] pass negative selftests=3"
     }
+}
+elseif ($AllowPartialManualPass) {
+    Assert-ManualChecklist -Path $ChecklistCsv -Steps $requiredSteps -EvidenceTypes $requiredEvidenceTypes -AllowPartial
+    Write-Host "[YoloGuiSmokeVerify] pass partial manual checklist"
 }
 else {
     Write-Host "[YoloGuiSmokeVerify] manual checklist not required in this run"

@@ -8,6 +8,8 @@ using FaceShield.ViewModels.Workspace;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Threading.Tasks;
+using Avalonia.Threading;
 
 namespace FaceShield.Controls
 {
@@ -134,6 +136,8 @@ namespace FaceShield.Controls
         }
 
         private int _hoverIndex = -1;
+        private readonly object _pendingThumbnailSync = new();
+        private readonly HashSet<int> _pendingThumbnails = new();
 
         static TimelineFrameStrip()
         {
@@ -323,8 +327,18 @@ namespace FaceShield.Controls
                 frame = Math.Clamp(frame, 0, Math.Max(0, totalFrames - 1));
 
                 WriteableBitmap? bmp;
-                try { bmp = provider.GetThumbnail(frame); }
-                catch { continue; }
+                try
+                {
+                    if (!provider.TryGetCachedThumbnail(frame, out bmp))
+                    {
+                        RequestThumbnail(provider, frame);
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
 
                 if (bmp == null) continue;
 
@@ -333,6 +347,40 @@ namespace FaceShield.Controls
 
                 ctx.DrawImage(bmp, src, dst);
             }
+        }
+
+        private void RequestThumbnail(TimelineThumbnailProvider provider, int frame)
+        {
+            lock (_pendingThumbnailSync)
+            {
+                if (!_pendingThumbnails.Add(frame))
+                    return;
+            }
+
+            _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        return provider.GetThumbnail(frame) != null;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                })
+                .ContinueWith(task =>
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        lock (_pendingThumbnailSync)
+                        {
+                            _pendingThumbnails.Remove(frame);
+                        }
+
+                        if (task.Status == TaskStatus.RanToCompletion && task.Result)
+                            InvalidateVisual();
+                    });
+                }, TaskScheduler.Default);
         }
 
         private static void DrawGridLines(DrawingContext ctx, double w, double stripH, double startSec, double endSec)

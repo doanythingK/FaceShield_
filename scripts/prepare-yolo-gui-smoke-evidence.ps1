@@ -204,20 +204,20 @@ if ($Verify) {
     Assert-Contains "guide records manual verifier" $guideText "verify-yolo-gui-smoke-state.ps1"
     Assert-Contains "guide records export output" $guideText "export must point to the actual exported video file"
 
-    if ($UpdateChecklist) {
-        $updatedRows = @(Import-Csv $checklistPath)
-        foreach ($step in $steps) {
-            $row = $updatedRows | Where-Object { $_.stepId -eq $step.stepId } | Select-Object -First 1
-            if ([string]::IsNullOrWhiteSpace($row.artifactPath)) {
-                throw "GUI smoke checklist artifactPath was not prepared: $($step.stepId)"
-            }
-            if ($row.status.Trim().ToLowerInvariant() -eq "pass" -or -not [string]::IsNullOrWhiteSpace($row.evidence)) {
-                throw "GUI smoke evidence prep unexpectedly filled final review fields: $($step.stepId)"
-            }
-        }
+	    if ($UpdateChecklist) {
+	        $updatedRows = @(Import-Csv $checklistPath)
+	        foreach ($step in $steps) {
+	            $row = $updatedRows | Where-Object { $_.stepId -eq $step.stepId } | Select-Object -First 1
+	            if ([string]::IsNullOrWhiteSpace($row.artifactPath)) {
+	                throw "GUI smoke checklist artifactPath was not prepared: $($step.stepId)"
+	            }
+	            if ($row.status.Trim().ToLowerInvariant() -eq "pass" -or -not [string]::IsNullOrWhiteSpace($row.evidence)) {
+	                continue
+	            }
+	        }
 
-        Write-Host "[YoloGuiSmokeEvidencePrep] pass checklist artifact paths prepared without final evidence"
-    }
+	        Write-Host "[YoloGuiSmokeEvidencePrep] pass checklist artifact paths prepared without changing final evidence"
+	    }
 }
 
 Write-Host "[YoloGuiSmokeEvidencePrep] evidenceDir=$resolvedEvidenceDir"

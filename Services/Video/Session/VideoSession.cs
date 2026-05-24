@@ -18,7 +18,8 @@ public sealed class VideoSession
         int thumbStep = 20,          // 4K 20분 기준: 20프레임마다 썸네일 하나 (메모리 부담 줄이기)
         int thumbWidth = 240,
         int thumbHeight = 135,
-        IProgress<int>? progress = null)
+        IProgress<int>? progress = null,
+        int eagerThumbnailCount = 0)
     {
         // 1) 고화질 정확 프레임용 Extractor
         var extractor = new FfFrameExtractor(videoPath, enableHardware: false);
@@ -34,9 +35,10 @@ public sealed class VideoSession
             totalFrames = 300; // 방어용 최소값
 
         int totalThumbs = (int)Math.Ceiling(totalFrames / (double)Math.Max(1, thumbStep));
+        int preloadLimit = Math.Clamp(eagerThumbnailCount, 0, totalThumbs);
         int done = 0;
 
-        for (int i = 0; i < totalFrames; i += thumbStep)
+        for (int i = 0; i < totalFrames && done < preloadLimit; i += thumbStep)
         {
             var bmp = thumbsProvider.GetThumbnail(i);
             if (bmp != null)
@@ -45,7 +47,7 @@ public sealed class VideoSession
             done++;
             if (progress != null)
             {
-                int percent = (int)Math.Round(done * 100.0 / Math.Max(1, totalThumbs));
+                int percent = (int)Math.Round(done * 100.0 / Math.Max(1, preloadLimit));
                 if (percent > 100) percent = 100;
                 progress.Report(percent);
             }

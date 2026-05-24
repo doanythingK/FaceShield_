@@ -248,19 +248,30 @@ function Assert-GuiChecklistReady {
     }
 
     $filledStatuses = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_.status) })
-    if ($filledStatuses.Count -ne 0 -and -not $AllowCompletedGuiSmoke) {
-        throw "GUI manual checklist should remain pending until real GUI smoke is performed: $($filledStatuses.Count) filled statuses"
-    }
-
-    if ($filledStatuses.Count -ne 0) {
+    if ($AllowCompletedGuiSmoke) {
         $guiSmokeVerifierPath = Assert-FileNonEmpty "GUI smoke verifier" $GuiSmokeVerifier
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $guiSmokeVerifierPath -ChecklistCsv $checklist -RequireManualPass
         if ($LASTEXITCODE -ne 0) {
             throw "GUI smoke verifier failed with exit code $LASTEXITCODE"
         }
     }
+    elseif ($filledStatuses.Count -ne 0) {
+        $guiSmokeVerifierPath = Assert-FileNonEmpty "GUI smoke verifier" $GuiSmokeVerifier
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $guiSmokeVerifierPath -ChecklistCsv $checklist -AllowPartialManualPass
+        if ($LASTEXITCODE -ne 0) {
+            throw "GUI smoke partial verifier failed with exit code $LASTEXITCODE"
+        }
+    }
 
-    $statusState = if ($filledStatuses.Count -eq 0) { "pending" } else { "completed" }
+    $statusState = if ($filledStatuses.Count -eq 0) {
+        "pending"
+    }
+    elseif ($filledStatuses.Count -eq $rows.Count) {
+        "completed"
+    }
+    else {
+        "partial"
+    }
     Write-Host "[YoloManualReadinessVerify] pass GUI manual checklist rows=$($rows.Count), status=$statusState"
 }
 

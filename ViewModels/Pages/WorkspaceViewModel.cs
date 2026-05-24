@@ -159,6 +159,15 @@ namespace FaceShield.ViewModels.Pages
             ToolPanel.AutoRequested += OnAutoRequested;
             ToolPanel.AutoCancelRequested += OnAutoCancelRequested;
             ToolPanel.ExportCancelRequested += OnExportCancelRequested;
+
+            if (_sessionInitialized && FrameList.SelectedFrameIndex >= 0)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_sessionInitialized && FrameList.SelectedFrameIndex >= 0)
+                        FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+                });
+            }
         }
 
         public async Task EnsureSessionInitializedAsync(IProgress<int>? loadProgress)
@@ -458,6 +467,11 @@ namespace FaceShield.ViewModels.Pages
                 if (!exportAfter)
                     await BuildAutoAnomaliesAsync();
 
+                // Detection and post-processing are complete at this point. If export is
+                // canceled afterwards, do not reopen as a partial detection resume.
+                _autoCompleted = true;
+                _autoResumeIndex = 0;
+
                 if (exportAfter)
                 {
                     bool exported = await SaveVideoAsync(
@@ -467,15 +481,12 @@ namespace FaceShield.ViewModels.Pages
                         runId: runId);
                     if (!exported)
                     {
-                        _autoCompleted = false;
                         PersistWorkspaceState(includePreviewMask: false);
                         persisted = true;
                         return false;
                     }
                 }
 
-                _autoCompleted = true;
-                _autoResumeIndex = 0;
                 PersistWorkspaceState(includePreviewMask: !exportAfter);
                 persisted = true;
 

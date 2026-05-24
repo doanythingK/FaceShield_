@@ -13,13 +13,17 @@ namespace FaceShield.Models
         public YoloFaceModelType? YoloModelType { get; private init; }
         public string? YoloModelPath { get; private init; }
         public WorkspaceMode? OpenMode { get; private init; }
+        public bool? AutoExportAfter { get; private init; }
+        public int? FrameIndex { get; private init; }
 
         public bool HasValues =>
             !string.IsNullOrWhiteSpace(VideoPath) ||
             DetectorBackend.HasValue ||
             YoloModelType.HasValue ||
             !string.IsNullOrWhiteSpace(YoloModelPath) ||
-            OpenMode.HasValue;
+            OpenMode.HasValue ||
+            AutoExportAfter.HasValue ||
+            FrameIndex.HasValue;
 
         public static AppStartupOptions Parse(IEnumerable<string>? args)
         {
@@ -28,6 +32,8 @@ namespace FaceShield.Models
             YoloFaceModelType? yoloModelType = null;
             string? yoloModelPath = null;
             WorkspaceMode? openMode = null;
+            bool? autoExportAfter = null;
+            int? frameIndex = null;
 
             var tokens = args is null ? Array.Empty<string>() : [.. args];
             for (int i = 0; i < tokens.Length; i++)
@@ -59,6 +65,15 @@ namespace FaceShield.Models
                     case "--open-auto":
                         openMode = WorkspaceMode.Auto;
                         break;
+                    case "--no-auto-export":
+                        autoExportAfter = false;
+                        break;
+                    case "--auto-export":
+                        autoExportAfter = true;
+                        break;
+                    case "--frame":
+                        frameIndex = ParseFrameIndex(ReadValue(tokens, ref i, token));
+                        break;
                 }
             }
 
@@ -68,7 +83,9 @@ namespace FaceShield.Models
                 DetectorBackend = detectorBackend,
                 YoloModelType = yoloModelType,
                 YoloModelPath = NormalizePath(yoloModelPath),
-                OpenMode = openMode
+                OpenMode = openMode,
+                AutoExportAfter = autoExportAfter,
+                FrameIndex = frameIndex
             };
         }
 
@@ -99,6 +116,14 @@ namespace FaceShield.Models
                 "yolo8" or "yolov8" or "yolov8face" or "yolov8-face" => YoloFaceModelType.YoloV8Face,
                 _ => throw new ArgumentException($"Unsupported YOLO model type: {value}")
             };
+        }
+
+        private static int ParseFrameIndex(string value)
+        {
+            if (!int.TryParse(value, out int frameIndex) || frameIndex < 0)
+                throw new ArgumentException($"Unsupported frame index: {value}");
+
+            return frameIndex;
         }
 
         private static string? ResolveExistingPath(string relativePath)

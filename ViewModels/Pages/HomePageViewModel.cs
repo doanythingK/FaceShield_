@@ -430,6 +430,9 @@ namespace FaceShield.ViewModels.Pages
             if (!string.IsNullOrWhiteSpace(options.VideoPath))
                 SelectedVideoPath = options.VideoPath;
 
+            if (options.AutoExportAfter.HasValue)
+                AutoExportAfter = options.AutoExportAfter.Value;
+
             PersistAutoSettings();
         }
 

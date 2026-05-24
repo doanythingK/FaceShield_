@@ -17,6 +17,7 @@ namespace FaceShield.ViewModels
         private readonly WorkspaceStateStore _stateStore = new();
         private readonly HomePageViewModel _home;
         private readonly WorkspaceMode? _startupOpenMode;
+        private readonly int? _startupFrameIndex;
 
         public MainWindowViewModel()
             : this(null)
@@ -37,6 +38,7 @@ namespace FaceShield.ViewModels
                 _home.ApplyStartupOptions(startupOptions);
 
             _startupOpenMode = startupOptions.OpenMode;
+            _startupFrameIndex = startupOptions.FrameIndex;
             CurrentPage = _home;
         }
 
@@ -53,6 +55,16 @@ namespace FaceShield.ViewModels
                     await _home.OpenAutoWorkspaceCommand.ExecuteAsync(null);
                 else
                     await _home.OpenManualWorkspaceCommand.ExecuteAsync(null);
+
+                if (_startupFrameIndex.HasValue &&
+                    CurrentPage is WorkspaceViewModel workspace &&
+                    workspace.FrameList.TotalFrames > 0)
+                {
+                    workspace.FrameList.SelectedFrameIndex = Math.Clamp(
+                        _startupFrameIndex.Value,
+                        0,
+                        workspace.FrameList.TotalFrames - 1);
+                }
             }
             catch (Exception ex)
             {

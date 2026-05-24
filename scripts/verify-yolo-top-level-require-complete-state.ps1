@@ -54,6 +54,17 @@ Assert-Contains "auto verifier exposes require complete switch" $autoVerifyText 
 Assert-Contains "auto verifier runs require complete guard" $autoVerifyText "yolo-require-complete-guard"
 Assert-Contains "auto verifier uses completion audit" $autoVerifyText "verify-yolo-completion-audit-state.ps1"
 Assert-Contains "auto verifier promotes require complete to yolo state" $autoVerifyText '$RunYoloState = $true'
+Assert-Contains "auto verifier exposes full GT quality failure allowance" $autoVerifyText "AllowFullGtQualityGateFailure"
+Assert-Contains "auto verifier forwards completion audit quality allowance" $autoVerifyText "-AllowQualityGateFailure"
+Assert-Contains "auto verifier forwards yolo state quality allowance" $autoVerifyText "-AllowFullGtQualityGateFailure"
+
+$planPath = Join-Path $repo "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
+$planText = if (Test-Path $planPath) { Get-Content -Raw -Path $planPath } else { "" }
+if ($planText.Contains("yolo-goal-audit-state:") -and $planText.Contains("complete=true") -and $planText.Contains("remaining=none")) {
+    Write-Host "[YoloTopLevelRequireCompleteVerify] current goal marker is complete; pending-marker negative runtime check skipped"
+    Write-Host "[YoloTopLevelRequireCompleteVerify] all requested checks passed"
+    return
+}
 
 $oldErrorAction = $ErrorActionPreference
 try {

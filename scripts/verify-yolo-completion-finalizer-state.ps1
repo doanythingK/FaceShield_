@@ -4,7 +4,12 @@ param(
     [string]$FullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review.csv",
     [string]$GuiChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
-    [string]$ManualGateSummary = ".tmp\yolo-manual-gates\manual-gate-summary.md"
+    [string]$ManualGateSummary = ".tmp\yolo-manual-gates\manual-gate-summary.md",
+    [double]$MinIou = 0.50,
+    [int]$MaxMisses = 0,
+    [int]$MaxFalsePositives = 0,
+    [int]$MaxLowIou = 0,
+    [switch]$AllowQualityGateFailure
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,6 +85,7 @@ Assert-Contains "finalizer requires strict full GT" $finalizerText "full-gt-revi
 Assert-Contains "finalizer requires GUI smoke" $finalizerText "gui-smoke-state"
 Assert-Contains "finalizer runs completion audit" $finalizerText "completion-audit-complete"
 Assert-Contains "finalizer writes evidence report" $finalizerText "goal-evidence-report-complete"
+Assert-Contains "finalizer forwards quality failure allowance" $finalizerText "allowQualityGateFailureArgs"
 Assert-Contains "finalizer has selftest" $finalizerText "SelfTest"
 
 Write-Host "[YoloCompletionFinalizerStateVerify] start finalizer selftest"
@@ -117,6 +123,16 @@ $hasPendingEvidence = $reviewedRows -lt $reviewRows.Count -or
     $frameReviewedRows -lt $frameRows.Count -or
     $guiStatusRows -lt $guiRows.Count
 
+$qualityArgs = @(
+    "-MinIou", "$MinIou",
+    "-MaxMisses", "$MaxMisses",
+    "-MaxFalsePositives", "$MaxFalsePositives",
+    "-MaxLowIou", "$MaxLowIou"
+)
+if ($AllowQualityGateFailure) {
+    $qualityArgs += "-AllowQualityGateFailure"
+}
+
 $oldErrorAction = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"
@@ -126,7 +142,8 @@ try {
         -FullFrameReviewCsv $frameCsv `
         -GuiChecklistCsv $guiCsv `
         -PredictionLog $predictionLogPath `
-        -ManualGateSummary $summaryPath 2>&1
+        -ManualGateSummary $summaryPath `
+        @qualityArgs 2>&1
     $exitCode = $LASTEXITCODE
     $text = ($output | Out-String)
     Write-Host $text

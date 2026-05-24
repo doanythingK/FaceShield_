@@ -60,11 +60,15 @@ var explicitOptions = AppStartupOptions.Parse(new[]
     "--detector", "yolo",
     "--yolo-model-type", "yolov8",
     "--yolo-model", ".tmp/models/yolov8n-face-lindevs.onnx",
-    "--open-auto"
+    "--open-auto",
+    "--no-auto-export",
+    "--frame", "12"
 });
 Assert(explicitOptions.DetectorBackend == FaceDetectorBackend.YoloFaceOnnx, "Explicit detector must select YOLO backend.");
 Assert(explicitOptions.YoloModelType == YoloFaceModelType.YoloV8Face, "Explicit model type must select YOLOv8.");
 Assert(explicitOptions.OpenMode == WorkspaceMode.Auto, "Explicit command must request auto open.");
+Assert(explicitOptions.AutoExportAfter == false, "Explicit command must disable auto export.");
+Assert(explicitOptions.FrameIndex == 12, "Explicit command must apply startup frame index.");
 AssertPathEndsWith(explicitOptions.VideoPath, "srcTest/260102_jp_10.mp4", "explicit video");
 AssertPathEndsWith(explicitOptions.YoloModelPath, ".tmp/models/yolov8n-face-lindevs.onnx", "explicit YOLO model");
 
@@ -82,6 +86,10 @@ Assert(home.SelectedYoloModelTypeOption?.ModelType == YoloFaceModelType.Yolo5Fac
 Assert(home.AutoYoloModelPath == smoke.YoloModelPath, "Home startup YOLO model path was not applied.");
 Assert(home.IsYoloDetectorSelected, "Home startup state must expose YOLO as selected.");
 Assert(home.CanStartWorkspace, "Home startup state must be ready to start workspace.");
+
+var noExportHome = new HomePageViewModel(_ => { }, () => { }, stateStore);
+noExportHome.ApplyStartupOptions(explicitOptions);
+Assert(noExportHome.AutoExportAfter == false, "Home startup no-auto-export option was not applied.");
 
 var main = new MainWindowViewModel(new[] { "--yolo-smoke", "--open-manual" });
 Assert(main.ShouldOpenStartupWorkspace, "Main window startup options must request workspace open.");

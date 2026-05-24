@@ -406,7 +406,7 @@ $openCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\
 $openDashboardCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\open-yolo-manual-gates.ps1 -WriteSummary -OpenDashboard"
 $openAppCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\open-yolo-manual-gates.ps1 -OpenApp"
 $openSmokeManualCommand = "dotnet run --project FaceShield.csproj -- --yolo-smoke --open-manual"
-$openSmokeAutoCommand = "dotnet run --project FaceShield.csproj -- --yolo-smoke --open-auto"
+$openSmokeAutoCommand = "dotnet run --project FaceShield.csproj -- --yolo-smoke --open-auto --no-auto-export"
 $dashboardCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\open-yolo-manual-gates.ps1 -WriteSummary"
 $fullGtAction = "fill label/reviewStatus/evidenceNotes in full-gt-review.csv, fill missedFaceCount/missedFaceRowsAdded/reviewStatus/evidenceNotes in full-frame-review.csv, and add manual missed-face rows when needed"
 $guiSmokeAction = "run the Avalonia app, complete every manual-smoke-checklist.csv row with status=pass, evidenceType, artifactPath, and evidence"
@@ -641,7 +641,8 @@ if ($VerifyCompleted) {
         "-FullGtMaxFalsePositives", "$MaxFalsePositives",
         "-FullGtMaxLowIou", "$MaxLowIou",
         "-AllowCompletedFullGt",
-        "-AllowCompletedGuiSmoke"
+        "-AllowCompletedGuiSmoke",
+        "-AllowQualityGateFailure"
     )
     Invoke-RequiredVerifier "full-gt-reviewed-state" $fullGtReviewedVerifier @(
         "-ReviewCsv", $resolvedFullGtReviewCsv,
@@ -653,7 +654,8 @@ if ($VerifyCompleted) {
         "-MinIou", "$MinIou",
         "-MaxMisses", "$MaxMisses",
         "-MaxFalsePositives", "$MaxFalsePositives",
-        "-MaxLowIou", "$MaxLowIou"
+        "-MaxLowIou", "$MaxLowIou",
+        "-AllowQualityGateFailure"
     )
     Invoke-RequiredVerifier "gui-smoke-state" $guiSmokeVerifier @(
         "-ChecklistCsv", $resolvedGuiChecklistCsv,

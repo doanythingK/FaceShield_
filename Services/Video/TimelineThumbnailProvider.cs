@@ -124,6 +124,15 @@ namespace FaceShield.Services.Video
             }
         }
 
+        public bool TryGetCachedThumbnail(int frameIndex, out WriteableBitmap? bitmap)
+        {
+            bitmap = null;
+            if (frameIndex < 0)
+                return false;
+
+            return _cache.TryGetValue(frameIndex, out bitmap);
+        }
+
         private WriteableBitmap? DecodeFrame(int frameIndex)
         {
             if (_fmt == null || _dec == null || _videoStreamIndex < 0 || _sws == null)

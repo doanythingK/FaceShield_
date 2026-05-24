@@ -17,15 +17,14 @@ public sealed class ExactFrameProvider
 
     public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
     {
-        await _decodeGate.WaitAsync(ct);
+        await _decodeGate.WaitAsync();
         try
         {
-            ct.ThrowIfCancellationRequested();
-            return await Task.Run(() =>
-            {
-                ct.ThrowIfCancellationRequested();
-                return _extractor.GetFrameByIndex(frameIndex);
-            }, ct);
+            if (ct.IsCancellationRequested)
+                return null;
+
+            var frame = await Task.Run(() => _extractor.GetFrameByIndex(frameIndex));
+            return ct.IsCancellationRequested ? null : frame;
         }
         finally
         {

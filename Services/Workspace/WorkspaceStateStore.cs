@@ -89,10 +89,37 @@ namespace FaceShield.Services.Workspace
             if (state == null)
                 return false;
 
+            string dir = GetWorkspaceDir(videoPath, mode);
             maskProvider.Clear();
 
-            string dir = GetWorkspaceDir(videoPath, mode);
-            foreach (int index in state.MaskIndices)
+            foreach (var faceState in state.FaceMasks ?? new List<FaceMaskState>())
+            {
+                if (faceState == null ||
+                    faceState.FrameIndex < 0 ||
+                    faceState.Width <= 0 ||
+                    faceState.Height <= 0 ||
+                    faceState.Faces == null ||
+                    faceState.Faces.Count == 0)
+                {
+                    continue;
+                }
+
+                var faces = faceState.Faces
+                    .Select(r => new Rect(r.X, r.Y, Math.Max(0.0, r.Width), Math.Max(0.0, r.Height)))
+                    .Where(r => r.Width > 0 && r.Height > 0)
+                    .ToArray();
+                if (faces.Length == 0)
+                    continue;
+
+                maskProvider.SetFaceRects(
+                    faceState.FrameIndex,
+                    faces,
+                    new PixelSize(faceState.Width, faceState.Height),
+                    faceState.MinConfidence,
+                    faceState.Confidences);
+            }
+
+            foreach (int index in state.MaskIndices ?? new List<int>())
             {
                 string filePath = Path.Combine(dir, $"mask_{index}.png");
                 if (!File.Exists(filePath))
@@ -128,13 +155,37 @@ namespace FaceShield.Services.Workspace
 
             var entries = maskProvider.GetMaskEntries();
             var indices = new List<int>(entries.Count);
+            var indexSet = new HashSet<int>();
 
             foreach (var entry in entries)
             {
                 indices.Add(entry.Key);
+                indexSet.Add(entry.Key);
                 string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
                 SaveMask(filePath, entry.Value);
             }
+
+            var faceMasks = maskProvider.GetFaceMaskEntries()
+                .Where(entry => !indexSet.Contains(entry.Key))
+                .OrderBy(entry => entry.Key)
+                .Select(entry => new FaceMaskState
+                {
+                    FrameIndex = entry.Key,
+                    Width = entry.Value.Size.Width,
+                    Height = entry.Value.Size.Height,
+                    MinConfidence = entry.Value.MinConfidence,
+                    Faces = entry.Value.Faces
+                        .Select(r => new RectState
+                        {
+                            X = r.X,
+                            Y = r.Y,
+                            Width = r.Width,
+                            Height = r.Height
+                        })
+                        .ToList(),
+                    Confidences = entry.Value.Confidences.ToList()
+                })
+                .ToList();
 
             _state.Workspaces.RemoveAll(w =>
                 string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
@@ -149,6 +200,7 @@ namespace FaceShield.Services.Workspace
                 SecondsPerScreen = snapshot.SecondsPerScreen,
                 LastOpened = snapshot.LastOpened,
                 MaskIndices = indices,
+                FaceMasks = faceMasks,
                 AutoResumeIndex = snapshot.AutoResumeIndex,
                 AutoCompleted = snapshot.AutoCompleted
             });
@@ -267,8 +319,27 @@ namespace FaceShield.Services.Workspace
             public double SecondsPerScreen { get; set; }
             public DateTimeOffset LastOpened { get; set; }
             public List<int> MaskIndices { get; set; } = new();
+            public List<FaceMaskState> FaceMasks { get; set; } = new();
             public int AutoResumeIndex { get; set; }
             public bool AutoCompleted { get; set; }
+        }
+
+        private sealed class FaceMaskState
+        {
+            public int FrameIndex { get; set; }
+            public int Width { get; set; }
+            public int Height { get; set; }
+            public float? MinConfidence { get; set; }
+            public List<RectState> Faces { get; set; } = new();
+            public List<float> Confidences { get; set; } = new();
+        }
+
+        private sealed class RectState
+        {
+            public double X { get; set; }
+            public double Y { get; set; }
+            public double Width { get; set; }
+            public double Height { get; set; }
         }
     }
 

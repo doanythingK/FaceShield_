@@ -249,7 +249,16 @@ if (-not $completionAuditAlreadyRan) {
 Invoke-YoloVerify "completion-audit-selftest" $completionAuditStateVerify @(
     "-SelfTest"
 )
-Invoke-YoloVerify "completion-finalizer-state" $completionFinalizerStateVerify @()
+$completionFinalizerArgs = @(
+    "-MinIou", "$FullGtMinIou",
+    "-MaxMisses", "$FullGtMaxMisses",
+    "-MaxFalsePositives", "$FullGtMaxFalsePositives",
+    "-MaxLowIou", "$FullGtMaxLowIou"
+)
+if ($allowFullGtQualityFailureForCurrentState) {
+    $completionFinalizerArgs += "-AllowQualityGateFailure"
+}
+Invoke-YoloVerify "completion-finalizer-state" $completionFinalizerStateVerify $completionFinalizerArgs
 Invoke-YoloVerify "gui-smoke-evidence-prep" $guiEvidencePrep @(
     "-ChecklistCsv", $GuiChecklistCsv,
     "-EvidenceDir", $GuiEvidenceDir,

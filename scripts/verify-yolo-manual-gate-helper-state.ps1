@@ -227,7 +227,10 @@ $frameState = Get-ColumnFillState $frameRows "missedFaceCount"
 $guiState = Get-ColumnFillState $guiRows "status"
 $allPending = $reviewState -eq "pending" -and $frameState -eq "pending" -and $guiState -eq "pending"
 $allCompleted = $reviewState -eq "completed" -and $frameState -eq "completed" -and $guiState -eq "completed"
-$expectedRemaining = if ($reviewState -eq "completed" -and $frameState -eq "completed" -and $guiState -eq "pending") {
+$expectedRemaining = if ($allCompleted) {
+    "remaining=none"
+}
+elseif ($reviewState -eq "completed" -and $frameState -eq "completed" -and $guiState -in @("pending", "partial")) {
     "remaining=gui-smoke"
 }
 else {
@@ -285,10 +288,10 @@ Assert-Contains "summary records pending report path" $summaryText "manual-pendi
 Assert-Contains "summary records dashboard path" $summaryText "manual-gate-dashboard.html"
 Assert-Contains "summary records AI candidate reference" $summaryText "aiCandidateFullGtReviewCsv"
 Assert-Contains "summary records AI candidate rule" $summaryText "reference-only-not-final-gt"
-if ($expectedRemaining -ne "remaining=gui-smoke") {
+if ($expectedRemaining -eq "remaining=full-gt-label,gui-smoke") {
     Assert-Contains "summary records human review draft command" $summaryText "new-yolo-human-review-draft.ps1"
+    Assert-Contains "summary records human review draft report" $summaryText "human-review-draft-report.md"
 }
-Assert-Contains "summary records human review draft report" $summaryText "human-review-draft-report.md"
 Assert-Contains "summary records progress section" $summaryText "## Progress"
 Assert-Contains "summary records full GT pending count" $summaryText "fullGtPendingRows="
 Assert-Contains "summary records full-frame pending count" $summaryText "fullFramePendingRows="
@@ -325,7 +328,9 @@ Assert-Contains "dashboard records pending full-frame rows" $dashboardText "Full
 Assert-Contains "dashboard records pending GUI rows" $dashboardText "GUI smoke rows"
 Assert-Contains "dashboard records AI candidate reference" $dashboardText "AI-Assisted Candidate Reference"
 Assert-Contains "dashboard records AI candidate rule" $dashboardText "reference-only-not-final-gt"
-Assert-Contains "dashboard links human review draft report" $dashboardText "Human review draft report"
+if ($expectedRemaining -eq "remaining=full-gt-label,gui-smoke") {
+    Assert-Contains "dashboard links human review draft report" $dashboardText "Human review draft report"
+}
 Assert-Contains "dashboard records full GT progress" $dashboardText "Full-GT crop review"
 Assert-Contains "dashboard records full-frame progress" $dashboardText "Full-frame review"
 Assert-Contains "dashboard records GUI progress" $dashboardText "GUI smoke checklist"
