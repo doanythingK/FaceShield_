@@ -198,6 +198,7 @@ cacheProvider.SetFaceRects(21, new[] { cacheFaceA, cacheFaceB }, size, 0.39f, ne
 var cacheCandidates = new[]
 {
     new FaceTrackFilledFace(21, cacheFaceA, size, 0.39f, 20),
+    new FaceTrackFilledFace(21, cacheFaceA, size, 0.39f, 20),
     new FaceTrackFilledFace(21, cacheFaceB, size, 0.38f, 20)
 };
 int diffCalls = 0;
@@ -211,7 +212,7 @@ var cacheResult = guard.Apply(
     });
 
 if (cacheResult.Checked != 2 || cacheResult.Removed != 2)
-    throw new InvalidOperationException($"Expected duplicate-pair guard checked=2 removed=2, got checked={cacheResult.Checked} removed={cacheResult.Removed}.");
+    throw new InvalidOperationException($"Expected exact duplicate candidate to be skipped while distinct boxes stay checked, got checked={cacheResult.Checked} removed={cacheResult.Removed}.");
 
 if (diffCalls != 1)
     throw new InvalidOperationException($"Expected duplicate pair difference to be computed once, got {diffCalls}.");

@@ -223,6 +223,7 @@ Assert-Match "scene cut guard builds weak direct candidates" $sceneCutGuardText 
 Assert-Match "scene cut guard builds weak post-cut carry candidates" $sceneCutGuardText "BuildWeakPostCutCarryCandidates[\s\S]*maxCarryFrames[\s\S]*BuildWeakCarryRun[\s\S]*HasStrongContinuation[\s\S]*FaceTrackFilledFace"
 Assert-Match "scene cut guard checks weak carry tails" $sceneCutGuardText "maxPostCutCarryFrames[\s\S]*carryEndFrame[\s\S]*lastAddedIndex[\s\S]*FaceTrackFilledFace"
 Assert-Match "scene cut guard caches frame differences" $sceneCutGuardText "differenceByPair[\s\S]*TryGetValue\(pair,[\s\S]*frameDifferenceProvider\(pair\.Source,\s*pair\.Target\)[\s\S]*differenceByPair\[pair\]"
+Assert-Match "scene cut guard skips exact duplicate candidates" $sceneCutGuardText "DeduplicateCandidates[\s\S]*GetCandidateKey[\s\S]*SourceFrameIndex[\s\S]*FrameIndex[\s\S]*Math\.Round\(candidate\.Bounds"
 Assert-Match "scene cut guard removes track fill" $sceneCutGuardText "DefaultDifferenceThreshold\s*=\s*0\.32[\s\S]*DefaultDirectDifferenceThreshold\s*=\s*0\.36[\s\S]*TryGetNextFrameRawToBuffer[\s\S]*RemoveFaceCandidate"
 Assert-Match "scene cut guard exposes deterministic verifier path" $sceneCutGuardText "Func<int,\s*int,\s*double>\s+frameDifferenceProvider[\s\S]*GetMaxFrameDifference[\s\S]*RemoveFaceCandidate"
 Assert-Match "scene cut guard scans adjacent frame differences" $sceneCutGuardText "for\s*\(int\s+frame\s*=\s*sourceFrame;\s*frame\s*<\s*targetFrame;\s*frame\+\+\)[\s\S]*FormatFramePair\(maxSource,\s*maxTarget\)"

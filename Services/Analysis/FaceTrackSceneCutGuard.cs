@@ -199,6 +199,10 @@ namespace FaceShield.Services.Analysis
             if (candidates.Count == 0)
                 return FaceTrackSceneCutGuardResult.Empty;
 
+            candidates = DeduplicateCandidates(candidates);
+            if (candidates.Count == 0)
+                return FaceTrackSceneCutGuardResult.Empty;
+
             var sw = Stopwatch.StartNew();
             int checkedCandidates = 0;
             int removedCandidates = 0;
@@ -279,6 +283,10 @@ namespace FaceShield.Services.Analysis
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
             if (string.IsNullOrWhiteSpace(videoPath) || candidates.Count == 0)
+                return FaceTrackSceneCutGuardResult.Empty;
+
+            candidates = DeduplicateCandidates(candidates);
+            if (candidates.Count == 0)
                 return FaceTrackSceneCutGuardResult.Empty;
 
             var sw = Stopwatch.StartNew();
@@ -416,6 +424,30 @@ namespace FaceShield.Services.Analysis
             => string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
                 $"{sourceFrame}->{targetFrame}");
+
+        private static IReadOnlyList<FaceTrackFilledFace> DeduplicateCandidates(
+            IReadOnlyList<FaceTrackFilledFace> candidates)
+        {
+            if (candidates.Count <= 1)
+                return candidates;
+
+            var unique = new List<FaceTrackFilledFace>(candidates.Count);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var candidate in candidates)
+            {
+                if (!seen.Add(GetCandidateKey(candidate)))
+                    continue;
+
+                unique.Add(candidate);
+            }
+
+            return unique;
+        }
+
+        private static string GetCandidateKey(FaceTrackFilledFace candidate)
+            => string.Create(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"{candidate.SourceFrameIndex}:{candidate.FrameIndex}:{Math.Round(candidate.Bounds.X, 2)}:{Math.Round(candidate.Bounds.Y, 2)}:{Math.Round(candidate.Bounds.Width, 2)}:{Math.Round(candidate.Bounds.Height, 2)}");
 
         private static List<WeakCarryCandidate> BuildWeakCarryRun(
             IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
