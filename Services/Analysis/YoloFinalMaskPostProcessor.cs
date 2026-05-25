@@ -25,6 +25,8 @@ namespace FaceShield.Services.Analysis
 
             var removedFrames = new List<int>();
             int removed = 0;
+            int removedUnsupported = 0;
+            int removedShortClusters = 0;
             for (int i = 0; i < entries.Length; i++)
             {
                 int frameIndex = entries[i].Key;
@@ -38,12 +40,22 @@ namespace FaceShield.Services.Analysis
                         ? data.Confidences[faceIndex]
                         : data.MinConfidence ?? 1.0f;
                     if (confidence <= options.WeakConfidenceMax &&
-                        !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio) &&
-                        (!HasMatchingTemporalNeighbor(entries, i, face, options) ||
-                            IsWeakShortTemporalCluster(entries, i, faceIndex, face, confidence, options)))
+                        !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio))
                     {
-                        removed++;
-                        continue;
+                        bool hasMatchingNeighbor = HasMatchingTemporalNeighbor(entries, i, face, options);
+                        bool removeUnsupported = !hasMatchingNeighbor;
+                        bool removeShortCluster = hasMatchingNeighbor &&
+                            IsWeakShortTemporalCluster(entries, i, faceIndex, face, confidence, options);
+
+                        if (removeUnsupported || removeShortCluster)
+                        {
+                            removed++;
+                            if (removeUnsupported)
+                                removedUnsupported++;
+                            if (removeShortCluster)
+                                removedShortClusters++;
+                            continue;
+                        }
                     }
 
                     faces.Add(face);
@@ -66,7 +78,11 @@ namespace FaceShield.Services.Analysis
 
             return removed == 0
                 ? YoloFinalMaskCleanupResult.Empty
-                : new YoloFinalMaskCleanupResult(removed, removedFrames.ToArray());
+                : new YoloFinalMaskCleanupResult(
+                    removed,
+                    removedUnsupported,
+                    removedShortClusters,
+                    removedFrames.ToArray());
         }
 
         private static bool IsWeakShortTemporalCluster(
@@ -240,8 +256,10 @@ namespace FaceShield.Services.Analysis
 
     public readonly record struct YoloFinalMaskCleanupResult(
         int RemovedWeakIsolatedFaces,
+        int RemovedWeakUnsupportedFaces,
+        int RemovedWeakShortClusterFaces,
         IReadOnlyList<int> RemovedFrameIndices)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, Array.Empty<int>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, Array.Empty<int>());
     }
 }

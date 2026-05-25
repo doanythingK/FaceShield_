@@ -59,6 +59,12 @@ var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 if (result.RemovedWeakIsolatedFaces != 5)
     throw new InvalidOperationException($"Expected 5 weak isolated/short-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
+if (result.RemovedWeakUnsupportedFaces != 3)
+    throw new InvalidOperationException($"Expected 3 weak unsupported faces to be removed, got {result.RemovedWeakUnsupportedFaces}.");
+
+if (result.RemovedWeakShortClusterFaces != 2)
+    throw new InvalidOperationException($"Expected 2 weak short-cluster faces to be removed, got {result.RemovedWeakShortClusterFaces}.");
+
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
 
@@ -94,7 +100,7 @@ if (provider.TryGetFaceMaskData(70, out var weakPairA) && weakPairA.Faces.Count 
 }
 
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
