@@ -50,6 +50,8 @@ namespace FaceShield.ViewModels.Pages
         private const double FinalMaskLargeJumpAreaChangeRatio = 4.0;
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
+        private const double YoloFinalMaskEdgeMarginRatio = 0.02;
+        private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private int _autoLastProcessedFrame = -1;
@@ -739,7 +741,7 @@ namespace FaceShield.ViewModels.Pages
                 {
                     NeighborWindowFrames = 1,
                     WeakConfidenceMax = YoloFinalMaskWeakIsolatedConfidenceMax,
-                    EdgeMarginRatio = 0.02
+                    EdgeMarginRatio = YoloFinalMaskEdgeMarginRatio
                 });
             if (cleanup.RemovedWeakIsolatedFaces <= 0)
                 return;
@@ -759,7 +761,7 @@ namespace FaceShield.ViewModels.Pages
                 .ToArray();
             if (entries.Length == 0)
             {
-                System.Diagnostics.Debug.WriteLine("[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0");
+                System.Diagnostics.Debug.WriteLine("[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0 weakNonEdge=0 tinyWeak=0");
                 return;
             }
 
@@ -803,21 +805,54 @@ namespace FaceShield.ViewModels.Pages
             }
 
             int lowConfidenceRows = 0;
+            int weakNonEdgeRows = 0;
+            int tinyWeakRows = 0;
             foreach (var entry in entries)
             {
                 var data = entry.Value;
                 for (int i = 0; i < data.Faces.Count; i++)
                 {
+                    var face = data.Faces[i];
                     float confidence = i < data.Confidences.Count
                         ? data.Confidences[i]
                         : data.MinConfidence ?? 1.0f;
                     if (confidence <= YoloFinalMaskLowConfidenceThreshold)
                         lowConfidenceRows++;
+                    if (confidence <= YoloFinalMaskWeakIsolatedConfidenceMax &&
+                        !TouchesFinalMaskFrameEdge(face, data.Size))
+                    {
+                        weakNonEdgeRows++;
+                        if (IsTinyFinalMaskFace(face, data.Size))
+                            tinyWeakRows++;
+                    }
                 }
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows}");
+                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} weakNonEdge={weakNonEdgeRows} tinyWeak={tinyWeakRows}");
+        }
+
+        private static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double marginX = size.Width * YoloFinalMaskEdgeMarginRatio;
+            double marginY = size.Height * YoloFinalMaskEdgeMarginRatio;
+            return face.X <= marginX ||
+                face.Y <= marginY ||
+                face.Right >= size.Width - marginX ||
+                face.Bottom >= size.Height - marginY;
+        }
+
+        private static bool IsTinyFinalMaskFace(Rect face, PixelSize size)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            return areaRatio <= YoloFinalMaskTinyWeakAreaRatio;
         }
 
         private static bool TryGetBestFinalMaskFace(

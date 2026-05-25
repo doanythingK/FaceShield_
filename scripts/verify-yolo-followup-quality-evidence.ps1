@@ -35,7 +35,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeFaceTrackPost] label=synthetic-yolo, tracks=1, filled=1, lostFilled=2, lostFrames=4,5, removedShort=1, removedSparse=1, removedEdgeTail=1, removedLower=0, rewritten=6
 [SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=1, removedWeakUnsupported=1, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedFrames=8
-[SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1
+[SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, weakNonEdge=1, tinyWeak=1
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=10.0, y=20.0, w=50.0, h=60.0, area=3000.0, conf=0.410, cx=0.055, cy=0.120, areaRatio=0.002000, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=6, index=0, x=500.0, y=400.0, w=20.0, h=22.0, area=440.0, conf=0.220, cx=0.398, cy=0.571, areaRatio=0.000210, aspectRatio=0.909
 [SmokeDetection] label=synthetic-yolo, frame=9, index=0, x=700.0, y=120.0, w=24.0, h=25.0, area=600.0, conf=0.180, cx=0.556, cy=0.190, areaRatio=0.000290, aspectRatio=0.960
@@ -109,6 +109,8 @@ Assert-Contains "summary links final mask continuity report" $summaryText "Final
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"
 Assert-Contains "summary records large jump summary" $summaryText "largeJumpGaps=1"
+Assert-Contains "summary records weak final mask evidence" $summaryText "weakNonEdge=1"
+Assert-Contains "summary records tiny weak final mask evidence" $summaryText "tinyWeak=1"
 Assert-Contains "summary records required full-frame review frames when packaged" $scriptText "Required full-frame review frames"
 Assert-Contains "summary preserves face label markdown" $summaryText 'Use `face` only'
 Assert-Contains "summary preserves nonface label markdown" $summaryText 'Use `nonface` for'
