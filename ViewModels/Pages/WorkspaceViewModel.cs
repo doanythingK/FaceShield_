@@ -491,12 +491,14 @@ namespace FaceShield.ViewModels.Pages
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                     RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
+                if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
+                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "pre-smooth");
                 if (_autoOptions.UseTracking)
                 {
                     ApplyAutoTemporalSmoothing();
                 }
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token);
+                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "post-smooth");
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                     RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token, fillStableGaps: false);
                 LogFinalMaskSummary();
@@ -710,7 +712,8 @@ namespace FaceShield.ViewModels.Pages
         private void RemoveYoloTrackFillAcrossSceneCuts(
             string videoPath,
             FaceTrackPostProcessResult trackPost,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string stage)
         {
             var guard = new FaceTrackSceneCutGuard();
             var directCandidates = guard.BuildWeakTrackTransitionCandidates(
@@ -734,7 +737,7 @@ namespace FaceShield.ViewModels.Pages
             if (candidates.Length > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length}");
+                    $"[FaceTrackSceneCutGuard] stage={stage} start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length}");
             }
 
             var result = guard.Apply(
@@ -750,14 +753,14 @@ namespace FaceShield.ViewModels.Pages
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
+                    $"[FaceTrackSceneCutGuard] stage={stage} skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
                 return;
             }
 
             if (result.Checked > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
+                    $"[FaceTrackSceneCutGuard] stage={stage} directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
             }
         }
 
