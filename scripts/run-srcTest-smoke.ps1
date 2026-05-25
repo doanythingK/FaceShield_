@@ -453,8 +453,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
     const float yoloSceneCutDirectCarryMaxConfidence = 0.78f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
-    const double yoloSceneCutDifferenceThreshold = 0.24;
-    const double yoloSceneCutDirectDifferenceThreshold = 0.24;
+    const double yoloSceneCutDifferenceThreshold = 0.15;
+    const double yoloSceneCutDirectDifferenceThreshold = 0.15;
     const int yoloFinalMaskStableGapMaxFrames = 5;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
