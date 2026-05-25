@@ -566,12 +566,14 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     {
         var postProcessor = new YoloFinalMaskPostProcessor();
         var cleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
+        var cleanupBlockedFrameIndices = cleanup.RemovedFrameIndices;
         Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
         var gapFill = postProcessor.FillShortStableGaps(
             maskProvider,
             new YoloFinalMaskGapFillOptions
             {
-                MaxGapFrames = yoloFinalMaskStableGapMaxFrames
+                MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
+                BlockedFrameIndices = cleanup.RemovedFrameIndices
             });
         Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}, blockedByCut={gapFill.BlockedCutGapFaces}, blockedFrames={FormatFrames(gapFill.BlockedCutFrameIndices)}");
         var gapFillGuard = gapFill.CutGuardFacesInfo.Count == 0
@@ -623,13 +625,19 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
+        var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
+            .Concat(postSceneCleanup.RemovedFrameIndices)
+            .Distinct()
+            .OrderBy(static frame => frame)
+            .ToArray();
         Console.WriteLine($"[SmokeYoloFinalMaskPostSceneCleanup] label={label}, removedWeakIsolated={postSceneCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={postSceneCleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={postSceneCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postSceneCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postSceneCleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={postSceneCleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={postSceneCleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={postSceneCleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(postSceneCleanup.RemovedFrameIndices)}");
         var postSceneGapFill = postProcessor.FillShortStableGaps(
             maskProvider,
             new YoloFinalMaskGapFillOptions
             {
                 MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
-                BlockedCutFramePairs = sceneCut.CutFramePairs
+                BlockedCutFramePairs = sceneCut.CutFramePairs,
+                BlockedFrameIndices = postSceneBlockedFrameIndices
             });
         Console.WriteLine($"[SmokeYoloFinalMaskPostSceneGapFill] label={label}, filled={postSceneGapFill.FilledFaces}, frames={FormatFrames(postSceneGapFill.FilledFrameIndices)}, blockedByCut={postSceneGapFill.BlockedCutGapFaces}, blockedFrames={FormatFrames(postSceneGapFill.BlockedCutFrameIndices)}");
         var postSceneGapFillGuard = postSceneGapFill.CutGuardFacesInfo.Count == 0

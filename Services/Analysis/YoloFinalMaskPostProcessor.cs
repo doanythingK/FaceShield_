@@ -217,6 +217,7 @@ namespace FaceShield.Services.Analysis
                 return YoloFinalMaskGapFillResult.Empty;
 
             var storedFrames = new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
+            var blockedFrames = new HashSet<int>(options.BlockedFrameIndices);
             var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
             var filledFaceInfo = new List<FaceTrackFilledFace>();
             var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
@@ -290,8 +291,11 @@ namespace FaceShield.Services.Analysis
 
                         for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
                         {
-                            if (storedFrames.Contains(frameIndex))
+                            if (storedFrames.Contains(frameIndex) ||
+                                blockedFrames.Contains(frameIndex))
+                            {
                                 continue;
+                            }
 
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
                             var interpolated = Interpolate(previousFace, nextFace, t);
@@ -528,12 +532,12 @@ namespace FaceShield.Services.Analysis
                         current.EntryIndex,
                         current.Face,
                         options,
-                        options.UpperWeakClusterMaxConfidence))
+                        options.UpperWeakStrongContinuationMinConfidence))
                 {
                     return false;
                 }
 
-                AddMatchingWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
+                AddMatchingUpperWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
             }
 
             return visited.Count > 0 && visited.Count <= options.UpperWeakClusterMaxFrames;
@@ -937,6 +941,54 @@ namespace FaceShield.Services.Analysis
             }
         }
 
+        private static void AddMatchingUpperWeakClusterNeighbors(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            Rect face,
+            YoloFinalMaskCleanupOptions options,
+            ISet<(int EntryIndex, int FaceIndex)> visited,
+            Stack<(int EntryIndex, int FaceIndex, Rect Face)> pending)
+        {
+            int frameIndex = entries[entryIndex].Key;
+            for (int i = entryIndex - 1; i >= 0; i--)
+            {
+                if (frameIndex - entries[i].Key > options.NeighborWindowFrames)
+                    break;
+                AddMatchingUpperWeakFaces(entries[i].Value, i, face, options, visited, pending);
+            }
+
+            for (int i = entryIndex + 1; i < entries.Count; i++)
+            {
+                if (entries[i].Key - frameIndex > options.NeighborWindowFrames)
+                    break;
+                AddMatchingUpperWeakFaces(entries[i].Value, i, face, options, visited, pending);
+            }
+        }
+
+        private static void AddMatchingUpperWeakFaces(
+            FrameMaskProvider.FaceMaskData data,
+            int entryIndex,
+            Rect face,
+            YoloFinalMaskCleanupOptions options,
+            ISet<(int EntryIndex, int FaceIndex)> visited,
+            Stack<(int EntryIndex, int FaceIndex, Rect Face)> pending)
+        {
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                var candidate = data.Faces[i];
+                if (visited.Contains((entryIndex, i)) ||
+                    GetConfidence(data, i) > options.UpperWeakClusterMaxConfidence ||
+                    !IsUpperWeakFace(candidate, data.Size, options) ||
+                    TouchesFrameEdge(candidate, data.Size, options.EdgeMarginRatio))
+                {
+                    continue;
+                }
+
+                if (IsMatchingFace(candidate, face, options))
+                    pending.Push((entryIndex, i, candidate));
+            }
+        }
+
         private static void AddMatchingFaces(
             IReadOnlyList<Rect> candidates,
             int entryIndex,
@@ -1108,6 +1160,7 @@ namespace FaceShield.Services.Analysis
         public double TinyIsolatedMaxAreaRatio { get; init; } = 0.0009;
         public int UpperWeakClusterMaxFrames { get; init; } = 6;
         public float UpperWeakClusterMaxConfidence { get; init; } = 0.60f;
+        public float UpperWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.10;
         public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0065;
         public int LowerWeakClusterMaxFrames { get; init; } = 3;
@@ -1133,6 +1186,7 @@ namespace FaceShield.Services.Analysis
         public double MaxAreaChangeRatio { get; init; } = 2.5;
         public double DuplicateIou { get; init; } = 0.50;
         public IReadOnlyCollection<string> BlockedCutFramePairs { get; init; } = Array.Empty<string>();
+        public IReadOnlyCollection<int> BlockedFrameIndices { get; init; } = Array.Empty<int>();
     }
 
     public readonly record struct YoloFinalMaskCleanupResult(

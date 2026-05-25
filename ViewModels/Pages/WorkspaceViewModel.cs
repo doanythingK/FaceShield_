@@ -504,8 +504,9 @@ namespace FaceShield.ViewModels.Pages
                 var trackPost = ApplyAutoTemporalFixes();
                 if (detector is IBgraFaceDetector bgraDetector)
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
+                IReadOnlyList<int> yoloCleanupBlockedFrames = Array.Empty<int>();
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
+                    yoloCleanupBlockedFrames = RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
                 IReadOnlyList<string> yoloPreSmoothCutPairs = Array.Empty<string>();
                 IReadOnlyList<string> yoloPostSmoothCutPairs = Array.Empty<string>();
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
@@ -528,7 +529,8 @@ namespace FaceShield.ViewModels.Pages
                     RemoveYoloWeakIsolatedFinalMasks(
                         FrameList.VideoPath,
                         token,
-                        blockedCutFramePairs: yoloPreSmoothCutPairs.Concat(yoloPostSmoothCutPairs).Distinct().ToArray());
+                        blockedCutFramePairs: yoloPreSmoothCutPairs.Concat(yoloPostSmoothCutPairs).Distinct().ToArray(),
+                        additionalBlockedFrameIndices: yoloCleanupBlockedFrames);
                 LogFinalMaskSummary();
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
@@ -804,11 +806,12 @@ namespace FaceShield.ViewModels.Pages
             return result;
         }
 
-        private void RemoveYoloWeakIsolatedFinalMasks(
+        private IReadOnlyList<int> RemoveYoloWeakIsolatedFinalMasks(
             string videoPath,
             CancellationToken cancellationToken,
             bool fillStableGaps = true,
-            IReadOnlyCollection<string>? blockedCutFramePairs = null)
+            IReadOnlyCollection<string>? blockedCutFramePairs = null,
+            IReadOnlyCollection<int>? additionalBlockedFrameIndices = null)
         {
             var postProcessor = new YoloFinalMaskPostProcessor();
             var cleanup = postProcessor.RemoveWeakIsolatedMasks(
@@ -822,29 +825,38 @@ namespace FaceShield.ViewModels.Pages
             if (cleanup.RemovedWeakIsolatedFaces <= 0)
             {
                 if (fillStableGaps)
-                    FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken, blockedCutFramePairs);
-                return;
+                    FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken, blockedCutFramePairs, additionalBlockedFrameIndices);
+                return cleanup.RemovedFrameIndices;
             }
 
             System.Diagnostics.Debug.WriteLine(
                 $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces} removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces} removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces} removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces} removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
 
             if (fillStableGaps)
-                FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken, blockedCutFramePairs);
+                FillYoloStableFinalMaskGaps(
+                    postProcessor,
+                    videoPath,
+                    cancellationToken,
+                    blockedCutFramePairs,
+                    CombineFrameIndices(additionalBlockedFrameIndices, cleanup.RemovedFrameIndices));
+
+            return cleanup.RemovedFrameIndices;
         }
 
         private void FillYoloStableFinalMaskGaps(
             YoloFinalMaskPostProcessor postProcessor,
             string videoPath,
             CancellationToken cancellationToken,
-            IReadOnlyCollection<string>? blockedCutFramePairs)
+            IReadOnlyCollection<string>? blockedCutFramePairs,
+            IReadOnlyCollection<int>? blockedFrameIndices)
         {
             var gapFill = postProcessor.FillShortStableGaps(
                 _maskProvider,
                 new YoloFinalMaskGapFillOptions
                 {
                     MaxGapFrames = YoloFinalMaskStableGapMaxFrames,
-                    BlockedCutFramePairs = blockedCutFramePairs ?? Array.Empty<string>()
+                    BlockedCutFramePairs = blockedCutFramePairs ?? Array.Empty<string>(),
+                    BlockedFrameIndices = blockedFrameIndices ?? Array.Empty<int>()
                 });
             if (gapFill.FilledFaces <= 0 && gapFill.BlockedCutGapFaces <= 0)
                 return;
@@ -1292,6 +1304,21 @@ namespace FaceShield.ViewModels.Pages
             return frames.Count > maxFrames
                 ? $"{text},+{frames.Count - maxFrames}"
                 : text;
+        }
+
+        private static IReadOnlyList<int> CombineFrameIndices(
+            IReadOnlyCollection<int>? first,
+            IReadOnlyCollection<int>? second)
+        {
+            if ((first == null || first.Count == 0) &&
+                (second == null || second.Count == 0))
+                return Array.Empty<int>();
+
+            return (first ?? Array.Empty<int>())
+                .Concat(second ?? Array.Empty<int>())
+                .Distinct()
+                .OrderBy(static frame => frame)
+                .ToArray();
         }
 
         private static string FormatTextList(IReadOnlyList<string> values)
