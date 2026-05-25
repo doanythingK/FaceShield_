@@ -448,6 +448,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
+    const float yoloSceneCutDirectCarryMaxConfidence = 0.72f;
+    const float yoloSceneCutPostCutCarryMaxConfidence = 0.58f;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
             {
@@ -523,11 +525,11 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var directCandidates = sceneCutGuard.BuildWeakTrackTransitionCandidates(
             maskProvider,
             trackOptions,
-            maxTargetConfidence: 0.60f,
+            maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
             maxTransitionGap: 8);
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
-            maxTargetConfidence: 0.50f,
+            maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
             maxCarryFrames: 6);
         var sceneCutCandidates = trackPost.FilledGapFacesInfo
             .Concat(trackPost.FilledLostFacesInfo)
@@ -576,6 +578,13 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
         var gapFill = postProcessor.FillShortStableGaps(maskProvider);
         Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}");
+        var gapFillGuard = gapFill.FilledFacesInfo.Count == 0
+            ? FaceTrackSceneCutGuardResult.Empty
+            : new FaceTrackSceneCutGuard().Apply(
+                maskProvider,
+                input,
+                gapFill.FilledFacesInfo);
+        Console.WriteLine($"[SmokeYoloFinalMaskGapFillSceneCutGuard] label={label}, candidates={gapFill.FilledFacesInfo.Count}, checked={gapFillGuard.Checked}, checkedPairs={FormatTextValues(gapFillGuard.CheckedFramePairs)}, maxDiff={gapFillGuard.MaxDifference:F3}, cutPairs={FormatTextValues(gapFillGuard.CutFramePairs)}, removed={gapFillGuard.Removed}, removedFrames={FormatFrames(gapFillGuard.RemovedFrameIndices)}, threshold={gapFillGuard.Threshold:F3}, elapsedMs={gapFillGuard.ElapsedMs}, error={gapFillGuard.Error ?? "none"}");
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
     if (useYolo)

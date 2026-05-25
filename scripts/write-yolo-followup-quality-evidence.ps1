@@ -627,6 +627,8 @@ $sceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFac
 $trackPost = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFaceTrackPost\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $autoSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[AutoRunSummary\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
 
@@ -655,6 +657,12 @@ if ($detectionRows.Count -eq 0) {
     }
     if ($finalMaskCleanup.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskCleanup[0].Line)``"
+    }
+    if ($finalMaskGapFill.Count -gt 0) {
+        $noDetectionChecklist += "- ``$($finalMaskGapFill[0].Line)``"
+    }
+    if ($finalMaskGapFillSceneGuard.Count -gt 0) {
+        $noDetectionChecklist += "- ``$($finalMaskGapFillSceneGuard[0].Line)``"
     }
     if ($finalMaskSummary.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskSummary[0].Line)``"
@@ -782,6 +790,12 @@ if ($sceneGuard.Count -gt 0) {
 }
 if ($finalMaskCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask cleanup: ``$($finalMaskCleanup[0].Line)``")
+}
+if ($finalMaskGapFill.Count -gt 0) {
+    [void]$summary.AppendLine("- Final mask gap fill: ``$($finalMaskGapFill[0].Line)``")
+}
+if ($finalMaskGapFillSceneGuard.Count -gt 0) {
+    [void]$summary.AppendLine("- Final mask gap-fill scene-cut guard: ``$($finalMaskGapFillSceneGuard[0].Line)``")
 }
 if ($finalMaskSummary.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask summary: ``$($finalMaskSummary[0].Line)``")
