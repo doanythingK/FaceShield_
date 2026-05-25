@@ -494,6 +494,8 @@ namespace FaceShield.ViewModels.Pages
                 }
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                     RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token);
+                if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
+                    RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token, fillStableGaps: false);
                 LogFinalMaskSummary();
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
@@ -754,7 +756,10 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private void RemoveYoloWeakIsolatedFinalMasks(string videoPath, CancellationToken cancellationToken)
+        private void RemoveYoloWeakIsolatedFinalMasks(
+            string videoPath,
+            CancellationToken cancellationToken,
+            bool fillStableGaps = true)
         {
             var postProcessor = new YoloFinalMaskPostProcessor();
             var cleanup = postProcessor.RemoveWeakIsolatedMasks(
@@ -767,14 +772,16 @@ namespace FaceShield.ViewModels.Pages
                 });
             if (cleanup.RemovedWeakIsolatedFaces <= 0)
             {
-                FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken);
+                if (fillStableGaps)
+                    FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken);
                 return;
             }
 
             System.Diagnostics.Debug.WriteLine(
                 $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces} removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
 
-            FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken);
+            if (fillStableGaps)
+                FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken);
         }
 
         private void FillYoloStableFinalMaskGaps(

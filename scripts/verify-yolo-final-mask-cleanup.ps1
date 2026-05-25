@@ -243,8 +243,29 @@ if (afterCutGuard.Removed != 1 || string.Join(",", afterCutGuard.RemovedFrameInd
 if (afterCutGapProvider.TryGetFaceMaskData(201, out var afterCutFilled) && afterCutFilled.Faces.Count > 0)
     throw new InvalidOperationException("Expected next-anchor scene-cut guard to remove the filled gap frame.");
 
+var postSceneCleanupProvider = new FrameMaskProvider();
+postSceneCleanupProvider.SetFaceRects(400, new[] { new Rect(300, 220, 90, 90) }, size, 0.82f, new[] { 0.82f });
+postSceneCleanupProvider.SetFaceRects(401, new[] { new Rect(520, 260, 90, 90) }, size, 0.45f, new[] { 0.45f });
+postSceneCleanupProvider.SetFaceRects(402, new[] { new Rect(524, 264, 90, 90) }, size, 0.45f, new[] { 0.45f });
+var preSceneCleanup = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(postSceneCleanupProvider);
+if (preSceneCleanup.RemovedWeakIsolatedFaces != 0)
+    throw new InvalidOperationException($"Expected adjacent moderate weak boxes to remain before scene-cut removal, got removed={preSceneCleanup.RemovedWeakIsolatedFaces}.");
+var postSceneGuard = new FaceTrackSceneCutGuard().Apply(
+    postSceneCleanupProvider,
+    new[] { new FaceTrackFilledFace(401, new Rect(520, 260, 90, 90), size, 0.45f, 400) },
+    static (source, target) => source == 400 && target == 401 ? 0.50 : 0.0);
+if (postSceneGuard.Removed != 1 || string.Join(",", postSceneGuard.RemovedFrameIndices) != "401")
+    throw new InvalidOperationException($"Expected scene-cut guard to remove frame 401, got removed={postSceneGuard.Removed}, frames={string.Join(",", postSceneGuard.RemovedFrameIndices)}.");
+var postSceneCleanup = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(postSceneCleanupProvider);
+if (postSceneCleanup.RemovedWeakIsolatedFaces != 1 ||
+    postSceneCleanup.RemovedWeakUnsupportedFaces != 1 ||
+    string.Join(",", postSceneCleanup.RemovedFrameIndices) != "402")
+{
+    throw new InvalidOperationException($"Expected post-scene cleanup to remove weak remnant frame 402, got removed={postSceneCleanup.RemovedWeakIsolatedFaces}, unsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, frames={string.Join(",", postSceneCleanup.RemovedFrameIndices)}.");
+}
+
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}, postSceneCleanupRemoved={postSceneCleanup.RemovedWeakIsolatedFaces}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

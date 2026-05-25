@@ -295,6 +295,7 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "extendedGapFr
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "mixedFrameGapFilled=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapCutRemoved=2"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapCutAfterRemoved=1"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "postSceneCleanupRemoved=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,40,41,50,59,60,61,90,91,92,93,96"
 
 $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(

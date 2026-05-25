@@ -525,34 +525,6 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         ? "none"
         : string.Join(",", trackPost.FilledLostFrameIndices.Take(32));
     Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, initialFilled={trackPost.FilledInitialFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, removedSparse={trackPost.RemovedSparseFaces}, removedEdgeTail={trackPost.RemovedEdgeTailFaces}, removedLower={trackPost.RemovedLowerFrameFaces}, rewritten={trackPost.RewrittenFrames}");
-    if (useYolo)
-    {
-        var sceneCutGuard = new FaceTrackSceneCutGuard();
-        var directCandidates = sceneCutGuard.BuildWeakTrackTransitionCandidates(
-            maskProvider,
-            trackOptions,
-            maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
-            maxTransitionGap: 8,
-            minConfidenceDrop: 0.06f,
-            maxPostCutCarryFrames: 5);
-        var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
-            maskProvider,
-            maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
-            maxCarryFrames: 5);
-        var sceneCutCandidates = trackPost.FilledGapFacesInfo
-            .Concat(trackPost.FilledLostFacesInfo)
-            .Concat(trackPost.FilledInitialFacesInfo)
-            .Concat(directCandidates)
-            .Concat(postCutCandidates)
-            .ToArray();
-        var sceneCut = sceneCutGuard.Apply(
-            maskProvider,
-            input,
-            sceneCutCandidates,
-            differenceThreshold: yoloSceneCutDifferenceThreshold,
-            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
-        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
-    }
     if (detector is IBgraFaceDetector bgraDetector)
     {
         using var faceOnnxRoiDetector = useScrfd || useYuNet || useYolo ? null : new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));
@@ -602,6 +574,33 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 differenceThreshold: yoloSceneCutDifferenceThreshold,
                 directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
         Console.WriteLine($"[SmokeYoloFinalMaskGapFillSceneCutGuard] label={label}, candidates={gapFill.CutGuardFacesInfo.Count}, checked={gapFillGuard.Checked}, checkedPairs={FormatTextValues(gapFillGuard.CheckedFramePairs)}, maxDiff={gapFillGuard.MaxDifference:F3}, cutPairs={FormatTextValues(gapFillGuard.CutFramePairs)}, removed={gapFillGuard.Removed}, removedFrames={FormatFrames(gapFillGuard.RemovedFrameIndices)}, threshold={gapFillGuard.Threshold:F3}, elapsedMs={gapFillGuard.ElapsedMs}, error={gapFillGuard.Error ?? "none"}");
+        var sceneCutGuard = new FaceTrackSceneCutGuard();
+        var directCandidates = sceneCutGuard.BuildWeakTrackTransitionCandidates(
+            maskProvider,
+            trackOptions,
+            maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
+            maxTransitionGap: 8,
+            minConfidenceDrop: 0.06f,
+            maxPostCutCarryFrames: 5);
+        var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
+            maskProvider,
+            maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
+            maxCarryFrames: 5);
+        var sceneCutCandidates = trackPost.FilledGapFacesInfo
+            .Concat(trackPost.FilledLostFacesInfo)
+            .Concat(trackPost.FilledInitialFacesInfo)
+            .Concat(directCandidates)
+            .Concat(postCutCandidates)
+            .ToArray();
+        var sceneCut = sceneCutGuard.Apply(
+            maskProvider,
+            input,
+            sceneCutCandidates,
+            differenceThreshold: yoloSceneCutDifferenceThreshold,
+            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
+        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
+        var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
+        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneCleanup] label={label}, removedWeakIsolated={postSceneCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={postSceneCleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={postSceneCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postSceneCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postSceneCleanup.RemovedTinyIsolatedFaces}, removedFrames={FormatFrames(postSceneCleanup.RemovedFrameIndices)}");
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
     if (useYolo)
