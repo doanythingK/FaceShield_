@@ -72,6 +72,21 @@ namespace FaceShield.Services.Analysis
                             continue;
                         }
                     }
+                    if (confidence <= options.UpperWeakClusterMaxConfidence &&
+                        confidence > options.WeakConfidenceMax &&
+                        !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio))
+                    {
+                        bool hasMatchingNeighbor = HasMatchingTemporalNeighbor(entries, i, face, options);
+                        bool removeUpperWeakCluster = hasMatchingNeighbor &&
+                            IsUpperWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
+
+                        if (removeUpperWeakCluster)
+                        {
+                            removed++;
+                            removedUpperWeakClusters++;
+                            continue;
+                        }
+                    }
                     if (confidence <= options.TinyShortClusterMaxConfidence &&
                         !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio))
                     {
@@ -859,9 +874,9 @@ namespace FaceShield.Services.Analysis
         public float TinyIsolatedMaxConfidence { get; init; } = 0.62f;
         public double TinyIsolatedMaxAreaRatio { get; init; } = 0.0009;
         public int UpperWeakClusterMaxFrames { get; init; } = 6;
-        public float UpperWeakClusterMaxConfidence { get; init; } = 0.50f;
-        public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.12;
-        public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0035;
+        public float UpperWeakClusterMaxConfidence { get; init; } = 0.60f;
+        public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.10;
+        public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0065;
     }
 
     public sealed record YoloFinalMaskGapFillOptions

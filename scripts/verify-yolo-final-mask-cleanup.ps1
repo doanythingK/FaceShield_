@@ -71,11 +71,16 @@ for (int frame = 120; frame <= 124; frame++)
 for (int frame = 130; frame <= 134; frame++)
     provider.SetFaceRects(frame, new[] { new Rect(820 + frame - 130, 40, 50, 50) }, size, 0.46f, new[] { 0.46f });
 provider.SetFaceRects(135, new[] { new Rect(825, 40, 50, 50) }, size, 0.72f, new[] { 0.72f });
+for (int frame = 140; frame <= 142; frame++)
+    provider.SetFaceRects(frame, new[] { new Rect(980 + frame - 140, 46, 76, 76) }, size, 0.58f, new[] { 0.58f });
+for (int frame = 150; frame <= 152; frame++)
+    provider.SetFaceRects(frame, new[] { new Rect(1120 + frame - 150, 44, 76, 76) }, size, 0.58f, new[] { 0.58f });
+provider.SetFaceRects(153, new[] { new Rect(1123, 44, 76, 76) }, size, 0.72f, new[] { 0.72f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 18)
-    throw new InvalidOperationException($"Expected 18 weak/tiny isolated/short/tiny/upper-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 21)
+    throw new InvalidOperationException($"Expected 21 weak/tiny isolated/short/tiny/upper-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (result.RemovedWeakUnsupportedFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak unsupported faces to be removed, got {result.RemovedWeakUnsupportedFaces}.");
@@ -92,8 +97,8 @@ if (result.RemovedTinyShortClusterFaces != 4)
 if (result.RemovedTinyIsolatedFaces != 1)
     throw new InvalidOperationException($"Expected 1 medium-confidence tiny isolated face to be removed, got {result.RemovedTinyIsolatedFaces}.");
 
-if (result.RemovedUpperWeakClusterFaces != 5)
-    throw new InvalidOperationException($"Expected 5 upper weak non-edge cluster faces to be removed, got {result.RemovedUpperWeakClusterFaces}.");
+if (result.RemovedUpperWeakClusterFaces != 8)
+    throw new InvalidOperationException($"Expected 8 upper weak non-edge cluster faces to be removed, got {result.RemovedUpperWeakClusterFaces}.");
 
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
@@ -172,6 +177,18 @@ for (int frame = 130; frame <= 135; frame++)
 {
     if (!provider.TryGetFaceMaskData(frame, out var upperWeakStrongContinuation) || upperWeakStrongContinuation.Faces.Count != 1)
         throw new InvalidOperationException($"Expected upper weak cluster with strong continuation to remain at frame {frame}.");
+}
+
+for (int frame = 140; frame <= 142; frame++)
+{
+    if (provider.TryGetFaceMaskData(frame, out var upperMediumWeak) && upperMediumWeak.Faces.Count > 0)
+        throw new InvalidOperationException($"Expected upper medium-weak non-edge cluster frame {frame} to be removed.");
+}
+
+for (int frame = 150; frame <= 153; frame++)
+{
+    if (!provider.TryGetFaceMaskData(frame, out var upperMediumWeakStrongContinuation) || upperMediumWeakStrongContinuation.Faces.Count != 1)
+        throw new InvalidOperationException($"Expected upper medium-weak cluster with strong continuation to remain at frame {frame}.");
 }
 
 var gapProvider = new FrameMaskProvider();
