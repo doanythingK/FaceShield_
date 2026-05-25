@@ -846,11 +846,11 @@ namespace FaceShield.ViewModels.Pages
                     MaxGapFrames = YoloFinalMaskStableGapMaxFrames,
                     BlockedCutFramePairs = blockedCutFramePairs ?? Array.Empty<string>()
                 });
-            if (gapFill.FilledFaces <= 0)
+            if (gapFill.FilledFaces <= 0 && gapFill.BlockedCutGapFaces <= 0)
                 return;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)}");
+                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} blockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)}");
 
             if (gapFill.CutGuardFacesInfo.Count == 0)
                 return;

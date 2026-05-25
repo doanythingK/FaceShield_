@@ -220,7 +220,9 @@ namespace FaceShield.Services.Analysis
             var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
             var filledFaceInfo = new List<FaceTrackFilledFace>();
             var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
+            var blockedCutFrames = new SortedSet<int>();
             int filledFaces = 0;
+            int blockedCutGapFaces = 0;
 
             for (int entryIndex = 0; entryIndex < entries.Length - 1; entryIndex++)
             {
@@ -241,8 +243,6 @@ namespace FaceShield.Services.Analysis
                             break;
 
                         if (gap <= 0)
-                            continue;
-                        if (CrossesBlockedCut(previousFrame, nextFrame, options))
                             continue;
 
                         if (!IsGapAnchorEligible(
@@ -269,6 +269,18 @@ namespace FaceShield.Services.Analysis
                                 out float nextConfidence))
                         {
                             continue;
+                        }
+
+                        if (CrossesBlockedCut(previousFrame, nextFrame, options))
+                        {
+                            blockedCutGapFaces += gap;
+                            for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
+                            {
+                                if (!storedFrames.Contains(frameIndex))
+                                    blockedCutFrames.Add(frameIndex);
+                            }
+
+                            break;
                         }
 
                         float fillConfidence = Math.Clamp(
@@ -323,7 +335,7 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
-            if (filledFaces == 0)
+            if (filledFaces == 0 && blockedCutGapFaces == 0)
                 return YoloFinalMaskGapFillResult.Empty;
 
             foreach (var entry in fills.OrderBy(static x => x.Key))
@@ -343,7 +355,9 @@ namespace FaceShield.Services.Analysis
                 filledFaces,
                 fills.Keys.OrderBy(static x => x).ToArray(),
                 filledFaceInfo.ToArray(),
-                cutGuardFaceInfo.ToArray());
+                cutGuardFaceInfo.ToArray(),
+                blockedCutGapFaces,
+                blockedCutFrames.ToArray());
         }
 
         private static (PixelSize Size, List<Rect> Faces, List<float> Confidences) CreateFillEntry(
@@ -1140,8 +1154,10 @@ namespace FaceShield.Services.Analysis
         int FilledFaces,
         IReadOnlyList<int> FilledFrameIndices,
         IReadOnlyList<FaceTrackFilledFace> FilledFacesInfo,
-        IReadOnlyList<FaceTrackFilledFace> CutGuardFacesInfo)
+        IReadOnlyList<FaceTrackFilledFace> CutGuardFacesInfo,
+        int BlockedCutGapFaces,
+        IReadOnlyList<int> BlockedCutFrameIndices)
     {
-        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>());
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>());
     }
 }
