@@ -1110,7 +1110,7 @@ namespace FaceShield.ViewModels.Pages
                 {
                     MaxTrackGap = SuspiciousNoFaceMaxGap,
                     MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                    MaxLostFillFrames = 2,
+                    MaxLostFillFrames = 3,
                     MaxInitialFillFrames = 3,
                     MaxConfirmedTrackHoldFrames = SuspiciousNoFaceMaxGap,
                     AllowSmallTrackLostFill = true,

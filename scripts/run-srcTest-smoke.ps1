@@ -63,7 +63,7 @@ param(
     [int]$YoloTileColumns = 2,
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
-    [int]$YoloMaxLostFillFrames = 2,
+    [int]$YoloMaxLostFillFrames = 3,
     [int]$YoloMaxInitialFillFrames = 3,
     [int]$YoloDropShortTrackMaxDetections = 1,
     [double]$YoloShortTrackMaxConfidence = 0.18,
