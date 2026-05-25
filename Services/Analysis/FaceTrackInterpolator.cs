@@ -58,11 +58,15 @@ namespace FaceShield.Services.Analysis
             var gapFilledFaces = new List<FaceTrackFilledFace>();
             var lostFillFrameIndices = new List<int>();
             var lostFilledFaces = new List<FaceTrackFilledFace>();
+            var initialFilledFaces = new List<FaceTrackFilledFace>();
             TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
+            int removedEdgeTailFaces = TrimEdgeLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
             int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
+            int removedSparseFaces = RemoveSparseLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces);
             int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces);
+            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces);
             int rewrittenFrames = RewriteMaskProvider(maskProvider, facesByFrame, confByFrame, sizeByFrame, hasStoredMask);
 
             return new FaceTrackPostProcessResult(
@@ -72,7 +76,11 @@ namespace FaceShield.Services.Analysis
                 lostFilledFrames,
                 lostFillFrameIndices.ToArray(),
                 lostFilledFaces.ToArray(),
+                initialFilledFrames,
+                initialFilledFaces.ToArray(),
                 removedFaces,
+                removedSparseFaces,
+                removedEdgeTailFaces,
                 removedLowerFrameFaces,
                 rewrittenFrames);
         }
@@ -105,6 +113,40 @@ namespace FaceShield.Services.Analysis
                 if (keepCount < track.DetectionCount)
                     track.RemoveDetectionsFrom(keepCount);
             }
+        }
+
+        private static int TrimEdgeLowConfidenceTails(
+            IReadOnlyList<FaceTrack> tracks,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame,
+            FaceTrackPostProcessOptions options)
+        {
+            if (options.EdgeTailMaxConfidence <= 0)
+                return 0;
+
+            int removed = 0;
+            foreach (var track in tracks)
+            {
+                int keepCount = track.DetectionCount;
+                while (keepCount > options.EdgeTailMinStableDetections)
+                {
+                    var current = track.Detections[keepCount - 1];
+                    if (current.Confidence > options.EdgeTailMaxConfidence ||
+                        !TouchesFrameEdge(current, options))
+                    {
+                        break;
+                    }
+
+                    RemoveDetectionFromFrame(current, facesByFrame, confByFrame);
+                    keepCount--;
+                    removed++;
+                }
+
+                if (keepCount < track.DetectionCount)
+                    track.RemoveDetectionsFrom(keepCount);
+            }
+
+            return removed;
         }
 
         private static int RemoveLowerFrameLowConfidenceTracks(
@@ -222,6 +264,57 @@ namespace FaceShield.Services.Analysis
             }
 
             return removed;
+        }
+
+        private static int RemoveSparseLowConfidenceTracks(
+            IReadOnlyList<FaceTrack> tracks,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame,
+            FaceTrackPostProcessOptions options,
+            ISet<int> removedTrackIds)
+        {
+            if (options.DropSparseTrackMaxDetections <= 0 ||
+                options.SparseTrackMaxConfidence <= 0 ||
+                options.DropSparseTrackMaxDensity <= 0)
+            {
+                return 0;
+            }
+
+            int removed = 0;
+            foreach (var track in tracks)
+            {
+                if (removedTrackIds.Contains(track.Id) ||
+                    !IsSparseLowConfidenceTrack(track, tracks, options))
+                {
+                    continue;
+                }
+
+                removedTrackIds.Add(track.Id);
+                removed += RemoveTrackDetections(track, facesByFrame, confByFrame);
+            }
+
+            return removed;
+        }
+
+        private static bool IsSparseLowConfidenceTrack(
+            FaceTrack track,
+            IReadOnlyList<FaceTrack> tracks,
+            FaceTrackPostProcessOptions options)
+        {
+            if (track.DetectionCount <= 0 ||
+                track.DetectionCount > options.DropSparseTrackMaxDetections ||
+                track.MaxConfidence >= options.SparseTrackMaxConfidence ||
+                CouldBePartialFace(track, tracks, options))
+            {
+                return false;
+            }
+
+            int span = track.Detections[^1].FrameIndex - track.Detections[0].FrameIndex + 1;
+            if (span < options.DropSparseTrackMinSpanFrames)
+                return false;
+
+            double density = track.DetectionCount / (double)Math.Max(1, span);
+            return density <= options.DropSparseTrackMaxDensity;
         }
 
         private static int RemoveTrackDetections(
@@ -367,9 +460,88 @@ namespace FaceShield.Services.Analysis
                             1.0f);
                         facesByFrame[frameIndex]!.Add(interpolated);
                         confByFrame[frameIndex]!.Add(confidence);
-                        gapFilledFaces.Add(new FaceTrackFilledFace(frameIndex, interpolated, sizeByFrame[frameIndex], confidence));
+                        gapFilledFaces.Add(new FaceTrackFilledFace(frameIndex, interpolated, sizeByFrame[frameIndex], confidence, previous.FrameIndex));
                         filled++;
                     }
+                }
+            }
+
+            return filled;
+        }
+
+        private static int FillConfirmedInitialFrames(
+            IReadOnlyList<FaceTrack> tracks,
+            List<Rect>?[] facesByFrame,
+            List<float>?[] confByFrame,
+            PixelSize[] sizeByFrame,
+            bool[] hasStoredMask,
+            FaceTrackPostProcessOptions options,
+            IReadOnlySet<int> removedTrackIds,
+            ICollection<FaceTrackFilledFace> initialFilledFaces)
+        {
+            if (options.MaxInitialFillFrames <= 0)
+                return 0;
+
+            int filled = 0;
+            foreach (var track in tracks)
+            {
+                if (removedTrackIds.Contains(track.Id) ||
+                    !IsConfirmedTrack(track, options) ||
+                    track.Detections.Count < 2)
+                {
+                    continue;
+                }
+
+                var first = track.Detections[0];
+                if (first.FrameIndex <= 0 ||
+                    first.Confidence < options.StrongConfidence ||
+                    !TouchesFrameEdge(first, options))
+                {
+                    continue;
+                }
+
+                var second = track.Detections[1];
+                int frameDelta = Math.Max(1, second.FrameIndex - first.FrameIndex);
+                double dx = (second.Bounds.X - first.Bounds.X) / frameDelta;
+                double dy = (second.Bounds.Y - first.Bounds.Y) / frameDelta;
+                double dw = (second.Bounds.Width - first.Bounds.Width) / frameDelta;
+                double dh = (second.Bounds.Height - first.Bounds.Height) / frameDelta;
+
+                for (int offset = 1; offset <= options.MaxInitialFillFrames; offset++)
+                {
+                    int frameIndex = first.FrameIndex - offset;
+                    if (frameIndex < 0)
+                        break;
+                    if (hasStoredMask[frameIndex])
+                        continue;
+
+                    var predicted = new Rect(
+                        first.Bounds.X - dx * offset,
+                        first.Bounds.Y - dy * offset,
+                        Math.Max(1.0, first.Bounds.Width - dw * offset),
+                        Math.Max(1.0, first.Bounds.Height - dh * offset));
+
+                    if (!IsMostlyInside(predicted, first.Size))
+                        break;
+
+                    predicted = ClampToSize(predicted, first.Size);
+                    if (predicted.Width <= 0 || predicted.Height <= 0)
+                        break;
+
+                    facesByFrame[frameIndex] ??= new List<Rect>();
+                    confByFrame[frameIndex] ??= new List<float>();
+
+                    if (HasSimilarFace(predicted, facesByFrame[frameIndex], options.DuplicateIou))
+                        continue;
+
+                    if (sizeByFrame[frameIndex].Width <= 0 || sizeByFrame[frameIndex].Height <= 0)
+                        sizeByFrame[frameIndex] = first.Size;
+
+                    float confidence = Math.Clamp(first.Confidence, options.WeakConfidence, 1.0f);
+                    facesByFrame[frameIndex]!.Add(predicted);
+                    confByFrame[frameIndex]!.Add(confidence);
+                    initialFilledFaces.Add(new FaceTrackFilledFace(frameIndex, predicted, first.Size, confidence, first.FrameIndex));
+                    filled++;
                 }
             }
 
@@ -406,6 +578,12 @@ namespace FaceShield.Services.Analysis
                 int lastFrame = last.FrameIndex;
                 if (lastFrame < 0 || lastFrame >= facesByFrame.Length - 1)
                     continue;
+                if (options.EdgeLostFillMaxConfidence > 0 &&
+                    last.Confidence <= options.EdgeLostFillMaxConfidence &&
+                    TouchesFrameEdge(last, options))
+                {
+                    continue;
+                }
 
                 var previous = detections.Count >= 2 ? detections[^2] : last;
                 int frameDelta = Math.Max(1, last.FrameIndex - previous.FrameIndex);
@@ -447,7 +625,7 @@ namespace FaceShield.Services.Analysis
                     facesByFrame[frameIndex]!.Add(predicted);
                     confByFrame[frameIndex]!.Add(Math.Clamp(last.Confidence, options.WeakConfidence, 1.0f));
                     lostFillFrameIndices.Add(frameIndex);
-                    lostFilledFaces.Add(new FaceTrackFilledFace(frameIndex, predicted, last.Size, last.Confidence));
+                    lostFilledFaces.Add(new FaceTrackFilledFace(frameIndex, predicted, last.Size, last.Confidence, last.FrameIndex));
                     filled++;
                 }
             }
@@ -583,16 +761,31 @@ namespace FaceShield.Services.Analysis
         int FilledLostFaces,
         IReadOnlyList<int> FilledLostFrameIndices,
         IReadOnlyList<FaceTrackFilledFace> FilledLostFacesInfo,
+        int FilledInitialFaces,
+        IReadOnlyList<FaceTrackFilledFace> FilledInitialFacesInfo,
         int RemovedShortFaces,
+        int RemovedSparseFaces,
+        int RemovedEdgeTailFaces,
         int RemovedLowerFrameFaces,
         int RewrittenFrames)
     {
-        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, 0, 0);
+        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<FaceTrackFilledFace>(), 0, 0, 0, 0, 0);
     }
 
     public readonly record struct FaceTrackFilledFace(
         int FrameIndex,
         Rect Bounds,
         PixelSize Size,
-        float Confidence);
+        float Confidence,
+        int SourceFrameIndex)
+    {
+        public FaceTrackFilledFace(
+            int FrameIndex,
+            Rect Bounds,
+            PixelSize Size,
+            float Confidence)
+            : this(FrameIndex, Bounds, Size, Confidence, FrameIndex)
+        {
+        }
+    }
 }

@@ -58,6 +58,14 @@ $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $trackPostprocessVerify = Join-Path $repo "scripts\verify-face-track-postprocess.ps1"
+$faceTrackSceneCutGuardVerify = Join-Path $repo "scripts\verify-face-track-scene-cut-guard.ps1"
+$autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sparse-scene-cut-guard.ps1"
+$autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
+$yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
+$yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-followup-quality-evidence.ps1"
+$yoloDetectionOverlayVideoVerify = Join-Path $repo "scripts\verify-yolo-detection-overlay-video.ps1"
+$yoloAspectRatioFilterVerify = Join-Path $repo "scripts\verify-yolo-aspect-ratio-filter.ps1"
+$yoloFinalMaskCleanupVerify = Join-Path $repo "scripts\verify-yolo-final-mask-cleanup.ps1"
 $yoloStateVerify = Join-Path $repo "scripts\verify-yolo-state.ps1"
 $yoloCompletionAuditVerify = Join-Path $repo "scripts\verify-yolo-completion-audit-state.ps1"
 $yoloProfileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
@@ -212,11 +220,68 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+    if (-not (Test-Path $requiredVerifier)) {
+        throw "Required verifier not found: $requiredVerifier"
+    }
+}
+
 $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVerify @()
 Assert-Contains "track-postprocess-policy" $trackOutput "\[FaceTrackPostVerify\]"
 Assert-Contains "track-postprocess-policy" $trackOutput "gapFrames=11"
-Assert-Contains "track-postprocess-policy" $trackOutput "lostFrames=33,34,35"
-Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52"
+Assert-Contains "track-postprocess-policy" $trackOutput "initialFilled=3"
+Assert-Contains "track-postprocess-policy" $trackOutput "lostFrames=33,34,35,88,89"
+Assert-Contains "track-postprocess-policy" $trackOutput "removedSparse=3"
+Assert-Contains "track-postprocess-policy" $trackOutput "removedEdgeTail=1"
+Assert-Contains "track-postprocess-policy" $trackOutput "largeJumpFilled=False"
+Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52,55,59,70,71,82,83,84,85,86,87,88,89"
+
+$sceneCutOutput = Invoke-ScriptStep "face-track-scene-cut-guard" $faceTrackSceneCutGuardVerify @()
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "\[FaceTrackSceneCutGuardVerify\]"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "checkedPairs=0->2,2->3"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "maxDiff=0.480"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "cutPairs=1->2"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "removedFrames=2"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "hardCutRemoved=True"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "sameSceneKept=True"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reverseChecked=1"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reverseRemoved=1"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reversePairs=1->3"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directCandidates=3"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directRemoved=3"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "diffCacheCalls=1"
+
+$sparseDecisionOutput = Invoke-ScriptStep "automask-sparse-scene-cut-guard" $autoMaskSparseSceneCutGuardVerify @()
+Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "\[AutoMaskSparseSceneCutGuardVerify\]"
+Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "hardCutStops=True"
+Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "sameSceneStops=False"
+Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "nonYoloStops=False"
+
+$sparseMaterializeOutput = Invoke-ScriptStep "automask-sparse-materialize-scene-cut" $autoMaskSparseMaterializeSceneCutVerify @()
+Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "\[AutoMaskSparseMaterializeSceneCutVerify\]"
+Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "yoloHardCutInterpolated=0"
+Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "yoloSceneCutStops=1"
+Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "yoloSceneCutTransitions=0->5"
+Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "cutBeforePositiveInterpolated=0"
+Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "faceOnnxInterpolated=4"
+
+$reviewChecklistOutput = Invoke-ScriptStep "yolo-quality-review-checklist" $yoloQualityReviewChecklistVerify @()
+Assert-Contains "yolo-quality-review-checklist" $reviewChecklistOutput "\[YoloQualityReviewChecklistVerify\] all requested checks passed"
+
+$followupEvidenceOutput = Invoke-ScriptStep "yolo-followup-quality-evidence" $yoloFollowupQualityEvidenceVerify @()
+Assert-Contains "yolo-followup-quality-evidence" $followupEvidenceOutput "\[YoloFollowupQualityEvidenceVerify\] all requested checks passed"
+
+$detectionOverlayOutput = Invoke-ScriptStep "yolo-detection-overlay-video" $yoloDetectionOverlayVideoVerify @()
+Assert-Contains "yolo-detection-overlay-video" $detectionOverlayOutput "\[YoloDetectionOverlayVideoVerify\] all requested checks passed"
+Assert-Contains "yolo-detection-overlay-video" $detectionOverlayOutput "yolo-detection-overlay\.mp4"
+
+$aspectRatioFilterOutput = Invoke-ScriptStep "yolo-aspect-ratio-filter" $yoloAspectRatioFilterVerify @()
+Assert-Contains "yolo-aspect-ratio-filter" $aspectRatioFilterOutput "\[YoloAspectRatioFilterVerify\] all requested checks passed"
+
+$finalMaskCleanupOutput = Invoke-ScriptStep "yolo-final-mask-cleanup" $yoloFinalMaskCleanupVerify @()
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "\[YoloFinalMaskCleanupVerify\]"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=2"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,40,41,50"
 
 $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(
     "-SkipTrim",

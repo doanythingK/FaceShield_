@@ -1,0 +1,176 @@
+param()
+
+$ErrorActionPreference = "Stop"
+
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$work = Join-Path $repo ".tmp\face-track-scene-cut-guard"
+$project = Join-Path $work "FaceTrackSceneCutGuardHarness.csproj"
+$program = Join-Path $work "Program.cs"
+
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+
+@"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$repo\FaceShield.csproj" />
+  </ItemGroup>
+</Project>
+"@ | Set-Content -Encoding UTF8 $project
+
+@'
+using System;
+using Avalonia;
+using FaceShield.Services.Analysis;
+using FaceShield.Services.Video;
+
+var provider = new FrameMaskProvider();
+var size = new PixelSize(1280, 720);
+var ghost = new Rect(250, 120, 90, 92);
+var sameScene = new Rect(520, 180, 86, 88);
+
+provider.SetFaceRects(2, new[] { ghost }, size, 0.38f, new[] { 0.38f });
+provider.SetFaceRects(3, new[] { sameScene }, size, 0.40f, new[] { 0.40f });
+
+var candidates = new[]
+{
+    new FaceTrackFilledFace(2, ghost, size, 0.38f, 0),
+    new FaceTrackFilledFace(3, sameScene, size, 0.40f, 2)
+};
+
+var result = new FaceTrackSceneCutGuard().Apply(
+    provider,
+    candidates,
+    static (source, target) => source == 1 && target == 2 ? 0.48 : 0.10);
+
+if (result.Checked != 2)
+    throw new InvalidOperationException($"Expected checked=2, got {result.Checked}.");
+
+if (result.Removed != 1)
+    throw new InvalidOperationException($"Expected removed=1, got {result.Removed}.");
+
+if (string.Join(",", result.CheckedFramePairs) != "0->2,2->3")
+    throw new InvalidOperationException($"Unexpected checked frame pairs: {string.Join(",", result.CheckedFramePairs)}.");
+
+if (Math.Abs(result.MaxDifference - 0.48) > 0.001)
+    throw new InvalidOperationException($"Expected max difference 0.48, got {result.MaxDifference:0.000}.");
+
+if (string.Join(",", result.CutFramePairs) != "1->2")
+    throw new InvalidOperationException($"Unexpected cut frame pairs: {string.Join(",", result.CutFramePairs)}.");
+
+if (string.Join(",", result.RemovedFrameIndices) != "2")
+    throw new InvalidOperationException($"Unexpected removed frame indices: {string.Join(",", result.RemovedFrameIndices)}.");
+
+if (provider.TryGetFaceMaskData(2, out var cutFrame) && cutFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected hard-cut track-fill candidate at frame 2 to be removed.");
+
+if (!provider.TryGetFaceMaskData(3, out var sameFrame) || sameFrame.Faces.Count != 1)
+    throw new InvalidOperationException("Expected same-scene track-fill candidate at frame 3 to remain.");
+
+var reverseProvider = new FrameMaskProvider();
+var reverseInitial = new Rect(1040, 0, 120, 110);
+reverseProvider.SetFaceRects(1, new[] { reverseInitial }, size, 0.90f, new[] { 0.90f });
+
+var reverseCandidates = new[]
+{
+    new FaceTrackFilledFace(1, reverseInitial, size, 0.90f, 3)
+};
+
+var reverseResult = new FaceTrackSceneCutGuard().Apply(
+    reverseProvider,
+    reverseCandidates,
+    static (source, target) => source == 1 && target == 2 ? 0.49 : 0.08);
+
+if (reverseResult.Checked != 1)
+    throw new InvalidOperationException($"Expected reverse checked=1, got {reverseResult.Checked}.");
+
+if (string.Join(",", reverseResult.CheckedFramePairs) != "1->3")
+    throw new InvalidOperationException($"Unexpected reverse checked frame pairs: {string.Join(",", reverseResult.CheckedFramePairs)}.");
+
+if (string.Join(",", reverseResult.CutFramePairs) != "1->2")
+    throw new InvalidOperationException($"Unexpected reverse cut frame pairs: {string.Join(",", reverseResult.CutFramePairs)}.");
+
+if (reverseResult.Removed != 1 || string.Join(",", reverseResult.RemovedFrameIndices) != "1")
+    throw new InvalidOperationException($"Expected reverse initial fill at frame 1 to be removed, got removed={reverseResult.Removed}, frames={string.Join(",", reverseResult.RemovedFrameIndices)}.");
+
+if (reverseProvider.TryGetFaceMaskData(1, out var reverseFrame) && reverseFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected reverse initial-fill candidate before a hard cut to be removed.");
+
+var directProvider = new FrameMaskProvider();
+var directPrevious = new Rect(300, 220, 80, 82);
+var directGhost = new Rect(306, 224, 82, 84);
+var directGhostTailA = new Rect(308, 225, 82, 84);
+var directGhostTailB = new Rect(309, 226, 82, 84);
+directProvider.SetFaceRects(10, new[] { directPrevious }, size, 0.86f, new[] { 0.86f });
+directProvider.SetFaceRects(11, new[] { directGhost }, size, 0.42f, new[] { 0.42f });
+directProvider.SetFaceRects(12, new[] { directGhostTailA }, size, 0.43f, new[] { 0.43f });
+directProvider.SetFaceRects(13, new[] { directGhostTailB }, size, 0.44f, new[] { 0.44f });
+
+var guard = new FaceTrackSceneCutGuard();
+var directCandidates = guard.BuildWeakTrackTransitionCandidates(
+    directProvider,
+    new FaceTrackPostProcessOptions
+    {
+        MaxTrackGap = 3,
+        MaxFillGap = 3,
+        WeakConfidence = 0.38f,
+        StrongConfidence = 0.58f,
+        MinTrackIou = 0.08,
+        MaxCenterShiftRatio = 0.72,
+        MaxAreaChangeRatio = 4.0,
+        DuplicateIou = 0.35
+    },
+    maxTargetConfidence: 0.60f,
+    maxTransitionGap: 3);
+
+var directResult = guard.Apply(
+    directProvider,
+    directCandidates,
+    static (source, target) => source == 10 && target >= 11 && target <= 13 ? 0.50 : 0.0);
+
+if (directCandidates.Count != 3)
+    throw new InvalidOperationException($"Expected three weak direct transition carry candidates, got {directCandidates.Count}.");
+
+if (directResult.Removed != 3)
+    throw new InvalidOperationException($"Expected three weak direct transition carry detections to be removed, got {directResult.Removed}.");
+
+if (directProvider.TryGetFaceMaskData(11, out var directFrame) && directFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected weak direct detection after a hard cut to be removed.");
+if (directProvider.TryGetFaceMaskData(12, out var directTailFrameA) && directTailFrameA.Faces.Count != 0)
+    throw new InvalidOperationException("Expected weak direct carry detection after a hard cut to be removed.");
+if (directProvider.TryGetFaceMaskData(13, out var directTailFrameB) && directTailFrameB.Faces.Count != 0)
+    throw new InvalidOperationException("Expected weak direct carry tail detection after a hard cut to be removed.");
+
+var cacheProvider = new FrameMaskProvider();
+var cacheFaceA = new Rect(100, 100, 40, 42);
+var cacheFaceB = new Rect(300, 100, 44, 46);
+cacheProvider.SetFaceRects(21, new[] { cacheFaceA, cacheFaceB }, size, 0.39f, new[] { 0.39f, 0.38f });
+var cacheCandidates = new[]
+{
+    new FaceTrackFilledFace(21, cacheFaceA, size, 0.39f, 20),
+    new FaceTrackFilledFace(21, cacheFaceB, size, 0.38f, 20)
+};
+int diffCalls = 0;
+var cacheResult = guard.Apply(
+    cacheProvider,
+    cacheCandidates,
+    (source, target) =>
+    {
+        diffCalls++;
+        return 0.50;
+    });
+
+if (cacheResult.Checked != 2 || cacheResult.Removed != 2)
+    throw new InvalidOperationException($"Expected duplicate-pair guard checked=2 removed=2, got checked={cacheResult.Checked} removed={cacheResult.Removed}.");
+
+if (diffCalls != 1)
+    throw new InvalidOperationException($"Expected duplicate pair difference to be computed once, got {diffCalls}.");
+
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, diffCacheCalls={diffCalls}");
+'@ | Set-Content -Encoding UTF8 $program
+
+dotnet run --project $project

@@ -96,7 +96,7 @@ if (provider.TryGetFaceMaskData(2, out var removedWeak) && removedWeak.Faces.Cou
     throw new InvalidOperationException("Expected one-frame weak YOLO candidate not to be held as a confirmed track.");
 
 Console.WriteLine(
-    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, heldFrames={string.Join(",", expectedHoldFrames)}");
+    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, heldFrames={string.Join(",", expectedHoldFrames)}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

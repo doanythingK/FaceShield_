@@ -180,8 +180,12 @@ namespace FaceShield.Services.FaceDetection
 
             var afterNms = ApplySmallAreaFilter(
                 ApplyLowConfidencePositionFilter(
-                    RefineLargeBoxes(
-                        ApplyNms(candidates, _options.NmsThreshold, Math.Max(1, _options.MaxDetections)),
+                    ApplyTopSmallLowConfidenceFilter(
+                        ApplyAspectRatioFilter(
+                            RefineLargeBoxes(
+                                ApplyNms(candidates, _options.NmsThreshold, Math.Max(1, _options.MaxDetections)),
+                                width,
+                                height)),
                         width,
                         height),
                     width,
@@ -900,6 +904,114 @@ namespace FaceShield.Services.FaceDetection
             }
 
             return kept;
+        }
+
+        private IReadOnlyList<Candidate> ApplyAspectRatioFilter(IReadOnlyList<Candidate> candidates)
+        {
+            if (!_options.UseAspectRatioFilter || candidates.Count == 0)
+                return candidates;
+
+            double minAspectRatio = Math.Clamp(_options.MinAspectRatio, 0.0, 10.0);
+            double maxAspectRatio = Math.Clamp(_options.MaxAspectRatio, 0.0, 10.0);
+            if (minAspectRatio <= 0.0 && maxAspectRatio <= 0.0)
+                return candidates;
+            if (maxAspectRatio <= 0.0)
+                maxAspectRatio = double.MaxValue;
+            if (minAspectRatio > maxAspectRatio)
+                (minAspectRatio, maxAspectRatio) = (maxAspectRatio, minAspectRatio);
+
+            var kept = new List<Candidate>(candidates.Count);
+            int dropped = 0;
+            foreach (var candidate in candidates)
+            {
+                if (!IsAspectRatioAllowed(candidate.Width, candidate.Height, minAspectRatio, maxAspectRatio))
+                {
+                    dropped++;
+                    continue;
+                }
+
+                kept.Add(candidate);
+            }
+
+            if (_options.DumpDebug)
+            {
+                Trace.WriteLine(
+                    $"[YoloAspectRatioFilter] candidates={candidates.Count}, kept={kept.Count}, dropped={dropped}, minAspect={minAspectRatio:0.###}, maxAspect={maxAspectRatio:0.###}");
+            }
+
+            return kept;
+        }
+
+        internal static bool IsAspectRatioAllowed(double width, double height, double minAspectRatio, double maxAspectRatio)
+        {
+            if (minAspectRatio <= 0.0 && maxAspectRatio <= 0.0)
+                return true;
+            if (maxAspectRatio <= 0.0)
+                maxAspectRatio = double.MaxValue;
+            if (minAspectRatio > maxAspectRatio)
+                (minAspectRatio, maxAspectRatio) = (maxAspectRatio, minAspectRatio);
+
+            double aspectRatio = height > 0.0 ? width / height : 0.0;
+            return aspectRatio >= minAspectRatio && aspectRatio <= maxAspectRatio;
+        }
+
+        private IReadOnlyList<Candidate> ApplyTopSmallLowConfidenceFilter(IReadOnlyList<Candidate> candidates, int width, int height)
+        {
+            if (!_options.UseTopSmallLowConfidenceFilter || candidates.Count == 0)
+                return candidates;
+
+            double maxCenterYRatio = Math.Clamp(_options.TopSmallLowConfidenceMaxCenterYRatio, 0.0, 1.0);
+            double maxAreaRatio = Math.Clamp(_options.TopSmallLowConfidenceMaxAreaRatio, 0.0, 1.0);
+            float maxConfidence = Math.Clamp(_options.TopSmallLowConfidenceMaxConfidence, 0.0f, 1.0f);
+            if (maxCenterYRatio <= 0.0 || maxAreaRatio <= 0.0 || maxConfidence <= 0.0f)
+                return candidates;
+
+            double safeArea = Math.Max(1.0, width * (double)height);
+            double safeHeight = Math.Max(1.0, height);
+            var kept = new List<Candidate>(candidates.Count);
+            int dropped = 0;
+            foreach (var candidate in candidates)
+            {
+                double centerYRatio = (candidate.Y + candidate.Height * 0.5f) / safeHeight;
+                double areaRatio = Math.Max(0.0, candidate.Width * candidate.Height) / safeArea;
+                if (IsTopSmallLowConfidenceCandidate(
+                        candidate.Score,
+                        centerYRatio,
+                        areaRatio,
+                        maxConfidence,
+                        maxCenterYRatio,
+                        maxAreaRatio))
+                {
+                    dropped++;
+                    continue;
+                }
+
+                kept.Add(candidate);
+            }
+
+            if (_options.DumpDebug)
+            {
+                Trace.WriteLine(
+                    $"[YoloTopSmallLowConfidenceFilter] candidates={candidates.Count}, kept={kept.Count}, dropped={dropped}, maxConfidence={maxConfidence:0.###}, maxCenterY={maxCenterYRatio:0.###}, maxArea={maxAreaRatio:0.####}");
+            }
+
+            return kept;
+        }
+
+        internal static bool IsTopSmallLowConfidenceCandidate(
+            double confidence,
+            double centerYRatio,
+            double areaRatio,
+            double maxConfidence,
+            double maxCenterYRatio,
+            double maxAreaRatio)
+        {
+            if (maxConfidence <= 0.0 || maxCenterYRatio <= 0.0 || maxAreaRatio <= 0.0)
+                return false;
+
+            return confidence <= maxConfidence &&
+                centerYRatio <= maxCenterYRatio &&
+                areaRatio <= maxAreaRatio;
         }
 
         private IReadOnlyList<Candidate> RefineLargeBoxes(IReadOnlyList<Candidate> candidates, int width, int height)

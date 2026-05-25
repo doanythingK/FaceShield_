@@ -38,6 +38,20 @@ namespace FaceShield.Services.FaceDetection
 
         public double SmallAreaMaxAreaRatio { get; init; } = 0.0;
 
+        public bool UseAspectRatioFilter { get; init; } = false;
+
+        public double MinAspectRatio { get; init; } = 0.35;
+
+        public double MaxAspectRatio { get; init; } = 1.65;
+
+        public bool UseTopSmallLowConfidenceFilter { get; init; } = false;
+
+        public double TopSmallLowConfidenceMaxCenterYRatio { get; init; } = 0.08;
+
+        public double TopSmallLowConfidenceMaxAreaRatio { get; init; } = 0.006;
+
+        public float TopSmallLowConfidenceMaxConfidence { get; init; } = 0.65f;
+
         public float LargeBoxWidthScale { get; init; } = 1.0f;
 
         public float LargeBoxHeightScale { get; init; } = 1.0f;

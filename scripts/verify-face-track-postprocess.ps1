@@ -39,23 +39,42 @@ provider.SetFaceRects(25, new[] { new Rect(0, 420, 42, 76) }, size, 0.96f, new[]
 provider.SetFaceRects(30, new[] { new Rect(300, 220, 90, 92) }, size, 0.90f, new[] { 0.90f });
 provider.SetFaceRects(31, new[] { new Rect(306, 224, 90, 92) }, size, 0.89f, new[] { 0.89f });
 provider.SetFaceRects(32, new[] { new Rect(312, 228, 90, 92) }, size, 0.88f, new[] { 0.88f });
+provider.SetFaceRects(5, new[] { new Rect(1500, 700, 120, 90) }, size, 0.52f, new[] { 0.52f });
+provider.SetFaceRects(13, new[] { new Rect(1508, 704, 120, 90) }, size, 0.51f, new[] { 0.51f });
+provider.SetFaceRects(18, new[] { new Rect(1516, 708, 120, 90) }, size, 0.50f, new[] { 0.50f });
 provider.SetFaceRects(40, new[] { new Rect(820, 410, 34, 42) }, size, 0.94f, new[] { 0.94f });
 provider.SetFaceRects(42, new[] { new Rect(825, 413, 34, 42) }, size, 0.93f, new[] { 0.93f });
 provider.SetFaceRects(50, new[] { new Rect(1120, 260, 33, 44) }, size, 0.95f, new[] { 0.95f });
 provider.SetFaceRects(51, new[] { new Rect(1123, 262, 33, 44) }, size, 0.94f, new[] { 0.94f });
 provider.SetFaceRects(52, new[] { new Rect(1126, 264, 33, 44) }, size, 0.93f, new[] { 0.93f });
+provider.SetFaceRects(55, new[] { new Rect(200, 40, 80, 80) }, size, 0.86f, new[] { 0.86f });
+provider.SetFaceRects(59, new[] { new Rect(980, 260, 420, 360) }, size, 0.88f, new[] { 0.88f });
+provider.SetFaceRects(70, new[] { new Rect(120, 320, 84, 96) }, size, 0.82f, new[] { 0.82f });
+provider.SetFaceRects(71, new[] { new Rect(96, 320, 84, 96) }, size, 0.74f, new[] { 0.74f });
+provider.SetFaceRects(72, new[] { new Rect(50, 320, 84, 96) }, size, 0.46f, new[] { 0.46f });
+provider.SetFaceRects(85, new[] { new Rect(1760, 0, 120, 100) }, size, 0.90f, new[] { 0.90f });
+provider.SetFaceRects(86, new[] { new Rect(1740, 2, 130, 110) }, size, 0.89f, new[] { 0.89f });
+provider.SetFaceRects(87, new[] { new Rect(1720, 4, 140, 120) }, size, 0.88f, new[] { 0.88f });
 
 var result = new FaceTrackInterpolator().Apply(
     provider,
-    totalFrames: 60,
+    totalFrames: 90,
     new FaceTrackPostProcessOptions
     {
         MaxTrackGap = 8,
         MaxFillGap = 5,
+        MaxInitialFillFrames = 3,
         DropShortTrackMaxDetections = 1,
+        DropSparseTrackMaxDetections = 3,
+        DropSparseTrackMinSpanFrames = 8,
+        DropSparseTrackMaxDensity = 0.42,
         WeakConfidence = 0.50f,
         StrongConfidence = 0.68f,
         ShortTrackMaxConfidence = 0.68f,
+        SparseTrackMaxConfidence = 0.56f,
+        EdgeTailMaxConfidence = 0.50f,
+        EdgeTailMinStableDetections = 2,
+        EdgeLostFillMaxConfidence = 0.60f,
         SmallTrackMaxAreaRatio = 0.00075,
         MinTrackIou = 0.12,
         MaxCenterShiftRatio = 0.55,
@@ -68,6 +87,12 @@ if (!provider.TryGetFaceMaskData(11, out var filled) || filled.Faces.Count != 1)
 
 if (provider.TryGetFaceMaskData(20, out var removed) && removed.Faces.Count > 0)
     throw new InvalidOperationException("Expected isolated low-confidence frame 20 to be removed.");
+
+foreach (int frame in new[] { 5, 13, 18 })
+{
+    if (provider.TryGetFaceMaskData(frame, out var sparse) && sparse.Faces.Count > 0)
+        throw new InvalidOperationException($"Expected sparse low-confidence temporal false-positive frame {frame} to be removed.");
+}
 
 if (!provider.TryGetFaceMaskData(10, out var frame10) || frame10.Faces.Count != 1)
     throw new InvalidOperationException("Expected source frame 10 to remain.");
@@ -99,8 +124,32 @@ for (int frame = 50; frame <= 52; frame++)
         throw new InvalidOperationException($"Expected three-detection central partial-face candidate at frame {frame} to remain.");
 }
 
+if (!provider.TryGetFaceMaskData(55, out var largeJumpSource) || largeJumpSource.Faces.Count != 1)
+    throw new InvalidOperationException("Expected large-jump source frame 55 to remain.");
+
+for (int frame = 56; frame <= 58; frame++)
+{
+    if (provider.TryGetFaceMaskData(frame, out var largeJumpFill) && largeJumpFill.Faces.Count > 0)
+        throw new InvalidOperationException($"Expected large box jump not to be auto-filled at frame {frame}.");
+}
+
+if (!provider.TryGetFaceMaskData(59, out var largeJumpTarget) || largeJumpTarget.Faces.Count != 1)
+    throw new InvalidOperationException("Expected large-jump target frame 59 to remain.");
+
+if (provider.TryGetFaceMaskData(72, out var edgeTail) && edgeTail.Faces.Count > 0)
+    throw new InvalidOperationException("Expected low-confidence edge tail frame 72 to be removed.");
+
+if (provider.TryGetFaceMaskData(73, out var blockedEdgeLostFill) && blockedEdgeLostFill.Faces.Count > 0)
+    throw new InvalidOperationException("Expected low-confidence edge track not to extend lost fill past frame 72.");
+
+for (int frame = 82; frame <= 84; frame++)
+{
+    if (!provider.TryGetFaceMaskData(frame, out var initialFill) || initialFill.Faces.Count != 1)
+        throw new InvalidOperationException($"Expected confirmed edge-start track initial frame {frame} to be backfilled.");
+}
+
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedLower={result.RemovedLowerFrameFaces}, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

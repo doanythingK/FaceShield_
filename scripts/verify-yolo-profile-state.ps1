@@ -6,6 +6,9 @@ param(
     [string]$HomeViewCodeBehind = "Views/Pages/HomePageView.axaml.cs",
     [string]$WorkspaceViewModel = "ViewModels/Pages/WorkspaceViewModel.cs",
     [string]$AutoMaskGenerator = "Services/Analysis/AutoMaskGenerator.cs",
+    [string]$SceneCutGuard = "Services/Analysis/FaceTrackSceneCutGuard.cs",
+    [string]$FinalMaskPostProcessor = "Services/Analysis/YoloFinalMaskPostProcessor.cs",
+    [string]$RoiRefiner = "Services/Analysis/FaceTrackRoiRefiner.cs",
     [string]$WorkspaceStateStore = "Services/Workspace/WorkspaceStateStore.cs",
     [string]$YoloOptions = "Services/FaceDetection/YoloFaceOnnxDetectorOptions.cs",
     [string]$YoloDetector = "Services/FaceDetection/YoloFaceOnnxDetector.cs",
@@ -51,6 +54,9 @@ $homeViewText = Read-RepoFile $HomeView
 $homeViewCodeBehindText = Read-RepoFile $HomeViewCodeBehind
 $workspaceText = Read-RepoFile $WorkspaceViewModel
 $autoMaskGeneratorText = Read-RepoFile $AutoMaskGenerator
+$sceneCutGuardText = Read-RepoFile $SceneCutGuard
+$finalMaskPostProcessorText = Read-RepoFile $FinalMaskPostProcessor
+$roiRefinerText = Read-RepoFile $RoiRefiner
 $state = Read-RepoFile $WorkspaceStateStore
 $options = Read-RepoFile $YoloOptions
 $yoloDetectorText = Read-RepoFile $YoloDetector
@@ -191,13 +197,42 @@ Assert-Match "workspace autotune updates faceonnx options only" $workspaceText "
 Assert-Match "workspace keeps configured filter profile in run options" $workspaceText "FilterProfile\s*=\s*_autoOptions\.FilterProfile"
 Assert-Match "workspace tracking toggle gates temporal fixes" $workspaceText "private\s+FaceTrackPostProcessResult\s+ApplyAutoTemporalFixes\(\)[\s\S]*if\s*\(!_autoOptions\.UseTracking\)[\s\S]*return\s+FaceTrackPostProcessResult\.Empty"
 Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText "if\s*\(_autoOptions\.UseTracking\)\s*\{\s*ApplyAutoTemporalSmoothing\(\);\s*\}"
-Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*6[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
+Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*3[\s\S]*MaxInitialFillFrames\s*=\s*3[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*StrongConfidence\s*=\s*0\.58f[\s\S]*DropShortTrackMaxDetections\s*=\s*2[\s\S]*DropShortSmallTrackMaxDetections\s*=\s*3[\s\S]*ShortTrackMaxConfidence\s*=\s*0\.48f[\s\S]*DropSparseTrackMaxDetections\s*=\s*3[\s\S]*DropSparseTrackMinSpanFrames\s*=\s*8[\s\S]*DropSparseTrackMaxDensity\s*=\s*0\.42[\s\S]*SparseTrackMaxConfidence\s*=\s*0\.56f[\s\S]*EdgeTailMaxConfidence\s*=\s*0\.50f[\s\S]*EdgeLostFillMaxConfidence\s*=\s*0\.60f[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
+Assert-Match "workspace logs sparse temporal removals" $workspaceText "removedSparse=\{result\.RemovedSparseFaces\}"
+Assert-Match "workspace logs edge-tail temporal removals" $workspaceText "removedEdgeTail=\{result\.RemovedEdgeTailFaces\}"
+Assert-Match "workspace logs final yolo mask summary" $workspaceText "\[FinalMaskSummary\][\s\S]*profile=Yolo[\s\S]*shortGaps=\{shortGapCount\}[\s\S]*largeJumpGaps=\{largeJumpGapRanges\.Count\}[\s\S]*largeJumpRanges=\{FormatTextList\(largeJumpGapRanges\)\}[\s\S]*isolatedFrames=\{FormatFrameList\(isolatedFrames\)\}[\s\S]*lowConf=\{lowConfidenceRows\}"
+Assert-Match "workspace final summary detects large jumps" $workspaceText "FinalMaskLargeJumpAreaChangeRatio\s*=\s*4\.0[\s\S]*FinalMaskLargeJumpCenterShift\s*=\s*0\.20[\s\S]*TryGetBestFinalMaskFace[\s\S]*GetFinalMaskAreaChange[\s\S]*GetFinalMaskCenterShift"
+Assert-Match "workspace final mask summary is yolo-only" $workspaceText "private\s+void\s+LogFinalMaskSummary\(\)[\s\S]*_autoOptions\.FilterProfile\s*!=\s*FaceFilterProfile\.Yolo[\s\S]*return;"
+Assert-Match "workspace removes weak isolated final yolo masks" $workspaceText "_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*RemoveYoloWeakIsolatedFinalMasks\(\)[\s\S]*YoloFinalMaskPostProcessor[\s\S]*YoloFinalMaskCleanup"
+Assert-Match "final mask cleanup removes weak isolated non-edge masks" $finalMaskPostProcessorText "RemoveWeakIsolatedMasks[\s\S]*NeighborWindowFrames[\s\S]*WeakConfidenceMax[\s\S]*TouchesFrameEdge[\s\S]*RemoveFaceMask"
+Assert-Match "workspace yolo scene cut guard is gated to yolo" $workspaceText "FaceFilterProfile\.Yolo[\s\S]*RemoveYoloTrackFillAcrossSceneCuts"
+Assert-Match "workspace yolo scene cut guard uses shared service" $workspaceText "new\s+FaceTrackSceneCutGuard\(\)[\s\S]*BuildWeakTrackTransitionCandidates[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*guard\.Apply"
+Assert-Match "scene cut guard builds weak direct candidates" $sceneCutGuardText "BuildWeakTrackTransitionCandidates[\s\S]*FaceTrackBuilder\(\)\.Build[\s\S]*maxTargetConfidence[\s\S]*FaceTrackFilledFace"
+Assert-Match "scene cut guard checks weak carry tails" $sceneCutGuardText "maxPostCutCarryFrames[\s\S]*carryEndFrame[\s\S]*lastAddedIndex[\s\S]*FaceTrackFilledFace"
+Assert-Match "scene cut guard caches frame differences" $sceneCutGuardText "differenceByPair[\s\S]*TryGetValue\(pair,[\s\S]*frameDifferenceProvider\(pair\.Item1,\s*pair\.Item2\)[\s\S]*differenceByPair\[pair\]"
+Assert-Match "scene cut guard removes track fill" $sceneCutGuardText "DefaultDifferenceThreshold\s*=\s*0\.32[\s\S]*TryGetNextFrameRawToBuffer[\s\S]*RemoveFaceCandidate"
+Assert-Match "scene cut guard exposes deterministic verifier path" $sceneCutGuardText "Func<int,\s*int,\s*double>\s+frameDifferenceProvider[\s\S]*GetMaxFrameDifference[\s\S]*RemoveFaceCandidate"
+Assert-Match "scene cut guard scans adjacent frame differences" $sceneCutGuardText "for\s*\(int\s+frame\s*=\s*sourceFrame;\s*frame\s*<\s*targetFrame;\s*frame\+\+\)[\s\S]*FormatFramePair\(maxSource,\s*maxTarget\)"
+Assert-Match "scene cut guard exposes frame evidence" $sceneCutGuardText "RemovedFrameIndices[\s\S]*CheckedFramePairs[\s\S]*MaxDifference[\s\S]*CutFramePairs"
+Assert-Match "workspace logs scene cut frame evidence" $workspaceText "checkedPairs=\{FormatTextList\(result\.CheckedFramePairs\)\}[\s\S]*maxDiff=\{result\.MaxDifference[\s\S]*cutPairs=\{FormatTextList\(result\.CutFramePairs\)\}[\s\S]*removedFrames=\{FormatFrameList\(result\.RemovedFrameIndices\)\}"
 Assert-Match "workspace faceonnx track profile remains default branch" $workspaceText "return\s+new\s+FaceTrackPostProcessOptions[\s\S]*WeakConfidence\s*=\s*TemporalConfidenceWeak[\s\S]*StrongConfidence\s*=\s*TemporalConfidenceStrong"
 Assert-Match "workspace refreshes preview after track postprocess" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*ApplyAutoTemporalSmoothing\(\);[\s\S]*RefreshAutoPreviewAfterPostProcess\(exportAfter\)"
+Assert-Match "workspace roi refine includes initial fill candidates" $workspaceText "private\s+void\s+RefineAutoFacesWithRoi[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*new\s+FaceTrackRoiRefiner\(\)\.Apply"
+Assert-Match "workspace applies yolo scene cut before roi refine" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost\);[\s\S]*RefineAutoFacesWithRoi"
+Assert-Match "workspace applies yolo scene cut before temporal smoothing" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost\);[\s\S]*ApplyAutoTemporalSmoothing\(\);"
+Assert-Match "workspace temporal smoothing does not materialize empty frames" $workspaceText "if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\)\s*continue;[\s\S]*if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\s*\|\|\s*facesByFrame\[i\]!\.Count\s*==\s*0\)\s*continue;"
+Assert-Match "roi refiner only replaces existing matching faces" $roiRefinerText "TryGetFaceMaskData\(candidate\.FrameIndex,[\s\S]*FindSimilarFaceIndex\(faces,\s*candidate\.Bounds\)[\s\S]*if\s*\(replaceIndex\s*<\s*0\)\s*return\s+false;[\s\S]*faces\[replaceIndex\]\s*=\s*refined\.Bounds"
 
 Assert-Match "automask yolo filter profile exists" $autoMaskGeneratorText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MinSmallFaceAreaRatio\s*\*\s*0\.70[\s\S]*2\.7[\s\S]*0\.30f[\s\S]*UseStatsFilter:\s*false"
 Assert-Match "automask faceonnx default uses stats filter" $autoMaskGeneratorText "return\s+new\s+FaceFilterSettings[\s\S]*MaxFaceAspectRatio[\s\S]*SmallFaceConfidenceMin[\s\S]*UseStatsFilter:\s*true"
 Assert-Match "automask yolo detector summary includes provider" $autoMaskGeneratorText "_detector\s+is\s+YoloFaceOnnxDetector[\s\S]*YoloFaceOnnxDetector\.GetLastExecutionProviderLabel\(\)[\s\S]*YoloFaceOnnxDetector\.GetLastExecutionProviderError\(\)"
+Assert-Match "automask sparse scene cut guard is yolo-only" $autoMaskGeneratorText "guardSceneCuts\s*=\s*_options\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*IsSparseSceneCut"
+Assert-Match "automask sparse scene cut guard blocks materialization" $autoMaskGeneratorText "stopAtSceneCut[\s\S]*sceneCutStops\+\+[\s\S]*\?\s*key\s*\+\s*1"
+Assert-Match "automask sparse scene cut summary logs count" $autoMaskGeneratorText "sparseSceneCuts=\{materialized\.SceneCutStops\}"
+Assert-Match "automask sparse scene cut summary logs pairs" $autoMaskGeneratorText "sparseSceneCutPairs=\{FormatSparseSceneCutTransitions\(materialized\.SceneCutTransitions\)\}"
+Assert-Match "automask sparse scene cut decision is isolated" $autoMaskGeneratorText "ShouldStopSparseSceneCarry[\s\S]*guardSceneCuts[\s\S]*ComputeSignatureDifference"
+Assert-Match "automask sparse materialize result exposes scene cut count" $autoMaskGeneratorText "SparseMaterializeResult\([\s\S]*int\s+Interpolated,[\s\S]*int\s+SceneCutStops"
+Assert-Match "automask sparse materialize result exposes scene cut transitions" $autoMaskGeneratorText "SparseSceneCutTransition\(int\s+SourceFrameIndex,\s*int\s+NextFrameIndex\)[\s\S]*SceneCutTransitions"
 
 foreach ($property in @(
     "ObjectnessThreshold",
@@ -225,7 +260,14 @@ foreach ($property in @(
     "LowConfidencePositionMaxConfidence",
     "LowConfidencePositionMinCenterYRatio",
     "UseSmallAreaFilter",
-    "SmallAreaMaxAreaRatio")) {
+    "SmallAreaMaxAreaRatio",
+    "UseAspectRatioFilter",
+    "MinAspectRatio",
+    "MaxAspectRatio",
+    "UseTopSmallLowConfidenceFilter",
+    "TopSmallLowConfidenceMaxCenterYRatio",
+    "TopSmallLowConfidenceMaxAreaRatio",
+    "TopSmallLowConfidenceMaxConfidence")) {
     Assert-Match "yolo options expose $property" $options "public\s+.*\s+$property\s*\{"
 }
 
@@ -237,6 +279,10 @@ foreach ($method in @(
     "RunTiles",
     "ApplyLowConfidencePositionFilter",
     "ApplySmallAreaFilter",
+    "ApplyAspectRatioFilter",
+    "IsAspectRatioAllowed",
+    "ApplyTopSmallLowConfidenceFilter",
+    "IsTopSmallLowConfidenceCandidate",
     "RefineLargeBoxes",
     "TryRefineFromLandmarks")) {
     Assert-Match "yolo detector uses $method" $yoloDetectorText ([regex]::Escape($method))
@@ -260,7 +306,14 @@ foreach ($optionUse in @(
     "Yolo5LandmarkBoxWidthScale",
     "Yolo5LandmarkBoxHeightScale",
     "Yolo5LandmarkBoxCenterYOffsetRatio",
-    "Yolo5LandmarkBoxMinOriginalIou")) {
+    "Yolo5LandmarkBoxMinOriginalIou",
+    "UseAspectRatioFilter",
+    "MinAspectRatio",
+    "MaxAspectRatio",
+    "UseTopSmallLowConfidenceFilter",
+    "TopSmallLowConfidenceMaxCenterYRatio",
+    "TopSmallLowConfidenceMaxAreaRatio",
+    "TopSmallLowConfidenceMaxConfidence")) {
     Assert-Match "yolo detector reads $optionUse" $yoloDetectorText "_options\.$optionUse"
 }
 
@@ -282,6 +335,10 @@ foreach ($parameter in @(
     "YoloLowConfidencePositionMinCenterYRatio",
     "YoloUseSmallAreaFilter",
     "YoloSmallAreaMaxAreaRatio",
+    "YoloUseAspectRatioFilter",
+    "YoloMinAspectRatio",
+    "YoloMaxAspectRatio",
+    "YoloMaxLostFillFrames",
     "YoloDropShortTrackMaxDetections",
     "YoloShortTrackMaxConfidence",
     "YoloLowerFrameTrackMaxConfidence")) {
@@ -303,16 +360,38 @@ foreach ($assignment in @(
     "LowConfidencePositionMinCenterYRatio\s*=\s*yoloLowConfidencePositionMinCenterYRatio",
     "UseSmallAreaFilter\s*=\s*yoloUseSmallAreaFilter",
     "SmallAreaMaxAreaRatio\s*=\s*yoloSmallAreaMaxAreaRatio",
+    "UseAspectRatioFilter\s*=\s*yoloUseAspectRatioFilter",
+    "MinAspectRatio\s*=\s*yoloMinAspectRatio",
+    "MaxAspectRatio\s*=\s*yoloMaxAspectRatio",
+    "MaxLostFillFrames\s*=\s*yoloMaxLostFillFrames",
+    "MaxInitialFillFrames\s*=\s*yoloMaxLostFillFrames",
     "DropShortTrackMaxDetections\s*=\s*yoloDropShortTrackMaxDetections",
-    "MaxLostFillFrames\s*=\s*6",
+    "DropSparseTrackMaxDetections\s*=\s*3",
+    "DropSparseTrackMinSpanFrames\s*=\s*8",
+    "DropSparseTrackMaxDensity\s*=\s*0\.42",
+    "EdgeTailMaxConfidence\s*=\s*0\.50f",
+    "EdgeLostFillMaxConfidence\s*=\s*0\.60f",
     "MaxConfirmedTrackHoldFrames\s*=\s*8",
     "AllowSmallTrackLostFill\s*=\s*true",
     "ShortTrackMaxConfidence\s*=\s*yoloShortTrackMaxConfidence",
+    "SparseTrackMaxConfidence\s*=\s*0\.56f",
     "LowerFrameTrackMaxConfidence\s*=\s*yoloLowerFrameTrackMaxConfidence")) {
     Assert-Match "smoke harness maps $assignment" $smokeHarnessText $assignment
 }
 
+Assert-Match "home enables yolo aspect ratio filter" $homeText "UseAspectRatioFilter\s*=\s*true[\s\S]*MinAspectRatio\s*=\s*0\.35[\s\S]*MaxAspectRatio\s*=\s*1\.65"
+Assert-Match "home leaves risky top small low-confidence filter opt-in" $options "public\s+bool\s+UseTopSmallLowConfidenceFilter\s*\{\s*get;\s*init;\s*\}\s*=\s*false;"
+
 Assert-Match "smoke harness supports yolo roi refine switch" $smokeHarnessText "if\s*\(useYolo\s*&&\s*yoloUseFaceOnnxRoiRefine\)"
+Assert-Match "smoke harness logs scene cut guard" $smokeHarnessText "new\s+FaceTrackSceneCutGuard\(\)[\s\S]*BuildWeakTrackTransitionCandidates[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*SmokeFaceTrackSceneCutGuard"
+Assert-Match "smoke harness logs initial fill count" $smokeHarnessText "SmokeFaceTrackPost[\s\S]*initialFilled=\{trackPost\.FilledInitialFaces\}"
+Assert-Match "smoke harness logs direct scene cut candidates" $smokeHarnessText "directCandidates=\{directCandidates\.Count\}"
+Assert-Match "smoke harness logs scene cut frame evidence" $smokeHarnessText "checkedPairs=\{FormatTextValues\(sceneCut\.CheckedFramePairs\)\}[\s\S]*maxDiff=\{sceneCut\.MaxDifference[\s\S]*cutPairs=\{FormatTextValues\(sceneCut\.CutFramePairs\)\}[\s\S]*removedFrames=\{FormatFrames\(sceneCut\.RemovedFrameIndices\)\}"
+Assert-Match "smoke harness logs final yolo mask summary" $smokeHarnessText "if\s*\(useYolo\)[\s\S]*LogFinalMaskSummary\(label,\s*maskProvider\)[\s\S]*SmokeFinalMaskSummary[\s\S]*shortGaps=\{shortGapCount\}[\s\S]*largeJumpGaps=\{largeJumpGapRanges\.Count\}[\s\S]*largeJumpRanges=\{FormatTextValues\(largeJumpGapRanges\)\}[\s\S]*isolatedFrames=\{FormatFrames\(isolatedFrames\)\}"
+Assert-Match "smoke harness final summary detects large jumps" $smokeHarnessText "largeJumpAreaChangeRatio\s*=\s*4\.0[\s\S]*largeJumpCenterShift\s*=\s*0\.20[\s\S]*TryGetBestFinalMaskFace[\s\S]*GetFinalMaskAreaChange[\s\S]*GetFinalMaskCenterShift"
+Assert-Match "smoke harness removes weak isolated final yolo masks" $smokeHarnessText "YoloFinalMaskPostProcessor[\s\S]*RemoveWeakIsolatedMasks\(maskProvider\)[\s\S]*SmokeYoloFinalMaskCleanup"
+Assert-Match "smoke harness detection dump logs normalized geometry" $smokeHarnessText "SmokeDetection[\s\S]*cx=\{centerX:F3\}[\s\S]*cy=\{centerY:F3\}[\s\S]*areaRatio=\{areaRatio:F6\}[\s\S]*aspectRatio=\{aspectRatio:F3\}"
+Assert-Match "smoke harness detection dump logs summary" $smokeHarnessText "SmokeDetectionSummary[\s\S]*frames=\{frameCount\}[\s\S]*detections=\{detectionCount\}[\s\S]*areaRatioAvg=\{avgAreaRatio:F6\}[\s\S]*aspectRatioAvg=\{avgAspectRatio:F3\}"
 Assert-Match "smoke harness builds yolo roi candidates" $smokeHarnessText "BuildLargeFaceRoiCandidates"
 Assert-Match "smoke harness logs yolo roi refine" $smokeHarnessText "SmokeYoloFaceOnnxRoiRefine"
 Assert-Match "smoke harness creates faceonnx roi detector" $smokeHarnessText "new FaceOnnxDetector\(CreateRoiRefinerDetectorOptions"

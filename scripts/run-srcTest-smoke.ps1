@@ -63,6 +63,7 @@ param(
     [int]$YoloTileColumns = 2,
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
+    [int]$YoloMaxLostFillFrames = 3,
     [int]$YoloDropShortTrackMaxDetections = 1,
     [double]$YoloShortTrackMaxConfidence = 0.18,
     [double]$YoloLowerFrameTrackMaxConfidence = 0.50,
@@ -71,6 +72,9 @@ param(
     [double]$YoloLowConfidencePositionMinCenterYRatio = 0.08,
     [switch]$YoloUseSmallAreaFilter,
     [double]$YoloSmallAreaMaxAreaRatio = 0.0035,
+    [switch]$YoloUseAspectRatioFilter,
+    [double]$YoloMinAspectRatio = 0.35,
+    [double]$YoloMaxAspectRatio = 1.65,
     [switch]$YoloDebugDump,
     [switch]$DumpCompareDetails,
     [switch]$DumpCompareOverlays,
@@ -222,6 +226,10 @@ double yoloLowConfidencePositionMinCenterYRatio = args.Length > 74 ? double.Pars
 bool yoloUseSmallAreaFilter = args.Length > 75 && bool.Parse(args[75]);
 double yoloSmallAreaMaxAreaRatio = args.Length > 76 ? double.Parse(args[76], System.Globalization.CultureInfo.InvariantCulture) : 0.0035;
 bool skipOptimized = args.Length > 77 && bool.Parse(args[77]);
+int yoloMaxLostFillFrames = args.Length > 78 ? int.Parse(args[78], System.Globalization.CultureInfo.InvariantCulture) : 3;
+bool yoloUseAspectRatioFilter = args.Length > 79 && bool.Parse(args[79]);
+double yoloMinAspectRatio = args.Length > 80 ? double.Parse(args[80], System.Globalization.CultureInfo.InvariantCulture) : 0.35;
+double yoloMaxAspectRatio = args.Length > 81 ? double.Parse(args[81], System.Globalization.CultureInfo.InvariantCulture) : 1.65;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -284,6 +292,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     int yoloTileColumns,
     int yoloTileRows,
     double yoloTileOverlapRatio,
+    int yoloMaxLostFillFrames,
     int yoloDropShortTrackMaxDetections,
     float yoloShortTrackMaxConfidence,
     float yoloLowerFrameTrackMaxConfidence,
@@ -292,6 +301,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     double yoloLowConfidencePositionMinCenterYRatio,
     bool yoloUseSmallAreaFilter,
     double yoloSmallAreaMaxAreaRatio,
+    bool yoloUseAspectRatioFilter,
+    double yoloMinAspectRatio,
+    double yoloMaxAspectRatio,
     bool yoloDebugDump)
 {
     string runId = $"smoke-{label}-{Guid.NewGuid():N}";
@@ -391,6 +403,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             LowConfidencePositionMinCenterYRatio = yoloLowConfidencePositionMinCenterYRatio,
             UseSmallAreaFilter = yoloUseSmallAreaFilter,
             SmallAreaMaxAreaRatio = yoloSmallAreaMaxAreaRatio,
+            UseAspectRatioFilter = yoloUseAspectRatioFilter,
+            MinAspectRatio = yoloMinAspectRatio,
+            MaxAspectRatio = yoloMaxAspectRatio,
             LargeBoxWidthScale = yoloLargeBoxWidthScale,
             LargeBoxHeightScale = yoloLargeBoxHeightScale,
             LargeBoxMinAreaRatio = yoloLargeBoxMinAreaRatio,
@@ -433,21 +448,26 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
-    var trackPost = new FaceTrackInterpolator().Apply(
-        maskProvider,
-        generator.LastRunSummary?.TotalFrames ?? 0,
-        useYolo
-            ? new FaceTrackPostProcessOptions
+    var trackOptions = useYolo
+        ? new FaceTrackPostProcessOptions
             {
                 MaxTrackGap = 8,
                 MaxFillGap = 5,
-                MaxLostFillFrames = 6,
+                MaxLostFillFrames = yoloMaxLostFillFrames,
+                MaxInitialFillFrames = yoloMaxLostFillFrames,
                 MaxConfirmedTrackHoldFrames = 8,
                 AllowSmallTrackLostFill = true,
                 WeakConfidence = 0.38f,
                 StrongConfidence = 0.58f,
                 DropShortTrackMaxDetections = yoloDropShortTrackMaxDetections,
                 ShortTrackMaxConfidence = yoloShortTrackMaxConfidence,
+                DropSparseTrackMaxDetections = 3,
+                DropSparseTrackMinSpanFrames = 8,
+                DropSparseTrackMaxDensity = 0.42,
+                SparseTrackMaxConfidence = 0.56f,
+                EdgeTailMaxConfidence = 0.50f,
+                EdgeTailMinStableDetections = 3,
+                EdgeLostFillMaxConfidence = 0.60f,
                 SmallTrackMaxAreaRatio = 0.00070,
                 MinTrackIou = 0.08,
                 MaxCenterShiftRatio = 0.72,
@@ -462,8 +482,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 LowerFrameTrackMinAreaRatio = 0.015,
                 LowerFrameTrackMaxAreaRatio = 0.045
             }
-            : useScrfd
-            ? new FaceTrackPostProcessOptions
+        : useScrfd
+        ? new FaceTrackPostProcessOptions
             {
                 MaxTrackGap = 8,
                 MaxFillGap = 5,
@@ -476,7 +496,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 MaxAreaChangeRatio = 4.0,
                 DuplicateIou = 0.35
             }
-            : new FaceTrackPostProcessOptions
+        : new FaceTrackPostProcessOptions
         {
             MaxTrackGap = 8,
             MaxFillGap = 5,
@@ -488,11 +508,34 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             MaxCenterShiftRatio = 0.55,
             MaxAreaChangeRatio = 3.2,
             DuplicateIou = 0.35
-        });
+        };
+    var trackPost = new FaceTrackInterpolator().Apply(
+        maskProvider,
+        generator.LastRunSummary?.TotalFrames ?? 0,
+        trackOptions);
     string lostFrames = trackPost.FilledLostFrameIndices.Count == 0
         ? "none"
         : string.Join(",", trackPost.FilledLostFrameIndices.Take(32));
-    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, removedLower={trackPost.RemovedLowerFrameFaces}, rewritten={trackPost.RewrittenFrames}");
+    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, initialFilled={trackPost.FilledInitialFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, removedSparse={trackPost.RemovedSparseFaces}, removedEdgeTail={trackPost.RemovedEdgeTailFaces}, removedLower={trackPost.RemovedLowerFrameFaces}, rewritten={trackPost.RewrittenFrames}");
+    if (useYolo)
+    {
+        var sceneCutGuard = new FaceTrackSceneCutGuard();
+        var directCandidates = sceneCutGuard.BuildWeakTrackTransitionCandidates(
+            maskProvider,
+            trackOptions,
+            maxTargetConfidence: 0.60f,
+            maxTransitionGap: 8);
+        var sceneCutCandidates = trackPost.FilledGapFacesInfo
+            .Concat(trackPost.FilledLostFacesInfo)
+            .Concat(trackPost.FilledInitialFacesInfo)
+            .Concat(directCandidates)
+            .ToArray();
+        var sceneCut = sceneCutGuard.Apply(
+            maskProvider,
+            input,
+            sceneCutCandidates);
+        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
+    }
     if (detector is IBgraFaceDetector bgraDetector)
     {
         using var faceOnnxRoiDetector = useScrfd || useYuNet || useYolo ? null : new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));
@@ -501,7 +544,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             maskProvider,
             input,
             roiDetector!,
-            trackPost.FilledGapFacesInfo.Concat(trackPost.FilledLostFacesInfo).ToArray(),
+            trackPost.FilledGapFacesInfo.Concat(trackPost.FilledLostFacesInfo).Concat(trackPost.FilledInitialFacesInfo).ToArray(),
             downscaleQuality);
         Console.WriteLine($"[SmokeFaceTrackRoiRefine] label={label}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
     }
@@ -521,7 +564,14 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             yoloFaceOnnxRoiMaxCandidates);
         Console.WriteLine($"[SmokeYoloFaceOnnxRoiRefine] label={label}, candidates={candidates.Count}, minAreaRatio={yoloFaceOnnxRoiMinAreaRatio:F3}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
     }
+    if (useYolo)
+    {
+        var cleanup = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(maskProvider);
+        Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
+    }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
+    if (useYolo)
+        LogFinalMaskSummary(label, maskProvider);
     if (dumpDetections)
         DumpDetections(label, maskProvider);
 
@@ -588,21 +638,204 @@ static IReadOnlyList<FaceTrackFilledFace> BuildLargeFaceRoiCandidates(
     return candidates;
 }
 
+static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
+{
+    const float lowConfidenceThreshold = 0.38f;
+    const int shortGapMaxFrames = 3;
+    const double largeJumpAreaChangeRatio = 4.0;
+    const double largeJumpCenterShift = 0.20;
+
+    var entries = maskProvider.GetFaceMaskEntries()
+        .Where(x => x.Value.Faces.Count > 0)
+        .OrderBy(x => x.Key)
+        .ToArray();
+    if (entries.Length == 0)
+    {
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0");
+        return;
+    }
+
+    var frames = entries.Select(x => x.Key).ToArray();
+    int rows = entries.Sum(x => x.Value.Faces.Count);
+    var shortGapRanges = new List<string>();
+    var largeJumpGapRanges = new List<string>();
+    int shortGapCount = 0;
+    for (int i = 1; i < frames.Length; i++)
+    {
+        int missing = frames[i] - frames[i - 1] - 1;
+        if (missing <= 0 || missing > shortGapMaxFrames)
+            continue;
+
+        shortGapCount++;
+        int start = frames[i - 1] + 1;
+        int end = frames[i] - 1;
+        string range = FormatFrameRange(start, end);
+        shortGapRanges.Add(range);
+
+        if (TryGetBestFinalMaskFace(entries[i - 1].Value, out var previousFace) &&
+            TryGetBestFinalMaskFace(entries[i].Value, out var nextFace))
+        {
+            double areaChange = GetFinalMaskAreaChange(previousFace, nextFace);
+            double centerShift = GetFinalMaskCenterShift(previousFace, nextFace);
+            if (areaChange >= largeJumpAreaChangeRatio ||
+                centerShift >= largeJumpCenterShift)
+            {
+                largeJumpGapRanges.Add(range);
+            }
+        }
+    }
+
+    var isolatedFrames = new List<int>();
+    for (int i = 0; i < frames.Length; i++)
+    {
+        bool hasPreviousNeighbor = i > 0 && frames[i] - frames[i - 1] <= 1;
+        bool hasNextNeighbor = i < frames.Length - 1 && frames[i + 1] - frames[i] <= 1;
+        if (!hasPreviousNeighbor && !hasNextNeighbor)
+            isolatedFrames.Add(frames[i]);
+    }
+
+    int lowConfidenceRows = 0;
+    foreach (var entry in entries)
+    {
+        var data = entry.Value;
+        for (int i = 0; i < data.Faces.Count; i++)
+        {
+            float confidence = i < data.Confidences.Count
+                ? data.Confidences[i]
+                : data.MinConfidence ?? 1.0f;
+            if (confidence <= lowConfidenceThreshold)
+                lowConfidenceRows++;
+        }
+    }
+
+    Console.WriteLine(
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}");
+}
+
+static bool TryGetBestFinalMaskFace(
+    FrameMaskProvider.FaceMaskData data,
+    out (double CenterX, double CenterY, double AreaRatio, double Confidence) evidence)
+{
+    evidence = default;
+    if (data.Faces.Count == 0 || data.Size.Width <= 0 || data.Size.Height <= 0)
+        return false;
+
+    double frameArea = Math.Max(1.0, data.Size.Width * (double)data.Size.Height);
+    int bestIndex = 0;
+    double bestConfidence = double.NegativeInfinity;
+    for (int i = 0; i < data.Faces.Count; i++)
+    {
+        double confidence = i < data.Confidences.Count
+            ? data.Confidences[i]
+            : data.MinConfidence ?? 1.0f;
+        if (confidence > bestConfidence)
+        {
+            bestConfidence = confidence;
+            bestIndex = i;
+        }
+    }
+
+    var face = data.Faces[bestIndex];
+    evidence = (
+        (face.X + face.Width * 0.5) / data.Size.Width,
+        (face.Y + face.Height * 0.5) / data.Size.Height,
+        Math.Max(0.0, face.Width * face.Height) / frameArea,
+        bestConfidence);
+    return true;
+}
+
+static double GetFinalMaskAreaChange(
+    (double CenterX, double CenterY, double AreaRatio, double Confidence) previous,
+    (double CenterX, double CenterY, double AreaRatio, double Confidence) next)
+{
+    double a = Math.Max(0.000001, previous.AreaRatio);
+    double b = Math.Max(0.000001, next.AreaRatio);
+    return Math.Max(a / b, b / a);
+}
+
+static double GetFinalMaskCenterShift(
+    (double CenterX, double CenterY, double AreaRatio, double Confidence) previous,
+    (double CenterX, double CenterY, double AreaRatio, double Confidence) next)
+{
+    double dx = next.CenterX - previous.CenterX;
+    double dy = next.CenterY - previous.CenterY;
+    return Math.Sqrt(dx * dx + dy * dy);
+}
+
+static string FormatFrameRange(int start, int end)
+{
+    return start == end
+        ? start.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{start}-{end}");
+}
+
 static void DumpDetections(string label, FrameMaskProvider maskProvider)
 {
+    int frameCount = 0;
+    int detectionCount = 0;
+    int firstFrame = int.MaxValue;
+    int lastFrame = int.MinValue;
+    double confSum = 0.0;
+    double minConf = double.PositiveInfinity;
+    double maxConf = double.NegativeInfinity;
+    double areaRatioSum = 0.0;
+    double minAreaRatio = double.PositiveInfinity;
+    double maxAreaRatio = double.NegativeInfinity;
+    double aspectRatioSum = 0.0;
+    double minAspectRatio = double.PositiveInfinity;
+    double maxAspectRatio = double.NegativeInfinity;
+
     foreach (var entry in maskProvider.GetFaceMaskEntries().OrderBy(x => x.Key))
     {
         var data = entry.Value;
+        if (data.Faces.Count == 0)
+            continue;
+
+        frameCount++;
+        firstFrame = Math.Min(firstFrame, entry.Key);
+        lastFrame = Math.Max(lastFrame, entry.Key);
         for (int i = 0; i < data.Faces.Count; i++)
         {
             var r = data.Faces[i];
             float conf = i < data.Confidences.Count ? data.Confidences[i] : data.MinConfidence ?? 1.0f;
             double area = Math.Max(0.0, r.Width * r.Height);
+            double frameArea = Math.Max(1.0, data.Size.Width * (double)data.Size.Height);
+            double areaRatio = area / frameArea;
+            double aspectRatio = r.Height > 0.0 ? r.Width / r.Height : 0.0;
+            double centerX = (r.X + r.Width * 0.5) / Math.Max(1.0, data.Size.Width);
+            double centerY = (r.Y + r.Height * 0.5) / Math.Max(1.0, data.Size.Height);
+            detectionCount++;
+            confSum += conf;
+            minConf = Math.Min(minConf, conf);
+            maxConf = Math.Max(maxConf, conf);
+            areaRatioSum += areaRatio;
+            minAreaRatio = Math.Min(minAreaRatio, areaRatio);
+            maxAreaRatio = Math.Max(maxAreaRatio, areaRatio);
+            aspectRatioSum += aspectRatio;
+            minAspectRatio = Math.Min(minAspectRatio, aspectRatio);
+            maxAspectRatio = Math.Max(maxAspectRatio, aspectRatio);
             Console.WriteLine(
-                $"[SmokeDetection] label={label}, frame={entry.Key}, index={i}, x={r.X:F1}, y={r.Y:F1}, w={r.Width:F1}, h={r.Height:F1}, area={area:F1}, conf={conf:F3}");
+                $"[SmokeDetection] label={label}, frame={entry.Key}, index={i}, x={r.X:F1}, y={r.Y:F1}, w={r.Width:F1}, h={r.Height:F1}, area={area:F1}, conf={conf:F3}, cx={centerX:F3}, cy={centerY:F3}, areaRatio={areaRatio:F6}, aspectRatio={aspectRatio:F3}");
         }
     }
-}
+
+    string frameRange = detectionCount == 0 ? "none" : $"{firstFrame}-{lastFrame}";
+    double avgConf = detectionCount == 0 ? 0.0 : confSum / detectionCount;
+    double avgAreaRatio = detectionCount == 0 ? 0.0 : areaRatioSum / detectionCount;
+    double avgAspectRatio = detectionCount == 0 ? 0.0 : aspectRatioSum / detectionCount;
+    if (detectionCount == 0)
+    {
+        minConf = 0.0;
+        maxConf = 0.0;
+        minAreaRatio = 0.0;
+        maxAreaRatio = 0.0;
+        minAspectRatio = 0.0;
+        maxAspectRatio = 0.0;
+    }
+
+    Console.WriteLine(
+        $"[SmokeDetectionSummary] label={label}, frames={frameCount}, detections={detectionCount}, frameRange={frameRange}, confMin={minConf:F3}, confAvg={avgConf:F3}, confMax={maxConf:F3}, areaRatioMin={minAreaRatio:F6}, areaRatioAvg={avgAreaRatio:F6}, areaRatioMax={maxAreaRatio:F6}, aspectRatioMin={minAspectRatio:F3}, aspectRatioAvg={avgAspectRatio:F3}, aspectRatioMax={maxAspectRatio:F3}");
+    }
 
 static bool CompareCases(
     string input,
@@ -1019,6 +1252,13 @@ static string FormatFrames(IReadOnlyList<int> frames)
     return string.Join(",", frames.Take(20)) + (frames.Count > 20 ? ",..." : string.Empty);
 }
 
+static string FormatTextValues(IReadOnlyList<string> values)
+{
+    if (values.Count == 0)
+        return "none";
+    return string.Join(",", values.Take(20)) + (values.Count > 20 ? ",..." : string.Empty);
+}
+
 static double IoU(Rect a, Rect b)
 {
     double x1 = Math.Max(a.X, b.X);
@@ -1103,6 +1343,7 @@ if (!skipBaseline)
         yoloTileColumns,
         yoloTileRows,
         yoloTileOverlapRatio,
+        yoloMaxLostFillFrames,
         yoloDropShortTrackMaxDetections,
         yoloShortTrackMaxConfidence,
         yoloLowerFrameTrackMaxConfidence,
@@ -1111,6 +1352,9 @@ if (!skipBaseline)
         yoloLowConfidencePositionMinCenterYRatio,
         yoloUseSmallAreaFilter: false,
         yoloSmallAreaMaxAreaRatio,
+        yoloUseAspectRatioFilter: false,
+        yoloMinAspectRatio,
+        yoloMaxAspectRatio,
         yoloDebugDump: false);
 }
 
@@ -1173,6 +1417,7 @@ if (!skipOptimized)
         yoloTileColumns,
         yoloTileRows,
         yoloTileOverlapRatio,
+        yoloMaxLostFillFrames,
         yoloDropShortTrackMaxDetections,
         yoloShortTrackMaxConfidence,
         yoloLowerFrameTrackMaxConfidence,
@@ -1181,6 +1426,9 @@ if (!skipOptimized)
         yoloLowConfidencePositionMinCenterYRatio,
         yoloUseSmallAreaFilter,
         yoloSmallAreaMaxAreaRatio,
+        yoloUseAspectRatioFilter,
+        yoloMinAspectRatio,
+        yoloMaxAspectRatio,
         yoloDebugDump);
 }
 
@@ -1257,6 +1505,7 @@ $yoloTileOnlyArg = $YoloTileOnly.IsPresent.ToString().ToLowerInvariant()
 $yoloTileColumnsArg = $YoloTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloTileRowsArg = $YoloTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloTileOverlapRatioArg = $YoloTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloMaxLostFillFramesArg = $YoloMaxLostFillFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloDropShortTrackMaxDetectionsArg = $YoloDropShortTrackMaxDetections.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloShortTrackMaxConfidenceArg = $YoloShortTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloLowerFrameTrackMaxConfidenceArg = $YoloLowerFrameTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -1265,6 +1514,9 @@ $yoloLowConfidencePositionMaxConfidenceArg = $YoloLowConfidencePositionMaxConfid
 $yoloLowConfidencePositionMinCenterYRatioArg = $YoloLowConfidencePositionMinCenterYRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloUseSmallAreaFilterArg = $YoloUseSmallAreaFilter.IsPresent.ToString().ToLowerInvariant()
 $yoloSmallAreaMaxAreaRatioArg = $YoloSmallAreaMaxAreaRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloUseAspectRatioFilterArg = $YoloUseAspectRatioFilter.IsPresent.ToString().ToLowerInvariant()
+$yoloMinAspectRatioArg = $YoloMinAspectRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloMaxAspectRatioArg = $YoloMaxAspectRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $skipOptimizedArg = $SkipOptimized.IsPresent.ToString().ToLowerInvariant()
 $yoloDebugDumpArg = $YoloDebugDump.IsPresent.ToString().ToLowerInvariant()
 $dumpCompareDetailsArg = $DumpCompareDetails.IsPresent.ToString().ToLowerInvariant()
@@ -1366,7 +1618,11 @@ dotnet run --project $project -- `
     $yoloLowConfidencePositionMinCenterYRatioArg `
     $yoloUseSmallAreaFilterArg `
     $yoloSmallAreaMaxAreaRatioArg `
-    $skipOptimizedArg
+    $skipOptimizedArg `
+    $yoloMaxLostFillFramesArg `
+    $yoloUseAspectRatioFilterArg `
+    $yoloMinAspectRatioArg `
+    $yoloMaxAspectRatioArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

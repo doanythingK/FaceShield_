@@ -65,6 +65,9 @@ Assert-Contains "package generator review index input rules" $packageScriptText 
 Assert-Contains "package generator review index label rule" $packageScriptText "full-gt-review.csv label"
 Assert-Contains "package generator review index csv key" $packageScriptText "CSV key:"
 Assert-Contains "package generator review index pending fields" $packageScriptText "pending:"
+Assert-Contains "package generator writes crop placeholder" $packageScriptText "Write-PlaceholderImage"
+Assert-Contains "package generator documents unavailable crop" $packageScriptText "Crop extraction unavailable"
+Assert-Contains "package generator documents unavailable full frame" $packageScriptText "Full-frame extraction unavailable"
 
 $resolvedVideo = Resolve-RepoPath $VideoPath
 $resolvedTemplate = Resolve-RepoPath $TemplateCsv
@@ -102,6 +105,56 @@ if ($noClobberExitCode -eq 0) {
     throw "Review package generator unexpectedly overwrote an existing package without -Force."
 }
 Assert-Contains "package generator no-clobber selftest" $noClobberText "Pass -Force to overwrite it."
+
+$requiredFrameDir = Join-Path $repo ".tmp\yolo-full-gt\review-package-required-frame-selftest"
+$requiredFrameTemplate = Join-Path $repo ".tmp\yolo-full-gt\required-frame-template.csv"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $requiredFrameTemplate) | Out-Null
+@(
+    [pscustomobject]@{
+        frame = 0
+        gtId = ""
+        label = ""
+        x = "10.0"
+        y = "10.0"
+        w = "40.0"
+        h = "40.0"
+        sourcePredictionId = "0"
+        sourceConfidence = "0.500"
+        source = "selftest"
+        notes = "selftest candidate frame should lose priority to required full-frame review frames."
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $requiredFrameTemplate
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
+    -VideoPath $resolvedVideo `
+    -TemplateCsv $requiredFrameTemplate `
+    -OutputDir $requiredFrameDir `
+    -MaxRows 1 `
+    -IncludeFullFrameReview `
+    -MaxFullFrameRows 1 `
+    -VideoFrameCount 12 `
+    -RequiredFullFrameNumbers "9" `
+    -FullFrameScaleWidth 320 `
+    -Force
+if ($LASTEXITCODE -ne 0) {
+    throw "Required full-frame selftest package generation failed with exit code $LASTEXITCODE"
+}
+
+$requiredFrameCsv = Join-Path $requiredFrameDir "full-frame-review.csv"
+if (-not (Test-Path $requiredFrameCsv)) {
+    throw "Required full-frame selftest CSV not found: $requiredFrameCsv"
+}
+
+$requiredFrameRows = @(Import-Csv $requiredFrameCsv)
+if ($requiredFrameRows.Count -ne 1 -or [int]$requiredFrameRows[0].frame -ne 9) {
+    throw "Required full-frame selftest expected only frame 9, got: $($requiredFrameRows | ForEach-Object { $_.frame } | Out-String)"
+}
+
+if (-not (Test-Path $requiredFrameRows[0].frameImagePath) -or -not (Test-Path $requiredFrameRows[0].overlayFrameImagePath)) {
+    throw "Required full-frame selftest did not create frame and overlay files."
+}
+
+Write-Host "[YoloFullGtReviewPackageVerify] pass required full-frame priority selftest"
 
 $reviewCsv = Join-Path $resolvedOutputDir "full-gt-review.csv"
 $frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"

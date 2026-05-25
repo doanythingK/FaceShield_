@@ -12,6 +12,7 @@ param(
     [int]$VideoFrameCount = 0,
     [int]$FullFrameScaleWidth = 0,
     [bool]$IncludeCandidateFramesInFullFrameReview = $true,
+    [string]$RequiredFullFrameNumbers = "",
     [string]$FfmpegPath = "",
     [string]$FfprobePath = "",
     [switch]$Force,
@@ -217,6 +218,31 @@ function Invoke-Tool {
     }
 
     return & $Tool.Command @Arguments
+}
+
+function Write-PlaceholderImage {
+    param(
+        [object]$Tool,
+        [string]$Path
+    )
+
+    Invoke-Tool $Tool @(
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=640x360",
+        "-frames:v",
+        "1",
+        $Path
+    ) | Out-Null
+
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Path)) {
+        throw "ffmpeg placeholder crop failed for $Path with exit code $LASTEXITCODE"
+    }
 }
 
 function Convert-ToHtmlText {
@@ -451,6 +477,15 @@ foreach ($row in $rows) {
         throw "ffmpeg crop failed for frame $frame with exit code $LASTEXITCODE"
     }
 
+    $cropAvailable = Test-Path $cropPath
+    $notes = $row.notes
+    if (-not $cropAvailable) {
+        Write-PlaceholderImage -Tool $ffmpeg -Path $cropPath
+        $notes = ([string]$notes).Trim()
+        $unavailableNote = "Crop extraction unavailable for frame $frame; the video may report more frames than can be decoded. Review the full-frame evidence or source video before using this row as GT."
+        $notes = if ([string]::IsNullOrWhiteSpace($notes)) { $unavailableNote } else { "$notes $unavailableNote" }
+    }
+
     $reviewRows.Add([pscustomobject]@{
         frame = $row.frame
         gtId = $row.gtId
@@ -469,7 +504,7 @@ foreach ($row in $rows) {
         cropH = $rect.H
         reviewStatus = ""
         evidenceNotes = ""
-        notes = $row.notes
+        notes = $notes
     }) | Out-Null
     $index++
 }
@@ -546,11 +581,32 @@ if ($IncludeFullFrameReview) {
     }
 
     $selectedFrames = New-Object System.Collections.Generic.List[int]
+    $selectedSeenFrames = @{}
+    $requiredFullFrames = @(
+        $RequiredFullFrameNumbers -split "," |
+            Where-Object { $_ -match '^\d+$' } |
+            ForEach-Object { [int]$_ } |
+            Sort-Object -Unique
+    )
+    foreach ($frame in $requiredFullFrames) {
+        if ($frame -ge 0 -and
+            ($VideoFrameCount -le 0 -or $frame -lt $VideoFrameCount) -and
+            -not $selectedSeenFrames.ContainsKey($frame)) {
+            $selectedSeenFrames[$frame] = $true
+            $selectedFrames.Add($frame) | Out-Null
+        }
+    }
+
     foreach ($frame in @($candidateFrameNumbers | Sort-Object)) {
         if ($MaxFullFrameRows -gt 0 -and $selectedFrames.Count -ge $MaxFullFrameRows) {
             break
         }
 
+        if ($selectedSeenFrames.ContainsKey($frame)) {
+            continue
+        }
+
+        $selectedSeenFrames[$frame] = $true
         $selectedFrames.Add($frame) | Out-Null
     }
 
@@ -559,6 +615,11 @@ if ($IncludeFullFrameReview) {
             break
         }
 
+        if ($selectedSeenFrames.ContainsKey($frame)) {
+            continue
+        }
+
+        $selectedSeenFrames[$frame] = $true
         $selectedFrames.Add($frame) | Out-Null
     }
 
@@ -575,6 +636,10 @@ if ($IncludeFullFrameReview) {
         Invoke-Tool $ffmpeg @("-y", "-hide_banner", "-loglevel", "error", "-i", $resolvedVideo, "-vf", $filter, "-frames:v", "1", $framePath) | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "ffmpeg full-frame extraction failed for frame $frame with exit code $LASTEXITCODE"
+        }
+        $frameAvailable = Test-Path $framePath
+        if (-not $frameAvailable) {
+            Write-PlaceholderImage -Tool $ffmpeg -Path $framePath
         }
 
         $overlayFilter = "select=eq(n\,$frame)"
@@ -593,6 +658,9 @@ if ($IncludeFullFrameReview) {
         if ($LASTEXITCODE -ne 0) {
             throw "ffmpeg full-frame overlay extraction failed for frame $frame with exit code $LASTEXITCODE"
         }
+        if (-not (Test-Path $overlayFramePath)) {
+            Write-PlaceholderImage -Tool $ffmpeg -Path $overlayFramePath
+        }
 
         $candidateCount = 0
         $candidateSummary = ""
@@ -601,6 +669,11 @@ if ($IncludeFullFrameReview) {
         }
         if ($candidateSummaryByFrame.ContainsKey($frame)) {
             $candidateSummary = ($candidateSummaryByFrame[$frame].ToArray() -join "; ")
+        }
+
+        $notes = "Review this full frame for visible faces that are not covered by detection crop rows. Add missed face rows to full-gt-review.csv."
+        if (-not $frameAvailable) {
+            $notes = "Full-frame extraction unavailable for frame $frame; the video may report more frames than can be decoded. Review the source video before using this row as GT."
         }
 
         $frameReviewRows.Add([pscustomobject]@{
@@ -613,7 +686,7 @@ if ($IncludeFullFrameReview) {
             missedFaceRowsAdded = ""
             reviewStatus = ""
             evidenceNotes = ""
-            notes = "Review this full frame for visible faces that are not covered by detection crop rows. Add missed face rows to full-gt-review.csv."
+            notes = $notes
         }) | Out-Null
     }
 
