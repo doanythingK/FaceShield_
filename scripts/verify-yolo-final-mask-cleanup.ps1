@@ -43,11 +43,19 @@ provider.SetFaceRects(
     size,
     0.45f,
     new[] { 0.45f, 0.83f });
+provider.SetFaceRects(59, new[] { new Rect(300, 300, 90, 90) }, size, 0.82f, new[] { 0.82f });
+provider.SetFaceRects(
+    60,
+    new[] { new Rect(304, 304, 90, 90), new Rect(1300, 520, 50, 50) },
+    size,
+    0.43f,
+    new[] { 0.82f, 0.43f });
+provider.SetFaceRects(61, new[] { new Rect(308, 308, 90, 90) }, size, 0.81f, new[] { 0.81f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 2)
-    throw new InvalidOperationException($"Expected 2 weak isolated faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 3)
+    throw new InvalidOperationException($"Expected 3 weak isolated faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
@@ -69,6 +77,13 @@ if (!provider.TryGetFaceMaskData(50, out var mixed) || mixed.Faces.Count != 1)
 
 if (mixed.Confidences.Count != 1 || Math.Abs(mixed.Confidences[0] - 0.83f) > 0.001f)
     throw new InvalidOperationException("Expected mixed frame 50 to keep the strong face confidence.");
+
+if (!provider.TryGetFaceMaskData(60, out var mixedTemporal) ||
+    mixedTemporal.Faces.Count != 1 ||
+    Math.Abs(mixedTemporal.Confidences[0] - 0.82f) > 0.001f)
+{
+    throw new InvalidOperationException("Expected frame 60 to remove only the weak unrelated face even though another face has temporal neighbors.");
+}
 
 Console.WriteLine(
     $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
