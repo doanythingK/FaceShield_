@@ -288,6 +288,7 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakSh
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakTinyClusters=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFilled=4"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFrames=11,31,32,33"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapCutRemoved=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,40,41,50,59,60,61,90,91,92,93"
 
 $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(

@@ -109,6 +109,7 @@ namespace FaceShield.Services.Analysis
 
             var storedFrames = new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
             var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
+            var filledFaceInfo = new List<FaceTrackFilledFace>();
             int filledFaces = 0;
 
             for (int entryIndex = 1; entryIndex < entries.Length; entryIndex++)
@@ -170,6 +171,12 @@ namespace FaceShield.Services.Analysis
 
                         fill.Faces.Add(interpolated);
                         fill.Confidences.Add(fillConfidence);
+                        filledFaceInfo.Add(new FaceTrackFilledFace(
+                            frameIndex,
+                            interpolated,
+                            previous.Size,
+                            fillConfidence,
+                            previousFrame));
                         filledFaces++;
                     }
                 }
@@ -193,7 +200,8 @@ namespace FaceShield.Services.Analysis
 
             return new YoloFinalMaskGapFillResult(
                 filledFaces,
-                fills.Keys.OrderBy(static x => x).ToArray());
+                fills.Keys.OrderBy(static x => x).ToArray(),
+                filledFaceInfo.ToArray());
         }
 
         private static bool IsWeakTinyTemporalCluster(
@@ -562,8 +570,9 @@ namespace FaceShield.Services.Analysis
 
     public readonly record struct YoloFinalMaskGapFillResult(
         int FilledFaces,
-        IReadOnlyList<int> FilledFrameIndices)
+        IReadOnlyList<int> FilledFrameIndices,
+        IReadOnlyList<FaceTrackFilledFace> FilledFacesInfo)
     {
-        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>());
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
     }
 }
