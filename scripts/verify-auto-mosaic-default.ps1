@@ -302,13 +302,14 @@ Assert-Contains "yolo-aspect-ratio-filter" $aspectRatioFilterOutput "\[YoloAspec
 
 $finalMaskCleanupOutput = Invoke-ScriptStep "yolo-final-mask-cleanup" $yoloFinalMaskCleanupVerify @()
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "\[YoloFinalMaskCleanupVerify\]"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=21"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=24"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakUnsupported=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakShortClusters=2"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakTinyClusters=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTinyShortClusters=4"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTinyIsolated=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedUpperWeakClusters=8"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedLowerWeakClusters=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFilled=5"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFrames=11,31,32,33,111"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "supportedWeakGapFilled=2"

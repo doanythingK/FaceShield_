@@ -31,6 +31,7 @@ namespace FaceShield.Services.Analysis
             int removedTinyShortClusters = 0;
             int removedTinyIsolated = 0;
             int removedUpperWeakClusters = 0;
+            int removedLowerWeakClusters = 0;
             for (int i = 0; i < entries.Length; i++)
             {
                 int frameIndex = entries[i].Key;
@@ -57,8 +58,13 @@ namespace FaceShield.Services.Analysis
                             !removeShortCluster &&
                             !removeTinyCluster &&
                             IsUpperWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
+                        bool removeLowerWeakCluster = hasMatchingNeighbor &&
+                            !removeShortCluster &&
+                            !removeTinyCluster &&
+                            !removeUpperWeakCluster &&
+                            IsLowerWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
 
-                        if (removeUnsupported || removeShortCluster || removeTinyCluster || removeUpperWeakCluster)
+                        if (removeUnsupported || removeShortCluster || removeTinyCluster || removeUpperWeakCluster || removeLowerWeakCluster)
                         {
                             removed++;
                             if (removeUnsupported)
@@ -69,6 +75,8 @@ namespace FaceShield.Services.Analysis
                                 removedTinyClusters++;
                             if (removeUpperWeakCluster)
                                 removedUpperWeakClusters++;
+                            if (removeLowerWeakCluster)
+                                removedLowerWeakClusters++;
                             continue;
                         }
                     }
@@ -79,11 +87,17 @@ namespace FaceShield.Services.Analysis
                         bool hasMatchingNeighbor = HasMatchingTemporalNeighbor(entries, i, face, options);
                         bool removeUpperWeakCluster = hasMatchingNeighbor &&
                             IsUpperWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
+                        bool removeLowerWeakCluster = hasMatchingNeighbor &&
+                            !removeUpperWeakCluster &&
+                            IsLowerWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
 
-                        if (removeUpperWeakCluster)
+                        if (removeUpperWeakCluster || removeLowerWeakCluster)
                         {
                             removed++;
-                            removedUpperWeakClusters++;
+                            if (removeUpperWeakCluster)
+                                removedUpperWeakClusters++;
+                            if (removeLowerWeakCluster)
+                                removedLowerWeakClusters++;
                             continue;
                         }
                     }
@@ -152,6 +166,7 @@ namespace FaceShield.Services.Analysis
                     removedTinyShortClusters,
                     removedTinyIsolated,
                     removedUpperWeakClusters,
+                    removedLowerWeakClusters,
                     removedFrames.ToArray());
         }
 
@@ -475,6 +490,60 @@ namespace FaceShield.Services.Analysis
             }
 
             return visited.Count > 0 && visited.Count <= options.UpperWeakClusterMaxFrames;
+        }
+
+        private static bool IsLowerWeakTemporalCluster(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int faceIndex,
+            Rect face,
+            float confidence,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (options.LowerWeakClusterMaxFrames <= 0 ||
+                options.LowerWeakClusterMaxConfidence <= 0 ||
+                options.LowerWeakClusterMinCenterYRatio <= 0 ||
+                options.LowerWeakClusterMinAreaRatio <= 0 ||
+                options.LowerWeakClusterMaxAreaRatio <= 0 ||
+                confidence > options.LowerWeakClusterMaxConfidence)
+            {
+                return false;
+            }
+
+            var visited = new HashSet<(int EntryIndex, int FaceIndex)>();
+            var pending = new Stack<(int EntryIndex, int FaceIndex, Rect Face)>();
+            pending.Push((entryIndex, faceIndex, face));
+
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                if (!visited.Add((current.EntryIndex, current.FaceIndex)))
+                    continue;
+                if (visited.Count > options.LowerWeakClusterMaxFrames)
+                    return false;
+
+                var currentData = entries[current.EntryIndex].Value;
+                float currentConfidence = GetConfidence(currentData, current.FaceIndex);
+                if (currentConfidence > options.LowerWeakClusterMaxConfidence ||
+                    !IsLowerWeakFace(current.Face, currentData.Size, options) ||
+                    TouchesFrameEdge(current.Face, currentData.Size, options.EdgeMarginRatio))
+                {
+                    return false;
+                }
+                if (HasStrongAdjacentContinuation(
+                        entries,
+                        current.EntryIndex,
+                        current.Face,
+                        options,
+                        options.LowerWeakClusterMaxConfidence))
+                {
+                    return false;
+                }
+
+                AddMatchingWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
+            }
+
+            return visited.Count > 0 && visited.Count <= options.LowerWeakClusterMaxFrames;
         }
 
         private static bool TryFindStableGapMatch(
@@ -853,6 +922,19 @@ namespace FaceShield.Services.Analysis
             return centerYRatio <= options.UpperWeakClusterMaxCenterYRatio &&
                 areaRatio <= options.UpperWeakClusterMaxAreaRatio;
         }
+
+        private static bool IsLowerWeakFace(Rect face, PixelSize size, YoloFinalMaskCleanupOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            return centerYRatio >= options.LowerWeakClusterMinCenterYRatio &&
+                areaRatio >= options.LowerWeakClusterMinAreaRatio &&
+                areaRatio <= options.LowerWeakClusterMaxAreaRatio;
+        }
     }
 
     public sealed record YoloFinalMaskCleanupOptions
@@ -877,6 +959,11 @@ namespace FaceShield.Services.Analysis
         public float UpperWeakClusterMaxConfidence { get; init; } = 0.60f;
         public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.10;
         public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0065;
+        public int LowerWeakClusterMaxFrames { get; init; } = 3;
+        public float LowerWeakClusterMaxConfidence { get; init; } = 0.50f;
+        public double LowerWeakClusterMinCenterYRatio { get; init; } = 0.58;
+        public double LowerWeakClusterMinAreaRatio { get; init; } = 0.015;
+        public double LowerWeakClusterMaxAreaRatio { get; init; } = 0.045;
     }
 
     public sealed record YoloFinalMaskGapFillOptions
@@ -900,9 +987,10 @@ namespace FaceShield.Services.Analysis
         int RemovedTinyShortClusterFaces,
         int RemovedTinyIsolatedFaces,
         int RemovedUpperWeakClusterFaces,
+        int RemovedLowerWeakClusterFaces,
         IReadOnlyList<int> RemovedFrameIndices)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, Array.Empty<int>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>());
     }
 
     public readonly record struct YoloFinalMaskGapFillResult(
