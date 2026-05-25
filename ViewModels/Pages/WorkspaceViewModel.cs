@@ -52,6 +52,8 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
         private const float YoloSceneCutDirectCarryMaxConfidence = 0.78f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.66f;
+        private const double YoloSceneCutDifferenceThreshold = 0.24;
+        private const double YoloSceneCutDirectDifferenceThreshold = 0.24;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
         private const float YoloFinalMaskTinyShortConfidenceMax = 0.62f;
@@ -733,6 +735,8 @@ namespace FaceShield.ViewModels.Pages
                 _maskProvider,
                 videoPath,
                 candidates,
+                differenceThreshold: YoloSceneCutDifferenceThreshold,
+                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
                 cancellationToken: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(result.Error))
@@ -791,6 +795,8 @@ namespace FaceShield.ViewModels.Pages
                 _maskProvider,
                 videoPath,
                 gapFill.CutGuardFacesInfo,
+                differenceThreshold: YoloSceneCutDifferenceThreshold,
+                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
                 cancellationToken: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(guard.Error))
@@ -1038,7 +1044,7 @@ namespace FaceShield.ViewModels.Pages
                 {
                     MaxTrackGap = SuspiciousNoFaceMaxGap,
                     MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                    MaxLostFillFrames = 3,
+                    MaxLostFillFrames = 2,
                     MaxInitialFillFrames = 3,
                     MaxConfirmedTrackHoldFrames = SuspiciousNoFaceMaxGap,
                     AllowSmallTrackLostFill = true,

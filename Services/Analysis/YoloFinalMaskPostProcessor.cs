@@ -153,16 +153,10 @@ namespace FaceShield.Services.Analysis
             var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
             int filledFaces = 0;
 
-            for (int entryIndex = 1; entryIndex < entries.Length; entryIndex++)
+            for (int entryIndex = 0; entryIndex < entries.Length - 1; entryIndex++)
             {
-                int previousFrame = entries[entryIndex - 1].Key;
-                int nextFrame = entries[entryIndex].Key;
-                int gap = nextFrame - previousFrame - 1;
-                if (gap <= 0 || gap > options.MaxGapFrames)
-                    continue;
-
-                var previous = entries[entryIndex - 1].Value;
-                var next = entries[entryIndex].Value;
+                int previousFrame = entries[entryIndex].Key;
+                var previous = entries[entryIndex].Value;
                 if (previous.Size.Width <= 0 || previous.Size.Height <= 0)
                     continue;
 
@@ -173,64 +167,75 @@ namespace FaceShield.Services.Analysis
                         continue;
 
                     var previousFace = previous.Faces[faceIndex];
-                    if (!TryFindStableGapMatch(
-                            next,
-                            previousFace,
-                            options,
-                            out var nextFace,
-                            out float nextConfidence))
+                    for (int nextEntryIndex = entryIndex + 1; nextEntryIndex < entries.Length; nextEntryIndex++)
                     {
-                        continue;
-                    }
+                        int nextFrame = entries[nextEntryIndex].Key;
+                        int gap = nextFrame - previousFrame - 1;
+                        if (gap > options.MaxGapFrames)
+                            break;
 
-                    float fillConfidence = Math.Clamp(
-                        Math.Min(previousConfidence, nextConfidence),
-                        options.FillConfidenceFloor,
-                        1.0f);
+                        if (gap <= 0)
+                            continue;
 
-                    for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
-                    {
-                        if (storedFrames.Contains(frameIndex) ||
-                            maskProvider.TryGetFaceMaskData(frameIndex, out _))
+                        var next = entries[nextEntryIndex].Value;
+                        if (!TryFindStableGapMatch(
+                                next,
+                                previousFace,
+                                options,
+                                out var nextFace,
+                                out float nextConfidence))
                         {
                             continue;
                         }
 
-                        double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
-                        var interpolated = Interpolate(previousFace, nextFace, t);
-                        if (interpolated.Width <= 0 || interpolated.Height <= 0)
-                            continue;
+                        float fillConfidence = Math.Clamp(
+                            Math.Min(previousConfidence, nextConfidence),
+                            options.FillConfidenceFloor,
+                            1.0f);
 
-                        if (!fills.TryGetValue(frameIndex, out var fill))
+                        for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
                         {
-                            fill = (previous.Size, new List<Rect>(), new List<float>());
-                            fills[frameIndex] = fill;
+                            if (storedFrames.Contains(frameIndex))
+                                continue;
+
+                            double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
+                            var interpolated = Interpolate(previousFace, nextFace, t);
+                            if (interpolated.Width <= 0 || interpolated.Height <= 0)
+                                continue;
+
+                            if (!fills.TryGetValue(frameIndex, out var fill))
+                            {
+                                fill = CreateFillEntry(maskProvider, frameIndex, previous.Size);
+                                fills[frameIndex] = fill;
+                            }
+
+                            if (HasMatchingFace(fill.Faces, interpolated, options.DuplicateIou))
+                                continue;
+
+                            fill.Faces.Add(interpolated);
+                            fill.Confidences.Add(fillConfidence);
+                            filledFaceInfo.Add(new FaceTrackFilledFace(
+                                frameIndex,
+                                interpolated,
+                                previous.Size,
+                                fillConfidence,
+                                previousFrame));
+                            cutGuardFaceInfo.Add(new FaceTrackFilledFace(
+                                frameIndex,
+                                interpolated,
+                                previous.Size,
+                                fillConfidence,
+                                previousFrame));
+                            cutGuardFaceInfo.Add(new FaceTrackFilledFace(
+                                frameIndex,
+                                interpolated,
+                                previous.Size,
+                                fillConfidence,
+                                nextFrame));
+                            filledFaces++;
                         }
 
-                        if (HasMatchingFace(fill.Faces, interpolated, options.DuplicateIou))
-                            continue;
-
-                        fill.Faces.Add(interpolated);
-                        fill.Confidences.Add(fillConfidence);
-                        filledFaceInfo.Add(new FaceTrackFilledFace(
-                            frameIndex,
-                            interpolated,
-                            previous.Size,
-                            fillConfidence,
-                            previousFrame));
-                        cutGuardFaceInfo.Add(new FaceTrackFilledFace(
-                            frameIndex,
-                            interpolated,
-                            previous.Size,
-                            fillConfidence,
-                            previousFrame));
-                        cutGuardFaceInfo.Add(new FaceTrackFilledFace(
-                            frameIndex,
-                            interpolated,
-                            previous.Size,
-                            fillConfidence,
-                            nextFrame));
-                        filledFaces++;
+                        break;
                     }
                 }
             }
@@ -256,6 +261,28 @@ namespace FaceShield.Services.Analysis
                 fills.Keys.OrderBy(static x => x).ToArray(),
                 filledFaceInfo.ToArray(),
                 cutGuardFaceInfo.ToArray());
+        }
+
+        private static (PixelSize Size, List<Rect> Faces, List<float> Confidences) CreateFillEntry(
+            FrameMaskProvider maskProvider,
+            int frameIndex,
+            PixelSize fallbackSize)
+        {
+            if (!maskProvider.TryGetFaceMaskData(frameIndex, out var existing) ||
+                existing.Faces.Count == 0)
+            {
+                return (fallbackSize, new List<Rect>(), new List<float>());
+            }
+
+            var faces = new List<Rect>(existing.Faces);
+            var confidences = new List<float>(faces.Count);
+            for (int i = 0; i < faces.Count; i++)
+                confidences.Add(GetConfidence(existing, i));
+
+            var size = existing.Size.Width > 0 && existing.Size.Height > 0
+                ? existing.Size
+                : fallbackSize;
+            return (size, faces, confidences);
         }
 
         private static bool IsWeakTinyTemporalCluster(
