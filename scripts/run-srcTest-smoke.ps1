@@ -455,6 +455,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.15;
+    const int yoloSceneCutMatchingTailMaxFrames = 5;
+    const float yoloSceneCutMatchingTailMaxConfidence = 0.78f;
     const int yoloFinalMaskStableGapMaxFrames = 5;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
@@ -597,7 +599,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             input,
             sceneCutCandidates,
             differenceThreshold: yoloSceneCutDifferenceThreshold,
-            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
+            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
+            removeMatchingTailFrames: yoloSceneCutMatchingTailMaxFrames,
+            removeMatchingTailMaxConfidence: yoloSceneCutMatchingTailMaxConfidence);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         Console.WriteLine($"[SmokeYoloFinalMaskPostSceneCleanup] label={label}, removedWeakIsolated={postSceneCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={postSceneCleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={postSceneCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postSceneCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postSceneCleanup.RemovedTinyIsolatedFaces}, removedFrames={FormatFrames(postSceneCleanup.RemovedFrameIndices)}");

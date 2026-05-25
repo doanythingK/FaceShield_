@@ -190,7 +190,9 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<FaceTrackFilledFace> candidates,
             Func<int, int, double> frameDifferenceProvider,
             double differenceThreshold = DefaultDifferenceThreshold,
-            double directDifferenceThreshold = DefaultDirectDifferenceThreshold)
+            double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
+            int removeMatchingTailFrames = 0,
+            float removeMatchingTailMaxConfidence = 0.0f)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -256,6 +258,13 @@ namespace FaceShield.Services.Analysis
                 {
                     removedCandidates++;
                     removedFrameIndices.Add(candidate.FrameIndex);
+                    removedCandidates += RemoveWeakMatchingTail(
+                        maskProvider,
+                        candidate.FrameIndex,
+                        candidate.Bounds,
+                        removeMatchingTailFrames,
+                        removeMatchingTailMaxConfidence,
+                        removedFrameIndices);
                 }
             }
 
@@ -278,6 +287,8 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<FaceTrackFilledFace> candidates,
             double differenceThreshold = DefaultDifferenceThreshold,
             double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
+            int removeMatchingTailFrames = 0,
+            float removeMatchingTailMaxConfidence = 0.0f,
             CancellationToken cancellationToken = default)
         {
             if (maskProvider == null)
@@ -379,6 +390,13 @@ namespace FaceShield.Services.Analysis
                         {
                             removedCandidates++;
                             removedFrameIndices.Add(candidate.FrameIndex);
+                            removedCandidates += RemoveWeakMatchingTail(
+                                maskProvider,
+                                candidate.FrameIndex,
+                                candidate.Bounds,
+                                removeMatchingTailFrames,
+                                removeMatchingTailMaxConfidence,
+                                removedFrameIndices);
                         }
                     }
                 }
@@ -1016,6 +1034,89 @@ namespace FaceShield.Services.Analysis
             }
 
             if (removeIndex < 0 || bestIou < 0.80)
+                return false;
+
+            var faces = data.Faces.ToList();
+            var confs = data.Confidences.ToList();
+            faces.RemoveAt(removeIndex);
+            if (removeIndex < confs.Count)
+                confs.RemoveAt(removeIndex);
+
+            maskProvider.SetFaceRects(
+                frameIndex,
+                faces,
+                data.Size,
+                confs.Count == 0 ? null : confs.Min(),
+                confs);
+            return true;
+        }
+
+        private static int RemoveWeakMatchingTail(
+            FrameMaskProvider maskProvider,
+            int startFrame,
+            Rect removedFace,
+            int maxTailFrames,
+            float maxTailConfidence,
+            ICollection<int> removedFrameIndices)
+        {
+            if (maxTailFrames <= 0 || maxTailConfidence <= 0.0f)
+                return 0;
+
+            int removed = 0;
+            var reference = removedFace;
+            for (int frameIndex = startFrame + 1; frameIndex <= startFrame + maxTailFrames; frameIndex++)
+            {
+                if (!TryRemoveWeakMatchingFace(
+                        maskProvider,
+                        frameIndex,
+                        reference,
+                        maxTailConfidence,
+                        out var removedBounds))
+                {
+                    break;
+                }
+
+                reference = removedBounds;
+                removed++;
+                removedFrameIndices.Add(frameIndex);
+            }
+
+            return removed;
+        }
+
+        private static bool TryRemoveWeakMatchingFace(
+            FrameMaskProvider maskProvider,
+            int frameIndex,
+            Rect reference,
+            float maxConfidence,
+            out Rect removedBounds)
+        {
+            removedBounds = default;
+            if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) || data.Faces.Count == 0)
+                return false;
+
+            int removeIndex = -1;
+            double bestScore = double.NegativeInfinity;
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                float confidence = GetConfidence(data, i);
+                if (confidence > maxConfidence)
+                    continue;
+
+                var face = data.Faces[i];
+                if (!IsMatchingFace(reference, face, minIou: 0.15, maxCenterShiftRatio: 0.65, maxAreaChangeRatio: 3.0))
+                    continue;
+
+                double score = IoU(reference, face);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    removeIndex = i;
+                    removedBounds = face;
+                }
+            }
+
+            if (removeIndex < 0)
                 return false;
 
             var faces = data.Faces.ToList();

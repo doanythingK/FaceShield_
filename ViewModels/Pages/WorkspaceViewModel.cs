@@ -54,6 +54,8 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.15;
+        private const int YoloSceneCutMatchingTailMaxFrames = 5;
+        private const float YoloSceneCutMatchingTailMaxConfidence = 0.78f;
         private const int YoloFinalMaskStableGapMaxFrames = 5;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
@@ -740,6 +742,8 @@ namespace FaceShield.ViewModels.Pages
                 candidates,
                 differenceThreshold: YoloSceneCutDifferenceThreshold,
                 directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
+                removeMatchingTailFrames: YoloSceneCutMatchingTailMaxFrames,
+                removeMatchingTailMaxConfidence: YoloSceneCutMatchingTailMaxConfidence,
                 cancellationToken: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(result.Error))
