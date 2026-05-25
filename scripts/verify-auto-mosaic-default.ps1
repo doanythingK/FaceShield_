@@ -282,10 +282,11 @@ Assert-Contains "yolo-aspect-ratio-filter" $aspectRatioFilterOutput "\[YoloAspec
 
 $finalMaskCleanupOutput = Invoke-ScriptStep "yolo-final-mask-cleanup" $yoloFinalMaskCleanupVerify @()
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "\[YoloFinalMaskCleanupVerify\]"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=5"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=8"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakUnsupported=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakShortClusters=2"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,40,41,50,59,60,61"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakTinyClusters=3"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,40,41,50,59,60,61,90,91,92,93"
 
 $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(
     "-SkipTrim",

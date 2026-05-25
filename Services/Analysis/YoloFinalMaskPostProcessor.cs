@@ -27,6 +27,7 @@ namespace FaceShield.Services.Analysis
             int removed = 0;
             int removedUnsupported = 0;
             int removedShortClusters = 0;
+            int removedTinyClusters = 0;
             for (int i = 0; i < entries.Length; i++)
             {
                 int frameIndex = entries[i].Key;
@@ -46,14 +47,19 @@ namespace FaceShield.Services.Analysis
                         bool removeUnsupported = !hasMatchingNeighbor;
                         bool removeShortCluster = hasMatchingNeighbor &&
                             IsWeakShortTemporalCluster(entries, i, faceIndex, face, confidence, options);
+                        bool removeTinyCluster = hasMatchingNeighbor &&
+                            !removeShortCluster &&
+                            IsWeakTinyTemporalCluster(entries, i, faceIndex, face, confidence, options);
 
-                        if (removeUnsupported || removeShortCluster)
+                        if (removeUnsupported || removeShortCluster || removeTinyCluster)
                         {
                             removed++;
                             if (removeUnsupported)
                                 removedUnsupported++;
                             if (removeShortCluster)
                                 removedShortClusters++;
+                            if (removeTinyCluster)
+                                removedTinyClusters++;
                             continue;
                         }
                     }
@@ -82,7 +88,53 @@ namespace FaceShield.Services.Analysis
                     removed,
                     removedUnsupported,
                     removedShortClusters,
+                    removedTinyClusters,
                     removedFrames.ToArray());
+        }
+
+        private static bool IsWeakTinyTemporalCluster(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int faceIndex,
+            Rect face,
+            float confidence,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (options.TinyClusterMaxFrames <= 0 ||
+                options.TinyClusterMaxConfidence <= 0 ||
+                options.TinyClusterMaxAreaRatio <= 0 ||
+                confidence > options.TinyClusterMaxConfidence)
+            {
+                return false;
+            }
+
+            var visited = new HashSet<(int EntryIndex, int FaceIndex)>();
+            var pending = new Stack<(int EntryIndex, int FaceIndex, Rect Face)>();
+            pending.Push((entryIndex, faceIndex, face));
+
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                if (!visited.Add((current.EntryIndex, current.FaceIndex)))
+                    continue;
+                if (visited.Count > options.TinyClusterMaxFrames)
+                    return false;
+
+                var currentData = entries[current.EntryIndex].Value;
+                float currentConfidence = GetConfidence(currentData, current.FaceIndex);
+                if (currentConfidence > options.TinyClusterMaxConfidence ||
+                    !IsTinyFace(current.Face, currentData.Size, options.TinyClusterMaxAreaRatio) ||
+                    TouchesFrameEdge(current.Face, currentData.Size, options.EdgeMarginRatio))
+                {
+                    return false;
+                }
+                if (HasStrongAdjacentContinuation(entries, current.EntryIndex, current.Face, options))
+                    return false;
+
+                AddMatchingWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
+            }
+
+            return visited.Count > 0 && visited.Count <= options.TinyClusterMaxFrames;
         }
 
         private static bool IsWeakShortTemporalCluster(
@@ -124,6 +176,48 @@ namespace FaceShield.Services.Analysis
             }
 
             return visited.Count > 0 && visited.Count <= options.WeakClusterMaxFrames;
+        }
+
+        private static bool HasStrongAdjacentContinuation(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            Rect face,
+            YoloFinalMaskCleanupOptions options)
+        {
+            int frameIndex = entries[entryIndex].Key;
+            for (int i = entryIndex - 1; i >= 0; i--)
+            {
+                if (frameIndex - entries[i].Key > options.NeighborWindowFrames + 1)
+                    break;
+                if (HasMatchingStrongFace(entries[i].Value, face, options))
+                    return true;
+            }
+
+            for (int i = entryIndex + 1; i < entries.Count; i++)
+            {
+                if (entries[i].Key - frameIndex > options.NeighborWindowFrames + 1)
+                    break;
+                if (HasMatchingStrongFace(entries[i].Value, face, options))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasMatchingStrongFace(
+            FrameMaskProvider.FaceMaskData data,
+            Rect face,
+            YoloFinalMaskCleanupOptions options)
+        {
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                if (GetConfidence(data, i) <= options.TinyClusterMaxConfidence)
+                    continue;
+                if (IsMatchingFace(data.Faces[i], face, options))
+                    return true;
+            }
+
+            return false;
         }
 
         private static void AddMatchingWeakClusterNeighbors(
@@ -240,6 +334,16 @@ namespace FaceShield.Services.Analysis
                 face.Right >= size.Width - marginX ||
                 face.Bottom >= size.Height - marginY;
         }
+
+        private static bool IsTinyFace(Rect face, PixelSize size, double maxAreaRatio)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            return areaRatio <= maxAreaRatio;
+        }
     }
 
     public sealed record YoloFinalMaskCleanupOptions
@@ -252,14 +356,18 @@ namespace FaceShield.Services.Analysis
         public double NeighborMaxAreaChangeRatio { get; init; } = 3.0;
         public int WeakClusterMaxFrames { get; init; } = 2;
         public float WeakClusterMaxConfidence { get; init; } = 0.38f;
+        public int TinyClusterMaxFrames { get; init; } = 3;
+        public float TinyClusterMaxConfidence { get; init; } = 0.45f;
+        public double TinyClusterMaxAreaRatio { get; init; } = 0.0012;
     }
 
     public readonly record struct YoloFinalMaskCleanupResult(
         int RemovedWeakIsolatedFaces,
         int RemovedWeakUnsupportedFaces,
         int RemovedWeakShortClusterFaces,
+        int RemovedWeakTinyClusterFaces,
         IReadOnlyList<int> RemovedFrameIndices)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, Array.Empty<int>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, Array.Empty<int>());
     }
 }

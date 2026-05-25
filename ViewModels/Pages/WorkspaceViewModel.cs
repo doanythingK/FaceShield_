@@ -745,7 +745,7 @@ namespace FaceShield.ViewModels.Pages
                 return;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
+                $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
         }
 
         private void LogFinalMaskSummary()

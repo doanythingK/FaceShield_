@@ -53,17 +53,27 @@ provider.SetFaceRects(
 provider.SetFaceRects(61, new[] { new Rect(308, 308, 90, 90) }, size, 0.81f, new[] { 0.81f });
 provider.SetFaceRects(70, new[] { new Rect(1500, 500, 46, 46) }, size, 0.32f, new[] { 0.32f });
 provider.SetFaceRects(71, new[] { new Rect(1504, 504, 46, 46) }, size, 0.31f, new[] { 0.31f });
+provider.SetFaceRects(80, new[] { new Rect(1400, 420, 40, 40) }, size, 0.42f, new[] { 0.42f });
+provider.SetFaceRects(81, new[] { new Rect(1403, 422, 40, 40) }, size, 0.43f, new[] { 0.43f });
+provider.SetFaceRects(82, new[] { new Rect(1406, 424, 40, 40) }, size, 0.44f, new[] { 0.44f });
+provider.SetFaceRects(90, new[] { new Rect(900, 620, 40, 40) }, size, 0.42f, new[] { 0.42f });
+provider.SetFaceRects(91, new[] { new Rect(903, 622, 40, 40) }, size, 0.43f, new[] { 0.43f });
+provider.SetFaceRects(92, new[] { new Rect(906, 624, 40, 40) }, size, 0.44f, new[] { 0.44f });
+provider.SetFaceRects(93, new[] { new Rect(909, 626, 40, 40) }, size, 0.71f, new[] { 0.71f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 5)
-    throw new InvalidOperationException($"Expected 5 weak isolated/short-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 8)
+    throw new InvalidOperationException($"Expected 8 weak isolated/short/tiny-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (result.RemovedWeakUnsupportedFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak unsupported faces to be removed, got {result.RemovedWeakUnsupportedFaces}.");
 
 if (result.RemovedWeakShortClusterFaces != 2)
     throw new InvalidOperationException($"Expected 2 weak short-cluster faces to be removed, got {result.RemovedWeakShortClusterFaces}.");
+
+if (result.RemovedWeakTinyClusterFaces != 3)
+    throw new InvalidOperationException($"Expected 3 weak tiny-cluster faces to be removed, got {result.RemovedWeakTinyClusterFaces}.");
 
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
@@ -99,8 +109,23 @@ if (provider.TryGetFaceMaskData(70, out var weakPairA) && weakPairA.Faces.Count 
     throw new InvalidOperationException("Expected a two-frame very-low-confidence non-edge cluster to be removed.");
 }
 
+if (provider.TryGetFaceMaskData(80, out var tinyClusterA) && tinyClusterA.Faces.Count > 0 ||
+    provider.TryGetFaceMaskData(81, out var tinyClusterB) && tinyClusterB.Faces.Count > 0 ||
+    provider.TryGetFaceMaskData(82, out var tinyClusterC) && tinyClusterC.Faces.Count > 0)
+{
+    throw new InvalidOperationException("Expected a three-frame weak tiny non-edge cluster without strong continuation to be removed.");
+}
+
+if (!provider.TryGetFaceMaskData(90, out var tinyStrongA) || tinyStrongA.Faces.Count != 1 ||
+    !provider.TryGetFaceMaskData(91, out var tinyStrongB) || tinyStrongB.Faces.Count != 1 ||
+    !provider.TryGetFaceMaskData(92, out var tinyStrongC) || tinyStrongC.Faces.Count != 1 ||
+    !provider.TryGetFaceMaskData(93, out var tinyStrongD) || tinyStrongD.Faces.Count != 1)
+{
+    throw new InvalidOperationException("Expected weak tiny cluster with strong continuation to remain.");
+}
+
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
