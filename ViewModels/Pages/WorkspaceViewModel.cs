@@ -55,8 +55,8 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
-        private const double YoloSceneCutDirectDifferenceThreshold = 0.36;
-        private const int YoloSceneCutDirectDifferenceMaxCandidates = 24;
+        private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
+        private const int YoloSceneCutDirectDifferenceMaxCandidates = 48;
         private const int YoloSceneCutMatchingTailMaxFrames = 5;
         private const float YoloSceneCutMatchingTailMaxConfidence = 0.90f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
@@ -761,11 +761,11 @@ namespace FaceShield.ViewModels.Pages
                 maxCarryFrames: 5,
                 sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
                 includeEdgeCandidates: true);
-            var candidates = trackPost.FilledGapFacesInfo
+            var candidates = directCandidates
+                .Concat(postCutCandidates)
+                .Concat(trackPost.FilledGapFacesInfo)
                 .Concat(trackPost.FilledLostFacesInfo)
                 .Concat(trackPost.FilledInitialFacesInfo)
-                .Concat(directCandidates)
-                .Concat(postCutCandidates)
                 .ToArray();
 
             if (candidates.Length > 0)

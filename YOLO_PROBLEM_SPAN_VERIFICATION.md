@@ -41,6 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
+`SmokeDetection` 로그의 `conf`는 threshold 경계 후보가 반올림 때문에 잘못 분류되지 않도록 6자리 정밀도로 기록한다.
 
 ## 판정 기준
 
@@ -126,7 +127,7 @@ goal 완료로 볼 수 있는 최소 증거:
 
 - Output: `.tmp/yolo-problem-span-wrapper-smoke/yolo-followup-quality-evidence.md`
 - Detection rows: `96`
-- Scene-cut evidence on this no-hard-cut wrapper sample after the direct-check budget update: `directChecked=24`, `directSkipped=56`, `maxDiff=0.206`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`. This confirms dense spans still get bounded direct source->target checks, while the higher direct threshold does not delete this no-hard-cut sample.
+- Scene-cut evidence on this no-hard-cut wrapper sample after the direct-check budget/priority update: `directChecked=48`, `directSkipped=26`, `maxDiff=0.206`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`. This confirms dense spans still get bounded direct source->target checks, while the lower direct threshold and higher budget do not delete this no-hard-cut sample.
 - Final cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
 - Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`

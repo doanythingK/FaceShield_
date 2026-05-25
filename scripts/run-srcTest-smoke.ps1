@@ -455,8 +455,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
-    const double yoloSceneCutDirectDifferenceThreshold = 0.36;
-    const int yoloSceneCutDirectDifferenceMaxCandidates = 24;
+    const double yoloSceneCutDirectDifferenceThreshold = 0.32;
+    const int yoloSceneCutDirectDifferenceMaxCandidates = 48;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.90f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
@@ -603,11 +603,11 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             maxCarryFrames: 5,
             sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames,
             includeEdgeCandidates: true);
-        var sceneCutCandidates = trackPost.FilledGapFacesInfo
+        var sceneCutCandidates = directCandidates
+            .Concat(postCutCandidates)
+            .Concat(trackPost.FilledGapFacesInfo)
             .Concat(trackPost.FilledLostFacesInfo)
             .Concat(trackPost.FilledInitialFacesInfo)
-            .Concat(directCandidates)
-            .Concat(postCutCandidates)
             .ToArray();
         var sceneCut = sceneCutGuard.Apply(
             maskProvider,
@@ -1040,7 +1040,7 @@ static void DumpDetections(string label, FrameMaskProvider maskProvider)
             minAspectRatio = Math.Min(minAspectRatio, aspectRatio);
             maxAspectRatio = Math.Max(maxAspectRatio, aspectRatio);
             Console.WriteLine(
-                $"[SmokeDetection] label={label}, frame={entry.Key}, index={i}, x={r.X:F1}, y={r.Y:F1}, w={r.Width:F1}, h={r.Height:F1}, area={area:F1}, conf={conf:F3}, cx={centerX:F3}, cy={centerY:F3}, areaRatio={areaRatio:F6}, aspectRatio={aspectRatio:F3}");
+                $"[SmokeDetection] label={label}, frame={entry.Key}, index={i}, x={r.X:F1}, y={r.Y:F1}, w={r.Width:F1}, h={r.Height:F1}, area={area:F1}, conf={conf:F6}, cx={centerX:F3}, cy={centerY:F3}, areaRatio={areaRatio:F6}, aspectRatio={aspectRatio:F3}");
         }
     }
 
