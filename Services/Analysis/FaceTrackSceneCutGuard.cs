@@ -275,7 +275,8 @@ namespace FaceShield.Services.Analysis
                     out string cutFramePair);
 
                 bool isCut = difference >= differenceThreshold;
-                if (targetFrame > sourceFrame + 1 &&
+                if (!isCut &&
+                    targetFrame > sourceFrame + 1 &&
                     directDifferenceThreshold > 0)
                 {
                     if (directDifferenceChecks < directDifferenceBudget)
@@ -292,7 +293,7 @@ namespace FaceShield.Services.Analysis
                             cutFramePair = FormatFramePair(sourceFrame, targetFrame);
                         }
 
-                        isCut |= directDifference >= directDifferenceThreshold;
+                        isCut = directDifference >= directDifferenceThreshold;
                     }
                     else
                     {
@@ -424,7 +425,8 @@ namespace FaceShield.Services.Analysis
                         }
 
                         bool isCut = difference >= differenceThreshold;
-                        if (targetFrame > sourceFrame + 1 &&
+                        if (!isCut &&
+                            targetFrame > sourceFrame + 1 &&
                             directDifferenceThreshold > 0)
                         {
                             if (directDifferenceChecks < directDifferenceBudget)
@@ -448,7 +450,7 @@ namespace FaceShield.Services.Analysis
                                         cutFramePair = FormatFramePair(sourceFrame, targetFrame);
                                     }
 
-                                    isCut |= directDifference >= directDifferenceThreshold;
+                                    isCut = directDifference >= directDifferenceThreshold;
                                 }
                             }
                             else
