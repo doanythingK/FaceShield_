@@ -710,7 +710,7 @@ namespace FaceShield.ViewModels.Pages
                 BuildTrackPostProcessOptions(FaceFilterProfile.Yolo),
                 maxTargetConfidence: YoloSceneCutDirectCarryMaxConfidence,
                 maxTransitionGap: SuspiciousNoFaceMaxGap,
-                minConfidenceDrop: 0.0f,
+                minConfidenceDrop: 0.06f,
                 maxPostCutCarryFrames: 5);
             var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
                 _maskProvider,
