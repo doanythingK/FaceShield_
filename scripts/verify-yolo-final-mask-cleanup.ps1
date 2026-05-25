@@ -51,11 +51,13 @@ provider.SetFaceRects(
     0.43f,
     new[] { 0.82f, 0.43f });
 provider.SetFaceRects(61, new[] { new Rect(308, 308, 90, 90) }, size, 0.81f, new[] { 0.81f });
+provider.SetFaceRects(70, new[] { new Rect(1500, 500, 46, 46) }, size, 0.32f, new[] { 0.32f });
+provider.SetFaceRects(71, new[] { new Rect(1504, 504, 46, 46) }, size, 0.31f, new[] { 0.31f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 3)
-    throw new InvalidOperationException($"Expected 3 weak isolated faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 5)
+    throw new InvalidOperationException($"Expected 5 weak isolated/short-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
@@ -83,6 +85,12 @@ if (!provider.TryGetFaceMaskData(60, out var mixedTemporal) ||
     Math.Abs(mixedTemporal.Confidences[0] - 0.82f) > 0.001f)
 {
     throw new InvalidOperationException("Expected frame 60 to remove only the weak unrelated face even though another face has temporal neighbors.");
+}
+
+if (provider.TryGetFaceMaskData(70, out var weakPairA) && weakPairA.Faces.Count > 0 ||
+    provider.TryGetFaceMaskData(71, out var weakPairB) && weakPairB.Faces.Count > 0)
+{
+    throw new InvalidOperationException("Expected a two-frame very-low-confidence non-edge cluster to be removed.");
 }
 
 Console.WriteLine(

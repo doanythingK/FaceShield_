@@ -23,7 +23,6 @@ namespace FaceShield.Services.Analysis
             if (entries.Length == 0)
                 return YoloFinalMaskCleanupResult.Empty;
 
-            var frames = entries.Select(static x => x.Key).ToArray();
             var removedFrames = new List<int>();
             int removed = 0;
             for (int i = 0; i < entries.Length; i++)
@@ -40,7 +39,8 @@ namespace FaceShield.Services.Analysis
                         : data.MinConfidence ?? 1.0f;
                     if (confidence <= options.WeakConfidenceMax &&
                         !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio) &&
-                        !HasMatchingTemporalNeighbor(entries, i, face, options))
+                        (!HasMatchingTemporalNeighbor(entries, i, face, options) ||
+                            IsWeakShortTemporalCluster(entries, i, faceIndex, face, confidence, options)))
                     {
                         removed++;
                         continue;
@@ -67,6 +67,88 @@ namespace FaceShield.Services.Analysis
             return removed == 0
                 ? YoloFinalMaskCleanupResult.Empty
                 : new YoloFinalMaskCleanupResult(removed, removedFrames.ToArray());
+        }
+
+        private static bool IsWeakShortTemporalCluster(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int faceIndex,
+            Rect face,
+            float confidence,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (options.WeakClusterMaxFrames <= 0 ||
+                options.WeakClusterMaxConfidence <= 0 ||
+                confidence > options.WeakClusterMaxConfidence)
+            {
+                return false;
+            }
+
+            var visited = new HashSet<(int EntryIndex, int FaceIndex)>();
+            var pending = new Stack<(int EntryIndex, int FaceIndex, Rect Face)>();
+            pending.Push((entryIndex, faceIndex, face));
+
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                if (!visited.Add((current.EntryIndex, current.FaceIndex)))
+                    continue;
+                if (visited.Count > options.WeakClusterMaxFrames)
+                    return false;
+
+                var currentData = entries[current.EntryIndex].Value;
+                float currentConfidence = GetConfidence(currentData, current.FaceIndex);
+                if (currentConfidence > options.WeakClusterMaxConfidence ||
+                    TouchesFrameEdge(current.Face, currentData.Size, options.EdgeMarginRatio))
+                {
+                    return false;
+                }
+
+                AddMatchingWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
+            }
+
+            return visited.Count > 0 && visited.Count <= options.WeakClusterMaxFrames;
+        }
+
+        private static void AddMatchingWeakClusterNeighbors(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            Rect face,
+            YoloFinalMaskCleanupOptions options,
+            ISet<(int EntryIndex, int FaceIndex)> visited,
+            Stack<(int EntryIndex, int FaceIndex, Rect Face)> pending)
+        {
+            int frameIndex = entries[entryIndex].Key;
+            for (int i = entryIndex - 1; i >= 0; i--)
+            {
+                if (frameIndex - entries[i].Key > options.NeighborWindowFrames)
+                    break;
+                AddMatchingFaces(entries[i].Value.Faces, i, face, options, visited, pending);
+            }
+
+            for (int i = entryIndex + 1; i < entries.Count; i++)
+            {
+                if (entries[i].Key - frameIndex > options.NeighborWindowFrames)
+                    break;
+                AddMatchingFaces(entries[i].Value.Faces, i, face, options, visited, pending);
+            }
+        }
+
+        private static void AddMatchingFaces(
+            IReadOnlyList<Rect> candidates,
+            int entryIndex,
+            Rect face,
+            YoloFinalMaskCleanupOptions options,
+            ISet<(int EntryIndex, int FaceIndex)> visited,
+            Stack<(int EntryIndex, int FaceIndex, Rect Face)> pending)
+        {
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (visited.Contains((entryIndex, i)))
+                    continue;
+                if (IsMatchingFace(candidates[i], face, options))
+                    pending.Push((entryIndex, i, candidates[i]));
+            }
         }
 
         private static bool HasMatchingTemporalNeighbor(
@@ -103,22 +185,32 @@ namespace FaceShield.Services.Analysis
             for (int i = 0; i < candidates.Count; i++)
             {
                 var candidate = candidates[i];
-                if (FaceTrackBuilder.IoU(candidate, face) >= options.NeighborMinIou)
-                    return true;
-
-                double areaRatio = FaceTrackBuilder.GetAreaRatio(candidate, face);
-                if (areaRatio > options.NeighborMaxAreaChangeRatio ||
-                    areaRatio < 1.0 / options.NeighborMaxAreaChangeRatio)
-                {
-                    continue;
-                }
-
-                if (FaceTrackBuilder.GetNormalizedCenterShift(candidate, face) <= options.NeighborMaxCenterShiftRatio)
+                if (IsMatchingFace(candidate, face, options))
                     return true;
             }
 
             return false;
         }
+
+        private static bool IsMatchingFace(Rect candidate, Rect face, YoloFinalMaskCleanupOptions options)
+        {
+            if (FaceTrackBuilder.IoU(candidate, face) >= options.NeighborMinIou)
+                return true;
+
+            double areaRatio = FaceTrackBuilder.GetAreaRatio(candidate, face);
+            if (areaRatio > options.NeighborMaxAreaChangeRatio ||
+                areaRatio < 1.0 / options.NeighborMaxAreaChangeRatio)
+            {
+                return false;
+            }
+
+            return FaceTrackBuilder.GetNormalizedCenterShift(candidate, face) <= options.NeighborMaxCenterShiftRatio;
+        }
+
+        private static float GetConfidence(FrameMaskProvider.FaceMaskData data, int faceIndex)
+            => faceIndex < data.Confidences.Count
+                ? data.Confidences[faceIndex]
+                : data.MinConfidence ?? 1.0f;
 
         private static bool TouchesFrameEdge(Rect face, PixelSize size, double marginRatio)
         {
@@ -142,6 +234,8 @@ namespace FaceShield.Services.Analysis
         public double NeighborMinIou { get; init; } = 0.15;
         public double NeighborMaxCenterShiftRatio { get; init; } = 0.65;
         public double NeighborMaxAreaChangeRatio { get; init; } = 3.0;
+        public int WeakClusterMaxFrames { get; init; } = 2;
+        public float WeakClusterMaxConfidence { get; init; } = 0.38f;
     }
 
     public readonly record struct YoloFinalMaskCleanupResult(
