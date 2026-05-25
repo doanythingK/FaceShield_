@@ -27,7 +27,9 @@ param(
     [int]$MaxFullFrameRows = 8,
     [int]$FullFrameScaleWidth = 960,
     [int]$SmokeTimeoutSeconds = 0,
+    [int]$MaxSmokeSourceSeconds = 30,
     [switch]$AllowNoDetections,
+    [switch]$AllowLongSmokeSource,
     [switch]$SkipReviewPackage,
     [switch]$ForceReviewPackage
 )
@@ -349,6 +351,97 @@ function Invoke-FfmpegTrim {
     }
 }
 
+function Read-DurationFromFfprobeOutput {
+    param([string[]]$Output)
+
+    foreach ($line in @($Output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        $duration = 0.0
+        if ([double]::TryParse(
+                $line.Trim(),
+                [System.Globalization.NumberStyles]::Float,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$duration)) {
+            return $duration
+        }
+    }
+
+    return $null
+}
+
+function Get-VideoDurationSeconds {
+    param([string]$Path)
+
+    $ffprobeArgs = @(
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        $Path
+    )
+
+    $ffprobe = Get-Command ffprobe -ErrorAction SilentlyContinue
+    if ($null -ne $ffprobe) {
+        $result = Invoke-NativeCapture -FilePath $ffprobe.Source -Arguments $ffprobeArgs
+        if ($result.ExitCode -eq 0) {
+            $duration = Read-DurationFromFfprobeOutput $result.Output
+            if ($null -ne $duration) {
+                return $duration
+            }
+        }
+    }
+
+    $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($null -ne $wsl) {
+        $wslArgs = @(
+            "--exec",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            (Convert-ToWslPath $Path)
+        )
+
+        $wslResult = Invoke-NativeCapture -FilePath $wsl.Source -Arguments $wslArgs
+        if ($wslResult.ExitCode -eq 0) {
+            $duration = Read-DurationFromFfprobeOutput $wslResult.Output
+            if ($null -ne $duration) {
+                return $duration
+            }
+        }
+    }
+
+    return $null
+}
+
+function Assert-SmokeSourceScope {
+    param(
+        [string]$SourcePath,
+        [int]$TrimSeconds,
+        [int]$MaxSourceSeconds,
+        [bool]$AllowLong
+    )
+
+    if ($AllowLong -or $TrimSeconds -gt 0) {
+        return
+    }
+
+    Require-File "smoke source video" $SourcePath
+
+    $duration = Get-VideoDurationSeconds $SourcePath
+    if ($null -eq $duration) {
+        throw "RunSmoke source duration could not be measured. Use -TrimStart/-TrimSeconds for a focused clip, pass an existing -PredictionLog, or explicitly use -AllowLongSmokeSource."
+    }
+
+    if ($duration -gt $MaxSourceSeconds) {
+        throw ("RunSmoke source is too long ({0:0.0}s > {1}s). Use -TrimStart/-TrimSeconds for a focused clip, pass an existing -PredictionLog, or explicitly use -AllowLongSmokeSource." -f $duration, $MaxSourceSeconds)
+    }
+}
+
 function Invoke-PowerShellCapture {
     param(
         [string[]]$Arguments,
@@ -486,6 +579,13 @@ if ($shouldRunSmoke) {
     if (-not ($RunSmoke.IsPresent -or $ForceRunSmoke.IsPresent)) {
         throw "Prediction log is missing: $resolvedPredictionLog. Re-run with -RunSmoke to generate it."
     }
+
+    $resolvedSmokeSource = Resolve-RepoPath $Source
+    Assert-SmokeSourceScope `
+        -SourcePath $resolvedSmokeSource `
+        -TrimSeconds $TrimSeconds `
+        -MaxSourceSeconds $MaxSmokeSourceSeconds `
+        -AllowLong $AllowLongSmokeSource.IsPresent
 
     $smokeArgs = [System.Collections.Generic.List[string]]::new()
     $smokeArgs.Add("-NoProfile") | Out-Null
