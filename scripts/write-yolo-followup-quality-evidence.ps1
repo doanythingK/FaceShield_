@@ -33,6 +33,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$LowConfidenceReviewThreshold = 0.38
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
@@ -157,11 +158,33 @@ function Add-FrameRangeValues {
     }
 }
 
+function Add-LowConfidenceDetectionFrames {
+    param(
+        [System.Collections.Generic.SortedSet[int]]$Frames,
+        [object[]]$DetectionRows,
+        [double]$ConfidenceThreshold
+    )
+
+    foreach ($row in $DetectionRows) {
+        $line = $row.Line
+        $match = [regex]::Match($line, 'frame=(\d+),[\s\S]*?conf=([0-9.]+),')
+        if (-not $match.Success) {
+            continue
+        }
+
+        $confidence = [double]::Parse($match.Groups[2].Value, [System.Globalization.CultureInfo]::InvariantCulture)
+        if ($confidence -le $ConfidenceThreshold) {
+            [void]$Frames.Add([int]$match.Groups[1].Value)
+        }
+    }
+}
+
 function Get-ReviewFrameNumbers {
     param(
         [object[]]$TrackPostLines,
         [object[]]$SceneGuardLines,
-        [object[]]$FinalMaskSummaryLines
+        [object[]]$FinalMaskSummaryLines,
+        [object[]]$DetectionRows
     )
 
     $frames = New-Object System.Collections.Generic.SortedSet[int]
@@ -183,6 +206,8 @@ function Get-ReviewFrameNumbers {
         Add-FrameRangeValues $frames (Read-MatchValue $summaryLine 'largeJumpRanges=(.*?), isolated=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'isolatedFrames=(.*?), lowConf=')
     }
+
+    Add-LowConfidenceDetectionFrames $frames $DetectionRows $LowConfidenceReviewThreshold
 
     return @($frames | ForEach-Object { $_ })
 }
@@ -503,7 +528,7 @@ $trackPost = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFace
 $autoSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[AutoRunSummary\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
-$reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -FinalMaskSummaryLines $finalMaskSummary
+$reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
 
 if ($detectionRows.Count -eq 0) {
     if (-not $AllowNoDetections.IsPresent) {
