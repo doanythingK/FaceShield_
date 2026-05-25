@@ -55,7 +55,7 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
-        private const double YoloSceneCutDirectDifferenceThreshold = 0.15;
+        private const double YoloSceneCutDirectDifferenceThreshold = 0.36;
         private const int YoloSceneCutDirectDifferenceMaxCandidates = 24;
         private const int YoloSceneCutMatchingTailMaxFrames = 5;
         private const float YoloSceneCutMatchingTailMaxConfidence = 0.90f;
@@ -771,18 +771,16 @@ namespace FaceShield.ViewModels.Pages
             if (candidates.Length > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] stage={stage} start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length}");
+                    $"[FaceTrackSceneCutGuard] stage={stage} start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length} directBudget={YoloSceneCutDirectDifferenceMaxCandidates}");
             }
 
-            double directDifferenceThreshold = candidates.Length <= YoloSceneCutDirectDifferenceMaxCandidates
-                ? YoloSceneCutDirectDifferenceThreshold
-                : 0.0;
             var result = guard.Apply(
                 _maskProvider,
                 videoPath,
                 candidates,
                 differenceThreshold: YoloSceneCutDifferenceThreshold,
-                directDifferenceThreshold: directDifferenceThreshold,
+                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
+                directDifferenceMaxChecks: YoloSceneCutDirectDifferenceMaxCandidates,
                 removeMatchingTailFrames: YoloSceneCutMatchingTailMaxFrames,
                 removeMatchingTailMaxConfidence: YoloSceneCutMatchingTailMaxConfidence,
                 candidateMatchMinIou: YoloSceneCutCandidateMatchMinIou,
@@ -793,14 +791,14 @@ namespace FaceShield.ViewModels.Pages
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] stage={stage} skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
+                    $"[FaceTrackSceneCutGuard] stage={stage} skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
                 return result;
             }
 
             if (result.Checked > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] stage={stage} directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
+                    $"[FaceTrackSceneCutGuard] stage={stage} directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
             }
 
             return result;

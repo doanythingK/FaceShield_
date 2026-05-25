@@ -455,7 +455,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
-    const double yoloSceneCutDirectDifferenceThreshold = 0.15;
+    const double yoloSceneCutDirectDifferenceThreshold = 0.36;
     const int yoloSceneCutDirectDifferenceMaxCandidates = 24;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.90f;
@@ -609,21 +609,19 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             .Concat(directCandidates)
             .Concat(postCutCandidates)
             .ToArray();
-        double sceneCutDirectDifferenceThreshold = sceneCutCandidates.Length <= yoloSceneCutDirectDifferenceMaxCandidates
-            ? yoloSceneCutDirectDifferenceThreshold
-            : 0.0;
         var sceneCut = sceneCutGuard.Apply(
             maskProvider,
             input,
             sceneCutCandidates,
             differenceThreshold: yoloSceneCutDifferenceThreshold,
-            directDifferenceThreshold: sceneCutDirectDifferenceThreshold,
+            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
+            directDifferenceMaxChecks: yoloSceneCutDirectDifferenceMaxCandidates,
             removeMatchingTailFrames: yoloSceneCutMatchingTailMaxFrames,
             removeMatchingTailMaxConfidence: yoloSceneCutMatchingTailMaxConfidence,
             candidateMatchMinIou: yoloSceneCutCandidateMatchMinIou,
             candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
             candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
-        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
+        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, directChecked={sceneCut.DirectDifferenceChecks}, directSkipped={sceneCut.DirectDifferenceSkipped}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
             .Concat(postSceneCleanup.RemovedFrameIndices)

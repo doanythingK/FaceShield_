@@ -228,6 +228,7 @@ namespace FaceShield.Services.Analysis
             Func<int, int, double> frameDifferenceProvider,
             double differenceThreshold = DefaultDifferenceThreshold,
             double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
+            int directDifferenceMaxChecks = int.MaxValue,
             int removeMatchingTailFrames = 0,
             float removeMatchingTailMaxConfidence = 0.0f,
             double candidateMatchMinIou = 0.80,
@@ -253,6 +254,9 @@ namespace FaceShield.Services.Analysis
             var removedFrameIndices = new List<int>();
             var cutFramePairs = new List<string>();
             var differenceByPair = new Dictionary<(int Source, int Target), double>();
+            int directDifferenceChecks = 0;
+            int directDifferenceSkipped = 0;
+            int directDifferenceBudget = Math.Max(0, directDifferenceMaxChecks);
 
             foreach (var candidate in candidates)
             {
@@ -274,18 +278,26 @@ namespace FaceShield.Services.Analysis
                 if (targetFrame > sourceFrame + 1 &&
                     directDifferenceThreshold > 0)
                 {
-                    double directDifference = GetFrameDifference(
-                        sourceFrame,
-                        targetFrame,
-                        frameDifferenceProvider,
-                        differenceByPair);
-                    if (directDifference > difference)
+                    if (directDifferenceChecks < directDifferenceBudget)
                     {
-                        difference = directDifference;
-                        cutFramePair = FormatFramePair(sourceFrame, targetFrame);
-                    }
+                        directDifferenceChecks++;
+                        double directDifference = GetFrameDifference(
+                            sourceFrame,
+                            targetFrame,
+                            frameDifferenceProvider,
+                            differenceByPair);
+                        if (directDifference > difference)
+                        {
+                            difference = directDifference;
+                            cutFramePair = FormatFramePair(sourceFrame, targetFrame);
+                        }
 
-                    isCut |= directDifference >= directDifferenceThreshold;
+                        isCut |= directDifference >= directDifferenceThreshold;
+                    }
+                    else
+                    {
+                        directDifferenceSkipped++;
+                    }
                 }
 
                 maxDifference = Math.Max(maxDifference, difference);
@@ -324,6 +336,8 @@ namespace FaceShield.Services.Analysis
                 maxDifference,
                 cutFramePairs.ToArray(),
                 sw.ElapsedMilliseconds,
+                directDifferenceChecks,
+                directDifferenceSkipped,
                 null);
         }
 
@@ -333,6 +347,7 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<FaceTrackFilledFace> candidates,
             double differenceThreshold = DefaultDifferenceThreshold,
             double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
+            int directDifferenceMaxChecks = int.MaxValue,
             int removeMatchingTailFrames = 0,
             float removeMatchingTailMaxConfidence = 0.0f,
             double candidateMatchMinIou = 0.80,
@@ -357,6 +372,9 @@ namespace FaceShield.Services.Analysis
             var removedFrameIndices = new List<int>();
             var cutFramePairs = new List<string>();
             var differenceByPair = new Dictionary<(int Source, int Target), double>();
+            int directDifferenceChecks = 0;
+            int directDifferenceSkipped = 0;
+            int directDifferenceBudget = Math.Max(0, directDifferenceMaxChecks);
 
             try
             {
@@ -407,26 +425,36 @@ namespace FaceShield.Services.Analysis
 
                         bool isCut = difference >= differenceThreshold;
                         if (targetFrame > sourceFrame + 1 &&
-                            directDifferenceThreshold > 0 &&
-                            TryGetFramePairDifference(
-                                extractor,
-                                sourceFrame,
-                                targetFrame,
-                                sampleWidth,
-                                sampleHeight,
-                                sourceBuffer,
-                                targetBuffer,
-                                differenceByPair,
-                                cancellationToken,
-                                out double directDifference))
+                            directDifferenceThreshold > 0)
                         {
-                            if (directDifference > difference)
+                            if (directDifferenceChecks < directDifferenceBudget)
                             {
-                                difference = directDifference;
-                                cutFramePair = FormatFramePair(sourceFrame, targetFrame);
-                            }
+                                directDifferenceChecks++;
+                                if (TryGetFramePairDifference(
+                                        extractor,
+                                        sourceFrame,
+                                        targetFrame,
+                                        sampleWidth,
+                                        sampleHeight,
+                                        sourceBuffer,
+                                        targetBuffer,
+                                        differenceByPair,
+                                        cancellationToken,
+                                        out double directDifference))
+                                {
+                                    if (directDifference > difference)
+                                    {
+                                        difference = directDifference;
+                                        cutFramePair = FormatFramePair(sourceFrame, targetFrame);
+                                    }
 
-                            isCut |= directDifference >= directDifferenceThreshold;
+                                    isCut |= directDifference >= directDifferenceThreshold;
+                                }
+                            }
+                            else
+                            {
+                                directDifferenceSkipped++;
+                            }
                         }
 
                         maxDifference = Math.Max(maxDifference, difference);
@@ -477,6 +505,8 @@ namespace FaceShield.Services.Analysis
                     maxDifference,
                     cutFramePairs.ToArray(),
                     sw.ElapsedMilliseconds,
+                    directDifferenceChecks,
+                    directDifferenceSkipped,
                     ex.Message);
             }
 
@@ -490,6 +520,8 @@ namespace FaceShield.Services.Analysis
                 maxDifference,
                 cutFramePairs.ToArray(),
                 sw.ElapsedMilliseconds,
+                directDifferenceChecks,
+                directDifferenceSkipped,
                 null);
         }
 
@@ -1334,8 +1366,10 @@ namespace FaceShield.Services.Analysis
         double MaxDifference,
         IReadOnlyList<string> CutFramePairs,
         long ElapsedMs,
+        int DirectDifferenceChecks,
+        int DirectDifferenceSkipped,
         string? Error)
     {
-        public static FaceTrackSceneCutGuardResult Empty { get; } = new(0, 0, Array.Empty<int>(), Array.Empty<string>(), 0, 0, Array.Empty<string>(), 0, null);
+        public static FaceTrackSceneCutGuardResult Empty { get; } = new(0, 0, Array.Empty<int>(), Array.Empty<string>(), 0, 0, Array.Empty<string>(), 0, 0, 0, null);
     }
 }

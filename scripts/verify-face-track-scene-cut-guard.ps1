@@ -145,6 +145,45 @@ if (directProvider.TryGetFaceMaskData(12, out var directTailFrameA) && directTai
 if (directProvider.TryGetFaceMaskData(13, out var directTailFrameB) && directTailFrameB.Faces.Count != 0)
     throw new InvalidOperationException("Expected weak direct carry tail detection after a hard cut to be removed.");
 
+var directBudgetProvider = new FrameMaskProvider();
+var directBudgetSource = new Rect(380, 260, 84, 86);
+var directBudgetGhostA = new Rect(384, 264, 84, 86);
+var directBudgetGhostB = new Rect(388, 266, 84, 86);
+var directBudgetGhostC = new Rect(392, 268, 84, 86);
+directBudgetProvider.SetFaceRects(300, new[] { directBudgetSource }, size, 0.92f, new[] { 0.92f });
+directBudgetProvider.SetFaceRects(302, new[] { directBudgetGhostA }, size, 0.51f, new[] { 0.51f });
+directBudgetProvider.SetFaceRects(303, new[] { directBudgetGhostB }, size, 0.52f, new[] { 0.52f });
+directBudgetProvider.SetFaceRects(304, new[] { directBudgetGhostC }, size, 0.53f, new[] { 0.53f });
+var directBudgetCandidates = new[]
+{
+    new FaceTrackFilledFace(302, directBudgetGhostA, size, 0.51f, 300),
+    new FaceTrackFilledFace(303, directBudgetGhostB, size, 0.52f, 300),
+    new FaceTrackFilledFace(304, directBudgetGhostC, size, 0.53f, 300)
+};
+
+var directBudgetResult = guard.Apply(
+    directBudgetProvider,
+    directBudgetCandidates,
+    static (source, target) =>
+    {
+        if (source == 300 && target >= 302 && target <= 304)
+            return 0.50;
+        return 0.10;
+    },
+    directDifferenceThreshold: 0.36,
+    directDifferenceMaxChecks: 1);
+
+if (directBudgetResult.DirectDifferenceChecks != 1 || directBudgetResult.DirectDifferenceSkipped != 2)
+    throw new InvalidOperationException($"Expected direct budget checked=1 skipped=2, got checked={directBudgetResult.DirectDifferenceChecks}, skipped={directBudgetResult.DirectDifferenceSkipped}.");
+if (directBudgetResult.Removed != 1 || string.Join(",", directBudgetResult.RemovedFrameIndices) != "302")
+    throw new InvalidOperationException($"Expected direct budget to remove only first checked frame 302, got removed={directBudgetResult.Removed}, frames={string.Join(",", directBudgetResult.RemovedFrameIndices)}.");
+if (directBudgetProvider.TryGetFaceMaskData(302, out var directBudgetRemovedFrame) && directBudgetRemovedFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected direct budget checked frame 302 to be removed.");
+if (!directBudgetProvider.TryGetFaceMaskData(303, out var directBudgetSkippedFrameA) || directBudgetSkippedFrameA.Faces.Count != 1)
+    throw new InvalidOperationException("Expected direct budget skipped frame 303 to remain.");
+if (!directBudgetProvider.TryGetFaceMaskData(304, out var directBudgetSkippedFrameB) || directBudgetSkippedFrameB.Faces.Count != 1)
+    throw new InvalidOperationException("Expected direct budget skipped frame 304 to remain.");
+
 var weakSourceDirectProvider = new FrameMaskProvider();
 var weakSourcePrevious = new Rect(430, 180, 78, 80);
 var weakSourceCurrent = new Rect(436, 184, 78, 80);
@@ -530,7 +569,7 @@ var mildGradualResult = guard.Apply(
 if (mildGradualResult.Removed != 1 || string.Join(",", mildGradualResult.CutFramePairs) != "0->4")
     throw new InvalidOperationException($"Expected lower direct scene-change threshold to remove mild gradual carry at frame 4, got removed={mildGradualResult.Removed}, cutPairs={string.Join(",", mildGradualResult.CutFramePairs)}.");
 
-Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, weakSourceDirectCandidates={weakSourceDirectCandidates.Count}, mediumDirectCandidates={mediumDirectCandidates.Count}, mediumDirectRemoved={mediumDirectResult.Removed}, noDropDirectCandidates={noDropDirectCandidates.Count}, noDropDirectRemoved={noDropDirectResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, edgePostCutDefaultCandidates={edgePostCutDefaultCandidates.Count}, edgePostCutCandidates={edgePostCutCandidates.Count}, edgePostCutRemoved={edgePostCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, noSourcePostCutCandidates={noSourcePostCutCandidates.Count}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, directBudgetChecked={directBudgetResult.DirectDifferenceChecks}, directBudgetSkipped={directBudgetResult.DirectDifferenceSkipped}, weakSourceDirectCandidates={weakSourceDirectCandidates.Count}, mediumDirectCandidates={mediumDirectCandidates.Count}, mediumDirectRemoved={mediumDirectResult.Removed}, noDropDirectCandidates={noDropDirectCandidates.Count}, noDropDirectRemoved={noDropDirectResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, edgePostCutDefaultCandidates={edgePostCutDefaultCandidates.Count}, edgePostCutCandidates={edgePostCutCandidates.Count}, edgePostCutRemoved={edgePostCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, noSourcePostCutCandidates={noSourcePostCutCandidates.Count}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

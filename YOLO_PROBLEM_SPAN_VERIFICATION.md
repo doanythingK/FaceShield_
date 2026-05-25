@@ -65,6 +65,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 통과 근거:
 
 - `Scene-cut guard`에 `cutPairs=...`와 `removedFrames=...`가 남음
+- 후보가 많은 구간에서도 `directChecked=...`가 0으로 고정되지 않는다. `directSkipped=...`가 있으면 직접 source->target 비교가 예산 한도까지 수행되고 나머지만 생략된 것이다.
 - 컷 직후 같은 위치의 약한 tail이 함께 제거됨
 - 컷 또는 cleanup 이후 final gap fill이 `blockedByCut=...`/`cutBlockedFrames=...` 또는 `blockedByCleanup=...`/`cleanupBlockedFrames=...`를 남기고 `frames=none`이면, 후속 anti-flicker fill이 잔상을 다시 만들지 않았다는 근거로 본다.
 - review overlay에서 다음 장면에 이전 장면의 모자이크가 남지 않음
@@ -125,7 +126,7 @@ goal 완료로 볼 수 있는 최소 증거:
 
 - Output: `.tmp/yolo-problem-span-wrapper-smoke/yolo-followup-quality-evidence.md`
 - Detection rows: `96`
-- Scene-cut evidence on this no-hard-cut wrapper sample: `maxDiff=0.097`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`
+- Scene-cut evidence on this no-hard-cut wrapper sample after the direct-check budget update: `directChecked=24`, `directSkipped=56`, `maxDiff=0.206`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`. This confirms dense spans still get bounded direct source->target checks, while the higher direct threshold does not delete this no-hard-cut sample.
 - Final cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
 - Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`
