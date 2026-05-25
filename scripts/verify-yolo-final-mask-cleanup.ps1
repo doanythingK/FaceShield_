@@ -66,11 +66,16 @@ provider.SetFaceRects(97, new[] { new Rect(1350, 720, 34, 34) }, size, 0.59f, ne
 provider.SetFaceRects(98, new[] { new Rect(1353, 722, 34, 34) }, size, 0.60f, new[] { 0.60f });
 provider.SetFaceRects(99, new[] { new Rect(1250, 720, 34, 34) }, size, 0.48f, new[] { 0.48f });
 provider.SetFaceRects(100, new[] { new Rect(1253, 722, 34, 34) }, size, 0.49f, new[] { 0.49f });
+for (int frame = 120; frame <= 124; frame++)
+    provider.SetFaceRects(frame, new[] { new Rect(620 + frame - 120, 36, 50, 50) }, size, 0.46f, new[] { 0.46f });
+for (int frame = 130; frame <= 134; frame++)
+    provider.SetFaceRects(frame, new[] { new Rect(820 + frame - 130, 40, 50, 50) }, size, 0.46f, new[] { 0.46f });
+provider.SetFaceRects(135, new[] { new Rect(825, 40, 50, 50) }, size, 0.72f, new[] { 0.72f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 13)
-    throw new InvalidOperationException($"Expected 13 weak/tiny isolated/short/tiny-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 18)
+    throw new InvalidOperationException($"Expected 18 weak/tiny isolated/short/tiny/upper-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (result.RemovedWeakUnsupportedFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak unsupported faces to be removed, got {result.RemovedWeakUnsupportedFaces}.");
@@ -86,6 +91,9 @@ if (result.RemovedTinyShortClusterFaces != 4)
 
 if (result.RemovedTinyIsolatedFaces != 1)
     throw new InvalidOperationException($"Expected 1 medium-confidence tiny isolated face to be removed, got {result.RemovedTinyIsolatedFaces}.");
+
+if (result.RemovedUpperWeakClusterFaces != 5)
+    throw new InvalidOperationException($"Expected 5 upper weak non-edge cluster faces to be removed, got {result.RemovedUpperWeakClusterFaces}.");
 
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
@@ -152,6 +160,18 @@ if (provider.TryGetFaceMaskData(99, out var tinyWeakClusterA) && tinyWeakCluster
     provider.TryGetFaceMaskData(100, out var tinyWeakClusterB) && tinyWeakClusterB.Faces.Count > 0)
 {
     throw new InvalidOperationException("Expected a two-frame weak tiny non-edge cluster above the old weak-tiny cutoff to be removed.");
+}
+
+for (int frame = 120; frame <= 124; frame++)
+{
+    if (provider.TryGetFaceMaskData(frame, out var upperWeak) && upperWeak.Faces.Count > 0)
+        throw new InvalidOperationException($"Expected upper weak non-edge cluster frame {frame} to be removed.");
+}
+
+for (int frame = 130; frame <= 135; frame++)
+{
+    if (!provider.TryGetFaceMaskData(frame, out var upperWeakStrongContinuation) || upperWeakStrongContinuation.Faces.Count != 1)
+        throw new InvalidOperationException($"Expected upper weak cluster with strong continuation to remain at frame {frame}.");
 }
 
 var gapProvider = new FrameMaskProvider();
@@ -265,7 +285,7 @@ if (postSceneCleanup.RemovedWeakIsolatedFaces != 1 ||
 }
 
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}, postSceneCleanupRemoved={postSceneCleanup.RemovedWeakIsolatedFaces}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={result.RemovedUpperWeakClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}, postSceneCleanupRemoved={postSceneCleanup.RemovedWeakIsolatedFaces}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
