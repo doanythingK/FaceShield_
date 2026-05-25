@@ -106,6 +106,7 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider maskProvider,
             float maxTargetConfidence,
             int maxCarryFrames,
+            int sourceLookbackFrames = 1,
             double edgeMarginRatio = 0.02,
             double minIou = 0.15,
             double maxCenterShiftRatio = 0.65,
@@ -125,6 +126,7 @@ namespace FaceShield.Services.Analysis
 
             var candidates = new List<FaceTrackFilledFace>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
+            var seenTargets = new HashSet<string>(StringComparer.Ordinal);
             foreach (var entry in entries)
             {
                 int frameIndex = entry.Key;
@@ -170,19 +172,30 @@ namespace FaceShield.Services.Analysis
                         continue;
                     }
 
-                    int sourceFrame = frameIndex - 1;
+                    int lookbackFrames = Math.Max(1, sourceLookbackFrames);
                     foreach (var item in run)
                     {
-                        string key = $"{item.FrameIndex}:{Math.Round(item.Bounds.X, 2)}:{Math.Round(item.Bounds.Y, 2)}:{Math.Round(item.Bounds.Width, 2)}:{Math.Round(item.Bounds.Height, 2)}";
-                        if (!seen.Add(key))
+                        string targetKey = $"{item.FrameIndex}:{Math.Round(item.Bounds.X, 2)}:{Math.Round(item.Bounds.Y, 2)}:{Math.Round(item.Bounds.Width, 2)}:{Math.Round(item.Bounds.Height, 2)}";
+                        if (!seenTargets.Add(targetKey))
                             continue;
 
-                        candidates.Add(new FaceTrackFilledFace(
-                            item.FrameIndex,
-                            item.Bounds,
-                            item.Size,
-                            item.Confidence,
-                            sourceFrame));
+                        for (int offset = lookbackFrames; offset >= 1; offset--)
+                        {
+                            int sourceFrame = frameIndex - offset;
+                            if (sourceFrame < 0)
+                                continue;
+
+                            string key = $"{sourceFrame}:{targetKey}";
+                            if (!seen.Add(key))
+                                continue;
+
+                            candidates.Add(new FaceTrackFilledFace(
+                                item.FrameIndex,
+                                item.Bounds,
+                                item.Size,
+                                item.Confidence,
+                                sourceFrame));
+                        }
                     }
                 }
             }

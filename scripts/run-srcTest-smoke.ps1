@@ -457,6 +457,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const double yoloSceneCutDirectDifferenceThreshold = 0.15;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.78f;
+    const int yoloSceneCutPostCutLookbackFrames = 3;
     const int yoloFinalMaskStableGapMaxFrames = 5;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
@@ -587,7 +588,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
             maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
-            maxCarryFrames: 5);
+            maxCarryFrames: 5,
+            sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames);
         var sceneCutCandidates = trackPost.FilledGapFacesInfo
             .Concat(trackPost.FilledLostFacesInfo)
             .Concat(trackPost.FilledInitialFacesInfo)
