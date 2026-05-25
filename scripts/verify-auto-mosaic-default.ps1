@@ -253,7 +253,7 @@ Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directCandidates=3
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directRemoved=3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "mediumDirectCandidates=3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "mediumDirectRemoved=3"
-Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutCandidates=10"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutCandidates=4"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutRemoved=4"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "edgePostCutDefaultCandidates=0"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "edgePostCutCandidates=2"
@@ -261,6 +261,7 @@ Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "edgePostCutRemoved
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "longPostCutRemoved=7"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "delayedPostCutCandidates=2"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "delayedPostCutRemoved=2"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "noSourcePostCutCandidates=0"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "diffCacheCalls=1"
 
 $smoothingCutOutput = Invoke-ScriptStep "yolo-temporal-smoothing-cut-boundary" $yoloTemporalSmoothingCutBoundaryVerify @()

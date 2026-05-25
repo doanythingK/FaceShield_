@@ -268,7 +268,7 @@ postCutProvider.SetFaceRects(32, new[] { postCutGhostB }, size, 0.42f, new[] { 0
 postCutProvider.SetFaceRects(40, new[] { postCutPersistentA }, size, 0.43f, new[] { 0.43f });
 for (int frame = 41; frame <= 46; frame++)
     postCutProvider.SetFaceRects(frame, new[] { new Rect(postCutPersistentA.X + frame - 40, postCutPersistentA.Y, postCutPersistentA.Width, postCutPersistentA.Height) }, size, 0.43f, new[] { 0.43f });
-postCutProvider.SetFaceRects(50, new[] { postCutContinuousA }, size, 0.43f, new[] { 0.43f });
+postCutProvider.SetFaceRects(50, new[] { postCutContinuousA }, size, 0.88f, new[] { 0.88f });
 postCutProvider.SetFaceRects(51, new[] { postCutContinuousB }, size, 0.42f, new[] { 0.42f });
 postCutProvider.SetFaceRects(52, new[] { postCutContinuousC }, size, 0.41f, new[] { 0.41f });
 
@@ -281,8 +281,8 @@ var postCutResult = guard.Apply(
     postCutCandidates,
     static (source, target) => source == 30 && target >= 31 && target <= 32 || source == 50 && target >= 51 && target <= 52 ? 0.52 : 0.05);
 
-if (postCutCandidates.Count != 10)
-    throw new InvalidOperationException($"Expected ten weak post-cut carry candidates with matching source masks, got {postCutCandidates.Count}.");
+if (postCutCandidates.Count != 4)
+    throw new InvalidOperationException($"Expected four weak post-cut carry candidates with stronger matching source masks, got {postCutCandidates.Count}.");
 
 if (postCutResult.Removed != 4 || string.Join(",", postCutResult.RemovedFrameIndices) != "31,32,51,52")
     throw new InvalidOperationException($"Expected weak post-cut carry at frames 31,32,51,52 to be removed, got removed={postCutResult.Removed}, frames={string.Join(",", postCutResult.RemovedFrameIndices)}.");
@@ -298,7 +298,7 @@ if (postCutProvider.TryGetFaceMaskData(51, out var postCutContinuousFrameA) && p
 if (postCutProvider.TryGetFaceMaskData(52, out var postCutContinuousFrameB) && postCutContinuousFrameB.Faces.Count != 0)
     throw new InvalidOperationException("Expected continuous weak carry tail after a hard cut to be removed.");
 if (!postCutProvider.TryGetFaceMaskData(40, out var persistentFrame) || persistentFrame.Faces.Count != 1)
-    throw new InvalidOperationException("Expected persistent weak run beyond the carry cap to remain.");
+    throw new InvalidOperationException("Expected persistent weak run with no stronger source to remain.");
 
 var edgePostCutProvider = new FrameMaskProvider();
 var edgePostCutSource = new Rect(0, 22, 72, 76);
@@ -389,6 +389,25 @@ if (delayedPostCutProvider.TryGetFaceMaskData(103, out var delayedPostCutFrameA)
 if (delayedPostCutProvider.TryGetFaceMaskData(104, out var delayedPostCutFrameB) && delayedPostCutFrameB.Faces.Count != 0)
     throw new InvalidOperationException("Expected delayed weak post-cut frame 104 to be removed.");
 
+var noSourcePostCutProvider = new FrameMaskProvider();
+var noSourceFaceA = new Rect(710, 250, 82, 84);
+var noSourceFaceB = new Rect(714, 252, 82, 84);
+noSourcePostCutProvider.SetFaceRects(130, new[] { noSourceFaceA }, size, 0.44f, new[] { 0.44f });
+noSourcePostCutProvider.SetFaceRects(131, new[] { noSourceFaceB }, size, 0.45f, new[] { 0.45f });
+var noSourcePostCutCandidates = guard.BuildWeakPostCutCarryCandidates(
+    noSourcePostCutProvider,
+    maxTargetConfidence: 0.50f,
+    maxCarryFrames: 4,
+    sourceLookbackFrames: 3);
+
+if (noSourcePostCutCandidates.Count != 0)
+    throw new InvalidOperationException($"Expected weak post-cut run with no matching source mask to stay out of scene-cut candidates, got {noSourcePostCutCandidates.Count}.");
+if (!noSourcePostCutProvider.TryGetFaceMaskData(130, out var noSourcePostCutFrameA) || noSourcePostCutFrameA.Faces.Count != 1 ||
+    !noSourcePostCutProvider.TryGetFaceMaskData(131, out var noSourcePostCutFrameB) || noSourcePostCutFrameB.Faces.Count != 1)
+{
+    throw new InvalidOperationException("Expected no-source weak post-cut frames to remain for visual review instead of being removed as carry residue.");
+}
+
 var cacheProvider = new FrameMaskProvider();
 var cacheFaceA = new Rect(100, 100, 40, 42);
 var cacheFaceB = new Rect(300, 100, 44, 46);
@@ -445,7 +464,7 @@ var mildGradualResult = guard.Apply(
 if (mildGradualResult.Removed != 1 || string.Join(",", mildGradualResult.CutFramePairs) != "0->4")
     throw new InvalidOperationException($"Expected lower direct scene-change threshold to remove mild gradual carry at frame 4, got removed={mildGradualResult.Removed}, cutPairs={string.Join(",", mildGradualResult.CutFramePairs)}.");
 
-Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, mediumDirectCandidates={mediumDirectCandidates.Count}, mediumDirectRemoved={mediumDirectResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, edgePostCutDefaultCandidates={edgePostCutDefaultCandidates.Count}, edgePostCutCandidates={edgePostCutCandidates.Count}, edgePostCutRemoved={edgePostCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, mediumDirectCandidates={mediumDirectCandidates.Count}, mediumDirectRemoved={mediumDirectResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, edgePostCutDefaultCandidates={edgePostCutDefaultCandidates.Count}, edgePostCutCandidates={edgePostCutCandidates.Count}, edgePostCutRemoved={edgePostCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, noSourcePostCutCandidates={noSourcePostCutCandidates.Count}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

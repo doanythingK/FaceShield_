@@ -184,10 +184,11 @@ namespace FaceShield.Services.Analysis
                             int sourceFrame = frameIndex - offset;
                             if (sourceFrame < 0)
                                 continue;
-                            if (!HasMatchingFace(
+                            if (!HasMatchingSourceFace(
                                     entries,
                                     sourceFrame,
                                     item.Bounds,
+                                    maxTargetConfidence,
                                     minIou,
                                     maxCenterShiftRatio,
                                     maxAreaChangeRatio))
@@ -637,6 +638,29 @@ namespace FaceShield.Services.Analysis
 
             for (int i = 0; i < data.Faces.Count; i++)
             {
+                if (IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasMatchingSourceFace(
+            IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
+            int frameIndex,
+            Rect face,
+            float minConfidenceExclusive,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio)
+        {
+            if (!entries.TryGetValue(frameIndex, out var data))
+                return false;
+
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                if (GetConfidence(data, i) <= minConfidenceExclusive)
+                    continue;
                 if (IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
                     return true;
             }
