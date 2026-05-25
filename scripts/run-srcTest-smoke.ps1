@@ -708,7 +708,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
         .ToArray();
     if (entries.Length == 0)
     {
-        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, upperWeak=0, upperWeakFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
         return;
     }
 
@@ -753,11 +753,15 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
 
     int lowConfidenceRows = 0;
     int weakNonEdgeRows = 0;
+    int edgeWeakRows = 0;
+    int topEdgeWeakRows = 0;
     int upperWeakRows = 0;
     int tinyWeakRows = 0;
     int tinyShortRows = 0;
     var lowConfidenceFrames = new SortedSet<int>();
     var weakNonEdgeFrames = new SortedSet<int>();
+    var edgeWeakFrames = new SortedSet<int>();
+    var topEdgeWeakFrames = new SortedSet<int>();
     var upperWeakFrames = new SortedSet<int>();
     var tinyWeakFrames = new SortedSet<int>();
     var tinyShortFrames = new SortedSet<int>();
@@ -777,26 +781,39 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
                 lowConfidenceFrames.Add(frameIndex);
             }
 
-            if (confidence <= weakNonEdgeThreshold &&
-                !TouchesFinalMaskFrameEdge(face, data.Size, edgeMarginRatio))
+            bool touchesEdge = TouchesFinalMaskFrameEdge(face, data.Size, edgeMarginRatio);
+            if (confidence <= weakNonEdgeThreshold)
             {
-                weakNonEdgeRows++;
-                weakNonEdgeFrames.Add(frameIndex);
-                if (IsTinyFinalMaskFace(face, data.Size, tinyWeakAreaRatio))
+                if (touchesEdge)
                 {
-                    tinyWeakRows++;
-                    tinyWeakFrames.Add(frameIndex);
+                    edgeWeakRows++;
+                    edgeWeakFrames.Add(frameIndex);
+                    if (IsUpperWeakFinalMaskFace(face, data.Size, upperWeakCenterYRatio, upperWeakAreaRatio))
+                    {
+                        topEdgeWeakRows++;
+                        topEdgeWeakFrames.Add(frameIndex);
+                    }
+                }
+                else
+                {
+                    weakNonEdgeRows++;
+                    weakNonEdgeFrames.Add(frameIndex);
+                    if (IsTinyFinalMaskFace(face, data.Size, tinyWeakAreaRatio))
+                    {
+                        tinyWeakRows++;
+                        tinyWeakFrames.Add(frameIndex);
+                    }
                 }
             }
             if (confidence <= upperWeakThreshold &&
-                !TouchesFinalMaskFrameEdge(face, data.Size, edgeMarginRatio) &&
+                !touchesEdge &&
                 IsUpperWeakFinalMaskFace(face, data.Size, upperWeakCenterYRatio, upperWeakAreaRatio))
             {
                 upperWeakRows++;
                 upperWeakFrames.Add(frameIndex);
             }
             if (confidence <= tinyShortThreshold &&
-                !TouchesFinalMaskFrameEdge(face, data.Size, edgeMarginRatio) &&
+                !touchesEdge &&
                 IsTinyFinalMaskFace(face, data.Size, tinyShortAreaRatio))
             {
                 tinyShortRows++;
@@ -806,7 +823,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     }
 
     Console.WriteLine(
-        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
 }
 
 static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)

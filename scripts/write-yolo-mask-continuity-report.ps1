@@ -264,6 +264,18 @@ $weakNonEdgeRows = @($rows |
         -not (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
     } |
     Sort-Object Confidence, Frame, Index)
+$edgeWeakRows = @($rows |
+    Where-Object {
+        $_.Confidence -le $WeakNonEdgeThreshold -and
+        (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
+    } |
+    Sort-Object Confidence, Frame, Index)
+$topEdgeWeakRows = @($edgeWeakRows |
+    Where-Object {
+        $_.CenterY -le $UpperFrameCenterYThreshold -and
+        $_.AreaRatio -le $UpperWeakNonEdgeMaxAreaRatio
+    } |
+    Sort-Object Confidence, Frame, Index)
 $upperWeakNonEdgeRows = @($rows |
     Where-Object {
         $_.Confidence -le $UpperWeakNonEdgeThreshold -and
@@ -288,6 +300,8 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("- Isolated final mask frames: $($isolatedFrames.Count)")
 [void]$builder.AppendLine("- Low-confidence final masks: $($lowConfidenceRows.Count)")
 [void]$builder.AppendLine("- Weak non-edge final masks: $($weakNonEdgeRows.Count)")
+[void]$builder.AppendLine("- Weak edge final masks: $($edgeWeakRows.Count)")
+[void]$builder.AppendLine("- Top-edge weak final masks: $($topEdgeWeakRows.Count)")
 [void]$builder.AppendLine("- Upper-frame weak non-edge final masks: $($upperWeakNonEdgeRows.Count)")
 [void]$builder.AppendLine()
 [void]$builder.AppendLine("## Interpretation")
@@ -349,6 +363,23 @@ if ($weakNonEdgeRows.Count -eq 0) {
 }
 [void]$builder.AppendLine()
 
+[void]$builder.AppendLine("## Weak Edge Final Masks")
+[void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Review hint | Box |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- | --- |")
+foreach ($row in $edgeWeakRows | Select-Object -First 80) {
+    $hint = if ($row.CenterY -le $UpperFrameCenterYThreshold -and $row.AreaRatio -le $UpperWeakNonEdgeMaxAreaRatio) {
+        "top-edge weak candidate; review partial face vs edge false positive"
+    } else {
+        "edge weak candidate; review partial face before removal"
+    }
+    [void]$builder.AppendLine(("| {0} | {1} | {2:F3} | {3:F3},{4:F3} | {5:F6} | {6:F3} | {7} | x={8:F1}, y={9:F1}, w={10:F1}, h={11:F1} |" -f
+        $row.Frame, $row.Index, $row.Confidence, $row.CenterX, $row.CenterY, $row.AreaRatio, $row.AspectRatio, $hint, $row.X, $row.Y, $row.W, $row.H))
+}
+if ($edgeWeakRows.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
+}
+[void]$builder.AppendLine()
+
 [void]$builder.AppendLine("## Upper Weak-To-Medium Non-Edge Final Masks")
 [void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Box |")
 [void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- |")
@@ -361,4 +392,4 @@ if ($upperWeakNonEdgeRows.Count -eq 0) {
 }
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()
-Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count)"
+Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count)"
