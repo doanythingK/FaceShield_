@@ -455,6 +455,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.15;
+    const int yoloSceneCutDirectDifferenceMaxCandidates = 24;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.90f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
@@ -590,7 +591,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             trackOptions,
             maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
             maxTransitionGap: 8,
-            minConfidenceDrop: 0.06f,
+            minConfidenceDrop: 0.02f,
             maxPostCutCarryFrames: 5);
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
@@ -604,12 +605,15 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             .Concat(directCandidates)
             .Concat(postCutCandidates)
             .ToArray();
+        double sceneCutDirectDifferenceThreshold = sceneCutCandidates.Length <= yoloSceneCutDirectDifferenceMaxCandidates
+            ? yoloSceneCutDirectDifferenceThreshold
+            : 0.0;
         var sceneCut = sceneCutGuard.Apply(
             maskProvider,
             input,
             sceneCutCandidates,
             differenceThreshold: yoloSceneCutDifferenceThreshold,
-            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
+            directDifferenceThreshold: sceneCutDirectDifferenceThreshold,
             removeMatchingTailFrames: yoloSceneCutMatchingTailMaxFrames,
             removeMatchingTailMaxConfidence: yoloSceneCutMatchingTailMaxConfidence,
             candidateMatchMinIou: yoloSceneCutCandidateMatchMinIou,

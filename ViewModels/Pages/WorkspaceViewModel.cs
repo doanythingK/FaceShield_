@@ -55,6 +55,7 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.15;
+        private const int YoloSceneCutDirectDifferenceMaxCandidates = 24;
         private const int YoloSceneCutMatchingTailMaxFrames = 5;
         private const float YoloSceneCutMatchingTailMaxConfidence = 0.90f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
@@ -519,7 +520,7 @@ namespace FaceShield.ViewModels.Pages
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                     RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "post-smooth");
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token, fillStableGaps: false);
+                    RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
                 LogFinalMaskSummary();
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
@@ -741,7 +742,7 @@ namespace FaceShield.ViewModels.Pages
                 BuildTrackPostProcessOptions(FaceFilterProfile.Yolo),
                 maxTargetConfidence: YoloSceneCutDirectCarryMaxConfidence,
                 maxTransitionGap: SuspiciousNoFaceMaxGap,
-                minConfidenceDrop: 0.06f,
+                minConfidenceDrop: 0.02f,
                 maxPostCutCarryFrames: 5);
             var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
                 _maskProvider,
@@ -762,12 +763,15 @@ namespace FaceShield.ViewModels.Pages
                     $"[FaceTrackSceneCutGuard] stage={stage} start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length}");
             }
 
+            double directDifferenceThreshold = candidates.Length <= YoloSceneCutDirectDifferenceMaxCandidates
+                ? YoloSceneCutDirectDifferenceThreshold
+                : 0.0;
             var result = guard.Apply(
                 _maskProvider,
                 videoPath,
                 candidates,
                 differenceThreshold: YoloSceneCutDifferenceThreshold,
-                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
+                directDifferenceThreshold: directDifferenceThreshold,
                 removeMatchingTailFrames: YoloSceneCutMatchingTailMaxFrames,
                 removeMatchingTailMaxConfidence: YoloSceneCutMatchingTailMaxConfidence,
                 candidateMatchMinIou: YoloSceneCutCandidateMatchMinIou,
