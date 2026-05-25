@@ -12,7 +12,7 @@ namespace FaceShield.Services.Analysis
     public sealed class FaceTrackSceneCutGuard
     {
         public const double DefaultDifferenceThreshold = 0.32;
-        public const double DefaultDirectDifferenceThreshold = 0.42;
+        public const double DefaultDirectDifferenceThreshold = 0.36;
 
         public IReadOnlyList<FaceTrackFilledFace> BuildWeakTrackTransitionCandidates(
             FrameMaskProvider maskProvider,

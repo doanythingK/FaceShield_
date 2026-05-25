@@ -163,11 +163,13 @@ gapProvider.SetFaceRects(50, new[] { new Rect(980, 320, 88, 88) }, size, 0.46f, 
 gapProvider.SetFaceRects(52, new[] { new Rect(986, 324, 88, 88) }, size, 0.47f, new[] { 0.47f });
 gapProvider.SetFaceRects(70, new[] { new Rect(1120, 300, 80, 80) }, size, 0.82f, new[] { 0.82f });
 gapProvider.SetFaceRects(72, new[] { new Rect(1500, 640, 180, 180) }, size, 0.84f, new[] { 0.84f });
+gapProvider.SetFaceRects(110, new[] { new Rect(640, 280, 88, 88) }, size, 0.56f, new[] { 0.56f });
+gapProvider.SetFaceRects(112, new[] { new Rect(646, 284, 88, 88) }, size, 0.55f, new[] { 0.55f });
 
 var gapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(gapProvider);
 var filledFrames = string.Join(",", gapFill.FilledFrameIndices);
-if (gapFill.FilledFaces != 4 || filledFrames != "11,31,32,33")
-    throw new InvalidOperationException($"Expected stable strong final-mask gaps at frames 11,31,32,33 to be filled, got filled={gapFill.FilledFaces}, frames={filledFrames}.");
+if (gapFill.FilledFaces != 5 || filledFrames != "11,31,32,33,111")
+    throw new InvalidOperationException($"Expected stable final-mask gaps at frames 11,31,32,33,111 to be filled, got filled={gapFill.FilledFaces}, frames={filledFrames}.");
 
 if (!gapProvider.TryGetFaceMaskData(11, out var filledSingle) || filledSingle.Faces.Count != 1)
     throw new InvalidOperationException("Expected frame 11 to be filled between strong matching anchors.");
@@ -177,6 +179,8 @@ if (!gapProvider.TryGetFaceMaskData(31, out var filledRangeA) || filledRangeA.Fa
 {
     throw new InvalidOperationException("Expected frames 31-33 to be filled between strong matching anchors.");
 }
+if (!gapProvider.TryGetFaceMaskData(111, out var mediumFilled) || mediumFilled.Faces.Count != 1)
+    throw new InvalidOperationException("Expected frame 111 to be filled between stable medium-confidence matching anchors.");
 if (gapProvider.TryGetFaceMaskData(51, out var weakGap) && weakGap.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak-anchor gap at frame 51 to remain unfilled.");
 if (gapProvider.TryGetFaceMaskData(71, out var jumpGap) && jumpGap.Faces.Count > 0)

@@ -71,6 +71,8 @@ $planText = Get-Content -Raw -Path $plan
 $smokeText = Get-Content -Raw -Path $smokeResult
 
 Assert-Contains "script can run smoke" $scriptText "RunSmoke"
+Assert-Contains "script loads yolo model resolver" $scriptText "resolve-yolo-model-path\.ps1"
+Assert-Contains "script resolves default yolo model for smoke" $scriptText 'Resolve-YoloModelPath[\s\S]*-Require[\s\S]*Add-ValueArg\s+\$smokeArgs\s+"-YoloModelPath"\s+\$resolvedYoloModelPath'
 Assert-Contains "script passes skip trim" $scriptText 'Add-SwitchArg\s+\$smokeArgs\s+"-SkipTrim"'
 Assert-Contains "script avoids direct native stderr failure" $scriptText "Invoke-PowerShellCapture"
 Assert-Contains "script captures stderr through files" $scriptText "RedirectStandardError"

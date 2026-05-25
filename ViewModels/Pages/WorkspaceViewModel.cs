@@ -50,8 +50,8 @@ namespace FaceShield.ViewModels.Pages
         private const double FinalMaskLargeJumpAreaChangeRatio = 4.0;
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
-        private const float YoloSceneCutDirectCarryMaxConfidence = 0.72f;
-        private const float YoloSceneCutPostCutCarryMaxConfidence = 0.58f;
+        private const float YoloSceneCutDirectCarryMaxConfidence = 0.78f;
+        private const float YoloSceneCutPostCutCarryMaxConfidence = 0.66f;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
         private const float YoloFinalMaskTinyShortConfidenceMax = 0.62f;
@@ -709,11 +709,13 @@ namespace FaceShield.ViewModels.Pages
                 _maskProvider,
                 BuildTrackPostProcessOptions(FaceFilterProfile.Yolo),
                 maxTargetConfidence: YoloSceneCutDirectCarryMaxConfidence,
-                maxTransitionGap: SuspiciousNoFaceMaxGap);
+                maxTransitionGap: SuspiciousNoFaceMaxGap,
+                minConfidenceDrop: 0.0f,
+                maxPostCutCarryFrames: 5);
             var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
                 _maskProvider,
                 maxTargetConfidence: YoloSceneCutPostCutCarryMaxConfidence,
-                maxCarryFrames: 6);
+                maxCarryFrames: 5);
             var candidates = trackPost.FilledGapFacesInfo
                 .Concat(trackPost.FilledLostFacesInfo)
                 .Concat(trackPost.FilledInitialFacesInfo)

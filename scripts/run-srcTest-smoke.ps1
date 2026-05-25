@@ -448,8 +448,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
-    const float yoloSceneCutDirectCarryMaxConfidence = 0.72f;
-    const float yoloSceneCutPostCutCarryMaxConfidence = 0.58f;
+    const float yoloSceneCutDirectCarryMaxConfidence = 0.78f;
+    const float yoloSceneCutPostCutCarryMaxConfidence = 0.66f;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
             {
@@ -526,11 +526,13 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             maskProvider,
             trackOptions,
             maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
-            maxTransitionGap: 8);
+            maxTransitionGap: 8,
+            minConfidenceDrop: 0.0f,
+            maxPostCutCarryFrames: 5);
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
             maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
-            maxCarryFrames: 6);
+            maxCarryFrames: 5);
         var sceneCutCandidates = trackPost.FilledGapFacesInfo
             .Concat(trackPost.FilledLostFacesInfo)
             .Concat(trackPost.FilledInitialFacesInfo)

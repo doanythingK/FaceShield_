@@ -38,6 +38,7 @@ $ErrorActionPreference = "Stop"
 $LowConfidenceReviewThreshold = 0.38
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1")
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -602,7 +603,14 @@ if ($shouldRunSmoke) {
     Add-SwitchArg $smokeArgs "-SkipBaseline" $true
     Add-SwitchArg $smokeArgs "-SkipExport" $true
     Add-SwitchArg $smokeArgs "-DumpDetections" $true
+    $resolvedYoloModelPath = Resolve-YoloModelPath `
+        -Repo $repo `
+        -YoloModelPath $YoloModelPath `
+        -YoloModelType $YoloModelType `
+        -Require
+
     Add-ValueArg $smokeArgs "-YoloModelType" $YoloModelType
+    Add-ValueArg $smokeArgs "-YoloModelPath" $resolvedYoloModelPath
     Add-ValueArg $smokeArgs "-YoloInputSize" $YoloInputSize
     Add-ValueArg $smokeArgs "-YoloObjectnessThreshold" $YoloObjectnessThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     Add-ValueArg $smokeArgs "-YoloConfidenceThreshold" $YoloConfidenceThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -612,10 +620,6 @@ if ($shouldRunSmoke) {
     Add-SwitchArg $smokeArgs "-YoloUseLowConfidencePositionFilter" $true
     Add-SwitchArg $smokeArgs "-YoloUseSmallAreaFilter" $true
     Add-SwitchArg $smokeArgs "-YoloUseAspectRatioFilter" $true
-
-    if (-not [string]::IsNullOrWhiteSpace($YoloModelPath)) {
-        Add-ValueArg $smokeArgs "-YoloModelPath" $YoloModelPath
-    }
 
     $smokeResult = Invoke-PowerShellCapture -Arguments $smokeArgs.ToArray() -TimeoutSeconds $SmokeTimeoutSeconds
     $smokeResult.Output | Set-Content -Encoding UTF8 -Path $resolvedPredictionLog

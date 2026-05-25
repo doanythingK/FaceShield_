@@ -670,8 +670,8 @@ namespace FaceShield.Services.Analysis
     public sealed record YoloFinalMaskGapFillOptions
     {
         public int MaxGapFrames { get; init; } = 3;
-        public float MinAnchorConfidence { get; init; } = 0.58f;
-        public float FillConfidenceFloor { get; init; } = 0.50f;
+        public float MinAnchorConfidence { get; init; } = 0.55f;
+        public float FillConfidenceFloor { get; init; } = 0.48f;
         public double MinIou { get; init; } = 0.15;
         public double MaxCenterShiftRatio { get; init; } = 0.65;
         public double MaxAreaChangeRatio { get; init; } = 2.5;
