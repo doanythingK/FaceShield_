@@ -12,6 +12,7 @@ namespace FaceShield.Services.Analysis
     public sealed class FaceTrackSceneCutGuard
     {
         public const double DefaultDifferenceThreshold = 0.32;
+        public const double DefaultDirectDifferenceThreshold = 0.42;
 
         public IReadOnlyList<FaceTrackFilledFace> BuildWeakTrackTransitionCandidates(
             FrameMaskProvider maskProvider,
@@ -188,7 +189,8 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider maskProvider,
             IReadOnlyList<FaceTrackFilledFace> candidates,
             Func<int, int, double> frameDifferenceProvider,
-            double differenceThreshold = DefaultDifferenceThreshold)
+            double differenceThreshold = DefaultDifferenceThreshold,
+            double directDifferenceThreshold = DefaultDirectDifferenceThreshold)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -221,9 +223,28 @@ namespace FaceShield.Services.Analysis
                     frameDifferenceProvider,
                     differenceByPair,
                     out string cutFramePair);
+
+                bool isCut = difference >= differenceThreshold;
+                if (targetFrame > sourceFrame + 1 &&
+                    directDifferenceThreshold > 0)
+                {
+                    double directDifference = GetFrameDifference(
+                        sourceFrame,
+                        targetFrame,
+                        frameDifferenceProvider,
+                        differenceByPair);
+                    if (directDifference > difference)
+                    {
+                        difference = directDifference;
+                        cutFramePair = FormatFramePair(sourceFrame, targetFrame);
+                    }
+
+                    isCut |= directDifference >= directDifferenceThreshold;
+                }
+
                 maxDifference = Math.Max(maxDifference, difference);
 
-                if (difference < differenceThreshold)
+                if (!isCut)
                     continue;
 
                 cutFramePairs.Add(cutFramePair);
@@ -252,6 +273,7 @@ namespace FaceShield.Services.Analysis
             string videoPath,
             IReadOnlyList<FaceTrackFilledFace> candidates,
             double differenceThreshold = DefaultDifferenceThreshold,
+            double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
             CancellationToken cancellationToken = default)
         {
             if (maskProvider == null)
@@ -314,9 +336,34 @@ namespace FaceShield.Services.Analysis
                         {
                             continue;
                         }
+
+                        bool isCut = difference >= differenceThreshold;
+                        if (targetFrame > sourceFrame + 1 &&
+                            directDifferenceThreshold > 0 &&
+                            TryGetFramePairDifference(
+                                extractor,
+                                sourceFrame,
+                                targetFrame,
+                                sampleWidth,
+                                sampleHeight,
+                                sourceBuffer,
+                                targetBuffer,
+                                differenceByPair,
+                                cancellationToken,
+                                out double directDifference))
+                        {
+                            if (directDifference > difference)
+                            {
+                                difference = directDifference;
+                                cutFramePair = FormatFramePair(sourceFrame, targetFrame);
+                            }
+
+                            isCut |= directDifference >= directDifferenceThreshold;
+                        }
+
                         maxDifference = Math.Max(maxDifference, difference);
 
-                        if (difference < differenceThreshold)
+                        if (!isCut)
                             continue;
 
                         cutFramePairs.Add(cutFramePair);
@@ -726,11 +773,11 @@ namespace FaceShield.Services.Analysis
             for (int frame = sourceFrame; frame < targetFrame; frame++)
             {
                 var pair = (frame, frame + 1);
-                if (!differenceByPair.TryGetValue(pair, out double difference))
-                {
-                    difference = frameDifferenceProvider(pair.Item1, pair.Item2);
-                    differenceByPair[pair] = difference;
-                }
+                double difference = GetFrameDifference(
+                    pair.Item1,
+                    pair.Item2,
+                    frameDifferenceProvider,
+                    differenceByPair);
 
                 if (difference > maxDifference)
                 {
@@ -742,6 +789,98 @@ namespace FaceShield.Services.Analysis
 
             cutFramePair = FormatFramePair(maxSource, maxTarget);
             return maxDifference;
+        }
+
+        private static double GetFrameDifference(
+            int sourceFrame,
+            int targetFrame,
+            Func<int, int, double> frameDifferenceProvider,
+            IDictionary<(int Source, int Target), double> differenceByPair)
+        {
+            var pair = (Source: sourceFrame, Target: targetFrame);
+            if (!differenceByPair.TryGetValue(pair, out double difference))
+            {
+                difference = frameDifferenceProvider(pair.Source, pair.Target);
+                differenceByPair[pair] = difference;
+            }
+
+            return difference;
+        }
+
+        private static bool TryGetFramePairDifference(
+            FfFrameExtractor extractor,
+            int sourceFrame,
+            int targetFrame,
+            int width,
+            int height,
+            byte[] sourceBuffer,
+            byte[] targetBuffer,
+            IDictionary<(int Source, int Target), double> differenceByPair,
+            CancellationToken cancellationToken,
+            out double difference)
+        {
+            difference = 0.0;
+            if (targetFrame <= sourceFrame)
+                return false;
+
+            var pair = (sourceFrame, targetFrame);
+            if (differenceByPair.TryGetValue(pair, out difference))
+                return true;
+
+            extractor.StartSequentialRead(sourceFrame);
+            bool sourceRead = false;
+            int decodedFrame = sourceFrame - 1;
+            int stride = 0;
+            while (decodedFrame <= targetFrame)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] buffer = sourceRead ? targetBuffer : sourceBuffer;
+                if (!extractor.TryGetNextFrameRawToBuffer(
+                        cancellationToken,
+                        width,
+                        height,
+                        useBilinear: true,
+                        buffer,
+                        out decodedFrame,
+                        out stride))
+                {
+                    return false;
+                }
+
+                if (decodedFrame < sourceFrame)
+                    continue;
+
+                if (!sourceRead)
+                {
+                    if (decodedFrame != sourceFrame)
+                        return false;
+
+                    sourceRead = true;
+                    if (decodedFrame == targetFrame)
+                    {
+                        difference = 0.0;
+                        differenceByPair[pair] = difference;
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (decodedFrame != targetFrame)
+                    continue;
+
+                difference = ComputeFrameDifference(
+                    sourceBuffer,
+                    targetBuffer,
+                    width,
+                    height,
+                    stride);
+                differenceByPair[pair] = difference;
+                return true;
+            }
+
+            return false;
         }
 
         private static bool TryComputeMaxSequentialDifference(

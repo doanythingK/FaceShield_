@@ -216,7 +216,26 @@ if (cacheResult.Checked != 2 || cacheResult.Removed != 2)
 if (diffCalls != 1)
     throw new InvalidOperationException($"Expected duplicate pair difference to be computed once, got {diffCalls}.");
 
-Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, diffCacheCalls={diffCalls}");
+var gradualProvider = new FrameMaskProvider();
+var gradualGhost = new Rect(180, 160, 74, 76);
+gradualProvider.SetFaceRects(3, new[] { gradualGhost }, size, 0.58f, new[] { 0.58f });
+var gradualCandidates = new[]
+{
+    new FaceTrackFilledFace(3, gradualGhost, size, 0.58f, 0)
+};
+
+var gradualResult = guard.Apply(
+    gradualProvider,
+    gradualCandidates,
+    static (source, target) => source == 0 && target == 3 ? 0.46 : 0.18);
+
+if (gradualResult.Removed != 1 || string.Join(",", gradualResult.CutFramePairs) != "0->3")
+    throw new InvalidOperationException($"Expected cumulative scene change to remove gradual carry at frame 3, got removed={gradualResult.Removed}, cutPairs={string.Join(",", gradualResult.CutFramePairs)}.");
+
+if (gradualProvider.TryGetFaceMaskData(3, out var gradualFrame) && gradualFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected gradual-transition track-fill candidate to be removed.");
+
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, diffCacheCalls={diffCalls}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
