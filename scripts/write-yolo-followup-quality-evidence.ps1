@@ -213,7 +213,8 @@ function Get-ReviewFrameNumbers {
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'weakNonEdgeFrames=(.*?), edgeWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'edgeWeakFrames=(.*?), topEdgeWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'topEdgeWeakFrames=(.*?), upperWeak=')
-        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'upperWeakFrames=(.*?), tinyWeak=')
+        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'upperWeakFrames=(.*?), lowerWeak=')
+        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'lowerWeakFrames=(.*?), tinyWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'tinyWeakFrames=(.*?), tinyShort=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'tinyShortFrames=(.*)$')
     }
