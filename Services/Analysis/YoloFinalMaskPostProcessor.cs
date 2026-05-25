@@ -171,9 +171,6 @@ namespace FaceShield.Services.Analysis
                 for (int faceIndex = 0; faceIndex < previous.Faces.Count; faceIndex++)
                 {
                     float previousConfidence = GetConfidence(previous, faceIndex);
-                    if (previousConfidence < options.MinAnchorConfidence)
-                        continue;
-
                     var previousFace = previous.Faces[faceIndex];
                     for (int nextEntryIndex = entryIndex + 1; nextEntryIndex < entries.Length; nextEntryIndex++)
                     {
@@ -185,8 +182,23 @@ namespace FaceShield.Services.Analysis
                         if (gap <= 0)
                             continue;
 
+                        if (!IsGapAnchorEligible(
+                                entries,
+                                entryIndex,
+                                faceIndex,
+                                previousFace,
+                                previousConfidence,
+                                options,
+                                excludedEntryIndex: nextEntryIndex))
+                        {
+                            continue;
+                        }
+
                         var next = entries[nextEntryIndex].Value;
                         if (!TryFindStableGapMatch(
+                                entries,
+                                nextEntryIndex,
+                                entryIndex,
                                 next,
                                 previousFace,
                                 options,
@@ -451,6 +463,9 @@ namespace FaceShield.Services.Analysis
         }
 
         private static bool TryFindStableGapMatch(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int excludedEntryIndex,
             FrameMaskProvider.FaceMaskData data,
             Rect reference,
             YoloFinalMaskGapFillOptions options,
@@ -463,10 +478,19 @@ namespace FaceShield.Services.Analysis
             for (int i = 0; i < data.Faces.Count; i++)
             {
                 float candidateConfidence = GetConfidence(data, i);
-                if (candidateConfidence < options.MinAnchorConfidence)
-                    continue;
-
                 var candidate = data.Faces[i];
+                if (!IsGapAnchorEligible(
+                        entries,
+                        entryIndex,
+                        i,
+                        candidate,
+                        candidateConfidence,
+                        options,
+                        excludedEntryIndex))
+                {
+                    continue;
+                }
+
                 if (!IsStableGapMatch(reference, candidate, options))
                     continue;
 
@@ -480,6 +504,75 @@ namespace FaceShield.Services.Analysis
             }
 
             return bestScore > double.NegativeInfinity;
+        }
+
+        private static bool IsGapAnchorEligible(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int faceIndex,
+            Rect face,
+            float confidence,
+            YoloFinalMaskGapFillOptions options,
+            int excludedEntryIndex)
+        {
+            if (confidence >= options.MinAnchorConfidence)
+                return true;
+            if (options.SupportedAnchorMinConfidence <= 0 ||
+                options.SupportedAnchorNeighborWindowFrames <= 0 ||
+                confidence < options.SupportedAnchorMinConfidence)
+            {
+                return false;
+            }
+
+            return HasSupportedGapAnchorNeighbor(entries, entryIndex, faceIndex, face, options, excludedEntryIndex);
+        }
+
+        private static bool HasSupportedGapAnchorNeighbor(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int faceIndex,
+            Rect face,
+            YoloFinalMaskGapFillOptions options,
+            int excludedEntryIndex)
+        {
+            int frameIndex = entries[entryIndex].Key;
+            for (int i = entryIndex - 1; i >= 0; i--)
+            {
+                if (frameIndex - entries[i].Key > options.SupportedAnchorNeighborWindowFrames)
+                    break;
+                if (i == excludedEntryIndex)
+                    continue;
+                if (HasSupportedGapAnchorFace(entries[i].Value, face, options))
+                    return true;
+            }
+
+            for (int i = entryIndex + 1; i < entries.Count; i++)
+            {
+                if (entries[i].Key - frameIndex > options.SupportedAnchorNeighborWindowFrames)
+                    break;
+                if (i == excludedEntryIndex)
+                    continue;
+                if (HasSupportedGapAnchorFace(entries[i].Value, face, options))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasSupportedGapAnchorFace(
+            FrameMaskProvider.FaceMaskData data,
+            Rect face,
+            YoloFinalMaskGapFillOptions options)
+        {
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                if (GetConfidence(data, i) < options.SupportedAnchorMinConfidence)
+                    continue;
+                if (IsStableGapMatch(face, data.Faces[i], options))
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool IsStableGapMatch(
@@ -775,6 +868,8 @@ namespace FaceShield.Services.Analysis
     {
         public int MaxGapFrames { get; init; } = 3;
         public float MinAnchorConfidence { get; init; } = 0.55f;
+        public float SupportedAnchorMinConfidence { get; init; } = 0.50f;
+        public int SupportedAnchorNeighborWindowFrames { get; init; } = 6;
         public float FillConfidenceFloor { get; init; } = 0.48f;
         public double MinIou { get; init; } = 0.15;
         public double MaxCenterShiftRatio { get; init; } = 0.65;

@@ -304,6 +304,8 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTinyIs
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedUpperWeakClusters=5"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFilled=5"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFrames=11,31,32,33,111"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "supportedWeakGapFilled=2"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "unsupportedWeakGapFilled=0"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "extendedGapFilled=5"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "extendedGapFrames=301,302,303,304,305"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "mixedFrameGapFilled=1"

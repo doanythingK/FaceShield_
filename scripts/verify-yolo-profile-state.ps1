@@ -226,6 +226,8 @@ Assert-Match "final mask cleanup removes medium-confidence tiny isolated non-edg
 Assert-Match "final mask cleanup removes medium-confidence tiny short clusters" $finalMaskPostProcessorText "IsTinyShortTemporalCluster[\s\S]*TinyShortClusterMaxFrames[\s\S]*TinyShortClusterMaxConfidence[\s\S]*TinyShortClusterMaxAreaRatio"
 Assert-Match "final mask cleanup removes upper weak non-edge clusters" $finalMaskPostProcessorText "IsUpperWeakTemporalCluster[\s\S]*UpperWeakClusterMaxFrames[\s\S]*UpperWeakClusterMaxConfidence[\s\S]*UpperWeakClusterMaxCenterYRatio[\s\S]*UpperWeakClusterMaxAreaRatio"
 Assert-Match "final mask cleanup fills stable strong gaps" $finalMaskPostProcessorText "FillShortStableGaps[\s\S]*MaxGapFrames[\s\S]*MinAnchorConfidence[\s\S]*TryFindStableGapMatch[\s\S]*SetFaceRects[\s\S]*FilledFacesInfo[\s\S]*CutGuardFacesInfo"
+Assert-Match "final mask cleanup exposes supported weak gap options" $finalMaskPostProcessorText "SupportedAnchorMinConfidence[\s\S]*SupportedAnchorNeighborWindowFrames"
+Assert-Match "final mask cleanup checks supported weak gap anchors" $finalMaskPostProcessorText "IsGapAnchorEligible[\s\S]*HasSupportedGapAnchorNeighbor[\s\S]*HasSupportedGapAnchorFace"
 Assert-Match "final mask gap fill seeds mixed frames" $finalMaskPostProcessorText "CreateFillEntry[\s\S]*TryGetFaceMaskData\(frameIndex[\s\S]*new\s+List<Rect>\(existing\.Faces\)"
 Assert-Match "final mask gap fill dedupes against existing frame faces" $finalMaskPostProcessorText "HasMatchingFace\(fill\.Faces,\s*interpolated"
 Assert-Match "workspace yolo scene cut guard is gated to yolo" $workspaceText "FaceFilterProfile\.Yolo[\s\S]*RemoveYoloTrackFillAcrossSceneCuts"
