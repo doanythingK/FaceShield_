@@ -36,7 +36,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=2, removedWeakUnsupported=1, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyIsolated=1, removedFrames=8,10
 [SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5
-[SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=1, checked=1, checkedPairs=4->5, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
+[SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
 [SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, weakNonEdge=1, tinyWeak=1
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=10.0, y=20.0, w=50.0, h=60.0, area=3000.0, conf=0.410, cx=0.055, cy=0.120, areaRatio=0.002000, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=6, index=0, x=500.0, y=400.0, w=20.0, h=22.0, area=440.0, conf=0.220, cx=0.398, cy=0.571, areaRatio=0.000210, aspectRatio=0.909

@@ -780,26 +780,26 @@ namespace FaceShield.ViewModels.Pages
             System.Diagnostics.Debug.WriteLine(
                 $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)}");
 
-            if (gapFill.FilledFacesInfo.Count == 0)
+            if (gapFill.CutGuardFacesInfo.Count == 0)
                 return;
 
             var guard = new FaceTrackSceneCutGuard().Apply(
                 _maskProvider,
                 videoPath,
-                gapFill.FilledFacesInfo,
+                gapFill.CutGuardFacesInfo,
                 cancellationToken: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(guard.Error))
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[YoloFinalMaskGapFillSceneCutGuard] skipped candidates={gapFill.FilledFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} error={guard.Error}");
+                    $"[YoloFinalMaskGapFillSceneCutGuard] skipped candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} error={guard.Error}");
                 return;
             }
 
             if (guard.Checked > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[YoloFinalMaskGapFillSceneCutGuard] candidates={gapFill.FilledFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} threshold={guard.Threshold:0.###} elapsedMs={guard.ElapsedMs}");
+                    $"[YoloFinalMaskGapFillSceneCutGuard] candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} threshold={guard.Threshold:0.###} elapsedMs={guard.ElapsedMs}");
             }
         }
 

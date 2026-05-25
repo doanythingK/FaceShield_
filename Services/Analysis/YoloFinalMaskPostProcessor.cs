@@ -121,6 +121,7 @@ namespace FaceShield.Services.Analysis
             var storedFrames = new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
             var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
             var filledFaceInfo = new List<FaceTrackFilledFace>();
+            var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
             int filledFaces = 0;
 
             for (int entryIndex = 1; entryIndex < entries.Length; entryIndex++)
@@ -188,6 +189,18 @@ namespace FaceShield.Services.Analysis
                             previous.Size,
                             fillConfidence,
                             previousFrame));
+                        cutGuardFaceInfo.Add(new FaceTrackFilledFace(
+                            frameIndex,
+                            interpolated,
+                            previous.Size,
+                            fillConfidence,
+                            previousFrame));
+                        cutGuardFaceInfo.Add(new FaceTrackFilledFace(
+                            frameIndex,
+                            interpolated,
+                            previous.Size,
+                            fillConfidence,
+                            nextFrame));
                         filledFaces++;
                     }
                 }
@@ -212,7 +225,8 @@ namespace FaceShield.Services.Analysis
             return new YoloFinalMaskGapFillResult(
                 filledFaces,
                 fills.Keys.OrderBy(static x => x).ToArray(),
-                filledFaceInfo.ToArray());
+                filledFaceInfo.ToArray(),
+                cutGuardFaceInfo.ToArray());
         }
 
         private static bool IsWeakTinyTemporalCluster(
@@ -585,8 +599,9 @@ namespace FaceShield.Services.Analysis
     public readonly record struct YoloFinalMaskGapFillResult(
         int FilledFaces,
         IReadOnlyList<int> FilledFrameIndices,
-        IReadOnlyList<FaceTrackFilledFace> FilledFacesInfo)
+        IReadOnlyList<FaceTrackFilledFace> FilledFacesInfo,
+        IReadOnlyList<FaceTrackFilledFace> CutGuardFacesInfo)
     {
-        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>());
     }
 }

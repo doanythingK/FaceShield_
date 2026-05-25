@@ -167,20 +167,36 @@ var cutGapProvider = new FrameMaskProvider();
 cutGapProvider.SetFaceRects(100, new[] { new Rect(400, 220, 90, 90) }, size, 0.82f, new[] { 0.82f });
 cutGapProvider.SetFaceRects(102, new[] { new Rect(406, 224, 90, 90) }, size, 0.80f, new[] { 0.80f });
 var cutGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(cutGapProvider);
-if (cutGapFill.FilledFaces != 1 || cutGapFill.FilledFacesInfo.Count != 1)
-    throw new InvalidOperationException($"Expected one scene-cut-checkable gap fill candidate, got filled={cutGapFill.FilledFaces}, candidates={cutGapFill.FilledFacesInfo.Count}.");
+if (cutGapFill.FilledFaces != 1 || cutGapFill.FilledFacesInfo.Count != 1 || cutGapFill.CutGuardFacesInfo.Count != 2)
+    throw new InvalidOperationException($"Expected one filled gap and two scene-cut-checkable anchor candidates, got filled={cutGapFill.FilledFaces}, filledCandidates={cutGapFill.FilledFacesInfo.Count}, cutCandidates={cutGapFill.CutGuardFacesInfo.Count}.");
 
 var cutGuard = new FaceTrackSceneCutGuard().Apply(
     cutGapProvider,
-    cutGapFill.FilledFacesInfo,
+    cutGapFill.CutGuardFacesInfo,
     static (source, target) => source == 100 && target == 101 ? 0.50 : 0.0);
 if (cutGuard.Removed != 1 || string.Join(",", cutGuard.RemovedFrameIndices) != "101")
     throw new InvalidOperationException($"Expected final gap fill across a hard cut to be removed, got removed={cutGuard.Removed}, frames={string.Join(",", cutGuard.RemovedFrameIndices)}.");
 if (cutGapProvider.TryGetFaceMaskData(101, out var cutFilled) && cutFilled.Faces.Count > 0)
     throw new InvalidOperationException("Expected scene-cut guard to remove the filled gap frame.");
 
+var afterCutGapProvider = new FrameMaskProvider();
+afterCutGapProvider.SetFaceRects(200, new[] { new Rect(500, 260, 90, 90) }, size, 0.82f, new[] { 0.82f });
+afterCutGapProvider.SetFaceRects(202, new[] { new Rect(506, 264, 90, 90) }, size, 0.80f, new[] { 0.80f });
+var afterCutGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(afterCutGapProvider);
+if (afterCutGapFill.FilledFaces != 1 || afterCutGapFill.CutGuardFacesInfo.Count != 2)
+    throw new InvalidOperationException($"Expected one after-cut gap fill and two anchor candidates, got filled={afterCutGapFill.FilledFaces}, cutCandidates={afterCutGapFill.CutGuardFacesInfo.Count}.");
+
+var afterCutGuard = new FaceTrackSceneCutGuard().Apply(
+    afterCutGapProvider,
+    afterCutGapFill.CutGuardFacesInfo,
+    static (source, target) => source == 201 && target == 202 ? 0.50 : 0.0);
+if (afterCutGuard.Removed != 1 || string.Join(",", afterCutGuard.RemovedFrameIndices) != "201")
+    throw new InvalidOperationException($"Expected final gap fill before a hard cut to be removed by next-anchor evidence, got removed={afterCutGuard.Removed}, frames={string.Join(",", afterCutGuard.RemovedFrameIndices)}.");
+if (afterCutGapProvider.TryGetFaceMaskData(201, out var afterCutFilled) && afterCutFilled.Faces.Count > 0)
+    throw new InvalidOperationException("Expected next-anchor scene-cut guard to remove the filled gap frame.");
+
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, gapCutRemoved={cutGuard.Removed}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
