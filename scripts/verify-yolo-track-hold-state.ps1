@@ -124,8 +124,31 @@ foreach (int frame in expectedHoldFrames)
         throw new InvalidOperationException($"Expected scene-cut guard to clear synthetic lost-fill tail frame {frame}.");
 }
 
+var appProvider = new FrameMaskProvider();
+appProvider.SetFaceRects(10, new[] { new Rect(420, 240, 90, 96) }, size, 0.88f, new[] { 0.88f });
+appProvider.SetFaceRects(11, new[] { new Rect(426, 244, 90, 96) }, size, 0.87f, new[] { 0.87f });
+appProvider.SetFaceRects(12, new[] { new Rect(432, 248, 90, 96) }, size, 0.86f, new[] { 0.86f });
+appProvider.SetFaceRects(20, new[] { new Rect(480, 280, 90, 96) }, size, 0.96f, new[] { 0.96f });
+
+var appOptions = options with
+{
+    MaxLostFillFrames = 0,
+    MaxConfirmedTrackHoldFrames = 8
+};
+
+var appResult = new FaceTrackInterpolator().Apply(appProvider, totalFrames: 28, appOptions);
+var appGapFrames = appResult.FilledGapFacesInfo.Select(x => x.FrameIndex).ToArray();
+if (!appGapFrames.SequenceEqual(expectedInternalHoldFrames))
+    throw new InvalidOperationException($"Expected app YOLO profile to keep internal gap hold frames {string.Join(",", expectedInternalHoldFrames)}, got {string.Join(",", appGapFrames)}.");
+
+if (appResult.FilledLostFaces != 0 || appResult.FilledLostFrameIndices.Count != 0)
+    throw new InvalidOperationException($"Expected app YOLO profile to disable post-track lost-fill, got lostFilled={appResult.FilledLostFaces}, lostFrames={string.Join(",", appResult.FilledLostFrameIndices)}.");
+
+if (appProvider.TryGetFaceMaskData(21, out var appTail) && appTail.Faces.Count > 0)
+    throw new InvalidOperationException("Expected app YOLO profile not to carry the track into frame 21 after the final detection.");
+
 Console.WriteLine(
-    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, syntheticConfidenceMax=0.78, sceneCutLostRemoved={cutGuard.Removed}, sceneCutLostFrames={string.Join(",", cutGuard.RemovedFrameIndices)}, heldFrames={string.Join(",", expectedHoldFrames)}");
+    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, syntheticConfidenceMax=0.78, sceneCutLostRemoved={cutGuard.Removed}, sceneCutLostFrames={string.Join(",", cutGuard.RemovedFrameIndices)}, heldFrames={string.Join(",", expectedHoldFrames)}, appGapHeld={appResult.FilledGapFaces}, appLostFilled={appResult.FilledLostFaces}, appLostFillDisabled=True");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

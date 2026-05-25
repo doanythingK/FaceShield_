@@ -63,7 +63,7 @@ param(
     [int]$YoloTileColumns = 2,
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
-    [int]$YoloMaxLostFillFrames = 3,
+    [int]$YoloMaxLostFillFrames = 0,
     [int]$YoloMaxInitialFillFrames = 3,
     [int]$YoloDropShortTrackMaxDetections = 1,
     [double]$YoloShortTrackMaxConfidence = 0.18,
@@ -227,7 +227,7 @@ double yoloLowConfidencePositionMinCenterYRatio = args.Length > 74 ? double.Pars
 bool yoloUseSmallAreaFilter = args.Length > 75 && bool.Parse(args[75]);
 double yoloSmallAreaMaxAreaRatio = args.Length > 76 ? double.Parse(args[76], System.Globalization.CultureInfo.InvariantCulture) : 0.0035;
 bool skipOptimized = args.Length > 77 && bool.Parse(args[77]);
-int yoloMaxLostFillFrames = args.Length > 78 ? int.Parse(args[78], System.Globalization.CultureInfo.InvariantCulture) : 2;
+int yoloMaxLostFillFrames = args.Length > 78 ? int.Parse(args[78], System.Globalization.CultureInfo.InvariantCulture) : 0;
 bool yoloUseAspectRatioFilter = args.Length > 79 && bool.Parse(args[79]);
 double yoloMinAspectRatio = args.Length > 80 ? double.Parse(args[80], System.Globalization.CultureInfo.InvariantCulture) : 0.35;
 double yoloMaxAspectRatio = args.Length > 81 ? double.Parse(args[81], System.Globalization.CultureInfo.InvariantCulture) : 1.65;
