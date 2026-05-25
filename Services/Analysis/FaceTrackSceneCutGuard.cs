@@ -178,16 +178,26 @@ namespace FaceShield.Services.Analysis
                     foreach (var item in run)
                     {
                         string targetKey = $"{item.FrameIndex}:{Math.Round(item.Bounds.X, 2)}:{Math.Round(item.Bounds.Y, 2)}:{Math.Round(item.Bounds.Width, 2)}:{Math.Round(item.Bounds.Height, 2)}";
-                        if (!seenTargets.Add(targetKey))
-                            continue;
 
                         for (int offset = lookbackFrames; offset >= 1; offset--)
                         {
                             int sourceFrame = frameIndex - offset;
                             if (sourceFrame < 0)
                                 continue;
+                            if (!HasMatchingFace(
+                                    entries,
+                                    sourceFrame,
+                                    item.Bounds,
+                                    minIou,
+                                    maxCenterShiftRatio,
+                                    maxAreaChangeRatio))
+                            {
+                                continue;
+                            }
 
                             string key = $"{sourceFrame}:{targetKey}";
+                            if (!seenTargets.Add(targetKey))
+                                continue;
                             if (!seen.Add(key))
                                 continue;
 

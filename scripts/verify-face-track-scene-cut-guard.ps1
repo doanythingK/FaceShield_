@@ -255,7 +255,7 @@ if (smoothedProvider.TryGetFaceMaskData(181, out var smoothedFrame) && smoothedF
     throw new InvalidOperationException("Expected shifted smoothed post-cut candidate to be removed.");
 
 var postCutProvider = new FrameMaskProvider();
-var postCutPrevious = new Rect(100, 100, 90, 92);
+var postCutPrevious = new Rect(718, 258, 84, 86);
 var postCutGhostA = new Rect(720, 260, 84, 86);
 var postCutGhostB = new Rect(724, 262, 84, 86);
 var postCutPersistentA = new Rect(420, 300, 70, 72);
@@ -281,8 +281,8 @@ var postCutResult = guard.Apply(
     postCutCandidates,
     static (source, target) => source == 30 && target >= 31 && target <= 32 || source == 50 && target >= 51 && target <= 52 ? 0.52 : 0.05);
 
-if (postCutCandidates.Count != 12)
-    throw new InvalidOperationException($"Expected twelve weak post-cut carry candidates, got {postCutCandidates.Count}.");
+if (postCutCandidates.Count != 10)
+    throw new InvalidOperationException($"Expected ten weak post-cut carry candidates with matching source masks, got {postCutCandidates.Count}.");
 
 if (postCutResult.Removed != 4 || string.Join(",", postCutResult.RemovedFrameIndices) != "31,32,51,52")
     throw new InvalidOperationException($"Expected weak post-cut carry at frames 31,32,51,52 to be removed, got removed={postCutResult.Removed}, frames={string.Join(",", postCutResult.RemovedFrameIndices)}.");
@@ -301,8 +301,10 @@ if (!postCutProvider.TryGetFaceMaskData(40, out var persistentFrame) || persiste
     throw new InvalidOperationException("Expected persistent weak run beyond the carry cap to remain.");
 
 var edgePostCutProvider = new FrameMaskProvider();
+var edgePostCutSource = new Rect(0, 22, 72, 76);
 var edgePostCutA = new Rect(0, 24, 72, 76);
 var edgePostCutB = new Rect(2, 26, 72, 76);
+edgePostCutProvider.SetFaceRects(59, new[] { edgePostCutSource }, size, 0.88f, new[] { 0.88f });
 edgePostCutProvider.SetFaceRects(60, new[] { edgePostCutA }, size, 0.47f, new[] { 0.47f });
 edgePostCutProvider.SetFaceRects(61, new[] { edgePostCutB }, size, 0.48f, new[] { 0.48f });
 var edgePostCutDefaultCandidates = guard.BuildWeakPostCutCarryCandidates(
@@ -334,6 +336,7 @@ if (edgePostCutProvider.TryGetFaceMaskData(61, out var edgePostCutFrameB) && edg
     throw new InvalidOperationException("Expected edge weak carry frame 61 after a hard cut to be removed.");
 
 var longPostCutProvider = new FrameMaskProvider();
+longPostCutProvider.SetFaceRects(79, new[] { new Rect(358, 238, 82, 84) }, size, 0.86f, new[] { 0.86f });
 for (int frame = 80; frame <= 86; frame++)
 {
     var face = new Rect(360 + frame - 80, 240, 82, 84);
@@ -359,8 +362,12 @@ if (longPostCutProvider.TryGetFaceMaskData(86, out var longPostCutTail) && longP
     throw new InvalidOperationException("Expected long weak post-cut tail to be removed.");
 
 var delayedPostCutProvider = new FrameMaskProvider();
+var delayedSource = new Rect(606, 206, 76, 78);
 var delayedGhostA = new Rect(610, 210, 76, 78);
 var delayedGhostB = new Rect(614, 212, 76, 78);
+delayedPostCutProvider.SetFaceRects(100, new[] { delayedSource }, size, 0.86f, new[] { 0.86f });
+delayedPostCutProvider.SetFaceRects(101, new[] { new Rect(608, 208, 76, 78) }, size, 0.84f, new[] { 0.84f });
+delayedPostCutProvider.SetFaceRects(102, new[] { new Rect(609, 209, 76, 78) }, size, 0.82f, new[] { 0.82f });
 delayedPostCutProvider.SetFaceRects(103, new[] { delayedGhostA }, size, 0.47f, new[] { 0.47f });
 delayedPostCutProvider.SetFaceRects(104, new[] { delayedGhostB }, size, 0.48f, new[] { 0.48f });
 var delayedPostCutCandidates = guard.BuildWeakPostCutCarryCandidates(
@@ -373,8 +380,8 @@ var delayedPostCutResult = guard.Apply(
     delayedPostCutCandidates,
     static (source, target) => source == 100 && target >= 103 && target <= 104 ? 0.54 : 0.04);
 
-if (delayedPostCutCandidates.Count != 6)
-    throw new InvalidOperationException($"Expected delayed weak post-cut run to be checked against three source frames per target, got {delayedPostCutCandidates.Count} candidates.");
+if (delayedPostCutCandidates.Count != 2)
+    throw new InvalidOperationException($"Expected delayed weak post-cut run to keep one matching source candidate per target, got {delayedPostCutCandidates.Count} candidates.");
 if (delayedPostCutResult.Removed != 2 || string.Join(",", delayedPostCutResult.RemovedFrameIndices) != "103,104")
     throw new InvalidOperationException($"Expected delayed weak post-cut run to be removed from frames 103-104, got removed={delayedPostCutResult.Removed}, frames={string.Join(",", delayedPostCutResult.RemovedFrameIndices)}.");
 if (delayedPostCutProvider.TryGetFaceMaskData(103, out var delayedPostCutFrameA) && delayedPostCutFrameA.Faces.Count != 0)
