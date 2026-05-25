@@ -35,9 +35,9 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeFaceTrackPost] label=synthetic-yolo, tracks=1, filled=1, lostFilled=2, lostFrames=4,5, removedShort=1, removedSparse=1, removedEdgeTail=1, removedLower=0, rewritten=6
 [SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, postCutCandidates=2, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=8,10,11,12
-[SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5, blockedByCut=1, blockedFrames=7
+[SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8
 [SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
-[SmokeYoloFinalMaskPostSceneGapFill] label=synthetic-yolo, filled=0, frames=none, blockedByCut=1, blockedFrames=7
+[SmokeYoloFinalMaskPostSceneGapFill] label=synthetic-yolo, filled=0, frames=none, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8
 [SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard] label=synthetic-yolo, candidates=0, checked=0, checkedPairs=none, maxDiff=0.000, cutPairs=none, removed=0, removedFrames=none, threshold=0.000, elapsedMs=0, error=none
 [SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, lowConfFrames=2, weakNonEdge=1, weakNonEdgeFrames=2, edgeWeak=1, edgeWeakFrames=10, topEdgeWeak=1, topEdgeWeakFrames=10, upperWeak=1, upperWeakFrames=2, lowerWeak=1, lowerWeakFrames=6, aspectBad=1, aspectBadFrames=9, tinyWeak=1, tinyWeakFrames=2, tinyShort=1, tinyShortFrames=2
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=10.0, y=20.0, w=50.0, h=60.0, area=3000.0, conf=0.410, cx=0.055, cy=0.120, areaRatio=0.002000, aspectRatio=0.833
@@ -135,6 +135,7 @@ Assert-Contains "summary records tiny short cluster cleanup" $summaryText "remov
 Assert-Contains "summary records tiny isolated cleanup" $summaryText "removedTinyIsolated=1"
 Assert-Contains "summary records final mask gap fill" $summaryText "Final mask gap fill"
 Assert-Contains "summary records blocked final mask gap fill" $summaryText "blockedByCut=1"
+Assert-Contains "summary records cleanup-blocked final mask gap fill" $summaryText "blockedByCleanup=1"
 Assert-Contains "summary records final mask gap-fill scene guard" $summaryText "Final mask gap-fill scene-cut guard"
 Assert-Contains "summary records large jump summary" $summaryText "largeJumpGaps=1"
 Assert-Contains "summary records weak final mask evidence" $summaryText "weakNonEdge=1"

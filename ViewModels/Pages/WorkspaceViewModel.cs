@@ -858,11 +858,15 @@ namespace FaceShield.ViewModels.Pages
                     BlockedCutFramePairs = blockedCutFramePairs ?? Array.Empty<string>(),
                     BlockedFrameIndices = blockedFrameIndices ?? Array.Empty<int>()
                 });
-            if (gapFill.FilledFaces <= 0 && gapFill.BlockedCutGapFaces <= 0)
+            if (gapFill.FilledFaces <= 0 &&
+                gapFill.BlockedCutGapFaces <= 0 &&
+                gapFill.BlockedCleanupGapFrames <= 0)
+            {
                 return;
+            }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} blockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)}");
+                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} cutBlockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)} blockedByCleanup={gapFill.BlockedCleanupGapFrames} cleanupBlockedFrames={FormatFrameList(gapFill.BlockedCleanupFrameIndices)}");
 
             if (gapFill.CutGuardFacesInfo.Count == 0)
                 return;

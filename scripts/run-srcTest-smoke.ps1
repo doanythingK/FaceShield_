@@ -575,7 +575,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
                 BlockedFrameIndices = cleanup.RemovedFrameIndices
             });
-        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}, blockedByCut={gapFill.BlockedCutGapFaces}, blockedFrames={FormatFrames(gapFill.BlockedCutFrameIndices)}");
+        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}, blockedByCut={gapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(gapFill.BlockedCutFrameIndices)}, blockedByCleanup={gapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(gapFill.BlockedCleanupFrameIndices)}");
         var gapFillGuard = gapFill.CutGuardFacesInfo.Count == 0
             ? FaceTrackSceneCutGuardResult.Empty
             : new FaceTrackSceneCutGuard().Apply(
@@ -639,7 +639,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 BlockedCutFramePairs = sceneCut.CutFramePairs,
                 BlockedFrameIndices = postSceneBlockedFrameIndices
             });
-        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneGapFill] label={label}, filled={postSceneGapFill.FilledFaces}, frames={FormatFrames(postSceneGapFill.FilledFrameIndices)}, blockedByCut={postSceneGapFill.BlockedCutGapFaces}, blockedFrames={FormatFrames(postSceneGapFill.BlockedCutFrameIndices)}");
+        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneGapFill] label={label}, filled={postSceneGapFill.FilledFaces}, frames={FormatFrames(postSceneGapFill.FilledFrameIndices)}, blockedByCut={postSceneGapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(postSceneGapFill.BlockedCutFrameIndices)}, blockedByCleanup={postSceneGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(postSceneGapFill.BlockedCleanupFrameIndices)}");
         var postSceneGapFillGuard = postSceneGapFill.CutGuardFacesInfo.Count == 0
             ? FaceTrackSceneCutGuardResult.Empty
             : new FaceTrackSceneCutGuard().Apply(
