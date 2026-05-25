@@ -14,14 +14,11 @@
 긴 원본 영상을 그대로 smoke로 돌리지 않는다. 문제 구간 시작 시각과 길이를 정해서 30초 이하로 자른다.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/write-yolo-followup-quality-evidence.ps1 `
-  -RunSmoke `
-  -ForceRunSmoke `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-problem-span-verification.ps1 `
   -Source "srcTest/260102_jp_10.mp4" `
   -TrimStart "00:09:00" `
   -TrimSeconds 2 `
   -OutputDir ".tmp/yolo-problem-span-0900" `
-  -SkipReviewPackage `
   -YoloModelType Yolo5Face `
   -YoloInputSize 640 `
   -YoloObjectnessThreshold 0.12 `
@@ -32,6 +29,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/write-yolo-fol
 ```
 
 `-TrimStart`와 `-TrimSeconds`는 실제 문제 구간에 맞게 바꾼다. `-AllowLongSmokeSource`는 사용하지 않는다.
+기본 실행은 review package 생성을 생략한다. crop/full-frame HTML 검토가 필요하면 `-WithReviewPackage`를 추가한다.
 
 ## 산출물
 
@@ -42,7 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/write-yolo-fol
 - `yolo-quality-review-checklist.md`: 깜박임/잔상/오탐 review frame 목록
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
 
-review package가 필요하면 `-SkipReviewPackage`를 빼고 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
+review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 
 ## 판정 기준
 
@@ -117,3 +115,12 @@ goal 완료로 볼 수 있는 최소 증거:
 - 문서에 최종 evidence path와 남은 risk가 기록됨
 
 현재 상태에서는 기존 짧은 샘플 evidence와 verifier는 통과했지만, 사용자가 실제로 본 문제 구간의 visual confirmation은 아직 별도 증거가 필요하다.
+
+## Wrapper Smoke
+
+`scripts/run-yolo-problem-span-verification.ps1` 자체는 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`의 2초 구간으로 확인했다.
+
+- Output: `.tmp/yolo-problem-span-wrapper-smoke/yolo-followup-quality-evidence.md`
+- Detection rows: `97`
+- Scene-cut evidence: `maxDiff=0.158`, `cutPairs=19->24,19->25`, `removedFrames=24,25,26,27,28,29`, `threshold=0.150`
+- Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=6`, `weakNonEdgeFrames=33`
