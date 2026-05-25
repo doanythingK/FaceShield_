@@ -279,14 +279,20 @@ namespace FaceShield.Services.Analysis
                     targetFrame > sourceFrame + 1 &&
                     directDifferenceThreshold > 0)
                 {
-                    if (directDifferenceChecks < directDifferenceBudget)
+                    var directPair = (Source: sourceFrame, Target: targetFrame);
+                    if (differenceByPair.TryGetValue(directPair, out double directDifference) ||
+                        directDifferenceChecks < directDifferenceBudget)
                     {
-                        directDifferenceChecks++;
-                        double directDifference = GetFrameDifference(
-                            sourceFrame,
-                            targetFrame,
-                            frameDifferenceProvider,
-                            differenceByPair);
+                        if (!differenceByPair.ContainsKey(directPair))
+                        {
+                            directDifferenceChecks++;
+                            directDifference = GetFrameDifference(
+                                sourceFrame,
+                                targetFrame,
+                                frameDifferenceProvider,
+                                differenceByPair);
+                        }
+
                         if (directDifference > difference)
                         {
                             difference = directDifference;
@@ -429,20 +435,28 @@ namespace FaceShield.Services.Analysis
                             targetFrame > sourceFrame + 1 &&
                             directDifferenceThreshold > 0)
                         {
-                            if (directDifferenceChecks < directDifferenceBudget)
+                            var directPair = (Source: sourceFrame, Target: targetFrame);
+                            if (differenceByPair.TryGetValue(directPair, out double directDifference) ||
+                                directDifferenceChecks < directDifferenceBudget)
                             {
-                                directDifferenceChecks++;
-                                if (TryGetFramePairDifference(
-                                        extractor,
-                                        sourceFrame,
-                                        targetFrame,
-                                        sampleWidth,
-                                        sampleHeight,
-                                        sourceBuffer,
-                                        targetBuffer,
-                                        differenceByPair,
-                                        cancellationToken,
-                                        out double directDifference))
+                                bool hasDirectDifference = true;
+                                if (!differenceByPair.ContainsKey(directPair))
+                                {
+                                    directDifferenceChecks++;
+                                    hasDirectDifference = TryGetFramePairDifference(
+                                            extractor,
+                                            sourceFrame,
+                                            targetFrame,
+                                            sampleWidth,
+                                            sampleHeight,
+                                            sourceBuffer,
+                                            targetBuffer,
+                                            differenceByPair,
+                                            cancellationToken,
+                                            out directDifference);
+                                }
+
+                                if (hasDirectDifference)
                                 {
                                     if (directDifference > difference)
                                     {
