@@ -50,6 +50,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 
 - `Final mask summary` 또는 `SmokeFinalMaskSummary`에서 `shortGaps=0`
 - `isolated=0`
+- cleanup이 제거한 프레임이 다시 채워지지 않았다는 근거가 필요하면 `Final mask gap fill`에서 `filled=0`, `frames=none`, `blockedByCleanup=...`, `cleanupBlockedFrames=...`를 확인한다.
 - `lostFrames`가 있더라도 해당 full-frame overlay에서 대상 얼굴이 계속 덮여 있음
 
 실패 근거:
@@ -57,6 +58,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - 실제 얼굴이 있는 구간에서 `shortGaps`가 남음
 - review overlay에서 얼굴이 1-2프레임 빠짐
 - gap fill 이후 scene-cut guard가 정상 얼굴 구간을 잘못 지움
+- cleanup으로 지운 프레임이 후속 gap fill에서 같은 프레임에 다시 생성됨
 
 ### 화면전환 잔상
 
@@ -64,6 +66,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 
 - `Scene-cut guard`에 `cutPairs=...`와 `removedFrames=...`가 남음
 - 컷 직후 같은 위치의 약한 tail이 함께 제거됨
+- 컷 또는 cleanup 이후 final gap fill이 `blockedByCut=...`/`cutBlockedFrames=...` 또는 `blockedByCleanup=...`/`cleanupBlockedFrames=...`를 남기고 `frames=none`이면, 후속 anti-flicker fill이 잔상을 다시 만들지 않았다는 근거로 본다.
 - review overlay에서 다음 장면에 이전 장면의 모자이크가 남지 않음
 
 실패 근거:
@@ -121,6 +124,8 @@ goal 완료로 볼 수 있는 최소 증거:
 `scripts/run-yolo-problem-span-verification.ps1` 자체는 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`의 2초 구간으로 확인했다.
 
 - Output: `.tmp/yolo-problem-span-wrapper-smoke/yolo-followup-quality-evidence.md`
-- Detection rows: `97`
-- Scene-cut evidence: `maxDiff=0.158`, `cutPairs=19->24,19->25`, `removedFrames=24,25,26,27,28,29`, `threshold=0.150`
-- Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=6`, `weakNonEdgeFrames=33`
+- Detection rows: `96`
+- Scene-cut evidence on this no-hard-cut wrapper sample: `maxDiff=0.097`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`
+- Final cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
+- Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
+- Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`
