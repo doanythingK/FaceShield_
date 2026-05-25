@@ -491,11 +491,17 @@ namespace FaceShield.ViewModels.Pages
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                     RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
+                IReadOnlyList<string> yoloPreSmoothCutPairs = Array.Empty<string>();
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "pre-smooth");
+                {
+                    var preSmoothGuard = RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "pre-smooth");
+                    yoloPreSmoothCutPairs = preSmoothGuard.CutFramePairs;
+                }
                 if (_autoOptions.UseTracking)
                 {
-                    ApplyAutoTemporalSmoothing();
+                    ApplyAutoTemporalSmoothing(_autoOptions.FilterProfile == FaceFilterProfile.Yolo
+                        ? yoloPreSmoothCutPairs
+                        : Array.Empty<string>());
                 }
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                     RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "post-smooth");
@@ -550,12 +556,13 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private void ApplyAutoTemporalSmoothing()
+        private void ApplyAutoTemporalSmoothing(IReadOnlyList<string>? blockedCutPairs = null)
         {
             int total = FrameList.TotalFrames;
             if (total < 3)
                 return;
 
+            var blockedCutStarts = BuildTemporalSmoothingCutStarts(blockedCutPairs);
             var facesByFrame = new List<Rect>?[total];
             var confByFrame = new List<float>?[total];
             var sizeByFrame = new PixelSize[total];
@@ -591,8 +598,8 @@ namespace FaceShield.ViewModels.Pages
 
                     var currentFaces = facesByFrame[i]!;
                     var smoothed = new List<Rect>(currentFaces.Count);
-                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1, TemporalSmoothSearchWindowFrames);
-                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1, TemporalSmoothSearchWindowFrames);
+                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1, TemporalSmoothSearchWindowFrames, blockedCutStarts);
+                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1, TemporalSmoothSearchWindowFrames, blockedCutStarts);
 
                     for (int j = 0; j < currentFaces.Count; j++)
                     {
@@ -709,7 +716,7 @@ namespace FaceShield.ViewModels.Pages
             return result;
         }
 
-        private void RemoveYoloTrackFillAcrossSceneCuts(
+        private FaceTrackSceneCutGuardResult RemoveYoloTrackFillAcrossSceneCuts(
             string videoPath,
             FaceTrackPostProcessResult trackPost,
             CancellationToken cancellationToken,
@@ -754,7 +761,7 @@ namespace FaceShield.ViewModels.Pages
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[FaceTrackSceneCutGuard] stage={stage} skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
-                return;
+                return result;
             }
 
             if (result.Checked > 0)
@@ -762,6 +769,8 @@ namespace FaceShield.ViewModels.Pages
                 System.Diagnostics.Debug.WriteLine(
                     $"[FaceTrackSceneCutGuard] stage={stage} directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
             }
+
+            return result;
         }
 
         private void RemoveYoloWeakIsolatedFinalMasks(
@@ -1183,15 +1192,20 @@ namespace FaceShield.ViewModels.Pages
             IReadOnlyList<Rect>?[] facesByFrame,
             int frameIndex,
             int direction,
-            int maxDistanceFrames)
+            int maxDistanceFrames,
+            IReadOnlySet<int>? blockedCutStarts)
         {
             if (maxDistanceFrames <= 0)
                 return null;
 
             int index = frameIndex + direction;
             int searched = 0;
+            int previousIndex = frameIndex;
             while (index >= 0 && index < facesByFrame.Length)
             {
+                if (IsBlockedTemporalSmoothingStep(previousIndex, index, blockedCutStarts))
+                    break;
+
                 searched++;
                 if (searched > maxDistanceFrames)
                     break;
@@ -1200,10 +1214,50 @@ namespace FaceShield.ViewModels.Pages
                 if (faces != null && faces.Count > 0)
                     return faces;
 
+                previousIndex = index;
                 index += direction;
             }
 
             return null;
+        }
+
+        private static IReadOnlySet<int> BuildTemporalSmoothingCutStarts(IReadOnlyList<string>? cutPairs)
+        {
+            if (cutPairs == null || cutPairs.Count == 0)
+                return new HashSet<int>();
+
+            var blocked = new HashSet<int>();
+            foreach (string pair in cutPairs)
+            {
+                if (string.IsNullOrWhiteSpace(pair))
+                    continue;
+
+                var parts = pair.Split("->", StringSplitOptions.TrimEntries);
+                if (parts.Length != 2)
+                    continue;
+
+                if (!int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int a) ||
+                    !int.TryParse(parts[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int b))
+                {
+                    continue;
+                }
+
+                int start = Math.Min(a, b);
+                int end = Math.Max(a, b);
+                for (int frame = start; frame < end; frame++)
+                    blocked.Add(frame);
+            }
+
+            return blocked;
+        }
+
+        private static bool IsBlockedTemporalSmoothingStep(int fromFrame, int toFrame, IReadOnlySet<int>? blockedCutStarts)
+        {
+            if (blockedCutStarts == null || blockedCutStarts.Count == 0)
+                return false;
+
+            int cutStart = Math.Min(fromFrame, toFrame);
+            return blockedCutStarts.Contains(cutStart);
         }
 
         private static bool IsReasonableTemporalMatch(Rect current, Rect match)
