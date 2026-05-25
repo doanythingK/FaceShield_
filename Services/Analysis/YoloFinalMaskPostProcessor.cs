@@ -65,7 +65,7 @@ namespace FaceShield.Services.Analysis
                             continue;
                         }
                     }
-                    else if (confidence <= options.TinyShortClusterMaxConfidence &&
+                    if (confidence <= options.TinyShortClusterMaxConfidence &&
                         !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio))
                     {
                         bool isTinyShortClusterCandidate = IsTinyFace(

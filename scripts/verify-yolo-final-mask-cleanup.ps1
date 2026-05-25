@@ -64,11 +64,13 @@ provider.SetFaceRects(95, new[] { new Rect(1500, 700, 34, 34) }, size, 0.58f, ne
 provider.SetFaceRects(96, new[] { new Rect(1600, 720, 34, 34) }, size, 0.74f, new[] { 0.74f });
 provider.SetFaceRects(97, new[] { new Rect(1350, 720, 34, 34) }, size, 0.59f, new[] { 0.59f });
 provider.SetFaceRects(98, new[] { new Rect(1353, 722, 34, 34) }, size, 0.60f, new[] { 0.60f });
+provider.SetFaceRects(99, new[] { new Rect(1250, 720, 34, 34) }, size, 0.48f, new[] { 0.48f });
+provider.SetFaceRects(100, new[] { new Rect(1253, 722, 34, 34) }, size, 0.49f, new[] { 0.49f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 11)
-    throw new InvalidOperationException($"Expected 11 weak/tiny isolated/short/tiny-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 13)
+    throw new InvalidOperationException($"Expected 13 weak/tiny isolated/short/tiny-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (result.RemovedWeakUnsupportedFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak unsupported faces to be removed, got {result.RemovedWeakUnsupportedFaces}.");
@@ -79,8 +81,8 @@ if (result.RemovedWeakShortClusterFaces != 2)
 if (result.RemovedWeakTinyClusterFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak tiny-cluster faces to be removed, got {result.RemovedWeakTinyClusterFaces}.");
 
-if (result.RemovedTinyShortClusterFaces != 2)
-    throw new InvalidOperationException($"Expected 2 medium-confidence tiny short-cluster faces to be removed, got {result.RemovedTinyShortClusterFaces}.");
+if (result.RemovedTinyShortClusterFaces != 4)
+    throw new InvalidOperationException($"Expected 4 weak/medium-confidence tiny short-cluster faces to be removed, got {result.RemovedTinyShortClusterFaces}.");
 
 if (result.RemovedTinyIsolatedFaces != 1)
     throw new InvalidOperationException($"Expected 1 medium-confidence tiny isolated face to be removed, got {result.RemovedTinyIsolatedFaces}.");
@@ -144,6 +146,12 @@ if (provider.TryGetFaceMaskData(97, out var tinyMediumClusterA) && tinyMediumClu
     provider.TryGetFaceMaskData(98, out var tinyMediumClusterB) && tinyMediumClusterB.Faces.Count > 0)
 {
     throw new InvalidOperationException("Expected a two-frame medium-confidence tiny non-edge cluster to be removed.");
+}
+
+if (provider.TryGetFaceMaskData(99, out var tinyWeakClusterA) && tinyWeakClusterA.Faces.Count > 0 ||
+    provider.TryGetFaceMaskData(100, out var tinyWeakClusterB) && tinyWeakClusterB.Faces.Count > 0)
+{
+    throw new InvalidOperationException("Expected a two-frame weak tiny non-edge cluster above the old weak-tiny cutoff to be removed.");
 }
 
 var gapProvider = new FrameMaskProvider();
