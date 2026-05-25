@@ -63,7 +63,8 @@ param(
     [int]$YoloTileColumns = 2,
     [int]$YoloTileRows = 2,
     [double]$YoloTileOverlapRatio = 0.15,
-    [int]$YoloMaxLostFillFrames = 3,
+    [int]$YoloMaxLostFillFrames = 2,
+    [int]$YoloMaxInitialFillFrames = 3,
     [int]$YoloDropShortTrackMaxDetections = 1,
     [double]$YoloShortTrackMaxConfidence = 0.18,
     [double]$YoloLowerFrameTrackMaxConfidence = 0.50,
@@ -226,10 +227,11 @@ double yoloLowConfidencePositionMinCenterYRatio = args.Length > 74 ? double.Pars
 bool yoloUseSmallAreaFilter = args.Length > 75 && bool.Parse(args[75]);
 double yoloSmallAreaMaxAreaRatio = args.Length > 76 ? double.Parse(args[76], System.Globalization.CultureInfo.InvariantCulture) : 0.0035;
 bool skipOptimized = args.Length > 77 && bool.Parse(args[77]);
-int yoloMaxLostFillFrames = args.Length > 78 ? int.Parse(args[78], System.Globalization.CultureInfo.InvariantCulture) : 3;
+int yoloMaxLostFillFrames = args.Length > 78 ? int.Parse(args[78], System.Globalization.CultureInfo.InvariantCulture) : 2;
 bool yoloUseAspectRatioFilter = args.Length > 79 && bool.Parse(args[79]);
 double yoloMinAspectRatio = args.Length > 80 ? double.Parse(args[80], System.Globalization.CultureInfo.InvariantCulture) : 0.35;
 double yoloMaxAspectRatio = args.Length > 81 ? double.Parse(args[81], System.Globalization.CultureInfo.InvariantCulture) : 1.65;
+int yoloMaxInitialFillFrames = args.Length > 82 ? int.Parse(args[82], System.Globalization.CultureInfo.InvariantCulture) : 3;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -293,6 +295,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     int yoloTileRows,
     double yoloTileOverlapRatio,
     int yoloMaxLostFillFrames,
+    int yoloMaxInitialFillFrames,
     int yoloDropShortTrackMaxDetections,
     float yoloShortTrackMaxConfidence,
     float yoloLowerFrameTrackMaxConfidence,
@@ -450,13 +453,15 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
     const float yoloSceneCutDirectCarryMaxConfidence = 0.78f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.66f;
+    const double yoloSceneCutDifferenceThreshold = 0.24;
+    const double yoloSceneCutDirectDifferenceThreshold = 0.24;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
             {
                 MaxTrackGap = 8,
                 MaxFillGap = 5,
                 MaxLostFillFrames = yoloMaxLostFillFrames,
-                MaxInitialFillFrames = yoloMaxLostFillFrames,
+                MaxInitialFillFrames = yoloMaxInitialFillFrames,
                 MaxConfirmedTrackHoldFrames = 8,
                 AllowSmallTrackLostFill = true,
                 WeakConfidence = 0.38f,
@@ -542,7 +547,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var sceneCut = sceneCutGuard.Apply(
             maskProvider,
             input,
-            sceneCutCandidates);
+            sceneCutCandidates,
+            differenceThreshold: yoloSceneCutDifferenceThreshold,
+            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
     }
     if (detector is IBgraFaceDetector bgraDetector)
@@ -585,7 +592,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             : new FaceTrackSceneCutGuard().Apply(
                 maskProvider,
                 input,
-                gapFill.CutGuardFacesInfo);
+                gapFill.CutGuardFacesInfo,
+                differenceThreshold: yoloSceneCutDifferenceThreshold,
+                directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
         Console.WriteLine($"[SmokeYoloFinalMaskGapFillSceneCutGuard] label={label}, candidates={gapFill.CutGuardFacesInfo.Count}, checked={gapFillGuard.Checked}, checkedPairs={FormatTextValues(gapFillGuard.CheckedFramePairs)}, maxDiff={gapFillGuard.MaxDifference:F3}, cutPairs={FormatTextValues(gapFillGuard.CutFramePairs)}, removed={gapFillGuard.Removed}, removedFrames={FormatFrames(gapFillGuard.RemovedFrameIndices)}, threshold={gapFillGuard.Threshold:F3}, elapsedMs={gapFillGuard.ElapsedMs}, error={gapFillGuard.Error ?? "none"}");
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
@@ -1422,6 +1431,7 @@ if (!skipBaseline)
         yoloTileRows,
         yoloTileOverlapRatio,
         yoloMaxLostFillFrames,
+        yoloMaxInitialFillFrames,
         yoloDropShortTrackMaxDetections,
         yoloShortTrackMaxConfidence,
         yoloLowerFrameTrackMaxConfidence,
@@ -1496,6 +1506,7 @@ if (!skipOptimized)
         yoloTileRows,
         yoloTileOverlapRatio,
         yoloMaxLostFillFrames,
+        yoloMaxInitialFillFrames,
         yoloDropShortTrackMaxDetections,
         yoloShortTrackMaxConfidence,
         yoloLowerFrameTrackMaxConfidence,
@@ -1584,6 +1595,7 @@ $yoloTileColumnsArg = $YoloTileColumns.ToString([System.Globalization.CultureInf
 $yoloTileRowsArg = $YoloTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloTileOverlapRatioArg = $YoloTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloMaxLostFillFramesArg = $YoloMaxLostFillFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$yoloMaxInitialFillFramesArg = $YoloMaxInitialFillFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloDropShortTrackMaxDetectionsArg = $YoloDropShortTrackMaxDetections.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloShortTrackMaxConfidenceArg = $YoloShortTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $yoloLowerFrameTrackMaxConfidenceArg = $YoloLowerFrameTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -1700,7 +1712,8 @@ dotnet run --project $project -- `
     $yoloMaxLostFillFramesArg `
     $yoloUseAspectRatioFilterArg `
     $yoloMinAspectRatioArg `
-    $yoloMaxAspectRatioArg
+    $yoloMaxAspectRatioArg `
+    $yoloMaxInitialFillFramesArg
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

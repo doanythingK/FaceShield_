@@ -21,7 +21,8 @@ param(
     [double]$YoloObjectnessThreshold = 0.12,
     [double]$YoloConfidenceThreshold = 0.18,
     [double]$YoloNmsThreshold = 0.45,
-    [int]$YoloMaxLostFillFrames = 3,
+    [int]$YoloMaxLostFillFrames = 2,
+    [int]$YoloMaxInitialFillFrames = 3,
     [int]$ParallelDetectorCount = 2,
     [int]$VideoFrameCount = 60,
     [int]$MaxFullFrameRows = 8,
@@ -616,6 +617,7 @@ if ($shouldRunSmoke) {
     Add-ValueArg $smokeArgs "-YoloConfidenceThreshold" $YoloConfidenceThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     Add-ValueArg $smokeArgs "-YoloNmsThreshold" $YoloNmsThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     Add-ValueArg $smokeArgs "-YoloMaxLostFillFrames" $YoloMaxLostFillFrames
+    Add-ValueArg $smokeArgs "-YoloMaxInitialFillFrames" $YoloMaxInitialFillFrames
     Add-ValueArg $smokeArgs "-ParallelDetectorCount" $ParallelDetectorCount
     Add-SwitchArg $smokeArgs "-YoloUseLowConfidencePositionFilter" $true
     Add-SwitchArg $smokeArgs "-YoloUseSmallAreaFilter" $true

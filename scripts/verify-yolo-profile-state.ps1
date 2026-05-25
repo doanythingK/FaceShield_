@@ -356,6 +356,7 @@ foreach ($parameter in @(
     "YoloMinAspectRatio",
     "YoloMaxAspectRatio",
     "YoloMaxLostFillFrames",
+    "YoloMaxInitialFillFrames",
     "YoloDropShortTrackMaxDetections",
     "YoloShortTrackMaxConfidence",
     "YoloLowerFrameTrackMaxConfidence")) {
@@ -381,7 +382,7 @@ foreach ($assignment in @(
     "MinAspectRatio\s*=\s*yoloMinAspectRatio",
     "MaxAspectRatio\s*=\s*yoloMaxAspectRatio",
     "MaxLostFillFrames\s*=\s*yoloMaxLostFillFrames",
-    "MaxInitialFillFrames\s*=\s*yoloMaxLostFillFrames",
+    "MaxInitialFillFrames\s*=\s*yoloMaxInitialFillFrames",
     "DropShortTrackMaxDetections\s*=\s*yoloDropShortTrackMaxDetections",
     "DropSparseTrackMaxDetections\s*=\s*3",
     "DropSparseTrackMinSpanFrames\s*=\s*8",
@@ -401,6 +402,7 @@ Assert-Match "home leaves risky top small low-confidence filter opt-in" $options
 
 Assert-Match "smoke harness supports yolo roi refine switch" $smokeHarnessText "if\s*\(useYolo\s*&&\s*yoloUseFaceOnnxRoiRefine\)"
 Assert-Match "smoke harness logs scene cut guard" $smokeHarnessText "new\s+FaceTrackSceneCutGuard\(\)[\s\S]*BuildWeakTrackTransitionCandidates[\s\S]*BuildWeakPostCutCarryCandidates[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*SmokeFaceTrackSceneCutGuard[\s\S]*postCutCandidates"
+Assert-Match "smoke harness matches yolo scene cut threshold" $smokeHarnessText "yoloSceneCutDifferenceThreshold\s*=\s*0\.24[\s\S]*yoloSceneCutDirectDifferenceThreshold\s*=\s*0\.24[\s\S]*differenceThreshold:\s*yoloSceneCutDifferenceThreshold[\s\S]*directDifferenceThreshold:\s*yoloSceneCutDirectDifferenceThreshold"
 Assert-Match "smoke harness logs initial fill count" $smokeHarnessText "SmokeFaceTrackPost[\s\S]*initialFilled=\{trackPost\.FilledInitialFaces\}"
 Assert-Match "smoke harness logs direct scene cut candidates" $smokeHarnessText "directCandidates=\{directCandidates\.Count\}"
 Assert-Match "smoke harness logs scene cut frame evidence" $smokeHarnessText "checkedPairs=\{FormatTextValues\(sceneCut\.CheckedFramePairs\)\}[\s\S]*maxDiff=\{sceneCut\.MaxDifference[\s\S]*cutPairs=\{FormatTextValues\(sceneCut\.CutFramePairs\)\}[\s\S]*removedFrames=\{FormatFrames\(sceneCut\.RemovedFrameIndices\)\}"
