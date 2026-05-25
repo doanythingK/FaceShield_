@@ -28,6 +28,7 @@ namespace FaceShield.Services.Analysis
             int removedUnsupported = 0;
             int removedShortClusters = 0;
             int removedTinyClusters = 0;
+            int removedTinyIsolated = 0;
             for (int i = 0; i < entries.Length; i++)
             {
                 int frameIndex = entries[i].Key;
@@ -63,6 +64,15 @@ namespace FaceShield.Services.Analysis
                             continue;
                         }
                     }
+                    else if (confidence <= options.TinyIsolatedMaxConfidence &&
+                        !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio) &&
+                        IsTinyFace(face, data.Size, options.TinyIsolatedMaxAreaRatio) &&
+                        !HasMatchingTemporalNeighbor(entries, i, face, options))
+                    {
+                        removed++;
+                        removedTinyIsolated++;
+                        continue;
+                    }
 
                     faces.Add(face);
                     confidences.Add(confidence);
@@ -89,6 +99,7 @@ namespace FaceShield.Services.Analysis
                     removedUnsupported,
                     removedShortClusters,
                     removedTinyClusters,
+                    removedTinyIsolated,
                     removedFrames.ToArray());
         }
 
@@ -545,6 +556,8 @@ namespace FaceShield.Services.Analysis
         public int TinyClusterMaxFrames { get; init; } = 3;
         public float TinyClusterMaxConfidence { get; init; } = 0.45f;
         public double TinyClusterMaxAreaRatio { get; init; } = 0.0012;
+        public float TinyIsolatedMaxConfidence { get; init; } = 0.62f;
+        public double TinyIsolatedMaxAreaRatio { get; init; } = 0.0009;
     }
 
     public sealed record YoloFinalMaskGapFillOptions
@@ -563,9 +576,10 @@ namespace FaceShield.Services.Analysis
         int RemovedWeakUnsupportedFaces,
         int RemovedWeakShortClusterFaces,
         int RemovedWeakTinyClusterFaces,
+        int RemovedTinyIsolatedFaces,
         IReadOnlyList<int> RemovedFrameIndices)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, Array.Empty<int>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, Array.Empty<int>());
     }
 
     public readonly record struct YoloFinalMaskGapFillResult(

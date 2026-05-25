@@ -60,11 +60,13 @@ provider.SetFaceRects(90, new[] { new Rect(900, 620, 40, 40) }, size, 0.42f, new
 provider.SetFaceRects(91, new[] { new Rect(903, 622, 40, 40) }, size, 0.43f, new[] { 0.43f });
 provider.SetFaceRects(92, new[] { new Rect(906, 624, 40, 40) }, size, 0.44f, new[] { 0.44f });
 provider.SetFaceRects(93, new[] { new Rect(909, 626, 40, 40) }, size, 0.71f, new[] { 0.71f });
+provider.SetFaceRects(95, new[] { new Rect(1500, 700, 34, 34) }, size, 0.58f, new[] { 0.58f });
+provider.SetFaceRects(96, new[] { new Rect(1600, 720, 34, 34) }, size, 0.74f, new[] { 0.74f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
-if (result.RemovedWeakIsolatedFaces != 8)
-    throw new InvalidOperationException($"Expected 8 weak isolated/short/tiny-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
+if (result.RemovedWeakIsolatedFaces != 9)
+    throw new InvalidOperationException($"Expected 9 weak/tiny isolated/short/tiny-cluster faces to be removed, got {result.RemovedWeakIsolatedFaces}.");
 
 if (result.RemovedWeakUnsupportedFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak unsupported faces to be removed, got {result.RemovedWeakUnsupportedFaces}.");
@@ -74,6 +76,9 @@ if (result.RemovedWeakShortClusterFaces != 2)
 
 if (result.RemovedWeakTinyClusterFaces != 3)
     throw new InvalidOperationException($"Expected 3 weak tiny-cluster faces to be removed, got {result.RemovedWeakTinyClusterFaces}.");
+
+if (result.RemovedTinyIsolatedFaces != 1)
+    throw new InvalidOperationException($"Expected 1 medium-confidence tiny isolated face to be removed, got {result.RemovedTinyIsolatedFaces}.");
 
 if (provider.TryGetFaceMaskData(10, out var weakIsolated) && weakIsolated.Faces.Count > 0)
     throw new InvalidOperationException("Expected weak isolated non-edge frame 10 to be removed.");
@@ -124,6 +129,12 @@ if (!provider.TryGetFaceMaskData(90, out var tinyStrongA) || tinyStrongA.Faces.C
     throw new InvalidOperationException("Expected weak tiny cluster with strong continuation to remain.");
 }
 
+if (provider.TryGetFaceMaskData(95, out var tinyMediumIsolated) && tinyMediumIsolated.Faces.Count > 0)
+    throw new InvalidOperationException("Expected a medium-confidence tiny isolated non-edge candidate to be removed.");
+
+if (!provider.TryGetFaceMaskData(96, out var tinyStrongIsolated) || tinyStrongIsolated.Faces.Count != 1)
+    throw new InvalidOperationException("Expected a high-confidence tiny isolated candidate to remain for review.");
+
 var gapProvider = new FrameMaskProvider();
 gapProvider.SetFaceRects(10, new[] { new Rect(500, 260, 90, 90) }, size, 0.82f, new[] { 0.82f });
 gapProvider.SetFaceRects(12, new[] { new Rect(506, 264, 90, 90) }, size, 0.80f, new[] { 0.80f });
@@ -169,7 +180,7 @@ if (cutGapProvider.TryGetFaceMaskData(101, out var cutFilled) && cutFilled.Faces
     throw new InvalidOperationException("Expected scene-cut guard to remove the filled gap frame.");
 
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, gapCutRemoved={cutGuard.Removed}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, gapCutRemoved={cutGuard.Removed}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
