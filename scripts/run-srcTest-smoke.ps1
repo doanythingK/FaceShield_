@@ -571,8 +571,11 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     }
     if (useYolo)
     {
-        var cleanup = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(maskProvider);
+        var postProcessor = new YoloFinalMaskPostProcessor();
+        var cleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
+        var gapFill = postProcessor.FillShortStableGaps(maskProvider);
+        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}");
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
     if (useYolo)

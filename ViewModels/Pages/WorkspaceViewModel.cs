@@ -745,7 +745,8 @@ namespace FaceShield.ViewModels.Pages
 
         private void RemoveYoloWeakIsolatedFinalMasks()
         {
-            var cleanup = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(
+            var postProcessor = new YoloFinalMaskPostProcessor();
+            var cleanup = postProcessor.RemoveWeakIsolatedMasks(
                 _maskProvider,
                 new YoloFinalMaskCleanupOptions
                 {
@@ -754,10 +755,25 @@ namespace FaceShield.ViewModels.Pages
                     EdgeMarginRatio = YoloFinalMaskEdgeMarginRatio
                 });
             if (cleanup.RemovedWeakIsolatedFaces <= 0)
+            {
+                FillYoloStableFinalMaskGaps(postProcessor);
                 return;
+            }
 
             System.Diagnostics.Debug.WriteLine(
                 $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
+
+            FillYoloStableFinalMaskGaps(postProcessor);
+        }
+
+        private void FillYoloStableFinalMaskGaps(YoloFinalMaskPostProcessor postProcessor)
+        {
+            var gapFill = postProcessor.FillShortStableGaps(_maskProvider);
+            if (gapFill.FilledFaces <= 0)
+                return;
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)}");
         }
 
         private void LogFinalMaskSummary()

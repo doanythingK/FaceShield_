@@ -150,12 +150,18 @@ var postCutPrevious = new Rect(100, 100, 90, 92);
 var postCutGhostA = new Rect(720, 260, 84, 86);
 var postCutGhostB = new Rect(724, 262, 84, 86);
 var postCutPersistentA = new Rect(420, 300, 70, 72);
+var postCutContinuousA = new Rect(860, 260, 80, 82);
+var postCutContinuousB = new Rect(864, 262, 80, 82);
+var postCutContinuousC = new Rect(868, 264, 80, 82);
 postCutProvider.SetFaceRects(30, new[] { postCutPrevious }, size, 0.88f, new[] { 0.88f });
 postCutProvider.SetFaceRects(31, new[] { postCutGhostA }, size, 0.41f, new[] { 0.41f });
 postCutProvider.SetFaceRects(32, new[] { postCutGhostB }, size, 0.42f, new[] { 0.42f });
 postCutProvider.SetFaceRects(40, new[] { postCutPersistentA }, size, 0.43f, new[] { 0.43f });
 for (int frame = 41; frame <= 46; frame++)
     postCutProvider.SetFaceRects(frame, new[] { new Rect(postCutPersistentA.X + frame - 40, postCutPersistentA.Y, postCutPersistentA.Width, postCutPersistentA.Height) }, size, 0.43f, new[] { 0.43f });
+postCutProvider.SetFaceRects(50, new[] { postCutContinuousA }, size, 0.43f, new[] { 0.43f });
+postCutProvider.SetFaceRects(51, new[] { postCutContinuousB }, size, 0.42f, new[] { 0.42f });
+postCutProvider.SetFaceRects(52, new[] { postCutContinuousC }, size, 0.41f, new[] { 0.41f });
 
 var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
     postCutProvider,
@@ -164,18 +170,24 @@ var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
 var postCutResult = guard.Apply(
     postCutProvider,
     postCutCandidates,
-    static (source, target) => source == 30 && target >= 31 && target <= 32 ? 0.52 : 0.05);
+    static (source, target) => source == 30 && target >= 31 && target <= 32 || source == 50 && target >= 51 && target <= 52 ? 0.52 : 0.05);
 
-if (postCutCandidates.Count != 2)
-    throw new InvalidOperationException($"Expected two weak post-cut carry candidates, got {postCutCandidates.Count}.");
+if (postCutCandidates.Count != 11)
+    throw new InvalidOperationException($"Expected eleven weak post-cut carry candidates, got {postCutCandidates.Count}.");
 
-if (postCutResult.Removed != 2 || string.Join(",", postCutResult.RemovedFrameIndices) != "31,32")
-    throw new InvalidOperationException($"Expected weak post-cut carry at frames 31,32 to be removed, got removed={postCutResult.Removed}, frames={string.Join(",", postCutResult.RemovedFrameIndices)}.");
+if (postCutResult.Removed != 4 || string.Join(",", postCutResult.RemovedFrameIndices) != "31,32,51,52")
+    throw new InvalidOperationException($"Expected weak post-cut carry at frames 31,32,51,52 to be removed, got removed={postCutResult.Removed}, frames={string.Join(",", postCutResult.RemovedFrameIndices)}.");
 
 if (postCutProvider.TryGetFaceMaskData(31, out var postCutFrameA) && postCutFrameA.Faces.Count != 0)
     throw new InvalidOperationException("Expected first weak post-cut carry frame to be removed.");
 if (postCutProvider.TryGetFaceMaskData(32, out var postCutFrameB) && postCutFrameB.Faces.Count != 0)
     throw new InvalidOperationException("Expected second weak post-cut carry frame to be removed.");
+if (!postCutProvider.TryGetFaceMaskData(50, out var postCutContinuousSource) || postCutContinuousSource.Faces.Count != 1)
+    throw new InvalidOperationException("Expected continuous weak carry source before the hard cut to remain.");
+if (postCutProvider.TryGetFaceMaskData(51, out var postCutContinuousFrameA) && postCutContinuousFrameA.Faces.Count != 0)
+    throw new InvalidOperationException("Expected continuous weak carry after a hard cut to be removed.");
+if (postCutProvider.TryGetFaceMaskData(52, out var postCutContinuousFrameB) && postCutContinuousFrameB.Faces.Count != 0)
+    throw new InvalidOperationException("Expected continuous weak carry tail after a hard cut to be removed.");
 if (!postCutProvider.TryGetFaceMaskData(40, out var persistentFrame) || persistentFrame.Faces.Count != 1)
     throw new InvalidOperationException("Expected persistent weak run beyond the carry cap to remain.");
 

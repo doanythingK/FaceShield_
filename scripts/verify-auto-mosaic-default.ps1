@@ -249,8 +249,8 @@ Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reverseRemoved=1"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reversePairs=1->3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directCandidates=3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directRemoved=3"
-Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutCandidates=2"
-Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutRemoved=2"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutCandidates=11"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutRemoved=4"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "diffCacheCalls=1"
 
 $sparseDecisionOutput = Invoke-ScriptStep "automask-sparse-scene-cut-guard" $autoMaskSparseSceneCutGuardVerify @()
@@ -286,6 +286,8 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIs
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakUnsupported=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakShortClusters=2"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakTinyClusters=3"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFilled=4"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapFrames=11,31,32,33"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,40,41,50,59,60,61,90,91,92,93"
 
 $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(

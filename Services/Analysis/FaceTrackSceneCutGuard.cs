@@ -138,9 +138,6 @@ namespace FaceShield.Services.Analysis
                     if (!IsWeakNonEdgeCandidate(face, data.Size, confidence, maxTargetConfidence, edgeMarginRatio))
                         continue;
 
-                    if (HasMatchingFace(entries, frameIndex - 1, face, minIou, maxCenterShiftRatio, maxAreaChangeRatio))
-                        continue;
-
                     var run = BuildWeakCarryRun(
                         entries,
                         frameIndex,

@@ -124,8 +124,36 @@ if (!provider.TryGetFaceMaskData(90, out var tinyStrongA) || tinyStrongA.Faces.C
     throw new InvalidOperationException("Expected weak tiny cluster with strong continuation to remain.");
 }
 
+var gapProvider = new FrameMaskProvider();
+gapProvider.SetFaceRects(10, new[] { new Rect(500, 260, 90, 90) }, size, 0.82f, new[] { 0.82f });
+gapProvider.SetFaceRects(12, new[] { new Rect(506, 264, 90, 90) }, size, 0.80f, new[] { 0.80f });
+gapProvider.SetFaceRects(30, new[] { new Rect(760, 300, 100, 100) }, size, 0.78f, new[] { 0.78f });
+gapProvider.SetFaceRects(34, new[] { new Rect(772, 308, 100, 100) }, size, 0.76f, new[] { 0.76f });
+gapProvider.SetFaceRects(50, new[] { new Rect(980, 320, 88, 88) }, size, 0.46f, new[] { 0.46f });
+gapProvider.SetFaceRects(52, new[] { new Rect(986, 324, 88, 88) }, size, 0.47f, new[] { 0.47f });
+gapProvider.SetFaceRects(70, new[] { new Rect(1120, 300, 80, 80) }, size, 0.82f, new[] { 0.82f });
+gapProvider.SetFaceRects(72, new[] { new Rect(1500, 640, 180, 180) }, size, 0.84f, new[] { 0.84f });
+
+var gapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(gapProvider);
+var filledFrames = string.Join(",", gapFill.FilledFrameIndices);
+if (gapFill.FilledFaces != 4 || filledFrames != "11,31,32,33")
+    throw new InvalidOperationException($"Expected stable strong final-mask gaps at frames 11,31,32,33 to be filled, got filled={gapFill.FilledFaces}, frames={filledFrames}.");
+
+if (!gapProvider.TryGetFaceMaskData(11, out var filledSingle) || filledSingle.Faces.Count != 1)
+    throw new InvalidOperationException("Expected frame 11 to be filled between strong matching anchors.");
+if (!gapProvider.TryGetFaceMaskData(31, out var filledRangeA) || filledRangeA.Faces.Count != 1 ||
+    !gapProvider.TryGetFaceMaskData(32, out var filledRangeB) || filledRangeB.Faces.Count != 1 ||
+    !gapProvider.TryGetFaceMaskData(33, out var filledRangeC) || filledRangeC.Faces.Count != 1)
+{
+    throw new InvalidOperationException("Expected frames 31-33 to be filled between strong matching anchors.");
+}
+if (gapProvider.TryGetFaceMaskData(51, out var weakGap) && weakGap.Faces.Count > 0)
+    throw new InvalidOperationException("Expected weak-anchor gap at frame 51 to remain unfilled.");
+if (gapProvider.TryGetFaceMaskData(71, out var jumpGap) && jumpGap.Faces.Count > 0)
+    throw new InvalidOperationException("Expected large-jump gap at frame 71 to remain unfilled.");
+
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

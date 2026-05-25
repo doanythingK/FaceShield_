@@ -92,6 +92,110 @@ namespace FaceShield.Services.Analysis
                     removedFrames.ToArray());
         }
 
+        public YoloFinalMaskGapFillResult FillShortStableGaps(
+            FrameMaskProvider maskProvider,
+            YoloFinalMaskGapFillOptions? options = null)
+        {
+            options ??= new YoloFinalMaskGapFillOptions();
+            if (options.MaxGapFrames <= 0 || options.MinAnchorConfidence <= 0)
+                return YoloFinalMaskGapFillResult.Empty;
+
+            var entries = maskProvider.GetFaceMaskEntries()
+                .Where(static x => x.Value.Faces.Count > 0)
+                .OrderBy(static x => x.Key)
+                .ToArray();
+            if (entries.Length < 2)
+                return YoloFinalMaskGapFillResult.Empty;
+
+            var storedFrames = new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
+            var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
+            int filledFaces = 0;
+
+            for (int entryIndex = 1; entryIndex < entries.Length; entryIndex++)
+            {
+                int previousFrame = entries[entryIndex - 1].Key;
+                int nextFrame = entries[entryIndex].Key;
+                int gap = nextFrame - previousFrame - 1;
+                if (gap <= 0 || gap > options.MaxGapFrames)
+                    continue;
+
+                var previous = entries[entryIndex - 1].Value;
+                var next = entries[entryIndex].Value;
+                if (previous.Size.Width <= 0 || previous.Size.Height <= 0)
+                    continue;
+
+                for (int faceIndex = 0; faceIndex < previous.Faces.Count; faceIndex++)
+                {
+                    float previousConfidence = GetConfidence(previous, faceIndex);
+                    if (previousConfidence < options.MinAnchorConfidence)
+                        continue;
+
+                    var previousFace = previous.Faces[faceIndex];
+                    if (!TryFindStableGapMatch(
+                            next,
+                            previousFace,
+                            options,
+                            out var nextFace,
+                            out float nextConfidence))
+                    {
+                        continue;
+                    }
+
+                    float fillConfidence = Math.Clamp(
+                        Math.Min(previousConfidence, nextConfidence),
+                        options.FillConfidenceFloor,
+                        1.0f);
+
+                    for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
+                    {
+                        if (storedFrames.Contains(frameIndex) ||
+                            maskProvider.TryGetFaceMaskData(frameIndex, out _))
+                        {
+                            continue;
+                        }
+
+                        double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
+                        var interpolated = Interpolate(previousFace, nextFace, t);
+                        if (interpolated.Width <= 0 || interpolated.Height <= 0)
+                            continue;
+
+                        if (!fills.TryGetValue(frameIndex, out var fill))
+                        {
+                            fill = (previous.Size, new List<Rect>(), new List<float>());
+                            fills[frameIndex] = fill;
+                        }
+
+                        if (HasMatchingFace(fill.Faces, interpolated, options.DuplicateIou))
+                            continue;
+
+                        fill.Faces.Add(interpolated);
+                        fill.Confidences.Add(fillConfidence);
+                        filledFaces++;
+                    }
+                }
+            }
+
+            if (filledFaces == 0)
+                return YoloFinalMaskGapFillResult.Empty;
+
+            foreach (var entry in fills.OrderBy(static x => x.Key))
+            {
+                if (entry.Value.Faces.Count == 0)
+                    continue;
+
+                maskProvider.SetFaceRects(
+                    entry.Key,
+                    entry.Value.Faces,
+                    entry.Value.Size,
+                    entry.Value.Confidences.Min(),
+                    entry.Value.Confidences);
+            }
+
+            return new YoloFinalMaskGapFillResult(
+                filledFaces,
+                fills.Keys.OrderBy(static x => x).ToArray());
+        }
+
         private static bool IsWeakTinyTemporalCluster(
             IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
             int entryIndex,
@@ -135,6 +239,66 @@ namespace FaceShield.Services.Analysis
             }
 
             return visited.Count > 0 && visited.Count <= options.TinyClusterMaxFrames;
+        }
+
+        private static bool TryFindStableGapMatch(
+            FrameMaskProvider.FaceMaskData data,
+            Rect reference,
+            YoloFinalMaskGapFillOptions options,
+            out Rect match,
+            out float confidence)
+        {
+            match = default;
+            confidence = 0.0f;
+            double bestScore = double.NegativeInfinity;
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                float candidateConfidence = GetConfidence(data, i);
+                if (candidateConfidence < options.MinAnchorConfidence)
+                    continue;
+
+                var candidate = data.Faces[i];
+                if (!IsStableGapMatch(reference, candidate, options))
+                    continue;
+
+                double score = FaceTrackBuilder.IoU(reference, candidate) * 2.0 + candidateConfidence;
+                if (score <= bestScore)
+                    continue;
+
+                bestScore = score;
+                match = candidate;
+                confidence = candidateConfidence;
+            }
+
+            return bestScore > double.NegativeInfinity;
+        }
+
+        private static bool IsStableGapMatch(
+            Rect previous,
+            Rect next,
+            YoloFinalMaskGapFillOptions options)
+        {
+            double areaRatio = FaceTrackBuilder.GetAreaRatio(previous, next);
+            if (areaRatio > options.MaxAreaChangeRatio ||
+                areaRatio < 1.0 / options.MaxAreaChangeRatio)
+            {
+                return false;
+            }
+
+            if (FaceTrackBuilder.IoU(previous, next) >= options.MinIou)
+                return true;
+
+            return FaceTrackBuilder.GetNormalizedCenterShift(previous, next) <= options.MaxCenterShiftRatio;
+        }
+
+        private static Rect Interpolate(Rect previous, Rect next, double t)
+        {
+            double inverse = 1.0 - t;
+            return new Rect(
+                previous.X * inverse + next.X * t,
+                previous.Y * inverse + next.Y * t,
+                Math.Max(0.0, previous.Width * inverse + next.Width * t),
+                Math.Max(0.0, previous.Height * inverse + next.Height * t));
         }
 
         private static bool IsWeakShortTemporalCluster(
@@ -302,6 +466,20 @@ namespace FaceShield.Services.Analysis
             return false;
         }
 
+        private static bool HasMatchingFace(
+            IReadOnlyList<Rect> candidates,
+            Rect face,
+            double minIou)
+        {
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (FaceTrackBuilder.IoU(candidates[i], face) >= minIou)
+                    return true;
+            }
+
+            return false;
+        }
+
         private static bool IsMatchingFace(Rect candidate, Rect face, YoloFinalMaskCleanupOptions options)
         {
             if (FaceTrackBuilder.IoU(candidate, face) >= options.NeighborMinIou)
@@ -361,6 +539,17 @@ namespace FaceShield.Services.Analysis
         public double TinyClusterMaxAreaRatio { get; init; } = 0.0012;
     }
 
+    public sealed record YoloFinalMaskGapFillOptions
+    {
+        public int MaxGapFrames { get; init; } = 3;
+        public float MinAnchorConfidence { get; init; } = 0.58f;
+        public float FillConfidenceFloor { get; init; } = 0.50f;
+        public double MinIou { get; init; } = 0.15;
+        public double MaxCenterShiftRatio { get; init; } = 0.65;
+        public double MaxAreaChangeRatio { get; init; } = 2.5;
+        public double DuplicateIou { get; init; } = 0.50;
+    }
+
     public readonly record struct YoloFinalMaskCleanupResult(
         int RemovedWeakIsolatedFaces,
         int RemovedWeakUnsupportedFaces,
@@ -369,5 +558,12 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<int> RemovedFrameIndices)
     {
         public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, Array.Empty<int>());
+    }
+
+    public readonly record struct YoloFinalMaskGapFillResult(
+        int FilledFaces,
+        IReadOnlyList<int> FilledFrameIndices)
+    {
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>());
     }
 }
