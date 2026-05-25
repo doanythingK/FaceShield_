@@ -4,7 +4,11 @@ param(
     [string]$OutputPath = ".tmp\yolo-quality\yolo-mask-continuity-report.md",
     [int]$ShortGapMaxFrames = 3,
     [int]$IsolatedNeighborWindow = 1,
-    [double]$LowConfidenceThreshold = 0.38
+    [double]$LowConfidenceThreshold = 0.38,
+    [double]$WeakNonEdgeThreshold = 0.50,
+    [double]$UpperFrameCenterYThreshold = 0.12,
+    [double]$EdgeMarginRatio = 0.02,
+    [double]$FrameAspectRatio = 1.7777777777777777
 )
 
 $ErrorActionPreference = "Stop"
@@ -134,6 +138,30 @@ function Get-GapReviewHint {
     return "short gap; review flicker"
 }
 
+function Test-NormalizedEdgeTouch {
+    param(
+        [object]$Row,
+        [double]$MarginRatio,
+        [double]$FrameAspectRatio
+    )
+
+    if ($MarginRatio -le 0 -or $FrameAspectRatio -le 0 -or $Row.AspectRatio -le 0 -or $Row.AreaRatio -le 0) {
+        return $false
+    }
+
+    $widthRatio = [Math]::Sqrt([Math]::Max(0.0, $Row.AreaRatio * $Row.AspectRatio / $FrameAspectRatio))
+    $heightRatio = [Math]::Sqrt([Math]::Max(0.0, $Row.AreaRatio * $FrameAspectRatio / $Row.AspectRatio))
+    $left = $Row.CenterX - ($widthRatio * 0.5)
+    $right = $Row.CenterX + ($widthRatio * 0.5)
+    $top = $Row.CenterY - ($heightRatio * 0.5)
+    $bottom = $Row.CenterY + ($heightRatio * 0.5)
+
+    return $left -le $MarginRatio -or
+        $top -le $MarginRatio -or
+        $right -ge 1.0 - $MarginRatio -or
+        $bottom -ge 1.0 - $MarginRatio
+}
+
 $shortGaps = New-Object System.Collections.Generic.List[object]
 $longGaps = New-Object System.Collections.Generic.List[object]
 for ($i = 1; $i -lt $frames.Count; $i++) {
@@ -190,6 +218,15 @@ foreach ($frame in $frames) {
 }
 
 $lowConfidenceRows = @($rows | Where-Object { $_.Confidence -le $LowConfidenceThreshold } | Sort-Object Confidence, Frame, Index)
+$weakNonEdgeRows = @($rows |
+    Where-Object {
+        $_.Confidence -le $WeakNonEdgeThreshold -and
+        -not (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
+    } |
+    Sort-Object Confidence, Frame, Index)
+$upperWeakNonEdgeRows = @($weakNonEdgeRows |
+    Where-Object { $_.CenterY -le $UpperFrameCenterYThreshold } |
+    Sort-Object Confidence, Frame, Index)
 $frameRange = if ($frames.Count -eq 0) { "none" } else { "{0}-{1}" -f $frames[0], $frames[$frames.Count - 1] }
 $generatedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
@@ -205,6 +242,8 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("- Long empty gaps: $($longGaps.Count)")
 [void]$builder.AppendLine("- Isolated final mask frames: $($isolatedFrames.Count)")
 [void]$builder.AppendLine("- Low-confidence final masks: $($lowConfidenceRows.Count)")
+[void]$builder.AppendLine("- Weak non-edge final masks: $($weakNonEdgeRows.Count)")
+[void]$builder.AppendLine("- Upper-frame weak non-edge final masks: $($upperWeakNonEdgeRows.Count)")
 [void]$builder.AppendLine()
 [void]$builder.AppendLine("## Interpretation")
 [void]$builder.AppendLine('- `[SmokeDetection]` rows in this smoke harness are final `FrameMaskProvider` face rectangles after tracking, scene-cut guard, and ROI refinement.')
@@ -246,6 +285,23 @@ foreach ($row in $lowConfidenceRows | Select-Object -First 80) {
 if ($lowConfidenceRows.Count -eq 0) {
     [void]$builder.AppendLine("| - | - | - | - | - | - | none |")
 }
+[void]$builder.AppendLine()
+
+[void]$builder.AppendLine("## Weak Non-Edge Final Masks")
+[void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Review hint | Box |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- | --- |")
+foreach ($row in $weakNonEdgeRows | Select-Object -First 80) {
+    $hint = if ($row.CenterY -le $UpperFrameCenterYThreshold) {
+        "upper-frame weak non-edge; review false positive vs small face"
+    } else {
+        "weak non-edge; review false positive"
+    }
+    [void]$builder.AppendLine(("| {0} | {1} | {2:F3} | {3:F3},{4:F3} | {5:F6} | {6:F3} | {7} | x={8:F1}, y={9:F1}, w={10:F1}, h={11:F1} |" -f
+        $row.Frame, $row.Index, $row.Confidence, $row.CenterX, $row.CenterY, $row.AreaRatio, $row.AspectRatio, $hint, $row.X, $row.Y, $row.W, $row.H))
+}
+if ($weakNonEdgeRows.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
+}
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()
-Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count)"
+Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count)"
