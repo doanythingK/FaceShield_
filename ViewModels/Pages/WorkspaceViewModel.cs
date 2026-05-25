@@ -43,6 +43,7 @@ namespace FaceShield.ViewModels.Pages
         private const double TemporalSmoothIouMin = 0.18;
         private const double TemporalSmoothWeight = 0.42;
         private const int TemporalSmoothPasses = 2;
+        private const int TemporalSmoothSearchWindowFrames = 2;
         private const int TemporalMinRunLength = 2;
         private const int SuspiciousNoFaceMaxGap = 8;
         private const float YoloFinalMaskLowConfidenceThreshold = 0.38f;
@@ -588,8 +589,8 @@ namespace FaceShield.ViewModels.Pages
 
                     var currentFaces = facesByFrame[i]!;
                     var smoothed = new List<Rect>(currentFaces.Count);
-                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1);
-                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1);
+                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1, TemporalSmoothSearchWindowFrames);
+                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1, TemporalSmoothSearchWindowFrames);
 
                     for (int j = 0; j < currentFaces.Count; j++)
                     {
@@ -1178,11 +1179,20 @@ namespace FaceShield.ViewModels.Pages
         private static IReadOnlyList<Rect>? FindNearestTemporalFaces(
             IReadOnlyList<Rect>?[] facesByFrame,
             int frameIndex,
-            int direction)
+            int direction,
+            int maxDistanceFrames)
         {
+            if (maxDistanceFrames <= 0)
+                return null;
+
             int index = frameIndex + direction;
+            int searched = 0;
             while (index >= 0 && index < facesByFrame.Length)
             {
+                searched++;
+                if (searched > maxDistanceFrames)
+                    break;
+
                 var faces = facesByFrame[index];
                 if (faces != null && faces.Count > 0)
                     return faces;
