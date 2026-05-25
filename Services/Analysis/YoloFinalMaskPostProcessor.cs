@@ -805,6 +805,15 @@ namespace FaceShield.Services.Analysis
                 {
                     return false;
                 }
+                if (HasStrongAdjacentContinuation(
+                        entries,
+                        current.EntryIndex,
+                        current.Face,
+                        options,
+                        options.WeakClusterMaxConfidence))
+                {
+                    return false;
+                }
 
                 AddMatchingWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
             }
@@ -1040,7 +1049,7 @@ namespace FaceShield.Services.Analysis
         public double NeighborMaxCenterShiftRatio { get; init; } = 0.65;
         public double NeighborMaxAreaChangeRatio { get; init; } = 3.0;
         public int WeakClusterMaxFrames { get; init; } = 2;
-        public float WeakClusterMaxConfidence { get; init; } = 0.38f;
+        public float WeakClusterMaxConfidence { get; init; } = 0.45f;
         public int TinyClusterMaxFrames { get; init; } = 3;
         public float TinyClusterMaxConfidence { get; init; } = 0.45f;
         public double TinyClusterMaxAreaRatio { get; init; } = 0.0012;
