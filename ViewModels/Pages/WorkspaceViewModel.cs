@@ -1116,6 +1116,7 @@ namespace FaceShield.ViewModels.Pages
                     AllowSmallTrackLostFill = true,
                     WeakConfidence = 0.38f,
                     StrongConfidence = 0.58f,
+                    SyntheticFillConfidenceMax = YoloSceneCutPostCutCarryMaxConfidence,
                     DropShortTrackMaxDetections = 2,
                     DropShortSmallTrackMaxDetections = 3,
                     ShortTrackMaxConfidence = 0.48f,

@@ -48,6 +48,7 @@ var options = new FaceTrackPostProcessOptions
     AllowSmallTrackLostFill = true,
     WeakConfidence = 0.38f,
     StrongConfidence = 0.58f,
+    SyntheticFillConfidenceMax = 0.78f,
     DropShortTrackMaxDetections = 1,
     ShortTrackMaxConfidence = 0.18f,
     SmallTrackMaxAreaRatio = 0.00070,
@@ -75,6 +76,8 @@ foreach (int frame in expectedInternalHoldFrames)
 {
     if (!provider.TryGetFaceMaskData(frame, out var held) || held.Faces.Count != 1)
         throw new InvalidOperationException($"Expected confirmed YOLO track to hold internal gap frame {frame}.");
+    if (held.Confidences.Count != 1 || held.Confidences[0] > 0.7801f)
+        throw new InvalidOperationException($"Expected synthetic internal hold frame {frame} confidence to be capped for scene-cut cleanup, got {string.Join(",", held.Confidences)}.");
 }
 
 var expectedHoldFrames = Enumerable.Range(21, 6).ToArray();
@@ -87,6 +90,8 @@ foreach (int frame in expectedHoldFrames)
 {
     if (!provider.TryGetFaceMaskData(frame, out var held) || held.Faces.Count != 1)
         throw new InvalidOperationException($"Expected confirmed YOLO track to hold frame {frame}.");
+    if (held.Confidences.Count != 1 || held.Confidences[0] > 0.7801f)
+        throw new InvalidOperationException($"Expected synthetic lost-fill frame {frame} confidence to be capped for scene-cut cleanup, got {string.Join(",", held.Confidences)}.");
 }
 
 if (provider.TryGetFaceMaskData(27, out var overHeld) && overHeld.Faces.Count > 0)
@@ -96,7 +101,7 @@ if (provider.TryGetFaceMaskData(2, out var removedWeak) && removedWeak.Faces.Cou
     throw new InvalidOperationException("Expected one-frame weak YOLO candidate not to be held as a confirmed track.");
 
 Console.WriteLine(
-    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, heldFrames={string.Join(",", expectedHoldFrames)}");
+    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, syntheticConfidenceMax=0.78, heldFrames={string.Join(",", expectedHoldFrames)}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

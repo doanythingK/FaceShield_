@@ -454,10 +454,9 @@ namespace FaceShield.Services.Analysis
                                 : next.Size;
                         }
 
-                        float confidence = Math.Clamp(
+                        float confidence = ClampSyntheticFillConfidence(
                             Math.Min(previous.Confidence, next.Confidence),
-                            options.WeakConfidence,
-                            1.0f);
+                            options);
                         facesByFrame[frameIndex]!.Add(interpolated);
                         confByFrame[frameIndex]!.Add(confidence);
                         gapFilledFaces.Add(new FaceTrackFilledFace(frameIndex, interpolated, sizeByFrame[frameIndex], confidence, previous.FrameIndex));
@@ -537,7 +536,7 @@ namespace FaceShield.Services.Analysis
                     if (sizeByFrame[frameIndex].Width <= 0 || sizeByFrame[frameIndex].Height <= 0)
                         sizeByFrame[frameIndex] = first.Size;
 
-                    float confidence = Math.Clamp(first.Confidence, options.WeakConfidence, 1.0f);
+                    float confidence = ClampSyntheticFillConfidence(first.Confidence, options);
                     facesByFrame[frameIndex]!.Add(predicted);
                     confByFrame[frameIndex]!.Add(confidence);
                     initialFilledFaces.Add(new FaceTrackFilledFace(frameIndex, predicted, first.Size, confidence, first.FrameIndex));
@@ -622,15 +621,22 @@ namespace FaceShield.Services.Analysis
                     if (sizeByFrame[frameIndex].Width <= 0 || sizeByFrame[frameIndex].Height <= 0)
                         sizeByFrame[frameIndex] = last.Size;
 
+                    float confidence = ClampSyntheticFillConfidence(last.Confidence, options);
                     facesByFrame[frameIndex]!.Add(predicted);
-                    confByFrame[frameIndex]!.Add(Math.Clamp(last.Confidence, options.WeakConfidence, 1.0f));
+                    confByFrame[frameIndex]!.Add(confidence);
                     lostFillFrameIndices.Add(frameIndex);
-                    lostFilledFaces.Add(new FaceTrackFilledFace(frameIndex, predicted, last.Size, last.Confidence, last.FrameIndex));
+                    lostFilledFaces.Add(new FaceTrackFilledFace(frameIndex, predicted, last.Size, confidence, last.FrameIndex));
                     filled++;
                 }
             }
 
             return filled;
+        }
+
+        private static float ClampSyntheticFillConfidence(float sourceConfidence, FaceTrackPostProcessOptions options)
+        {
+            float maxConfidence = Math.Clamp(options.SyntheticFillConfidenceMax, options.WeakConfidence, 1.0f);
+            return Math.Clamp(sourceConfidence, options.WeakConfidence, maxConfidence);
         }
 
         private static bool IsConfirmedTrack(FaceTrack track, FaceTrackPostProcessOptions options)

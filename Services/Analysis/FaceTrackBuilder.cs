@@ -147,6 +147,7 @@ namespace FaceShield.Services.Analysis
         public double DropSparseTrackMaxDensity { get; init; } = 0.45;
         public float WeakConfidence { get; init; } = 0.50f;
         public float StrongConfidence { get; init; } = 0.68f;
+        public float SyntheticFillConfidenceMax { get; init; } = 1.0f;
         public float ShortTrackMaxConfidence { get; init; } = 0.68f;
         public float SparseTrackMaxConfidence { get; init; } = 0.0f;
         public float EdgeTailMaxConfidence { get; init; } = 0.0f;

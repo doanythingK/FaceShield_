@@ -6,6 +6,8 @@ param(
     [string]$HomeViewCodeBehind = "Views/Pages/HomePageView.axaml.cs",
     [string]$WorkspaceViewModel = "ViewModels/Pages/WorkspaceViewModel.cs",
     [string]$AutoMaskGenerator = "Services/Analysis/AutoMaskGenerator.cs",
+    [string]$TrackBuilder = "Services/Analysis/FaceTrackBuilder.cs",
+    [string]$TrackInterpolator = "Services/Analysis/FaceTrackInterpolator.cs",
     [string]$SceneCutGuard = "Services/Analysis/FaceTrackSceneCutGuard.cs",
     [string]$FinalMaskPostProcessor = "Services/Analysis/YoloFinalMaskPostProcessor.cs",
     [string]$RoiRefiner = "Services/Analysis/FaceTrackRoiRefiner.cs",
@@ -56,6 +58,8 @@ $homeViewText = Read-RepoFile $HomeView
 $homeViewCodeBehindText = Read-RepoFile $HomeViewCodeBehind
 $workspaceText = Read-RepoFile $WorkspaceViewModel
 $autoMaskGeneratorText = Read-RepoFile $AutoMaskGenerator
+$trackBuilderText = Read-RepoFile $TrackBuilder
+$trackInterpolatorText = Read-RepoFile $TrackInterpolator
 $sceneCutGuardText = Read-RepoFile $SceneCutGuard
 $finalMaskPostProcessorText = Read-RepoFile $FinalMaskPostProcessor
 $roiRefinerText = Read-RepoFile $RoiRefiner
@@ -241,6 +245,9 @@ Assert-Match "scene cut guard skips exact duplicate candidates" $sceneCutGuardTe
 Assert-Match "scene cut guard removes track fill" $sceneCutGuardText "DefaultDifferenceThreshold\s*=\s*0\.32[\s\S]*DefaultDirectDifferenceThreshold\s*=\s*0\.36[\s\S]*TryGetNextFrameRawToBuffer[\s\S]*RemoveFaceCandidate"
 Assert-Match "scene cut guard can remove weak matching post-cut tail" $sceneCutGuardText "RemoveWeakMatchingTail[\s\S]*maxTailFrames[\s\S]*maxTailConfidence[\s\S]*TryRemoveWeakMatchingFace"
 Assert-Match "scene cut guard exposes deterministic verifier path" $sceneCutGuardText "Func<int,\s*int,\s*double>\s+frameDifferenceProvider[\s\S]*GetMaxFrameDifference[\s\S]*RemoveFaceCandidate"
+Assert-Match "track postprocess exposes synthetic fill confidence cap" $trackBuilderText "SyntheticFillConfidenceMax\s*\{\s*get;\s*init;\s*\}\s*=\s*1\.0f"
+Assert-Match "track interpolation caps synthetic fill confidence" $trackInterpolatorText "ClampSyntheticFillConfidence[\s\S]*SyntheticFillConfidenceMax[\s\S]*Math\.Clamp\(sourceConfidence"
+Assert-Match "workspace caps yolo synthetic track fill confidence" $workspaceText "SyntheticFillConfidenceMax\s*=\s*YoloSceneCutPostCutCarryMaxConfidence"
 Assert-Match "scene cut guard scans adjacent frame differences" $sceneCutGuardText "for\s*\(int\s+frame\s*=\s*sourceFrame;\s*frame\s*<\s*targetFrame;\s*frame\+\+\)[\s\S]*FormatFramePair\(maxSource,\s*maxTarget\)"
 Assert-Match "scene cut guard checks cumulative frame difference" $sceneCutGuardText "directDifferenceThreshold[\s\S]*GetFrameDifference\(\s*sourceFrame,\s*targetFrame[\s\S]*TryGetFramePairDifference[\s\S]*FormatFramePair\(sourceFrame,\s*targetFrame\)"
 Assert-Match "scene cut guard exposes frame evidence" $sceneCutGuardText "RemovedFrameIndices[\s\S]*CheckedFramePairs[\s\S]*MaxDifference[\s\S]*CutFramePairs"
@@ -402,6 +409,7 @@ foreach ($assignment in @(
     "DropSparseTrackMaxDensity\s*=\s*0\.42",
     "EdgeTailMaxConfidence\s*=\s*0\.50f",
     "EdgeLostFillMaxConfidence\s*=\s*0\.60f",
+    "SyntheticFillConfidenceMax\s*=\s*yoloSceneCutPostCutCarryMaxConfidence",
     "MaxConfirmedTrackHoldFrames\s*=\s*8",
     "AllowSmallTrackLostFill\s*=\s*true",
     "ShortTrackMaxConfidence\s*=\s*yoloShortTrackMaxConfidence",
