@@ -37,7 +37,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedFrames=8,10,11,12
 [SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5
 [SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
-[SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, weakNonEdge=1, tinyWeak=1
+[SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, weakNonEdge=1, tinyWeak=1, tinyShort=1
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=10.0, y=20.0, w=50.0, h=60.0, area=3000.0, conf=0.410, cx=0.055, cy=0.120, areaRatio=0.002000, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=6, index=0, x=500.0, y=400.0, w=20.0, h=22.0, area=440.0, conf=0.220, cx=0.398, cy=0.571, areaRatio=0.000210, aspectRatio=0.909
 [SmokeDetection] label=synthetic-yolo, frame=9, index=0, x=700.0, y=120.0, w=24.0, h=25.0, area=600.0, conf=0.180, cx=0.556, cy=0.190, areaRatio=0.000290, aspectRatio=0.960
@@ -119,6 +119,7 @@ Assert-Contains "summary records final mask gap-fill scene guard" $summaryText "
 Assert-Contains "summary records large jump summary" $summaryText "largeJumpGaps=1"
 Assert-Contains "summary records weak final mask evidence" $summaryText "weakNonEdge=1"
 Assert-Contains "summary records tiny weak final mask evidence" $summaryText "tinyWeak=1"
+Assert-Contains "summary records tiny short final mask evidence" $summaryText "tinyShort=1"
 Assert-Contains "summary records required full-frame review frames when packaged" $scriptText "Required full-frame review frames"
 Assert-Contains "summary preserves face label markdown" $summaryText 'Use `face` only'
 Assert-Contains "summary preserves nonface label markdown" $summaryText 'Use `nonface` for'
