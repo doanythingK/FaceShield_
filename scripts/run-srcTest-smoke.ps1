@@ -451,7 +451,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
-    const float yoloSceneCutDirectCarryMaxConfidence = 0.78f;
+    const float yoloSceneCutDirectCarryMaxConfidence = 0.90f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.15;

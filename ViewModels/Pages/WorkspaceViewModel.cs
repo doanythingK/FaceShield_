@@ -51,7 +51,7 @@ namespace FaceShield.ViewModels.Pages
         private const double FinalMaskLargeJumpAreaChangeRatio = 4.0;
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
-        private const float YoloSceneCutDirectCarryMaxConfidence = 0.78f;
+        private const float YoloSceneCutDirectCarryMaxConfidence = 0.90f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.15;
