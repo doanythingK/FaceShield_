@@ -242,6 +242,8 @@ namespace FaceShield.Services.Analysis
 
                         if (gap <= 0)
                             continue;
+                        if (CrossesBlockedCut(previousFrame, nextFrame, options))
+                            continue;
 
                         if (!IsGapAnchorEligible(
                                 entries,
@@ -761,6 +763,38 @@ namespace FaceShield.Services.Analysis
             return FaceTrackBuilder.GetNormalizedCenterShift(previous, next) <= options.MaxCenterShiftRatio;
         }
 
+        private static bool CrossesBlockedCut(int previousFrame, int nextFrame, YoloFinalMaskGapFillOptions options)
+        {
+            if (options.BlockedCutFramePairs.Count == 0)
+                return false;
+
+            foreach (string pair in options.BlockedCutFramePairs)
+            {
+                if (!TryParseFramePair(pair, out int sourceFrame, out int targetFrame))
+                    continue;
+
+                int cutStart = Math.Min(sourceFrame, targetFrame);
+                int cutEnd = Math.Max(sourceFrame, targetFrame);
+                if (previousFrame <= cutStart && cutEnd <= nextFrame)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseFramePair(string value, out int sourceFrame, out int targetFrame)
+        {
+            sourceFrame = 0;
+            targetFrame = 0;
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            string[] parts = value.Split("->", StringSplitOptions.TrimEntries);
+            return parts.Length == 2 &&
+                int.TryParse(parts[0], out sourceFrame) &&
+                int.TryParse(parts[1], out targetFrame);
+        }
+
         private static Rect Interpolate(Rect previous, Rect next, double t)
         {
             double inverse = 1.0 - t;
@@ -1084,6 +1118,7 @@ namespace FaceShield.Services.Analysis
         public double MaxCenterShiftRatio { get; init; } = 0.65;
         public double MaxAreaChangeRatio { get; init; } = 2.5;
         public double DuplicateIou { get; init; } = 0.50;
+        public IReadOnlyCollection<string> BlockedCutFramePairs { get; init; } = Array.Empty<string>();
     }
 
     public readonly record struct YoloFinalMaskCleanupResult(
