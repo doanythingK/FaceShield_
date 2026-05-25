@@ -592,7 +592,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             trackOptions,
             maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
             maxTransitionGap: 8,
-            minConfidenceDrop: 0.02f,
+            minConfidenceDrop: 0.0f,
             maxPostCutCarryFrames: 5,
             minSourceConfidence: yoloSceneCutDirectCarryMinSourceConfidence);
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
