@@ -129,6 +129,7 @@ goal 완료로 볼 수 있는 최소 증거:
 - Detection rows: `96`
 - Scene-cut evidence on this no-hard-cut wrapper sample after the direct-check budget/priority update: `directChecked=48`, `directSkipped=26`, `maxDiff=0.206`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`. This confirms dense spans still get bounded direct source->target checks, while the lower direct threshold and higher budget do not delete this no-hard-cut sample.
 - Post-scene final gap-fill now also carries cut pairs found by the initial final gap-fill scene-cut guard, so a gap-fill that was removed across a transition cannot be re-created by the later post-scene gap-fill pass.
+- Final gap-fill now rejects weak geometry-risk anchors (`edge`, `tiny`, `upper/lower weak`, aspect outlier) while keeping strong edge anchors eligible. This reduces YOLO false positives from becoming temporal gap-fill seeds without disabling high-confidence edge faces.
 - Final cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
 - Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`

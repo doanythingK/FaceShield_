@@ -18,6 +18,7 @@ param(
     [string]$YoloModelEnum = "Services/FaceDetection/YoloFaceModelType.cs",
     [string]$YoloModelResolver = "scripts/resolve-yolo-model-path.ps1",
     [string]$SmokeHarness = "scripts/run-srcTest-smoke.ps1",
+    [string]$FinalMaskCleanupVerifier = "scripts/verify-yolo-final-mask-cleanup.ps1",
     [string]$SmoothingCutBoundaryVerifier = "scripts/verify-yolo-temporal-smoothing-cut-boundary.ps1",
     [string]$AutoMosaicDefaultVerifier = "scripts/verify-auto-mosaic-default.ps1"
 )
@@ -70,6 +71,7 @@ $backend = Read-RepoFile $BackendEnum
 $modelEnum = Read-RepoFile $YoloModelEnum
 $yoloModelResolverText = Read-RepoFile $YoloModelResolver
 $smokeHarnessText = Read-RepoFile $SmokeHarness
+$finalMaskCleanupVerifyText = Read-RepoFile $FinalMaskCleanupVerifier
 $smoothingCutBoundaryVerifyText = Read-RepoFile $SmoothingCutBoundaryVerifier
 $autoMosaicDefaultVerifyText = Read-RepoFile $AutoMosaicDefaultVerifier
 
@@ -240,6 +242,9 @@ Assert-Match "final mask gap fill blocks known scene cuts" $finalMaskPostProcess
 Assert-Match "final mask gap fill reports cleanup-blocked frames" $finalMaskPostProcessorText "blockedFrames\s*=\s*new\s+HashSet<int>\(options\.BlockedFrameIndices\)[\s\S]*blockedCleanupFrames[\s\S]*blockedFrames\.Contains\(frameIndex\)[\s\S]*blockedCleanupFrames\.Add\(frameIndex\)[\s\S]*BlockedCleanupGapFrames[\s\S]*BlockedCleanupFrameIndices"
 Assert-Match "final mask cleanup exposes supported weak gap options" $finalMaskPostProcessorText "SupportedAnchorMinConfidence[\s\S]*SupportedAnchorNeighborWindowFrames"
 Assert-Match "final mask cleanup checks supported weak gap anchors" $finalMaskPostProcessorText "IsGapAnchorEligible[\s\S]*HasSupportedGapAnchorNeighbor[\s\S]*HasSupportedGapAnchorFace"
+Assert-Match "final mask gap fill suppresses weak geometry-risk anchors" $finalMaskPostProcessorText "IsSuppressedWeakGeometryGapAnchor[\s\S]*WeakGeometryAnchorMaxConfidence[\s\S]*TouchesFrameEdge[\s\S]*IsTinyGapAnchorFace[\s\S]*IsUpperWeakGapAnchorFace[\s\S]*IsLowerWeakGapAnchorFace[\s\S]*IsAspectOutlierGapAnchorFace"
+Assert-Match "final mask gap fill rejects weak edge anchors" $finalMaskCleanupVerifyText "weakEdgeAnchorGapFill[\s\S]*Expected weak edge anchors not to create final-mask gap fills"
+Assert-Match "final mask gap fill keeps strong edge anchors eligible" $finalMaskCleanupVerifyText "strongEdgeAnchorGapFill[\s\S]*Expected strong edge anchors to remain eligible"
 Assert-Match "final mask gap fill seeds mixed frames" $finalMaskPostProcessorText "CreateFillEntry[\s\S]*TryGetFaceMaskData\(frameIndex[\s\S]*new\s+List<Rect>\(existing\.Faces\)"
 Assert-Match "final mask gap fill dedupes against existing frame faces" $finalMaskPostProcessorText "HasMatchingFace\(fill\.Faces,\s*interpolated"
 Assert-Match "workspace yolo scene cut guard is gated to yolo" $workspaceText "FaceFilterProfile\.Yolo[\s\S]*RemoveYoloTrackFillAcrossSceneCuts"

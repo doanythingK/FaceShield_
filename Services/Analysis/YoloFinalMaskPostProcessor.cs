@@ -711,6 +711,9 @@ namespace FaceShield.Services.Analysis
             YoloFinalMaskGapFillOptions options,
             int excludedEntryIndex)
         {
+            if (IsSuppressedWeakGeometryGapAnchor(face, entries[entryIndex].Value.Size, confidence, options))
+                return false;
+
             if (confidence >= options.MinAnchorConfidence)
                 return true;
             if (options.SupportedAnchorMinConfidence <= 0 ||
@@ -762,7 +765,10 @@ namespace FaceShield.Services.Analysis
         {
             for (int i = 0; i < data.Faces.Count; i++)
             {
-                if (GetConfidence(data, i) < options.SupportedAnchorMinConfidence)
+                float confidence = GetConfidence(data, i);
+                if (confidence < options.SupportedAnchorMinConfidence)
+                    continue;
+                if (IsSuppressedWeakGeometryGapAnchor(data.Faces[i], data.Size, confidence, options))
                     continue;
                 if (IsStableGapMatch(face, data.Faces[i], options))
                     return true;
@@ -787,6 +793,25 @@ namespace FaceShield.Services.Analysis
                 return true;
 
             return FaceTrackBuilder.GetNormalizedCenterShift(previous, next) <= options.MaxCenterShiftRatio;
+        }
+
+        private static bool IsSuppressedWeakGeometryGapAnchor(
+            Rect face,
+            PixelSize size,
+            float confidence,
+            YoloFinalMaskGapFillOptions options)
+        {
+            if (options.WeakGeometryAnchorMaxConfidence <= 0 ||
+                confidence > options.WeakGeometryAnchorMaxConfidence)
+            {
+                return false;
+            }
+
+            return TouchesFrameEdge(face, size, options.AnchorEdgeMarginRatio) ||
+                IsTinyGapAnchorFace(face, size, options) ||
+                IsUpperWeakGapAnchorFace(face, size, options) ||
+                IsLowerWeakGapAnchorFace(face, size, options) ||
+                IsAspectOutlierGapAnchorFace(face, options);
         }
 
         private static bool CrossesBlockedCut(int previousFrame, int nextFrame, YoloFinalMaskGapFillOptions options)
@@ -1146,6 +1171,51 @@ namespace FaceShield.Services.Analysis
             return aspectRatio < options.AspectOutlierMinRatio ||
                 aspectRatio > options.AspectOutlierMaxRatio;
         }
+
+        private static bool IsTinyGapAnchorFace(Rect face, PixelSize size, YoloFinalMaskGapFillOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            return areaRatio <= options.TinyAnchorMaxAreaRatio;
+        }
+
+        private static bool IsUpperWeakGapAnchorFace(Rect face, PixelSize size, YoloFinalMaskGapFillOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            return centerYRatio <= options.UpperWeakAnchorMaxCenterYRatio &&
+                areaRatio <= options.UpperWeakAnchorMaxAreaRatio;
+        }
+
+        private static bool IsLowerWeakGapAnchorFace(Rect face, PixelSize size, YoloFinalMaskGapFillOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            return centerYRatio >= options.LowerWeakAnchorMinCenterYRatio &&
+                areaRatio >= options.LowerWeakAnchorMinAreaRatio &&
+                areaRatio <= options.LowerWeakAnchorMaxAreaRatio;
+        }
+
+        private static bool IsAspectOutlierGapAnchorFace(Rect face, YoloFinalMaskGapFillOptions options)
+        {
+            if (face.Width <= 0 || face.Height <= 0)
+                return false;
+
+            double aspectRatio = face.Width / face.Height;
+            return aspectRatio < options.AnchorMinAspectRatio ||
+                aspectRatio > options.AnchorMaxAspectRatio;
+        }
     }
 
     public sealed record YoloFinalMaskCleanupOptions
@@ -1193,6 +1263,16 @@ namespace FaceShield.Services.Analysis
         public double MaxCenterShiftRatio { get; init; } = 0.65;
         public double MaxAreaChangeRatio { get; init; } = 2.5;
         public double DuplicateIou { get; init; } = 0.50;
+        public float WeakGeometryAnchorMaxConfidence { get; init; } = 0.62f;
+        public double AnchorEdgeMarginRatio { get; init; } = 0.02;
+        public double TinyAnchorMaxAreaRatio { get; init; } = 0.0009;
+        public double UpperWeakAnchorMaxCenterYRatio { get; init; } = 0.10;
+        public double UpperWeakAnchorMaxAreaRatio { get; init; } = 0.0065;
+        public double LowerWeakAnchorMinCenterYRatio { get; init; } = 0.58;
+        public double LowerWeakAnchorMinAreaRatio { get; init; } = 0.015;
+        public double LowerWeakAnchorMaxAreaRatio { get; init; } = 0.045;
+        public double AnchorMinAspectRatio { get; init; } = 0.35;
+        public double AnchorMaxAspectRatio { get; init; } = 1.65;
         public IReadOnlyCollection<string> BlockedCutFramePairs { get; init; } = Array.Empty<string>();
         public IReadOnlyCollection<int> BlockedFrameIndices { get; init; } = Array.Empty<int>();
     }
