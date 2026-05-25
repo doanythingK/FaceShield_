@@ -564,7 +564,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     {
         var postProcessor = new YoloFinalMaskPostProcessor();
         var cleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
-        Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
+        Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
         var gapFill = postProcessor.FillShortStableGaps(
             maskProvider,
             new YoloFinalMaskGapFillOptions
@@ -617,7 +617,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
-        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneCleanup] label={label}, removedWeakIsolated={postSceneCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={postSceneCleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={postSceneCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postSceneCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postSceneCleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={postSceneCleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={postSceneCleanup.RemovedLowerWeakClusterFaces}, removedFrames={FormatFrames(postSceneCleanup.RemovedFrameIndices)}");
+        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneCleanup] label={label}, removedWeakIsolated={postSceneCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={postSceneCleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={postSceneCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postSceneCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postSceneCleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={postSceneCleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={postSceneCleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={postSceneCleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(postSceneCleanup.RemovedFrameIndices)}");
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
     if (useYolo)
@@ -703,6 +703,8 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     const double lowerWeakCenterYRatio = 0.58;
     const double lowerWeakMinAreaRatio = 0.015;
     const double lowerWeakMaxAreaRatio = 0.045;
+    const double finalMaskMinAspectRatio = 0.35;
+    const double finalMaskMaxAspectRatio = 1.65;
     const int shortGapMaxFrames = 3;
     const double largeJumpAreaChangeRatio = 4.0;
     const double largeJumpCenterShift = 0.20;
@@ -713,7 +715,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
         .ToArray();
     if (entries.Length == 0)
     {
-        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
         return;
     }
 
@@ -762,6 +764,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     int topEdgeWeakRows = 0;
     int upperWeakRows = 0;
     int lowerWeakRows = 0;
+    int aspectBadRows = 0;
     int tinyWeakRows = 0;
     int tinyShortRows = 0;
     var lowConfidenceFrames = new SortedSet<int>();
@@ -770,6 +773,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     var topEdgeWeakFrames = new SortedSet<int>();
     var upperWeakFrames = new SortedSet<int>();
     var lowerWeakFrames = new SortedSet<int>();
+    var aspectBadFrames = new SortedSet<int>();
     var tinyWeakFrames = new SortedSet<int>();
     var tinyShortFrames = new SortedSet<int>();
     foreach (var entry in entries)
@@ -826,6 +830,11 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
                 lowerWeakRows++;
                 lowerWeakFrames.Add(frameIndex);
             }
+            if (IsAbnormalFinalMaskAspect(face, finalMaskMinAspectRatio, finalMaskMaxAspectRatio))
+            {
+                aspectBadRows++;
+                aspectBadFrames.Add(frameIndex);
+            }
             if (confidence <= tinyShortThreshold &&
                 !touchesEdge &&
                 IsTinyFinalMaskFace(face, data.Size, tinyShortAreaRatio))
@@ -837,7 +846,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     }
 
     Console.WriteLine(
-        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
 }
 
 static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)
@@ -885,6 +894,15 @@ static bool IsLowerWeakFinalMaskFace(Rect face, PixelSize size, double minCenter
     return centerYRatio >= minCenterYRatio &&
         areaRatio >= minAreaRatio &&
         areaRatio <= maxAreaRatio;
+}
+
+static bool IsAbnormalFinalMaskAspect(Rect face, double minAspectRatio, double maxAspectRatio)
+{
+    if (face.Width <= 0 || face.Height <= 0)
+        return false;
+
+    double aspectRatio = face.Width / face.Height;
+    return aspectRatio < minAspectRatio || aspectRatio > maxAspectRatio;
 }
 
 static bool TryGetBestFinalMaskFace(

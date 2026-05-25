@@ -73,6 +73,8 @@ namespace FaceShield.ViewModels.Pages
         private const double YoloFinalMaskLowerWeakCenterYRatio = 0.58;
         private const double YoloFinalMaskLowerWeakMinAreaRatio = 0.015;
         private const double YoloFinalMaskLowerWeakMaxAreaRatio = 0.045;
+        private const double YoloFinalMaskMinAspectRatio = 0.35;
+        private const double YoloFinalMaskMaxAspectRatio = 1.65;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private int _autoLastProcessedFrame = -1;
@@ -811,7 +813,7 @@ namespace FaceShield.ViewModels.Pages
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces} removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces} removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces} removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
+                $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces} removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces} removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces} removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces} removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
 
             if (fillStableGaps)
                 FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken);
@@ -873,7 +875,7 @@ namespace FaceShield.ViewModels.Pages
                 .ToArray();
             if (entries.Length == 0)
             {
-                System.Diagnostics.Debug.WriteLine("[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0 lowConfFrames=none weakNonEdge=0 weakNonEdgeFrames=none edgeWeak=0 edgeWeakFrames=none topEdgeWeak=0 topEdgeWeakFrames=none upperWeak=0 upperWeakFrames=none lowerWeak=0 lowerWeakFrames=none tinyWeak=0 tinyWeakFrames=none tinyShort=0 tinyShortFrames=none");
+                System.Diagnostics.Debug.WriteLine("[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0 lowConfFrames=none weakNonEdge=0 weakNonEdgeFrames=none edgeWeak=0 edgeWeakFrames=none topEdgeWeak=0 topEdgeWeakFrames=none upperWeak=0 upperWeakFrames=none lowerWeak=0 lowerWeakFrames=none aspectBad=0 aspectBadFrames=none tinyWeak=0 tinyWeakFrames=none tinyShort=0 tinyShortFrames=none");
                 return;
             }
 
@@ -922,6 +924,7 @@ namespace FaceShield.ViewModels.Pages
             int topEdgeWeakRows = 0;
             int upperWeakRows = 0;
             int lowerWeakRows = 0;
+            int aspectBadRows = 0;
             int tinyWeakRows = 0;
             int tinyShortRows = 0;
             var lowConfidenceFrames = new HashSet<int>();
@@ -930,6 +933,7 @@ namespace FaceShield.ViewModels.Pages
             var topEdgeWeakFrames = new HashSet<int>();
             var upperWeakFrames = new HashSet<int>();
             var lowerWeakFrames = new HashSet<int>();
+            var aspectBadFrames = new HashSet<int>();
             var tinyWeakFrames = new HashSet<int>();
             var tinyShortFrames = new HashSet<int>();
             foreach (var entry in entries)
@@ -989,6 +993,12 @@ namespace FaceShield.ViewModels.Pages
                         lowerWeakFrames.Add(frameIndex);
                     }
 
+                    if (IsAbnormalFinalMaskAspect(face))
+                    {
+                        aspectBadRows++;
+                        aspectBadFrames.Add(frameIndex);
+                    }
+
                     if (confidence <= YoloFinalMaskTinyShortConfidenceMax &&
                         !touchesEdge &&
                         IsTinyFinalMaskFace(face, data.Size, YoloFinalMaskTinyShortAreaRatio))
@@ -1000,7 +1010,7 @@ namespace FaceShield.ViewModels.Pages
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())}");
+                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())}");
         }
 
         private static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size)
@@ -1049,6 +1059,16 @@ namespace FaceShield.ViewModels.Pages
             return centerYRatio >= YoloFinalMaskLowerWeakCenterYRatio &&
                 areaRatio >= YoloFinalMaskLowerWeakMinAreaRatio &&
                 areaRatio <= YoloFinalMaskLowerWeakMaxAreaRatio;
+        }
+
+        private static bool IsAbnormalFinalMaskAspect(Rect face)
+        {
+            if (face.Width <= 0 || face.Height <= 0)
+                return false;
+
+            double aspectRatio = face.Width / face.Height;
+            return aspectRatio < YoloFinalMaskMinAspectRatio ||
+                aspectRatio > YoloFinalMaskMaxAspectRatio;
         }
 
         private static bool TryGetBestFinalMaskFace(
