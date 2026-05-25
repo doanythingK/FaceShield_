@@ -174,6 +174,42 @@ if (weakTailProvider.TryGetFaceMaskData(73, out var weakTailFrameC) && weakTailF
 if (!weakTailProvider.TryGetFaceMaskData(74, out var weakTailStrongFrame) || weakTailStrongFrame.Faces.Count != 1)
     throw new InvalidOperationException("Expected strong matching detection after the weak tail to remain.");
 
+var highTailProvider = new FrameMaskProvider();
+var highTailSource = new Rect(240, 220, 82, 84);
+var highTailFirst = new Rect(246, 224, 82, 84);
+var highTailSecond = new Rect(250, 226, 82, 84);
+highTailProvider.SetFaceRects(150, new[] { highTailSource }, size, 0.90f, new[] { 0.90f });
+highTailProvider.SetFaceRects(151, new[] { highTailFirst }, size, 0.82f, new[] { 0.82f });
+highTailProvider.SetFaceRects(152, new[] { highTailSecond }, size, 0.86f, new[] { 0.86f });
+var highTailResult = guard.Apply(
+    highTailProvider,
+    new[] { new FaceTrackFilledFace(151, highTailFirst, size, 0.82f, 150) },
+    static (source, target) => source == 150 && target == 151 ? 0.50 : 0.0,
+    removeMatchingTailFrames: 3,
+    removeMatchingTailMaxConfidence: 0.90f);
+
+if (highTailResult.Removed != 2 || string.Join(",", highTailResult.RemovedFrameIndices) != "151,152")
+    throw new InvalidOperationException($"Expected high-confidence carried tail to be removed after a confirmed cut, got removed={highTailResult.Removed}, frames={string.Join(",", highTailResult.RemovedFrameIndices)}.");
+if (highTailProvider.TryGetFaceMaskData(152, out var highTailFrame) && highTailFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected high-confidence matching tail after a cut to be removed.");
+
+var smoothedProvider = new FrameMaskProvider();
+var smoothedCandidate = new Rect(460, 210, 90, 92);
+var smoothedMask = new Rect(472, 218, 90, 92);
+smoothedProvider.SetFaceRects(181, new[] { smoothedMask }, size, 0.60f, new[] { 0.60f });
+var smoothedResult = guard.Apply(
+    smoothedProvider,
+    new[] { new FaceTrackFilledFace(181, smoothedCandidate, size, 0.60f, 180) },
+    static (source, target) => source == 180 && target == 181 ? 0.50 : 0.0,
+    candidateMatchMinIou: 0.55,
+    candidateMatchMaxCenterShiftRatio: 0.45,
+    candidateMatchMaxAreaChangeRatio: 2.0);
+
+if (smoothedResult.Removed != 1)
+    throw new InvalidOperationException($"Expected smoothed post-cut candidate to be removed by relaxed scene-cut matching, got {smoothedResult.Removed}.");
+if (smoothedProvider.TryGetFaceMaskData(181, out var smoothedFrame) && smoothedFrame.Faces.Count != 0)
+    throw new InvalidOperationException("Expected shifted smoothed post-cut candidate to be removed.");
+
 var postCutProvider = new FrameMaskProvider();
 var postCutPrevious = new Rect(100, 100, 90, 92);
 var postCutGhostA = new Rect(720, 260, 84, 86);
@@ -325,7 +361,7 @@ var mildGradualResult = guard.Apply(
 if (mildGradualResult.Removed != 1 || string.Join(",", mildGradualResult.CutFramePairs) != "0->4")
     throw new InvalidOperationException($"Expected lower direct scene-change threshold to remove mild gradual carry at frame 4, got removed={mildGradualResult.Removed}, cutPairs={string.Join(",", mildGradualResult.CutFramePairs)}.");
 
-Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, weakTailRemoved={weakTailResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

@@ -210,7 +210,10 @@ namespace FaceShield.Services.Analysis
             double differenceThreshold = DefaultDifferenceThreshold,
             double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
             int removeMatchingTailFrames = 0,
-            float removeMatchingTailMaxConfidence = 0.0f)
+            float removeMatchingTailMaxConfidence = 0.0f,
+            double candidateMatchMinIou = 0.80,
+            double candidateMatchMaxCenterShiftRatio = 0.35,
+            double candidateMatchMaxAreaChangeRatio = 1.8)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -272,7 +275,13 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 cutFramePairs.Add(cutFramePair);
-                if (RemoveFaceCandidate(maskProvider, candidate.FrameIndex, candidate.Bounds))
+                if (RemoveFaceCandidate(
+                        maskProvider,
+                        candidate.FrameIndex,
+                        candidate.Bounds,
+                        candidateMatchMinIou,
+                        candidateMatchMaxCenterShiftRatio,
+                        candidateMatchMaxAreaChangeRatio))
                 {
                     removedCandidates++;
                     removedFrameIndices.Add(candidate.FrameIndex);
@@ -307,6 +316,9 @@ namespace FaceShield.Services.Analysis
             double directDifferenceThreshold = DefaultDirectDifferenceThreshold,
             int removeMatchingTailFrames = 0,
             float removeMatchingTailMaxConfidence = 0.0f,
+            double candidateMatchMinIou = 0.80,
+            double candidateMatchMaxCenterShiftRatio = 0.35,
+            double candidateMatchMaxAreaChangeRatio = 1.8,
             CancellationToken cancellationToken = default)
         {
             if (maskProvider == null)
@@ -404,7 +416,13 @@ namespace FaceShield.Services.Analysis
                             continue;
 
                         cutFramePairs.Add(cutFramePair);
-                        if (RemoveFaceCandidate(maskProvider, candidate.FrameIndex, candidate.Bounds))
+                        if (RemoveFaceCandidate(
+                                maskProvider,
+                                candidate.FrameIndex,
+                                candidate.Bounds,
+                                candidateMatchMinIou,
+                                candidateMatchMaxCenterShiftRatio,
+                                candidateMatchMaxAreaChangeRatio))
                         {
                             removedCandidates++;
                             removedFrameIndices.Add(candidate.FrameIndex);
@@ -1034,24 +1052,50 @@ namespace FaceShield.Services.Analysis
             return false;
         }
 
-        private static bool RemoveFaceCandidate(FrameMaskProvider maskProvider, int frameIndex, Rect candidate)
+        private static bool RemoveFaceCandidate(
+            FrameMaskProvider maskProvider,
+            int frameIndex,
+            Rect candidate,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio)
         {
             if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) || data.Faces.Count == 0)
                 return false;
 
-            int removeIndex = -1;
+            int bestIouIndex = -1;
+            int fallbackIndex = -1;
             double bestIou = 0.0;
+            double bestFallbackScore = double.NegativeInfinity;
             for (int i = 0; i < data.Faces.Count; i++)
             {
-                double iou = IoU(data.Faces[i], candidate);
+                var face = data.Faces[i];
+                double iou = IoU(face, candidate);
                 if (iou > bestIou)
                 {
                     bestIou = iou;
-                    removeIndex = i;
+                    bestIouIndex = i;
+                }
+
+                if (iou >= minIou)
+                    continue;
+
+                if (!IsMatchingFace(candidate, face, minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                    continue;
+
+                double centerShift = GetNormalizedCenterShift(candidate, face);
+                double score = iou - centerShift;
+                if (score > bestFallbackScore)
+                {
+                    bestFallbackScore = score;
+                    fallbackIndex = i;
                 }
             }
 
-            if (removeIndex < 0 || bestIou < 0.80)
+            int removeIndex = bestIou >= minIou
+                ? bestIouIndex
+                : fallbackIndex;
+            if (removeIndex < 0)
                 return false;
 
             var faces = data.Faces.ToList();

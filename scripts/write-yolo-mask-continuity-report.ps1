@@ -6,7 +6,9 @@ param(
     [int]$IsolatedNeighborWindow = 1,
     [double]$LowConfidenceThreshold = 0.38,
     [double]$WeakNonEdgeThreshold = 0.50,
-    [double]$UpperFrameCenterYThreshold = 0.12,
+    [double]$UpperWeakNonEdgeThreshold = 0.60,
+    [double]$UpperFrameCenterYThreshold = 0.10,
+    [double]$UpperWeakNonEdgeMaxAreaRatio = 0.0065,
     [double]$EdgeMarginRatio = 0.02,
     [double]$FrameAspectRatio = 1.7777777777777777
 )
@@ -262,8 +264,13 @@ $weakNonEdgeRows = @($rows |
         -not (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
     } |
     Sort-Object Confidence, Frame, Index)
-$upperWeakNonEdgeRows = @($weakNonEdgeRows |
-    Where-Object { $_.CenterY -le $UpperFrameCenterYThreshold } |
+$upperWeakNonEdgeRows = @($rows |
+    Where-Object {
+        $_.Confidence -le $UpperWeakNonEdgeThreshold -and
+        $_.CenterY -le $UpperFrameCenterYThreshold -and
+        $_.AreaRatio -le $UpperWeakNonEdgeMaxAreaRatio -and
+        -not (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
+    } |
     Sort-Object Confidence, Frame, Index)
 $frameRange = if ($frames.Count -eq 0) { "none" } else { "{0}-{1}" -f $frames[0], $frames[$frames.Count - 1] }
 $generatedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -329,7 +336,7 @@ if ($lowConfidenceRows.Count -eq 0) {
 [void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Review hint | Box |")
 [void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- | --- |")
 foreach ($row in $weakNonEdgeRows | Select-Object -First 80) {
-    $hint = if ($row.CenterY -le $UpperFrameCenterYThreshold) {
+    $hint = if ($row.Confidence -le $UpperWeakNonEdgeThreshold -and $row.CenterY -le $UpperFrameCenterYThreshold -and $row.AreaRatio -le $UpperWeakNonEdgeMaxAreaRatio) {
         "upper-frame weak non-edge; review false positive vs small face"
     } else {
         "weak non-edge; review false positive"
@@ -339,6 +346,18 @@ foreach ($row in $weakNonEdgeRows | Select-Object -First 80) {
 }
 if ($weakNonEdgeRows.Count -eq 0) {
     [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
+}
+[void]$builder.AppendLine()
+
+[void]$builder.AppendLine("## Upper Weak-To-Medium Non-Edge Final Masks")
+[void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Box |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- |")
+foreach ($row in $upperWeakNonEdgeRows | Select-Object -First 80) {
+    [void]$builder.AppendLine(("| {0} | {1} | {2:F3} | {3:F3},{4:F3} | {5:F6} | {6:F3} | x={7:F1}, y={8:F1}, w={9:F1}, h={10:F1} |" -f
+        $row.Frame, $row.Index, $row.Confidence, $row.CenterX, $row.CenterY, $row.AreaRatio, $row.AspectRatio, $row.X, $row.Y, $row.W, $row.H))
+}
+if ($upperWeakNonEdgeRows.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | - | - | - | none |")
 }
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()

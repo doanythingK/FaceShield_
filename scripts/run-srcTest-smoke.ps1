@@ -456,7 +456,10 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.15;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
-    const float yoloSceneCutMatchingTailMaxConfidence = 0.78f;
+    const float yoloSceneCutMatchingTailMaxConfidence = 0.90f;
+    const double yoloSceneCutCandidateMatchMinIou = 0.55;
+    const double yoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.45;
+    const double yoloSceneCutCandidateMatchMaxAreaChangeRatio = 2.0;
     const int yoloSceneCutPostCutLookbackFrames = 3;
     const int yoloFinalMaskStableGapMaxFrames = 5;
     var trackOptions = useYolo
@@ -575,7 +578,10 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 input,
                 gapFill.CutGuardFacesInfo,
                 differenceThreshold: yoloSceneCutDifferenceThreshold,
-                directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold);
+                directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
+                candidateMatchMinIou: yoloSceneCutCandidateMatchMinIou,
+                candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
+                candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
         Console.WriteLine($"[SmokeYoloFinalMaskGapFillSceneCutGuard] label={label}, candidates={gapFill.CutGuardFacesInfo.Count}, checked={gapFillGuard.Checked}, checkedPairs={FormatTextValues(gapFillGuard.CheckedFramePairs)}, maxDiff={gapFillGuard.MaxDifference:F3}, cutPairs={FormatTextValues(gapFillGuard.CutFramePairs)}, removed={gapFillGuard.Removed}, removedFrames={FormatFrames(gapFillGuard.RemovedFrameIndices)}, threshold={gapFillGuard.Threshold:F3}, elapsedMs={gapFillGuard.ElapsedMs}, error={gapFillGuard.Error ?? "none"}");
         var sceneCutGuard = new FaceTrackSceneCutGuard();
         var directCandidates = sceneCutGuard.BuildWeakTrackTransitionCandidates(
@@ -603,7 +609,10 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             differenceThreshold: yoloSceneCutDifferenceThreshold,
             directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
             removeMatchingTailFrames: yoloSceneCutMatchingTailMaxFrames,
-            removeMatchingTailMaxConfidence: yoloSceneCutMatchingTailMaxConfidence);
+            removeMatchingTailMaxConfidence: yoloSceneCutMatchingTailMaxConfidence,
+            candidateMatchMinIou: yoloSceneCutCandidateMatchMinIou,
+            candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
+            candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         Console.WriteLine($"[SmokeYoloFinalMaskPostSceneCleanup] label={label}, removedWeakIsolated={postSceneCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postSceneCleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={postSceneCleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={postSceneCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postSceneCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postSceneCleanup.RemovedTinyIsolatedFaces}, removedUpperWeakClusters={postSceneCleanup.RemovedUpperWeakClusterFaces}, removedFrames={FormatFrames(postSceneCleanup.RemovedFrameIndices)}");
@@ -682,9 +691,12 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     const float lowConfidenceThreshold = 0.38f;
     const float weakNonEdgeThreshold = 0.50f;
     const float tinyShortThreshold = 0.62f;
+    const float upperWeakThreshold = 0.60f;
     const double edgeMarginRatio = 0.02;
     const double tinyWeakAreaRatio = 0.0012;
     const double tinyShortAreaRatio = 0.0009;
+    const double upperWeakCenterYRatio = 0.10;
+    const double upperWeakAreaRatio = 0.0065;
     const int shortGapMaxFrames = 3;
     const double largeJumpAreaChangeRatio = 4.0;
     const double largeJumpCenterShift = 0.20;
@@ -695,7 +707,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
         .ToArray();
     if (entries.Length == 0)
     {
-        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, upperWeak=0, upperWeakFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
         return;
     }
 
@@ -740,10 +752,12 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
 
     int lowConfidenceRows = 0;
     int weakNonEdgeRows = 0;
+    int upperWeakRows = 0;
     int tinyWeakRows = 0;
     int tinyShortRows = 0;
     var lowConfidenceFrames = new SortedSet<int>();
     var weakNonEdgeFrames = new SortedSet<int>();
+    var upperWeakFrames = new SortedSet<int>();
     var tinyWeakFrames = new SortedSet<int>();
     var tinyShortFrames = new SortedSet<int>();
     foreach (var entry in entries)
@@ -773,6 +787,13 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
                     tinyWeakFrames.Add(frameIndex);
                 }
             }
+            if (confidence <= upperWeakThreshold &&
+                !TouchesFinalMaskFrameEdge(face, data.Size, edgeMarginRatio) &&
+                IsUpperWeakFinalMaskFace(face, data.Size, upperWeakCenterYRatio, upperWeakAreaRatio))
+            {
+                upperWeakRows++;
+                upperWeakFrames.Add(frameIndex);
+            }
             if (confidence <= tinyShortThreshold &&
                 !TouchesFinalMaskFrameEdge(face, data.Size, edgeMarginRatio) &&
                 IsTinyFinalMaskFace(face, data.Size, tinyShortAreaRatio))
@@ -784,7 +805,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     }
 
     Console.WriteLine(
-        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
 }
 
 static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)
@@ -808,6 +829,17 @@ static bool IsTinyFinalMaskFace(Rect face, PixelSize size, double maxAreaRatio)
     double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
     double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
     return areaRatio <= maxAreaRatio;
+}
+
+static bool IsUpperWeakFinalMaskFace(Rect face, PixelSize size, double maxCenterYRatio, double maxAreaRatio)
+{
+    if (size.Width <= 0 || size.Height <= 0)
+        return false;
+
+    double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+    double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+    double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+    return centerYRatio <= maxCenterYRatio && areaRatio <= maxAreaRatio;
 }
 
 static bool TryGetBestFinalMaskFace(
