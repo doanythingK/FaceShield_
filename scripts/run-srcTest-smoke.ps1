@@ -634,7 +634,10 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             new YoloFinalMaskGapFillOptions
             {
                 MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
-                BlockedCutFramePairs = sceneCut.CutFramePairs,
+                BlockedCutFramePairs = sceneCut.CutFramePairs
+                    .Concat(gapFillGuard.CutFramePairs)
+                    .Distinct()
+                    .ToArray(),
                 BlockedFrameIndices = postSceneBlockedFrameIndices
             });
         Console.WriteLine($"[SmokeYoloFinalMaskPostSceneGapFill] label={label}, filled={postSceneGapFill.FilledFaces}, frames={FormatFrames(postSceneGapFill.FilledFrameIndices)}, blockedByCut={postSceneGapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(postSceneGapFill.BlockedCutFrameIndices)}, blockedByCleanup={postSceneGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(postSceneGapFill.BlockedCleanupFrameIndices)}");
