@@ -741,7 +741,8 @@ namespace FaceShield.ViewModels.Pages
                 _maskProvider,
                 maxTargetConfidence: YoloSceneCutPostCutCarryMaxConfidence,
                 maxCarryFrames: 5,
-                sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames);
+                sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
+                includeEdgeCandidates: true);
             var candidates = trackPost.FilledGapFacesInfo
                 .Concat(trackPost.FilledLostFacesInfo)
                 .Concat(trackPost.FilledInitialFacesInfo)

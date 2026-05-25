@@ -596,7 +596,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             maskProvider,
             maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
             maxCarryFrames: 5,
-            sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames);
+            sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames,
+            includeEdgeCandidates: true);
         var sceneCutCandidates = trackPost.FilledGapFacesInfo
             .Concat(trackPost.FilledLostFacesInfo)
             .Concat(trackPost.FilledInitialFacesInfo)

@@ -110,7 +110,8 @@ namespace FaceShield.Services.Analysis
             double edgeMarginRatio = 0.02,
             double minIou = 0.15,
             double maxCenterShiftRatio = 0.65,
-            double maxAreaChangeRatio = 3.0)
+            double maxAreaChangeRatio = 3.0,
+            bool includeEdgeCandidates = false)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -138,7 +139,7 @@ namespace FaceShield.Services.Analysis
                 {
                     var face = data.Faces[i];
                     float confidence = GetConfidence(data, i);
-                    if (!IsWeakNonEdgeCandidate(face, data.Size, confidence, maxTargetConfidence, edgeMarginRatio))
+                    if (!IsWeakCandidate(face, data.Size, confidence, maxTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
                         continue;
 
                     var run = BuildWeakCarryRun(
@@ -151,6 +152,7 @@ namespace FaceShield.Services.Analysis
                         minIou,
                         maxCenterShiftRatio,
                         maxAreaChangeRatio,
+                        includeEdgeCandidates,
                         out _);
                     if (run.Count == 0)
                         continue;
@@ -513,6 +515,7 @@ namespace FaceShield.Services.Analysis
             double minIou,
             double maxCenterShiftRatio,
             double maxAreaChangeRatio,
+            bool includeEdgeCandidates,
             out bool exceededLimit)
         {
             var run = new List<WeakCarryCandidate>();
@@ -532,6 +535,7 @@ namespace FaceShield.Services.Analysis
                         minIou,
                         maxCenterShiftRatio,
                         maxAreaChangeRatio,
+                        includeEdgeCandidates,
                         out var match,
                         out float confidence))
                 {
@@ -559,6 +563,7 @@ namespace FaceShield.Services.Analysis
             double minIou,
             double maxCenterShiftRatio,
             double maxAreaChangeRatio,
+            bool includeEdgeCandidates,
             out Rect match,
             out float confidence)
         {
@@ -569,7 +574,7 @@ namespace FaceShield.Services.Analysis
             {
                 var candidate = data.Faces[i];
                 float candidateConfidence = GetConfidence(data, i);
-                if (!IsWeakNonEdgeCandidate(candidate, data.Size, candidateConfidence, maxTargetConfidence, edgeMarginRatio))
+                if (!IsWeakCandidate(candidate, data.Size, candidateConfidence, maxTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
                     continue;
                 if (!IsMatchingFace(reference, candidate, minIou, maxCenterShiftRatio, maxAreaChangeRatio))
                     continue;
@@ -629,13 +634,15 @@ namespace FaceShield.Services.Analysis
             return false;
         }
 
-        private static bool IsWeakNonEdgeCandidate(
+        private static bool IsWeakCandidate(
             Rect face,
             PixelSize size,
             float confidence,
             float maxTargetConfidence,
-            double edgeMarginRatio)
-            => confidence <= maxTargetConfidence && !TouchesFrameEdge(face, size, edgeMarginRatio);
+            double edgeMarginRatio,
+            bool includeEdgeCandidates)
+            => confidence <= maxTargetConfidence &&
+                (includeEdgeCandidates || !TouchesFrameEdge(face, size, edgeMarginRatio));
 
         private static bool TouchesFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)
         {
