@@ -254,7 +254,8 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider maskProvider,
             string videoPath,
             IReadOnlyList<FaceTrackFilledFace> candidates,
-            double differenceThreshold = DefaultDifferenceThreshold)
+            double differenceThreshold = DefaultDifferenceThreshold,
+            CancellationToken cancellationToken = default)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -285,8 +286,21 @@ namespace FaceShield.Services.Analysis
                 byte[] targetBuffer = pool.Rent(sampleBytes);
                 try
                 {
+                    var ranges = BuildFrameDifferenceRanges(candidates);
+                    PrecomputeFrameDifferences(
+                        extractor,
+                        ranges,
+                        sampleWidth,
+                        sampleHeight,
+                        sourceBuffer,
+                        targetBuffer,
+                        differenceByPair,
+                        cancellationToken);
+
                     foreach (var candidate in candidates)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         int sourceFrame = Math.Min(candidate.SourceFrameIndex, candidate.FrameIndex);
                         int targetFrame = Math.Max(candidate.SourceFrameIndex, candidate.FrameIndex);
                         if (sourceFrame < 0 || targetFrame <= sourceFrame)
@@ -294,17 +308,12 @@ namespace FaceShield.Services.Analysis
 
                         checkedCandidates++;
                         checkedFramePairs.Add(FormatFramePair(sourceFrame, targetFrame));
-                        if (!TryComputeMaxSequentialDifference(
-                                    extractor,
-                                    sourceFrame,
-                                    targetFrame,
-                                    sampleWidth,
-                                    sampleHeight,
-                                    sourceBuffer,
-                                    targetBuffer,
-                                    differenceByPair,
-                                    out double difference,
-                                    out string cutFramePair))
+                        if (!TryGetMaxFrameDifferenceFromCache(
+                                sourceFrame,
+                                targetFrame,
+                                differenceByPair,
+                                out double difference,
+                                out string cutFramePair))
                         {
                             continue;
                         }
@@ -326,6 +335,10 @@ namespace FaceShield.Services.Analysis
                     pool.Return(sourceBuffer);
                     pool.Return(targetBuffer);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -526,6 +539,181 @@ namespace FaceShield.Services.Analysis
             => faceIndex >= 0 && faceIndex < data.Confidences.Count
                 ? data.Confidences[faceIndex]
                 : data.MinConfidence ?? 1.0f;
+
+        private readonly record struct FrameDifferenceRange(int SourceFrame, int TargetFrame);
+
+        private static IReadOnlyList<FrameDifferenceRange> BuildFrameDifferenceRanges(
+            IReadOnlyList<FaceTrackFilledFace> candidates)
+        {
+            var ranges = new List<FrameDifferenceRange>();
+            foreach (var candidate in candidates)
+            {
+                int sourceFrame = Math.Min(candidate.SourceFrameIndex, candidate.FrameIndex);
+                int targetFrame = Math.Max(candidate.SourceFrameIndex, candidate.FrameIndex);
+                if (sourceFrame < 0 || targetFrame <= sourceFrame)
+                    continue;
+
+                ranges.Add(new FrameDifferenceRange(sourceFrame, targetFrame));
+            }
+
+            if (ranges.Count == 0)
+                return Array.Empty<FrameDifferenceRange>();
+
+            ranges.Sort(static (a, b) =>
+            {
+                int sourceCompare = a.SourceFrame.CompareTo(b.SourceFrame);
+                return sourceCompare != 0
+                    ? sourceCompare
+                    : a.TargetFrame.CompareTo(b.TargetFrame);
+            });
+
+            var merged = new List<FrameDifferenceRange>();
+            foreach (var range in ranges)
+            {
+                if (merged.Count == 0)
+                {
+                    merged.Add(range);
+                    continue;
+                }
+
+                var last = merged[^1];
+                if (range.SourceFrame <= last.TargetFrame + 1)
+                {
+                    merged[^1] = new FrameDifferenceRange(
+                        last.SourceFrame,
+                        Math.Max(last.TargetFrame, range.TargetFrame));
+                }
+                else
+                {
+                    merged.Add(range);
+                }
+            }
+
+            return merged;
+        }
+
+        private static void PrecomputeFrameDifferences(
+            FfFrameExtractor extractor,
+            IReadOnlyList<FrameDifferenceRange> ranges,
+            int width,
+            int height,
+            byte[] sourceBuffer,
+            byte[] targetBuffer,
+            IDictionary<(int Source, int Target), double> differenceByPair,
+            CancellationToken cancellationToken)
+        {
+            foreach (var range in ranges)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                PrecomputeFrameDifferencesForRange(
+                    extractor,
+                    range.SourceFrame,
+                    range.TargetFrame,
+                    width,
+                    height,
+                    sourceBuffer,
+                    targetBuffer,
+                    differenceByPair,
+                    cancellationToken);
+            }
+        }
+
+        private static void PrecomputeFrameDifferencesForRange(
+            FfFrameExtractor extractor,
+            int sourceFrame,
+            int targetFrame,
+            int width,
+            int height,
+            byte[] sourceBuffer,
+            byte[] targetBuffer,
+            IDictionary<(int Source, int Target), double> differenceByPair,
+            CancellationToken cancellationToken)
+        {
+            if (targetFrame <= sourceFrame)
+                return;
+
+            extractor.StartSequentialRead(sourceFrame);
+            bool previousRead = false;
+            int previousFrame = -1;
+            int decodedFrame = sourceFrame - 1;
+            int stride = 0;
+            byte[] previousBuffer = sourceBuffer;
+            byte[] currentBuffer = targetBuffer;
+
+            while (decodedFrame <= targetFrame)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!extractor.TryGetNextFrameRawToBuffer(
+                        cancellationToken,
+                        width,
+                        height,
+                        useBilinear: true,
+                        previousRead ? currentBuffer : previousBuffer,
+                        out decodedFrame,
+                        out stride))
+                {
+                    return;
+                }
+
+                if (decodedFrame < sourceFrame)
+                    continue;
+
+                if (!previousRead)
+                {
+                    previousRead = true;
+                    previousFrame = decodedFrame;
+                    continue;
+                }
+
+                var pair = (previousFrame, decodedFrame);
+                if (!differenceByPair.ContainsKey(pair))
+                {
+                    differenceByPair[pair] = ComputeFrameDifference(
+                        previousBuffer,
+                        currentBuffer,
+                        width,
+                        height,
+                        stride);
+                }
+
+                if (decodedFrame >= targetFrame)
+                    return;
+
+                previousFrame = decodedFrame;
+                (previousBuffer, currentBuffer) = (currentBuffer, previousBuffer);
+            }
+        }
+
+        private static bool TryGetMaxFrameDifferenceFromCache(
+            int sourceFrame,
+            int targetFrame,
+            IDictionary<(int Source, int Target), double> differenceByPair,
+            out double maxDifference,
+            out string cutFramePair)
+        {
+            maxDifference = 0.0;
+            int maxSource = sourceFrame;
+            int maxTarget = targetFrame;
+            bool found = false;
+
+            for (int frame = sourceFrame; frame < targetFrame; frame++)
+            {
+                if (!differenceByPair.TryGetValue((frame, frame + 1), out double difference))
+                    continue;
+
+                found = true;
+                if (difference > maxDifference)
+                {
+                    maxDifference = difference;
+                    maxSource = frame;
+                    maxTarget = frame + 1;
+                }
+            }
+
+            cutFramePair = FormatFramePair(maxSource, maxTarget);
+            return found;
+        }
 
         private static double GetMaxFrameDifference(
             int sourceFrame,

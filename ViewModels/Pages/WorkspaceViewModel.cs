@@ -478,7 +478,7 @@ namespace FaceShield.ViewModels.Pages
 
                 var trackPost = ApplyAutoTemporalFixes();
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost);
+                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token);
                 if (detector is IBgraFaceDetector bgraDetector)
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
@@ -695,7 +695,10 @@ namespace FaceShield.ViewModels.Pages
             return result;
         }
 
-        private void RemoveYoloTrackFillAcrossSceneCuts(string videoPath, FaceTrackPostProcessResult trackPost)
+        private void RemoveYoloTrackFillAcrossSceneCuts(
+            string videoPath,
+            FaceTrackPostProcessResult trackPost,
+            CancellationToken cancellationToken)
         {
             var guard = new FaceTrackSceneCutGuard();
             var directCandidates = guard.BuildWeakTrackTransitionCandidates(
@@ -714,10 +717,17 @@ namespace FaceShield.ViewModels.Pages
                 .Concat(postCutCandidates)
                 .ToArray();
 
+            if (candidates.Length > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[FaceTrackSceneCutGuard] start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length}");
+            }
+
             var result = guard.Apply(
                 _maskProvider,
                 videoPath,
-                candidates);
+                candidates,
+                cancellationToken: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
