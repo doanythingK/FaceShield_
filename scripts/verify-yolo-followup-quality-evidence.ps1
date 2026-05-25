@@ -41,7 +41,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=10.0, y=20.0, w=50.0, h=60.0, area=3000.0, conf=0.410, cx=0.055, cy=0.120, areaRatio=0.002000, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=6, index=0, x=500.0, y=400.0, w=20.0, h=22.0, area=440.0, conf=0.220, cx=0.398, cy=0.571, areaRatio=0.000210, aspectRatio=0.909
 [SmokeDetection] label=synthetic-yolo, frame=9, index=0, x=700.0, y=120.0, w=24.0, h=25.0, area=600.0, conf=0.180, cx=0.556, cy=0.190, areaRatio=0.000290, aspectRatio=0.960
-[SmokeDetectionSummary] label=synthetic-yolo, frames=3, detections=3, frameRange=2-9, confMin=0.180, confAvg=0.270, confMax=0.410, areaRatioMin=0.000210, areaRatioAvg=0.000833, areaRatioMax=0.002000, aspectRatioMin=0.833, aspectRatioAvg=0.901, aspectRatioMax=0.960
+[SmokeDetection] label=synthetic-yolo, frame=10, index=0, x=610.0, y=35.0, w=34.0, h=30.0, area=1020.0, conf=0.310, cx=0.490, cy=0.070, areaRatio=0.000492, aspectRatio=1.133
+[SmokeDetectionSummary] label=synthetic-yolo, frames=4, detections=4, frameRange=2-10, confMin=0.180, confAvg=0.280, confMax=0.410, areaRatioMin=0.000210, areaRatioAvg=0.000748, areaRatioMax=0.002000, aspectRatioMin=0.833, aspectRatioAvg=0.959, aspectRatioMax=1.133
 '@ | Set-Content -Encoding UTF8 -Path $log
 
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -108,14 +109,14 @@ Assert-Contains "checklist has scene-cut evidence" $checklistText "directCandida
 Assert-Contains "checklist has false-positive label rule" $checklistText "do not treat YOLO or FaceONNX as ground truth"
 Assert-Contains "continuity says rows are final masks" $continuityText 'final `FrameMaskProvider` face rectangles'
 Assert-Contains "continuity reports short gaps" $continuityText "Short empty gaps: 2"
-Assert-Contains "continuity reports isolated masks" $continuityText "Isolated final mask frames: 3"
-Assert-Contains "continuity reports low confidence masks" $continuityText "Low-confidence final masks: 2"
+Assert-Contains "continuity reports isolated masks" $continuityText "Isolated final mask frames: 2"
+Assert-Contains "continuity reports low confidence masks" $continuityText "Low-confidence final masks: 3"
 Assert-Contains "continuity reports weak non-edge masks" $continuityText "Weak non-edge final masks: 3"
 Assert-Contains "continuity reports upper-frame weak non-edge masks" $continuityText "Upper-frame weak non-edge final masks: 1"
 Assert-Contains "continuity reports gap diagnostics" $continuityText "AreaChange[\s\S]*CenterShift[\s\S]*Review hint"
 Assert-Contains "continuity reports large jump hint" $continuityText "large box jump; review before fill"
 Assert-Contains "continuity includes weak non-edge table" $continuityText "Weak Non-Edge Final Masks[\s\S]*upper-frame weak non-edge; review false positive vs small face"
-Assert-Contains "summary records detection rows" $summaryText "Detection rows: 3"
+Assert-Contains "summary records detection rows" $summaryText "Detection rows: 4"
 Assert-Contains "summary links final mask continuity report" $summaryText "Final mask continuity"
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"

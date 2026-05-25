@@ -149,10 +149,15 @@ namespace FaceShield.Services.Analysis
                         minIou,
                         maxCenterShiftRatio,
                         maxAreaChangeRatio,
-                        out bool runExceededLimit);
-                    if (run.Count == 0 || runExceededLimit)
+                        out _);
+                    if (run.Count == 0)
                         continue;
 
+                    // Long weak runs are still worth checking when they begin
+                    // immediately after a scene cut. Skipping them entirely lets
+                    // a carried blur survive just because it lasted past the
+                    // conservative carry window. A strong continuation still
+                    // protects real after-cut detections.
                     if (HasStrongContinuation(
                             entries,
                             run[^1].FrameIndex + 1,

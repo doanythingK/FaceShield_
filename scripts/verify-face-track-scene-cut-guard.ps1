@@ -201,8 +201,8 @@ var postCutResult = guard.Apply(
     postCutCandidates,
     static (source, target) => source == 30 && target >= 31 && target <= 32 || source == 50 && target >= 51 && target <= 52 ? 0.52 : 0.05);
 
-if (postCutCandidates.Count != 11)
-    throw new InvalidOperationException($"Expected eleven weak post-cut carry candidates, got {postCutCandidates.Count}.");
+if (postCutCandidates.Count != 12)
+    throw new InvalidOperationException($"Expected twelve weak post-cut carry candidates, got {postCutCandidates.Count}.");
 
 if (postCutResult.Removed != 4 || string.Join(",", postCutResult.RemovedFrameIndices) != "31,32,51,52")
     throw new InvalidOperationException($"Expected weak post-cut carry at frames 31,32,51,52 to be removed, got removed={postCutResult.Removed}, frames={string.Join(",", postCutResult.RemovedFrameIndices)}.");
@@ -219,6 +219,31 @@ if (postCutProvider.TryGetFaceMaskData(52, out var postCutContinuousFrameB) && p
     throw new InvalidOperationException("Expected continuous weak carry tail after a hard cut to be removed.");
 if (!postCutProvider.TryGetFaceMaskData(40, out var persistentFrame) || persistentFrame.Faces.Count != 1)
     throw new InvalidOperationException("Expected persistent weak run beyond the carry cap to remain.");
+
+var longPostCutProvider = new FrameMaskProvider();
+for (int frame = 80; frame <= 86; frame++)
+{
+    var face = new Rect(360 + frame - 80, 240, 82, 84);
+    longPostCutProvider.SetFaceRects(frame, new[] { face }, size, 0.44f, new[] { 0.44f });
+}
+
+var longPostCutCandidates = guard.BuildWeakPostCutCarryCandidates(
+    longPostCutProvider,
+    maxTargetConfidence: 0.50f,
+    maxCarryFrames: 5);
+var longPostCutResult = guard.Apply(
+    longPostCutProvider,
+    longPostCutCandidates,
+    static (source, target) => source == 79 && target == 80 ? 0.52 : 0.05,
+    removeMatchingTailFrames: 6,
+    removeMatchingTailMaxConfidence: 0.78f);
+
+if (longPostCutCandidates.Count < 5)
+    throw new InvalidOperationException($"Expected long weak post-cut run to remain checkable, got {longPostCutCandidates.Count} candidates.");
+if (longPostCutResult.Removed != 7 || string.Join(",", longPostCutResult.RemovedFrameIndices) != "80,81,82,83,84,85,86")
+    throw new InvalidOperationException($"Expected long weak post-cut run to be removed from frames 80-86, got removed={longPostCutResult.Removed}, frames={string.Join(",", longPostCutResult.RemovedFrameIndices)}.");
+if (longPostCutProvider.TryGetFaceMaskData(86, out var longPostCutTail) && longPostCutTail.Faces.Count != 0)
+    throw new InvalidOperationException("Expected long weak post-cut tail to be removed.");
 
 var cacheProvider = new FrameMaskProvider();
 var cacheFaceA = new Rect(100, 100, 40, 42);
@@ -276,7 +301,7 @@ var mildGradualResult = guard.Apply(
 if (mildGradualResult.Removed != 1 || string.Join(",", mildGradualResult.CutFramePairs) != "0->4")
     throw new InvalidOperationException($"Expected lower direct scene-change threshold to remove mild gradual carry at frame 4, got removed={mildGradualResult.Removed}, cutPairs={string.Join(",", mildGradualResult.CutFramePairs)}.");
 
-Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, weakTailRemoved={weakTailResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, weakTailRemoved={weakTailResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

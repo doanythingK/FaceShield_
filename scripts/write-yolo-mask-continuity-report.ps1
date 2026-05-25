@@ -145,7 +145,21 @@ function Test-NormalizedEdgeTouch {
         [double]$FrameAspectRatio
     )
 
-    if ($MarginRatio -le 0 -or $FrameAspectRatio -le 0 -or $Row.AspectRatio -le 0 -or $Row.AreaRatio -le 0) {
+    if ($MarginRatio -le 0) {
+        return $false
+    }
+
+    $dimensions = Get-InferredFrameDimensions $Row
+    if ($null -ne $dimensions -and $dimensions.Width -gt 0 -and $dimensions.Height -gt 0) {
+        $marginX = $dimensions.Width * $MarginRatio
+        $marginY = $dimensions.Height * $MarginRatio
+        return $Row.X -le $marginX -or
+            $Row.Y -le $marginY -or
+            ($Row.X + $Row.W) -ge $dimensions.Width - $marginX -or
+            ($Row.Y + $Row.H) -ge $dimensions.Height - $marginY
+    }
+
+    if ($FrameAspectRatio -le 0 -or $Row.AspectRatio -le 0 -or $Row.AreaRatio -le 0) {
         return $false
     }
 
@@ -160,6 +174,30 @@ function Test-NormalizedEdgeTouch {
         $top -le $MarginRatio -or
         $right -ge 1.0 - $MarginRatio -or
         $bottom -ge 1.0 - $MarginRatio
+}
+
+function Get-InferredFrameDimensions {
+    param([object]$Row)
+
+    $centerX = [double]$Row.CenterX
+    $centerY = [double]$Row.CenterY
+    $width = 0.0
+    $height = 0.0
+    if ($centerX -gt 0) {
+        $width = ([double]$Row.X + ([double]$Row.W * 0.5)) / $centerX
+    }
+    if ($centerY -gt 0) {
+        $height = ([double]$Row.Y + ([double]$Row.H * 0.5)) / $centerY
+    }
+
+    if ($width -le 0 -or $height -le 0) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        Width = $width
+        Height = $height
+    }
 }
 
 $shortGaps = New-Object System.Collections.Generic.List[object]
