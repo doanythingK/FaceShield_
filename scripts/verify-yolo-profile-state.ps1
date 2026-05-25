@@ -15,7 +15,9 @@ param(
     [string]$BackendEnum = "Services/FaceDetection/FaceDetectorBackend.cs",
     [string]$YoloModelEnum = "Services/FaceDetection/YoloFaceModelType.cs",
     [string]$YoloModelResolver = "scripts/resolve-yolo-model-path.ps1",
-    [string]$SmokeHarness = "scripts/run-srcTest-smoke.ps1"
+    [string]$SmokeHarness = "scripts/run-srcTest-smoke.ps1",
+    [string]$SmoothingCutBoundaryVerifier = "scripts/verify-yolo-temporal-smoothing-cut-boundary.ps1",
+    [string]$AutoMosaicDefaultVerifier = "scripts/verify-auto-mosaic-default.ps1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +66,8 @@ $backend = Read-RepoFile $BackendEnum
 $modelEnum = Read-RepoFile $YoloModelEnum
 $yoloModelResolverText = Read-RepoFile $YoloModelResolver
 $smokeHarnessText = Read-RepoFile $SmokeHarness
+$smoothingCutBoundaryVerifyText = Read-RepoFile $SmoothingCutBoundaryVerifier
+$autoMosaicDefaultVerifyText = Read-RepoFile $AutoMosaicDefaultVerifier
 
 Assert-Match "backend enum exposes yolo" $backend "YoloFaceOnnx\s*=\s*3"
 Assert-Match "yolo model enum exposes v8" $modelEnum "YoloV8Face\s*=\s*0"
@@ -199,6 +203,7 @@ Assert-Match "workspace tracking toggle gates temporal fixes" $workspaceText "pr
 Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText "if\s*\(_autoOptions\.UseTracking\)\s*\{[\s\S]*ApplyAutoTemporalSmoothing\(_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*yoloPreSmoothCutPairs[\s\S]*Array\.Empty<string>\(\)\);[\s\S]*\}"
 Assert-Match "workspace smoothing does not search across long scene gaps" $workspaceText "TemporalSmoothSearchWindowFrames\s*=\s*2[\s\S]*BuildTemporalSmoothingCutStarts\(blockedCutPairs\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*-1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*searched\s*>\s*maxDistanceFrames"
 Assert-Match "workspace smoothing blocks pre-smooth yolo scene cuts" $workspaceText "yoloPreSmoothCutPairs[\s\S]*preSmoothGuard\.CutFramePairs[\s\S]*ApplyAutoTemporalSmoothing\(_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*BuildTemporalSmoothingCutStarts[\s\S]*Split\(""->""[\s\S]*IsBlockedTemporalSmoothingStep"
+Assert-Match "smoothing cut boundary verifier covers blocked direct pairs" $smoothingCutBoundaryVerifyText "10->13[\s\S]*AssertSet[\s\S]*13,\s*12[\s\S]*12,\s*13[\s\S]*InvokeFindNearest\(facesByFrame,\s*13,\s*-1,\s*2,\s*blocked\)"
 Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*2[\s\S]*MaxInitialFillFrames\s*=\s*3[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*StrongConfidence\s*=\s*0\.58f[\s\S]*DropShortTrackMaxDetections\s*=\s*2[\s\S]*DropShortSmallTrackMaxDetections\s*=\s*3[\s\S]*ShortTrackMaxConfidence\s*=\s*0\.48f[\s\S]*DropSparseTrackMaxDetections\s*=\s*3[\s\S]*DropSparseTrackMinSpanFrames\s*=\s*8[\s\S]*DropSparseTrackMaxDensity\s*=\s*0\.42[\s\S]*SparseTrackMaxConfidence\s*=\s*0\.56f[\s\S]*EdgeTailMaxConfidence\s*=\s*0\.50f[\s\S]*EdgeLostFillMaxConfidence\s*=\s*0\.60f[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
 Assert-Match "workspace logs sparse temporal removals" $workspaceText "removedSparse=\{result\.RemovedSparseFaces\}"
 Assert-Match "workspace logs edge-tail temporal removals" $workspaceText "removedEdgeTail=\{result\.RemovedEdgeTailFaces\}"
@@ -241,6 +246,7 @@ Assert-Match "workspace faceonnx track profile remains default branch" $workspac
 Assert-Match "workspace refreshes preview after track postprocess" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*RefreshAutoPreviewAfterPostProcess\(exportAfter\)"
 Assert-Match "workspace roi refine includes initial fill candidates" $workspaceText "private\s+void\s+RefineAutoFacesWithRoi[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*new\s+FaceTrackRoiRefiner\(\)\.Apply"
 Assert-Match "workspace applies yolo scene cut before and after temporal smoothing" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*RemoveYoloWeakIsolatedFinalMasks\(FrameList\.VideoPath,\s*token\);[\s\S]*var\s+preSmoothGuard\s*=\s*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""pre-smooth""\);[\s\S]*yoloPreSmoothCutPairs\s*=\s*preSmoothGuard\.CutFramePairs;[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*yoloPreSmoothCutPairs[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""post-smooth""\);[\s\S]*RemoveYoloWeakIsolatedFinalMasks\(FrameList\.VideoPath,\s*token,\s*fillStableGaps:\s*false\);[\s\S]*LogFinalMaskSummary"
+Assert-Match "default verifier runs smoothing cut boundary harness" $autoMosaicDefaultVerifyText "verify-yolo-temporal-smoothing-cut-boundary\.ps1[\s\S]*Invoke-ScriptStep\s+""yolo-temporal-smoothing-cut-boundary""[\s\S]*prevBlocked=True[\s\S]*nextBlocked=True"
 Assert-Match "workspace temporal smoothing does not materialize empty frames" $workspaceText "if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\)\s*continue;[\s\S]*if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\s*\|\|\s*facesByFrame\[i\]!\.Count\s*==\s*0\)\s*continue;"
 Assert-Match "roi refiner only replaces existing matching faces" $roiRefinerText "TryGetFaceMaskData\(candidate\.FrameIndex,[\s\S]*FindSimilarFaceIndex\(faces,\s*candidate\.Bounds\)[\s\S]*if\s*\(replaceIndex\s*<\s*0\)\s*return\s+false;[\s\S]*faces\[replaceIndex\]\s*=\s*refined\.Bounds"
 

@@ -59,6 +59,7 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $smoke = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $trackPostprocessVerify = Join-Path $repo "scripts\verify-face-track-postprocess.ps1"
 $faceTrackSceneCutGuardVerify = Join-Path $repo "scripts\verify-face-track-scene-cut-guard.ps1"
+$yoloTemporalSmoothingCutBoundaryVerify = Join-Path $repo "scripts\verify-yolo-temporal-smoothing-cut-boundary.ps1"
 $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sparse-scene-cut-guard.ps1"
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
 $yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
@@ -221,7 +222,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -253,6 +254,13 @@ Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directRemoved=3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutCandidates=11"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutRemoved=4"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "diffCacheCalls=1"
+
+$smoothingCutOutput = Invoke-ScriptStep "yolo-temporal-smoothing-cut-boundary" $yoloTemporalSmoothingCutBoundaryVerify @()
+Assert-Contains "yolo-temporal-smoothing-cut-boundary" $smoothingCutOutput "\[YoloTemporalSmoothingCutBoundaryVerify\]"
+Assert-Contains "yolo-temporal-smoothing-cut-boundary" $smoothingCutOutput "blocked=10,11,12,30"
+Assert-Contains "yolo-temporal-smoothing-cut-boundary" $smoothingCutOutput "prevBlocked=True"
+Assert-Contains "yolo-temporal-smoothing-cut-boundary" $smoothingCutOutput "nextSameScene=True"
+Assert-Contains "yolo-temporal-smoothing-cut-boundary" $smoothingCutOutput "nextBlocked=True"
 
 $sparseDecisionOutput = Invoke-ScriptStep "automask-sparse-scene-cut-guard" $autoMaskSparseSceneCutGuardVerify @()
 Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "\[AutoMaskSparseSceneCutGuardVerify\]"
