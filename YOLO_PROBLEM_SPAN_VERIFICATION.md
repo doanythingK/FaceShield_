@@ -1,0 +1,119 @@
+# YOLO Problem-Span Verification
+
+이 문서는 YOLO 자동 모자이크의 남은 문제를 전체 영상이 아니라 짧은 문제 구간으로 확인하기 위한 절차다.
+
+## 목적
+
+- 깜박임: 한 번 잡힌 얼굴이 짧은 detector miss 때문에 빠지는지 확인한다.
+- 화면전환 잔상: 컷 이후 이전 장면의 모자이크가 남는지 확인한다.
+- 오탐: 얼굴이 아닌 영역의 후보를 `face`/`nonface`/`miss` 기준으로 분리한다.
+- FaceONNX 기본 경로는 별도 회귀 게이트로만 확인하고, YOLO 문제 구간 검증과 섞지 않는다.
+
+## 짧은 구간 생성 및 실행
+
+긴 원본 영상을 그대로 smoke로 돌리지 않는다. 문제 구간 시작 시각과 길이를 정해서 30초 이하로 자른다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/write-yolo-followup-quality-evidence.ps1 `
+  -RunSmoke `
+  -ForceRunSmoke `
+  -Source "srcTest/260102_jp_10.mp4" `
+  -TrimStart "00:09:00" `
+  -TrimSeconds 2 `
+  -OutputDir ".tmp/yolo-problem-span-0900" `
+  -SkipReviewPackage `
+  -YoloModelType Yolo5Face `
+  -YoloInputSize 640 `
+  -YoloObjectnessThreshold 0.12 `
+  -YoloConfidenceThreshold 0.18 `
+  -YoloNmsThreshold 0.45 `
+  -ParallelDetectorCount 2 `
+  -MaxFullFrameRows 24
+```
+
+`-TrimStart`와 `-TrimSeconds`는 실제 문제 구간에 맞게 바꾼다. `-AllowLongSmokeSource`는 사용하지 않는다.
+
+## 산출물
+
+`-OutputDir` 아래에서 다음 파일을 확인한다.
+
+- `yolo-followup-quality-evidence.md`: 실행 summary, scene-cut 제거 결과, 최종 mask summary
+- `yolo-mask-continuity-report.md`: 짧은 gap, isolated mask, low-confidence mask 목록
+- `yolo-quality-review-checklist.md`: 깜박임/잔상/오탐 review frame 목록
+- `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
+
+review package가 필요하면 `-SkipReviewPackage`를 빼고 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
+
+## 판정 기준
+
+### 깜박임
+
+통과 근거:
+
+- `Final mask summary` 또는 `SmokeFinalMaskSummary`에서 `shortGaps=0`
+- `isolated=0`
+- `lostFrames`가 있더라도 해당 full-frame overlay에서 대상 얼굴이 계속 덮여 있음
+
+실패 근거:
+
+- 실제 얼굴이 있는 구간에서 `shortGaps`가 남음
+- review overlay에서 얼굴이 1-2프레임 빠짐
+- gap fill 이후 scene-cut guard가 정상 얼굴 구간을 잘못 지움
+
+### 화면전환 잔상
+
+통과 근거:
+
+- `Scene-cut guard`에 `cutPairs=...`와 `removedFrames=...`가 남음
+- 컷 직후 같은 위치의 약한 tail이 함께 제거됨
+- review overlay에서 다음 장면에 이전 장면의 모자이크가 남지 않음
+
+실패 근거:
+
+- `maxDiff`가 threshold 이상인데 `removedFrames=none`
+- 컷 직후 1-5프레임 동안 같은 위치의 약한 box가 남음
+- `removedFrames` 이후 final cleanup/gap fill이 같은 위치의 mask를 다시 만든 흔적이 있음
+
+### 오탐
+
+자동 오탐으로 단정하지 않는다. 다음 기준으로 라벨링한다.
+
+- `face`: 후보 box가 실제 보이는 얼굴 또는 보호해야 할 부분 얼굴을 덮음
+- `nonface`: 배경, 물체, 자막, 몸통 등 얼굴이 아닌 영역
+- `miss`: 보이는 얼굴이 후보 box에 덮이지 않음. CSV에 수동 row를 추가한다.
+
+자동 삭제 후보로 볼 수 있는 근거:
+
+- `weak unsupported`
+- `very-low-confidence short cluster`
+- `tiny isolated non-edge`
+- scene-cut 이후 같은 위치의 weak tail
+
+삭제하지 말고 review 대상으로 남겨야 하는 근거:
+
+- edge에 닿은 부분 얼굴
+- 3프레임 이상 안정적으로 이어지는 작은 후보
+- confidence가 낮아도 주변 frame에 strong continuation이 있는 후보
+
+## 회귀 확인
+
+YOLO 문제 구간 수정 후에는 다음을 실행한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify-auto-mosaic-default.ps1
+dotnet build FaceShield.sln
+```
+
+`verify-auto-mosaic-default.ps1`는 FaceONNX/default 회귀와 YOLO 후처리 verifier를 같이 확인한다. FFmpeg hardware decode setup warning은 fallback 후 검증이 통과하면 실패 근거로 보지 않는다.
+
+## 완료 조건
+
+goal 완료로 볼 수 있는 최소 증거:
+
+- 문제 구간 30초 이하 clip 또는 기존 run log 기반 evidence bundle이 있음
+- 깜박임, 화면전환 잔상, 오탐 후보가 각각 checklist/review artifact에서 확인됨
+- `dotnet build FaceShield.sln` 통과
+- FaceONNX/default regression gate 통과
+- 문서에 최종 evidence path와 남은 risk가 기록됨
+
+현재 상태에서는 기존 짧은 샘플 evidence와 verifier는 통과했지만, 사용자가 실제로 본 문제 구간의 visual confirmation은 아직 별도 증거가 필요하다.
