@@ -33,7 +33,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 @'
 [AutoRunSummary] runId=synthetic, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=3, small=0, rejected=1, statsRejected=0
 [SmokeFaceTrackPost] label=synthetic-yolo, tracks=1, filled=1, lostFilled=2, lostFrames=4,5, removedShort=1, removedSparse=1, removedEdgeTail=1, removedLower=0, rewritten=6
-[SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
+[SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, postCutCandidates=2, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=8,10,11,12
 [SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5
 [SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
@@ -106,6 +106,7 @@ Assert-Contains "script passes required full-frame review frames" $scriptText "R
 Assert-Contains "script expands review video frame count for required frames" $scriptText "reviewVideoFrameCount[\s\S]*maxRequiredFrame\s*\+\s*1"
 Assert-Contains "script writes summary" $scriptText "YOLO Follow-Up Quality Evidence"
 Assert-Contains "checklist has scene-cut evidence" $checklistText "directCandidates=1"
+Assert-Contains "checklist has post-cut scene-cut evidence" $checklistText "postCutCandidates=2"
 Assert-Contains "checklist has false-positive label rule" $checklistText "do not treat YOLO or FaceONNX as ground truth"
 Assert-Contains "continuity says rows are final masks" $continuityText 'final `FrameMaskProvider` face rectangles'
 Assert-Contains "continuity reports short gaps" $continuityText "Short empty gaps: 2"
