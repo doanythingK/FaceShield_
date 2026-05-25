@@ -20,7 +20,8 @@ namespace FaceShield.Services.Analysis
             float maxTargetConfidence,
             int maxTransitionGap,
             float minConfidenceDrop = 0.10f,
-            int maxPostCutCarryFrames = 3)
+            int maxPostCutCarryFrames = 3,
+            float minSourceConfidence = 0.0f)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -69,6 +70,11 @@ namespace FaceShield.Services.Analysis
                         continue;
                     if (current.Confidence > maxTargetConfidence)
                         continue;
+                    if (minSourceConfidence > 0 &&
+                        previous.Confidence < minSourceConfidence)
+                    {
+                        continue;
+                    }
                     if (minConfidenceDrop > 0 &&
                         previous.Confidence - current.Confidence < minConfidenceDrop)
                     {

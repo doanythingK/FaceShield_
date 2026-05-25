@@ -52,6 +52,7 @@ namespace FaceShield.ViewModels.Pages
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
         private const float YoloSceneCutDirectCarryMaxConfidence = 0.90f;
+        private const float YoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.15;
@@ -743,7 +744,8 @@ namespace FaceShield.ViewModels.Pages
                 maxTargetConfidence: YoloSceneCutDirectCarryMaxConfidence,
                 maxTransitionGap: SuspiciousNoFaceMaxGap,
                 minConfidenceDrop: 0.02f,
-                maxPostCutCarryFrames: 5);
+                maxPostCutCarryFrames: 5,
+                minSourceConfidence: YoloSceneCutDirectCarryMinSourceConfidence);
             var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
                 _maskProvider,
                 maxTargetConfidence: YoloSceneCutPostCutCarryMaxConfidence,

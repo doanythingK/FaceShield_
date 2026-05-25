@@ -452,6 +452,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
     const float yoloSceneCutDirectCarryMaxConfidence = 0.90f;
+    const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.15;
@@ -592,7 +593,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
             maxTransitionGap: 8,
             minConfidenceDrop: 0.02f,
-            maxPostCutCarryFrames: 5);
+            maxPostCutCarryFrames: 5,
+            minSourceConfidence: yoloSceneCutDirectCarryMinSourceConfidence);
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
             maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
