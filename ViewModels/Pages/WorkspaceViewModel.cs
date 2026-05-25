@@ -51,9 +51,10 @@ namespace FaceShield.ViewModels.Pages
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
         private const float YoloSceneCutDirectCarryMaxConfidence = 0.78f;
-        private const float YoloSceneCutPostCutCarryMaxConfidence = 0.66f;
+        private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.24;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.24;
+        private const int YoloFinalMaskStableGapMaxFrames = 5;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
         private const float YoloFinalMaskTinyShortConfidenceMax = 0.62f;
@@ -483,8 +484,6 @@ namespace FaceShield.ViewModels.Pages
                 }
 
                 var trackPost = ApplyAutoTemporalFixes();
-                if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token);
                 if (detector is IBgraFaceDetector bgraDetector)
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
@@ -493,6 +492,8 @@ namespace FaceShield.ViewModels.Pages
                 {
                     ApplyAutoTemporalSmoothing();
                 }
+                if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
+                    RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token);
                 LogFinalMaskSummary();
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
@@ -781,7 +782,12 @@ namespace FaceShield.ViewModels.Pages
             string videoPath,
             CancellationToken cancellationToken)
         {
-            var gapFill = postProcessor.FillShortStableGaps(_maskProvider);
+            var gapFill = postProcessor.FillShortStableGaps(
+                _maskProvider,
+                new YoloFinalMaskGapFillOptions
+                {
+                    MaxGapFrames = YoloFinalMaskStableGapMaxFrames
+                });
             if (gapFill.FilledFaces <= 0)
                 return;
 

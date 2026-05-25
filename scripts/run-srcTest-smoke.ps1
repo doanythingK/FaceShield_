@@ -452,9 +452,10 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
     const float yoloSceneCutDirectCarryMaxConfidence = 0.78f;
-    const float yoloSceneCutPostCutCarryMaxConfidence = 0.66f;
+    const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.24;
     const double yoloSceneCutDirectDifferenceThreshold = 0.24;
+    const int yoloFinalMaskStableGapMaxFrames = 5;
     var trackOptions = useYolo
         ? new FaceTrackPostProcessOptions
             {
@@ -585,7 +586,12 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var postProcessor = new YoloFinalMaskPostProcessor();
         var cleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
-        var gapFill = postProcessor.FillShortStableGaps(maskProvider);
+        var gapFill = postProcessor.FillShortStableGaps(
+            maskProvider,
+            new YoloFinalMaskGapFillOptions
+            {
+                MaxGapFrames = yoloFinalMaskStableGapMaxFrames
+            });
         Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}");
         var gapFillGuard = gapFill.CutGuardFacesInfo.Count == 0
             ? FaceTrackSceneCutGuardResult.Empty

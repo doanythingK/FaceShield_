@@ -186,6 +186,19 @@ if (gapProvider.TryGetFaceMaskData(51, out var weakGap) && weakGap.Faces.Count >
 if (gapProvider.TryGetFaceMaskData(71, out var jumpGap) && jumpGap.Faces.Count > 0)
     throw new InvalidOperationException("Expected large-jump gap at frame 71 to remain unfilled.");
 
+var extendedGapProvider = new FrameMaskProvider();
+extendedGapProvider.SetFaceRects(300, new[] { new Rect(440, 220, 90, 90) }, size, 0.82f, new[] { 0.82f });
+extendedGapProvider.SetFaceRects(306, new[] { new Rect(455, 230, 90, 90) }, size, 0.80f, new[] { 0.80f });
+var defaultExtendedGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(extendedGapProvider);
+if (defaultExtendedGapFill.FilledFaces != 0)
+    throw new InvalidOperationException($"Expected default final-mask gap fill to leave a five-frame gap for conservative callers, got {defaultExtendedGapFill.FilledFaces}.");
+var appExtendedGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(
+    extendedGapProvider,
+    new YoloFinalMaskGapFillOptions { MaxGapFrames = 5 });
+var extendedGapFrames = string.Join(",", appExtendedGapFill.FilledFrameIndices);
+if (appExtendedGapFill.FilledFaces != 5 || extendedGapFrames != "301,302,303,304,305")
+    throw new InvalidOperationException($"Expected app five-frame stable gap fill at frames 301-305, got filled={appExtendedGapFill.FilledFaces}, frames={extendedGapFrames}.");
+
 var mixedFrameGapProvider = new FrameMaskProvider();
 mixedFrameGapProvider.SetFaceRects(10, new[] { new Rect(500, 260, 90, 90) }, size, 0.82f, new[] { 0.82f });
 mixedFrameGapProvider.SetFaceRects(11, new[] { new Rect(1200, 500, 100, 100) }, size, 0.91f, new[] { 0.91f });
@@ -231,7 +244,7 @@ if (afterCutGapProvider.TryGetFaceMaskData(201, out var afterCutFilled) && after
     throw new InvalidOperationException("Expected next-anchor scene-cut guard to remove the filled gap frame.");
 
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, gapCutAfterRemoved={afterCutGuard.Removed}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
