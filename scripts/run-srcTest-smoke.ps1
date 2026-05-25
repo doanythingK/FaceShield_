@@ -525,16 +525,21 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             trackOptions,
             maxTargetConfidence: 0.60f,
             maxTransitionGap: 8);
+        var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
+            maskProvider,
+            maxTargetConfidence: 0.50f,
+            maxCarryFrames: 6);
         var sceneCutCandidates = trackPost.FilledGapFacesInfo
             .Concat(trackPost.FilledLostFacesInfo)
             .Concat(trackPost.FilledInitialFacesInfo)
             .Concat(directCandidates)
+            .Concat(postCutCandidates)
             .ToArray();
         var sceneCut = sceneCutGuard.Apply(
             maskProvider,
             input,
             sceneCutCandidates);
-        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
+        Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
     }
     if (detector is IBgraFaceDetector bgraDetector)
     {

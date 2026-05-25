@@ -101,6 +101,92 @@ namespace FaceShield.Services.Analysis
             return candidates;
         }
 
+        public IReadOnlyList<FaceTrackFilledFace> BuildWeakPostCutCarryCandidates(
+            FrameMaskProvider maskProvider,
+            float maxTargetConfidence,
+            int maxCarryFrames,
+            double edgeMarginRatio = 0.02,
+            double minIou = 0.15,
+            double maxCenterShiftRatio = 0.65,
+            double maxAreaChangeRatio = 3.0)
+        {
+            if (maskProvider == null)
+                throw new ArgumentNullException(nameof(maskProvider));
+            if (maxTargetConfidence <= 0 || maxCarryFrames <= 0)
+                return Array.Empty<FaceTrackFilledFace>();
+
+            var entries = maskProvider.GetFaceMaskEntries()
+                .Where(static x => x.Value.Faces.Count > 0)
+                .OrderBy(static x => x.Key)
+                .ToDictionary(static x => x.Key, static x => x.Value);
+            if (entries.Count == 0)
+                return Array.Empty<FaceTrackFilledFace>();
+
+            var candidates = new List<FaceTrackFilledFace>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+            {
+                int frameIndex = entry.Key;
+                if (frameIndex <= 0)
+                    continue;
+
+                var data = entry.Value;
+                for (int i = 0; i < data.Faces.Count; i++)
+                {
+                    var face = data.Faces[i];
+                    float confidence = GetConfidence(data, i);
+                    if (!IsWeakNonEdgeCandidate(face, data.Size, confidence, maxTargetConfidence, edgeMarginRatio))
+                        continue;
+
+                    if (HasMatchingFace(entries, frameIndex - 1, face, minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                        continue;
+
+                    var run = BuildWeakCarryRun(
+                        entries,
+                        frameIndex,
+                        face,
+                        maxTargetConfidence,
+                        maxCarryFrames,
+                        edgeMarginRatio,
+                        minIou,
+                        maxCenterShiftRatio,
+                        maxAreaChangeRatio,
+                        out bool runExceededLimit);
+                    if (run.Count == 0 || runExceededLimit)
+                        continue;
+
+                    if (HasStrongContinuation(
+                            entries,
+                            run[^1].FrameIndex + 1,
+                            run[^1].Bounds,
+                            maxTargetConfidence,
+                            minIou,
+                            maxCenterShiftRatio,
+                            maxAreaChangeRatio))
+                    {
+                        continue;
+                    }
+
+                    int sourceFrame = frameIndex - 1;
+                    foreach (var item in run)
+                    {
+                        string key = $"{item.FrameIndex}:{Math.Round(item.Bounds.X, 2)}:{Math.Round(item.Bounds.Y, 2)}:{Math.Round(item.Bounds.Width, 2)}:{Math.Round(item.Bounds.Height, 2)}";
+                        if (!seen.Add(key))
+                            continue;
+
+                        candidates.Add(new FaceTrackFilledFace(
+                            item.FrameIndex,
+                            item.Bounds,
+                            item.Size,
+                            item.Confidence,
+                            sourceFrame));
+                    }
+                }
+            }
+
+            return candidates;
+        }
+
         public FaceTrackSceneCutGuardResult Apply(
             FrameMaskProvider maskProvider,
             IReadOnlyList<FaceTrackFilledFace> candidates,
@@ -273,6 +359,173 @@ namespace FaceShield.Services.Analysis
             => string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
                 $"{sourceFrame}->{targetFrame}");
+
+        private static List<WeakCarryCandidate> BuildWeakCarryRun(
+            IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
+            int startFrame,
+            Rect startFace,
+            float maxTargetConfidence,
+            int maxCarryFrames,
+            double edgeMarginRatio,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio,
+            out bool exceededLimit)
+        {
+            var run = new List<WeakCarryCandidate>();
+            Rect current = startFace;
+            exceededLimit = false;
+            for (int offset = 0; offset <= maxCarryFrames; offset++)
+            {
+                int frameIndex = startFrame + offset;
+                if (!entries.TryGetValue(frameIndex, out var data))
+                    break;
+
+                if (!TryFindMatchingWeakNonEdgeFace(
+                        data,
+                        current,
+                        maxTargetConfidence,
+                        edgeMarginRatio,
+                        minIou,
+                        maxCenterShiftRatio,
+                        maxAreaChangeRatio,
+                        out var match,
+                        out float confidence))
+                {
+                    break;
+                }
+
+                if (offset == maxCarryFrames)
+                {
+                    exceededLimit = true;
+                    break;
+                }
+
+                run.Add(new WeakCarryCandidate(frameIndex, match, data.Size, confidence));
+                current = match;
+            }
+
+            return run;
+        }
+
+        private static bool TryFindMatchingWeakNonEdgeFace(
+            FrameMaskProvider.FaceMaskData data,
+            Rect reference,
+            float maxTargetConfidence,
+            double edgeMarginRatio,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio,
+            out Rect match,
+            out float confidence)
+        {
+            match = default;
+            confidence = 0.0f;
+            double bestScore = double.NegativeInfinity;
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                var candidate = data.Faces[i];
+                float candidateConfidence = GetConfidence(data, i);
+                if (!IsWeakNonEdgeCandidate(candidate, data.Size, candidateConfidence, maxTargetConfidence, edgeMarginRatio))
+                    continue;
+                if (!IsMatchingFace(reference, candidate, minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                    continue;
+
+                double score = IoU(reference, candidate);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    match = candidate;
+                    confidence = candidateConfidence;
+                }
+            }
+
+            return bestScore > double.NegativeInfinity;
+        }
+
+        private static bool HasStrongContinuation(
+            IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
+            int frameIndex,
+            Rect face,
+            float maxTargetConfidence,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio)
+        {
+            if (!entries.TryGetValue(frameIndex, out var data))
+                return false;
+
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                if (GetConfidence(data, i) <= maxTargetConfidence)
+                    continue;
+                if (IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasMatchingFace(
+            IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
+            int frameIndex,
+            Rect face,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio)
+        {
+            if (!entries.TryGetValue(frameIndex, out var data))
+                return false;
+
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                if (IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsWeakNonEdgeCandidate(
+            Rect face,
+            PixelSize size,
+            float confidence,
+            float maxTargetConfidence,
+            double edgeMarginRatio)
+            => confidence <= maxTargetConfidence && !TouchesFrameEdge(face, size, edgeMarginRatio);
+
+        private static bool TouchesFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double marginX = size.Width * Math.Max(0.0, edgeMarginRatio);
+            double marginY = size.Height * Math.Max(0.0, edgeMarginRatio);
+            return face.X <= marginX ||
+                face.Y <= marginY ||
+                face.Right >= size.Width - marginX ||
+                face.Bottom >= size.Height - marginY;
+        }
+
+        private static bool IsMatchingFace(
+            Rect a,
+            Rect b,
+            double minIou,
+            double maxCenterShiftRatio,
+            double maxAreaChangeRatio)
+        {
+            double areaRatio = GetAreaRatio(a, b);
+            if (areaRatio > maxAreaChangeRatio || areaRatio < 1.0 / maxAreaChangeRatio)
+                return false;
+            if (IoU(a, b) >= minIou)
+                return true;
+            return GetNormalizedCenterShift(a, b) <= maxCenterShiftRatio;
+        }
+
+        private static float GetConfidence(FrameMaskProvider.FaceMaskData data, int faceIndex)
+            => faceIndex >= 0 && faceIndex < data.Confidences.Count
+                ? data.Confidences[faceIndex]
+                : data.MinConfidence ?? 1.0f;
 
         private static double GetMaxFrameDifference(
             int sourceFrame,
@@ -478,6 +731,32 @@ namespace FaceShield.Services.Analysis
             double union = a.Width * a.Height + b.Width * b.Height - inter;
             return union <= 0.0 ? 0.0 : inter / union;
         }
+
+        private static double GetAreaRatio(Rect a, Rect b)
+        {
+            double aa = Math.Max(1.0, a.Width * a.Height);
+            double ba = Math.Max(1.0, b.Width * b.Height);
+            return Math.Max(aa, ba) / Math.Min(aa, ba);
+        }
+
+        private static double GetNormalizedCenterShift(Rect a, Rect b)
+        {
+            double ax = a.X + a.Width * 0.5;
+            double ay = a.Y + a.Height * 0.5;
+            double bx = b.X + b.Width * 0.5;
+            double by = b.Y + b.Height * 0.5;
+            double dx = ax - bx;
+            double dy = ay - by;
+            double shift = Math.Sqrt(dx * dx + dy * dy);
+            double maxDim = Math.Max(Math.Max(a.Width, a.Height), Math.Max(b.Width, b.Height));
+            return maxDim <= 0.0 ? double.MaxValue : shift / maxDim;
+        }
+
+        private readonly record struct WeakCarryCandidate(
+            int FrameIndex,
+            Rect Bounds,
+            PixelSize Size,
+            float Confidence);
     }
 
     public readonly record struct FaceTrackSceneCutGuardResult(

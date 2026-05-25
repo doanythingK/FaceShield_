@@ -701,10 +701,15 @@ namespace FaceShield.ViewModels.Pages
                 BuildTrackPostProcessOptions(FaceFilterProfile.Yolo),
                 maxTargetConfidence: 0.60f,
                 maxTransitionGap: SuspiciousNoFaceMaxGap);
+            var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
+                _maskProvider,
+                maxTargetConfidence: 0.50f,
+                maxCarryFrames: 6);
             var candidates = trackPost.FilledGapFacesInfo
                 .Concat(trackPost.FilledLostFacesInfo)
                 .Concat(trackPost.FilledInitialFacesInfo)
                 .Concat(directCandidates)
+                .Concat(postCutCandidates)
                 .ToArray();
 
             var result = guard.Apply(
@@ -715,14 +720,14 @@ namespace FaceShield.ViewModels.Pages
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] skipped directCandidates={directCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
+                    $"[FaceTrackSceneCutGuard] skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
                 return;
             }
 
             if (result.Checked > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] directCandidates={directCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
+                    $"[FaceTrackSceneCutGuard] directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
             }
         }
 

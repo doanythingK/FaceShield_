@@ -249,6 +249,8 @@ Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reverseRemoved=1"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "reversePairs=1->3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directCandidates=3"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "directRemoved=3"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutCandidates=2"
+Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "postCutRemoved=2"
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "diffCacheCalls=1"
 
 $sparseDecisionOutput = Invoke-ScriptStep "automask-sparse-scene-cut-guard" $autoMaskSparseSceneCutGuardVerify @()
