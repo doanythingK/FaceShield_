@@ -175,6 +175,7 @@ The original check did not find a persisted YOLO auto-detect `.log` file. The la
    - Detection and postprocess were already complete in that flow; only export was canceled.
    - `WorkspaceViewModel` now marks detection complete and clears `_autoResumeIndex` before export, so canceling export no longer reopens as a partial detection resume.
    - 2026-05-27 follow-up: a resumed auto-detect run now removes stale face-rect masks from the resume frame onward before the detector starts. This prevents old YOLO masks after the resume point from blocking fresh detections and then being postprocessed/exported as if they came from the new run. The app logs this as `[AutoMaskResumeReset] start=... removedStaleFaceMasks=...`, and `scripts/verify-auto-resume-mask-reset.ps1` covers the source invariant.
+   - `[AutoRunSummary]` now includes `startFrame=...`, so future debug output can distinguish a normal partial resume from a suspicious short run before judging flicker or scene-carry evidence.
    - `--no-auto-export` and `--frame <index>` were added for GUI smoke so automatic detection can complete and leave a selected preview frame visible for recording.
 
 6. Auto face masks were not persisted for reopen-state. Fix implemented and covered by reopen-state/manual smoke evidence.

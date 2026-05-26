@@ -5,6 +5,7 @@ param(
     [string]$HomeView = "Views/Pages/HomePageView.axaml",
     [string]$HomeViewCodeBehind = "Views/Pages/HomePageView.axaml.cs",
     [string]$WorkspaceViewModel = "ViewModels/Pages/WorkspaceViewModel.cs",
+    [string]$AutoMaskRunSummary = "Services/Analysis/AutoMaskRunSummary.cs",
     [string]$AutoMaskGenerator = "Services/Analysis/AutoMaskGenerator.cs",
     [string]$TrackBuilder = "Services/Analysis/FaceTrackBuilder.cs",
     [string]$TrackInterpolator = "Services/Analysis/FaceTrackInterpolator.cs",
@@ -74,6 +75,7 @@ $homeText = Read-RepoFile $HomeViewModel
 $homeViewText = Read-RepoFile $HomeView
 $homeViewCodeBehindText = Read-RepoFile $HomeViewCodeBehind
 $workspaceText = Read-RepoFile $WorkspaceViewModel
+$autoMaskRunSummaryText = Read-RepoFile $AutoMaskRunSummary
 $autoMaskGeneratorText = Read-RepoFile $AutoMaskGenerator
 $trackBuilderText = Read-RepoFile $TrackBuilder
 $trackInterpolatorText = Read-RepoFile $TrackInterpolator
@@ -223,6 +225,8 @@ Assert-Match "yolo tile-only maps to full-frame switch" $homeText "IncludeFullFr
 Assert-Match "workspace autotune guarded to faceonnx backend" $workspaceText "_detectorFactoryOptions\.Backend\s*==\s*FaceDetectorBackend\.FaceOnnx[\s\S]*DetectorAutoTuner\.TryTune"
 Assert-Match "workspace autotune updates faceonnx options only" $workspaceText "detectorFactoryOptions\s*=\s*detectorFactoryOptions\.WithFaceOnnxOptions\(detectorOptions\)"
 Assert-Match "workspace keeps configured filter profile in run options" $workspaceText "FilterProfile\s*=\s*_autoOptions\.FilterProfile"
+Assert-Match "auto summary logs start frame" $autoMaskRunSummaryText "int\s+StartFrameIndex[\s\S]*startFrame=\{StartFrameIndex\}"
+Assert-Match "auto generator passes start frame into summaries" $autoMaskGeneratorText "new\s+AutoMaskRunSummary\([\s\S]*totalFrames,\s*start,[\s\S]*processed[\s\S]*new\s+AutoMaskRunSummary\([\s\S]*totalFrames,\s*start,[\s\S]*decoded"
 Assert-Match "workspace tracking toggle gates temporal fixes" $workspaceText "private\s+FaceTrackPostProcessResult\s+ApplyAutoTemporalFixes\(\)[\s\S]*if\s*\(!_autoOptions\.UseTracking\)[\s\S]*return\s+FaceTrackPostProcessResult\.Empty"
 Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText "if\s*\(_autoOptions\.UseTracking\)\s*\{[\s\S]*ApplyAutoTemporalSmoothing\(_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*yoloPreSmoothCutPairs[\s\S]*Array\.Empty<string>\(\)\);[\s\S]*\}"
 Assert-Match "workspace smoothing does not search across long scene gaps" $workspaceText "TemporalSmoothSearchWindowFrames\s*=\s*2[\s\S]*BuildTemporalSmoothingCutStarts\(blockedCutPairs\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*-1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*searched\s*>\s*maxDistanceFrames"

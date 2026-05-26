@@ -31,7 +31,7 @@ if (-not (Test-Path $script)) {
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @'
-[AutoRunSummary] runId=synthetic, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=3, small=0, rejected=1, statsRejected=0
+[AutoRunSummary] runId=synthetic, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, startFrame=0, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=3, small=0, rejected=1, statsRejected=0
 [SmokeFaceTrackPost] label=synthetic-yolo, tracks=1, filled=1, lostFilled=2, lostFrames=4,5, removedShort=1, removedSparse=1, removedUnstableTail=1, removedEdgeTail=1, removedLower=0, rewritten=6
 [SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, postCutCandidates=2, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedMediumUnsupported=0, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedTopEdgeWeakClusters=0, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=8,10,11,12
@@ -130,6 +130,7 @@ Assert-Contains "continuity includes weak edge table" $continuityText "Weak Edge
 Assert-Contains "continuity includes lower weak table" $continuityText "Lower Weak-To-Medium Non-Edge Final Masks[\s\S]*0\.220"
 Assert-Contains "continuity includes aspect outlier table" $continuityText "Aspect-Ratio Outlier Final Masks[\s\S]*too narrow for YOLO face profile"
 Assert-Contains "summary records detection rows" $summaryText "Detection rows: 4"
+Assert-Contains "summary records auto start frame" $summaryText "startFrame=0"
 Assert-Contains "summary links final mask continuity report" $summaryText "Final mask continuity"
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"

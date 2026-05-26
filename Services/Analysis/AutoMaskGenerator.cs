@@ -436,6 +436,7 @@ namespace FaceShield.Services.Analysis
             SetLastRunSummary(new AutoMaskRunSummary(
                 "sequential",
                 totalFrames,
+                start,
                 processed,
                 processed,
                 processed,
@@ -728,6 +729,7 @@ namespace FaceShield.Services.Analysis
             SetLastRunSummary(new AutoMaskRunSummary(
                 "pipe-single",
                 totalFrames,
+                start,
                 processed,
                 processed,
                 processed,
@@ -1079,6 +1081,7 @@ namespace FaceShield.Services.Analysis
             SetLastRunSummary(new AutoMaskRunSummary(
                 "pipe-parallel",
                 totalFrames,
+                start,
                 processed,
                 processed,
                 processed,
@@ -1356,6 +1359,7 @@ namespace FaceShield.Services.Analysis
             SetLastRunSummary(new AutoMaskRunSummary(
                 "sparse-pipe-parallel",
                 totalFrames,
+                start,
                 decoded,
                 decoded,
                 detected,

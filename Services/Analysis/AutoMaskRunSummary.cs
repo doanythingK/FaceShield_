@@ -5,6 +5,7 @@ namespace FaceShield.Services.Analysis
     public sealed record AutoMaskRunSummary(
         string Mode,
         int TotalFrames,
+        int StartFrameIndex,
         int ProcessedFrames,
         int DecodedFrames,
         int DetectedFrames,
@@ -28,7 +29,7 @@ namespace FaceShield.Services.Analysis
             string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
             string detector = string.IsNullOrWhiteSpace(DetectorName) ? "n/a" : DetectorName;
             return
-                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, totalMs={TotalMs}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}";
+                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, totalMs={TotalMs}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}";
         }
     }
 }
