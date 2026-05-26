@@ -1898,7 +1898,7 @@ namespace FaceShield.Services.Analysis
     {
         public int MaxCarryFrames { get; init; } = 5;
         public int ExtendedWeakCarryFrames { get; init; } = 8;
-        public int SourceLookbackFrames { get; init; } = 2;
+        public int SourceLookbackFrames { get; init; } = 5;
         public float MaxConfidence { get; init; } = 0.90f;
         public float ExtendedWeakMaxConfidence { get; init; } = 0.78f;
         public int StrongCarrySupportLookaheadFrames { get; init; } = 5;

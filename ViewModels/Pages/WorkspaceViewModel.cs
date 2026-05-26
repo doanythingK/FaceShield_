@@ -62,7 +62,7 @@ namespace FaceShield.ViewModels.Pages
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
         private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
         private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
-        private const int YoloSceneCutPostCutLookbackFrames = 3;
+        private const int YoloSceneCutPostCutLookbackFrames = 5;
         private const int YoloSceneCutCarryPurgeFrames = 5;
         private const int YoloSceneCutCarryBlockFrames = 8;
         private const float YoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;

@@ -542,6 +542,39 @@ if (delayedPostCutProvider.TryGetFaceMaskData(103, out var delayedPostCutFrameA)
 if (delayedPostCutProvider.TryGetFaceMaskData(104, out var delayedPostCutFrameB) && delayedPostCutFrameB.Faces.Count != 0)
     throw new InvalidOperationException("Expected delayed weak post-cut frame 104 to be removed.");
 
+var extendedLookbackPostCutProvider = new FrameMaskProvider();
+var extendedLookbackSource = new Rect(506, 206, 78, 80);
+var extendedLookbackGhostA = new Rect(510, 210, 78, 80);
+var extendedLookbackGhostB = new Rect(514, 212, 78, 80);
+extendedLookbackPostCutProvider.SetFaceRects(200, new[] { extendedLookbackSource }, size, 0.87f, new[] { 0.87f });
+extendedLookbackPostCutProvider.SetFaceRects(205, new[] { extendedLookbackGhostA }, size, 0.46f, new[] { 0.46f });
+extendedLookbackPostCutProvider.SetFaceRects(206, new[] { extendedLookbackGhostB }, size, 0.47f, new[] { 0.47f });
+var shortLookbackPostCutCandidates = guard.BuildWeakPostCutCarryCandidates(
+    extendedLookbackPostCutProvider,
+    maxTargetConfidence: 0.50f,
+    maxCarryFrames: 4,
+    sourceLookbackFrames: 3);
+if (shortLookbackPostCutCandidates.Count != 0)
+    throw new InvalidOperationException($"Expected 3-frame source lookback to miss the delayed post-cut carry source, got {shortLookbackPostCutCandidates.Count} candidates.");
+var extendedLookbackPostCutCandidates = guard.BuildWeakPostCutCarryCandidates(
+    extendedLookbackPostCutProvider,
+    maxTargetConfidence: 0.50f,
+    maxCarryFrames: 4,
+    sourceLookbackFrames: 5);
+var extendedLookbackPostCutResult = guard.Apply(
+    extendedLookbackPostCutProvider,
+    extendedLookbackPostCutCandidates,
+    static (source, target) => source == 200 && target >= 205 && target <= 206 ? 0.54 : 0.04);
+
+if (extendedLookbackPostCutCandidates.Count != 2)
+    throw new InvalidOperationException($"Expected 5-frame source lookback to catch delayed post-cut carry frames 205-206, got {extendedLookbackPostCutCandidates.Count} candidates.");
+if (extendedLookbackPostCutResult.Removed != 2 || string.Join(",", extendedLookbackPostCutResult.RemovedFrameIndices) != "205,206")
+    throw new InvalidOperationException($"Expected extended-lookback weak post-cut carry to be removed from frames 205-206, got removed={extendedLookbackPostCutResult.Removed}, frames={string.Join(",", extendedLookbackPostCutResult.RemovedFrameIndices)}.");
+if (extendedLookbackPostCutProvider.TryGetFaceMaskData(205, out var extendedLookbackPostCutFrameA) && extendedLookbackPostCutFrameA.Faces.Count != 0)
+    throw new InvalidOperationException("Expected extended-lookback weak post-cut frame 205 to be removed.");
+if (extendedLookbackPostCutProvider.TryGetFaceMaskData(206, out var extendedLookbackPostCutFrameB) && extendedLookbackPostCutFrameB.Faces.Count != 0)
+    throw new InvalidOperationException("Expected extended-lookback weak post-cut frame 206 to be removed.");
+
 var noSourcePostCutProvider = new FrameMaskProvider();
 var noSourceFaceA = new Rect(710, 250, 82, 84);
 var noSourceFaceB = new Rect(714, 252, 82, 84);
@@ -617,7 +650,7 @@ var mildGradualResult = guard.Apply(
 if (mildGradualResult.Removed != 1 || string.Join(",", mildGradualResult.CutFramePairs) != "0->4")
     throw new InvalidOperationException($"Expected lower direct scene-change threshold to remove mild gradual carry at frame 4, got removed={mildGradualResult.Removed}, cutPairs={string.Join(",", mildGradualResult.CutFramePairs)}.");
 
-Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, adjacentCutDirectChecked={adjacentCutDirectResult.DirectDifferenceChecks}, directBudgetChecked={directBudgetResult.DirectDifferenceChecks}, directBudgetSkipped={directBudgetResult.DirectDifferenceSkipped}, directReuseRemoved={directReuseResult.Removed}, directReuseChecked={directReuseResult.DirectDifferenceChecks}, directReuseSkipped={directReuseResult.DirectDifferenceSkipped}, weakSourceDirectCandidates={weakSourceDirectCandidates.Count}, mediumDirectCandidates={mediumDirectCandidates.Count}, mediumDirectRemoved={mediumDirectResult.Removed}, noDropDirectCandidates={noDropDirectCandidates.Count}, noDropDirectRemoved={noDropDirectResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, edgePostCutDefaultCandidates={edgePostCutDefaultCandidates.Count}, edgePostCutCandidates={edgePostCutCandidates.Count}, edgePostCutRemoved={edgePostCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, noSourcePostCutCandidates={noSourcePostCutCandidates.Count}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
+Console.WriteLine($"[FaceTrackSceneCutGuardVerify] checked={result.Checked}, checkedPairs={string.Join(",", result.CheckedFramePairs)}, maxDiff={result.MaxDifference:0.000}, cutPairs={string.Join(",", result.CutFramePairs)}, removed={result.Removed}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, threshold={result.Threshold:0.000}, hardCutRemoved=True, sameSceneKept=True, reverseChecked={reverseResult.Checked}, reverseRemoved={reverseResult.Removed}, reversePairs={string.Join(",", reverseResult.CheckedFramePairs)}, directCandidates={directCandidates.Count}, directRemoved={directResult.Removed}, adjacentCutDirectChecked={adjacentCutDirectResult.DirectDifferenceChecks}, directBudgetChecked={directBudgetResult.DirectDifferenceChecks}, directBudgetSkipped={directBudgetResult.DirectDifferenceSkipped}, directReuseRemoved={directReuseResult.Removed}, directReuseChecked={directReuseResult.DirectDifferenceChecks}, directReuseSkipped={directReuseResult.DirectDifferenceSkipped}, weakSourceDirectCandidates={weakSourceDirectCandidates.Count}, mediumDirectCandidates={mediumDirectCandidates.Count}, mediumDirectRemoved={mediumDirectResult.Removed}, noDropDirectCandidates={noDropDirectCandidates.Count}, noDropDirectRemoved={noDropDirectResult.Removed}, weakTailRemoved={weakTailResult.Removed}, highTailRemoved={highTailResult.Removed}, smoothedRemoved={smoothedResult.Removed}, postCutCandidates={postCutCandidates.Count}, postCutRemoved={postCutResult.Removed}, edgePostCutDefaultCandidates={edgePostCutDefaultCandidates.Count}, edgePostCutCandidates={edgePostCutCandidates.Count}, edgePostCutRemoved={edgePostCutResult.Removed}, longPostCutRemoved={longPostCutResult.Removed}, delayedPostCutCandidates={delayedPostCutCandidates.Count}, delayedPostCutRemoved={delayedPostCutResult.Removed}, extendedLookbackPostCutCandidates={extendedLookbackPostCutCandidates.Count}, extendedLookbackPostCutRemoved={extendedLookbackPostCutResult.Removed}, noSourcePostCutCandidates={noSourcePostCutCandidates.Count}, gradualRemoved={gradualResult.Removed}, gradualCutPairs={string.Join(",", gradualResult.CutFramePairs)}, mildGradualRemoved={mildGradualResult.Removed}, diffCacheCalls={diffCalls}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
