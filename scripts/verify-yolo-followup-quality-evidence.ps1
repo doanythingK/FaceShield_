@@ -34,6 +34,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [AutoRunSummary] runId=synthetic, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, startFrame=0, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=3, small=0, rejected=1, statsRejected=0
 [SmokeFaceTrackPost] label=synthetic-yolo, tracks=1, filled=1, lostFilled=2, lostFrames=4,5, removedShort=1, removedSparse=1, removedUnstableTail=1, removedEdgeTail=1, removedLower=0, rewritten=6
 [SmokeFaceTrackSceneCutGuard] label=synthetic-yolo, directCandidates=1, postCutCandidates=2, checked=2, checkedPairs=2->3,5->6, maxDiff=0.410, cutPairs=5->6, removed=1, removedFrames=6, threshold=0.320, elapsedMs=3, error=none
+[SmokeYoloStrongCarrySceneCutProbe] label=synthetic-yolo, candidates=1, checked=1, directChecked=1, directSkipped=0, checkedPairs=13->14, maxDiff=0.520, cutPairs=13->14, threshold=0.150, elapsedMs=2, error=none
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedMediumUnsupported=0, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedTopEdgeWeakClusters=0, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=8,10,11,12
 [SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8, blockedBySceneCarry=0, sceneCarryBlockedFrames=none
 [SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
@@ -94,6 +95,7 @@ Assert-Contains "script handles blank process exit code" $scriptText '\$exitCode
 Assert-Contains "script enables dumped detections" $scriptText "DumpDetections"
 Assert-Contains "script enables aspect filter" $scriptText "YoloUseAspectRatioFilter"
 Assert-Contains "script parses final mask cleanup" $scriptText "SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup"
+Assert-Contains "script parses strong carry scene-cut probe" $scriptText "SmokeYoloStrongCarrySceneCutProbe|YoloStrongCarrySceneCutProbe"
 Assert-Contains "script parses scene-cut carry cleanup" $scriptText "SmokeYoloSceneCutCarryCleanup|YoloSceneCutCarryCleanup"
 Assert-Contains "script parses final mask post-scene cleanup" $scriptText "SmokeYoloFinalMaskPostSceneCleanup"
 Assert-Contains "script parses final mask gap fill" $scriptText "SmokeYoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill"
@@ -105,6 +107,7 @@ Assert-Contains "script can write detection overlay video" $scriptText "WithDete
 Assert-Contains "script writes detection overlay summary" $scriptText "Detection overlay video"
 Assert-Contains "script reuses existing review package" $scriptText "ForceReviewPackage[\s\S]*review-index\.html"
 Assert-Contains "script derives required full-frame review frames" $scriptText "Get-ReviewFrameNumbers[\s\S]*lostFrames=.*removedShort[\s\S]*checkedPairs=.*maxDiff"
+Assert-Contains "script derives review frames from strong carry probe" $scriptText "StrongCarryProbeLines[\s\S]*checkedPairs=.*maxDiff[\s\S]*cutPairs=.*threshold"
 Assert-Contains "script derives protected carry review frames" $scriptText "SceneCutCarryCleanupLines[\s\S]*removedUnsupportedStrongFrames=.*protectedStrong[\s\S]*protectedStrongFrames=.*blockedFrames"
 Assert-Contains "script derives review frames from final summary gaps" $scriptText "FinalMaskSummaryLines[\s\S]*shortGapRanges=.*largeJumpGaps[\s\S]*largeJumpRanges=.*isolated="
 Assert-Contains "script derives review frames from final summary residuals" $scriptText "lowConfFrames=.*weakNonEdge[\s\S]*weakNonEdgeFrames=.*edgeWeak[\s\S]*edgeWeakFrames=.*topEdgeWeak[\s\S]*topEdgeWeakFrames=.*upperWeak[\s\S]*upperWeakFrames=.*lowerWeak[\s\S]*lowerWeakFrames=.*aspectBad[\s\S]*aspectBadFrames=.*tinyWeak[\s\S]*tinyWeakFrames=.*tinyShort[\s\S]*tinyShortFrames=.*protectedSceneCarry[\s\S]*protectedSceneCarryFrames="
@@ -114,6 +117,7 @@ Assert-Contains "script expands review video frame count for required frames" $s
 Assert-Contains "script writes summary" $scriptText "YOLO Follow-Up Quality Evidence"
 Assert-Contains "checklist has scene-cut evidence" $checklistText "directCandidates=1"
 Assert-Contains "checklist has post-cut scene-cut evidence" $checklistText "postCutCandidates=2"
+Assert-Contains "checklist has strong carry scene-cut probe evidence" $checklistText "Strong carry scene-cut probe[\s\S]*probeCandidates=1[\s\S]*probeCutPairs=13->14"
 Assert-Contains "checklist has false-positive label rule" $checklistText "do not treat YOLO or FaceONNX as ground truth"
 Assert-Contains "continuity says rows are final masks" $continuityText 'final `FrameMaskProvider` face rectangles'
 Assert-Contains "continuity reports short gaps" $continuityText "Short empty gaps: 2"
@@ -137,6 +141,7 @@ Assert-Contains "summary links final mask continuity report" $summaryText "Final
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"
 Assert-Contains "summary records scene-cut carry cleanup" $summaryText "Scene-cut carry cleanup[\s\S]*removed=3[\s\S]*removedFrames=6,7,13[\s\S]*removedUnsupportedStrong=1[\s\S]*removedUnsupportedStrongFrames=13[\s\S]*protectedStrong=2[\s\S]*protectedStrongFrames=14,15"
+Assert-Contains "summary records strong carry scene-cut probe" $summaryText "Strong carry scene-cut probe[\s\S]*candidates=1[\s\S]*checkedPairs=13->14[\s\S]*cutPairs=13->14"
 Assert-Contains "summary records extended scene-carry block window" $summaryText "blockFrames=8"
 Assert-Contains "summary records extended weak carry confidence" $summaryText "extendedWeakMaxConfidence=0.78"
 Assert-Contains "summary records final mask post-scene cleanup" $scriptText "Final mask post-scene cleanup"

@@ -190,6 +190,7 @@ function Get-ReviewFrameNumbers {
     param(
         [object[]]$TrackPostLines,
         [object[]]$SceneGuardLines,
+        [object[]]$StrongCarryProbeLines,
         [object[]]$SceneCutCarryCleanupLines,
         [object[]]$FinalMaskSummaryLines,
         [object[]]$DetectionRows
@@ -206,6 +207,12 @@ function Get-ReviewFrameNumbers {
         Add-FramePairTargetValues $frames (Read-MatchValue $sceneLine 'checkedPairs=(.*?), maxDiff=')
         Add-FramePairTargetValues $frames (Read-MatchValue $sceneLine 'cutPairs=(.*?), removed=')
         Add-FrameListValues $frames (Read-MatchValue $sceneLine 'removedFrames=(.*?), threshold=')
+    }
+
+    if ($StrongCarryProbeLines.Count -gt 0) {
+        $probeLine = $StrongCarryProbeLines[0].Line
+        Add-FramePairTargetValues $frames (Read-MatchValue $probeLine 'checkedPairs=(.*?), maxDiff=')
+        Add-FramePairTargetValues $frames (Read-MatchValue $probeLine 'cutPairs=(.*?), threshold=')
     }
 
     if ($SceneCutCarryCleanupLines.Count -gt 0) {
@@ -664,6 +671,7 @@ Require-File "prediction log" $resolvedPredictionLog
 
 $detectionRows = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeDetection\]' -ErrorAction SilentlyContinue)
 $sceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFaceTrackSceneCutGuard\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$strongCarryProbe = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloStrongCarrySceneCutProbe|YoloStrongCarrySceneCutProbe)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $trackPost = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFaceTrackPost\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $autoSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[AutoRunSummary\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
@@ -672,7 +680,7 @@ $finalMaskPostSceneCleanup = @(Select-String -Path $resolvedPredictionLog -Patte
 $finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
-$reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -SceneCutCarryCleanupLines $sceneCutCarryCleanup -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
+$reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -StrongCarryProbeLines $strongCarryProbe -SceneCutCarryCleanupLines $sceneCutCarryCleanup -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
 
 if ($detectionRows.Count -eq 0) {
     if (-not $AllowNoDetections.IsPresent) {
@@ -696,6 +704,9 @@ if ($detectionRows.Count -eq 0) {
     }
     if ($sceneGuard.Count -gt 0) {
         $noDetectionChecklist += "- ``$($sceneGuard[0].Line)``"
+    }
+    if ($strongCarryProbe.Count -gt 0) {
+        $noDetectionChecklist += "- ``$($strongCarryProbe[0].Line)``"
     }
     if ($finalMaskCleanup.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskCleanup[0].Line)``"
@@ -848,6 +859,9 @@ if ($trackPost.Count -gt 0) {
 }
 if ($sceneGuard.Count -gt 0) {
     [void]$summary.AppendLine("- Scene-cut guard: ``$($sceneGuard[0].Line)``")
+}
+if ($strongCarryProbe.Count -gt 0) {
+    [void]$summary.AppendLine("- Strong carry scene-cut probe: ``$($strongCarryProbe[0].Line)``")
 }
 if ($finalMaskCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask cleanup: ``$($finalMaskCleanup[0].Line)``")

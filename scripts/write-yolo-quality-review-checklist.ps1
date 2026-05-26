@@ -69,6 +69,7 @@ $lines = Get-Content -Path $resolvedLog
 $autoSummary = @($lines | Where-Object { $_.StartsWith("[AutoRunSummary]") } | Select-Object -Last 1)
 $trackPost = @($lines | Where-Object { $_.StartsWith("[SmokeFaceTrackPost]") } | Select-Object -Last 1)
 $sceneGuard = @($lines | Where-Object { $_.StartsWith("[SmokeFaceTrackSceneCutGuard]") } | Select-Object -Last 1)
+$strongCarryProbe = @($lines | Where-Object { $_.StartsWith("[SmokeYoloStrongCarrySceneCutProbe]") -or $_.StartsWith("[YoloStrongCarrySceneCutProbe]") } | Select-Object -Last 1)
 $sparseSummary = @($lines | Where-Object { $_.StartsWith("[AutoMaskSparsePipe] done") } | Select-Object -Last 1)
 $detectionSummary = @($lines | Where-Object { $_.StartsWith("[SmokeDetectionSummary]") } | Select-Object -Last 1)
 
@@ -119,6 +120,10 @@ if ($checkedPairsText -eq "none" -and $sceneGuard.Count -gt 0) {
 $maxDiffText = if ($sceneGuard.Count -gt 0) { Read-MatchValue $sceneGuard[0] 'maxDiff=(.*?), cutPairs=' } else { "none" }
 $cutPairsText = if ($sceneGuard.Count -gt 0) { Read-MatchValue $sceneGuard[0] 'cutPairs=(.*?), removed=' } else { "none" }
 $removedFramesText = if ($sceneGuard.Count -gt 0) { Read-MatchValue $sceneGuard[0] 'removedFrames=(.*?), threshold=' } else { "none" }
+$probeCandidatesText = if ($strongCarryProbe.Count -gt 0) { Read-MatchValue $strongCarryProbe[0] 'candidates=([^,]+)' } else { "none" }
+$probeCheckedPairsText = if ($strongCarryProbe.Count -gt 0) { Read-MatchValue $strongCarryProbe[0] 'checkedPairs=(.*?), maxDiff=' } else { "none" }
+$probeMaxDiffText = if ($strongCarryProbe.Count -gt 0) { Read-MatchValue $strongCarryProbe[0] 'maxDiff=(.*?), cutPairs=' } else { "none" }
+$probeCutPairsText = if ($strongCarryProbe.Count -gt 0) { Read-MatchValue $strongCarryProbe[0] 'cutPairs=(.*?), threshold=' } else { "none" }
 $sparseCutPairsText = if ($sparseSummary.Count -gt 0) { Read-MatchValue $sparseSummary[0] 'sparseSceneCutPairs=(.*?), decodeMs=' } else { "none" }
 
 $framesToReview = New-Object System.Collections.Generic.SortedSet[int]
@@ -129,6 +134,16 @@ foreach ($frame in (Split-FrameList $removedFramesText)) {
     [void]$framesToReview.Add($frame)
 }
 foreach ($pair in @($checkedPairsText -split ",")) {
+    if ($pair -match '^\d+->(\d+)$') {
+        [void]$framesToReview.Add([int]$Matches[1])
+    }
+}
+foreach ($pair in @($probeCheckedPairsText -split ",")) {
+    if ($pair -match '^\d+->(\d+)$') {
+        [void]$framesToReview.Add([int]$Matches[1])
+    }
+}
+foreach ($pair in @($probeCutPairsText -split ",")) {
     if ($pair -match '^\d+->(\d+)$') {
         [void]$framesToReview.Add([int]$Matches[1])
     }
@@ -158,7 +173,7 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine()
 
 [void]$builder.AppendLine("## Run Evidence")
-foreach ($line in @($autoSummary + $trackPost + $sceneGuard + $sparseSummary + $detectionSummary)) {
+foreach ($line in @($autoSummary + $trackPost + $sceneGuard + $strongCarryProbe + $sparseSummary + $detectionSummary)) {
     if (-not [string]::IsNullOrWhiteSpace($line)) {
         $escapedLine = Escape-Cell $line
         [void]$builder.AppendLine("- ``$escapedLine``")
@@ -171,6 +186,7 @@ foreach ($line in @($autoSummary + $trackPost + $sceneGuard + $sparseSummary + $
 [void]$builder.AppendLine("| --- | --- | --- | --- |")
 [void]$builder.AppendLine("| Flicker / missed hold | ``lostFrames=$lostFramesText`` | ``$reviewFramesText`` | Confirm the target remains covered during short detector misses. |")
 [void]$builder.AppendLine("| Scene-cut ghost mask | ``directCandidates=$directCandidatesText``, ``postCutCandidates=$postCutCandidatesText``, ``checkedPairs=$checkedPairsText``, ``maxDiff=$maxDiffText``, ``cutPairs=$cutPairsText``, ``removedFrames=$removedFramesText``, ``sparseSceneCutPairs=$sparseCutPairsText`` | ``$reviewFramesText`` | Confirm masks do not persist into a new scene. |")
+[void]$builder.AppendLine("| Strong carry scene-cut probe | ``probeCandidates=$probeCandidatesText``, ``probeCheckedPairs=$probeCheckedPairsText``, ``probeMaxDiff=$probeMaxDiffText``, ``probeCutPairs=$probeCutPairsText`` | ``$reviewFramesText`` | Confirm high-confidence same-position candidates are reviewed through cut evidence and final carry cleanup, not confidence alone. |")
 [void]$builder.AppendLine("| Unstable tail ghost mask | ``removedUnstableTail=$removedUnstableTailText`` | ``$reviewFramesText`` | Confirm low-confidence geometry jumps at the end of a track do not persist as masks. |")
 [void]$builder.AppendLine("| Exit-edge ghost mask | ``removedEdgeTail=$removedEdgeTailText`` | ``$reviewFramesText`` | Confirm low-confidence edge tails do not continue as masks after the target leaves. |")
 [void]$builder.AppendLine("| False positives | ``[SmokeDetection]`` candidate rows and ``[SmokeDetectionSummary]`` | see tables below | Label each reviewed crop/frame as ``face`` or ``nonface``; do not treat YOLO or FaceONNX as ground truth. |")

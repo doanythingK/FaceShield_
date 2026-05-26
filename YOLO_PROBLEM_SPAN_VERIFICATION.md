@@ -259,3 +259,16 @@ The GUI and smoke paths now add a high-confidence post-cut carry probe before fi
 - Verifier: `scripts/verify-face-track-scene-cut-guard.ps1`
 - Evidence: `probeCandidates=1`, `probeCutPairs=100->101`, `probeRemoved=0`
 - Meaning: a high-confidence transition ghost no longer needs to be weak enough for the older `0.78` post-cut candidate path before the cut pair can be discovered, but the app still avoids treating confidence alone as ground truth.
+- Evidence export: `scripts/write-yolo-followup-quality-evidence.ps1` and `scripts/write-yolo-quality-review-checklist.ps1` preserve `[SmokeYoloStrongCarrySceneCutProbe]` / `[YoloStrongCarrySceneCutProbe]` lines and add probe target frames to required full-frame review candidates.
+
+Focused 2-second `00:09:00` evidence after the probe export update:
+
+- Summary: `.tmp/yolo-problem-span-strongprobe-0900/yolo-followup-quality-evidence.md`
+- Checklist: `.tmp/yolo-problem-span-strongprobe-0900/yolo-quality-review-checklist.md`
+- Detection overlay: `.tmp/yolo-problem-span-strongprobe-0900/yolo-detection-overlay.mp4`
+- Detector: `YoloFaceOnnxDetector/GPU:DirectML`
+- Detection rows: `96`
+- Strong carry probe: `candidates=44`, `checked=44`, `directChecked=43`, `directSkipped=0`, `maxDiff=0.216`, `cutPairs=none`
+- Final summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`, `protectedSceneCarry=0`
+- Remaining review state: `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
+- This run used a 2-second focused trim, not the full source video.
