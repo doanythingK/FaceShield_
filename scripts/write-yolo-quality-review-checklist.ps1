@@ -108,6 +108,7 @@ foreach ($line in $lines) {
 }
 
 $lostFramesText = if ($trackPost.Count -gt 0) { Read-MatchValue $trackPost[0] 'lostFrames=(.*?), removedShort=' } else { "none" }
+$removedUnstableTailText = if ($trackPost.Count -gt 0) { Read-MatchValue $trackPost[0] 'removedUnstableTail=(.*?), removedEdgeTail=' } else { "none" }
 $removedEdgeTailText = if ($trackPost.Count -gt 0) { Read-MatchValue $trackPost[0] 'removedEdgeTail=(.*?), removedLower=' } else { "none" }
 $directCandidatesText = if ($sceneGuard.Count -gt 0) { Read-MatchValue $sceneGuard[0] 'directCandidates=([^,]+)' } else { "none" }
 $postCutCandidatesText = if ($sceneGuard.Count -gt 0) { Read-MatchValue $sceneGuard[0] 'postCutCandidates=([^,]+)' } else { "none" }
@@ -170,6 +171,7 @@ foreach ($line in @($autoSummary + $trackPost + $sceneGuard + $sparseSummary + $
 [void]$builder.AppendLine("| --- | --- | --- | --- |")
 [void]$builder.AppendLine("| Flicker / missed hold | ``lostFrames=$lostFramesText`` | ``$reviewFramesText`` | Confirm the target remains covered during short detector misses. |")
 [void]$builder.AppendLine("| Scene-cut ghost mask | ``directCandidates=$directCandidatesText``, ``postCutCandidates=$postCutCandidatesText``, ``checkedPairs=$checkedPairsText``, ``maxDiff=$maxDiffText``, ``cutPairs=$cutPairsText``, ``removedFrames=$removedFramesText``, ``sparseSceneCutPairs=$sparseCutPairsText`` | ``$reviewFramesText`` | Confirm masks do not persist into a new scene. |")
+[void]$builder.AppendLine("| Unstable tail ghost mask | ``removedUnstableTail=$removedUnstableTailText`` | ``$reviewFramesText`` | Confirm low-confidence geometry jumps at the end of a track do not persist as masks. |")
 [void]$builder.AppendLine("| Exit-edge ghost mask | ``removedEdgeTail=$removedEdgeTailText`` | ``$reviewFramesText`` | Confirm low-confidence edge tails do not continue as masks after the target leaves. |")
 [void]$builder.AppendLine("| False positives | ``[SmokeDetection]`` candidate rows and ``[SmokeDetectionSummary]`` | see tables below | Label each reviewed crop/frame as ``face`` or ``nonface``; do not treat YOLO or FaceONNX as ground truth. |")
 [void]$builder.AppendLine()

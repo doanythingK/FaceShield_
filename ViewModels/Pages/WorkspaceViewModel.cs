@@ -756,11 +756,12 @@ namespace FaceShield.ViewModels.Pages
                 result.FilledInitialFaces > 0 ||
                 result.RemovedShortFaces > 0 ||
                 result.RemovedSparseFaces > 0 ||
+                result.RemovedUnstableTailFaces > 0 ||
                 result.RemovedEdgeTailFaces > 0 ||
                 result.RemovedLowerFrameFaces > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} initialFilled={result.FilledInitialFaces} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} removedSparse={result.RemovedSparseFaces} removedEdgeTail={result.RemovedEdgeTailFaces} removedLower={result.RemovedLowerFrameFaces} rewritten={result.RewrittenFrames}");
+                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} initialFilled={result.FilledInitialFaces} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} removedSparse={result.RemovedSparseFaces} removedUnstableTail={result.RemovedUnstableTailFaces} removedEdgeTail={result.RemovedEdgeTailFaces} removedLower={result.RemovedLowerFrameFaces} rewritten={result.RewrittenFrames}");
             }
 
             return result;

@@ -148,7 +148,7 @@ if (appProvider.TryGetFaceMaskData(21, out var appTail) && appTail.Faces.Count >
     throw new InvalidOperationException("Expected app YOLO profile not to carry the track into frame 21 after the final detection.");
 
 Console.WriteLine(
-    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, syntheticConfidenceMax=0.78, sceneCutLostRemoved={cutGuard.Removed}, sceneCutLostFrames={string.Join(",", cutGuard.RemovedFrameIndices)}, heldFrames={string.Join(",", expectedHoldFrames)}, appGapHeld={appResult.FilledGapFaces}, appLostFilled={appResult.FilledLostFaces}, appLostFillDisabled=True");
+    $"[YoloTrackHoldVerify] tracks={result.TrackCount}, gapHeld={result.FilledGapFaces}, gapFrames={string.Join(",", gapFrames)}, lostFilled={result.FilledLostFaces}, lostFrames={string.Join(",", lostFrames)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, syntheticConfidenceMax=0.78, sceneCutLostRemoved={cutGuard.Removed}, sceneCutLostFrames={string.Join(",", cutGuard.RemovedFrameIndices)}, heldFrames={string.Join(",", expectedHoldFrames)}, appGapHeld={appResult.FilledGapFaces}, appLostFilled={appResult.FilledLostFaces}, appLostFillDisabled=True");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

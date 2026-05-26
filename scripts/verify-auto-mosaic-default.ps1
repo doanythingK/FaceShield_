@@ -234,9 +234,10 @@ Assert-Contains "track-postprocess-policy" $trackOutput "gapFrames=11"
 Assert-Contains "track-postprocess-policy" $trackOutput "initialFilled=3"
 Assert-Contains "track-postprocess-policy" $trackOutput "lostFrames=33,34,35,88,89"
 Assert-Contains "track-postprocess-policy" $trackOutput "removedSparse=3"
+Assert-Contains "track-postprocess-policy" $trackOutput "removedUnstableTail=1"
 Assert-Contains "track-postprocess-policy" $trackOutput "removedEdgeTail=1"
 Assert-Contains "track-postprocess-policy" $trackOutput "largeJumpFilled=False"
-Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52,55,59,70,71,82,83,84,85,86,87,88,89"
+Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52,55,59,70,71,75,76,77,82,83,84,85,86,87,88,89"
 
 $sceneCutOutput = Invoke-ScriptStep "face-track-scene-cut-guard" $faceTrackSceneCutGuardVerify @()
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "\[FaceTrackSceneCutGuardVerify\]"

@@ -59,7 +59,7 @@ namespace FaceShield.Services.Analysis
             var lostFillFrameIndices = new List<int>();
             var lostFilledFaces = new List<FaceTrackFilledFace>();
             var initialFilledFaces = new List<FaceTrackFilledFace>();
-            TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
+            int removedUnstableTailFaces = TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
             int removedEdgeTailFaces = TrimEdgeLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
             int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int removedSparseFaces = RemoveSparseLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
@@ -80,20 +80,22 @@ namespace FaceShield.Services.Analysis
                 initialFilledFaces.ToArray(),
                 removedFaces,
                 removedSparseFaces,
+                removedUnstableTailFaces,
                 removedEdgeTailFaces,
                 removedLowerFrameFaces,
                 rewrittenFrames);
         }
 
-        private static void TrimUnstableLowConfidenceTails(
+        private static int TrimUnstableLowConfidenceTails(
             IReadOnlyList<FaceTrack> tracks,
             List<Rect>?[] facesByFrame,
             List<float>?[] confByFrame,
             FaceTrackPostProcessOptions options)
         {
             if (options.UnstableTailMaxConfidence <= 0)
-                return;
+                return 0;
 
+            int removed = 0;
             foreach (var track in tracks)
             {
                 int keepCount = track.DetectionCount;
@@ -108,11 +110,14 @@ namespace FaceShield.Services.Analysis
 
                     RemoveDetectionFromFrame(current, facesByFrame, confByFrame);
                     keepCount--;
+                    removed++;
                 }
 
                 if (keepCount < track.DetectionCount)
                     track.RemoveDetectionsFrom(keepCount);
             }
+
+            return removed;
         }
 
         private static int TrimEdgeLowConfidenceTails(
@@ -771,11 +776,12 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<FaceTrackFilledFace> FilledInitialFacesInfo,
         int RemovedShortFaces,
         int RemovedSparseFaces,
+        int RemovedUnstableTailFaces,
         int RemovedEdgeTailFaces,
         int RemovedLowerFrameFaces,
         int RewrittenFrames)
     {
-        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<FaceTrackFilledFace>(), 0, 0, 0, 0, 0);
+        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<FaceTrackFilledFace>(), 0, 0, 0, 0, 0, 0);
     }
 
     public readonly record struct FaceTrackFilledFace(

@@ -52,6 +52,10 @@ provider.SetFaceRects(59, new[] { new Rect(980, 260, 420, 360) }, size, 0.88f, n
 provider.SetFaceRects(70, new[] { new Rect(120, 320, 84, 96) }, size, 0.82f, new[] { 0.82f });
 provider.SetFaceRects(71, new[] { new Rect(96, 320, 84, 96) }, size, 0.74f, new[] { 0.74f });
 provider.SetFaceRects(72, new[] { new Rect(50, 320, 84, 96) }, size, 0.46f, new[] { 0.46f });
+provider.SetFaceRects(75, new[] { new Rect(1636, 320, 84, 96) }, size, 0.82f, new[] { 0.82f });
+provider.SetFaceRects(76, new[] { new Rect(1679, 322, 84, 96) }, size, 0.80f, new[] { 0.80f });
+provider.SetFaceRects(77, new[] { new Rect(1722, 324, 84, 96) }, size, 0.58f, new[] { 0.58f });
+provider.SetFaceRects(78, new[] { new Rect(1682, 324, 84, 96) }, size, 0.44f, new[] { 0.44f });
 provider.SetFaceRects(85, new[] { new Rect(1760, 0, 120, 100) }, size, 0.90f, new[] { 0.90f });
 provider.SetFaceRects(86, new[] { new Rect(1740, 2, 130, 110) }, size, 0.89f, new[] { 0.89f });
 provider.SetFaceRects(87, new[] { new Rect(1720, 4, 140, 120) }, size, 0.88f, new[] { 0.88f });
@@ -75,6 +79,10 @@ var result = new FaceTrackInterpolator().Apply(
         EdgeTailMaxConfidence = 0.50f,
         EdgeTailMinStableDetections = 2,
         EdgeLostFillMaxConfidence = 0.60f,
+        UnstableTailMaxConfidence = 0.50f,
+        UnstableTailMinStableDetections = 3,
+        UnstableTailMinIou = 0.45,
+        UnstableTailMaxAreaChangeRatio = 1.8,
         SmallTrackMaxAreaRatio = 0.00075,
         MinTrackIou = 0.12,
         MaxCenterShiftRatio = 0.55,
@@ -142,6 +150,15 @@ if (provider.TryGetFaceMaskData(72, out var edgeTail) && edgeTail.Faces.Count > 
 if (provider.TryGetFaceMaskData(73, out var blockedEdgeLostFill) && blockedEdgeLostFill.Faces.Count > 0)
     throw new InvalidOperationException("Expected low-confidence edge track not to extend lost fill past frame 72.");
 
+if (result.RemovedUnstableTailFaces != 1)
+    throw new InvalidOperationException($"Expected one unstable low-confidence tail face to be removed, got {result.RemovedUnstableTailFaces}.");
+
+for (int frame = 75; frame <= 77; frame++)
+{
+    if (!provider.TryGetFaceMaskData(frame, out var stableBeforeTail) || stableBeforeTail.Faces.Count != 1)
+        throw new InvalidOperationException($"Expected stable pre-tail track frame {frame} to remain.");
+}
+
 for (int frame = 82; frame <= 84; frame++)
 {
     if (!provider.TryGetFaceMaskData(frame, out var initialFill) || initialFill.Faces.Count != 1)
@@ -149,7 +166,7 @@ for (int frame = 82; frame <= 84; frame++)
 }
 
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

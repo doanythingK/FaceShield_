@@ -2164,7 +2164,7 @@ Implemented guard rails in this follow-up:
 
 Current short-sample evidence:
 
-- `.tmp/yolo-quality/yolo-quality-2s-dump.log` contains 60 processed frames, 19 detection rows, `lostFrames=none`, `removedEdgeTail=1`, `directCandidates=2`, `checkedPairs=3->4,8->9,16->17`, and `removedFrames=none`.
+- `.tmp/yolo-quality/yolo-quality-2s-dump.log` contains 60 processed frames, 19 detection rows, `lostFrames=none`, `removedEdgeTail=1`, `directCandidates=2`, `checkedPairs=3->4,8->9,16->17`, and `removedFrames=none`. The track-postprocess evidence path now also logs `removedUnstableTail=...`, so low-confidence geometry-jump tail removals are auditable separately from edge-tail removals.
 - `.tmp/yolo-quality/yolo-quality-review-checklist.md` lists the frame-level low-confidence/small-area/aspect review points.
 - `.tmp/yolo-quality/review-package/review-index.html` was generated with 19 detection crop rows and 8 full-frame overlay rows for human `face`/`nonface`/`miss` labeling.
 - `scripts/write-yolo-followup-quality-evidence.ps1` regenerates the short-sample evidence bundle from an existing prediction log or a short YOLO smoke run. It also supports `-TrimStart`, `-TrimSeconds`, and `-ClipPath`, so a long source video can be cut into a focused problem-span clip before YOLO evidence is generated. When `-RunSmoke` is used without trimming, the wrapper now checks source duration with FFprobe metadata and blocks sources longer than `MaxSmokeSourceSeconds=30` unless `-AllowLongSmokeSource` is explicitly passed.
