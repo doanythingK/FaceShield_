@@ -200,6 +200,8 @@ Latest extended-lookback short-span evidence:
 - False-positive triage: `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`
 - Scene-cut guard on this no-cut sample: `cutPairs=none`, `removedFrames=none`, `maxDiff=0.206`
 - Remaining review state: `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
+- Visual overlay spot-check: top-region crops from `.tmp/yolo-problem-span-lookback5-0900/review-frames/overlay-top-004.png`, `overlay-top-006.png`, `overlay-top-007.png`, `overlay-top-017.png`, `overlay-top-020.png`, `overlay-top-024.png`, `overlay-top-025.png`, and `overlay-top-032.png` were checked. Frames `4`, `6`, and `7` show the residual top-edge weak box over a visible partial background face; frames `17`, `20`, `24`, `25`, and `32` show a visible partial background face and/or the foreground face. No confirmed non-face false positive was found in these residual review rows.
+- Decision: do not tighten the default edge/top-edge cleanup based on this 2-second sample. These rows remain `reviewRequired=True` until the crop/full-frame GT CSV rows are filled, because automatically deleting them would risk creating misses on partial faces.
 
 ## 2026-05-27 Top-Edge Fastcheck
 
