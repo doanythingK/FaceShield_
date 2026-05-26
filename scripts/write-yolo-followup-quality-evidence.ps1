@@ -833,6 +833,11 @@ if ($finalMaskSummary.Count -gt 0) {
 [void]$summary.AppendLine('- Use `miss` by adding manual rows for visible faces not covered by any candidate row.')
 [void]$summary.AppendLine("- This package is review evidence only. It does not make YOLO or FaceONNX ground truth.")
 [void]$summary.AppendLine()
+[void]$summary.AppendLine("## Partial Visual Review Rule")
+[void]$summary.AppendLine("- Assistant/AI overlay observations are reference evidence only unless the crop and full-frame CSV rows are reviewed and filled.")
+[void]$summary.AppendLine("- A reviewed subset can explain why a candidate was kept or removed, but it cannot close the full false-positive/miss gate.")
+[void]$summary.AppendLine("- Do not convert edge or top-edge weak candidates to automatic false positives without visual confirmation that the box does not cover a protectable partial face.")
+[void]$summary.AppendLine()
 [void]$summary.AppendLine("## Completion Note")
 [void]$summary.AppendLine("- Follow-up completion still requires visual confirmation on the user-reported problem span.")
 

@@ -43,6 +43,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 `SmokeDetection` 로그의 `conf`는 threshold 경계 후보가 반올림 때문에 잘못 분류되지 않도록 6자리 정밀도로 기록한다.
 
+부분 시각 확인은 참고 증거로만 취급한다. 일부 overlay를 확인해서 후보가 실제 얼굴인지 설명할 수는 있지만, 전체 오탐/미탐 게이트를 닫으려면 `review-package/full-gt-review.csv`와 `review-package/full-frame-review.csv`에 crop/full-frame row가 채워져 있어야 한다. 특히 edge 또는 top-edge weak 후보는 보호해야 할 부분 얼굴일 수 있으므로, 실제 얼굴을 덮지 않는다는 시각 근거 없이 자동 오탐으로 단정하지 않는다.
+
 ## 판정 기준
 
 ### 깜박임

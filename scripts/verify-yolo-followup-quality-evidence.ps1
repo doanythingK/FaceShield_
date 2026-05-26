@@ -152,6 +152,10 @@ Assert-Contains "summary records tiny short final mask evidence" $summaryText "t
 Assert-Contains "summary records required full-frame review frames when packaged" $scriptText "Required full-frame review frames"
 Assert-Contains "summary preserves face label markdown" $summaryText 'Use `face` only'
 Assert-Contains "summary preserves nonface label markdown" $summaryText 'Use `nonface` for'
+Assert-Contains "summary records partial visual review boundary" $summaryText "Partial Visual Review Rule"
+Assert-Contains "summary keeps assistant observations reference-only" $summaryText "Assistant/AI overlay observations are reference evidence only"
+Assert-Contains "summary blocks subset review from closing gate" $summaryText "reviewed subset can explain why a candidate was kept or removed, but it cannot close the full false-positive/miss gate"
+Assert-Contains "summary protects partial top-edge faces" $summaryText "Do not convert edge or top-edge weak candidates to automatic false positives"
 Assert-Contains "summary records pending visual completion" $summaryText "visual confirmation"
 Assert-Contains "plan records follow-up incomplete" $planText "yolo-followup-quality-state:[\s\S]*complete=false"
 Assert-Contains "plan records problem-video pending" $planText "problem-video-visual-confirmation=pending"
