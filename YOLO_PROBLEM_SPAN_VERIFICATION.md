@@ -141,10 +141,14 @@ goal 완료로 볼 수 있는 최소 증거:
 Current short evidence after the top-edge cleanup/logging pass:
 
 - Output: `.tmp/yolo-followup-current-topedge-fastcheck/yolo-followup-quality-evidence.md`
+- Review package: `.tmp/yolo-followup-current-topedge-fastcheck/review-package/review-index.html`
 - Detection rows: `96`
 - Cleanup evidence: `removedTopEdgeWeakClusters=0`, `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Final post-scene gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
 - Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`
 - Remaining review targets: `lowConf=7`, `edgeWeak=8`, `topEdgeWeak=8`, frames `4,6,7,17,20,24,25,32`
+- Visual overlay review:
+  - Frames `4,6,7`: the top-edge weak box covers a visible partial background face.
+  - Frames `17,20,24,25,32`: the large foreground face is covered, and the top-edge weak box covers the same visible partial background face.
 
-These remaining edge/top-edge weak candidates are not automatically false positives. They still need visual `face`/`nonface` labeling before the follow-up goal can be marked complete.
+These remaining edge/top-edge weak candidates are not automatically false positives. In this 2-second sample they are visible face candidates, so tightening the default cleanup further would risk removing protectable partial faces. The user-reported problem span still needs its own focused visual confirmation before the follow-up goal can be marked complete.
