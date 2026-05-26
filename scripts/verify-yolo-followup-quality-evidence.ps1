@@ -101,6 +101,8 @@ Assert-Contains "script parses final mask gap-fill scene guard" $scriptText "Smo
 Assert-Contains "script parses final mask summary" $scriptText "SmokeFinalMaskSummary|FinalMaskSummary"
 Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-review-package\.ps1"
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
+Assert-Contains "script can write detection overlay video" $scriptText "WithDetectionOverlayVideo[\s\S]*new-yolo-detection-overlay-video\.ps1"
+Assert-Contains "script writes detection overlay summary" $scriptText "Detection overlay video"
 Assert-Contains "script reuses existing review package" $scriptText "ForceReviewPackage[\s\S]*review-index\.html"
 Assert-Contains "script derives required full-frame review frames" $scriptText "Get-ReviewFrameNumbers[\s\S]*lostFrames=.*removedShort[\s\S]*checkedPairs=.*maxDiff"
 Assert-Contains "script derives protected carry review frames" $scriptText "SceneCutCarryCleanupLines[\s\S]*removedUnsupportedStrongFrames=.*protectedStrong[\s\S]*protectedStrongFrames=.*blockedFrames"

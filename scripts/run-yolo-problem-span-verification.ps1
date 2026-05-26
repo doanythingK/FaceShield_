@@ -17,6 +17,7 @@ param(
     [int]$ParallelDetectorCount = 2,
     [int]$MaxFullFrameRows = 24,
     [switch]$WithReviewPackage,
+    [switch]$WithDetectionOverlayVideo,
     [switch]$Force
 )
 
@@ -65,6 +66,10 @@ if (-not [string]::IsNullOrWhiteSpace($YoloModelPath)) {
 
 if (-not $WithReviewPackage.IsPresent) {
     $argsList.Add("-SkipReviewPackage") | Out-Null
+}
+
+if ($WithDetectionOverlayVideo.IsPresent) {
+    $argsList.Add("-WithDetectionOverlayVideo") | Out-Null
 }
 
 if ($Force.IsPresent) {

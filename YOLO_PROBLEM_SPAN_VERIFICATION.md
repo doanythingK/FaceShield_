@@ -30,6 +30,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 
 `-TrimStart`와 `-TrimSeconds`는 실제 문제 구간에 맞게 바꾼다. `-AllowLongSmokeSource`는 사용하지 않는다.
 기본 실행은 review package 생성을 생략한다. crop/full-frame HTML 검토가 필요하면 `-WithReviewPackage`를 추가한다.
+검출 박스가 짧은 clip 위에서 시간 순서대로 어떻게 이어지는지 확인하려면 `-WithDetectionOverlayVideo`를 추가한다. 이 경우 `yolo-detection-overlay.mp4`가 함께 생성된다.
 
 ## 산출물
 
@@ -39,8 +40,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 - `yolo-mask-continuity-report.md`: 짧은 gap, isolated mask, low-confidence mask 목록
 - `yolo-quality-review-checklist.md`: 깜박임/잔상/오탐 review frame 목록
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
+- `yolo-detection-overlay.mp4`: `-WithDetectionOverlayVideo` 사용 시 생성되는 연속 검출 overlay 영상
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
+연속 재생에서 깜박임이나 화면전환 잔상을 먼저 빠르게 보려면 `-WithDetectionOverlayVideo`를 함께 사용한다. 단, 이 overlay 영상도 참고 증거이며 최종 오탐/미탐 판정은 CSV review row로 닫는다.
 `SmokeDetection` 로그의 `conf`는 threshold 경계 후보가 반올림 때문에 잘못 분류되지 않도록 6자리 정밀도로 기록한다.
 
 부분 시각 확인은 참고 증거로만 취급한다. 일부 overlay를 확인해서 후보가 실제 얼굴인지 설명할 수는 있지만, 전체 오탐/미탐 게이트를 닫으려면 `review-package/full-gt-review.csv`와 `review-package/full-frame-review.csv`에 crop/full-frame row가 채워져 있어야 한다. 특히 edge 또는 top-edge weak 후보는 보호해야 할 부분 얼굴일 수 있으므로, 실제 얼굴을 덮지 않는다는 시각 근거 없이 자동 오탐으로 단정하지 않는다.
@@ -163,6 +166,8 @@ goal 완료로 볼 수 있는 최소 증거:
 
 - Output: `.tmp/yolo-problem-span-wrapper-smoke/yolo-followup-quality-evidence.md`
 - Detection rows: `96`
+- Overlay option smoke: `.tmp/yolo-problem-span-overlay-smoke/yolo-followup-quality-evidence.md`
+- Detection overlay video: `.tmp/yolo-problem-span-overlay-smoke/yolo-detection-overlay.mp4` (`689K`, generated from the same 2-second sample)
 - Scene-cut evidence on this no-hard-cut wrapper sample after the direct-check budget/priority update: `directChecked=74`, `directSkipped=0`, `maxDiff=0.206`, `cutPairs=none`, `removedFrames=none`, `threshold=0.150`. This confirms dense spans still get bounded direct source->target checks, while the lower direct threshold and higher budget do not delete this no-hard-cut sample.
 - Post-scene final gap-fill now also carries cut pairs found by the initial final gap-fill scene-cut guard, so a gap-fill that was removed across a transition cannot be re-created by the later post-scene gap-fill pass.
 - Final gap-fill now rejects weak geometry-risk anchors (`edge`, `tiny`, `upper/lower weak`, aspect outlier) while keeping strong edge anchors eligible. This reduces YOLO false positives from becoming temporal gap-fill seeds without disabling high-confidence edge faces.
