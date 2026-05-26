@@ -229,7 +229,8 @@ function Get-ReviewFrameNumbers {
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'lowerWeakFrames=(.*?), aspectBad=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'aspectBadFrames=(.*?), tinyWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'tinyWeakFrames=(.*?), tinyShort=')
-        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'tinyShortFrames=(.*)$')
+        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'tinyShortFrames=(.*?), protectedSceneCarry=')
+        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'protectedSceneCarryFrames=(.*?), reviewRequired=')
     }
 
     Add-LowConfidenceDetectionFrames $frames $DetectionRows $LowConfidenceReviewThreshold

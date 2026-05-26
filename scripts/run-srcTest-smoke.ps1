@@ -566,6 +566,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             yoloFaceOnnxRoiMaxCandidates);
         Console.WriteLine($"[SmokeYoloFaceOnnxRoiRefine] label={label}, candidates={candidates.Count}, minAreaRatio={yoloFaceOnnxRoiMinAreaRatio:F3}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
     }
+    IReadOnlyList<int> protectedSceneCarryFrameIndices = Array.Empty<int>();
     if (useYolo)
     {
         var postProcessor = new YoloFinalMaskPostProcessor();
@@ -645,6 +646,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             sceneCut.CutFramePairs,
             yoloSceneCutCarryBlockFrames);
         Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
+        protectedSceneCarryFrameIndices = sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices;
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
             .Concat(sceneCutCarryCleanup.RemovedFrameIndices)
             .Concat(postSceneCleanup.RemovedFrameIndices)
@@ -680,7 +682,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
     if (useYolo)
-        LogFinalMaskSummary(label, maskProvider);
+        LogFinalMaskSummary(label, maskProvider, protectedSceneCarryFrameIndices);
     if (dumpDetections)
         DumpDetections(label, maskProvider);
 
@@ -747,7 +749,10 @@ static IReadOnlyList<FaceTrackFilledFace> BuildLargeFaceRoiCandidates(
     return candidates;
 }
 
-static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
+static void LogFinalMaskSummary(
+    string label,
+    FrameMaskProvider maskProvider,
+    IReadOnlyCollection<int>? protectedSceneCarryFrameIndices = null)
 {
     const float lowConfidenceThreshold = 0.38f;
     const float weakNonEdgeThreshold = 0.50f;
@@ -768,13 +773,18 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
     const double largeJumpAreaChangeRatio = 4.0;
     const double largeJumpCenterShift = 0.20;
 
+    var protectedSceneCarryFrames = protectedSceneCarryFrameIndices?
+        .Distinct()
+        .OrderBy(x => x)
+        .ToArray() ?? Array.Empty<int>();
     var entries = maskProvider.GetFaceMaskEntries()
         .Where(x => x.Value.Faces.Count > 0)
         .OrderBy(x => x.Key)
         .ToArray();
     if (entries.Length == 0)
     {
-        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, reviewRequired=False, reviewReasons=none");
+        var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, protectedSceneCarry={protectedSceneCarryFrames.Length}, protectedSceneCarryFrames={FormatFrames(protectedSceneCarryFrames)}, reviewRequired={emptyReviewReasons.Count > 0}, reviewReasons={FormatTextValues(emptyReviewReasons)}");
         return;
     }
 
@@ -913,10 +923,11 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
         lowerWeakRows,
         aspectBadRows,
         tinyWeakRows,
-        tinyShortRows);
+        tinyShortRows,
+        protectedSceneCarryFrames.Length);
 
     Console.WriteLine(
-        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}, reviewRequired={reviewReasons.Count > 0}, reviewReasons={FormatTextValues(reviewReasons)}");
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}, protectedSceneCarry={protectedSceneCarryFrames.Length}, protectedSceneCarryFrames={FormatFrames(protectedSceneCarryFrames)}, reviewRequired={reviewReasons.Count > 0}, reviewReasons={FormatTextValues(reviewReasons)}");
 }
 
 static IReadOnlyList<string> BuildFinalMaskReviewReasons(
@@ -928,7 +939,8 @@ static IReadOnlyList<string> BuildFinalMaskReviewReasons(
     int lowerWeakRows,
     int aspectBadRows,
     int tinyWeakRows,
-    int tinyShortRows)
+    int tinyShortRows,
+    int protectedSceneCarryRows = 0)
 {
     var reasons = new List<string>();
     if (shortGapCount > 0)
@@ -949,6 +961,8 @@ static IReadOnlyList<string> BuildFinalMaskReviewReasons(
         reasons.Add("tiny-weak");
     if (tinyShortRows > 0)
         reasons.Add("tiny-short");
+    if (protectedSceneCarryRows > 0)
+        reasons.Add("scene-carry-protected");
 
     return reasons;
 }
