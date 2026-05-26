@@ -266,6 +266,7 @@ The GUI and smoke paths now add a high-confidence post-cut carry probe before fi
 - Evidence: `probeCandidates=1`, `probeCutPairs=100->101`, `probeRemoved=0`
 - Meaning: a high-confidence transition ghost no longer needs to be weak enough for the older `0.78` post-cut candidate path before the cut pair can be discovered, but the app still avoids treating confidence alone as ground truth.
 - Evidence export: `scripts/write-yolo-followup-quality-evidence.ps1` and `scripts/write-yolo-quality-review-checklist.ps1` preserve `[SmokeYoloStrongCarrySceneCutProbe]` / `[YoloStrongCarrySceneCutProbe]` lines and add probe target frames to required full-frame review candidates.
+- Carry-cleanup evidence export: when both the initial scene-carry cleanup and `stage=post-gap-fill` cleanup appear in one run, `scripts/write-yolo-followup-quality-evidence.ps1` keeps all cleanup lines and adds frames from each line's removed/protected carry fields to the required full-frame review candidates.
 
 Focused 2-second `00:09:00` evidence after the probe export update:
 

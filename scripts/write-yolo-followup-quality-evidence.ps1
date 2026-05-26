@@ -217,8 +217,8 @@ function Get-ReviewFrameNumbers {
         Add-FramePairTargetValues $frames (Read-MatchValue $probeLine 'cutPairs=(.*?), threshold=')
     }
 
-    if ($SceneCutCarryCleanupLines.Count -gt 0) {
-        $carryLine = $SceneCutCarryCleanupLines[0].Line
+    foreach ($carryMatch in $SceneCutCarryCleanupLines) {
+        $carryLine = $carryMatch.Line
         $removedCarryFrames = Read-MatchValue $carryLine 'removedFrames=(.*?), removedUnsupportedStrong='
         if ($removedCarryFrames -eq "none") {
             $removedCarryFrames = Read-MatchValue $carryLine 'removedFrames=(.*?), protectedStrong='
@@ -707,7 +707,7 @@ $strongCarryProbe = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(S
 $trackPost = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFaceTrackPost\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $autoSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[AutoRunSummary\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
-$sceneCutCarryCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloSceneCutCarryCleanup|YoloSceneCutCarryCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$sceneCutCarryCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloSceneCutCarryCleanup|YoloSceneCutCarryCleanup)\]' -ErrorAction SilentlyContinue)
 $finalMaskPostSceneCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeYoloFinalMaskPostSceneCleanup\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
@@ -757,8 +757,8 @@ if ($detectionRows.Count -eq 0) {
     if ($finalMaskCleanup.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskCleanup[0].Line)``"
     }
-    if ($sceneCutCarryCleanup.Count -gt 0) {
-        $noDetectionChecklist += "- ``$($sceneCutCarryCleanup[0].Line)``"
+    foreach ($carryCleanup in $sceneCutCarryCleanup) {
+        $noDetectionChecklist += "- ``$($carryCleanup.Line)``"
     }
     if ($finalMaskGapFill.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskGapFill[0].Line)``"
@@ -932,8 +932,8 @@ if ($strongCarryProbe.Count -gt 0) {
 if ($finalMaskCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask cleanup: ``$($finalMaskCleanup[0].Line)``")
 }
-if ($sceneCutCarryCleanup.Count -gt 0) {
-    [void]$summary.AppendLine("- Scene-cut carry cleanup: ``$($sceneCutCarryCleanup[0].Line)``")
+foreach ($carryCleanup in $sceneCutCarryCleanup) {
+    [void]$summary.AppendLine("- Scene-cut carry cleanup: ``$($carryCleanup.Line)``")
 }
 if ($finalMaskPostSceneCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask post-scene cleanup: ``$($finalMaskPostSceneCleanup[0].Line)``")
