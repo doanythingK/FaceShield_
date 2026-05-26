@@ -842,6 +842,13 @@ namespace FaceShield.Services.Analysis
             if (IsSuppressedWeakGeometryGapAnchor(face, entries[entryIndex].Value.Size, confidence, options))
                 return false;
 
+            if (confidence <= options.RiskyGeometryAnchorSupportMaxConfidence &&
+                IsRiskyGeometryGapAnchor(face, entries[entryIndex].Value.Size, options) &&
+                !HasSupportedGapAnchorNeighbor(entries, entryIndex, faceIndex, face, options, excludedEntryIndex))
+            {
+                return false;
+            }
+
             if (confidence >= options.MinAnchorConfidence)
                 return true;
             if (options.SupportedAnchorMinConfidence <= 0 ||
@@ -937,6 +944,20 @@ namespace FaceShield.Services.Analysis
 
             return TouchesFrameEdge(face, size, options.AnchorEdgeMarginRatio) ||
                 IsTinyGapAnchorFace(face, size, options) ||
+                IsUpperWeakGapAnchorFace(face, size, options) ||
+                IsLowerWeakGapAnchorFace(face, size, options) ||
+                IsAspectOutlierGapAnchorFace(face, options);
+        }
+
+        private static bool IsRiskyGeometryGapAnchor(
+            Rect face,
+            PixelSize size,
+            YoloFinalMaskGapFillOptions options)
+        {
+            if (TouchesFrameEdge(face, size, options.AnchorEdgeMarginRatio))
+                return false;
+
+            return IsTinyGapAnchorFace(face, size, options) ||
                 IsUpperWeakGapAnchorFace(face, size, options) ||
                 IsLowerWeakGapAnchorFace(face, size, options) ||
                 IsAspectOutlierGapAnchorFace(face, options);
@@ -1392,6 +1413,7 @@ namespace FaceShield.Services.Analysis
         public double MaxAreaChangeRatio { get; init; } = 2.5;
         public double DuplicateIou { get; init; } = 0.50;
         public float WeakGeometryAnchorMaxConfidence { get; init; } = 0.62f;
+        public float RiskyGeometryAnchorSupportMaxConfidence { get; init; } = 0.72f;
         public double AnchorEdgeMarginRatio { get; init; } = 0.02;
         public double TinyAnchorMaxAreaRatio { get; init; } = 0.0009;
         public double UpperWeakAnchorMaxCenterYRatio { get; init; } = 0.10;
