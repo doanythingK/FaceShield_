@@ -580,7 +580,8 @@ namespace FaceShield.ViewModels.Pages
                             yoloCleanupPass.RemovedFacesInfo,
                             yoloCarryCleanup.RemovedFacesInfo),
                         sceneCarryBlockedFaces: yoloCarryCleanup.RemovedFacesInfo,
-                        sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames);
+                        sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames,
+                        logLabel: "YoloFinalMaskPostSceneCleanup");
                     if (postSceneCleanupPass.CutFramePairs.Count > 0)
                     {
                         var postGapFillCutPairs = CombineCutFramePairs(yoloCutPairs, postSceneCleanupPass.CutFramePairs);
@@ -960,7 +961,8 @@ namespace FaceShield.ViewModels.Pages
             IReadOnlyCollection<int>? additionalBlockedFrameIndices = null,
             IReadOnlyCollection<FaceTrackFilledFace>? additionalBlockedFaces = null,
             IReadOnlyCollection<FaceTrackFilledFace>? sceneCarryBlockedFaces = null,
-            IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices = null)
+            IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices = null,
+            string logLabel = "YoloFinalMaskCleanup")
         {
             var postProcessor = new YoloFinalMaskPostProcessor();
             var cleanup = postProcessor.RemoveWeakIsolatedMasks(
@@ -988,7 +990,7 @@ namespace FaceShield.ViewModels.Pages
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskCleanup] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedMediumUnsupported={cleanup.RemovedMediumUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces} removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces} removedTopEdgeWeakClusters={cleanup.RemovedTopEdgeWeakClusterFaces} removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces} removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces} removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
+                $"[{logLabel}] removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces} removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces} removedMediumUnsupported={cleanup.RemovedMediumUnsupportedFaces} removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces} removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces} removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces} removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces} removedTopEdgeWeakClusters={cleanup.RemovedTopEdgeWeakClusterFaces} removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces} removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces} removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces} removedFrames={FormatFrameList(cleanup.RemovedFrameIndices)} maxConf={YoloFinalMaskWeakIsolatedConfidenceMax:0.###}");
 
             var gapFillCutPairs = Array.Empty<string>();
             if (fillStableGaps)
