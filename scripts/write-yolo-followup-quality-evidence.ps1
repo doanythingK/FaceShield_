@@ -187,6 +187,7 @@ function Get-ReviewFrameNumbers {
     param(
         [object[]]$TrackPostLines,
         [object[]]$SceneGuardLines,
+        [object[]]$SceneCutCarryCleanupLines,
         [object[]]$FinalMaskSummaryLines,
         [object[]]$DetectionRows
     )
@@ -202,6 +203,12 @@ function Get-ReviewFrameNumbers {
         Add-FramePairTargetValues $frames (Read-MatchValue $sceneLine 'checkedPairs=(.*?), maxDiff=')
         Add-FramePairTargetValues $frames (Read-MatchValue $sceneLine 'cutPairs=(.*?), removed=')
         Add-FrameListValues $frames (Read-MatchValue $sceneLine 'removedFrames=(.*?), threshold=')
+    }
+
+    if ($SceneCutCarryCleanupLines.Count -gt 0) {
+        $carryLine = $SceneCutCarryCleanupLines[0].Line
+        Add-FrameListValues $frames (Read-MatchValue $carryLine 'removedFrames=(.*?), protectedStrong=')
+        Add-FrameListValues $frames (Read-MatchValue $carryLine 'protectedStrongFrames=(.*?), blockedFrames=')
     }
 
     if ($FinalMaskSummaryLines.Count -gt 0) {
@@ -647,7 +654,7 @@ $finalMaskPostSceneCleanup = @(Select-String -Path $resolvedPredictionLog -Patte
 $finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
-$reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
+$reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -SceneCutCarryCleanupLines $sceneCutCarryCleanup -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
 
 if ($detectionRows.Count -eq 0) {
     if (-not $AllowNoDetections.IsPresent) {
@@ -791,9 +798,9 @@ if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Review index: ``$ReviewPackageDir/review-index.html``")
     [void]$summary.AppendLine("- Crop review CSV: ``$ReviewPackageDir/full-gt-review.csv``")
     [void]$summary.AppendLine("- Full-frame review CSV: ``$ReviewPackageDir/full-frame-review.csv``")
-    if ($reviewFrameNumbers.Count -gt 0) {
-        [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
-    }
+}
+if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
 }
 [void]$summary.AppendLine("- Detection rows: $($detectionRows.Count)")
 if ($detectionRows.Count -eq 0) {
