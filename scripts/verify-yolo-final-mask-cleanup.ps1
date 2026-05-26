@@ -435,15 +435,19 @@ sceneCutCarryProvider.SetFaceRects(
     new[] { 0.62f, 0.93f });
 sceneCutCarryProvider.SetFaceRects(1003, new[] { new Rect(646, 366, 120, 120) }, size, 0.63f, new[] { 0.63f });
 sceneCutCarryProvider.SetFaceRects(1004, new[] { new Rect(648, 368, 120, 120) }, size, 0.65f, new[] { 0.65f });
-sceneCutCarryProvider.SetFaceRects(1005, new[] { new Rect(650, 370, 120, 120) }, size, 0.66f, new[] { 0.66f });
+sceneCutCarryProvider.SetFaceRects(1005, new[] { new Rect(650, 370, 120, 120) }, size, 0.93f, new[] { 0.93f });
 sceneCutCarryProvider.SetFaceRects(1006, new[] { new Rect(652, 372, 120, 120) }, size, 0.95f, new[] { 0.95f });
 sceneCutCarryProvider.SetFaceRects(2000, new[] { new Rect(420, 280, 100, 100) }, size, 0.86f, new[] { 0.86f });
 for (int frame = 2001; frame <= 2008; frame++)
-    sceneCutCarryProvider.SetFaceRects(frame, new[] { new Rect(420 + frame - 2000, 280 + frame - 2000, 100, 100) }, size, 0.61f, new[] { 0.61f });
+{
+    float confidence = frame == 2008 ? 0.94f : 0.61f;
+    sceneCutCarryProvider.SetFaceRects(frame, new[] { new Rect(420 + frame - 2000, 280 + frame - 2000, 100, 100) }, size, confidence, new[] { confidence });
+}
 sceneCutCarryProvider.SetFaceRects(2009, new[] { new Rect(429, 289, 100, 100) }, size, 0.93f, new[] { 0.93f });
 var sceneCutCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
     sceneCutCarryProvider,
-    new[] { "1000->1001", "2000->2004" });
+    new[] { "1000->1001", "2000->2004" },
+    new YoloSceneCutCarryCleanupOptions { MaxConfidence = 0.95f });
 var sceneCutCarryFrames = string.Join(",", sceneCutCarryCleanup.RemovedFrameIndices);
 var sceneCutCarryBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
     new[] { "1000->1001", "2000->2004" },

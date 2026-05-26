@@ -308,8 +308,8 @@ var noDropDirectPrevious = new Rect(610, 240, 88, 90);
 var noDropDirectGhostA = new Rect(614, 242, 88, 90);
 var noDropDirectGhostB = new Rect(618, 244, 88, 90);
 noDropDirectProvider.SetFaceRects(220, new[] { noDropDirectPrevious }, size, 0.88f, new[] { 0.88f });
-noDropDirectProvider.SetFaceRects(221, new[] { noDropDirectGhostA }, size, 0.88f, new[] { 0.88f });
-noDropDirectProvider.SetFaceRects(222, new[] { noDropDirectGhostB }, size, 0.87f, new[] { 0.87f });
+noDropDirectProvider.SetFaceRects(221, new[] { noDropDirectGhostA }, size, 0.93f, new[] { 0.93f });
+noDropDirectProvider.SetFaceRects(222, new[] { noDropDirectGhostB }, size, 0.92f, new[] { 0.92f });
 var noDropDirectCandidates = guard.BuildWeakTrackTransitionCandidates(
     noDropDirectProvider,
     new FaceTrackPostProcessOptions
@@ -323,7 +323,7 @@ var noDropDirectCandidates = guard.BuildWeakTrackTransitionCandidates(
         MaxAreaChangeRatio = 4.0,
         DuplicateIou = 0.35
     },
-    maxTargetConfidence: 0.90f,
+    maxTargetConfidence: 0.95f,
     maxTransitionGap: 3,
     minConfidenceDrop: 0.0f,
     maxPostCutCarryFrames: 5,
@@ -377,13 +377,13 @@ var highTailFirst = new Rect(246, 224, 82, 84);
 var highTailSecond = new Rect(250, 226, 82, 84);
 highTailProvider.SetFaceRects(150, new[] { highTailSource }, size, 0.90f, new[] { 0.90f });
 highTailProvider.SetFaceRects(151, new[] { highTailFirst }, size, 0.82f, new[] { 0.82f });
-highTailProvider.SetFaceRects(152, new[] { highTailSecond }, size, 0.86f, new[] { 0.86f });
+highTailProvider.SetFaceRects(152, new[] { highTailSecond }, size, 0.93f, new[] { 0.93f });
 var highTailResult = guard.Apply(
     highTailProvider,
     new[] { new FaceTrackFilledFace(151, highTailFirst, size, 0.82f, 150) },
     static (source, target) => source == 150 && target == 151 ? 0.50 : 0.0,
     removeMatchingTailFrames: 3,
-    removeMatchingTailMaxConfidence: 0.90f);
+    removeMatchingTailMaxConfidence: 0.95f);
 
 if (highTailResult.Removed != 2 || string.Join(",", highTailResult.RemovedFrameIndices) != "151,152")
     throw new InvalidOperationException($"Expected high-confidence carried tail to be removed after a confirmed cut, got removed={highTailResult.Removed}, frames={string.Join(",", highTailResult.RemovedFrameIndices)}.");
