@@ -451,15 +451,15 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
     Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
-    const float yoloSceneCutDirectCarryMaxConfidence = 0.95f;
+    const float yoloSceneCutDirectCarryMaxConfidence = 0.98f;
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.32;
-    const int yoloSceneCutDirectDifferenceMaxCandidates = 48;
+    const int yoloSceneCutDirectDifferenceMaxCandidates = 96;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
     const int yoloSceneCutCarryBlockFrames = 8;
-    const float yoloSceneCutMatchingTailMaxConfidence = 0.95f;
+    const float yoloSceneCutMatchingTailMaxConfidence = 0.98f;
     const float yoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
     const double yoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
@@ -633,6 +633,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             {
                 MaxCarryFrames = 5,
                 ExtendedWeakCarryFrames = yoloSceneCutCarryBlockFrames,
+                SourceLookbackFrames = yoloSceneCutPostCutLookbackFrames,
                 MaxConfidence = yoloSceneCutMatchingTailMaxConfidence,
                 ExtendedWeakMaxConfidence = yoloSceneCutExtendedWeakCarryMaxConfidence,
                 CandidateMatchMinIou = yoloSceneCutCandidateMatchMinIou,

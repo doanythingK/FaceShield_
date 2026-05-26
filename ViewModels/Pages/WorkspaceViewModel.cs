@@ -56,7 +56,7 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
-        private const int YoloSceneCutDirectDifferenceMaxCandidates = 48;
+        private const int YoloSceneCutDirectDifferenceMaxCandidates = 96;
         private const int YoloSceneCutMatchingTailMaxFrames = 5;
         private const float YoloSceneCutMatchingTailMaxConfidence = 0.98f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
