@@ -7,6 +7,7 @@ param(
     [string]$TemplateCsv = "",
     [string]$ReviewPackageDir = "",
     [string]$DetectionOverlayPath = "",
+    [string]$ReviewContactSheetPath = "",
     [string]$SummaryPath = "",
     [string]$MaskContinuityPath = "",
     [string]$TrimStart = "",
@@ -35,6 +36,7 @@ param(
     [switch]$SkipReviewPackage,
     [switch]$ForceReviewPackage,
     [switch]$WithDetectionOverlayVideo,
+    [switch]$WithReviewContactSheet,
     [int]$DetectionOverlayScaleWidth = 960
 )
 
@@ -553,6 +555,10 @@ if ([string]::IsNullOrWhiteSpace($DetectionOverlayPath)) {
     $DetectionOverlayPath = Join-Path $OutputDir "yolo-detection-overlay.mp4"
 }
 
+if ([string]::IsNullOrWhiteSpace($ReviewContactSheetPath)) {
+    $ReviewContactSheetPath = Join-Path $OutputDir "yolo-review-contact-sheet.png"
+}
+
 if ([string]::IsNullOrWhiteSpace($SummaryPath)) {
     $SummaryPath = Join-Path $OutputDir "yolo-followup-quality-evidence.md"
 }
@@ -567,6 +573,7 @@ $resolvedChecklistPath = Resolve-RepoPath $ChecklistPath
 $resolvedTemplateCsv = Resolve-RepoPath $TemplateCsv
 $resolvedReviewPackageDir = Resolve-RepoPath $ReviewPackageDir
 $resolvedDetectionOverlayPath = Resolve-RepoPath $DetectionOverlayPath
+$resolvedReviewContactSheetPath = Resolve-RepoPath $ReviewContactSheetPath
 $resolvedSummaryPath = Resolve-RepoPath $SummaryPath
 $resolvedMaskContinuityPath = Resolve-RepoPath $MaskContinuityPath
 $resolvedVideoPath = Resolve-RepoPath $VideoPath
@@ -606,12 +613,16 @@ $templateScript = Join-Path $repo "scripts\new-yolo-full-gt-template.ps1"
 $packageScript = Join-Path $repo "scripts\new-yolo-full-gt-review-package.ps1"
 $maskContinuityScript = Join-Path $repo "scripts\write-yolo-mask-continuity-report.ps1"
 $detectionOverlayScript = Join-Path $repo "scripts\new-yolo-detection-overlay-video.ps1"
+$reviewContactSheetScript = Join-Path $repo "scripts\new-yolo-review-contact-sheet.ps1"
 
 Require-File "run-srcTest-smoke.ps1" $smokeScript
 Require-File "write-yolo-quality-review-checklist.ps1" $checklistScript
 Require-File "new-yolo-full-gt-template.ps1" $templateScript
-if ($WithDetectionOverlayVideo.IsPresent) {
+if ($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent) {
     Require-File "new-yolo-detection-overlay-video.ps1" $detectionOverlayScript
+}
+if ($WithReviewContactSheet.IsPresent) {
+    Require-File "new-yolo-review-contact-sheet.ps1" $reviewContactSheetScript
 }
 if (-not $SkipReviewPackage) {
     Require-File "new-yolo-full-gt-review-package.ps1" $packageScript
@@ -813,7 +824,7 @@ else {
         }
     }
 
-    if ($WithDetectionOverlayVideo.IsPresent) {
+    if ($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent) {
         Require-File "overlay video" $resolvedVideoPath
 
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $detectionOverlayScript `
@@ -823,6 +834,18 @@ else {
             -ScaleWidth $DetectionOverlayScaleWidth
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to write YOLO detection overlay video."
+        }
+    }
+
+    if ($WithReviewContactSheet.IsPresent -and $reviewFrameNumbers.Count -gt 0) {
+        Require-File "detection overlay video" $resolvedDetectionOverlayPath
+
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $reviewContactSheetScript `
+            -VideoPath $resolvedDetectionOverlayPath `
+            -Frames ($reviewFrameNumbers -join ",") `
+            -OutputPath $resolvedReviewContactSheetPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO review contact sheet."
         }
     }
 }
@@ -841,8 +864,11 @@ if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Crop review CSV: ``$ReviewPackageDir/full-gt-review.csv``")
     [void]$summary.AppendLine("- Full-frame review CSV: ``$ReviewPackageDir/full-frame-review.csv``")
 }
-if ($WithDetectionOverlayVideo.IsPresent -and $detectionRows.Count -gt 0) {
+if (($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent) -and $detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Detection overlay video: ``$DetectionOverlayPath``")
+}
+if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    [void]$summary.AppendLine("- Review contact sheet: ``$ReviewContactSheetPath``")
 }
 if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
@@ -907,8 +933,11 @@ if ($detectionRows.Count -gt 0) {
 if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewIndex=$ReviewPackageDir/review-index.html"
 }
-if ($WithDetectionOverlayVideo.IsPresent -and $detectionRows.Count -gt 0) {
+if (($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent) -and $detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] detectionOverlay=$DetectionOverlayPath"
+}
+if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"
 }
 Write-Host "[YoloFollowupQualityEvidence] summary=$SummaryPath"
 Write-Host "[YoloFollowupQualityEvidence] detections=$($detectionRows.Count)"

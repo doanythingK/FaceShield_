@@ -19,6 +19,7 @@ param(
     [switch]$AllowNoDetections,
     [switch]$WithReviewPackage,
     [switch]$WithDetectionOverlayVideo,
+    [switch]$WithReviewContactSheet,
     [switch]$Force
 )
 
@@ -75,6 +76,10 @@ if (-not $WithReviewPackage.IsPresent) {
 
 if ($WithDetectionOverlayVideo.IsPresent) {
     $argsList.Add("-WithDetectionOverlayVideo") | Out-Null
+}
+
+if ($WithReviewContactSheet.IsPresent) {
+    $argsList.Add("-WithReviewContactSheet") | Out-Null
 }
 
 if ($Force.IsPresent) {

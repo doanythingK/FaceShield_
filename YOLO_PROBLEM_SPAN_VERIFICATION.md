@@ -31,6 +31,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 `-TrimStart`와 `-TrimSeconds`는 실제 문제 구간에 맞게 바꾼다. `-AllowLongSmokeSource`는 사용하지 않는다.
 기본 실행은 review package 생성을 생략한다. crop/full-frame HTML 검토가 필요하면 `-WithReviewPackage`를 추가한다.
 검출 박스가 짧은 clip 위에서 시간 순서대로 어떻게 이어지는지 확인하려면 `-WithDetectionOverlayVideo`를 추가한다. 이 경우 `yolo-detection-overlay.mp4`가 함께 생성된다.
+review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewContactSheet`를 추가한다. 이 옵션은 `yolo-detection-overlay.mp4`와 `yolo-review-contact-sheet.png`를 함께 생성한다.
 
 ## 산출물
 
@@ -41,9 +42,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 - `yolo-quality-review-checklist.md`: 깜박임/잔상/오탐 review frame 목록
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
 - `yolo-detection-overlay.mp4`: `-WithDetectionOverlayVideo` 사용 시 생성되는 연속 검출 overlay 영상
+- `yolo-review-contact-sheet.png`: `-WithReviewContactSheet` 사용 시 생성되는 review frame contact sheet
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 연속 재생에서 깜박임이나 화면전환 잔상을 먼저 빠르게 보려면 `-WithDetectionOverlayVideo`를 함께 사용한다. 단, 이 overlay 영상도 참고 증거이며 최종 오탐/미탐 판정은 CSV review row로 닫는다.
+정지 이미지로 오탐 후보를 빠르게 분류하려면 `-WithReviewContactSheet`를 함께 사용한다. 이 contact sheet도 참고 증거이며, 최종 판정은 review CSV로 닫는다.
 `SmokeDetection` 로그의 `conf`는 threshold 경계 후보가 반올림 때문에 잘못 분류되지 않도록 6자리 정밀도로 기록한다.
 
 부분 시각 확인은 참고 증거로만 취급한다. 일부 overlay를 확인해서 후보가 실제 얼굴인지 설명할 수는 있지만, 전체 오탐/미탐 게이트를 닫으려면 `review-package/full-gt-review.csv`와 `review-package/full-frame-review.csv`에 crop/full-frame row가 채워져 있어야 한다. 특히 edge 또는 top-edge weak 후보는 보호해야 할 부분 얼굴일 수 있으므로, 실제 얼굴을 덮지 않는다는 시각 근거 없이 자동 오탐으로 단정하지 않는다.
@@ -276,3 +279,15 @@ Focused 2-second `00:09:00` evidence after the probe export update:
   - Full review: `.tmp/yolo-problem-span-strongprobe-0900/visual-review/full-review-contact.png`
 - Visual observation: frames `4,6,7,17,20,24,25,32` still show visible partial background and/or foreground faces inside the residual edge/top-edge boxes. These are not confirmed non-face false positives from this evidence, so the default cleanup should not delete them automatically.
 - This run used a 2-second focused trim, not the full source video.
+
+## 2026-05-27 Review Contact Sheet Smoke
+
+The problem-span wrapper can now generate a review contact sheet directly:
+
+- Option: `-WithReviewContactSheet`
+- Smoke summary: `.tmp/yolo-problem-span-contactsheet-smoke/yolo-followup-quality-evidence.md`
+- Detection overlay: `.tmp/yolo-problem-span-contactsheet-smoke/yolo-detection-overlay.mp4`
+- Contact sheet: `.tmp/yolo-problem-span-contactsheet-smoke/yolo-review-contact-sheet.png`
+- Required full-frame review frames: `4,6,7,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32`
+- Final summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`, `protectedSceneCarry=0`, `reviewRequired=True`
+- This smoke used a 2-second focused `00:09:00` trim, not the full source video.

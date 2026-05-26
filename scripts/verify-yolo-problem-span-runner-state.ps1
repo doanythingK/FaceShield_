@@ -45,6 +45,7 @@ Assert-Match "runner forwards yolo thresholds" $runner '-YoloObjectnessThreshold
 Assert-Match "runner supports no-detection evidence" $runner '\[switch\]\$AllowNoDetections[\s\S]*-AllowNoDetections'
 Assert-Match "runner skips review package by default" $runner 'if\s*\(-not\s*\$WithReviewPackage\.IsPresent\)[\s\S]*-SkipReviewPackage'
 Assert-Match "runner supports detection overlay video" $runner '\[switch\]\$WithDetectionOverlayVideo[\s\S]*-WithDetectionOverlayVideo'
+Assert-Match "runner supports review contact sheet" $runner '\[switch\]\$WithReviewContactSheet[\s\S]*-WithReviewContactSheet'
 Assert-Match "runner supports forced rerun" $runner 'if\s*\(\$Force\.IsPresent\)[\s\S]*-ForceTrim[\s\S]*-ForceRunSmoke'
 
 if ($runner -match "AllowLongSmokeSource") {
@@ -54,6 +55,7 @@ Write-Host "[YoloProblemSpanRunnerVerify] pass runner does not expose long sourc
 
 Assert-Match "guide uses runner" $guide 'scripts/run-yolo-problem-span-verification\.ps1[\s\S]*-TrimStart[\s\S]*-TrimSeconds'
 Assert-Match "guide documents detection overlay option" $guide '-WithDetectionOverlayVideo[\s\S]*yolo-detection-overlay\.mp4'
+Assert-Match "guide documents contact sheet option" $guide '-WithReviewContactSheet[\s\S]*yolo-review-contact-sheet\.png'
 Assert-Match "guide says no full video smoke override" $guide '-AllowLongSmokeSource'
 Assert-Match "guide records wrapper smoke evidence" $guide 'Wrapper Smoke[\s\S]*yolo-problem-span-wrapper-smoke[\s\S]*Detection rows:\s*`96`[\s\S]*removedFrames=33,34,35[\s\S]*blockedByCleanup=3[\s\S]*cleanupBlockedFrames=33,34,35'
 Assert-Match "guide documents cleanup-block pass criteria" $guide 'blockedByCleanup=\.\.\.[\s\S]*cleanupBlockedFrames=\.\.\.[\s\S]*후속 anti-flicker fill'
