@@ -26,6 +26,7 @@ namespace FaceShield.Services.Analysis
             var removedFrames = new List<int>();
             int removed = 0;
             int removedUnsupported = 0;
+            int removedMediumUnsupported = 0;
             int removedShortClusters = 0;
             int removedTinyClusters = 0;
             int removedTinyShortClusters = 0;
@@ -94,6 +95,8 @@ namespace FaceShield.Services.Analysis
                         !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio))
                     {
                         bool hasMatchingNeighbor = HasMatchingTemporalNeighbor(entries, i, face, options);
+                        bool removeMediumUnsupported = !hasMatchingNeighbor &&
+                            IsMediumUnsupportedSuspiciousFace(face, data.Size, options);
                         bool removeUpperWeakCluster = hasMatchingNeighbor &&
                             IsUpperWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
                         bool removeLowerWeakCluster = hasMatchingNeighbor &&
@@ -104,9 +107,11 @@ namespace FaceShield.Services.Analysis
                             !removeLowerWeakCluster &&
                             IsAspectOutlierTemporalCluster(entries, i, faceIndex, face, confidence, options);
 
-                        if (removeUpperWeakCluster || removeLowerWeakCluster || removeAspectOutlierCluster)
+                        if (removeMediumUnsupported || removeUpperWeakCluster || removeLowerWeakCluster || removeAspectOutlierCluster)
                         {
                             removed++;
+                            if (removeMediumUnsupported)
+                                removedMediumUnsupported++;
                             if (removeUpperWeakCluster)
                                 removedUpperWeakClusters++;
                             if (removeLowerWeakCluster)
@@ -191,6 +196,7 @@ namespace FaceShield.Services.Analysis
                 : new YoloFinalMaskCleanupResult(
                     removed,
                     removedUnsupported,
+                    removedMediumUnsupported,
                     removedShortClusters,
                     removedTinyClusters,
                     removedTinyShortClusters,
@@ -1395,6 +1401,16 @@ namespace FaceShield.Services.Analysis
                 aspectRatio > options.AspectOutlierMaxRatio;
         }
 
+        private static bool IsMediumUnsupportedSuspiciousFace(
+            Rect face,
+            PixelSize size,
+            YoloFinalMaskCleanupOptions options)
+        {
+            return IsUpperWeakFace(face, size, options) ||
+                IsLowerWeakFace(face, size, options) ||
+                IsAspectOutlierFace(face, options);
+        }
+
         private static bool IsTinyGapAnchorFace(Rect face, PixelSize size, YoloFinalMaskGapFillOptions options)
         {
             if (size.Width <= 0 || size.Height <= 0)
@@ -1522,6 +1538,7 @@ namespace FaceShield.Services.Analysis
     public readonly record struct YoloFinalMaskCleanupResult(
         int RemovedWeakIsolatedFaces,
         int RemovedWeakUnsupportedFaces,
+        int RemovedMediumUnsupportedFaces,
         int RemovedWeakShortClusterFaces,
         int RemovedWeakTinyClusterFaces,
         int RemovedTinyShortClusterFaces,
@@ -1531,7 +1548,7 @@ namespace FaceShield.Services.Analysis
         int RemovedAspectOutlierClusterFaces,
         IReadOnlyList<int> RemovedFrameIndices)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>());
     }
 
     public readonly record struct YoloFinalMaskGapFillResult(
