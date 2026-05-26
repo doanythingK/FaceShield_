@@ -46,7 +46,7 @@ review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewConta
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 연속 재생에서 깜박임이나 화면전환 잔상을 먼저 빠르게 보려면 `-WithDetectionOverlayVideo`를 함께 사용한다. 단, 이 overlay 영상도 참고 증거이며 최종 오탐/미탐 판정은 CSV review row로 닫는다.
-정지 이미지로 오탐 후보를 빠르게 분류하려면 `-WithReviewContactSheet`를 함께 사용한다. 이 contact sheet도 참고 증거이며, 최종 판정은 review CSV로 닫는다.
+정지 이미지로 오탐 후보를 빠르게 분류하려면 `-WithReviewContactSheet`를 함께 사용한다. 검출이 0개인 구간에서는 같은 옵션이 짧은 source clip에서 샘플 frame contact sheet를 만들어 미탐 여부를 확인하게 한다. 이 contact sheet도 참고 증거이며, 최종 판정은 review CSV로 닫는다.
 `SmokeDetection` 로그의 `conf`는 threshold 경계 후보가 반올림 때문에 잘못 분류되지 않도록 6자리 정밀도로 기록한다.
 
 부분 시각 확인은 참고 증거로만 취급한다. 일부 overlay를 확인해서 후보가 실제 얼굴인지 설명할 수는 있지만, 전체 오탐/미탐 게이트를 닫으려면 `review-package/full-gt-review.csv`와 `review-package/full-frame-review.csv`에 crop/full-frame row가 채워져 있어야 한다. 특히 edge 또는 top-edge weak 후보는 보호해야 할 부분 얼굴일 수 있으므로, 실제 얼굴을 덮지 않는다는 시각 근거 없이 자동 오탐으로 단정하지 않는다.
@@ -291,3 +291,13 @@ The problem-span wrapper can now generate a review contact sheet directly:
 - Required full-frame review frames: `4,6,7,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32`
 - Final summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`, `protectedSceneCarry=0`, `reviewRequired=True`
 - This smoke used a 2-second focused `00:09:00` trim, not the full source video.
+
+For no-detection spans, the same `-WithReviewContactSheet` option samples frames from the short source clip and records `Sampled no-detection review frames` in `yolo-followup-quality-evidence.md`.
+
+No-detection contact-sheet smoke:
+
+- Smoke summary: `.tmp/yolo-problem-span-nodetect-contactsheet-smoke/yolo-followup-quality-evidence.md`
+- Contact sheet: `.tmp/yolo-problem-span-nodetect-contactsheet-smoke/yolo-review-contact-sheet.png`
+- Detection rows: `0`
+- Sampled no-detection review frames: `0,5,11,16,21,27,32,38,43,48,54,59`
+- This smoke used a 2-second focused `00:06:00` trim, not the full source video.

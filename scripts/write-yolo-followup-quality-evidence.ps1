@@ -250,6 +250,27 @@ function Get-ReviewFrameNumbers {
     return @($frames | ForEach-Object { $_ })
 }
 
+function Get-SampledReviewFrameNumbers {
+    param(
+        [int]$FrameCount,
+        [int]$MaxFrames = 12
+    )
+
+    $lastFrame = [Math]::Max(0, $FrameCount - 1)
+    $sampleCount = [Math]::Max(1, [Math]::Min($MaxFrames, [Math]::Max(1, $FrameCount)))
+    if ($sampleCount -eq 1) {
+        return @(0)
+    }
+
+    $frames = New-Object System.Collections.Generic.SortedSet[int]
+    for ($index = 0; $index -lt $sampleCount; $index++) {
+        $frame = [int][Math]::Round($index * $lastFrame / [double]($sampleCount - 1))
+        [void]$frames.Add($frame)
+    }
+
+    return @($frames | ForEach-Object { $_ })
+}
+
 function Convert-ToWslPath {
     param([string]$Path)
 
@@ -692,10 +713,24 @@ $finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(S
 $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -StrongCarryProbeLines $strongCarryProbe -SceneCutCarryCleanupLines $sceneCutCarryCleanup -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
+$noDetectionReviewFrameNumbers = @()
 
 if ($detectionRows.Count -eq 0) {
     if (-not $AllowNoDetections.IsPresent) {
         throw "Prediction log contains no [SmokeDetection] rows. Re-run with -AllowNoDetections to record this as no-detection evidence."
+    }
+
+    if ($WithReviewContactSheet.IsPresent) {
+        $noDetectionReviewFrameNumbers = Get-SampledReviewFrameNumbers -FrameCount $VideoFrameCount
+        Require-File "review video" $resolvedVideoPath
+
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $reviewContactSheetScript `
+            -VideoPath $resolvedVideoPath `
+            -Frames ($noDetectionReviewFrameNumbers -join ",") `
+            -OutputPath $resolvedReviewContactSheetPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO no-detection review contact sheet."
+        }
     }
 
     $noDetectionChecklist = @(
@@ -877,6 +912,10 @@ if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
 if ($detectionRows.Count -eq 0) {
     [void]$summary.AppendLine("- No detection rows were found; crop/full-frame package generation was skipped.")
 }
+if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
+    [void]$summary.AppendLine("- Review contact sheet: ``$ReviewContactSheetPath``")
+    [void]$summary.AppendLine("- Sampled no-detection review frames: ``$($noDetectionReviewFrameNumbers -join ",")``")
+}
 if ($autoSummary.Count -gt 0) {
     [void]$summary.AppendLine("- Auto summary: ``$($autoSummary[0].Line)``")
 }
@@ -937,6 +976,9 @@ if (($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent)
     Write-Host "[YoloFollowupQualityEvidence] detectionOverlay=$DetectionOverlayPath"
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"
+}
+if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"
 }
 Write-Host "[YoloFollowupQualityEvidence] summary=$SummaryPath"

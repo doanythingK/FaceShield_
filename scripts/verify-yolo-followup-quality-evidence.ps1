@@ -105,6 +105,7 @@ Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-rev
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
 Assert-Contains "script can write detection overlay video" $scriptText "WithDetectionOverlayVideo[\s\S]*new-yolo-detection-overlay-video\.ps1"
 Assert-Contains "script can write review contact sheet" $scriptText "WithReviewContactSheet[\s\S]*new-yolo-review-contact-sheet\.ps1[\s\S]*Review contact sheet"
+Assert-Contains "script can write no-detection contact sheet" $scriptText "Get-SampledReviewFrameNumbers[\s\S]*No detection rows were found[\s\S]*Sampled no-detection review frames"
 Assert-Contains "script writes detection overlay summary" $scriptText "Detection overlay video"
 Assert-Contains "script reuses existing review package" $scriptText "ForceReviewPackage[\s\S]*review-index\.html"
 Assert-Contains "script derives required full-frame review frames" $scriptText "Get-ReviewFrameNumbers[\s\S]*lostFrames=.*removedShort[\s\S]*checkedPairs=.*maxDiff"
