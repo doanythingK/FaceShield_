@@ -66,7 +66,7 @@ namespace FaceShield.Services.Analysis
             int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces);
             int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces);
-            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces);
+            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces, out int blockedInitialFillTracks);
             int rewrittenFrames = RewriteMaskProvider(maskProvider, facesByFrame, confByFrame, sizeByFrame, hasStoredMask);
 
             return new FaceTrackPostProcessResult(
@@ -78,6 +78,7 @@ namespace FaceShield.Services.Analysis
                 lostFilledFaces.ToArray(),
                 initialFilledFrames,
                 initialFilledFaces.ToArray(),
+                blockedInitialFillTracks,
                 removedFaces,
                 removedSparseFaces,
                 removedUnstableTailFaces,
@@ -481,8 +482,10 @@ namespace FaceShield.Services.Analysis
             bool[] hasStoredMask,
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
-            ICollection<FaceTrackFilledFace> initialFilledFaces)
+            ICollection<FaceTrackFilledFace> initialFilledFaces,
+            out int blockedInitialFillTracks)
         {
+            blockedInitialFillTracks = 0;
             if (options.MaxInitialFillFrames <= 0)
                 return 0;
 
@@ -508,6 +511,7 @@ namespace FaceShield.Services.Analysis
                 if (options.InitialFillRequiresInwardMotion &&
                     !IsMovingInwardFromTouchedEdge(first.Bounds, second.Bounds, first.Size, options))
                 {
+                    blockedInitialFillTracks++;
                     continue;
                 }
 
@@ -835,6 +839,7 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<FaceTrackFilledFace> FilledLostFacesInfo,
         int FilledInitialFaces,
         IReadOnlyList<FaceTrackFilledFace> FilledInitialFacesInfo,
+        int BlockedInitialFillTracks,
         int RemovedShortFaces,
         int RemovedSparseFaces,
         int RemovedUnstableTailFaces,
@@ -842,7 +847,7 @@ namespace FaceShield.Services.Analysis
         int RemovedLowerFrameFaces,
         int RewrittenFrames)
     {
-        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<FaceTrackFilledFace>(), 0, 0, 0, 0, 0, 0);
+        public static FaceTrackPostProcessResult Empty { get; } = new(0, 0, Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<FaceTrackFilledFace>(), 0, 0, 0, 0, 0, 0, 0);
     }
 
     public readonly record struct FaceTrackFilledFace(

@@ -758,6 +758,7 @@ namespace FaceShield.ViewModels.Pages
             if (result.FilledGapFaces > 0 ||
                 result.FilledLostFaces > 0 ||
                 result.FilledInitialFaces > 0 ||
+                result.BlockedInitialFillTracks > 0 ||
                 result.RemovedShortFaces > 0 ||
                 result.RemovedSparseFaces > 0 ||
                 result.RemovedUnstableTailFaces > 0 ||
@@ -765,7 +766,7 @@ namespace FaceShield.ViewModels.Pages
                 result.RemovedLowerFrameFaces > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} initialFilled={result.FilledInitialFaces} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} removedSparse={result.RemovedSparseFaces} removedUnstableTail={result.RemovedUnstableTailFaces} removedEdgeTail={result.RemovedEdgeTailFaces} removedLower={result.RemovedLowerFrameFaces} rewritten={result.RewrittenFrames}");
+                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} initialFilled={result.FilledInitialFaces} blockedInitialFill={result.BlockedInitialFillTracks} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} removedSparse={result.RemovedSparseFaces} removedUnstableTail={result.RemovedUnstableTailFaces} removedEdgeTail={result.RemovedEdgeTailFaces} removedLower={result.RemovedLowerFrameFaces} rewritten={result.RewrittenFrames}");
             }
 
             return result;

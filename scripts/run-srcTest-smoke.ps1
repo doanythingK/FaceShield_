@@ -534,7 +534,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     string lostFrames = trackPost.FilledLostFrameIndices.Count == 0
         ? "none"
         : string.Join(",", trackPost.FilledLostFrameIndices.Take(32));
-    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, initialFilled={trackPost.FilledInitialFaces}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, removedSparse={trackPost.RemovedSparseFaces}, removedUnstableTail={trackPost.RemovedUnstableTailFaces}, removedEdgeTail={trackPost.RemovedEdgeTailFaces}, removedLower={trackPost.RemovedLowerFrameFaces}, rewritten={trackPost.RewrittenFrames}");
+    Console.WriteLine($"[SmokeFaceTrackPost] label={label}, tracks={trackPost.TrackCount}, filled={trackPost.FilledGapFaces}, lostFilled={trackPost.FilledLostFaces}, initialFilled={trackPost.FilledInitialFaces}, blockedInitialFill={trackPost.BlockedInitialFillTracks}, lostFrames={lostFrames}, removedShort={trackPost.RemovedShortFaces}, removedSparse={trackPost.RemovedSparseFaces}, removedUnstableTail={trackPost.RemovedUnstableTailFaces}, removedEdgeTail={trackPost.RemovedEdgeTailFaces}, removedLower={trackPost.RemovedLowerFrameFaces}, rewritten={trackPost.RewrittenFrames}");
     if (detector is IBgraFaceDetector bgraDetector)
     {
         using var faceOnnxRoiDetector = useScrfd || useYuNet || useYolo ? null : new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions));

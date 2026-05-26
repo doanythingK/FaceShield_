@@ -175,8 +175,11 @@ for (int frame = 92; frame <= 94; frame++)
         throw new InvalidOperationException($"Expected edge-start track moving outward not to backfill frame {frame}.");
 }
 
+if (result.BlockedInitialFillTracks != 1)
+    throw new InvalidOperationException($"Expected one outward edge-start track to be blocked from initial backfill; got {result.BlockedInitialFillTracks}.");
+
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
