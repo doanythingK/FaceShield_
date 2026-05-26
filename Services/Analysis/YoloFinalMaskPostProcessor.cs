@@ -305,22 +305,24 @@ namespace FaceShield.Services.Analysis
                             options.FillConfidenceFloor,
                             1.0f);
 
-                        for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
+                        var gapFrameIndices = GetUnstoredGapFrameIndices(previousFrame, nextFrame, storedFrames);
+                        bool hasCleanupBlockedFrame = gapFrameIndices.Any(blockedFrames.Contains);
+                        bool hasSceneCarryBlockedFrame = gapFrameIndices.Any(blockedSceneCarryFrames.Contains);
+                        if (hasCleanupBlockedFrame || hasSceneCarryBlockedFrame)
                         {
-                            if (storedFrames.Contains(frameIndex))
-                                continue;
-
-                            if (blockedFrames.Contains(frameIndex))
+                            foreach (int frameIndex in gapFrameIndices)
                             {
-                                blockedCleanupFrames.Add(frameIndex);
-                                continue;
-                            }
-                            if (blockedSceneCarryFrames.Contains(frameIndex))
-                            {
-                                blockedSceneCarryGapFrames.Add(frameIndex);
-                                continue;
+                                if (hasCleanupBlockedFrame)
+                                    blockedCleanupFrames.Add(frameIndex);
+                                if (hasSceneCarryBlockedFrame)
+                                    blockedSceneCarryGapFrames.Add(frameIndex);
                             }
 
+                            break;
+                        }
+
+                        foreach (int frameIndex in gapFrameIndices)
+                        {
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
                             var interpolated = Interpolate(previousFace, nextFace, t);
                             if (interpolated.Width <= 0 || interpolated.Height <= 0)
@@ -402,6 +404,21 @@ namespace FaceShield.Services.Analysis
                 suppressedWeakGeometryAnchorChecks,
                 suppressedRiskyGeometryAnchorChecks,
                 unsupportedWeakAnchorChecks);
+        }
+
+        private static IReadOnlyList<int> GetUnstoredGapFrameIndices(
+            int previousFrame,
+            int nextFrame,
+            HashSet<int> storedFrames)
+        {
+            var frameIndices = new List<int>(Math.Max(0, nextFrame - previousFrame - 1));
+            for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
+            {
+                if (!storedFrames.Contains(frameIndex))
+                    frameIndices.Add(frameIndex);
+            }
+
+            return frameIndices;
         }
 
         public YoloSceneCutCarryCleanupResult RemoveSceneCutCarryRemnants(
