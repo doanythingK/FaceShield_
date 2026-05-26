@@ -642,6 +642,7 @@ $sceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFac
 $trackPost = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeFaceTrackPost\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $autoSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[AutoRunSummary\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$sceneCutCarryCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloSceneCutCarryCleanup|YoloSceneCutCarryCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskPostSceneCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[SmokeYoloFinalMaskPostSceneCleanup\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
@@ -673,6 +674,9 @@ if ($detectionRows.Count -eq 0) {
     }
     if ($finalMaskCleanup.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskCleanup[0].Line)``"
+    }
+    if ($sceneCutCarryCleanup.Count -gt 0) {
+        $noDetectionChecklist += "- ``$($sceneCutCarryCleanup[0].Line)``"
     }
     if ($finalMaskGapFill.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskGapFill[0].Line)``"
@@ -806,6 +810,9 @@ if ($sceneGuard.Count -gt 0) {
 }
 if ($finalMaskCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask cleanup: ``$($finalMaskCleanup[0].Line)``")
+}
+if ($sceneCutCarryCleanup.Count -gt 0) {
+    [void]$summary.AppendLine("- Scene-cut carry cleanup: ``$($sceneCutCarryCleanup[0].Line)``")
 }
 if ($finalMaskPostSceneCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask post-scene cleanup: ``$($finalMaskPostSceneCleanup[0].Line)``")
