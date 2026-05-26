@@ -338,13 +338,16 @@ namespace FaceShield.Services.Analysis
                             break;
                         }
 
-                        var gapFrameIndices = GetUnstoredGapFrameIndices(previousFrame, nextFrame, storedFrames);
+                        var allGapFrameIndices = GetGapFrameIndices(previousFrame, nextFrame);
+                        var fillableGapFrameIndices = allGapFrameIndices
+                            .Where(frameIndex => !storedFrames.Contains(frameIndex))
+                            .ToArray();
                         bool usesSceneCarryBlockedAnchor =
                             blockedSceneCarryFrames.Contains(previousFrame) ||
                             blockedSceneCarryFrames.Contains(nextFrame);
                         if (usesSceneCarryBlockedAnchor)
                         {
-                            foreach (int frameIndex in gapFrameIndices)
+                            foreach (int frameIndex in allGapFrameIndices)
                                 blockedSceneCarryGapFrames.Add(frameIndex);
 
                             break;
@@ -355,25 +358,25 @@ namespace FaceShield.Services.Analysis
                             options.FillConfidenceFloor,
                             1.0f);
 
-                        bool hasCleanupBlockedFrame = gapFrameIndices.Any(blockedFrames.Contains);
+                        bool hasCleanupBlockedFrame = allGapFrameIndices.Any(blockedFrames.Contains);
                         if (hasCleanupBlockedFrame)
                         {
-                            foreach (int frameIndex in gapFrameIndices)
+                            foreach (int frameIndex in allGapFrameIndices)
                                 blockedCleanupFrames.Add(frameIndex);
 
                             break;
                         }
 
-                        bool hasSceneCarryBlockedFrame = gapFrameIndices.Any(blockedSceneCarryFrames.Contains);
+                        bool hasSceneCarryBlockedFrame = allGapFrameIndices.Any(blockedSceneCarryFrames.Contains);
                         if (hasSceneCarryBlockedFrame)
                         {
-                            foreach (int frameIndex in gapFrameIndices)
+                            foreach (int frameIndex in allGapFrameIndices)
                                 blockedSceneCarryGapFrames.Add(frameIndex);
 
                             break;
                         }
 
-                        foreach (int frameIndex in gapFrameIndices)
+                        foreach (int frameIndex in fillableGapFrameIndices)
                         {
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
                             var interpolated = Interpolate(previousFace, nextFace, t);
@@ -478,17 +481,13 @@ namespace FaceShield.Services.Analysis
                 unsupportedWeakAnchorChecks);
         }
 
-        private static IReadOnlyList<int> GetUnstoredGapFrameIndices(
+        private static IReadOnlyList<int> GetGapFrameIndices(
             int previousFrame,
-            int nextFrame,
-            HashSet<int> storedFrames)
+            int nextFrame)
         {
             var frameIndices = new List<int>(Math.Max(0, nextFrame - previousFrame - 1));
             for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
-            {
-                if (!storedFrames.Contains(frameIndex))
-                    frameIndices.Add(frameIndex);
-            }
+                frameIndices.Add(frameIndex);
 
             return frameIndices;
         }

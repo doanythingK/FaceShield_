@@ -26,11 +26,16 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 using System;
 using System.Linq;
 using Avalonia;
+using Avalonia.Media.Imaging;
 using FaceShield.Services.Analysis;
 using FaceShield.Services.Video;
+using System.Runtime.CompilerServices;
 
 var provider = new FrameMaskProvider();
 var size = new PixelSize(1920, 1080);
+
+static WriteableBitmap CreateStoredMaskStub()
+    => (WriteableBitmap)RuntimeHelpers.GetUninitializedObject(typeof(WriteableBitmap));
 
 provider.SetFaceRects(10, new[] { new Rect(900, 300, 80, 80) }, size, 0.44f, new[] { 0.44f });
 provider.SetFaceRects(20, new[] { new Rect(0, 420, 52, 76) }, size, 0.42f, new[] { 0.42f });
@@ -709,8 +714,56 @@ if (sceneCarryAnchorGapFill.FilledFaces != 0 ||
 if (sceneCarryAnchorGapProvider.TryGetFaceMaskData(3209, out var sceneCarryAnchorExtended) && sceneCarryAnchorExtended.Faces.Count > 0)
     throw new InvalidOperationException("Expected scene-carry blocked anchor not to recreate frame 3209.");
 
+var storedCleanupBlockedGapProvider = new FrameMaskProvider();
+storedCleanupBlockedGapProvider.SetFaceRects(3300, new[] { new Rect(700, 320, 100, 100) }, size, 0.95f, new[] { 0.95f });
+storedCleanupBlockedGapProvider.SetMask(3302, CreateStoredMaskStub());
+storedCleanupBlockedGapProvider.SetFaceRects(3304, new[] { new Rect(708, 328, 100, 100) }, size, 0.94f, new[] { 0.94f });
+var storedCleanupBlockedGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(
+    storedCleanupBlockedGapProvider,
+    new YoloFinalMaskGapFillOptions
+    {
+        MaxGapFrames = 5,
+        BlockedFrameIndices = new[] { 3302 }
+    });
+if (storedCleanupBlockedGapFill.FilledFaces != 0 ||
+    storedCleanupBlockedGapFill.BlockedCleanupGapFrames != 3 ||
+    string.Join(",", storedCleanupBlockedGapFill.BlockedCleanupFrameIndices) != "3301,3302,3303")
+{
+    throw new InvalidOperationException($"Expected a stored cleanup-blocked frame to suppress the whole stable gap, got filled={storedCleanupBlockedGapFill.FilledFaces}, cleanupBlocked={storedCleanupBlockedGapFill.BlockedCleanupGapFrames}, frames={string.Join(",", storedCleanupBlockedGapFill.BlockedCleanupFrameIndices)}.");
+}
+if (storedCleanupBlockedGapProvider.TryGetFaceMaskData(3301, out var storedCleanupBlockedA) && storedCleanupBlockedA.Faces.Count > 0 ||
+    storedCleanupBlockedGapProvider.TryGetFaceMaskData(3303, out var storedCleanupBlockedB) && storedCleanupBlockedB.Faces.Count > 0 ||
+    !storedCleanupBlockedGapProvider.TryGetStoredMask(3302, out _))
+{
+    throw new InvalidOperationException("Expected stored cleanup-blocked frame 3302 to remain stored and surrounding gap frames not to be recreated.");
+}
+
+var storedSceneCarryBlockedGapProvider = new FrameMaskProvider();
+storedSceneCarryBlockedGapProvider.SetFaceRects(3310, new[] { new Rect(720, 340, 100, 100) }, size, 0.95f, new[] { 0.95f });
+storedSceneCarryBlockedGapProvider.SetMask(3312, CreateStoredMaskStub());
+storedSceneCarryBlockedGapProvider.SetFaceRects(3314, new[] { new Rect(728, 348, 100, 100) }, size, 0.94f, new[] { 0.94f });
+var storedSceneCarryBlockedGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(
+    storedSceneCarryBlockedGapProvider,
+    new YoloFinalMaskGapFillOptions
+    {
+        MaxGapFrames = 5,
+        BlockedSceneCarryFrameIndices = new[] { 3312 }
+    });
+if (storedSceneCarryBlockedGapFill.FilledFaces != 0 ||
+    storedSceneCarryBlockedGapFill.BlockedSceneCarryGapFrames != 3 ||
+    string.Join(",", storedSceneCarryBlockedGapFill.BlockedSceneCarryFrameIndices) != "3311,3312,3313")
+{
+    throw new InvalidOperationException($"Expected a stored scene-carry blocked frame to suppress the whole stable gap, got filled={storedSceneCarryBlockedGapFill.FilledFaces}, sceneCarryBlocked={storedSceneCarryBlockedGapFill.BlockedSceneCarryGapFrames}, frames={string.Join(",", storedSceneCarryBlockedGapFill.BlockedSceneCarryFrameIndices)}.");
+}
+if (storedSceneCarryBlockedGapProvider.TryGetFaceMaskData(3311, out var storedSceneCarryBlockedA) && storedSceneCarryBlockedA.Faces.Count > 0 ||
+    storedSceneCarryBlockedGapProvider.TryGetFaceMaskData(3313, out var storedSceneCarryBlockedB) && storedSceneCarryBlockedB.Faces.Count > 0 ||
+    !storedSceneCarryBlockedGapProvider.TryGetStoredMask(3312, out _))
+{
+    throw new InvalidOperationException("Expected stored scene-carry blocked frame 3312 to remain stored and surrounding gap frames not to be recreated.");
+}
+
 Console.WriteLine(
-    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedMediumUnsupported={result.RemovedMediumUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedTopEdgeWeakClusters={result.RemovedTopEdgeWeakClusterFaces}, removedUpperWeakClusters={result.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={result.RemovedLowerWeakClusterFaces}, removedAspectOutliers={result.RemovedAspectOutlierClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, supportedWeakGapFilled={supportedWeakGapFill.FilledFaces}, supportedWeakGapFrames={supportedWeakGapFrames}, unsupportedWeakGapFilled={unsupportedWeakGapFill.FilledFaces}, weakEdgeAnchorGapFilled={weakEdgeAnchorGapFill.FilledFaces}, strongEdgeAnchorGapFilled={strongEdgeAnchorGapFill.FilledFaces}, mediumRiskyAnchorGapFilled={mediumRiskyAnchorGapFill.FilledFaces}, mediumRiskyAnchorSuppressed={mediumRiskyAnchorGapFill.SuppressedRiskyGeometryAnchorChecks}, supportedMediumRiskyAnchorGapFilled={supportedMediumRiskyAnchorGapFill.FilledFaces}, supportedMediumRiskyAnchorGapFrames={supportedMediumRiskyAnchorGapFrames}, supportedMediumRiskyAnchorSuppressed={supportedMediumRiskyAnchorGapFill.SuppressedRiskyGeometryAnchorChecks}, cleanupBlockedGapFilled={blockedFrameGapFill.FilledFaces}, cleanupBlockedGapFrames={blockedFrameGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={string.Join(",", blockedFrameGapFill.BlockedCleanupFrameIndices)}, partialCleanupBlockedGapFilled={partialBlockedFrameGapFill.FilledFaces}, partialCleanupBlockedGapFrames={partialBlockedFrameGapFill.BlockedCleanupGapFrames}, partialCleanupBlockedFrames={string.Join(",", partialBlockedFrameGapFill.BlockedCleanupFrameIndices)}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, blockedCutGapFilled={blockedCutGapFill.FilledFaces}, blockedCutGapFaces={blockedCutGapFill.BlockedCutGapFaces}, blockedCutGapFrames={string.Join(",", blockedCutGapFill.BlockedCutFrameIndices)}, gapCutAfterRemoved={afterCutGuard.Removed}, postSceneCleanupRemoved={preSceneCleanup.RemovedWeakIsolatedFaces}, sceneCutCarryRemoved={sceneCutCarryCleanup.RemovedFaces}, sceneCutCarryFrames={sceneCutCarryFrames}, sceneCutCarryRemovedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, sceneCutCarryRemovedUnsupportedStrongFrames={string.Join(",", sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, sceneCutCarryProtected={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, sceneCutCarryProtectedFrames={sceneCutCarryProtectedFrames}, lookbackSceneCutCarryRemoved={lookbackCarryCleanup.RemovedFaces}, lookbackSceneCutCarryFrames={lookbackCarryFrames}, sceneCutCarryBlockedFrames={sceneCutCarryBlockedFrameText}, sceneCutCarryRefillBlocked={sceneCutCarryBlockedFill.BlockedSceneCarryGapFrames}, emptyPostCutRemovedUnsupportedStrong={postCutWindowCleanup.RemovedUnsupportedStrongCarryLikeFaces}, emptyPostCutProtected={postCutWindowCleanup.ProtectedStrongCarryLikeFaces}, emptyPostCutRefillBlocked={postCutWindowGapFill.BlockedSceneCarryGapFrames}, partialSceneCarryRefillBlocked={partialPostCutWindowGapFill.BlockedSceneCarryGapFrames}, partialSceneCarryBlockedFrames={string.Join(",", partialPostCutWindowGapFill.BlockedSceneCarryFrameIndices)}, sceneCarryAnchorRefillBlocked={sceneCarryAnchorGapFill.BlockedSceneCarryGapFrames}, sceneCarryAnchorBlockedFrames={string.Join(",", sceneCarryAnchorGapFill.BlockedSceneCarryFrameIndices)}");
+    $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedMediumUnsupported={result.RemovedMediumUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedTopEdgeWeakClusters={result.RemovedTopEdgeWeakClusterFaces}, removedUpperWeakClusters={result.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={result.RemovedLowerWeakClusterFaces}, removedAspectOutliers={result.RemovedAspectOutlierClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, supportedWeakGapFilled={supportedWeakGapFill.FilledFaces}, supportedWeakGapFrames={supportedWeakGapFrames}, unsupportedWeakGapFilled={unsupportedWeakGapFill.FilledFaces}, weakEdgeAnchorGapFilled={weakEdgeAnchorGapFill.FilledFaces}, strongEdgeAnchorGapFilled={strongEdgeAnchorGapFill.FilledFaces}, mediumRiskyAnchorGapFilled={mediumRiskyAnchorGapFill.FilledFaces}, mediumRiskyAnchorSuppressed={mediumRiskyAnchorGapFill.SuppressedRiskyGeometryAnchorChecks}, supportedMediumRiskyAnchorGapFilled={supportedMediumRiskyAnchorGapFill.FilledFaces}, supportedMediumRiskyAnchorGapFrames={supportedMediumRiskyAnchorGapFrames}, supportedMediumRiskyAnchorSuppressed={supportedMediumRiskyAnchorGapFill.SuppressedRiskyGeometryAnchorChecks}, cleanupBlockedGapFilled={blockedFrameGapFill.FilledFaces}, cleanupBlockedGapFrames={blockedFrameGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={string.Join(",", blockedFrameGapFill.BlockedCleanupFrameIndices)}, partialCleanupBlockedGapFilled={partialBlockedFrameGapFill.FilledFaces}, partialCleanupBlockedGapFrames={partialBlockedFrameGapFill.BlockedCleanupGapFrames}, partialCleanupBlockedFrames={string.Join(",", partialBlockedFrameGapFill.BlockedCleanupFrameIndices)}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, blockedCutGapFilled={blockedCutGapFill.FilledFaces}, blockedCutGapFaces={blockedCutGapFill.BlockedCutGapFaces}, blockedCutGapFrames={string.Join(",", blockedCutGapFill.BlockedCutFrameIndices)}, gapCutAfterRemoved={afterCutGuard.Removed}, postSceneCleanupRemoved={preSceneCleanup.RemovedWeakIsolatedFaces}, sceneCutCarryRemoved={sceneCutCarryCleanup.RemovedFaces}, sceneCutCarryFrames={sceneCutCarryFrames}, sceneCutCarryRemovedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, sceneCutCarryRemovedUnsupportedStrongFrames={string.Join(",", sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, sceneCutCarryProtected={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, sceneCutCarryProtectedFrames={sceneCutCarryProtectedFrames}, lookbackSceneCutCarryRemoved={lookbackCarryCleanup.RemovedFaces}, lookbackSceneCutCarryFrames={lookbackCarryFrames}, sceneCutCarryBlockedFrames={sceneCutCarryBlockedFrameText}, sceneCutCarryRefillBlocked={sceneCutCarryBlockedFill.BlockedSceneCarryGapFrames}, emptyPostCutRemovedUnsupportedStrong={postCutWindowCleanup.RemovedUnsupportedStrongCarryLikeFaces}, emptyPostCutProtected={postCutWindowCleanup.ProtectedStrongCarryLikeFaces}, emptyPostCutRefillBlocked={postCutWindowGapFill.BlockedSceneCarryGapFrames}, partialSceneCarryRefillBlocked={partialPostCutWindowGapFill.BlockedSceneCarryGapFrames}, partialSceneCarryBlockedFrames={string.Join(",", partialPostCutWindowGapFill.BlockedSceneCarryFrameIndices)}, sceneCarryAnchorRefillBlocked={sceneCarryAnchorGapFill.BlockedSceneCarryGapFrames}, sceneCarryAnchorBlockedFrames={string.Join(",", sceneCarryAnchorGapFill.BlockedSceneCarryFrameIndices)}, storedCleanupRefillBlocked={storedCleanupBlockedGapFill.BlockedCleanupGapFrames}, storedCleanupBlockedFrames={string.Join(",", storedCleanupBlockedGapFill.BlockedCleanupFrameIndices)}, storedSceneCarryRefillBlocked={storedSceneCarryBlockedGapFill.BlockedSceneCarryGapFrames}, storedSceneCarryBlockedFrames={string.Join(",", storedSceneCarryBlockedGapFill.BlockedSceneCarryFrameIndices)}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
