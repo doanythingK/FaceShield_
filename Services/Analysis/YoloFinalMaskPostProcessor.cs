@@ -218,12 +218,14 @@ namespace FaceShield.Services.Analysis
 
             var storedFrames = new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
             var blockedFrames = new HashSet<int>(options.BlockedFrameIndices);
+            var blockedSceneCarryFrames = new HashSet<int>(options.BlockedSceneCarryFrameIndices);
             var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
             var filledFaceInfo = new List<FaceTrackFilledFace>();
             var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
             var filledFrames = new SortedSet<int>();
             var blockedCutFrames = new SortedSet<int>();
             var blockedCleanupFrames = new SortedSet<int>();
+            var blockedSceneCarryGapFrames = new SortedSet<int>();
             int filledFaces = 0;
             int blockedCutGapFaces = 0;
 
@@ -301,6 +303,11 @@ namespace FaceShield.Services.Analysis
                                 blockedCleanupFrames.Add(frameIndex);
                                 continue;
                             }
+                            if (blockedSceneCarryFrames.Contains(frameIndex))
+                            {
+                                blockedSceneCarryGapFrames.Add(frameIndex);
+                                continue;
+                            }
 
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
                             var interpolated = Interpolate(previousFace, nextFace, t);
@@ -345,8 +352,13 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
-            if (filledFaces == 0 && blockedCutGapFaces == 0 && blockedCleanupFrames.Count == 0)
+            if (filledFaces == 0 &&
+                blockedCutGapFaces == 0 &&
+                blockedCleanupFrames.Count == 0 &&
+                blockedSceneCarryGapFrames.Count == 0)
+            {
                 return YoloFinalMaskGapFillResult.Empty;
+            }
 
             foreach (var entry in fills.OrderBy(static x => x.Key))
             {
@@ -369,7 +381,9 @@ namespace FaceShield.Services.Analysis
                 blockedCutGapFaces,
                 blockedCutFrames.ToArray(),
                 blockedCleanupFrames.Count,
-                blockedCleanupFrames.ToArray());
+                blockedCleanupFrames.ToArray(),
+                blockedSceneCarryGapFrames.Count,
+                blockedSceneCarryGapFrames.ToArray());
         }
 
         public YoloSceneCutCarryCleanupResult RemoveSceneCutCarryRemnants(
@@ -1389,6 +1403,7 @@ namespace FaceShield.Services.Analysis
         public double AnchorMaxAspectRatio { get; init; } = 1.65;
         public IReadOnlyCollection<string> BlockedCutFramePairs { get; init; } = Array.Empty<string>();
         public IReadOnlyCollection<int> BlockedFrameIndices { get; init; } = Array.Empty<int>();
+        public IReadOnlyCollection<int> BlockedSceneCarryFrameIndices { get; init; } = Array.Empty<int>();
     }
 
     public sealed record YoloSceneCutCarryCleanupOptions
@@ -1423,9 +1438,11 @@ namespace FaceShield.Services.Analysis
         int BlockedCutGapFaces,
         IReadOnlyList<int> BlockedCutFrameIndices,
         int BlockedCleanupGapFrames,
-        IReadOnlyList<int> BlockedCleanupFrameIndices)
+        IReadOnlyList<int> BlockedCleanupFrameIndices,
+        int BlockedSceneCarryGapFrames,
+        IReadOnlyList<int> BlockedSceneCarryFrameIndices)
     {
-        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), 0, Array.Empty<int>());
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, Array.Empty<int>());
     }
 
     public readonly record struct YoloSceneCutCarryCleanupResult(

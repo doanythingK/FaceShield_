@@ -558,8 +558,8 @@ namespace FaceShield.ViewModels.Pages
                         blockedCutFramePairs: yoloCutPairs,
                         additionalBlockedFrameIndices: CombineFrameIndices(
                             yoloCleanupPass.RemovedFrameIndices,
-                            yoloCarryCleanup.RemovedFrameIndices,
-                            yoloSceneCutBlockedFrames));
+                            yoloCarryCleanup.RemovedFrameIndices),
+                        sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames);
                 }
                 LogFinalMaskSummary();
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
@@ -840,7 +840,8 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken,
             bool fillStableGaps = true,
             IReadOnlyCollection<string>? blockedCutFramePairs = null,
-            IReadOnlyCollection<int>? additionalBlockedFrameIndices = null)
+            IReadOnlyCollection<int>? additionalBlockedFrameIndices = null,
+            IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices = null)
         {
             var postProcessor = new YoloFinalMaskPostProcessor();
             var cleanup = postProcessor.RemoveWeakIsolatedMasks(
@@ -855,7 +856,13 @@ namespace FaceShield.ViewModels.Pages
             {
                 var cutPairs = Array.Empty<string>();
                 if (fillStableGaps)
-                    cutPairs = FillYoloStableFinalMaskGaps(postProcessor, videoPath, cancellationToken, blockedCutFramePairs, additionalBlockedFrameIndices);
+                    cutPairs = FillYoloStableFinalMaskGaps(
+                        postProcessor,
+                        videoPath,
+                        cancellationToken,
+                        blockedCutFramePairs,
+                        additionalBlockedFrameIndices,
+                        sceneCarryBlockedFrameIndices);
                 return new YoloFinalMaskCleanupPassResult(cleanup.RemovedFrameIndices, cutPairs);
             }
 
@@ -869,7 +876,8 @@ namespace FaceShield.ViewModels.Pages
                     videoPath,
                     cancellationToken,
                     blockedCutFramePairs,
-                    CombineFrameIndices(additionalBlockedFrameIndices, cleanup.RemovedFrameIndices));
+                    CombineFrameIndices(additionalBlockedFrameIndices, cleanup.RemovedFrameIndices),
+                    sceneCarryBlockedFrameIndices);
 
             return new YoloFinalMaskCleanupPassResult(cleanup.RemovedFrameIndices, gapFillCutPairs);
         }
@@ -879,7 +887,8 @@ namespace FaceShield.ViewModels.Pages
             string videoPath,
             CancellationToken cancellationToken,
             IReadOnlyCollection<string>? blockedCutFramePairs,
-            IReadOnlyCollection<int>? blockedFrameIndices)
+            IReadOnlyCollection<int>? blockedFrameIndices,
+            IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices)
         {
             var gapFill = postProcessor.FillShortStableGaps(
                 _maskProvider,
@@ -887,17 +896,19 @@ namespace FaceShield.ViewModels.Pages
                 {
                     MaxGapFrames = YoloFinalMaskStableGapMaxFrames,
                     BlockedCutFramePairs = blockedCutFramePairs ?? Array.Empty<string>(),
-                    BlockedFrameIndices = blockedFrameIndices ?? Array.Empty<int>()
+                    BlockedFrameIndices = blockedFrameIndices ?? Array.Empty<int>(),
+                    BlockedSceneCarryFrameIndices = sceneCarryBlockedFrameIndices ?? Array.Empty<int>()
                 });
             if (gapFill.FilledFaces <= 0 &&
                 gapFill.BlockedCutGapFaces <= 0 &&
-                gapFill.BlockedCleanupGapFrames <= 0)
+                gapFill.BlockedCleanupGapFrames <= 0 &&
+                gapFill.BlockedSceneCarryGapFrames <= 0)
             {
                 return Array.Empty<string>();
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} cutBlockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)} blockedByCleanup={gapFill.BlockedCleanupGapFrames} cleanupBlockedFrames={FormatFrameList(gapFill.BlockedCleanupFrameIndices)}");
+                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} cutBlockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)} blockedByCleanup={gapFill.BlockedCleanupGapFrames} cleanupBlockedFrames={FormatFrameList(gapFill.BlockedCleanupFrameIndices)} blockedBySceneCarry={gapFill.BlockedSceneCarryGapFrames} sceneCarryBlockedFrames={FormatFrameList(gapFill.BlockedSceneCarryFrameIndices)}");
 
             if (gapFill.CutGuardFacesInfo.Count == 0)
                 return Array.Empty<string>();
