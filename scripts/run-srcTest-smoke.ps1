@@ -458,6 +458,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const double yoloSceneCutDirectDifferenceThreshold = 0.32;
     const int yoloSceneCutDirectDifferenceMaxCandidates = 48;
     const int yoloSceneCutMatchingTailMaxFrames = 5;
+    const int yoloSceneCutCarryBlockFrames = 8;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.95f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
     const double yoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
@@ -637,8 +638,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         var sceneCutBlockedFrameIndices = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
             sceneCut.CutFramePairs,
-            5);
-        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}");
+            yoloSceneCutCarryBlockFrames);
+        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}");
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
             .Concat(sceneCutCarryCleanup.RemovedFrameIndices)
             .Concat(postSceneCleanup.RemovedFrameIndices)

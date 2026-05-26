@@ -64,6 +64,7 @@ namespace FaceShield.ViewModels.Pages
         private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
         private const int YoloSceneCutPostCutLookbackFrames = 3;
         private const int YoloSceneCutCarryPurgeFrames = 5;
+        private const int YoloSceneCutCarryBlockFrames = 8;
         private const float YoloSceneCutCarryPurgeMaxConfidence = 0.95f;
         private const int YoloFinalMaskStableGapMaxFrames = 5;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
@@ -546,11 +547,11 @@ namespace FaceShield.ViewModels.Pages
                         });
                     var yoloSceneCutBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
                         yoloCutPairs,
-                        YoloSceneCutCarryPurgeFrames);
+                        YoloSceneCutCarryBlockFrames);
                     if (yoloCutPairs.Count > 0)
                     {
                         System.Diagnostics.Debug.WriteLine(
-                            $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###}");
+                            $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###}");
                     }
                     RemoveYoloWeakIsolatedFinalMasks(
                         FrameList.VideoPath,

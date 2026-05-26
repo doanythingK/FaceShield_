@@ -37,7 +37,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedMediumUnsupported=0, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedTopEdgeWeakClusters=0, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=8,10,11,12
 [SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8, blockedBySceneCarry=0, sceneCarryBlockedFrames=none
 [SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
-[SmokeYoloSceneCutCarryCleanup] label=synthetic-yolo, removed=2, removedFrames=6,7, blockedFrames=6,7,8,9,10
+[SmokeYoloSceneCutCarryCleanup] label=synthetic-yolo, removed=2, removedFrames=6,7, blockedFrames=6,7,8,9,10,11,12,13, purgeFrames=5, blockFrames=8
 [SmokeYoloFinalMaskPostSceneGapFill] label=synthetic-yolo, filled=0, frames=none, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8, blockedBySceneCarry=2, sceneCarryBlockedFrames=6,7
 [SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard] label=synthetic-yolo, candidates=0, checked=0, checkedPairs=none, maxDiff=0.000, cutPairs=none, removed=0, removedFrames=none, threshold=0.000, elapsedMs=0, error=none
 [SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, lowConfFrames=2, weakNonEdge=1, weakNonEdgeFrames=2, edgeWeak=1, edgeWeakFrames=10, topEdgeWeak=1, topEdgeWeakFrames=10, upperWeak=1, upperWeakFrames=2, lowerWeak=1, lowerWeakFrames=6, aspectBad=1, aspectBadFrames=9, tinyWeak=1, tinyWeakFrames=2, tinyShort=1, tinyShortFrames=2
@@ -133,6 +133,7 @@ Assert-Contains "summary links final mask continuity report" $summaryText "Final
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"
 Assert-Contains "summary records scene-cut carry cleanup" $summaryText "Scene-cut carry cleanup[\s\S]*removed=2[\s\S]*removedFrames=6,7"
+Assert-Contains "summary records extended scene-carry block window" $summaryText "blockFrames=8"
 Assert-Contains "summary records final mask post-scene cleanup" $scriptText "Final mask post-scene cleanup"
 Assert-Contains "summary records tiny short cluster cleanup" $summaryText "removedTinyShortClusters=2"
 Assert-Contains "summary records tiny isolated cleanup" $summaryText "removedTinyIsolated=1"

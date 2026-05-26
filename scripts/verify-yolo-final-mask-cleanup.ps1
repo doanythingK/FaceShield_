@@ -524,12 +524,12 @@ var sceneCutCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryR
 var sceneCutCarryFrames = string.Join(",", sceneCutCarryCleanup.RemovedFrameIndices);
 var sceneCutCarryBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
     new[] { "1000->1001", "2000->2004" },
-    5);
+    8);
 var sceneCutCarryBlockedFrameText = string.Join(",", sceneCutCarryBlockedFrames);
 if (sceneCutCarryCleanup.RemovedFaces != 13 || sceneCutCarryFrames != "1001,1002,1003,1004,1005,2001,2002,2003,2004,2005,2006,2007,2008")
     throw new InvalidOperationException($"Expected scene-cut carry cleanup to remove weak frames 1001-1005 and direct-pair frames 2001-2008, got removed={sceneCutCarryCleanup.RemovedFaces}, frames={sceneCutCarryFrames}.");
-if (sceneCutCarryBlockedFrameText != "1001,1002,1003,1004,1005,2001,2002,2003,2004,2005,2006,2007,2008")
-    throw new InvalidOperationException($"Expected scene-cut carry blocked frames to cover the same post-cut carry windows, got frames={sceneCutCarryBlockedFrameText}.");
+if (sceneCutCarryBlockedFrameText != "1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011")
+    throw new InvalidOperationException($"Expected scene-cut carry blocked frames to cover the extended post-cut carry windows, got frames={sceneCutCarryBlockedFrameText}.");
 if (!sceneCutCarryProvider.TryGetFaceMaskData(1002, out var mixedCarryFrame) ||
     mixedCarryFrame.Faces.Count != 1 ||
     mixedCarryFrame.Confidences[0] < 0.90f)
