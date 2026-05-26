@@ -468,8 +468,7 @@ namespace FaceShield.ViewModels.Pages
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
-                if (lastProcessed == 0)
-                    _maskProvider.ClearFaceMasks();
+                ResetAutoFaceMasksForRun(lastProcessed);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
                 //       진행률 UI를 그릴 수 있습니다.
@@ -615,6 +614,22 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.IsAutoRunning = false;
                 if (!persisted)
                     PersistWorkspaceState(includePreviewMask: !exportAfter);
+            }
+        }
+
+        private void ResetAutoFaceMasksForRun(int startFrameIndex)
+        {
+            if (startFrameIndex <= 0)
+            {
+                _maskProvider.ClearFaceMasks();
+                return;
+            }
+
+            int removed = _maskProvider.RemoveFaceMasksFrom(startFrameIndex);
+            if (removed > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[AutoMaskResumeReset] start={startFrameIndex} removedStaleFaceMasks={removed}");
             }
         }
 

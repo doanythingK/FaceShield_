@@ -78,6 +78,21 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         _faceMasks.TryRemove(frameIndex, out _);
     }
 
+    public int RemoveFaceMasksFrom(int startFrameIndex)
+    {
+        int removed = 0;
+        foreach (int frameIndex in _faceMasks.Keys)
+        {
+            if (frameIndex < startFrameIndex)
+                continue;
+
+            if (_faceMasks.TryRemove(frameIndex, out _))
+                removed++;
+        }
+
+        return removed;
+    }
+
     public void ClearFaceMasks()
     {
         _faceMasks.Clear();

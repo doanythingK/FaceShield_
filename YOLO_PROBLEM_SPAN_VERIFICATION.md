@@ -126,6 +126,19 @@ goal 완료로 볼 수 있는 최소 증거:
 
 현재 상태에서는 기존 짧은 샘플 evidence와 verifier는 통과했지만, 사용자가 실제로 본 문제 구간의 visual confirmation은 아직 별도 증거가 필요하다.
 
+## Resume/Retry State Guard
+
+사용자 debug output에는 export cancel 이후 `processed=1`인 재개 실행이 기존 mask state 전체에 대해 track postprocess를 다시 수행한 흔적이 있었다. 이 경우 재개 지점 이후에 남아 있던 예전 YOLO face-rect mask가 새 detector 결과를 가로막고, 이전 실행의 화면전환 잔상 또는 오탐이 다시 export될 수 있다.
+
+현재 GUI 자동 감지 경로는 detector를 시작하기 전에 다음을 보장한다.
+
+- fresh run: 기존 auto face-rect mask 전체를 지운다.
+- resume run: resume frame 이후의 stale auto face-rect mask를 먼저 지운다.
+- manual bitmap mask는 별도 저장 경로라서 이 stale face-rect reset 대상이 아니다.
+- stale reset이 발생하면 `[AutoMaskResumeReset] start=... removedStaleFaceMasks=...`가 debug output에 남는다.
+
+검증 스크립트: `scripts/verify-auto-resume-mask-reset.ps1`
+
 ## Current Focused Evidence
 
 - 2026-05-27 current HEAD short-span run: `.tmp/yolo-goal-current-perface-0900/yolo-followup-quality-evidence.md`

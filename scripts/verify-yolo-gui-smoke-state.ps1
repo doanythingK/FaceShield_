@@ -9,6 +9,7 @@ param(
     [string]$FramePreviewViewModel = "ViewModels\Workspace\FramePreviewViewModel.cs",
     [string]$ToolPanelViewModel = "ViewModels\Workspace\ToolPanelViewModel.cs",
     [string]$StateStore = "Services\Workspace\WorkspaceStateStore.cs",
+    [string]$FrameMaskProvider = "Services\Video\FrameMaskProvider.cs",
     [string]$ExactFrameProvider = "Services\Video\Session\ExactFrameProvider.cs",
     [string]$TimelineController = "Services\Video\Session\TimelineController.cs",
     [string]$VideoSession = "Services\Video\Session\VideoSession.cs",
@@ -197,6 +198,7 @@ $workspaceText = Read-RepoFile $WorkspaceViewModel
 $framePreviewText = Read-RepoFile $FramePreviewViewModel
 $toolPanelText = Read-RepoFile $ToolPanelViewModel
 $stateText = Read-RepoFile $StateStore
+$frameMaskProviderText = Read-RepoFile $FrameMaskProvider
 $exactFrameProviderText = Read-RepoFile $ExactFrameProvider
 $timelineControllerText = Read-RepoFile $TimelineController
 $videoSessionText = Read-RepoFile $VideoSession
@@ -231,6 +233,8 @@ Assert-Match "workspace exports video" $workspaceText "VideoExportService[\s\S]*
 Assert-Match "workspace persists state" $workspaceText "PersistWorkspaceState"
 Assert-Match "workspace marks detection complete before export cancel path" $workspaceText '_autoCompleted\s*=\s*true;\s*_autoResumeIndex\s*=\s*0;[\s\S]*if\s*\(exportAfter\)[\s\S]*SaveVideoAsync'
 Assert-Match "workspace keeps completed detection state when export is canceled" $workspaceText 'if\s*\(!exported\)[\s\S]*PersistWorkspaceState\(includePreviewMask:\s*false\)[\s\S]*return\s+false;'
+Assert-Match "workspace clears stale resume face masks before auto rerun" $workspaceText 'ResetAutoFaceMasksForRun\(lastProcessed\);[\s\S]*RemoveFaceMasksFrom\(startFrameIndex\)[\s\S]*AutoMaskResumeReset'
+Assert-Match "frame mask provider supports resume-range face reset" $frameMaskProviderText 'public\s+int\s+RemoveFaceMasksFrom\(int\s+startFrameIndex\)[\s\S]*frameIndex\s*<\s*startFrameIndex[\s\S]*_faceMasks\.TryRemove'
 Assert-Match "workspace loads initial selected frame after session init on UI thread" $workspaceText '_sessionInitialized\s*&&\s*FrameList\.SelectedFrameIndex\s*>=\s*0[\s\S]*Dispatcher\.UIThread\.Post[\s\S]*FramePreview\.OnFrameIndexChanged\(FrameList\.SelectedFrameIndex\)'
 Assert-Match "workspace state restores face rect masks" $stateText 'FaceMasks[\s\S]*SetFaceRects'
 Assert-Match "workspace state saves face rect masks" $stateText 'GetFaceMaskEntries\(\)[\s\S]*FaceMasks'
