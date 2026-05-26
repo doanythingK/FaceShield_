@@ -100,8 +100,8 @@ Assert-Contains "script parses strong carry scene-cut probe" $scriptText "SmokeY
 Assert-Contains "script parses scene-cut carry cleanup" $scriptText "SmokeYoloSceneCutCarryCleanup|YoloSceneCutCarryCleanup"
 Assert-Contains "script preserves all scene-cut carry cleanup lines" $scriptText 'foreach\s*\(\$carryCleanup\s+in\s+\$sceneCutCarryCleanup\)'
 Assert-Contains "script parses final mask post-scene cleanup" $scriptText "SmokeYoloFinalMaskPostSceneCleanup|YoloFinalMaskPostSceneCleanup"
-Assert-Contains "script parses final mask gap fill" $scriptText "SmokeYoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill"
-Assert-Contains "script parses final mask gap-fill scene guard" $scriptText "SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard"
+Assert-Contains "script parses final mask gap fill" $scriptText "SmokeYoloFinalMaskPostSceneGapFill|YoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill"
+Assert-Contains "script parses final mask gap-fill scene guard" $scriptText "SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|YoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard"
 Assert-Contains "script parses final mask summary" $scriptText "SmokeFinalMaskSummary|FinalMaskSummary"
 Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-review-package\.ps1"
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
