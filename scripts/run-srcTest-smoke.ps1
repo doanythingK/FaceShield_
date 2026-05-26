@@ -772,7 +772,7 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
         .ToArray();
     if (entries.Length == 0)
     {
-        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none");
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, reviewRequired=False, reviewReasons=none");
         return;
     }
 
@@ -902,8 +902,53 @@ static void LogFinalMaskSummary(string label, FrameMaskProvider maskProvider)
         }
     }
 
+    var reviewReasons = BuildFinalMaskReviewReasons(
+        shortGapCount,
+        largeJumpGapRanges.Count,
+        isolatedFrames.Count,
+        weakNonEdgeRows,
+        upperWeakRows,
+        lowerWeakRows,
+        aspectBadRows,
+        tinyWeakRows,
+        tinyShortRows);
+
     Console.WriteLine(
-        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}");
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}, reviewRequired={reviewReasons.Count > 0}, reviewReasons={FormatTextValues(reviewReasons)}");
+}
+
+static IReadOnlyList<string> BuildFinalMaskReviewReasons(
+    int shortGapCount,
+    int largeJumpGapCount,
+    int isolatedCount,
+    int weakNonEdgeRows,
+    int upperWeakRows,
+    int lowerWeakRows,
+    int aspectBadRows,
+    int tinyWeakRows,
+    int tinyShortRows)
+{
+    var reasons = new List<string>();
+    if (shortGapCount > 0)
+        reasons.Add("short-gap");
+    if (largeJumpGapCount > 0)
+        reasons.Add("large-jump-gap");
+    if (isolatedCount > 0)
+        reasons.Add("isolated-mask");
+    if (weakNonEdgeRows > 0)
+        reasons.Add("weak-non-edge");
+    if (upperWeakRows > 0)
+        reasons.Add("upper-weak");
+    if (lowerWeakRows > 0)
+        reasons.Add("lower-weak");
+    if (aspectBadRows > 0)
+        reasons.Add("aspect-outlier");
+    if (tinyWeakRows > 0)
+        reasons.Add("tiny-weak");
+    if (tinyShortRows > 0)
+        reasons.Add("tiny-short");
+
+    return reasons;
 }
 
 static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)

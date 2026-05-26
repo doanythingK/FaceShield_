@@ -53,6 +53,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 
 - `Final mask summary` 또는 `SmokeFinalMaskSummary`에서 `shortGaps=0`
 - `isolated=0`
+- `reviewRequired=True`이면 `reviewReasons`에서 `short-gap`, `large-jump-gap`, `isolated-mask`가 있는지 먼저 확인한다. 이 값은 통과/실패 단정이 아니라 어느 frame group을 먼저 봐야 하는지 알려주는 triage 근거다.
 - cleanup이 제거한 프레임이 다시 채워지지 않았다는 근거가 필요하면 `Final mask gap fill`에서 `filled=0`, `frames=none`, `blockedByCleanup=...`, `cleanupBlockedFrames=...`를 확인한다.
 - `lostFrames`가 있더라도 해당 full-frame overlay에서 대상 얼굴이 계속 덮여 있음
 
@@ -71,6 +72,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - 후보가 많은 구간에서도 `directChecked=...`가 0으로 고정되지 않는다. `directSkipped=...`가 있으면 직접 source->target 비교가 예산 한도까지 수행되고 나머지만 생략된 것이다.
 - 컷 직후 같은 위치의 약한 tail이 함께 제거됨
 - 컷 또는 cleanup 이후 final gap fill이 `blockedByCut=...`/`cutBlockedFrames=...` 또는 `blockedByCleanup=...`/`cleanupBlockedFrames=...`를 남기고 `frames=none`이면, 후속 anti-flicker fill이 잔상을 다시 만들지 않았다는 근거로 본다.
+- `reviewReasons`에 `large-jump-gap`이 있으면 화면전환 또는 box jump 후보를 우선 확인한다.
 - review overlay에서 다음 장면에 이전 장면의 모자이크가 남지 않음
 
 실패 근거:
@@ -93,6 +95,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `very-low-confidence short cluster`
 - `tiny isolated non-edge`
 - scene-cut 이후 같은 위치의 weak tail
+- `reviewReasons`의 `weak-non-edge`, `upper-weak`, `lower-weak`, `aspect-outlier`, `tiny-weak`, `tiny-short`
 
 삭제하지 말고 review 대상으로 남겨야 하는 근거:
 
