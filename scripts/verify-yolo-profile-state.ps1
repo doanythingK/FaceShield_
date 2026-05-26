@@ -228,7 +228,7 @@ Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText
 Assert-Match "workspace smoothing does not search across long scene gaps" $workspaceText "TemporalSmoothSearchWindowFrames\s*=\s*2[\s\S]*BuildTemporalSmoothingCutStarts\(blockedCutPairs\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*-1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*searched\s*>\s*maxDistanceFrames"
 Assert-Match "workspace smoothing blocks pre-smooth yolo scene cuts" $workspaceText "yoloPreSmoothCutPairs[\s\S]*preSmoothGuard\.CutFramePairs[\s\S]*ApplyAutoTemporalSmoothing\(_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*BuildTemporalSmoothingCutStarts[\s\S]*Split\(""->""[\s\S]*IsBlockedTemporalSmoothingStep"
 Assert-Match "smoothing cut boundary verifier covers blocked direct pairs" $smoothingCutBoundaryVerifyText "10->13[\s\S]*AssertSet[\s\S]*13,\s*12[\s\S]*12,\s*13[\s\S]*InvokeFindNearest\(facesByFrame,\s*13,\s*-1,\s*2,\s*blocked\)"
-Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*0[\s\S]*MaxInitialFillFrames\s*=\s*3[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*StrongConfidence\s*=\s*0\.58f[\s\S]*DropShortTrackMaxDetections\s*=\s*2[\s\S]*DropShortSmallTrackMaxDetections\s*=\s*3[\s\S]*ShortTrackMaxConfidence\s*=\s*0\.48f[\s\S]*DropSparseTrackMaxDetections\s*=\s*3[\s\S]*DropSparseTrackMinSpanFrames\s*=\s*8[\s\S]*DropSparseTrackMaxDensity\s*=\s*0\.42[\s\S]*SparseTrackMaxConfidence\s*=\s*0\.56f[\s\S]*EdgeTailMaxConfidence\s*=\s*0\.50f[\s\S]*EdgeLostFillMaxConfidence\s*=\s*0\.60f[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
+Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*0[\s\S]*MaxInitialFillFrames\s*=\s*3[\s\S]*InitialFillRequiresInwardMotion\s*=\s*true[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*StrongConfidence\s*=\s*0\.58f[\s\S]*DropShortTrackMaxDetections\s*=\s*2[\s\S]*DropShortSmallTrackMaxDetections\s*=\s*3[\s\S]*ShortTrackMaxConfidence\s*=\s*0\.48f[\s\S]*DropSparseTrackMaxDetections\s*=\s*3[\s\S]*DropSparseTrackMinSpanFrames\s*=\s*8[\s\S]*DropSparseTrackMaxDensity\s*=\s*0\.42[\s\S]*SparseTrackMaxConfidence\s*=\s*0\.56f[\s\S]*EdgeTailMaxConfidence\s*=\s*0\.50f[\s\S]*EdgeLostFillMaxConfidence\s*=\s*0\.60f[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
 Assert-Match "workspace logs sparse temporal removals" $workspaceText "removedSparse=\{result\.RemovedSparseFaces\}"
 Assert-Match "workspace logs unstable-tail temporal removals" $workspaceText "removedUnstableTail=\{result\.RemovedUnstableTailFaces\}"
 Assert-Match "workspace logs edge-tail temporal removals" $workspaceText "removedEdgeTail=\{result\.RemovedEdgeTailFaces\}"
@@ -297,6 +297,8 @@ Assert-Match "scene cut guard removes track fill" $sceneCutGuardText "DefaultDif
 Assert-Match "scene cut guard can remove weak matching post-cut tail" $sceneCutGuardText "RemoveWeakMatchingTail[\s\S]*maxTailFrames[\s\S]*maxTailConfidence[\s\S]*TryRemoveWeakMatchingFace"
 Assert-Match "scene cut guard exposes deterministic verifier path" $sceneCutGuardText "Func<int,\s*int,\s*double>\s+frameDifferenceProvider[\s\S]*GetMaxFrameDifference[\s\S]*RemoveFaceCandidate"
 Assert-Match "track postprocess exposes synthetic fill confidence cap" $trackBuilderText "SyntheticFillConfidenceMax\s*\{\s*get;\s*init;\s*\}\s*=\s*1\.0f"
+Assert-Match "track postprocess exposes inward initial-fill gate" $trackBuilderText "InitialFillRequiresInwardMotion\s*\{\s*get;\s*init;\s*\}\s*=\s*false"
+Assert-Match "track interpolator gates initial fill by inward edge motion" $trackInterpolatorText "InitialFillRequiresInwardMotion[\s\S]*IsMovingInwardFromTouchedEdge[\s\S]*return\s+touchedEdge\s*&&\s*inward"
 Assert-Match "track interpolation caps synthetic fill confidence" $trackInterpolatorText "ClampSyntheticFillConfidence[\s\S]*SyntheticFillConfidenceMax[\s\S]*Math\.Clamp\(sourceConfidence"
 Assert-Match "workspace caps yolo synthetic track fill confidence" $workspaceText "SyntheticFillConfidenceMax\s*=\s*YoloSceneCutPostCutCarryMaxConfidence"
 Assert-Match "scene cut guard scans adjacent frame differences" $sceneCutGuardText "for\s*\(int\s+frame\s*=\s*sourceFrame;\s*frame\s*<\s*targetFrame;\s*frame\+\+\)[\s\S]*FormatFramePair\(maxSource,\s*maxTarget\)"
@@ -457,6 +459,7 @@ foreach ($assignment in @(
     "MaxAspectRatio\s*=\s*yoloMaxAspectRatio",
     "MaxLostFillFrames\s*=\s*yoloMaxLostFillFrames",
     "MaxInitialFillFrames\s*=\s*yoloMaxInitialFillFrames",
+    "InitialFillRequiresInwardMotion\s*=\s*true",
     "DropShortTrackMaxDetections\s*=\s*yoloDropShortTrackMaxDetections",
     "DropSparseTrackMaxDetections\s*=\s*3",
     "DropSparseTrackMinSpanFrames\s*=\s*8",

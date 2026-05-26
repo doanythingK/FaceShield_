@@ -59,15 +59,19 @@ provider.SetFaceRects(78, new[] { new Rect(1682, 324, 84, 96) }, size, 0.44f, ne
 provider.SetFaceRects(85, new[] { new Rect(1760, 0, 120, 100) }, size, 0.90f, new[] { 0.90f });
 provider.SetFaceRects(86, new[] { new Rect(1740, 2, 130, 110) }, size, 0.89f, new[] { 0.89f });
 provider.SetFaceRects(87, new[] { new Rect(1720, 4, 140, 120) }, size, 0.88f, new[] { 0.88f });
+provider.SetFaceRects(95, new[] { new Rect(1760, 800, 120, 100) }, size, 0.90f, new[] { 0.90f });
+provider.SetFaceRects(96, new[] { new Rect(1780, 800, 120, 100) }, size, 0.89f, new[] { 0.89f });
+provider.SetFaceRects(97, new[] { new Rect(1800, 800, 120, 100) }, size, 0.88f, new[] { 0.88f });
 
 var result = new FaceTrackInterpolator().Apply(
     provider,
-    totalFrames: 90,
+    totalFrames: 103,
     new FaceTrackPostProcessOptions
     {
         MaxTrackGap = 8,
         MaxFillGap = 5,
         MaxInitialFillFrames = 3,
+        InitialFillRequiresInwardMotion = true,
         DropShortTrackMaxDetections = 1,
         DropSparseTrackMaxDetections = 3,
         DropSparseTrackMinSpanFrames = 8,
@@ -165,8 +169,14 @@ for (int frame = 82; frame <= 84; frame++)
         throw new InvalidOperationException($"Expected confirmed edge-start track initial frame {frame} to be backfilled.");
 }
 
+for (int frame = 92; frame <= 94; frame++)
+{
+    if (provider.TryGetFaceMaskData(frame, out var outwardInitialFill) && outwardInitialFill.Faces.Count > 0)
+        throw new InvalidOperationException($"Expected edge-start track moving outward not to backfill frame {frame}.");
+}
+
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

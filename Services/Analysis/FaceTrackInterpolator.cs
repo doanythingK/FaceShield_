@@ -505,6 +505,12 @@ namespace FaceShield.Services.Analysis
                 }
 
                 var second = track.Detections[1];
+                if (options.InitialFillRequiresInwardMotion &&
+                    !IsMovingInwardFromTouchedEdge(first.Bounds, second.Bounds, first.Size, options))
+                {
+                    continue;
+                }
+
                 int frameDelta = Math.Max(1, second.FrameIndex - first.FrameIndex);
                 double dx = (second.Bounds.X - first.Bounds.X) / frameDelta;
                 double dy = (second.Bounds.Y - first.Bounds.Y) / frameDelta;
@@ -550,6 +556,61 @@ namespace FaceShield.Services.Analysis
             }
 
             return filled;
+        }
+
+        private static bool IsMovingInwardFromTouchedEdge(
+            Rect first,
+            Rect second,
+            PixelSize size,
+            FaceTrackPostProcessOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double marginX = size.Width * options.EdgePartialFaceMarginRatio;
+            double marginY = size.Height * options.EdgePartialFaceMarginRatio;
+            double epsilonX = Math.Max(1.0, size.Width * 0.0025);
+            double epsilonY = Math.Max(1.0, size.Height * 0.0025);
+            bool touchedEdge = false;
+            bool inward = false;
+
+            if (first.X <= marginX)
+            {
+                touchedEdge = true;
+                if (second.X < first.X - epsilonX)
+                    return false;
+                inward |= second.X > first.X + epsilonX;
+            }
+
+            double firstRight = first.X + first.Width;
+            double secondRight = second.X + second.Width;
+            if (firstRight >= size.Width - marginX)
+            {
+                touchedEdge = true;
+                if (secondRight > firstRight + epsilonX)
+                    return false;
+                inward |= secondRight < firstRight - epsilonX;
+            }
+
+            if (first.Y <= marginY)
+            {
+                touchedEdge = true;
+                if (second.Y < first.Y - epsilonY)
+                    return false;
+                inward |= second.Y > first.Y + epsilonY;
+            }
+
+            double firstBottom = first.Y + first.Height;
+            double secondBottom = second.Y + second.Height;
+            if (firstBottom >= size.Height - marginY)
+            {
+                touchedEdge = true;
+                if (secondBottom > firstBottom + epsilonY)
+                    return false;
+                inward |= secondBottom < firstBottom - epsilonY;
+            }
+
+            return touchedEdge && inward;
         }
 
         private static int FillConfirmedLostFrames(

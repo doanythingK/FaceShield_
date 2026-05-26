@@ -1256,6 +1256,7 @@ namespace FaceShield.ViewModels.Pages
                     MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
                     MaxLostFillFrames = 0,
                     MaxInitialFillFrames = 3,
+                    InitialFillRequiresInwardMotion = true,
                     MaxConfirmedTrackHoldFrames = SuspiciousNoFaceMaxGap,
                     AllowSmallTrackLostFill = true,
                     WeakConfidence = 0.38f,

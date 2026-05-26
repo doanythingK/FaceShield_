@@ -137,6 +137,7 @@ namespace FaceShield.Services.Analysis
         public int MaxFillGap { get; init; } = 5;
         public int MaxLostFillFrames { get; init; } = 3;
         public int MaxInitialFillFrames { get; init; } = 0;
+        public bool InitialFillRequiresInwardMotion { get; init; } = false;
         public int MaxConfirmedTrackHoldFrames { get; init; } = 3;
         public int ConfirmedTrackMinDetections { get; init; } = 3;
         public bool AllowSmallTrackLostFill { get; init; } = false;
