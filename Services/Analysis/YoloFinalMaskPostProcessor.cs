@@ -338,12 +338,23 @@ namespace FaceShield.Services.Analysis
                             break;
                         }
 
+                        var gapFrameIndices = GetUnstoredGapFrameIndices(previousFrame, nextFrame, storedFrames);
+                        bool usesSceneCarryBlockedAnchor =
+                            blockedSceneCarryFrames.Contains(previousFrame) ||
+                            blockedSceneCarryFrames.Contains(nextFrame);
+                        if (usesSceneCarryBlockedAnchor)
+                        {
+                            foreach (int frameIndex in gapFrameIndices)
+                                blockedSceneCarryGapFrames.Add(frameIndex);
+
+                            break;
+                        }
+
                         float fillConfidence = Math.Clamp(
                             Math.Min(previousConfidence, nextConfidence),
                             options.FillConfidenceFloor,
                             1.0f);
 
-                        var gapFrameIndices = GetUnstoredGapFrameIndices(previousFrame, nextFrame, storedFrames);
                         bool hasCleanupBlockedFrame = gapFrameIndices.Any(blockedFrames.Contains);
                         if (hasCleanupBlockedFrame)
                         {
