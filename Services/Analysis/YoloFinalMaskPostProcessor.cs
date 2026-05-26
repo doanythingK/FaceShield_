@@ -372,6 +372,96 @@ namespace FaceShield.Services.Analysis
                 blockedCleanupFrames.ToArray());
         }
 
+        public YoloSceneCutCarryCleanupResult RemoveSceneCutCarryRemnants(
+            FrameMaskProvider maskProvider,
+            IReadOnlyCollection<string> cutFramePairs,
+            YoloSceneCutCarryCleanupOptions? options = null)
+        {
+            options ??= new YoloSceneCutCarryCleanupOptions();
+            if (cutFramePairs.Count == 0 || options.MaxCarryFrames <= 0 || options.MaxConfidence <= 0)
+                return YoloSceneCutCarryCleanupResult.Empty;
+
+            var removedFrames = new SortedSet<int>();
+            int removedFaces = 0;
+
+            foreach (string cutFramePair in cutFramePairs)
+            {
+                if (!TryParseFramePair(cutFramePair, out int sourceFrame, out int targetFrame))
+                    continue;
+
+                int referenceFrame = Math.Min(sourceFrame, targetFrame);
+                int firstTargetFrame = Math.Max(sourceFrame, targetFrame);
+                if (!maskProvider.TryGetFaceMaskData(referenceFrame, out var referenceData) ||
+                    referenceData.Faces.Count == 0)
+                {
+                    continue;
+                }
+
+                var references = referenceData.Faces.ToArray();
+                int lastTargetFrame = firstTargetFrame + options.MaxCarryFrames - 1;
+                for (int frameIndex = firstTargetFrame; frameIndex <= lastTargetFrame; frameIndex++)
+                {
+                    if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) ||
+                        data.Faces.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var faces = data.Faces.ToList();
+                    var confidences = data.Confidences.ToList();
+                    bool changed = false;
+                    for (int i = faces.Count - 1; i >= 0; i--)
+                    {
+                        float confidence = GetConfidence(data, i);
+                        if (confidence > options.MaxConfidence)
+                            continue;
+                        if (!references.Any(reference => IsSceneCutCarryMatch(reference, faces[i], options)))
+                            continue;
+
+                        faces.RemoveAt(i);
+                        if (i < confidences.Count)
+                            confidences.RemoveAt(i);
+                        changed = true;
+                        removedFaces++;
+                    }
+
+                    if (!changed)
+                        continue;
+
+                    maskProvider.SetFaceRects(
+                        frameIndex,
+                        faces,
+                        data.Size,
+                        confidences.Count == 0 ? null : confidences.Min(),
+                        confidences);
+                    removedFrames.Add(frameIndex);
+                }
+            }
+
+            return removedFaces == 0
+                ? YoloSceneCutCarryCleanupResult.Empty
+                : new YoloSceneCutCarryCleanupResult(removedFaces, removedFrames.ToArray());
+        }
+
+        private static bool IsSceneCutCarryMatch(
+            Rect reference,
+            Rect candidate,
+            YoloSceneCutCarryCleanupOptions options)
+        {
+            double areaRatio = FaceTrackBuilder.GetAreaRatio(reference, candidate);
+            if (areaRatio > options.CandidateMatchMaxAreaChangeRatio ||
+                areaRatio < 1.0 / options.CandidateMatchMaxAreaChangeRatio)
+            {
+                return false;
+            }
+
+            if (FaceTrackBuilder.IoU(reference, candidate) >= options.CandidateMatchMinIou)
+                return true;
+
+            return FaceTrackBuilder.GetNormalizedCenterShift(reference, candidate) <=
+                options.CandidateMatchMaxCenterShiftRatio;
+        }
+
         private static (PixelSize Size, List<Rect> Faces, List<float> Confidences) CreateFillEntry(
             FrameMaskProvider maskProvider,
             int frameIndex,
@@ -1277,6 +1367,15 @@ namespace FaceShield.Services.Analysis
         public IReadOnlyCollection<int> BlockedFrameIndices { get; init; } = Array.Empty<int>();
     }
 
+    public sealed record YoloSceneCutCarryCleanupOptions
+    {
+        public int MaxCarryFrames { get; init; } = 5;
+        public float MaxConfidence { get; init; } = 0.90f;
+        public double CandidateMatchMinIou { get; init; } = 0.55;
+        public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
+        public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;
+    }
+
     public readonly record struct YoloFinalMaskCleanupResult(
         int RemovedWeakIsolatedFaces,
         int RemovedWeakUnsupportedFaces,
@@ -1303,5 +1402,12 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<int> BlockedCleanupFrameIndices)
     {
         public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), 0, Array.Empty<int>());
+    }
+
+    public readonly record struct YoloSceneCutCarryCleanupResult(
+        int RemovedFaces,
+        IReadOnlyList<int> RemovedFrameIndices)
+    {
+        public static YoloSceneCutCarryCleanupResult Empty { get; } = new(0, Array.Empty<int>());
     }
 }

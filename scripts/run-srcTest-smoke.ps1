@@ -622,8 +622,21 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
             candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, directChecked={sceneCut.DirectDifferenceChecks}, directSkipped={sceneCut.DirectDifferenceSkipped}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
+        var sceneCutCarryCleanup = postProcessor.RemoveSceneCutCarryRemnants(
+            maskProvider,
+            sceneCut.CutFramePairs,
+            new YoloSceneCutCarryCleanupOptions
+            {
+                MaxCarryFrames = 5,
+                MaxConfidence = yoloSceneCutMatchingTailMaxConfidence,
+                CandidateMatchMinIou = yoloSceneCutCandidateMatchMinIou,
+                CandidateMatchMaxCenterShiftRatio = yoloSceneCutCandidateMatchMaxCenterShiftRatio,
+                CandidateMatchMaxAreaChangeRatio = yoloSceneCutCandidateMatchMaxAreaChangeRatio
+            });
+        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
+            .Concat(sceneCutCarryCleanup.RemovedFrameIndices)
             .Concat(postSceneCleanup.RemovedFrameIndices)
             .Distinct()
             .OrderBy(static frame => frame)
