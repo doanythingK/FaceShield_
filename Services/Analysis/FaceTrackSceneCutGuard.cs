@@ -379,6 +379,7 @@ namespace FaceShield.Services.Analysis
             var removedFrameIndices = new List<int>();
             var cutFramePairs = new List<string>();
             var differenceByPair = new Dictionary<(int Source, int Target), double>();
+            var frameSamples = new Dictionary<int, FrameDifferenceSample>();
             int directDifferenceChecks = 0;
             int directDifferenceSkipped = 0;
             int directDifferenceBudget = Math.Max(0, directDifferenceMaxChecks);
@@ -399,6 +400,9 @@ namespace FaceShield.Services.Analysis
                 try
                 {
                     var ranges = BuildFrameDifferenceRanges(candidates);
+                    var directSampleFrames = BuildDirectDifferenceFrameSet(
+                        candidates,
+                        directDifferenceThreshold > 0 ? directDifferenceBudget : 0);
                     PrecomputeFrameDifferences(
                         extractor,
                         ranges,
@@ -407,6 +411,8 @@ namespace FaceShield.Services.Analysis
                         sourceBuffer,
                         targetBuffer,
                         differenceByPair,
+                        directSampleFrames,
+                        frameSamples,
                         cancellationToken);
 
                     foreach (var candidate in candidates)
@@ -452,6 +458,7 @@ namespace FaceShield.Services.Analysis
                                             sourceBuffer,
                                             targetBuffer,
                                             differenceByPair,
+                                            frameSamples,
                                             cancellationToken,
                                             out directDifference);
                                 }
@@ -767,6 +774,8 @@ namespace FaceShield.Services.Analysis
 
         private readonly record struct FrameDifferenceRange(int SourceFrame, int TargetFrame);
 
+        private sealed record FrameDifferenceSample(byte[] Buffer, int Stride);
+
         private static IReadOnlyList<FrameDifferenceRange> BuildFrameDifferenceRanges(
             IReadOnlyList<FaceTrackFilledFace> candidates)
         {
@@ -817,6 +826,32 @@ namespace FaceShield.Services.Analysis
             return merged;
         }
 
+        private static ISet<int> BuildDirectDifferenceFrameSet(
+            IReadOnlyList<FaceTrackFilledFace> candidates,
+            int directDifferenceBudget)
+        {
+            if (directDifferenceBudget <= 0 || candidates.Count == 0)
+                return new HashSet<int>();
+
+            var frames = new HashSet<int>();
+            int remaining = directDifferenceBudget;
+            foreach (var candidate in candidates)
+            {
+                int sourceFrame = Math.Min(candidate.SourceFrameIndex, candidate.FrameIndex);
+                int targetFrame = Math.Max(candidate.SourceFrameIndex, candidate.FrameIndex);
+                if (sourceFrame < 0 || targetFrame <= sourceFrame + 1)
+                    continue;
+
+                frames.Add(sourceFrame);
+                frames.Add(targetFrame);
+                remaining--;
+                if (remaining <= 0)
+                    break;
+            }
+
+            return frames;
+        }
+
         private static void PrecomputeFrameDifferences(
             FfFrameExtractor extractor,
             IReadOnlyList<FrameDifferenceRange> ranges,
@@ -825,6 +860,8 @@ namespace FaceShield.Services.Analysis
             byte[] sourceBuffer,
             byte[] targetBuffer,
             IDictionary<(int Source, int Target), double> differenceByPair,
+            ISet<int> frameSampleIndices,
+            IDictionary<int, FrameDifferenceSample> frameSamples,
             CancellationToken cancellationToken)
         {
             foreach (var range in ranges)
@@ -839,6 +876,8 @@ namespace FaceShield.Services.Analysis
                     sourceBuffer,
                     targetBuffer,
                     differenceByPair,
+                    frameSampleIndices,
+                    frameSamples,
                     cancellationToken);
             }
         }
@@ -852,6 +891,8 @@ namespace FaceShield.Services.Analysis
             byte[] sourceBuffer,
             byte[] targetBuffer,
             IDictionary<(int Source, int Target), double> differenceByPair,
+            ISet<int> frameSampleIndices,
+            IDictionary<int, FrameDifferenceSample> frameSamples,
             CancellationToken cancellationToken)
         {
             if (targetFrame <= sourceFrame)
@@ -883,6 +924,14 @@ namespace FaceShield.Services.Analysis
 
                 if (decodedFrame < sourceFrame)
                     continue;
+
+                CaptureFrameSample(
+                    decodedFrame,
+                    previousRead ? currentBuffer : previousBuffer,
+                    stride,
+                    height,
+                    frameSampleIndices,
+                    frameSamples);
 
                 if (!previousRead)
                 {
@@ -938,6 +987,31 @@ namespace FaceShield.Services.Analysis
 
             cutFramePair = FormatFramePair(maxSource, maxTarget);
             return found;
+        }
+
+        private static void CaptureFrameSample(
+            int frameIndex,
+            byte[] buffer,
+            int stride,
+            int height,
+            ISet<int> frameSampleIndices,
+            IDictionary<int, FrameDifferenceSample> frameSamples)
+        {
+            if (!frameSampleIndices.Contains(frameIndex) ||
+                frameSamples.ContainsKey(frameIndex) ||
+                stride <= 0 ||
+                height <= 0)
+            {
+                return;
+            }
+
+            int byteCount = stride * height;
+            if (byteCount <= 0 || byteCount > buffer.Length)
+                return;
+
+            var sample = new byte[byteCount];
+            Buffer.BlockCopy(buffer, 0, sample, 0, byteCount);
+            frameSamples[frameIndex] = new FrameDifferenceSample(sample, stride);
         }
 
         private static double GetMaxFrameDifference(
@@ -997,6 +1071,7 @@ namespace FaceShield.Services.Analysis
             byte[] sourceBuffer,
             byte[] targetBuffer,
             IDictionary<(int Source, int Target), double> differenceByPair,
+            IReadOnlyDictionary<int, FrameDifferenceSample> frameSamples,
             CancellationToken cancellationToken,
             out double difference)
         {
@@ -1007,6 +1082,20 @@ namespace FaceShield.Services.Analysis
             var pair = (sourceFrame, targetFrame);
             if (differenceByPair.TryGetValue(pair, out difference))
                 return true;
+
+            if (frameSamples.TryGetValue(sourceFrame, out var sourceSample) &&
+                frameSamples.TryGetValue(targetFrame, out var targetSample) &&
+                sourceSample.Stride == targetSample.Stride)
+            {
+                difference = ComputeFrameDifference(
+                    sourceSample.Buffer,
+                    targetSample.Buffer,
+                    width,
+                    height,
+                    sourceSample.Stride);
+                differenceByPair[pair] = difference;
+                return true;
+            }
 
             extractor.StartSequentialRead(sourceFrame);
             bool sourceRead = false;
