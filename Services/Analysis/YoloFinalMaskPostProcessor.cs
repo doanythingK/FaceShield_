@@ -457,6 +457,8 @@ namespace FaceShield.Services.Analysis
                 return YoloSceneCutCarryCleanupResult.Empty;
 
             var removedFrames = new SortedSet<int>();
+            var protectedFrames = new SortedSet<int>();
+            var protectedFaceKeys = new HashSet<string>(StringComparer.Ordinal);
             int removedFaces = 0;
 
             foreach (string cutFramePair in cutFramePairs)
@@ -492,13 +494,18 @@ namespace FaceShield.Services.Analysis
                     for (int i = faces.Count - 1; i >= 0; i--)
                     {
                         float confidence = GetConfidence(data, i);
+                        if (!references.Any(reference => IsSceneCutCarryMatch(reference, faces[i], options)))
+                            continue;
                         float maxConfidence = frameIndex <= purgeLastTargetFrame
                             ? options.MaxConfidence
                             : options.ExtendedWeakMaxConfidence;
                         if (confidence > maxConfidence)
+                        {
+                            string protectedKey = GetCarryReviewKey(frameIndex, faces[i]);
+                            if (protectedFaceKeys.Add(protectedKey))
+                                protectedFrames.Add(frameIndex);
                             continue;
-                        if (!references.Any(reference => IsSceneCutCarryMatch(reference, faces[i], options)))
-                            continue;
+                        }
 
                         faces.RemoveAt(i);
                         if (i < confidences.Count)
@@ -520,9 +527,13 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
-            return removedFaces == 0
+            return removedFaces == 0 && protectedFaceKeys.Count == 0
                 ? YoloSceneCutCarryCleanupResult.Empty
-                : new YoloSceneCutCarryCleanupResult(removedFaces, removedFrames.ToArray());
+                : new YoloSceneCutCarryCleanupResult(
+                    removedFaces,
+                    removedFrames.ToArray(),
+                    protectedFaceKeys.Count,
+                    protectedFrames.ToArray());
         }
 
         public static IReadOnlyList<int> BuildSceneCutCarryBlockedFrames(
@@ -1176,6 +1187,11 @@ namespace FaceShield.Services.Analysis
                 int.TryParse(parts[1], out targetFrame);
         }
 
+        private static string GetCarryReviewKey(int frameIndex, Rect face)
+            => string.Create(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"{frameIndex}:{Math.Round(face.X, 2)}:{Math.Round(face.Y, 2)}:{Math.Round(face.Width, 2)}:{Math.Round(face.Height, 2)}");
+
         private static Rect Interpolate(Rect previous, Rect next, double t)
         {
             double inverse = 1.0 - t;
@@ -1749,8 +1765,10 @@ namespace FaceShield.Services.Analysis
 
     public readonly record struct YoloSceneCutCarryCleanupResult(
         int RemovedFaces,
-        IReadOnlyList<int> RemovedFrameIndices)
+        IReadOnlyList<int> RemovedFrameIndices,
+        int ProtectedStrongCarryLikeFaces,
+        IReadOnlyList<int> ProtectedStrongCarryLikeFrameIndices)
     {
-        public static YoloSceneCutCarryCleanupResult Empty { get; } = new(0, Array.Empty<int>());
+        public static YoloSceneCutCarryCleanupResult Empty { get; } = new(0, Array.Empty<int>(), 0, Array.Empty<int>());
     }
 }
