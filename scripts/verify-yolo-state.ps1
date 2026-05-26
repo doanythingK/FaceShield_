@@ -86,7 +86,7 @@ function New-CompletionAuditArgs {
         $args += @("-PredictionLog", $FullGtPredictionLog)
     }
 
-    if ($RequireComplete) {
+    if ($requireCompleteForCurrentState) {
         $args += "-RequireComplete"
     }
     if ($AllowFullGtQualityGateFailure -or $allowFullGtQualityFailureForCurrentState) {
@@ -154,6 +154,22 @@ function Test-DocumentedFullGtQualityFailureAllowed {
         $plan.Contains("fullGtQualityGate=fail-documented")
 }
 
+function Test-YoloGoalAuditAlreadyComplete {
+    $planPath = Resolve-RepoPath "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
+    if (-not (Test-Path $planPath)) {
+        return $false
+    }
+
+    $plan = Get-Content -Raw -Path $planPath
+    $matches = [regex]::Matches($plan, "<!--\s*yolo-goal-audit-state:[\s\S]*?-->")
+    if ($matches.Count -eq 0) {
+        return $false
+    }
+
+    $marker = $matches[$matches.Count - 1].Value
+    return $marker.Contains("complete=true") -and $marker.Contains("remaining=none")
+}
+
 $profileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
 $startupSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-startup-smoke-state.ps1"
 $sweepStateVerify = Join-Path $repo "scripts\verify-yolo-sweep-state.ps1"
@@ -185,6 +201,7 @@ $fullGtReviewAlreadyCompleted = Test-CompletedFullGtReview
 $allowCompletedFullGtForCurrentState = $AllowCompletedFullGt -or $fullGtReviewAlreadyCompleted
 $allowFullGtQualityFailureForCurrentState = $AllowFullGtQualityGateFailure -or
     ($fullGtReviewAlreadyCompleted -and (Test-DocumentedFullGtQualityFailureAllowed))
+$requireCompleteForCurrentState = $RequireComplete -or (Test-YoloGoalAuditAlreadyComplete)
 
 $completionAuditAlreadyRan = $false
 if ($RequireComplete) {
