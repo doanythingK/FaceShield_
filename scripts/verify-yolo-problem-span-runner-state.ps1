@@ -54,6 +54,7 @@ Assert-Match "guide uses runner" $guide 'scripts/run-yolo-problem-span-verificat
 Assert-Match "guide says no full video smoke override" $guide '-AllowLongSmokeSource'
 Assert-Match "guide records wrapper smoke evidence" $guide 'Wrapper Smoke[\s\S]*yolo-problem-span-wrapper-smoke[\s\S]*Detection rows:\s*`96`[\s\S]*removedFrames=33,34,35[\s\S]*blockedByCleanup=3[\s\S]*cleanupBlockedFrames=33,34,35'
 Assert-Match "guide documents cleanup-block pass criteria" $guide 'blockedByCleanup=\.\.\.[\s\S]*cleanupBlockedFrames=\.\.\.[\s\S]*후속 anti-flicker fill'
+Assert-Match "guide documents high-confidence scene carry cleanup" $guide 'at or below `0\.95` confidence[\s\S]*RemoveSceneCutCarryRemnants[\s\S]*anti-flicker pass cannot recreate the same scene-transition residue'
 Assert-Match "plan links runner" $plan 'scripts/run-yolo-problem-span-verification\.ps1[\s\S]*caps the problem span at 30 seconds'
 Assert-Match "smoke result links runner" $smoke 'scripts/run-yolo-problem-span-verification\.ps1[\s\S]*short-span entrypoint'
 
