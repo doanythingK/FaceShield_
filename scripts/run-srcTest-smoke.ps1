@@ -577,26 +577,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var cleanupBlockedFrameIndices = Array.Empty<int>();
         var cleanupBlockedFaces = cleanup.RemovedFacesInfo;
         Console.WriteLine($"[SmokeYoloFinalMaskCleanup] label={label}, removedWeakIsolated={cleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={cleanup.RemovedWeakUnsupportedFaces}, removedMediumUnsupported={cleanup.RemovedMediumUnsupportedFaces}, removedWeakShortClusters={cleanup.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={cleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={cleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={cleanup.RemovedTinyIsolatedFaces}, removedTopEdgeWeakClusters={cleanup.RemovedTopEdgeWeakClusterFaces}, removedUpperWeakClusters={cleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={cleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={cleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(cleanup.RemovedFrameIndices)}");
-        var gapFill = postProcessor.FillShortStableGaps(
-            maskProvider,
-            new YoloFinalMaskGapFillOptions
-            {
-                MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
-                BlockedFaces = cleanupBlockedFaces
-            });
-        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}, blockedByCut={gapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(gapFill.BlockedCutFrameIndices)}, blockedByCleanup={gapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(gapFill.BlockedCleanupFrameIndices)}, suppressedWeakGeometryAnchors={gapFill.SuppressedWeakGeometryAnchorChecks}, suppressedRiskyGeometryAnchors={gapFill.SuppressedRiskyGeometryAnchorChecks}, unsupportedWeakAnchors={gapFill.UnsupportedWeakAnchorChecks}");
-        var gapFillGuard = gapFill.CutGuardFacesInfo.Count == 0
-            ? FaceTrackSceneCutGuardResult.Empty
-            : new FaceTrackSceneCutGuard().Apply(
-                maskProvider,
-                input,
-                gapFill.CutGuardFacesInfo,
-                differenceThreshold: yoloSceneCutDifferenceThreshold,
-                directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
-                candidateMatchMinIou: yoloSceneCutCandidateMatchMinIou,
-                candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
-                candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
-        Console.WriteLine($"[SmokeYoloFinalMaskGapFillSceneCutGuard] label={label}, candidates={gapFill.CutGuardFacesInfo.Count}, checked={gapFillGuard.Checked}, checkedPairs={FormatTextValues(gapFillGuard.CheckedFramePairs)}, maxDiff={gapFillGuard.MaxDifference:F3}, cutPairs={FormatTextValues(gapFillGuard.CutFramePairs)}, removed={gapFillGuard.Removed}, removedFrames={FormatFrames(gapFillGuard.RemovedFrameIndices)}, threshold={gapFillGuard.Threshold:F3}, elapsedMs={gapFillGuard.ElapsedMs}, error={gapFillGuard.Error ?? "none"}");
+        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, deferredUntilSceneCutGuard=True");
         var sceneCutGuard = new FaceTrackSceneCutGuard();
         var directCandidates = sceneCutGuard.BuildWeakTrackTransitionCandidates(
             maskProvider,
@@ -691,10 +672,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             new YoloFinalMaskGapFillOptions
             {
                 MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
-                BlockedCutFramePairs = sceneCutPairs
-                    .Concat(gapFillGuard.CutFramePairs)
-                    .Distinct()
-                    .ToArray(),
+                BlockedCutFramePairs = sceneCutPairs,
                 BlockedFrameIndices = postSceneBlockedFrameIndices,
                 BlockedFaces = postSceneBlockedFaces,
                 BlockedSceneCarryFaces = sceneCutCarryCleanup.RemovedFacesInfo,

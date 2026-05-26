@@ -512,7 +512,10 @@ namespace FaceShield.ViewModels.Pages
                     RefineAutoFacesWithRoi(FrameList.VideoPath, bgraDetector, trackPost, detectorOptions);
                 YoloFinalMaskCleanupPassResult yoloCleanupPass = YoloFinalMaskCleanupPassResult.Empty;
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
-                    yoloCleanupPass = RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
+                    yoloCleanupPass = RemoveYoloWeakIsolatedFinalMasks(
+                        FrameList.VideoPath,
+                        token,
+                        fillStableGaps: false);
                 IReadOnlyList<string> yoloPreSmoothCutPairs = Array.Empty<string>();
                 IReadOnlyList<string> yoloPreSmoothStrongCarryProbeCutPairs = Array.Empty<string>();
                 IReadOnlyList<string> yoloPostSmoothCutPairs = Array.Empty<string>();

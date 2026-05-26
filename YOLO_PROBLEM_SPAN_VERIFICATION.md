@@ -259,6 +259,7 @@ The GUI and smoke paths now add a high-confidence post-cut carry probe before fi
 - Code paths: `WorkspaceViewModel.ProbeYoloStrongCarrySceneCuts`, `FaceTrackSceneCutGuard.BuildWeakPostCutCarryCandidates`, and `FaceTrackSceneCutGuard.Apply(removeCandidates: false)`.
 - Rule: YOLO candidates from `0.78` through `0.995` confidence that still match a stronger pre-cut source can be used to collect frame-difference cut evidence, but this probe does not delete the candidate immediately.
 - GUI order: the same strong-carry probe now runs once before temporal smoothing and once after smoothing. Pre-smooth probe cut pairs are passed into temporal smoothing, so smoothing cannot average boxes across a cut that was discovered only by the high-confidence carry probe.
+- Gap-fill order: the GUI path now performs the first YOLO weak/isolated cleanup with `fillStableGaps: false`. Stable gap fill is deferred until after pre/post scene-cut probes and scene-carry cleanup have produced blocked cut pairs, blocked cleanup faces, and scene-carry blocked frames. This prevents the anti-flicker fill from bridging a cut before the cut evidence exists.
 - Final deletion still happens in `YoloFinalMaskPostProcessor.RemoveSceneCutCarryRemnants`, so same-position strong residue after a confirmed cut can be removed while independently moving/scaling strong post-cut faces remain protected for review.
 - Verifier: `scripts/verify-face-track-scene-cut-guard.ps1`
 - Evidence: `probeCandidates=1`, `probeCutPairs=100->101`, `probeRemoved=0`
