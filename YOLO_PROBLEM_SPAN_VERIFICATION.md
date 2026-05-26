@@ -154,7 +154,7 @@ goal 완료로 볼 수 있는 최소 증거:
 - Review package: `.tmp/yolo-goal-current-perface-0900-review/review-package/review-index.html`
 - Review rows: `96` crop rows, `32` full-frame rows
 - Required full-frame review frames: `4,6,7,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,32`
-- Flicker/carry triage: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `protectedSceneCarry=0`, `reviewRequired=False`, `reviewReasons=none`
+- Flicker/carry triage: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `protectedSceneCarry=0`; remaining low-confidence edge/top-edge rows now keep `reviewRequired=True` with review-only reasons until visual labeling is complete.
 - Cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Scene-cut evidence: `directChecked=74`, `directSkipped=0`, `cutPairs=none`, `removedFrames=none`
 - False-positive triage: `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`; residual `edgeWeak/topEdgeWeak` frames are `4,6,7,17,20,24,25,32` and remain visual review targets rather than automatic non-face labels.
@@ -175,7 +175,7 @@ goal 완료로 볼 수 있는 최소 증거:
 - Deterministic verifier evidence: `scripts/verify-yolo-final-mask-cleanup.ps1` now includes `sceneCutCarryRemoved=17`, `sceneCutCarryFrames=1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009`, extended `sceneCutCarryBlockedFrames=1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011`, `emptyPostCutRemovedUnsupportedStrong=2`, and `partialSceneCarryRefillBlocked=3` with `partialSceneCarryBlockedFrames=3101,3102,3103`.
 - Final cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
-- Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`
+- Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`, `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
 
 ## 2026-05-27 Top-Edge Fastcheck
 

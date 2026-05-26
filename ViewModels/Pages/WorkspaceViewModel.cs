@@ -992,7 +992,7 @@ namespace FaceShield.ViewModels.Pages
                 .ToArray();
             if (entries.Length == 0)
             {
-                var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
+                var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
                 System.Diagnostics.Debug.WriteLine($"[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0 lowConfFrames=none weakNonEdge=0 weakNonEdgeFrames=none edgeWeak=0 edgeWeakFrames=none topEdgeWeak=0 topEdgeWeakFrames=none upperWeak=0 upperWeakFrames=none lowerWeak=0 lowerWeakFrames=none aspectBad=0 aspectBadFrames=none tinyWeak=0 tinyWeakFrames=none tinyShort=0 tinyShortFrames=none protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} reviewRequired={emptyReviewReasons.Count > 0} reviewReasons={FormatTextList(emptyReviewReasons)}");
                 return;
             }
@@ -1131,7 +1131,10 @@ namespace FaceShield.ViewModels.Pages
                 shortGapCount,
                 largeJumpGapRanges.Count,
                 isolatedFrames.Count,
+                lowConfidenceRows,
                 weakNonEdgeRows,
+                edgeWeakRows,
+                topEdgeWeakRows,
                 upperWeakRows,
                 lowerWeakRows,
                 aspectBadRows,
@@ -1147,7 +1150,10 @@ namespace FaceShield.ViewModels.Pages
             int shortGapCount,
             int largeJumpGapCount,
             int isolatedCount,
+            int lowConfidenceRows,
             int weakNonEdgeRows,
+            int edgeWeakRows,
+            int topEdgeWeakRows,
             int upperWeakRows,
             int lowerWeakRows,
             int aspectBadRows,
@@ -1162,8 +1168,14 @@ namespace FaceShield.ViewModels.Pages
                 reasons.Add("large-jump-gap");
             if (isolatedCount > 0)
                 reasons.Add("isolated-mask");
+            if (lowConfidenceRows > 0)
+                reasons.Add("low-confidence-review");
             if (weakNonEdgeRows > 0)
                 reasons.Add("weak-non-edge");
+            if (edgeWeakRows > 0)
+                reasons.Add("edge-weak-review");
+            if (topEdgeWeakRows > 0)
+                reasons.Add("top-edge-weak-review");
             if (upperWeakRows > 0)
                 reasons.Add("upper-weak");
             if (lowerWeakRows > 0)
