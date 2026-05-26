@@ -202,6 +202,13 @@ Latest extended-lookback short-span evidence:
 - Remaining review state: `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
 - Visual overlay spot-check: top-region crops from `.tmp/yolo-problem-span-lookback5-0900/review-frames/overlay-top-004.png`, `overlay-top-006.png`, `overlay-top-007.png`, `overlay-top-017.png`, `overlay-top-020.png`, `overlay-top-024.png`, `overlay-top-025.png`, and `overlay-top-032.png` were checked. Frames `4`, `6`, and `7` show the residual top-edge weak box over a visible partial background face; frames `17`, `20`, `24`, `25`, and `32` show a visible partial background face and/or the foreground face. No confirmed non-face false positive was found in these residual review rows.
 - Decision: do not tighten the default edge/top-edge cleanup based on this 2-second sample. These rows remain `reviewRequired=True` until the crop/full-frame GT CSV rows are filled, because automatically deleting them would risk creating misses on partial faces.
+- Full review package generated for this same lookback5 sample:
+  - Summary: `.tmp/yolo-problem-span-lookback5-0900-review/yolo-followup-quality-evidence.md`
+  - Review index: `.tmp/yolo-problem-span-lookback5-0900-review/review-package/review-index.html`
+  - Crop review CSV: `.tmp/yolo-problem-span-lookback5-0900-review/review-package/full-gt-review.csv` with `96` candidate rows
+  - Full-frame review CSV: `.tmp/yolo-problem-span-lookback5-0900-review/review-package/full-frame-review.csv` with `24` frame rows
+  - Detection overlay video: `.tmp/yolo-problem-span-lookback5-0900-review/yolo-detection-overlay.mp4`
+  - Required full-frame review frames: `4,6,7,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,32`
 
 ## 2026-05-27 Top-Edge Fastcheck
 

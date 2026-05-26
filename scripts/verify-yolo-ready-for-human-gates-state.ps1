@@ -70,10 +70,6 @@ Invoke-RequiredStep "goal-evidence-report" $evidenceReportWriter @(
     "-AllowQualityGateFailure",
     "-Verify"
 )
-Invoke-RequiredStep "completion-audit" $completionAuditVerify @(
-    "-ManualGateSummary", $ManualGateSummary,
-    "-AllowQualityGateFailure"
-)
 
 $summaryPath = Resolve-RepoPath $ManualGateSummary
 if (-not (Test-Path $summaryPath)) {
@@ -81,10 +77,25 @@ if (-not (Test-Path $summaryPath)) {
 }
 
 $summary = Get-Content -Raw -Path $summaryPath
-Assert-Contains "summary records GUI-only remaining gates" $summary "- gui-smoke"
+$completionAuditArgs = @(
+    "-ManualGateSummary", $ManualGateSummary,
+    "-AllowQualityGateFailure"
+)
+if ($summary.Contains("remaining=none")) {
+    $completionAuditArgs += "-RequireComplete"
+}
+
+Invoke-RequiredStep "completion-audit" $completionAuditVerify $completionAuditArgs
 Assert-Contains "summary keeps completed full GT progress" $summary "fullGtPendingRows=0"
 Assert-Contains "summary keeps completed full-frame progress" $summary "fullFramePendingRows=0"
-Assert-Contains "summary keeps pending GUI progress" $summary "guiPendingRows=9"
+if ($summary.Contains("remaining=none")) {
+    Assert-Contains "summary records no remaining gates" $summary "remaining=none"
+    Assert-Contains "summary keeps completed GUI progress" $summary "guiPendingRows=0"
+}
+else {
+    Assert-Contains "summary records GUI-only remaining gates" $summary "- gui-smoke"
+    Assert-Contains "summary keeps pending GUI progress" $summary "guiPendingRows=9"
+}
 Assert-Contains "summary records app open command" $summary "open-yolo-manual-gates.ps1 -OpenApp"
 Assert-Contains "summary records smoke manual startup command" $summary "--yolo-smoke --open-manual"
 Assert-Contains "summary records smoke auto startup command" $summary "--yolo-smoke --open-auto"
@@ -117,13 +128,21 @@ $report = Get-Content -Raw -Path $evidenceReportPath
 Assert-Contains "report records filled full GT" $report "Full-GT label review | filled-pending-strict-gate"
 Assert-Contains "report records documented full GT quality failure" $report "Full-GT quality gate | fail-documented"
 Assert-Contains "report records documented full GT quality state" $report "fullGtQualityGate=fail-documented"
-Assert-Contains "report keeps GUI pending" $report "Avalonia GUI smoke | pending-human"
-Assert-Contains "report keeps preview track hold pending" $report "Preview track-hold GUI evidence | pending-human"
+if ($summary.Contains("remaining=none")) {
+    Assert-Contains "report records filled GUI smoke" $report "Avalonia GUI smoke | filled-pending-strict-gate"
+    Assert-Contains "report records preview track hold pass" $report "Preview track-hold GUI evidence | pass"
+    Assert-Contains "report records completion ready" $report "Goal completion | ready-for-strict-completion-audit"
+}
+else {
+    Assert-Contains "report keeps GUI pending" $report "Avalonia GUI smoke | pending-human"
+    Assert-Contains "report keeps preview track hold pending" $report "Preview track-hold GUI evidence | pending-human"
+    Assert-Contains "report keeps goal incomplete" $report "Goal completion | incomplete"
+}
 Assert-Contains "report records YOLOv8 candidate comparison" $report "YOLOv8 candidate A/B comparison | pass"
 Assert-Contains "report records YOLO5Face candidate comparison" $report "YOLO5Face candidate A/B comparison | pass"
 Assert-Contains "report records failure axis classification" $report "Failure-axis classification | pass"
-Assert-Contains "report keeps goal incomplete" $report "Goal completion | incomplete"
 Assert-Contains "report keeps recommendation none" $report "Final YOLO recommendation | none"
 
-Write-Host "[YoloReadyForHumanGatesVerify] ready=true, remaining=gui-smoke"
+$remaining = if ($summary.Contains("remaining=none")) { "none" } else { "gui-smoke" }
+Write-Host "[YoloReadyForHumanGatesVerify] ready=true, remaining=$remaining"
 Write-Host "[YoloReadyForHumanGatesVerify] all requested checks passed"

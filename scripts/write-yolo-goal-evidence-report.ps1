@@ -359,9 +359,26 @@ if ($Verify) {
             Assert-ReportContains "report keeps full GT quality pending" $report "Full-GT quality gate | pending-human"
             Assert-ReportContains "report records pending full GT quality state" $report "fullGtQualityGate=pending-human"
         }
-        Assert-ReportContains "report keeps GUI pending" $report "Avalonia GUI smoke | pending-human"
-        Assert-ReportContains "report keeps preview track-hold pending" $report "Preview track-hold GUI evidence | pending-human"
-        Assert-ReportContains "report keeps completion incomplete" $report "Goal completion | incomplete"
+        if ($guiFilled) {
+            Assert-ReportContains "report keeps GUI filled" $report "Avalonia GUI smoke | filled-pending-strict-gate"
+        }
+        else {
+            Assert-ReportContains "report keeps GUI pending" $report "Avalonia GUI smoke | pending-human"
+        }
+
+        if ($previewTrackHoldPassed) {
+            Assert-ReportContains "report keeps preview track-hold passed" $report "Preview track-hold GUI evidence | pass"
+        }
+        else {
+            Assert-ReportContains "report keeps preview track-hold pending" $report "Preview track-hold GUI evidence | pending-human"
+        }
+
+        if ($goalStatus -eq "ready-for-strict-completion-audit") {
+            Assert-ReportContains "report keeps completion ready for strict audit" $report "Goal completion | ready-for-strict-completion-audit"
+        }
+        else {
+            Assert-ReportContains "report keeps completion incomplete" $report "Goal completion | incomplete"
+        }
     }
 }
 
