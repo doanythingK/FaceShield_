@@ -592,7 +592,10 @@ namespace FaceShield.Services.Analysis
                     for (int i = faces.Count - 1; i >= 0; i--)
                     {
                         float confidence = GetConfidence(data, i);
-                        if (!references.Any(reference => IsSceneCutCarryMatch(reference, faces[i], options)))
+                        var matchingReferences = references
+                            .Where(reference => IsSceneCutCarryMatch(reference, faces[i], options))
+                            .ToArray();
+                        if (matchingReferences.Length == 0)
                             continue;
                         float maxConfidence = frameIndex <= purgeLastTargetFrame
                             ? options.MaxConfidence
@@ -604,6 +607,7 @@ namespace FaceShield.Services.Analysis
                                     frameIndex,
                                     lastTargetFrame,
                                     faces[i],
+                                    matchingReferences,
                                     options))
                             {
                                 var removedFaceInfo = new FaceTrackFilledFace(frameIndex, faces[i], data.Size, confidence);
@@ -733,19 +737,47 @@ namespace FaceShield.Services.Analysis
             int frameIndex,
             int lastTargetFrame,
             Rect face,
+            IReadOnlyList<Rect> references,
             YoloSceneCutCarryCleanupOptions options)
         {
             if (options.StrongCarrySupportLookaheadFrames <= 0 ||
                 options.StrongCarrySupportMinConfidence <= 0 ||
-                options.StrongCarrySupportMinFrames <= 0)
+                options.StrongCarrySupportMinFrames <= 0 ||
+                references.Count == 0)
             {
                 return false;
             }
 
+            foreach (var reference in references)
+            {
+                if (HasIndependentStrongCarrySupport(
+                        maskProvider,
+                        frameIndex,
+                        lastTargetFrame,
+                        face,
+                        reference,
+                        options))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool HasIndependentStrongCarrySupport(
+            FrameMaskProvider maskProvider,
+            int frameIndex,
+            int lastTargetFrame,
+            Rect face,
+            Rect reference,
+            YoloSceneCutCarryCleanupOptions options)
+        {
             int lastSupportFrame = Math.Min(
                 lastTargetFrame,
                 frameIndex + options.StrongCarrySupportLookaheadFrames);
             int supportFrames = 0;
+            bool hasIndependentSupport = false;
             for (int supportFrame = frameIndex + 1; supportFrame <= lastSupportFrame; supportFrame++)
             {
                 if (!maskProvider.TryGetFaceMaskData(supportFrame, out var data) ||
@@ -761,17 +793,50 @@ namespace FaceShield.Services.Analysis
                     if (IsSceneCutCarryMatch(face, data.Faces[i], options))
                     {
                         supportFrames++;
+                        hasIndependentSupport |= IsIndependentStrongCarrySupport(reference, data.Faces[i], options);
                         break;
                     }
                 }
 
-                if (supportFrames >= options.StrongCarrySupportMinFrames)
+                if (supportFrames >= options.StrongCarrySupportMinFrames &&
+                    (!RequiresIndependentStrongCarrySupport(options) || hasIndependentSupport))
                 {
-                    return false;
+                    return true;
                 }
             }
 
-            return true;
+            return false;
+        }
+
+        private static bool RequiresIndependentStrongCarrySupport(YoloSceneCutCarryCleanupOptions options)
+        {
+            return options.StrongCarryProtectionMinReferenceCenterShiftRatio > 0.0 ||
+                options.StrongCarryProtectionMinReferenceAreaChangeRatio > 1.0;
+        }
+
+        private static bool IsIndependentStrongCarrySupport(
+            Rect reference,
+            Rect candidate,
+            YoloSceneCutCarryCleanupOptions options)
+        {
+            if (options.StrongCarryProtectionMinReferenceCenterShiftRatio > 0.0 &&
+                FaceTrackBuilder.GetNormalizedCenterShift(reference, candidate) >=
+                    options.StrongCarryProtectionMinReferenceCenterShiftRatio)
+            {
+                return true;
+            }
+
+            if (options.StrongCarryProtectionMinReferenceAreaChangeRatio > 1.0)
+            {
+                double areaRatio = FaceTrackBuilder.GetAreaRatio(reference, candidate);
+                if (areaRatio >= options.StrongCarryProtectionMinReferenceAreaChangeRatio ||
+                    areaRatio <= 1.0 / options.StrongCarryProtectionMinReferenceAreaChangeRatio)
+                {
+                    return true;
+                }
+            }
+
+            return !RequiresIndependentStrongCarrySupport(options);
         }
 
         private static (PixelSize Size, List<Rect> Faces, List<float> Confidences) CreateFillEntry(
@@ -1904,6 +1969,8 @@ namespace FaceShield.Services.Analysis
         public int StrongCarrySupportLookaheadFrames { get; init; } = 5;
         public int StrongCarrySupportMinFrames { get; init; } = 2;
         public float StrongCarrySupportMinConfidence { get; init; } = 0.80f;
+        public double StrongCarryProtectionMinReferenceCenterShiftRatio { get; init; } = 0.10;
+        public double StrongCarryProtectionMinReferenceAreaChangeRatio { get; init; } = 1.35;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
         public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;

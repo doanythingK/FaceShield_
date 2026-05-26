@@ -238,3 +238,13 @@ Focused 2-second probe at `00:06:00`:
 - Visual observation: the sampled frames do not contain a large foreground face, but do contain very small/background face-like regions. Treat this as small-face miss evidence, not as false-positive evidence.
 - Tiling comparison on the same 2-second clip: `.tmp/yolo-tiling-0600-sweep.csv` and `.tmp/yolo-tiling-0600-sweep.log`. The non-tiling sweep produced `FaceMaskFrames=15`; tiling produced `FaceMaskFrames=16`, but also left `weakNonEdge=8`, `tinyShort=5`, `reviewRequired=True`, and raised CPU `totalMs` to `42006`. Do not enable tiling as a default fix from this evidence alone; it needs a separate small-face profile gate.
 - Large/landmark box refinement comparison on the 09:00 2-second clip: `.tmp/yolo-landmark-refine-0900-sweep.csv`. Landmark refine reduced quality against the current reference (`AvgBestIou` from `0.801` to `0.473`, `MinBestIou` from `0.625` to `0.205`, `AvgBaselineCoverage` from `0.925` to `0.502`), so it should not be enabled by default for large-box cleanup.
+
+## 2026-05-27 Strong Carry Independence Guard
+
+Synthetic scene-cut carry cleanup now distinguishes a real post-cut strong face from a same-position strong carry residue:
+
+- Code path: `YoloFinalMaskPostProcessor.RemoveSceneCutCarryRemnants`
+- Rule: a high-confidence carry-like candidate is protected only when later strong matching support also shows independent movement or scale change away from the pre-cut reference.
+- Verifier: `scripts/verify-yolo-final-mask-cleanup.ps1`
+- Evidence: `stickyStrongCarryRemoved=5`, `stickyStrongCarryRemovedUnsupportedStrong=5`, `driftingStrongCarryProtected=3`
+- Meaning: same-position high-confidence blur residue after a confirmed cut is no longer protected only because it repeats for several frames. A drifting supported post-cut face can still remain for visual review.
