@@ -54,6 +54,9 @@ namespace FaceShield.ViewModels.Pages
         private const float YoloSceneCutDirectCarryMaxConfidence = 0.98f;
         private const float YoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
+        private const float YoloSceneCutStrongCarryProbeMaxConfidence = 0.995f;
+        private const float YoloSceneCutStrongCarryProbeMinConfidence = 0.78f;
+        private const float YoloSceneCutStrongCarryProbeMinSourceConfidence = 0.80f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
         private const int YoloSceneCutDirectDifferenceMaxCandidates = 96;
@@ -512,6 +515,7 @@ namespace FaceShield.ViewModels.Pages
                     yoloCleanupPass = RemoveYoloWeakIsolatedFinalMasks(FrameList.VideoPath, token);
                 IReadOnlyList<string> yoloPreSmoothCutPairs = Array.Empty<string>();
                 IReadOnlyList<string> yoloPostSmoothCutPairs = Array.Empty<string>();
+                IReadOnlyList<string> yoloStrongCarryProbeCutPairs = Array.Empty<string>();
                 if (_autoOptions.UseTracking && _autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                 {
                     var preSmoothGuard = RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "pre-smooth");
@@ -527,6 +531,8 @@ namespace FaceShield.ViewModels.Pages
                 {
                     var postSmoothGuard = RemoveYoloTrackFillAcrossSceneCuts(FrameList.VideoPath, trackPost, token, "post-smooth");
                     yoloPostSmoothCutPairs = postSmoothGuard.CutFramePairs;
+                    var strongCarryProbe = ProbeYoloStrongCarrySceneCuts(FrameList.VideoPath, token);
+                    yoloStrongCarryProbeCutPairs = strongCarryProbe.CutFramePairs;
                 }
                 IReadOnlyList<int> yoloProtectedSceneCarryFrames = Array.Empty<int>();
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
@@ -534,7 +540,8 @@ namespace FaceShield.ViewModels.Pages
                     var yoloCutPairs = CombineCutFramePairs(
                         yoloPreSmoothCutPairs,
                         yoloPostSmoothCutPairs,
-                        yoloCleanupPass.CutFramePairs);
+                        yoloCleanupPass.CutFramePairs,
+                        yoloStrongCarryProbeCutPairs);
                     var yoloCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
                         _maskProvider,
                         yoloCutPairs,
@@ -854,6 +861,58 @@ namespace FaceShield.ViewModels.Pages
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[FaceTrackSceneCutGuard] stage={stage} directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
+            }
+
+            return result;
+        }
+
+        private FaceTrackSceneCutGuardResult ProbeYoloStrongCarrySceneCuts(
+            string videoPath,
+            CancellationToken cancellationToken)
+        {
+            var guard = new FaceTrackSceneCutGuard();
+            var candidates = guard.BuildWeakPostCutCarryCandidates(
+                _maskProvider,
+                maxTargetConfidence: YoloSceneCutStrongCarryProbeMaxConfidence,
+                maxCarryFrames: 5,
+                sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
+                minSourceConfidence: YoloSceneCutStrongCarryProbeMinSourceConfidence,
+                minTargetConfidence: YoloSceneCutStrongCarryProbeMinConfidence,
+                minIou: YoloSceneCutCandidateMatchMinIou,
+                maxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
+                maxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
+                includeEdgeCandidates: true);
+
+            if (candidates.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[YoloStrongCarrySceneCutProbe] start candidates={candidates.Count} minTarget={YoloSceneCutStrongCarryProbeMinConfidence:0.###} maxTarget={YoloSceneCutStrongCarryProbeMaxConfidence:0.###} minSource={YoloSceneCutStrongCarryProbeMinSourceConfidence:0.###}");
+            }
+
+            var result = guard.Apply(
+                _maskProvider,
+                videoPath,
+                candidates,
+                differenceThreshold: YoloSceneCutDifferenceThreshold,
+                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
+                directDifferenceMaxChecks: YoloSceneCutDirectDifferenceMaxCandidates,
+                candidateMatchMinIou: YoloSceneCutCandidateMatchMinIou,
+                candidateMatchMaxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
+                candidateMatchMaxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
+                removeCandidates: false,
+                cancellationToken: cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(result.Error))
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[YoloStrongCarrySceneCutProbe] skipped candidates={candidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} error={result.Error}");
+                return result;
+            }
+
+            if (result.Checked > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[YoloStrongCarrySceneCutProbe] candidates={candidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
             }
 
             return result;

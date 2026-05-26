@@ -248,3 +248,14 @@ Synthetic scene-cut carry cleanup now distinguishes a real post-cut strong face 
 - Verifier: `scripts/verify-yolo-final-mask-cleanup.ps1`
 - Evidence: `stickyStrongCarryRemoved=5`, `stickyStrongCarryRemovedUnsupportedStrong=5`, `driftingStrongCarryProtected=3`
 - Meaning: same-position high-confidence blur residue after a confirmed cut is no longer protected only because it repeats for several frames. A drifting supported post-cut face can still remain for visual review.
+
+## 2026-05-27 Strong Carry Scene-Cut Probe
+
+The GUI and smoke paths now add a high-confidence post-cut carry probe before final scene-carry cleanup:
+
+- Code paths: `WorkspaceViewModel.ProbeYoloStrongCarrySceneCuts`, `FaceTrackSceneCutGuard.BuildWeakPostCutCarryCandidates`, and `FaceTrackSceneCutGuard.Apply(removeCandidates: false)`.
+- Rule: YOLO candidates from `0.78` through `0.995` confidence that still match a stronger pre-cut source can be used to collect frame-difference cut evidence, but this probe does not delete the candidate immediately.
+- Final deletion still happens in `YoloFinalMaskPostProcessor.RemoveSceneCutCarryRemnants`, so same-position strong residue after a confirmed cut can be removed while independently moving/scaling strong post-cut faces remain protected for review.
+- Verifier: `scripts/verify-face-track-scene-cut-guard.ps1`
+- Evidence: `probeCandidates=1`, `probeCutPairs=100->101`, `probeRemoved=0`
+- Meaning: a high-confidence transition ghost no longer needs to be weak enough for the older `0.78` post-cut candidate path before the cut pair can be discovered, but the app still avoids treating confidence alone as ground truth.

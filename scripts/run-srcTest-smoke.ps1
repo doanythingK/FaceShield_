@@ -454,6 +454,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const float yoloSceneCutDirectCarryMaxConfidence = 0.98f;
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
+    const float yoloSceneCutStrongCarryProbeMaxConfidence = 0.995f;
+    const float yoloSceneCutStrongCarryProbeMinConfidence = 0.78f;
+    const float yoloSceneCutStrongCarryProbeMinSourceConfidence = 0.80f;
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.32;
     const int yoloSceneCutDirectDifferenceMaxCandidates = 96;
@@ -628,9 +631,36 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
             candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio);
         Console.WriteLine($"[SmokeFaceTrackSceneCutGuard] label={label}, directCandidates={directCandidates.Count}, postCutCandidates={postCutCandidates.Count}, checked={sceneCut.Checked}, directChecked={sceneCut.DirectDifferenceChecks}, directSkipped={sceneCut.DirectDifferenceSkipped}, checkedPairs={FormatTextValues(sceneCut.CheckedFramePairs)}, maxDiff={sceneCut.MaxDifference:F3}, cutPairs={FormatTextValues(sceneCut.CutFramePairs)}, removed={sceneCut.Removed}, removedFrames={FormatFrames(sceneCut.RemovedFrameIndices)}, threshold={sceneCut.Threshold:F3}, elapsedMs={sceneCut.ElapsedMs}, error={sceneCut.Error ?? "none"}");
+        var strongCarryProbeCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
+            maskProvider,
+            maxTargetConfidence: yoloSceneCutStrongCarryProbeMaxConfidence,
+            maxCarryFrames: 5,
+            sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames,
+            minSourceConfidence: yoloSceneCutStrongCarryProbeMinSourceConfidence,
+            minTargetConfidence: yoloSceneCutStrongCarryProbeMinConfidence,
+            minIou: yoloSceneCutCandidateMatchMinIou,
+            maxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
+            maxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio,
+            includeEdgeCandidates: true);
+        var strongCarryProbe = sceneCutGuard.Apply(
+            maskProvider,
+            input,
+            strongCarryProbeCandidates,
+            differenceThreshold: yoloSceneCutDifferenceThreshold,
+            directDifferenceThreshold: yoloSceneCutDirectDifferenceThreshold,
+            directDifferenceMaxChecks: yoloSceneCutDirectDifferenceMaxCandidates,
+            candidateMatchMinIou: yoloSceneCutCandidateMatchMinIou,
+            candidateMatchMaxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
+            candidateMatchMaxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio,
+            removeCandidates: false);
+        Console.WriteLine($"[SmokeYoloStrongCarrySceneCutProbe] label={label}, candidates={strongCarryProbeCandidates.Count}, checked={strongCarryProbe.Checked}, directChecked={strongCarryProbe.DirectDifferenceChecks}, directSkipped={strongCarryProbe.DirectDifferenceSkipped}, checkedPairs={FormatTextValues(strongCarryProbe.CheckedFramePairs)}, maxDiff={strongCarryProbe.MaxDifference:F3}, cutPairs={FormatTextValues(strongCarryProbe.CutFramePairs)}, threshold={strongCarryProbe.Threshold:F3}, elapsedMs={strongCarryProbe.ElapsedMs}, error={strongCarryProbe.Error ?? "none"}");
+        var sceneCutPairs = sceneCut.CutFramePairs
+            .Concat(strongCarryProbe.CutFramePairs)
+            .Distinct()
+            .ToArray();
         var sceneCutCarryCleanup = postProcessor.RemoveSceneCutCarryRemnants(
             maskProvider,
-            sceneCut.CutFramePairs,
+            sceneCutPairs,
             new YoloSceneCutCarryCleanupOptions
             {
                 MaxCarryFrames = 5,
@@ -644,7 +674,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             });
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         var sceneCutBlockedFrameIndices = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
-            sceneCut.CutFramePairs,
+            sceneCutPairs,
             yoloSceneCutCarryBlockFrames);
         Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
         protectedSceneCarryFrameIndices = sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices;
@@ -661,7 +691,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             new YoloFinalMaskGapFillOptions
             {
                 MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
-                BlockedCutFramePairs = sceneCut.CutFramePairs
+                BlockedCutFramePairs = sceneCutPairs
                     .Concat(gapFillGuard.CutFramePairs)
                     .Distinct()
                     .ToArray(),

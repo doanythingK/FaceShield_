@@ -113,6 +113,8 @@ namespace FaceShield.Services.Analysis
             float maxTargetConfidence,
             int maxCarryFrames,
             int sourceLookbackFrames = 1,
+            float minSourceConfidence = 0.0f,
+            float minTargetConfidence = 0.0f,
             double edgeMarginRatio = 0.02,
             double minIou = 0.15,
             double maxCenterShiftRatio = 0.65,
@@ -145,7 +147,7 @@ namespace FaceShield.Services.Analysis
                 {
                     var face = data.Faces[i];
                     float confidence = GetConfidence(data, i);
-                    if (!IsWeakCandidate(face, data.Size, confidence, maxTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
+                    if (!IsWeakCandidate(face, data.Size, confidence, maxTargetConfidence, minTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
                         continue;
 
                     var run = BuildWeakCarryRun(
@@ -153,6 +155,7 @@ namespace FaceShield.Services.Analysis
                         frameIndex,
                         face,
                         maxTargetConfidence,
+                        minTargetConfidence,
                         maxCarryFrames,
                         edgeMarginRatio,
                         minIou,
@@ -190,11 +193,14 @@ namespace FaceShield.Services.Analysis
                             int sourceFrame = frameIndex - offset;
                             if (sourceFrame < 0)
                                 continue;
+                            float sourceConfidenceThreshold = minSourceConfidence > 0
+                                ? minSourceConfidence
+                                : maxTargetConfidence;
                             if (!HasMatchingSourceFace(
                                     entries,
                                     sourceFrame,
                                     item.Bounds,
-                                    maxTargetConfidence,
+                                    sourceConfidenceThreshold,
                                     minIou,
                                     maxCenterShiftRatio,
                                     maxAreaChangeRatio))
@@ -233,7 +239,8 @@ namespace FaceShield.Services.Analysis
             float removeMatchingTailMaxConfidence = 0.0f,
             double candidateMatchMinIou = 0.80,
             double candidateMatchMaxCenterShiftRatio = 0.35,
-            double candidateMatchMaxAreaChangeRatio = 1.8)
+            double candidateMatchMaxAreaChangeRatio = 1.8,
+            bool removeCandidates = true)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -313,6 +320,9 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 cutFramePairs.Add(cutFramePair);
+                if (!removeCandidates)
+                    continue;
+
                 if (RemoveFaceCandidate(
                         maskProvider,
                         candidate.FrameIndex,
@@ -360,6 +370,7 @@ namespace FaceShield.Services.Analysis
             double candidateMatchMinIou = 0.80,
             double candidateMatchMaxCenterShiftRatio = 0.35,
             double candidateMatchMaxAreaChangeRatio = 1.8,
+            bool removeCandidates = true,
             CancellationToken cancellationToken = default)
         {
             if (maskProvider == null)
@@ -486,6 +497,9 @@ namespace FaceShield.Services.Analysis
                             continue;
 
                         cutFramePairs.Add(cutFramePair);
+                        if (!removeCandidates)
+                            continue;
+
                         if (RemoveFaceCandidate(
                                 maskProvider,
                                 candidate.FrameIndex,
@@ -582,6 +596,7 @@ namespace FaceShield.Services.Analysis
             int startFrame,
             Rect startFace,
             float maxTargetConfidence,
+            float minTargetConfidence,
             int maxCarryFrames,
             double edgeMarginRatio,
             double minIou,
@@ -603,6 +618,7 @@ namespace FaceShield.Services.Analysis
                         data,
                         current,
                         maxTargetConfidence,
+                        minTargetConfidence,
                         edgeMarginRatio,
                         minIou,
                         maxCenterShiftRatio,
@@ -631,6 +647,7 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider.FaceMaskData data,
             Rect reference,
             float maxTargetConfidence,
+            float minTargetConfidence,
             double edgeMarginRatio,
             double minIou,
             double maxCenterShiftRatio,
@@ -646,7 +663,7 @@ namespace FaceShield.Services.Analysis
             {
                 var candidate = data.Faces[i];
                 float candidateConfidence = GetConfidence(data, i);
-                if (!IsWeakCandidate(candidate, data.Size, candidateConfidence, maxTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
+                if (!IsWeakCandidate(candidate, data.Size, candidateConfidence, maxTargetConfidence, minTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
                     continue;
                 if (!IsMatchingFace(reference, candidate, minIou, maxCenterShiftRatio, maxAreaChangeRatio))
                     continue;
@@ -734,9 +751,11 @@ namespace FaceShield.Services.Analysis
             PixelSize size,
             float confidence,
             float maxTargetConfidence,
+            float minTargetConfidence,
             double edgeMarginRatio,
             bool includeEdgeCandidates)
             => confidence <= maxTargetConfidence &&
+                (minTargetConfidence <= 0 || confidence >= minTargetConfidence) &&
                 (includeEdgeCandidates || !TouchesFrameEdge(face, size, edgeMarginRatio));
 
         private static bool TouchesFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)
