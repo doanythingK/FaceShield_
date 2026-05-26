@@ -226,3 +226,15 @@ Current short evidence after the top-edge cleanup/logging pass:
   - Frames `17,20,24,25,32`: the large foreground face is covered, and the top-edge weak box covers the same visible partial background face.
 
 These remaining edge/top-edge weak candidates are not automatically false positives. In this 2-second sample they are visible face candidates, so tightening the default cleanup further would risk removing protectable partial faces. The user-reported problem span still needs its own focused visual confirmation before the follow-up goal can be marked complete.
+
+## 2026-05-27 No-Detection / Small-Face Probe
+
+Focused 2-second probe at `00:06:00`:
+
+- Command path: `scripts/run-yolo-problem-span-verification.ps1 -Source srcTest/260102_jp_10.mp4 -TrimStart 00:06:00 -TrimSeconds 2 -AllowNoDetections`
+- Evidence summary: `.tmp/yolo-problem-span-0600-review/yolo-followup-quality-evidence.md`
+- Contact sheet: `.tmp/yolo-problem-span-0600-review/no-detection-contact-sheet.png`
+- Result: `Detection rows: 0`; final mask summary stayed `frames=0`, `rows=0`, `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `weakNonEdge=0`, `tinyShort=0`, and `reviewRequired=False`.
+- Visual observation: the sampled frames do not contain a large foreground face, but do contain very small/background face-like regions. Treat this as small-face miss evidence, not as false-positive evidence.
+- Tiling comparison on the same 2-second clip: `.tmp/yolo-tiling-0600-sweep.csv` and `.tmp/yolo-tiling-0600-sweep.log`. The non-tiling sweep produced `FaceMaskFrames=15`; tiling produced `FaceMaskFrames=16`, but also left `weakNonEdge=8`, `tinyShort=5`, `reviewRequired=True`, and raised CPU `totalMs` to `42006`. Do not enable tiling as a default fix from this evidence alone; it needs a separate small-face profile gate.
+- Large/landmark box refinement comparison on the 09:00 2-second clip: `.tmp/yolo-landmark-refine-0900-sweep.csv`. Landmark refine reduced quality against the current reference (`AvgBestIou` from `0.801` to `0.473`, `MinBestIou` from `0.625` to `0.205`, `AvgBaselineCoverage` from `0.925` to `0.502`), so it should not be enabled by default for large-box cleanup.

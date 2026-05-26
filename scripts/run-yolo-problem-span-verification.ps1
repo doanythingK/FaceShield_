@@ -16,6 +16,7 @@ param(
     [double]$YoloNmsThreshold = 0.45,
     [int]$ParallelDetectorCount = 2,
     [int]$MaxFullFrameRows = 24,
+    [switch]$AllowNoDetections,
     [switch]$WithReviewPackage,
     [switch]$WithDetectionOverlayVideo,
     [switch]$Force
@@ -58,6 +59,10 @@ $argsList.Add("-ParallelDetectorCount") | Out-Null
 $argsList.Add($ParallelDetectorCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 $argsList.Add("-MaxFullFrameRows") | Out-Null
 $argsList.Add($MaxFullFrameRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+
+if ($AllowNoDetections.IsPresent) {
+    $argsList.Add("-AllowNoDetections") | Out-Null
+}
 
 if (-not [string]::IsNullOrWhiteSpace($YoloModelPath)) {
     $argsList.Add("-YoloModelPath") | Out-Null

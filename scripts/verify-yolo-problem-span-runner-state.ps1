@@ -42,6 +42,7 @@ Assert-Match "runner requires bounded trim seconds" $runner '\[Parameter\(Mandat
 Assert-Match "runner defaults to yolo5" $runner '\[ValidateSet\("YoloV8Face",\s*"Yolo5Face"\)\][\s\S]*\$YoloModelType\s*=\s*"Yolo5Face"'
 Assert-Match "runner uses followup wrapper" $runner 'write-yolo-followup-quality-evidence\.ps1[\s\S]*-RunSmoke[\s\S]*-TrimStart[\s\S]*-TrimSeconds[\s\S]*-OutputDir'
 Assert-Match "runner forwards yolo thresholds" $runner '-YoloObjectnessThreshold[\s\S]*-YoloConfidenceThreshold[\s\S]*-YoloNmsThreshold'
+Assert-Match "runner supports no-detection evidence" $runner '\[switch\]\$AllowNoDetections[\s\S]*-AllowNoDetections'
 Assert-Match "runner skips review package by default" $runner 'if\s*\(-not\s*\$WithReviewPackage\.IsPresent\)[\s\S]*-SkipReviewPackage'
 Assert-Match "runner supports detection overlay video" $runner '\[switch\]\$WithDetectionOverlayVideo[\s\S]*-WithDetectionOverlayVideo'
 Assert-Match "runner supports forced rerun" $runner 'if\s*\(\$Force\.IsPresent\)[\s\S]*-ForceTrim[\s\S]*-ForceRunSmoke'
