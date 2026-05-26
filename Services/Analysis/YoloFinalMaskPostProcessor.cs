@@ -444,6 +444,29 @@ namespace FaceShield.Services.Analysis
                 : new YoloSceneCutCarryCleanupResult(removedFaces, removedFrames.ToArray());
         }
 
+        public static IReadOnlyList<int> BuildSceneCutCarryBlockedFrames(
+            IReadOnlyCollection<string> cutFramePairs,
+            int maxCarryFrames)
+        {
+            if (cutFramePairs.Count == 0 || maxCarryFrames <= 0)
+                return Array.Empty<int>();
+
+            var frames = new SortedSet<int>();
+            foreach (string cutFramePair in cutFramePairs)
+            {
+                if (!TryParseFramePair(cutFramePair, out int sourceFrame, out int targetFrame))
+                    continue;
+
+                int referenceFrame = Math.Min(sourceFrame, targetFrame);
+                int confirmedTargetFrame = Math.Max(sourceFrame, targetFrame);
+                int lastTargetFrame = confirmedTargetFrame + maxCarryFrames - 1;
+                for (int frameIndex = referenceFrame + 1; frameIndex <= lastTargetFrame; frameIndex++)
+                    frames.Add(frameIndex);
+            }
+
+            return frames.Count == 0 ? Array.Empty<int>() : frames.ToArray();
+        }
+
         private static bool IsSceneCutCarryMatch(
             Rect reference,
             Rect candidate,

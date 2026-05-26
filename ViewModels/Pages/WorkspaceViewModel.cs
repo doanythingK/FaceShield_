@@ -549,13 +549,17 @@ namespace FaceShield.ViewModels.Pages
                         System.Diagnostics.Debug.WriteLine(
                             $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###}");
                     }
+                    var yoloSceneCutBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
+                        yoloCutPairs,
+                        YoloSceneCutCarryPurgeFrames);
                     RemoveYoloWeakIsolatedFinalMasks(
                         FrameList.VideoPath,
                         token,
                         blockedCutFramePairs: yoloCutPairs,
                         additionalBlockedFrameIndices: CombineFrameIndices(
                             yoloCleanupPass.RemovedFrameIndices,
-                            yoloCarryCleanup.RemovedFrameIndices));
+                            yoloCarryCleanup.RemovedFrameIndices,
+                            yoloSceneCutBlockedFrames));
                 }
                 LogFinalMaskSummary();
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
@@ -1339,16 +1343,14 @@ namespace FaceShield.ViewModels.Pages
                 : text;
         }
 
-        private static IReadOnlyList<int> CombineFrameIndices(
-            IReadOnlyCollection<int>? first,
-            IReadOnlyCollection<int>? second)
+        private static IReadOnlyList<int> CombineFrameIndices(params IReadOnlyCollection<int>?[] sources)
         {
-            if ((first == null || first.Count == 0) &&
-                (second == null || second.Count == 0))
+            if (sources.Length == 0 || sources.All(static x => x == null || x.Count == 0))
                 return Array.Empty<int>();
 
-            return (first ?? Array.Empty<int>())
-                .Concat(second ?? Array.Empty<int>())
+            return sources
+                .Where(static x => x != null && x.Count > 0)
+                .SelectMany(static x => x!)
                 .Distinct()
                 .OrderBy(static frame => frame)
                 .ToArray();
