@@ -323,8 +323,8 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "mixedFrameGap
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapCutRemoved=2"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "gapCutAfterRemoved=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "postSceneCleanupRemoved=2"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryRemoved=5"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryFrames=1001,1002,1003,1004,1005"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryRemoved=13"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryFrames=1001,1002,1003,1004,1005,2001,2002,2003,2004,2005,2006,2007,2008"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryRefillBlocked=5"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,50,59,60,61,90,91,92,93,96"
 

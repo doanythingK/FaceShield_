@@ -390,7 +390,8 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 int referenceFrame = Math.Min(sourceFrame, targetFrame);
-                int firstTargetFrame = Math.Max(sourceFrame, targetFrame);
+                int confirmedTargetFrame = Math.Max(sourceFrame, targetFrame);
+                int firstTargetFrame = referenceFrame + 1;
                 if (!maskProvider.TryGetFaceMaskData(referenceFrame, out var referenceData) ||
                     referenceData.Faces.Count == 0)
                 {
@@ -398,7 +399,7 @@ namespace FaceShield.Services.Analysis
                 }
 
                 var references = referenceData.Faces.ToArray();
-                int lastTargetFrame = firstTargetFrame + options.MaxCarryFrames - 1;
+                int lastTargetFrame = confirmedTargetFrame + options.MaxCarryFrames - 1;
                 for (int frameIndex = firstTargetFrame; frameIndex <= lastTargetFrame; frameIndex++)
                 {
                     if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) ||
