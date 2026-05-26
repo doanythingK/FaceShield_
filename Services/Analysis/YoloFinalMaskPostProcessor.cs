@@ -444,16 +444,15 @@ namespace FaceShield.Services.Analysis
                 if (!TryParseFramePair(cutFramePair, out int sourceFrame, out int targetFrame))
                     continue;
 
-                int referenceFrame = Math.Min(sourceFrame, targetFrame);
+                int cutStartFrame = Math.Min(sourceFrame, targetFrame);
                 int confirmedTargetFrame = Math.Max(sourceFrame, targetFrame);
-                int firstTargetFrame = referenceFrame + 1;
-                if (!maskProvider.TryGetFaceMaskData(referenceFrame, out var referenceData) ||
-                    referenceData.Faces.Count == 0)
+                int firstTargetFrame = cutStartFrame + 1;
+                var references = GetSceneCutCarryReferences(maskProvider, cutStartFrame, options);
+                if (references.Count == 0)
                 {
                     continue;
                 }
 
-                var references = referenceData.Faces.ToArray();
                 int lastTargetFrame = confirmedTargetFrame + options.MaxCarryFrames - 1;
                 for (int frameIndex = firstTargetFrame; frameIndex <= lastTargetFrame; frameIndex++)
                 {
@@ -539,6 +538,29 @@ namespace FaceShield.Services.Analysis
 
             return FaceTrackBuilder.GetNormalizedCenterShift(reference, candidate) <=
                 options.CandidateMatchMaxCenterShiftRatio;
+        }
+
+        private static IReadOnlyList<Rect> GetSceneCutCarryReferences(
+            FrameMaskProvider maskProvider,
+            int cutStartFrame,
+            YoloSceneCutCarryCleanupOptions options)
+        {
+            int lookbackFrames = Math.Max(0, options.SourceLookbackFrames);
+            var references = new List<Rect>();
+            for (int frameIndex = cutStartFrame; frameIndex >= cutStartFrame - lookbackFrames; frameIndex--)
+            {
+                if (frameIndex < 0)
+                    break;
+                if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) ||
+                    data.Faces.Count == 0)
+                {
+                    continue;
+                }
+
+                references.AddRange(data.Faces);
+            }
+
+            return references;
         }
 
         private static (PixelSize Size, List<Rect> Faces, List<float> Confidences) CreateFillEntry(
@@ -1529,6 +1551,7 @@ namespace FaceShield.Services.Analysis
     public sealed record YoloSceneCutCarryCleanupOptions
     {
         public int MaxCarryFrames { get; init; } = 5;
+        public int SourceLookbackFrames { get; init; } = 2;
         public float MaxConfidence { get; init; } = 0.90f;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
