@@ -353,6 +353,15 @@ namespace FaceShield.Services.Analysis
                             break;
                         }
 
+                        bool hasSceneCarryBlockedFrame = gapFrameIndices.Any(blockedSceneCarryFrames.Contains);
+                        if (hasSceneCarryBlockedFrame)
+                        {
+                            foreach (int frameIndex in gapFrameIndices)
+                                blockedSceneCarryGapFrames.Add(frameIndex);
+
+                            break;
+                        }
+
                         foreach (int frameIndex in gapFrameIndices)
                         {
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
