@@ -460,6 +460,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const int yoloSceneCutMatchingTailMaxFrames = 5;
     const int yoloSceneCutCarryBlockFrames = 8;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.95f;
+    const float yoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
     const double yoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
     const double yoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
@@ -630,7 +631,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             new YoloSceneCutCarryCleanupOptions
             {
                 MaxCarryFrames = 5,
+                ExtendedWeakCarryFrames = yoloSceneCutCarryBlockFrames,
                 MaxConfidence = yoloSceneCutMatchingTailMaxConfidence,
+                ExtendedWeakMaxConfidence = yoloSceneCutExtendedWeakCarryMaxConfidence,
                 CandidateMatchMinIou = yoloSceneCutCandidateMatchMinIou,
                 CandidateMatchMaxCenterShiftRatio = yoloSceneCutCandidateMatchMaxCenterShiftRatio,
                 CandidateMatchMaxAreaChangeRatio = yoloSceneCutCandidateMatchMaxAreaChangeRatio
@@ -639,7 +642,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var sceneCutBlockedFrameIndices = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
             sceneCut.CutFramePairs,
             yoloSceneCutCarryBlockFrames);
-        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}");
+        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
             .Concat(sceneCutCarryCleanup.RemovedFrameIndices)
             .Concat(postSceneCleanup.RemovedFrameIndices)

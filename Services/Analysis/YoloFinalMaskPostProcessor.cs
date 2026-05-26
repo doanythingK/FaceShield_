@@ -473,7 +473,11 @@ namespace FaceShield.Services.Analysis
                     continue;
                 }
 
-                int lastTargetFrame = confirmedTargetFrame + options.MaxCarryFrames - 1;
+                int purgeLastTargetFrame = confirmedTargetFrame + options.MaxCarryFrames - 1;
+                int weakLastTargetFrame = options.ExtendedWeakCarryFrames > options.MaxCarryFrames && options.ExtendedWeakMaxConfidence > 0
+                    ? confirmedTargetFrame + options.ExtendedWeakCarryFrames - 1
+                    : purgeLastTargetFrame;
+                int lastTargetFrame = Math.Max(purgeLastTargetFrame, weakLastTargetFrame);
                 for (int frameIndex = firstTargetFrame; frameIndex <= lastTargetFrame; frameIndex++)
                 {
                     if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) ||
@@ -488,7 +492,10 @@ namespace FaceShield.Services.Analysis
                     for (int i = faces.Count - 1; i >= 0; i--)
                     {
                         float confidence = GetConfidence(data, i);
-                        if (confidence > options.MaxConfidence)
+                        float maxConfidence = frameIndex <= purgeLastTargetFrame
+                            ? options.MaxConfidence
+                            : options.ExtendedWeakMaxConfidence;
+                        if (confidence > maxConfidence)
                             continue;
                         if (!references.Any(reference => IsSceneCutCarryMatch(reference, faces[i], options)))
                             continue;
@@ -1696,8 +1703,10 @@ namespace FaceShield.Services.Analysis
     public sealed record YoloSceneCutCarryCleanupOptions
     {
         public int MaxCarryFrames { get; init; } = 5;
+        public int ExtendedWeakCarryFrames { get; init; } = 8;
         public int SourceLookbackFrames { get; init; } = 2;
         public float MaxConfidence { get; init; } = 0.90f;
+        public float ExtendedWeakMaxConfidence { get; init; } = 0.78f;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
         public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;

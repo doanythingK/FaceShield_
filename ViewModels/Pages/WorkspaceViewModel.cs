@@ -65,6 +65,7 @@ namespace FaceShield.ViewModels.Pages
         private const int YoloSceneCutPostCutLookbackFrames = 3;
         private const int YoloSceneCutCarryPurgeFrames = 5;
         private const int YoloSceneCutCarryBlockFrames = 8;
+        private const float YoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
         private const float YoloSceneCutCarryPurgeMaxConfidence = 0.95f;
         private const int YoloFinalMaskStableGapMaxFrames = 5;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
@@ -540,7 +541,9 @@ namespace FaceShield.ViewModels.Pages
                         new YoloSceneCutCarryCleanupOptions
                         {
                             MaxCarryFrames = YoloSceneCutCarryPurgeFrames,
+                            ExtendedWeakCarryFrames = YoloSceneCutCarryBlockFrames,
                             MaxConfidence = YoloSceneCutCarryPurgeMaxConfidence,
+                            ExtendedWeakMaxConfidence = YoloSceneCutExtendedWeakCarryMaxConfidence,
                             CandidateMatchMinIou = YoloSceneCutCandidateMatchMinIou,
                             CandidateMatchMaxCenterShiftRatio = YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                             CandidateMatchMaxAreaChangeRatio = YoloSceneCutCandidateMatchMaxAreaChangeRatio
@@ -551,7 +554,7 @@ namespace FaceShield.ViewModels.Pages
                     if (yoloCutPairs.Count > 0)
                     {
                         System.Diagnostics.Debug.WriteLine(
-                            $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###}");
+                            $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                     }
                     RemoveYoloWeakIsolatedFinalMasks(
                         FrameList.VideoPath,

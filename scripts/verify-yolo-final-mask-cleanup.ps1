@@ -510,6 +510,8 @@ sceneCutCarryProvider.SetFaceRects(1003, new[] { new Rect(646, 366, 120, 120) },
 sceneCutCarryProvider.SetFaceRects(1004, new[] { new Rect(648, 368, 120, 120) }, size, 0.65f, new[] { 0.65f });
 sceneCutCarryProvider.SetFaceRects(1005, new[] { new Rect(650, 370, 120, 120) }, size, 0.93f, new[] { 0.93f });
 sceneCutCarryProvider.SetFaceRects(1006, new[] { new Rect(652, 372, 120, 120) }, size, 0.95f, new[] { 0.95f });
+sceneCutCarryProvider.SetFaceRects(1007, new[] { new Rect(654, 374, 120, 120) }, size, 0.70f, new[] { 0.70f });
+sceneCutCarryProvider.SetFaceRects(1008, new[] { new Rect(656, 376, 120, 120) }, size, 0.76f, new[] { 0.76f });
 sceneCutCarryProvider.SetFaceRects(2000, new[] { new Rect(420, 280, 100, 100) }, size, 0.86f, new[] { 0.86f });
 for (int frame = 2001; frame <= 2008; frame++)
 {
@@ -520,14 +522,19 @@ sceneCutCarryProvider.SetFaceRects(2009, new[] { new Rect(429, 289, 100, 100) },
 var sceneCutCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
     sceneCutCarryProvider,
     new[] { "1000->1001", "2000->2004" },
-    new YoloSceneCutCarryCleanupOptions { MaxConfidence = 0.95f });
+    new YoloSceneCutCarryCleanupOptions
+    {
+        MaxConfidence = 0.95f,
+        ExtendedWeakCarryFrames = 8,
+        ExtendedWeakMaxConfidence = 0.78f
+    });
 var sceneCutCarryFrames = string.Join(",", sceneCutCarryCleanup.RemovedFrameIndices);
 var sceneCutCarryBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
     new[] { "1000->1001", "2000->2004" },
     8);
 var sceneCutCarryBlockedFrameText = string.Join(",", sceneCutCarryBlockedFrames);
-if (sceneCutCarryCleanup.RemovedFaces != 13 || sceneCutCarryFrames != "1001,1002,1003,1004,1005,2001,2002,2003,2004,2005,2006,2007,2008")
-    throw new InvalidOperationException($"Expected scene-cut carry cleanup to remove weak frames 1001-1005 and direct-pair frames 2001-2008, got removed={sceneCutCarryCleanup.RemovedFaces}, frames={sceneCutCarryFrames}.");
+if (sceneCutCarryCleanup.RemovedFaces != 15 || sceneCutCarryFrames != "1001,1002,1003,1004,1005,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008")
+    throw new InvalidOperationException($"Expected scene-cut carry cleanup to remove weak frames 1001-1005, extended weak frames 1007-1008, and direct-pair frames 2001-2008, got removed={sceneCutCarryCleanup.RemovedFaces}, frames={sceneCutCarryFrames}.");
 if (sceneCutCarryBlockedFrameText != "1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011")
     throw new InvalidOperationException($"Expected scene-cut carry blocked frames to cover the extended post-cut carry windows, got frames={sceneCutCarryBlockedFrameText}.");
 if (!sceneCutCarryProvider.TryGetFaceMaskData(1002, out var mixedCarryFrame) ||
@@ -541,6 +548,12 @@ if (!sceneCutCarryProvider.TryGetFaceMaskData(2009, out var directCarryStrongAft
     directCarryStrongAfter.Confidences[0] < 0.90f)
 {
     throw new InvalidOperationException("Expected direct-pair scene-cut carry cleanup to keep strong post-range face 2009.");
+}
+if (!sceneCutCarryProvider.TryGetFaceMaskData(1006, out var strongExtendedCarry) ||
+    strongExtendedCarry.Faces.Count != 1 ||
+    strongExtendedCarry.Confidences[0] < 0.90f)
+{
+    throw new InvalidOperationException("Expected extended scene-cut carry cleanup to keep strong carry-looking frame 1006 for review.");
 }
 
 var lookbackCarryProvider = new FrameMaskProvider();
