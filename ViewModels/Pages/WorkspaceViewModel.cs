@@ -572,7 +572,7 @@ namespace FaceShield.ViewModels.Pages
                         System.Diagnostics.Debug.WriteLine(
                             $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} removedUnsupportedStrong={yoloCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces} removedUnsupportedStrongFrames={FormatFrameList(yoloCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)} protectedStrong={yoloCarryCleanup.ProtectedStrongCarryLikeFaces} protectedStrongFrames={FormatFrameList(yoloCarryCleanup.ProtectedStrongCarryLikeFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                     }
-                    RemoveYoloWeakIsolatedFinalMasks(
+                    var postSceneCleanupPass = RemoveYoloWeakIsolatedFinalMasks(
                         FrameList.VideoPath,
                         token,
                         blockedCutFramePairs: yoloCutPairs,
@@ -581,6 +581,32 @@ namespace FaceShield.ViewModels.Pages
                             yoloCarryCleanup.RemovedFacesInfo),
                         sceneCarryBlockedFaces: yoloCarryCleanup.RemovedFacesInfo,
                         sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames);
+                    if (postSceneCleanupPass.CutFramePairs.Count > 0)
+                    {
+                        var postGapFillCutPairs = CombineCutFramePairs(yoloCutPairs, postSceneCleanupPass.CutFramePairs);
+                        var postGapFillCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
+                            _maskProvider,
+                            postGapFillCutPairs,
+                            new YoloSceneCutCarryCleanupOptions
+                            {
+                                MaxCarryFrames = YoloSceneCutCarryPurgeFrames,
+                                ExtendedWeakCarryFrames = YoloSceneCutCarryBlockFrames,
+                                SourceLookbackFrames = YoloSceneCutPostCutLookbackFrames,
+                                MaxConfidence = YoloSceneCutCarryPurgeMaxConfidence,
+                                ExtendedWeakMaxConfidence = YoloSceneCutExtendedWeakCarryMaxConfidence,
+                                CandidateMatchMinIou = YoloSceneCutCandidateMatchMinIou,
+                                CandidateMatchMaxCenterShiftRatio = YoloSceneCutCandidateMatchMaxCenterShiftRatio,
+                                CandidateMatchMaxAreaChangeRatio = YoloSceneCutCandidateMatchMaxAreaChangeRatio
+                            });
+                        var postGapFillBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
+                            postGapFillCutPairs,
+                            YoloSceneCutCarryBlockFrames);
+                        yoloProtectedSceneCarryFrames = CombineFrameIndices(
+                            yoloProtectedSceneCarryFrames,
+                            postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices);
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[YoloSceneCutCarryCleanup] stage=post-gap-fill cutPairs={FormatTextList(postGapFillCutPairs)} removed={postGapFillCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(postGapFillCarryCleanup.RemovedFrameIndices)} removedUnsupportedStrong={postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces} removedUnsupportedStrongFrames={FormatFrameList(postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)} protectedStrong={postGapFillCarryCleanup.ProtectedStrongCarryLikeFaces} protectedStrongFrames={FormatFrameList(postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices)} blockedFrames={FormatFrameList(postGapFillBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
+                    }
                 }
                 LogFinalMaskSummary(yoloProtectedSceneCarryFrames);
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
