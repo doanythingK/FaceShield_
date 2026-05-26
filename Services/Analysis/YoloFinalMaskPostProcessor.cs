@@ -35,12 +35,16 @@ namespace FaceShield.Services.Analysis
             int removedUpperWeakClusters = 0;
             int removedLowerWeakClusters = 0;
             int removedAspectOutlierClusters = 0;
+            var removedFacesInfo = new List<FaceTrackFilledFace>();
             for (int i = 0; i < entries.Length; i++)
             {
                 int frameIndex = entries[i].Key;
                 var data = entries[i].Value;
                 var faces = new List<Rect>(data.Faces.Count);
                 var confidences = new List<float>(data.Faces.Count);
+                void AddRemovedFace(Rect removedFace, float removedConfidence)
+                    => removedFacesInfo.Add(new FaceTrackFilledFace(frameIndex, removedFace, data.Size, removedConfidence));
+
                 for (int faceIndex = 0; faceIndex < data.Faces.Count; faceIndex++)
                 {
                     var face = data.Faces[faceIndex];
@@ -88,6 +92,7 @@ namespace FaceShield.Services.Analysis
                                 removedLowerWeakClusters++;
                             if (removeAspectOutlierCluster)
                                 removedAspectOutlierClusters++;
+                            AddRemovedFace(face, confidence);
                             continue;
                         }
                     }
@@ -119,6 +124,7 @@ namespace FaceShield.Services.Analysis
                                 removedLowerWeakClusters++;
                             if (removeAspectOutlierCluster)
                                 removedAspectOutlierClusters++;
+                            AddRemovedFace(face, confidence);
                             continue;
                         }
                     }
@@ -137,6 +143,7 @@ namespace FaceShield.Services.Analysis
                         {
                             removed++;
                             removedTopEdgeWeakClusters++;
+                            AddRemovedFace(face, confidence);
                             continue;
                         }
                     }
@@ -152,6 +159,7 @@ namespace FaceShield.Services.Analysis
                         {
                             removed++;
                             removedAspectOutlierClusters++;
+                            AddRemovedFace(face, confidence);
                             continue;
                         }
                     }
@@ -188,6 +196,7 @@ namespace FaceShield.Services.Analysis
                                 removedTinyShortClusters++;
                             if (removeTinyIsolated)
                                 removedTinyIsolated++;
+                            AddRemovedFace(face, confidence);
                             continue;
                         }
                     }
@@ -224,7 +233,8 @@ namespace FaceShield.Services.Analysis
                     removedUpperWeakClusters,
                     removedLowerWeakClusters,
                     removedAspectOutlierClusters,
-                    removedFrames.ToArray());
+                    removedFrames.ToArray(),
+                    removedFacesInfo.ToArray());
         }
 
         public YoloFinalMaskGapFillResult FillShortStableGaps(
@@ -245,6 +255,8 @@ namespace FaceShield.Services.Analysis
             var storedFrames = new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
             var blockedFrames = new HashSet<int>(options.BlockedFrameIndices);
             var blockedSceneCarryFrames = new HashSet<int>(options.BlockedSceneCarryFrameIndices);
+            var blockedFacesByFrame = BuildBlockedFacesByFrame(options.BlockedFaces);
+            var blockedSceneCarryFacesByFrame = BuildBlockedFacesByFrame(options.BlockedSceneCarryFaces);
             var fills = new Dictionary<int, (PixelSize Size, List<Rect> Faces, List<float> Confidences)>();
             var filledFaceInfo = new List<FaceTrackFilledFace>();
             var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
@@ -333,16 +345,10 @@ namespace FaceShield.Services.Analysis
 
                         var gapFrameIndices = GetUnstoredGapFrameIndices(previousFrame, nextFrame, storedFrames);
                         bool hasCleanupBlockedFrame = gapFrameIndices.Any(blockedFrames.Contains);
-                        bool hasSceneCarryBlockedFrame = gapFrameIndices.Any(blockedSceneCarryFrames.Contains);
-                        if (hasCleanupBlockedFrame || hasSceneCarryBlockedFrame)
+                        if (hasCleanupBlockedFrame)
                         {
                             foreach (int frameIndex in gapFrameIndices)
-                            {
-                                if (hasCleanupBlockedFrame)
-                                    blockedCleanupFrames.Add(frameIndex);
-                                if (hasSceneCarryBlockedFrame)
-                                    blockedSceneCarryGapFrames.Add(frameIndex);
-                            }
+                                blockedCleanupFrames.Add(frameIndex);
 
                             break;
                         }
@@ -353,6 +359,26 @@ namespace FaceShield.Services.Analysis
                             var interpolated = Interpolate(previousFace, nextFace, t);
                             if (interpolated.Width <= 0 || interpolated.Height <= 0)
                                 continue;
+
+                            bool blockedByCleanupFace = HasMatchingBlockedFace(
+                                blockedFacesByFrame,
+                                frameIndex,
+                                interpolated,
+                                options);
+                            bool blockedBySceneCarry = blockedSceneCarryFrames.Contains(frameIndex) ||
+                                HasMatchingBlockedFace(
+                                    blockedSceneCarryFacesByFrame,
+                                    frameIndex,
+                                    interpolated,
+                                    options);
+                            if (blockedByCleanupFace || blockedBySceneCarry)
+                            {
+                                if (blockedByCleanupFace)
+                                    blockedCleanupFrames.Add(frameIndex);
+                                if (blockedBySceneCarry)
+                                    blockedSceneCarryGapFrames.Add(frameIndex);
+                                continue;
+                            }
 
                             if (!fills.TryGetValue(frameIndex, out var fill))
                             {
@@ -447,6 +473,54 @@ namespace FaceShield.Services.Analysis
             return frameIndices;
         }
 
+        private static Dictionary<int, List<FaceTrackFilledFace>> BuildBlockedFacesByFrame(
+            IReadOnlyCollection<FaceTrackFilledFace> blockedFaces)
+        {
+            var result = new Dictionary<int, List<FaceTrackFilledFace>>();
+            foreach (var blockedFace in blockedFaces)
+            {
+                if (blockedFace.Bounds.Width <= 0 || blockedFace.Bounds.Height <= 0)
+                    continue;
+                if (!result.TryGetValue(blockedFace.FrameIndex, out var faces))
+                {
+                    faces = new List<FaceTrackFilledFace>();
+                    result[blockedFace.FrameIndex] = faces;
+                }
+
+                faces.Add(blockedFace);
+            }
+
+            return result;
+        }
+
+        private static bool HasMatchingBlockedFace(
+            Dictionary<int, List<FaceTrackFilledFace>> blockedFacesByFrame,
+            int frameIndex,
+            Rect candidate,
+            YoloFinalMaskGapFillOptions options)
+        {
+            if (!blockedFacesByFrame.TryGetValue(frameIndex, out var blockedFaces))
+                return false;
+
+            foreach (var blockedFace in blockedFaces)
+            {
+                if (FaceTrackBuilder.IoU(candidate, blockedFace.Bounds) >= options.BlockedFaceMinIou)
+                    return true;
+                if (FaceTrackBuilder.GetNormalizedCenterShift(candidate, blockedFace.Bounds) <=
+                    options.BlockedFaceMaxCenterShiftRatio)
+                {
+                    double areaRatio = FaceTrackBuilder.GetAreaRatio(candidate, blockedFace.Bounds);
+                    if (areaRatio <= options.BlockedFaceMaxAreaChangeRatio &&
+                        areaRatio >= 1.0 / options.BlockedFaceMaxAreaChangeRatio)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         public YoloSceneCutCarryCleanupResult RemoveSceneCutCarryRemnants(
             FrameMaskProvider maskProvider,
             IReadOnlyCollection<string> cutFramePairs,
@@ -458,6 +532,9 @@ namespace FaceShield.Services.Analysis
 
             var removedFrames = new SortedSet<int>();
             var protectedFrames = new SortedSet<int>();
+            var removedFacesInfo = new List<FaceTrackFilledFace>();
+            var removedUnsupportedStrongFacesInfo = new List<FaceTrackFilledFace>();
+            var protectedFacesInfo = new List<FaceTrackFilledFace>();
             var protectedFaceKeys = new HashSet<string>(StringComparer.Ordinal);
             var removedUnsupportedStrongFrames = new SortedSet<int>();
             int removedFaces = 0;
@@ -510,6 +587,7 @@ namespace FaceShield.Services.Analysis
                                     faces[i],
                                     options))
                             {
+                                var removedFaceInfo = new FaceTrackFilledFace(frameIndex, faces[i], data.Size, confidence);
                                 faces.RemoveAt(i);
                                 if (i < confidences.Count)
                                     confidences.RemoveAt(i);
@@ -517,15 +595,21 @@ namespace FaceShield.Services.Analysis
                                 removedFaces++;
                                 removedUnsupportedStrongFaces++;
                                 removedUnsupportedStrongFrames.Add(frameIndex);
+                                removedFacesInfo.Add(removedFaceInfo);
+                                removedUnsupportedStrongFacesInfo.Add(removedFaceInfo);
                                 continue;
                             }
 
                             string protectedKey = GetCarryReviewKey(frameIndex, faces[i]);
                             if (protectedFaceKeys.Add(protectedKey))
+                            {
                                 protectedFrames.Add(frameIndex);
+                                protectedFacesInfo.Add(new FaceTrackFilledFace(frameIndex, faces[i], data.Size, confidence));
+                            }
                             continue;
                         }
 
+                        removedFacesInfo.Add(new FaceTrackFilledFace(frameIndex, faces[i], data.Size, confidence));
                         faces.RemoveAt(i);
                         if (i < confidences.Count)
                             confidences.RemoveAt(i);
@@ -553,8 +637,11 @@ namespace FaceShield.Services.Analysis
                     removedFrames.ToArray(),
                     removedUnsupportedStrongFaces,
                     removedUnsupportedStrongFrames.ToArray(),
+                    removedFacesInfo.ToArray(),
+                    removedUnsupportedStrongFacesInfo.ToArray(),
                     protectedFaceKeys.Count,
-                    protectedFrames.ToArray());
+                    protectedFrames.ToArray(),
+                    protectedFacesInfo.ToArray());
         }
 
         public static IReadOnlyList<int> BuildSceneCutCarryBlockedFrames(
@@ -630,7 +717,8 @@ namespace FaceShield.Services.Analysis
             YoloSceneCutCarryCleanupOptions options)
         {
             if (options.StrongCarrySupportLookaheadFrames <= 0 ||
-                options.StrongCarrySupportMinConfidence <= 0)
+                options.StrongCarrySupportMinConfidence <= 0 ||
+                options.StrongCarrySupportMinFrames <= 0)
             {
                 return false;
             }
@@ -638,6 +726,7 @@ namespace FaceShield.Services.Analysis
             int lastSupportFrame = Math.Min(
                 lastTargetFrame,
                 frameIndex + options.StrongCarrySupportLookaheadFrames);
+            int supportFrames = 0;
             for (int supportFrame = frameIndex + 1; supportFrame <= lastSupportFrame; supportFrame++)
             {
                 if (!maskProvider.TryGetFaceMaskData(supportFrame, out var data) ||
@@ -651,7 +740,15 @@ namespace FaceShield.Services.Analysis
                     if (GetConfidence(data, i) < options.StrongCarrySupportMinConfidence)
                         continue;
                     if (IsSceneCutCarryMatch(face, data.Faces[i], options))
-                        return false;
+                    {
+                        supportFrames++;
+                        break;
+                    }
+                }
+
+                if (supportFrames >= options.StrongCarrySupportMinFrames)
+                {
+                    return false;
                 }
             }
 
@@ -1770,7 +1867,12 @@ namespace FaceShield.Services.Analysis
         public double AnchorMaxAspectRatio { get; init; } = 1.65;
         public IReadOnlyCollection<string> BlockedCutFramePairs { get; init; } = Array.Empty<string>();
         public IReadOnlyCollection<int> BlockedFrameIndices { get; init; } = Array.Empty<int>();
+        public IReadOnlyCollection<FaceTrackFilledFace> BlockedFaces { get; init; } = Array.Empty<FaceTrackFilledFace>();
         public IReadOnlyCollection<int> BlockedSceneCarryFrameIndices { get; init; } = Array.Empty<int>();
+        public IReadOnlyCollection<FaceTrackFilledFace> BlockedSceneCarryFaces { get; init; } = Array.Empty<FaceTrackFilledFace>();
+        public double BlockedFaceMinIou { get; init; } = 0.30;
+        public double BlockedFaceMaxCenterShiftRatio { get; init; } = 0.45;
+        public double BlockedFaceMaxAreaChangeRatio { get; init; } = 2.2;
     }
 
     public sealed record YoloSceneCutCarryCleanupOptions
@@ -1781,6 +1883,7 @@ namespace FaceShield.Services.Analysis
         public float MaxConfidence { get; init; } = 0.90f;
         public float ExtendedWeakMaxConfidence { get; init; } = 0.78f;
         public int StrongCarrySupportLookaheadFrames { get; init; } = 5;
+        public int StrongCarrySupportMinFrames { get; init; } = 2;
         public float StrongCarrySupportMinConfidence { get; init; } = 0.80f;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
@@ -1799,9 +1902,10 @@ namespace FaceShield.Services.Analysis
         int RemovedUpperWeakClusterFaces,
         int RemovedLowerWeakClusterFaces,
         int RemovedAspectOutlierClusterFaces,
-        IReadOnlyList<int> RemovedFrameIndices)
+        IReadOnlyList<int> RemovedFrameIndices,
+        IReadOnlyList<FaceTrackFilledFace> RemovedFacesInfo)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
     }
 
     public readonly record struct YoloFinalMaskGapFillResult(
@@ -1827,9 +1931,12 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<int> RemovedFrameIndices,
         int RemovedUnsupportedStrongCarryLikeFaces,
         IReadOnlyList<int> RemovedUnsupportedStrongCarryLikeFrameIndices,
+        IReadOnlyList<FaceTrackFilledFace> RemovedFacesInfo,
+        IReadOnlyList<FaceTrackFilledFace> RemovedUnsupportedStrongCarryLikeFacesInfo,
         int ProtectedStrongCarryLikeFaces,
-        IReadOnlyList<int> ProtectedStrongCarryLikeFrameIndices)
+        IReadOnlyList<int> ProtectedStrongCarryLikeFrameIndices,
+        IReadOnlyList<FaceTrackFilledFace> ProtectedStrongCarryLikeFacesInfo)
     {
-        public static YoloSceneCutCarryCleanupResult Empty { get; } = new(0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, Array.Empty<int>());
+        public static YoloSceneCutCarryCleanupResult Empty { get; } = new(0, Array.Empty<int>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
     }
 }

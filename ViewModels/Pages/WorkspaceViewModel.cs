@@ -563,9 +563,10 @@ namespace FaceShield.ViewModels.Pages
                         FrameList.VideoPath,
                         token,
                         blockedCutFramePairs: yoloCutPairs,
-                        additionalBlockedFrameIndices: CombineFrameIndices(
-                            yoloCleanupPass.RemovedFrameIndices,
-                            yoloCarryCleanup.RemovedFrameIndices),
+                        additionalBlockedFaces: CombineFaceInfos(
+                            yoloCleanupPass.RemovedFacesInfo,
+                            yoloCarryCleanup.RemovedFacesInfo),
+                        sceneCarryBlockedFaces: yoloCarryCleanup.RemovedFacesInfo,
                         sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames);
                 }
                 LogFinalMaskSummary(yoloProtectedSceneCarryFrames);
@@ -849,6 +850,8 @@ namespace FaceShield.ViewModels.Pages
             bool fillStableGaps = true,
             IReadOnlyCollection<string>? blockedCutFramePairs = null,
             IReadOnlyCollection<int>? additionalBlockedFrameIndices = null,
+            IReadOnlyCollection<FaceTrackFilledFace>? additionalBlockedFaces = null,
+            IReadOnlyCollection<FaceTrackFilledFace>? sceneCarryBlockedFaces = null,
             IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices = null)
         {
             var postProcessor = new YoloFinalMaskPostProcessor();
@@ -870,8 +873,10 @@ namespace FaceShield.ViewModels.Pages
                         cancellationToken,
                         blockedCutFramePairs,
                         additionalBlockedFrameIndices,
+                        additionalBlockedFaces,
+                        sceneCarryBlockedFaces,
                         sceneCarryBlockedFrameIndices);
-                return new YoloFinalMaskCleanupPassResult(cleanup.RemovedFrameIndices, cutPairs);
+                return new YoloFinalMaskCleanupPassResult(cleanup.RemovedFrameIndices, cleanup.RemovedFacesInfo, cutPairs);
             }
 
             System.Diagnostics.Debug.WriteLine(
@@ -884,10 +889,12 @@ namespace FaceShield.ViewModels.Pages
                     videoPath,
                     cancellationToken,
                     blockedCutFramePairs,
-                    CombineFrameIndices(additionalBlockedFrameIndices, cleanup.RemovedFrameIndices),
+                    additionalBlockedFrameIndices,
+                    CombineFaceInfos(additionalBlockedFaces, cleanup.RemovedFacesInfo),
+                    sceneCarryBlockedFaces,
                     sceneCarryBlockedFrameIndices);
 
-            return new YoloFinalMaskCleanupPassResult(cleanup.RemovedFrameIndices, gapFillCutPairs);
+            return new YoloFinalMaskCleanupPassResult(cleanup.RemovedFrameIndices, cleanup.RemovedFacesInfo, gapFillCutPairs);
         }
 
         private string[] FillYoloStableFinalMaskGaps(
@@ -896,6 +903,8 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken,
             IReadOnlyCollection<string>? blockedCutFramePairs,
             IReadOnlyCollection<int>? blockedFrameIndices,
+            IReadOnlyCollection<FaceTrackFilledFace>? blockedFaces,
+            IReadOnlyCollection<FaceTrackFilledFace>? sceneCarryBlockedFaces,
             IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices)
         {
             var gapFill = postProcessor.FillShortStableGaps(
@@ -905,6 +914,8 @@ namespace FaceShield.ViewModels.Pages
                     MaxGapFrames = YoloFinalMaskStableGapMaxFrames,
                     BlockedCutFramePairs = blockedCutFramePairs ?? Array.Empty<string>(),
                     BlockedFrameIndices = blockedFrameIndices ?? Array.Empty<int>(),
+                    BlockedFaces = blockedFaces ?? Array.Empty<FaceTrackFilledFace>(),
+                    BlockedSceneCarryFaces = sceneCarryBlockedFaces ?? Array.Empty<FaceTrackFilledFace>(),
                     BlockedSceneCarryFrameIndices = sceneCarryBlockedFrameIndices ?? Array.Empty<int>()
                 });
             if (gapFill.FilledFaces <= 0 &&
@@ -1430,6 +1441,20 @@ namespace FaceShield.ViewModels.Pages
                 .SelectMany(static x => x!)
                 .Distinct()
                 .OrderBy(static frame => frame)
+                .ToArray();
+        }
+
+        private static IReadOnlyList<FaceTrackFilledFace> CombineFaceInfos(
+            params IReadOnlyCollection<FaceTrackFilledFace>?[] sources)
+        {
+            if (sources.Length == 0 || sources.All(static x => x == null || x.Count == 0))
+                return Array.Empty<FaceTrackFilledFace>();
+
+            return sources
+                .Where(static x => x != null && x.Count > 0)
+                .SelectMany(static x => x!)
+                .Distinct()
+                .OrderBy(static x => x.FrameIndex)
                 .ToArray();
         }
 
@@ -2273,9 +2298,10 @@ namespace FaceShield.ViewModels.Pages
 
         private readonly record struct YoloFinalMaskCleanupPassResult(
             IReadOnlyList<int> RemovedFrameIndices,
+            IReadOnlyList<FaceTrackFilledFace> RemovedFacesInfo,
             IReadOnlyList<string> CutFramePairs)
         {
-            public static YoloFinalMaskCleanupPassResult Empty { get; } = new(Array.Empty<int>(), Array.Empty<string>());
+            public static YoloFinalMaskCleanupPassResult Empty { get; } = new(Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<string>());
         }
 
     }

@@ -54,7 +54,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `Final mask summary` 또는 `SmokeFinalMaskSummary`에서 `shortGaps=0`
 - `isolated=0`
 - `reviewRequired=True`이면 `reviewReasons`에서 `short-gap`, `large-jump-gap`, `isolated-mask`가 있는지 먼저 확인한다. 이 값은 통과/실패 단정이 아니라 어느 frame group을 먼저 봐야 하는지 알려주는 triage 근거다.
-- cleanup이 제거한 프레임이 다시 채워지지 않았다는 근거가 필요하면 `Final mask gap fill`에서 `filled=0`, `frames=none`, `blockedByCleanup=...`, `cleanupBlockedFrames=...`를 확인한다.
+- cleanup이 제거한 얼굴이 다시 채워지지 않았다는 근거가 필요하면 `Final mask gap fill`에서 `blockedByCleanup=...`, `cleanupBlockedFrames=...`를 확인한다. 현재 YOLO 경로는 제거된 얼굴 위치를 per-face block으로 넘기므로, 같은 프레임의 unrelated face gap은 채워질 수 있다. 따라서 `frames=none`은 전체 gap 미보정 근거이고, `blockedByCleanup`은 같은 제거 얼굴을 재생성하지 않았다는 근거다.
 - `lostFrames`가 있더라도 해당 full-frame overlay에서 대상 얼굴이 계속 덮여 있음
 
 실패 근거:
@@ -71,7 +71,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `Scene-cut guard`에 `cutPairs=...`와 `removedFrames=...`가 남음
 - 후보가 많은 구간에서도 `directChecked=...`가 0으로 고정되지 않는다. `directSkipped=...`가 있으면 직접 source->target 비교가 예산 한도까지 수행되고 나머지만 생략된 것이다.
 - 컷 직후 같은 위치의 약한 tail이 함께 제거됨
-- 컷 또는 cleanup 이후 final gap fill이 `blockedByCut=...`/`cutBlockedFrames=...` 또는 `blockedByCleanup=...`/`cleanupBlockedFrames=...`를 남기고 `frames=none`이면, 후속 anti-flicker fill이 잔상을 다시 만들지 않았다는 근거로 본다.
+- 컷 이후 final gap fill이 `blockedByCut=...`/`cutBlockedFrames=...` 또는 `blockedBySceneCarry=...`/`sceneCarryBlockedFrames=...`를 남기면, 후속 anti-flicker fill이 확인된 전환 구간의 잔상을 다시 만들지 않았다는 근거로 본다. `blockedByCleanup=...`/`cleanupBlockedFrames=...`는 cleanup이 제거한 같은 얼굴 위치를 재생성하지 않았다는 근거다.
 - `reviewReasons`에 `large-jump-gap`이 있으면 화면전환 또는 box jump 후보를 우선 확인한다.
 - review overlay에서 다음 장면에 이전 장면의 모자이크가 남지 않음
 
@@ -79,7 +79,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 
 - `maxDiff`가 threshold 이상인데 `removedFrames=none`
 - 컷 직후 1-5프레임 동안 같은 위치의 약한 box가 남음
-- `removedFrames` 이후 final cleanup/gap fill이 같은 위치의 mask를 다시 만든 흔적이 있음
+- `removedFrames` 이후 final cleanup/gap fill이 같은 위치의 mask를 다시 만든 흔적이 있음. 같은 프레임의 다른 얼굴 보정은 실패 근거로 보지 않고 crop/full-frame overlay에서 위치가 겹치는지 확인한다.
 
 ### 오탐
 
@@ -136,7 +136,7 @@ goal 완료로 볼 수 있는 최소 증거:
 - Post-scene final gap-fill now also carries cut pairs found by the initial final gap-fill scene-cut guard, so a gap-fill that was removed across a transition cannot be re-created by the later post-scene gap-fill pass.
 - Final gap-fill now rejects weak geometry-risk anchors (`edge`, `tiny`, `upper/lower weak`, aspect outlier) while keeping strong edge anchors eligible. This reduces YOLO false positives from becoming temporal gap-fill seeds without disabling high-confidence edge faces.
 - Post-scene cleanup now also purges residual YOLO carry masks after known cut pairs when the post-cut box still matches the pre-cut position and remains at or below `0.98` confidence. For adjacent cut pairs it scans the normal 5-frame carry purge window, then continues through an 8-frame weak-carry window for matching boxes at or below `0.78` confidence. The later anti-flicker gap-fill block window is also 8 frames, so a transition residue removed or flagged near a cut is not recreated a few frames later. For direct source-to-target cut pairs it starts at `source+1` and continues through the confirmed target plus the carry window, so transition frames between `source` and `target` cannot keep an old blur. This is implemented in `YoloFinalMaskPostProcessor.RemoveSceneCutCarryRemnants` and shared by the GUI path and smoke harness. Removed carry frames and the extended carry block window are passed into the final gap-fill blocked-frame list, so the anti-flicker pass cannot recreate the same scene-transition residue.
-- Deterministic verifier evidence: `scripts/verify-yolo-final-mask-cleanup.ps1` now includes `sceneCutCarryRemoved=15`, `sceneCutCarryFrames=1001,1002,1003,1004,1005,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008`, extended `sceneCutCarryBlockedFrames=1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011`, and `sceneCutCarryRefillBlocked=5`.
+- Deterministic verifier evidence: `scripts/verify-yolo-final-mask-cleanup.ps1` now includes `sceneCutCarryRemoved=17`, `sceneCutCarryFrames=1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009`, extended `sceneCutCarryBlockedFrames=1001,1002,1003,1004,1005,1006,1007,1008,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011`, `emptyPostCutRemovedUnsupportedStrong=2`, and `partialSceneCarryRefillBlocked=1`.
 - Final cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
 - Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`
