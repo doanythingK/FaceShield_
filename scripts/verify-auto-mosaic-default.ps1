@@ -328,6 +328,7 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarry
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryFrames=1001,1002,1003,1004,1005,2001,2002,2003,2004,2005,2006,2007,2008"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryBlockedFrames=1001,1002,1003,1004,1005,2001,2002,2003,2004,2005,2006,2007,2008"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCutCarryRefillBlocked=5"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "emptyPostCutRefillBlocked=4"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "remainingFrames=20,30,50,59,60,61,90,91,92,93,96"
 
 $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(

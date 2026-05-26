@@ -633,11 +633,11 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 CandidateMatchMaxCenterShiftRatio = yoloSceneCutCandidateMatchMaxCenterShiftRatio,
                 CandidateMatchMaxAreaChangeRatio = yoloSceneCutCandidateMatchMaxAreaChangeRatio
             });
-        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}");
         var postSceneCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
         var sceneCutBlockedFrameIndices = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
             sceneCut.CutFramePairs,
             5);
+        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}");
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
             .Concat(sceneCutCarryCleanup.RemovedFrameIndices)
             .Concat(postSceneCleanup.RemovedFrameIndices)

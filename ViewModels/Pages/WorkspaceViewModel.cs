@@ -544,14 +544,14 @@ namespace FaceShield.ViewModels.Pages
                             CandidateMatchMaxCenterShiftRatio = YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                             CandidateMatchMaxAreaChangeRatio = YoloSceneCutCandidateMatchMaxAreaChangeRatio
                         });
-                    if (yoloCarryCleanup.RemovedFaces > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine(
-                            $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###}");
-                    }
                     var yoloSceneCutBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
                         yoloCutPairs,
                         YoloSceneCutCarryPurgeFrames);
+                    if (yoloCutPairs.Count > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###}");
+                    }
                     RemoveYoloWeakIsolatedFinalMasks(
                         FrameList.VideoPath,
                         token,
