@@ -129,14 +129,19 @@ goal 완료로 볼 수 있는 최소 증거:
 ## Current Focused Evidence
 
 - 2026-05-27 current HEAD short-span run: `.tmp/yolo-goal-current-perface-0900/yolo-followup-quality-evidence.md`
+- 2026-05-27 current HEAD review-package run: `.tmp/yolo-goal-current-perface-0900-review/yolo-followup-quality-evidence.md`
 - Source span: `srcTest/260102_jp_10.mp4`, `TrimStart=00:09:00`, `TrimSeconds=2`
 - Detector/provider: `YoloFaceOnnxDetector/GPU:DirectML`
 - Processed frames: `60`
 - Final rows: `96`
+- Review package: `.tmp/yolo-goal-current-perface-0900-review/review-package/review-index.html`
+- Review rows: `96` crop rows, `32` full-frame rows
+- Required full-frame review frames: `4,6,7,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,32`
 - Flicker/carry triage: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `protectedSceneCarry=0`, `reviewRequired=False`, `reviewReasons=none`
 - Cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
 - Scene-cut evidence: `directChecked=74`, `directSkipped=0`, `cutPairs=none`, `removedFrames=none`
 - False-positive triage: `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`; residual `edgeWeak/topEdgeWeak` frames are `4,6,7,17,20,24,25,32` and remain visual review targets rather than automatic non-face labels.
+- Partial overlay observation: frames `4`, `24`, and `32` show the residual edge/top-edge boxes covering a visible partial background face and/or the foreground face. This is reference evidence only; the crop/full-frame CSV rows are still unreviewed GT rows.
 
 ## Wrapper Smoke
 
