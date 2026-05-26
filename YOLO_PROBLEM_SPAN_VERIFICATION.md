@@ -177,6 +177,17 @@ goal 완료로 볼 수 있는 최소 증거:
 - Final gap-fill evidence: `filled=0`, `frames=none`, `blockedByCleanup=3`, `cleanupBlockedFrames=33,34,35`
 - Final mask summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `lowConf=7`, `weakNonEdgeFrames=none`, `upperWeakFrames=none`, `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
 
+Latest post stored-gap-block short-span evidence:
+
+- Evidence summary: `.tmp/yolo-problem-span-storedblock-0900/yolo-followup-quality-evidence.md`
+- Overlay video: `.tmp/yolo-problem-span-storedblock-0900/yolo-detection-overlay.mp4`
+- Source: existing 2-second `.tmp/srcTest-smoke/smoke-0900-2s.mp4` clip, not the full source video
+- Run summary: `detector=YoloFaceOnnxDetector/GPU:DirectML`, `processed=60`, `detections=96`
+- Flicker/carry triage: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `protectedSceneCarry=0`
+- False-positive triage: `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`
+- Scene-cut guard on this no-cut sample: `cutPairs=none`, `removedFrames=none`, `maxDiff=0.206`
+- Remaining review state: `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
+
 ## 2026-05-27 Top-Edge Fastcheck
 
 Current short evidence after the top-edge cleanup/logging pass:
