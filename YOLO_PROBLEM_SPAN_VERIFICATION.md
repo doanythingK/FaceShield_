@@ -271,4 +271,8 @@ Focused 2-second `00:09:00` evidence after the probe export update:
 - Strong carry probe: `candidates=44`, `checked=44`, `directChecked=43`, `directSkipped=0`, `maxDiff=0.216`, `cutPairs=none`
 - Final summary: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`, `protectedSceneCarry=0`
 - Remaining review state: `reviewRequired=True`, `reviewReasons=low-confidence-review,edge-weak-review,top-edge-weak-review`
+- Visual overlay contact sheets:
+  - Edge/top review: `.tmp/yolo-problem-span-strongprobe-0900/visual-review/edge-top-review-contact.png`
+  - Full review: `.tmp/yolo-problem-span-strongprobe-0900/visual-review/full-review-contact.png`
+- Visual observation: frames `4,6,7,17,20,24,25,32` still show visible partial background and/or foreground faces inside the residual edge/top-edge boxes. These are not confirmed non-face false positives from this evidence, so the default cleanup should not delete them automatically.
 - This run used a 2-second focused trim, not the full source video.
