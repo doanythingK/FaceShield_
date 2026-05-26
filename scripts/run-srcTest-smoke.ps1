@@ -480,6 +480,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 StrongConfidence = 0.58f,
                 SyntheticFillConfidenceMax = yoloSceneCutPostCutCarryMaxConfidence,
                 DropShortTrackMaxDetections = yoloDropShortTrackMaxDetections,
+                DropShortSmallTrackMaxDetections = 3,
                 ShortTrackMaxConfidence = yoloShortTrackMaxConfidence,
                 DropSparseTrackMaxDetections = 3,
                 DropSparseTrackMinSpanFrames = 8,

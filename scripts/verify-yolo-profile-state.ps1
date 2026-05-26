@@ -306,6 +306,7 @@ Assert-Match "scene cut guard exposes deterministic verifier path" $sceneCutGuar
 Assert-Match "track postprocess exposes synthetic fill confidence cap" $trackBuilderText "SyntheticFillConfidenceMax\s*\{\s*get;\s*init;\s*\}\s*=\s*1\.0f"
 Assert-Match "track postprocess exposes inward initial-fill gate" $trackBuilderText "InitialFillRequiresInwardMotion\s*\{\s*get;\s*init;\s*\}\s*=\s*false"
 Assert-Match "track interpolator gates initial fill by inward edge motion" $trackInterpolatorText "InitialFillRequiresInwardMotion[\s\S]*IsMovingInwardFromTouchedEdge[\s\S]*return\s+touchedEdge\s*&&\s*inward"
+Assert-Match "track interpolator protects confirmed small tracks" $trackInterpolatorText "CouldBePartialFace[\s\S]*IsConfirmedSmallTrack[\s\S]*ConfirmedTrackMinDetections[\s\S]*StrongConfidence[\s\S]*IsSmallTrack"
 Assert-Match "track postprocess reports blocked initial fill" $trackInterpolatorText "blockedInitialFillTracks\+\+[\s\S]*BlockedInitialFillTracks"
 Assert-Match "track interpolation caps synthetic fill confidence" $trackInterpolatorText "ClampSyntheticFillConfidence[\s\S]*SyntheticFillConfidenceMax[\s\S]*Math\.Clamp\(sourceConfidence"
 Assert-Match "workspace caps yolo synthetic track fill confidence" $workspaceText "SyntheticFillConfidenceMax\s*=\s*YoloSceneCutPostCutCarryMaxConfidence"
@@ -471,6 +472,7 @@ foreach ($assignment in @(
     "MaxInitialFillFrames\s*=\s*yoloMaxInitialFillFrames",
     "InitialFillRequiresInwardMotion\s*=\s*true",
     "DropShortTrackMaxDetections\s*=\s*yoloDropShortTrackMaxDetections",
+    "DropShortSmallTrackMaxDetections\s*=\s*3",
     "DropSparseTrackMaxDetections\s*=\s*3",
     "DropSparseTrackMinSpanFrames\s*=\s*8",
     "DropSparseTrackMaxDensity\s*=\s*0\.42",

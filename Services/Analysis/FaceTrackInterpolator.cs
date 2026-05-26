@@ -379,6 +379,9 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<FaceTrack> tracks,
             FaceTrackPostProcessOptions options)
         {
+            if (IsConfirmedSmallTrack(track, options))
+                return true;
+
             for (int i = 0; i < track.Detections.Count; i++)
             {
                 var detection = track.Detections[i];
@@ -388,6 +391,11 @@ namespace FaceShield.Services.Analysis
 
             return false;
         }
+
+        private static bool IsConfirmedSmallTrack(FaceTrack track, FaceTrackPostProcessOptions options)
+            => track.DetectionCount >= options.ConfirmedTrackMinDetections &&
+                track.MaxConfidence >= options.StrongConfidence &&
+                IsSmallTrack(track, options);
 
         private static bool TouchesFrameEdge(FaceTrackDetection detection, FaceTrackPostProcessOptions options)
         {

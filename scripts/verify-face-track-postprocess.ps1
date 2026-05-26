@@ -73,6 +73,7 @@ var result = new FaceTrackInterpolator().Apply(
         MaxInitialFillFrames = 3,
         InitialFillRequiresInwardMotion = true,
         DropShortTrackMaxDetections = 1,
+        DropShortSmallTrackMaxDetections = 3,
         DropSparseTrackMaxDetections = 3,
         DropSparseTrackMinSpanFrames = 8,
         DropSparseTrackMaxDensity = 0.42,
@@ -133,7 +134,7 @@ if (provider.TryGetFaceMaskData(42, out var removedSmallB) && removedSmallB.Face
 for (int frame = 50; frame <= 52; frame++)
 {
     if (!provider.TryGetFaceMaskData(frame, out var centralPartial) || centralPartial.Faces.Count != 1)
-        throw new InvalidOperationException($"Expected three-detection central partial-face candidate at frame {frame} to remain.");
+        throw new InvalidOperationException($"Expected confirmed three-detection small central partial-face candidate at frame {frame} to remain.");
 }
 
 if (!provider.TryGetFaceMaskData(55, out var largeJumpSource) || largeJumpSource.Faces.Count != 1)
