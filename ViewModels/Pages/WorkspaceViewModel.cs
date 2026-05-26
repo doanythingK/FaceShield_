@@ -51,14 +51,14 @@ namespace FaceShield.ViewModels.Pages
         private const double FinalMaskLargeJumpAreaChangeRatio = 4.0;
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
-        private const float YoloSceneCutDirectCarryMaxConfidence = 0.95f;
+        private const float YoloSceneCutDirectCarryMaxConfidence = 0.98f;
         private const float YoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
         private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
         private const int YoloSceneCutDirectDifferenceMaxCandidates = 48;
         private const int YoloSceneCutMatchingTailMaxFrames = 5;
-        private const float YoloSceneCutMatchingTailMaxConfidence = 0.95f;
+        private const float YoloSceneCutMatchingTailMaxConfidence = 0.98f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
         private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
         private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
@@ -66,7 +66,7 @@ namespace FaceShield.ViewModels.Pages
         private const int YoloSceneCutCarryPurgeFrames = 5;
         private const int YoloSceneCutCarryBlockFrames = 8;
         private const float YoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
-        private const float YoloSceneCutCarryPurgeMaxConfidence = 0.95f;
+        private const float YoloSceneCutCarryPurgeMaxConfidence = 0.98f;
         private const int YoloFinalMaskStableGapMaxFrames = 5;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
@@ -542,6 +542,7 @@ namespace FaceShield.ViewModels.Pages
                         {
                             MaxCarryFrames = YoloSceneCutCarryPurgeFrames,
                             ExtendedWeakCarryFrames = YoloSceneCutCarryBlockFrames,
+                            SourceLookbackFrames = YoloSceneCutPostCutLookbackFrames,
                             MaxConfidence = YoloSceneCutCarryPurgeMaxConfidence,
                             ExtendedWeakMaxConfidence = YoloSceneCutExtendedWeakCarryMaxConfidence,
                             CandidateMatchMinIou = YoloSceneCutCandidateMatchMinIou,
