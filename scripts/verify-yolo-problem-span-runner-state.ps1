@@ -57,5 +57,6 @@ Assert-Match "guide documents cleanup-block pass criteria" $guide 'blockedByClea
 Assert-Match "guide documents high-confidence scene carry cleanup" $guide 'at or below `0\.95` confidence[\s\S]*RemoveSceneCutCarryRemnants[\s\S]*anti-flicker pass cannot recreate the same scene-transition residue'
 Assert-Match "plan links runner" $plan 'scripts/run-yolo-problem-span-verification\.ps1[\s\S]*caps the problem span at 30 seconds'
 Assert-Match "smoke result links runner" $smoke 'scripts/run-yolo-problem-span-verification\.ps1[\s\S]*short-span entrypoint'
+Assert-Match "smoke result records current high-confidence validation" $smoke 'Current validation after the high-confidence scene-carry update[\s\S]*dotnet build FaceShield\.sln[\s\S]*scripts/verify-auto-mosaic-default\.ps1[\s\S]*SmokeQualityGate passed=True[\s\S]*avgBestIou=1\.000[\s\S]*largeJumpGaps=0'
 
 Write-Host "[YoloProblemSpanRunnerVerify] all requested checks passed"
