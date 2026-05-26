@@ -228,6 +228,9 @@ namespace FaceShield.Services.Analysis
             var blockedSceneCarryGapFrames = new SortedSet<int>();
             int filledFaces = 0;
             int blockedCutGapFaces = 0;
+            int suppressedWeakGeometryAnchorChecks = 0;
+            int suppressedRiskyGeometryAnchorChecks = 0;
+            int unsupportedWeakAnchorChecks = 0;
 
             for (int entryIndex = 0; entryIndex < entries.Length - 1; entryIndex++)
             {
@@ -257,8 +260,14 @@ namespace FaceShield.Services.Analysis
                                 previousFace,
                                 previousConfidence,
                                 options,
-                                excludedEntryIndex: nextEntryIndex))
+                                excludedEntryIndex: nextEntryIndex,
+                                out var previousAnchorRejection))
                         {
+                            AddAnchorRejection(
+                                previousAnchorRejection,
+                                ref suppressedWeakGeometryAnchorChecks,
+                                ref suppressedRiskyGeometryAnchorChecks,
+                                ref unsupportedWeakAnchorChecks);
                             continue;
                         }
 
@@ -270,6 +279,9 @@ namespace FaceShield.Services.Analysis
                                 next,
                                 previousFace,
                                 options,
+                                ref suppressedWeakGeometryAnchorChecks,
+                                ref suppressedRiskyGeometryAnchorChecks,
+                                ref unsupportedWeakAnchorChecks,
                                 out var nextFace,
                                 out float nextConfidence))
                         {
@@ -355,7 +367,10 @@ namespace FaceShield.Services.Analysis
             if (filledFaces == 0 &&
                 blockedCutGapFaces == 0 &&
                 blockedCleanupFrames.Count == 0 &&
-                blockedSceneCarryGapFrames.Count == 0)
+                blockedSceneCarryGapFrames.Count == 0 &&
+                suppressedWeakGeometryAnchorChecks == 0 &&
+                suppressedRiskyGeometryAnchorChecks == 0 &&
+                unsupportedWeakAnchorChecks == 0)
             {
                 return YoloFinalMaskGapFillResult.Empty;
             }
@@ -383,7 +398,10 @@ namespace FaceShield.Services.Analysis
                 blockedCleanupFrames.Count,
                 blockedCleanupFrames.ToArray(),
                 blockedSceneCarryGapFrames.Count,
-                blockedSceneCarryGapFrames.ToArray());
+                blockedSceneCarryGapFrames.ToArray(),
+                suppressedWeakGeometryAnchorChecks,
+                suppressedRiskyGeometryAnchorChecks,
+                unsupportedWeakAnchorChecks);
         }
 
         public YoloSceneCutCarryCleanupResult RemoveSceneCutCarryRemnants(
@@ -793,6 +811,9 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider.FaceMaskData data,
             Rect reference,
             YoloFinalMaskGapFillOptions options,
+            ref int suppressedWeakGeometryAnchorChecks,
+            ref int suppressedRiskyGeometryAnchorChecks,
+            ref int unsupportedWeakAnchorChecks,
             out Rect match,
             out float confidence)
         {
@@ -810,8 +831,14 @@ namespace FaceShield.Services.Analysis
                         candidate,
                         candidateConfidence,
                         options,
-                        excludedEntryIndex))
+                        excludedEntryIndex,
+                        out var rejection))
                 {
+                    AddAnchorRejection(
+                        rejection,
+                        ref suppressedWeakGeometryAnchorChecks,
+                        ref suppressedRiskyGeometryAnchorChecks,
+                        ref unsupportedWeakAnchorChecks);
                     continue;
                 }
 
@@ -837,15 +864,21 @@ namespace FaceShield.Services.Analysis
             Rect face,
             float confidence,
             YoloFinalMaskGapFillOptions options,
-            int excludedEntryIndex)
+            int excludedEntryIndex,
+            out GapAnchorRejection rejection)
         {
+            rejection = GapAnchorRejection.None;
             if (IsSuppressedWeakGeometryGapAnchor(face, entries[entryIndex].Value.Size, confidence, options))
+            {
+                rejection = GapAnchorRejection.WeakGeometry;
                 return false;
+            }
 
             if (confidence <= options.RiskyGeometryAnchorSupportMaxConfidence &&
                 IsRiskyGeometryGapAnchor(face, entries[entryIndex].Value.Size, options) &&
                 !HasSupportedGapAnchorNeighbor(entries, entryIndex, faceIndex, face, options, excludedEntryIndex))
             {
+                rejection = GapAnchorRejection.RiskyGeometry;
                 return false;
             }
 
@@ -855,10 +888,34 @@ namespace FaceShield.Services.Analysis
                 options.SupportedAnchorNeighborWindowFrames <= 0 ||
                 confidence < options.SupportedAnchorMinConfidence)
             {
+                rejection = GapAnchorRejection.UnsupportedWeak;
                 return false;
             }
 
-            return HasSupportedGapAnchorNeighbor(entries, entryIndex, faceIndex, face, options, excludedEntryIndex);
+            bool supported = HasSupportedGapAnchorNeighbor(entries, entryIndex, faceIndex, face, options, excludedEntryIndex);
+            if (!supported)
+                rejection = GapAnchorRejection.UnsupportedWeak;
+            return supported;
+        }
+
+        private static void AddAnchorRejection(
+            GapAnchorRejection rejection,
+            ref int suppressedWeakGeometryAnchorChecks,
+            ref int suppressedRiskyGeometryAnchorChecks,
+            ref int unsupportedWeakAnchorChecks)
+        {
+            switch (rejection)
+            {
+                case GapAnchorRejection.WeakGeometry:
+                    suppressedWeakGeometryAnchorChecks++;
+                    break;
+                case GapAnchorRejection.RiskyGeometry:
+                    suppressedRiskyGeometryAnchorChecks++;
+                    break;
+                case GapAnchorRejection.UnsupportedWeak:
+                    unsupportedWeakAnchorChecks++;
+                    break;
+            }
         }
 
         private static bool HasSupportedGapAnchorNeighbor(
@@ -1365,6 +1422,14 @@ namespace FaceShield.Services.Analysis
             return aspectRatio < options.AnchorMinAspectRatio ||
                 aspectRatio > options.AnchorMaxAspectRatio;
         }
+
+        private enum GapAnchorRejection
+        {
+            None,
+            WeakGeometry,
+            RiskyGeometry,
+            UnsupportedWeak
+        }
     }
 
     public sealed record YoloFinalMaskCleanupOptions
@@ -1462,9 +1527,12 @@ namespace FaceShield.Services.Analysis
         int BlockedCleanupGapFrames,
         IReadOnlyList<int> BlockedCleanupFrameIndices,
         int BlockedSceneCarryGapFrames,
-        IReadOnlyList<int> BlockedSceneCarryFrameIndices)
+        IReadOnlyList<int> BlockedSceneCarryFrameIndices,
+        int SuppressedWeakGeometryAnchorChecks,
+        int SuppressedRiskyGeometryAnchorChecks,
+        int UnsupportedWeakAnchorChecks)
     {
-        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, Array.Empty<int>());
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, 0, 0);
     }
 
     public readonly record struct YoloSceneCutCarryCleanupResult(

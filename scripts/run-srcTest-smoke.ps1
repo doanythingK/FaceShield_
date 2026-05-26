@@ -575,7 +575,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 MaxGapFrames = yoloFinalMaskStableGapMaxFrames,
                 BlockedFrameIndices = cleanup.RemovedFrameIndices
             });
-        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}, blockedByCut={gapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(gapFill.BlockedCutFrameIndices)}, blockedByCleanup={gapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(gapFill.BlockedCleanupFrameIndices)}");
+        Console.WriteLine($"[SmokeYoloFinalMaskGapFill] label={label}, filled={gapFill.FilledFaces}, frames={FormatFrames(gapFill.FilledFrameIndices)}, blockedByCut={gapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(gapFill.BlockedCutFrameIndices)}, blockedByCleanup={gapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(gapFill.BlockedCleanupFrameIndices)}, suppressedWeakGeometryAnchors={gapFill.SuppressedWeakGeometryAnchorChecks}, suppressedRiskyGeometryAnchors={gapFill.SuppressedRiskyGeometryAnchorChecks}, unsupportedWeakAnchors={gapFill.UnsupportedWeakAnchorChecks}");
         var gapFillGuard = gapFill.CutGuardFacesInfo.Count == 0
             ? FaceTrackSceneCutGuardResult.Empty
             : new FaceTrackSceneCutGuard().Apply(
@@ -657,7 +657,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 BlockedFrameIndices = postSceneBlockedFrameIndices,
                 BlockedSceneCarryFrameIndices = sceneCutBlockedFrameIndices
             });
-        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneGapFill] label={label}, filled={postSceneGapFill.FilledFaces}, frames={FormatFrames(postSceneGapFill.FilledFrameIndices)}, blockedByCut={postSceneGapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(postSceneGapFill.BlockedCutFrameIndices)}, blockedByCleanup={postSceneGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(postSceneGapFill.BlockedCleanupFrameIndices)}, blockedBySceneCarry={postSceneGapFill.BlockedSceneCarryGapFrames}, sceneCarryBlockedFrames={FormatFrames(postSceneGapFill.BlockedSceneCarryFrameIndices)}");
+        Console.WriteLine($"[SmokeYoloFinalMaskPostSceneGapFill] label={label}, filled={postSceneGapFill.FilledFaces}, frames={FormatFrames(postSceneGapFill.FilledFrameIndices)}, blockedByCut={postSceneGapFill.BlockedCutGapFaces}, cutBlockedFrames={FormatFrames(postSceneGapFill.BlockedCutFrameIndices)}, blockedByCleanup={postSceneGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={FormatFrames(postSceneGapFill.BlockedCleanupFrameIndices)}, blockedBySceneCarry={postSceneGapFill.BlockedSceneCarryGapFrames}, sceneCarryBlockedFrames={FormatFrames(postSceneGapFill.BlockedSceneCarryFrameIndices)}, suppressedWeakGeometryAnchors={postSceneGapFill.SuppressedWeakGeometryAnchorChecks}, suppressedRiskyGeometryAnchors={postSceneGapFill.SuppressedRiskyGeometryAnchorChecks}, unsupportedWeakAnchors={postSceneGapFill.UnsupportedWeakAnchorChecks}");
         var postSceneGapFillGuard = postSceneGapFill.CutGuardFacesInfo.Count == 0
             ? FaceTrackSceneCutGuardResult.Empty
             : new FaceTrackSceneCutGuard().Apply(

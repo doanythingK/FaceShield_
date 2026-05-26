@@ -902,13 +902,16 @@ namespace FaceShield.ViewModels.Pages
             if (gapFill.FilledFaces <= 0 &&
                 gapFill.BlockedCutGapFaces <= 0 &&
                 gapFill.BlockedCleanupGapFrames <= 0 &&
-                gapFill.BlockedSceneCarryGapFrames <= 0)
+                gapFill.BlockedSceneCarryGapFrames <= 0 &&
+                gapFill.SuppressedWeakGeometryAnchorChecks <= 0 &&
+                gapFill.SuppressedRiskyGeometryAnchorChecks <= 0 &&
+                gapFill.UnsupportedWeakAnchorChecks <= 0)
             {
                 return Array.Empty<string>();
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} cutBlockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)} blockedByCleanup={gapFill.BlockedCleanupGapFrames} cleanupBlockedFrames={FormatFrameList(gapFill.BlockedCleanupFrameIndices)} blockedBySceneCarry={gapFill.BlockedSceneCarryGapFrames} sceneCarryBlockedFrames={FormatFrameList(gapFill.BlockedSceneCarryFrameIndices)}");
+                $"[YoloFinalMaskGapFill] filled={gapFill.FilledFaces} frames={FormatFrameList(gapFill.FilledFrameIndices)} blockedByCut={gapFill.BlockedCutGapFaces} cutBlockedFrames={FormatFrameList(gapFill.BlockedCutFrameIndices)} blockedByCleanup={gapFill.BlockedCleanupGapFrames} cleanupBlockedFrames={FormatFrameList(gapFill.BlockedCleanupFrameIndices)} blockedBySceneCarry={gapFill.BlockedSceneCarryGapFrames} sceneCarryBlockedFrames={FormatFrameList(gapFill.BlockedSceneCarryFrameIndices)} suppressedWeakGeometryAnchors={gapFill.SuppressedWeakGeometryAnchorChecks} suppressedRiskyGeometryAnchors={gapFill.SuppressedRiskyGeometryAnchorChecks} unsupportedWeakAnchors={gapFill.UnsupportedWeakAnchorChecks}");
 
             if (gapFill.CutGuardFacesInfo.Count == 0)
                 return Array.Empty<string>();
