@@ -126,6 +126,18 @@ goal 완료로 볼 수 있는 최소 증거:
 
 현재 상태에서는 기존 짧은 샘플 evidence와 verifier는 통과했지만, 사용자가 실제로 본 문제 구간의 visual confirmation은 아직 별도 증거가 필요하다.
 
+## Current Focused Evidence
+
+- 2026-05-27 current HEAD short-span run: `.tmp/yolo-goal-current-perface-0900/yolo-followup-quality-evidence.md`
+- Source span: `srcTest/260102_jp_10.mp4`, `TrimStart=00:09:00`, `TrimSeconds=2`
+- Detector/provider: `YoloFaceOnnxDetector/GPU:DirectML`
+- Processed frames: `60`
+- Final rows: `96`
+- Flicker/carry triage: `shortGaps=0`, `largeJumpGaps=0`, `isolated=0`, `protectedSceneCarry=0`, `reviewRequired=False`, `reviewReasons=none`
+- Cleanup evidence: `removedUpperWeakClusters=3`, `removedFrames=33,34,35`
+- Scene-cut evidence: `directChecked=74`, `directSkipped=0`, `cutPairs=none`, `removedFrames=none`
+- False-positive triage: `weakNonEdge=0`, `upperWeak=0`, `lowerWeak=0`, `aspectBad=0`, `tinyWeak=0`, `tinyShort=0`; residual `edgeWeak/topEdgeWeak` frames are `4,6,7,17,20,24,25,32` and remain visual review targets rather than automatic non-face labels.
+
 ## Wrapper Smoke
 
 `scripts/run-yolo-problem-span-verification.ps1` 자체는 `.tmp/srcTest-smoke/smoke-0900-2s.mp4`의 2초 구간으로 확인했다.
