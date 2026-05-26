@@ -20,7 +20,9 @@ param(
     [string]$SmokeHarness = "scripts/run-srcTest-smoke.ps1",
     [string]$FinalMaskCleanupVerifier = "scripts/verify-yolo-final-mask-cleanup.ps1",
     [string]$SmoothingCutBoundaryVerifier = "scripts/verify-yolo-temporal-smoothing-cut-boundary.ps1",
-    [string]$AutoMosaicDefaultVerifier = "scripts/verify-auto-mosaic-default.ps1"
+    [string]$AutoMosaicDefaultVerifier = "scripts/verify-auto-mosaic-default.ps1",
+    [string]$YoloGuiSmokeResult = "YOLO_GUI_SMOKE_RESULT.md",
+    [string]$AutoMosaicQualityPlan = "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,6 +76,8 @@ $smokeHarnessText = Read-RepoFile $SmokeHarness
 $finalMaskCleanupVerifyText = Read-RepoFile $FinalMaskCleanupVerifier
 $smoothingCutBoundaryVerifyText = Read-RepoFile $SmoothingCutBoundaryVerifier
 $autoMosaicDefaultVerifyText = Read-RepoFile $AutoMosaicDefaultVerifier
+$yoloGuiSmokeResultText = Read-RepoFile $YoloGuiSmokeResult
+$autoMosaicQualityPlanText = Read-RepoFile $AutoMosaicQualityPlan
 
 Assert-Match "backend enum exposes yolo" $backend "YoloFaceOnnx\s*=\s*3"
 Assert-Match "yolo model enum exposes v8" $modelEnum "YoloV8Face\s*=\s*0"
@@ -227,6 +231,8 @@ Assert-Match "workspace carries initial gap-fill cut pairs into post-scene final
 Assert-Match "workspace blocks final gap fill from cleanup removals" $workspaceText "FillYoloStableFinalMaskGaps[\s\S]*BlockedFrameIndices\s*=\s*blockedFrameIndices\s*\?\?\s*Array\.Empty<int>\(\)"
 Assert-Match "workspace guards stable yolo final gaps across scene cuts" $workspaceText "FillYoloStableFinalMaskGaps[\s\S]*gapFill\.CutGuardFacesInfo[\s\S]*FaceTrackSceneCutGuard\(\)\.Apply[\s\S]*YoloFinalMaskGapFillSceneCutGuard"
 Assert-Match "workspace broadens yolo scene cut carry candidates conservatively" $workspaceText "YoloSceneCutDirectCarryMaxConfidence\s*=\s*0\.90f[\s\S]*YoloSceneCutDirectCarryMinSourceConfidence\s*=\s*0\.58f[\s\S]*YoloSceneCutPostCutCarryMaxConfidence\s*=\s*0\.78f[\s\S]*YoloSceneCutDifferenceThreshold\s*=\s*0\.15[\s\S]*YoloSceneCutDirectDifferenceThreshold\s*=\s*0\.32[\s\S]*YoloSceneCutDirectDifferenceMaxCandidates\s*=\s*48[\s\S]*YoloSceneCutMatchingTailMaxFrames\s*=\s*5[\s\S]*YoloSceneCutMatchingTailMaxConfidence\s*=\s*0\.90f[\s\S]*YoloSceneCutCandidateMatchMinIou\s*=\s*0\.55[\s\S]*YoloSceneCutCandidateMatchMaxCenterShiftRatio\s*=\s*0\.65[\s\S]*YoloSceneCutCandidateMatchMaxAreaChangeRatio\s*=\s*3\.0[\s\S]*YoloSceneCutPostCutLookbackFrames\s*=\s*3[\s\S]*BuildWeakTrackTransitionCandidates[\s\S]*maxTargetConfidence:\s*YoloSceneCutDirectCarryMaxConfidence[\s\S]*minConfidenceDrop:\s*0\.0f[\s\S]*maxPostCutCarryFrames:\s*5[\s\S]*minSourceConfidence:\s*YoloSceneCutDirectCarryMinSourceConfidence[\s\S]*BuildWeakPostCutCarryCandidates[\s\S]*maxTargetConfidence:\s*YoloSceneCutPostCutCarryMaxConfidence[\s\S]*maxCarryFrames:\s*5[\s\S]*sourceLookbackFrames:\s*YoloSceneCutPostCutLookbackFrames[\s\S]*includeEdgeCandidates:\s*true[\s\S]*var\s+candidates\s*=\s*directCandidates[\s\S]*\.Concat\(postCutCandidates\)[\s\S]*\.Concat\(trackPost\.FilledGapFacesInfo\)[\s\S]*directDifferenceThreshold:\s*YoloSceneCutDirectDifferenceThreshold[\s\S]*directDifferenceMaxChecks:\s*YoloSceneCutDirectDifferenceMaxCandidates[\s\S]*removeMatchingTailFrames:\s*YoloSceneCutMatchingTailMaxFrames[\s\S]*removeMatchingTailMaxConfidence:\s*YoloSceneCutMatchingTailMaxConfidence[\s\S]*candidateMatchMinIou:\s*YoloSceneCutCandidateMatchMinIou"
+Assert-Match "docs record yolo direct scene cut budget" $yoloGuiSmokeResultText "direct source->target frame difference[\s\S]*cap direct source->target checks at 48"
+Assert-Match "plan records yolo direct scene cut budget" $autoMosaicQualityPlanText "YoloSceneCutDirectDifferenceMaxCandidates=48[\s\S]*cap expensive direct source-to-target frame comparisons at 48"
 Assert-Match "workspace purges residual yolo carry masks after scene cuts" $workspaceText "YoloSceneCutCarryPurgeFrames\s*=\s*5[\s\S]*YoloSceneCutCarryPurgeMaxConfidence\s*=\s*0\.90f[\s\S]*RemoveSceneCutCarryRemnants\([\s\S]*new\s+YoloSceneCutCarryCleanupOptions[\s\S]*YoloSceneCutCarryCleanup"
 Assert-Match "final mask postprocessor owns scene-cut carry cleanup" $finalMaskPostProcessorText "RemoveSceneCutCarryRemnants[\s\S]*YoloSceneCutCarryCleanupOptions[\s\S]*TryParseFramePair[\s\S]*IsSceneCutCarryMatch[\s\S]*YoloSceneCutCarryCleanupResult"
 Assert-Match "final mask cleanup verifies scene-cut carry cleanup behavior" $finalMaskCleanupVerifyText "RemoveSceneCutCarryRemnants[\s\S]*Expected scene-cut carry cleanup to remove weak frames 1001-1005 and direct-pair frames 2001-2008[\s\S]*Expected scene-cut carry cleanup frames to block final gap refill"
