@@ -42,7 +42,7 @@ review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewConta
 - `yolo-quality-review-checklist.md`: 깜박임/잔상/오탐 review frame 목록
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
 - `yolo-detection-overlay.mp4`: `-WithDetectionOverlayVideo` 사용 시 생성되는 연속 검출 overlay 영상
-- `yolo-review-contact-sheet.png`: `-WithReviewContactSheet` 사용 시 생성되는 review frame contact sheet
+- `yolo-review-contact-sheet.png`: `-WithReviewContactSheet` 사용 시 생성되는 frame-number-labeled review contact sheet
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 연속 재생에서 깜박임이나 화면전환 잔상을 먼저 빠르게 보려면 `-WithDetectionOverlayVideo`를 함께 사용한다. 단, 이 overlay 영상도 참고 증거이며 최종 오탐/미탐 판정은 CSV review row로 닫는다.

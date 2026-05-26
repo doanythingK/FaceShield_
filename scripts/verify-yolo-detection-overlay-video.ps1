@@ -40,6 +40,8 @@ Assert-Contains "script supports wsl ffmpeg fallback" $scriptText "wsl.exe"
 
 $contactSheetText = Get-Content -Raw -Path $contactSheetScript
 Assert-Contains "contact sheet uses select filter" $contactSheetText "select='"
+Assert-Contains "contact sheet labels frame numbers" $contactSheetText 'drawtext=text=''f$frame'''
+Assert-Contains "contact sheet labels selected frame index" $contactSheetText 'enable=''eq(n\,$index)'''
 Assert-Contains "contact sheet tiles frames" $contactSheetText "tile="
 Assert-Contains "contact sheet supports wsl ffmpeg fallback" $contactSheetText "wsl.exe"
 

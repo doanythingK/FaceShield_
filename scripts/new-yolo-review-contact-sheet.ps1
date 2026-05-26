@@ -7,6 +7,7 @@ param(
     [int]$ScaleWidth = 360,
     [int]$Columns = 5,
     [int]$MaxFrames = 40,
+    [switch]$NoFrameLabels,
     [string]$FfmpegPath = ""
 )
 
@@ -104,6 +105,12 @@ $selectExpr = @($frameNumbers | ForEach-Object { "eq(n\,$_)" }) -join "+"
 $filters = @("select='$selectExpr'")
 if ($ScaleWidth -gt 0) {
     $filters += "scale=$($ScaleWidth):-2"
+}
+if (-not $NoFrameLabels.IsPresent) {
+    for ($index = 0; $index -lt $frameNumbers.Count; $index++) {
+        $frame = $frameNumbers[$index]
+        $filters += "drawtext=text='f$frame':x=8:y=8:fontcolor=white:fontsize=28:box=1:boxcolor=black@0.60:enable='eq(n\,$index)'"
+    }
 }
 $filters += "tile=${columnsToUse}x${rowsToUse}:padding=6:margin=6"
 $filterGraph = $filters -join ","
