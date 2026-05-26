@@ -911,6 +911,7 @@ if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
 [void]$summary.AppendLine("- Detection rows: $($detectionRows.Count)")
 if ($detectionRows.Count -eq 0) {
     [void]$summary.AppendLine("- No detection rows were found; crop/full-frame package generation was skipped.")
+    [void]$summary.AppendLine("- No-detection review: ``reviewRequired=True``, ``reviewReasons=no-detection-frame-scan``")
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Review contact sheet: ``$ReviewContactSheetPath``")

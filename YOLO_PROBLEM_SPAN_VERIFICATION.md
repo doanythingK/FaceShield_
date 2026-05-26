@@ -293,6 +293,7 @@ The problem-span wrapper can now generate a review contact sheet directly:
 - This smoke used a 2-second focused `00:09:00` trim, not the full source video.
 
 For no-detection spans, the same `-WithReviewContactSheet` option samples frames from the short source clip and records `Sampled no-detection review frames` in `yolo-followup-quality-evidence.md`.
+Even if `[SmokeFinalMaskSummary]` reports `reviewRequired=False` because there are no final mask rows, the wrapper summary records `No-detection review: reviewRequired=True, reviewReasons=no-detection-frame-scan` so visible-face misses are not accidentally treated as clean.
 
 No-detection contact-sheet smoke:
 
