@@ -37,7 +37,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeYoloFinalMaskCleanup] label=synthetic-yolo, removedWeakIsolated=4, removedWeakUnsupported=1, removedMediumUnsupported=0, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=2, removedTinyIsolated=1, removedTopEdgeWeakClusters=0, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=8,10,11,12
 [SmokeYoloFinalMaskGapFill] label=synthetic-yolo, filled=1, frames=5, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8, blockedBySceneCarry=0, sceneCarryBlockedFrames=none
 [SmokeYoloFinalMaskGapFillSceneCutGuard] label=synthetic-yolo, candidates=2, checked=2, checkedPairs=4->5,5->6, maxDiff=0.410, cutPairs=4->5, removed=1, removedFrames=5, threshold=0.320, elapsedMs=2, error=none
-[SmokeYoloSceneCutCarryCleanup] label=synthetic-yolo, removed=2, removedFrames=6,7, protectedStrong=2, protectedStrongFrames=14,15, blockedFrames=6,7,8,9,10,11,12,13, purgeFrames=5, blockFrames=8, extendedWeakMaxConfidence=0.78
+[SmokeYoloSceneCutCarryCleanup] label=synthetic-yolo, removed=3, removedFrames=6,7,13, removedUnsupportedStrong=1, removedUnsupportedStrongFrames=13, protectedStrong=2, protectedStrongFrames=14,15, blockedFrames=6,7,8,9,10,11,12,13, purgeFrames=5, blockFrames=8, extendedWeakMaxConfidence=0.78
 [SmokeYoloFinalMaskPostSceneGapFill] label=synthetic-yolo, filled=0, frames=none, blockedByCut=1, cutBlockedFrames=7, blockedByCleanup=1, cleanupBlockedFrames=8, blockedBySceneCarry=2, sceneCarryBlockedFrames=6,7
 [SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard] label=synthetic-yolo, candidates=0, checked=0, checkedPairs=none, maxDiff=0.000, cutPairs=none, removed=0, removedFrames=none, threshold=0.000, elapsedMs=0, error=none
 [SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, lowConfFrames=2, weakNonEdge=1, weakNonEdgeFrames=2, edgeWeak=1, edgeWeakFrames=10, topEdgeWeak=1, topEdgeWeakFrames=10, upperWeak=1, upperWeakFrames=2, lowerWeak=1, lowerWeakFrames=6, aspectBad=1, aspectBadFrames=9, tinyWeak=1, tinyWeakFrames=2, tinyShort=1, tinyShortFrames=2, reviewRequired=True, reviewReasons=short-gap,large-jump-gap,isolated-mask,weak-non-edge,upper-weak,lower-weak,aspect-outlier,tiny-weak,tiny-short
@@ -103,7 +103,7 @@ Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-rev
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
 Assert-Contains "script reuses existing review package" $scriptText "ForceReviewPackage[\s\S]*review-index\.html"
 Assert-Contains "script derives required full-frame review frames" $scriptText "Get-ReviewFrameNumbers[\s\S]*lostFrames=.*removedShort[\s\S]*checkedPairs=.*maxDiff"
-Assert-Contains "script derives protected carry review frames" $scriptText "SceneCutCarryCleanupLines[\s\S]*protectedStrongFrames=.*blockedFrames"
+Assert-Contains "script derives protected carry review frames" $scriptText "SceneCutCarryCleanupLines[\s\S]*removedUnsupportedStrongFrames=.*protectedStrong[\s\S]*protectedStrongFrames=.*blockedFrames"
 Assert-Contains "script derives review frames from final summary gaps" $scriptText "FinalMaskSummaryLines[\s\S]*shortGapRanges=.*largeJumpGaps[\s\S]*largeJumpRanges=.*isolated="
 Assert-Contains "script derives review frames from final summary residuals" $scriptText "lowConfFrames=.*weakNonEdge[\s\S]*weakNonEdgeFrames=.*edgeWeak[\s\S]*edgeWeakFrames=.*topEdgeWeak[\s\S]*topEdgeWeakFrames=.*upperWeak[\s\S]*upperWeakFrames=.*lowerWeak[\s\S]*lowerWeakFrames=.*aspectBad[\s\S]*aspectBadFrames=.*tinyWeak[\s\S]*tinyWeakFrames=.*tinyShort[\s\S]*tinyShortFrames="
 Assert-Contains "script derives review frames from low-confidence detections" $scriptText "LowConfidenceReviewThreshold[\s\S]*Add-LowConfidenceDetectionFrames[\s\S]*DetectionRows[\s\S]*conf="
@@ -133,7 +133,7 @@ Assert-Contains "summary records detection rows" $summaryText "Detection rows: 4
 Assert-Contains "summary links final mask continuity report" $summaryText "Final mask continuity"
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"
-Assert-Contains "summary records scene-cut carry cleanup" $summaryText "Scene-cut carry cleanup[\s\S]*removed=2[\s\S]*removedFrames=6,7[\s\S]*protectedStrong=2[\s\S]*protectedStrongFrames=14,15"
+Assert-Contains "summary records scene-cut carry cleanup" $summaryText "Scene-cut carry cleanup[\s\S]*removed=3[\s\S]*removedFrames=6,7,13[\s\S]*removedUnsupportedStrong=1[\s\S]*removedUnsupportedStrongFrames=13[\s\S]*protectedStrong=2[\s\S]*protectedStrongFrames=14,15"
 Assert-Contains "summary records extended scene-carry block window" $summaryText "blockFrames=8"
 Assert-Contains "summary records extended weak carry confidence" $summaryText "extendedWeakMaxConfidence=0.78"
 Assert-Contains "summary records final mask post-scene cleanup" $scriptText "Final mask post-scene cleanup"

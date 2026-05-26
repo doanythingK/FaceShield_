@@ -642,7 +642,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var sceneCutBlockedFrameIndices = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
             sceneCut.CutFramePairs,
             yoloSceneCutCarryBlockFrames);
-        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, protectedStrong={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
+        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices
             .Concat(sceneCutCarryCleanup.RemovedFrameIndices)
             .Concat(postSceneCleanup.RemovedFrameIndices)

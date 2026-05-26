@@ -207,7 +207,12 @@ function Get-ReviewFrameNumbers {
 
     if ($SceneCutCarryCleanupLines.Count -gt 0) {
         $carryLine = $SceneCutCarryCleanupLines[0].Line
-        Add-FrameListValues $frames (Read-MatchValue $carryLine 'removedFrames=(.*?), protectedStrong=')
+        $removedCarryFrames = Read-MatchValue $carryLine 'removedFrames=(.*?), removedUnsupportedStrong='
+        if ($removedCarryFrames -eq "none") {
+            $removedCarryFrames = Read-MatchValue $carryLine 'removedFrames=(.*?), protectedStrong='
+        }
+        Add-FrameListValues $frames $removedCarryFrames
+        Add-FrameListValues $frames (Read-MatchValue $carryLine 'removedUnsupportedStrongFrames=(.*?), protectedStrong=')
         Add-FrameListValues $frames (Read-MatchValue $carryLine 'protectedStrongFrames=(.*?), blockedFrames=')
     }
 
