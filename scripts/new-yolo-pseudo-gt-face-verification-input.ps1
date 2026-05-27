@@ -446,14 +446,42 @@ function Assert-ExternalFaceVerificationCsv {
             throw "face-verification CSV row $index references frame $frame outside the manifest."
         }
 
+        $x = Read-RequiredDoubleValue $row @("x", "X") "face-verification" $index
+        $y = Read-RequiredDoubleValue $row @("y", "Y") "face-verification" $index
         $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "face-verification" $index
         $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "face-verification" $index
         if ($width -le 0 -or $height -le 0) {
             throw "face-verification CSV row $index has non-positive geometry: w=$width, h=$height"
         }
 
-        [void](Read-RequiredDoubleValue $row @("x", "X") "face-verification" $index)
-        [void](Read-RequiredDoubleValue $row @("y", "Y") "face-verification" $index)
+        $candidateId = [string](Get-PropertyValue $row @("candidateId", "sourceCandidateId", "basePredictionId") "")
+        $frameManifestRows = @($ManifestRows | Where-Object { [int]$_.frame -eq $frame })
+        if (-not [string]::IsNullOrWhiteSpace($candidateId)) {
+            $frameManifestRows = @($frameManifestRows | Where-Object { $_.candidateId -eq $candidateId -or $_.basePredictionId -eq $candidateId })
+            if ($frameManifestRows.Count -eq 0) {
+                throw "face-verification CSV row $index references candidate $candidateId outside the manifest."
+            }
+        }
+
+        $centerX = $x + ($width / 2.0)
+        $centerY = $y + ($height / 2.0)
+        $insideManifestCrop = $false
+        foreach ($manifestRow in $frameManifestRows) {
+            $cropX = [double]::Parse([string]$manifestRow.cropX, [System.Globalization.CultureInfo]::InvariantCulture)
+            $cropY = [double]::Parse([string]$manifestRow.cropY, [System.Globalization.CultureInfo]::InvariantCulture)
+            $cropW = [double]::Parse([string]$manifestRow.cropW, [System.Globalization.CultureInfo]::InvariantCulture)
+            $cropH = [double]::Parse([string]$manifestRow.cropH, [System.Globalization.CultureInfo]::InvariantCulture)
+            if ($centerX -ge $cropX -and $centerX -le ($cropX + $cropW) -and
+                $centerY -ge $cropY -and $centerY -le ($cropY + $cropH)) {
+                $insideManifestCrop = $true
+                break
+            }
+        }
+
+        if (-not $insideManifestCrop) {
+            throw "face-verification CSV row $index is outside the manifest crop for frame $frame."
+        }
+
         [void](Read-RequiredDoubleValue $row @("faceVerificationConfidence", "confidence", "conf", "Confidence") "face-verification" $index)
         [void](Read-RequiredDoubleValue $row @("faceVerificationDistance", "verificationDistance", "distance", "FaceVerificationDistance") "face-verification" $index)
         $index++
@@ -736,6 +764,7 @@ $summary = @(
     "- externalOutputCsv=$ExternalOutputCsv",
     "",
     "External model output should be converted to FaceVerificationCsv fields before running new-yolo-pseudo-gt-evidence.ps1: frame, verificationId, x, y, w, h, faceVerificationConfidence, faceVerificationDistance.",
+    "When the external CSV includes candidateId/sourceCandidateId/basePredictionId, it must match the manifest. Every output detection center must also stay inside one of the manifest crops for that frame.",
     "Final face/nonface/miss decisions still require review CSV labels."
 )
 

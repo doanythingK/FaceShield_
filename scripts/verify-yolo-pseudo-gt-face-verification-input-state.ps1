@@ -12,6 +12,8 @@ $externalGenerator = Join-Path $work "external-verifier.ps1"
 $externalCsv = Join-Path $work "external-face-verification.csv"
 $badExternalGenerator = Join-Path $work "bad-external-verifier.ps1"
 $badExternalCsv = Join-Path $work "bad-external-face-verification.csv"
+$badCropExternalGenerator = Join-Path $work "bad-crop-external-verifier.ps1"
+$badCropExternalCsv = Join-Path $work "bad-crop-external-face-verification.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -94,6 +96,30 @@ param(
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $badExternalGenerator
 
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+$manifest = @(Import-Csv $ManifestCsv)
+@(
+    [pscustomobject]@{
+        frame = $manifest[0].frame
+        candidateId = $manifest[0].candidateId
+        verificationId = "bad-outside-crop"
+        x = 300
+        y = 220
+        w = 20
+        h = 20
+        faceVerificationConfidence = 0.91
+        faceVerificationDistance = 0.18
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $badCropExternalGenerator
+
 $template = "-NoProfile -ExecutionPolicy Bypass -File `"$externalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -BasePredictionLog $baseLog `
@@ -153,6 +179,28 @@ if ($badExternalExitCode -eq 0 -or (($badExternalOutput | Out-String) -notmatch 
     throw "Expected face verification input to reject external CSV rows outside the manifest."
 }
 
+$badCropTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$badCropExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+try {
+    $ErrorActionPreference = "Continue"
+    $badCropExternalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -BasePredictionLog $baseLog `
+        -OutputDir (Join-Path $work "bad-crop-external") `
+        -FrameWidth 320 `
+        -FrameHeight 240 `
+        -SkipImageExtraction `
+        -ExternalCommand "powershell.exe" `
+        -ExternalArgumentsTemplate $badCropTemplate `
+        -ExternalOutputCsv $badCropExternalCsv 2>&1
+    $badCropExternalExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badCropExternalExitCode -eq 0 -or (($badCropExternalOutput | Out-String) -notmatch "outside the manifest crop")) {
+    throw "Expected face verification input to reject external CSV rows outside the manifest crop."
+}
+
 $manifest = Join-Path $outDir "face-verification-manifest.csv"
 $summary = Join-Path $outDir "face-verification-input-summary.md"
 
@@ -197,12 +245,15 @@ Assert-Contains "script extracts candidate crops" $scriptText "Invoke-FfmpegCrop
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
+Assert-Contains "script validates external output against manifest crop" $scriptText "outside the manifest crop"
+Assert-Contains "script validates optional external candidate id" $scriptText "candidateId[\s\S]*sourceCandidateId[\s\S]*basePredictionId"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records crop count" $summaryText "crops=2"
 Assert-Contains "summary records frame count" $summaryText "frameCount=2"
 Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
 Assert-Contains "summary records face verification output fields" $summaryText "faceVerificationConfidence"
+Assert-Contains "summary records manifest crop validation" $summaryText "manifest crops"
 Assert-Contains "guide documents face verification input" $guideText "new-yolo-pseudo-gt-face-verification-input\.ps1"
 
 Write-Host "[YoloPseudoGtFaceVerificationInputVerify] all requested checks passed"
