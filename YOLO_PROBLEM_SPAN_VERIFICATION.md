@@ -151,7 +151,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pse
 - `pseudo-gt-person-object-input/person-object-manifest.csv`: `-WithPseudoGtPersonObjectInput` 사용 시 생성되는 full-frame person/object 보조 검증 manifest
 - `pseudo-gt-person-object-input/person-object-input-summary.md`: frame/해상도/외부 person/object runner 연결 요약
 - `pseudo-gt-candidates.csv`: test-only high-precision tile/verification 결과를 기본 YOLO 후보와 비교한 후보 CSV
-- `pseudo-gt-review-queue.csv`: `falsePositiveCandidate`/`missCandidate` 우선 확인용 review queue CSV. 사람이 후보를 바로 추적할 수 있도록 `basePredictionId`, `tileDetectionId`, `verificationId`, `x/y/w/h`, IoU/center-distance/support/probability 근거를 함께 보존한다.
+- `pseudo-gt-review-queue.csv`: `falsePositiveCandidate`/`missCandidate` 우선 확인용 review queue CSV. 사람이 후보를 바로 추적할 수 있도록 `basePredictionId`, `tileDetectionId`, `verificationId`, `x/y/w/h`, IoU/center-distance/support/probability 근거를 함께 보존한다. person/object overlap은 `auxiliaryPriorityBoost`로 review 우선순위만 올리며, face/nonface/miss 결론으로 쓰지 않는다.
 - `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
 - `pseudo-gt-review-closure.csv`: review CSV 라벨로 pseudo-GT 후보가 닫혔는지 확인한 결과
 - `pseudo-gt-review-closure-summary.md`: 닫힌 후보, 미검토 후보, 라벨 불일치 후보 수 요약

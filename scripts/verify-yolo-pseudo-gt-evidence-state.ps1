@@ -145,6 +145,7 @@ foreach ($column in @(
         "w",
         "h",
         "reviewPriorityScore",
+        "auxiliaryPriorityBoost",
         "dominantProbability",
         "reviewPriorityReason",
         "fpProbability",
@@ -163,6 +164,19 @@ if ([string]::IsNullOrWhiteSpace($queueFirst.x) -or [string]::IsNullOrWhiteSpace
 
 if ($queueFirst.candidateType -eq "missCandidate" -and [string]::IsNullOrWhiteSpace($queueFirst.tileDetectionId) -and [string]::IsNullOrWhiteSpace($queueFirst.verificationId)) {
     throw "Expected miss review queue row to preserve tile or verification source id."
+}
+
+$falsePositiveQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
+if ($null -eq $falsePositiveQueueRow) {
+    throw "Expected falsePositiveCandidate in review queue."
+}
+
+if ([double]::Parse($falsePositiveQueueRow.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected person/object support to raise falsePositiveCandidate review priority."
+}
+
+if ($falsePositiveQueueRow.reviewPriorityReason -notmatch "auxiliary person/object support raises review priority") {
+    throw "Expected review priority reason to explain auxiliary person/object boost."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
@@ -203,6 +217,8 @@ Assert-Contains "script calculates center distance" $scriptText "Get-CenterDista
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
+Assert-Contains "script records auxiliary priority boost" $scriptText "auxiliaryPriorityBoost"
+Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
 Assert-Contains "script preserves review queue geometry" $scriptText "basePredictionId[\s\S]*tileDetectionId[\s\S]*verificationId[\s\S]*x ="
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"

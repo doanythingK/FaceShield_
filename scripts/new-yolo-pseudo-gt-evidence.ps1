@@ -694,7 +694,9 @@ $orderedRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $outputPath
 $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
         $fpProbability = Read-CandidateDouble $_ "fpProbability"
         $missProbability = Read-CandidateDouble $_ "missProbability"
-        $priorityScore = [Math]::Max($fpProbability, $missProbability)
+        $personUpperOverlap = [Math]::Min(1.0, [Math]::Max(0.0, (Read-CandidateDouble $_ "personUpperOverlap")))
+        $auxiliaryPriorityBoost = [Math]::Min(0.15, $personUpperOverlap * 0.15)
+        $priorityScore = [Math]::Min(1.0, [Math]::Max($fpProbability, $missProbability) + $auxiliaryPriorityBoost)
         $priorityGroup = if ($_.candidateType -eq "supportedFaceCandidate") { 1 } else { 0 }
         $dominantProbability = if ($missProbability -gt $fpProbability) { "missProbability" } else { "fpProbability" }
         $priorityReason = switch ($_.candidateType) {
@@ -702,11 +704,15 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
             "missCandidate" { "review likely miss first; high-precision face evidence was not matched by base YOLO" }
             default { "supported face candidate; lower priority unless visual QA needs confirmation" }
         }
+        if ($auxiliaryPriorityBoost -gt 0) {
+            $priorityReason = "$priorityReason; auxiliary person/object support raises review priority but does not decide face/nonface"
+        }
 
         [pscustomobject]@{
             Row = $_
             PriorityGroup = $priorityGroup
             PriorityScore = $priorityScore
+            AuxiliaryPriorityBoost = $auxiliaryPriorityBoost
             DominantProbability = $dominantProbability
             PriorityReason = $priorityReason
         }
@@ -729,6 +735,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             w = $row.w
             h = $row.h
             reviewPriorityScore = Format-Double $_.PriorityScore
+            auxiliaryPriorityBoost = Format-Double $_.AuxiliaryPriorityBoost
             dominantProbability = $_.DominantProbability
             baseFaceConfidence = $row.baseFaceConfidence
             tileFaceConfidence = $row.tileFaceConfidence
