@@ -51,6 +51,30 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 
 부분 시각 확인은 참고 증거로만 취급한다. 일부 overlay를 확인해서 후보가 실제 얼굴인지 설명할 수는 있지만, 전체 오탐/미탐 게이트를 닫으려면 `review-package/full-gt-review.csv`와 `review-package/full-frame-review.csv`에 crop/full-frame row가 채워져 있어야 한다. 특히 edge 또는 top-edge weak 후보는 보호해야 할 부분 얼굴일 수 있으므로, 실제 얼굴을 덮지 않는다는 시각 근거 없이 자동 오탐으로 단정하지 않는다.
 
+## Test-Only High-Precision Pseudo-GT Direction
+
+오탐/미탐 고도화 단계에서는 앱 기본 런타임 경로와 별도로, 느려도 더 강한 테스트 전용 pseudo-GT 검출을 사용한다. 이 경로는 배포 기본값이나 실시간 자동 모자이크 속도 목표가 아니라, 짧은 문제 구간에서 사람이 리뷰하기 전 후보 우선순위를 높이는 검증 보조 단계다.
+
+- 기본 YOLO 결과와 별도로, 테스트 전용 고정밀 검출을 같은 짧은 clip/frame에 실행한다.
+- 작은 얼굴 미탐을 줄이기 위해 frame을 tile/overlap으로 나누고, tile을 모델 입력 크기로 확대해서 검출한다.
+- 필요하면 무거운 face/person/object 모델을 로컬 경로로 받아 사용한다. 모델 파일은 커밋하지 않고, 기본 앱 실행 경로에도 넣지 않는다.
+- 기본 YOLO에는 없고 고정밀 tile 검출에는 있는 후보를 `missCandidate`로 기록한다.
+- 기본 YOLO에는 있는데 고정밀 face/person/object/context 근거가 약한 후보를 `falsePositiveCandidate`로 기록한다.
+- 기본 YOLO와 고정밀 tile 검출이 같은 위치를 반복 지지하면 `supportedFaceCandidate`로 기록한다.
+- person/object 결과는 얼굴 정답이 아니므로 단독으로 `face`/`nonface`/`miss` 확정에 쓰지 않는다. 사람 검출은 얼굴 미탐 후보나 오탐 후보의 우선순위를 높이는 보조 신호로만 사용한다.
+- 최종 확정은 여전히 review CSV의 `face`/`nonface`/`miss` 라벨로 닫는다.
+
+예상 로그/CSV 필드:
+
+- `baseFaceConfidence`
+- `tileFaceConfidence`
+- `tileSupportCount`
+- `personConfidence`
+- `personUpperOverlap`
+- `fpProbability`
+- `missProbability`
+- `pseudoGtReason`
+
 ## 판정 기준
 
 ### 깜박임
