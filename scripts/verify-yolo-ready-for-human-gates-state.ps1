@@ -149,6 +149,8 @@ Assert-Contains "report records pseudo-GT auxiliary boost count" $report "pseudo
 Assert-Contains "report records pseudo-GT max auxiliary boost" $report "pseudoGtReviewQueueMaxAuxiliaryBoost="
 Assert-Contains "report records pseudo-GT support row evidence" $report "pseudoGtSupportRowEvidenceRows="
 Assert-Contains "report records pseudo-GT closure support row evidence" $report "pseudoGtClosureSupportRowEvidenceRows="
+Assert-Contains "report records pseudo-GT face verification evidence" $report "pseudoGtFaceVerificationEvidenceRows="
+Assert-Contains "report records pseudo-GT closure face verification evidence" $report "pseudoGtClosureFaceVerificationEvidenceRows="
 Assert-Contains "report keeps recommendation none" $report "Final YOLO recommendation | none"
 
 $remaining = if ($summary.Contains("remaining=none")) { "none" } else { "gui-smoke" }
