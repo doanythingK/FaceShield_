@@ -88,6 +88,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 
 `PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
 
+review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pseudo-gt-review.ps1 `
+  -PseudoGtCsv ".tmp/yolo-problem-span-0900-pseudo-gt/pseudo-gt-candidates.csv" `
+  -ReviewCsv ".tmp/yolo-problem-span-0900-pseudo-gt/review-package/full-gt-review.csv" `
+  -FullFrameReviewCsv ".tmp/yolo-problem-span-0900-pseudo-gt/review-package/full-frame-review.csv" `
+  -OutputCsv ".tmp/yolo-problem-span-0900-pseudo-gt/pseudo-gt-review-closure.csv" `
+  -SummaryPath ".tmp/yolo-problem-span-0900-pseudo-gt/pseudo-gt-review-closure-summary.md" `
+  -RequireAllClosed
+```
+
+`supportedFaceCandidate`는 `face`, `falsePositiveCandidate`는 `nonface`, `missCandidate`는 수동 추가한 `face` row로 닫힌다. `missCandidate`는 같은 frame의 manual row와 IoU로 매칭하며, `full-frame-review.csv`가 있으면 missed-face scan 상태도 closure CSV에 같이 남긴다.
+
 ## 산출물
 
 `-OutputDir` 아래에서 다음 파일을 확인한다.
@@ -102,6 +116,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 - `pseudo-gt-tile-input/tile-input-summary.md`: tile frame/overlap/해상도/외부 runner 연결 요약
 - `pseudo-gt-candidates.csv`: test-only high-precision tile/verification 결과를 기본 YOLO 후보와 비교한 후보 CSV
 - `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
+- `pseudo-gt-review-closure.csv`: review CSV 라벨로 pseudo-GT 후보가 닫혔는지 확인한 결과
+- `pseudo-gt-review-closure-summary.md`: 닫힌 후보, 미검토 후보, 라벨 불일치 후보 수 요약
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 연속 재생에서 깜박임이나 화면전환 잔상을 먼저 빠르게 보려면 `-WithDetectionOverlayVideo`를 함께 사용한다. 단, 이 overlay 영상도 참고 증거이며 최종 오탐/미탐 판정은 CSV review row로 닫는다.

@@ -1,0 +1,349 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$PseudoGtCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$ReviewCsv,
+    [string]$FullFrameReviewCsv = "",
+    [string]$OutputCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
+    [string]$SummaryPath = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md",
+    [double]$MinReviewIou = 0.50,
+    [switch]$RequireAllClosed
+)
+
+$ErrorActionPreference = "Stop"
+
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
+function Resolve-RepoPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    if ([IO.Path]::IsPathRooted($Path)) {
+        return $Path
+    }
+
+    return Join-Path $repo $Path
+}
+
+function Get-PropertyValue {
+    param(
+        [object]$Row,
+        [string]$Name,
+        [object]$Default = ""
+    )
+
+    $property = $Row.PSObject.Properties[$Name]
+    if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+        return $Default
+    }
+
+    return $property.Value
+}
+
+function Read-DoubleValue {
+    param(
+        [object]$Row,
+        [string]$Name,
+        [double]$Default = 0.0
+    )
+
+    $value = Get-PropertyValue $Row $Name ""
+    if ([string]::IsNullOrWhiteSpace([string]$value)) {
+        return $Default
+    }
+
+    $parsed = 0.0
+    if ([double]::TryParse(
+            [string]$value,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $Default
+}
+
+function Read-IntValue {
+    param(
+        [object]$Row,
+        [string]$Name,
+        [int]$Default = 0
+    )
+
+    $value = Get-PropertyValue $Row $Name ""
+    if ([string]::IsNullOrWhiteSpace([string]$value)) {
+        return $Default
+    }
+
+    $parsed = 0
+    if ([int]::TryParse([string]$value, [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $Default
+}
+
+function Normalize-Label {
+    param([string]$Label)
+
+    if ([string]::IsNullOrWhiteSpace($Label)) {
+        return ""
+    }
+
+    $normalized = $Label.Trim().ToLowerInvariant()
+    if ($normalized -in @("face", "actualface", "true", "1")) {
+        return "face"
+    }
+
+    if ($normalized -in @("nonface", "notface", "false", "0", "object", "background")) {
+        return "nonface"
+    }
+
+    if ($normalized -eq "miss") {
+        return "miss"
+    }
+
+    return $normalized
+}
+
+function New-Box {
+    param([object]$Row)
+
+    [pscustomobject]@{
+        Frame = Read-IntValue $Row "frame"
+        X = Read-DoubleValue $Row "x"
+        Y = Read-DoubleValue $Row "y"
+        W = Read-DoubleValue $Row "w"
+        H = Read-DoubleValue $Row "h"
+    }
+}
+
+function Get-Iou {
+    param(
+        [object]$A,
+        [object]$B
+    )
+
+    $left = [Math]::Max($A.X, $B.X)
+    $top = [Math]::Max($A.Y, $B.Y)
+    $right = [Math]::Min($A.X + $A.W, $B.X + $B.W)
+    $bottom = [Math]::Min($A.Y + $A.H, $B.Y + $B.H)
+    $width = [Math]::Max(0.0, $right - $left)
+    $height = [Math]::Max(0.0, $bottom - $top)
+    $intersection = $width * $height
+    if ($intersection -le 0.0) {
+        return 0.0
+    }
+
+    $areaA = [Math]::Max(0.0, $A.W) * [Math]::Max(0.0, $A.H)
+    $areaB = [Math]::Max(0.0, $B.W) * [Math]::Max(0.0, $B.H)
+    $union = $areaA + $areaB - $intersection
+    if ($union -le 0.0) {
+        return 0.0
+    }
+
+    return $intersection / $union
+}
+
+function Format-Double {
+    param([double]$Value)
+    return $Value.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Find-BestReviewMatch {
+    param(
+        [object]$Candidate,
+        [object[]]$ReviewRows,
+        [bool]$PreferManualMiss
+    )
+
+    $candidateFrame = Read-IntValue $Candidate "frame"
+    $candidateBox = New-Box $Candidate
+    $basePredictionId = [string](Get-PropertyValue $Candidate "basePredictionId" "")
+
+    $best = $null
+    $bestIou = 0.0
+    foreach ($row in @($ReviewRows | Where-Object { (Read-IntValue $_ "frame") -eq $candidateFrame })) {
+        $sourcePredictionId = [string](Get-PropertyValue $row "sourcePredictionId" "")
+        if (-not $PreferManualMiss -and -not [string]::IsNullOrWhiteSpace($basePredictionId) -and $sourcePredictionId -eq $basePredictionId) {
+            return [pscustomobject]@{ Row = $row; Iou = 1.0; MatchMode = "sourcePredictionId" }
+        }
+
+        if ($PreferManualMiss -and -not [string]::IsNullOrWhiteSpace($sourcePredictionId)) {
+            continue
+        }
+
+        $reviewBox = New-Box $row
+        $iou = Get-Iou $candidateBox $reviewBox
+        if ($iou -gt $bestIou) {
+            $best = $row
+            $bestIou = $iou
+        }
+    }
+
+    if ($null -ne $best -and $bestIou -ge $MinReviewIou) {
+        return [pscustomobject]@{ Row = $best; Iou = $bestIou; MatchMode = "iou" }
+    }
+
+    return $null
+}
+
+$pseudoPath = Resolve-RepoPath $PseudoGtCsv
+$reviewPath = Resolve-RepoPath $ReviewCsv
+$frameReviewPath = Resolve-RepoPath $FullFrameReviewCsv
+$outputPath = Resolve-RepoPath $OutputCsv
+$summaryPathResolved = Resolve-RepoPath $SummaryPath
+
+foreach ($required in @($pseudoPath, $reviewPath)) {
+    if (-not (Test-Path $required)) {
+        throw "Required CSV not found: $required"
+    }
+}
+
+$pseudoRows = @(Import-Csv $pseudoPath)
+$reviewRows = @(Import-Csv $reviewPath)
+if ($pseudoRows.Count -eq 0) {
+    throw "Pseudo-GT CSV has no rows: $pseudoPath"
+}
+if ($reviewRows.Count -eq 0) {
+    throw "Review CSV has no rows: $reviewPath"
+}
+
+$fullFrameRows = @()
+if (-not [string]::IsNullOrWhiteSpace($frameReviewPath)) {
+    if (-not (Test-Path $frameReviewPath)) {
+        throw "Full-frame review CSV not found: $frameReviewPath"
+    }
+    $fullFrameRows = @(Import-Csv $frameReviewPath)
+}
+
+$closureRows = [System.Collections.Generic.List[object]]::new()
+foreach ($candidate in $pseudoRows) {
+    $candidateType = [string](Get-PropertyValue $candidate "candidateType" "")
+    $expectedLabel = switch ($candidateType) {
+        "supportedFaceCandidate" { "face" }
+        "falsePositiveCandidate" { "nonface" }
+        "missCandidate" { "face" }
+        default { "" }
+    }
+
+    $preferManualMiss = $candidateType -eq "missCandidate"
+    $match = Find-BestReviewMatch -Candidate $candidate -ReviewRows $reviewRows -PreferManualMiss $preferManualMiss
+    $reviewLabel = ""
+    $reviewStatus = ""
+    $reviewEvidenceNotes = ""
+    $reviewSourcePredictionId = ""
+    $reviewIou = 0.0
+    $matchMode = "none"
+    if ($null -ne $match) {
+        $reviewLabel = Normalize-Label ([string](Get-PropertyValue $match.Row "label" ""))
+        $reviewStatus = [string](Get-PropertyValue $match.Row "reviewStatus" "")
+        $reviewEvidenceNotes = [string](Get-PropertyValue $match.Row "evidenceNotes" "")
+        $reviewSourcePredictionId = [string](Get-PropertyValue $match.Row "sourcePredictionId" "")
+        $reviewIou = $match.Iou
+        $matchMode = $match.MatchMode
+    }
+
+    $closureStatus = "unreviewed"
+    $closureReason = "no matching reviewed row"
+    if ($null -ne $match -and [string]::IsNullOrWhiteSpace($reviewLabel)) {
+        $closureStatus = "unreviewed"
+        $closureReason = "matching row has no label"
+    }
+    elseif ($null -ne $match -and $reviewLabel -eq $expectedLabel) {
+        $closureStatus = "closed"
+        $closureReason = "review CSV label matches expected pseudo-GT candidate closure"
+    }
+    elseif ($null -ne $match) {
+        $closureStatus = "label-mismatch"
+        $closureReason = "review CSV label '$reviewLabel' does not match expected '$expectedLabel'"
+    }
+
+    $fullFrameReviewStatus = ""
+    $fullFrameMissedFaceCount = ""
+    $fullFrameMissedRowsAdded = ""
+    if ($candidateType -eq "missCandidate" -and $fullFrameRows.Count -gt 0) {
+        $frame = Read-IntValue $candidate "frame"
+        $frameReview = @($fullFrameRows | Where-Object { (Read-IntValue $_ "frame") -eq $frame } | Select-Object -First 1)
+        if ($frameReview.Count -gt 0) {
+            $fullFrameReviewStatus = [string](Get-PropertyValue $frameReview[0] "reviewStatus" "")
+            $fullFrameMissedFaceCount = [string](Get-PropertyValue $frameReview[0] "missedFaceCount" "")
+            $fullFrameMissedRowsAdded = [string](Get-PropertyValue $frameReview[0] "missedFaceRowsAdded" "")
+        }
+    }
+
+    $closureRows.Add([pscustomobject]@{
+            candidateId = $candidate.candidateId
+            frame = $candidate.frame
+            candidateType = $candidateType
+            expectedReviewLabel = $expectedLabel
+            closureStatus = $closureStatus
+            reviewLabel = $reviewLabel
+            reviewStatus = $reviewStatus
+            reviewSourcePredictionId = $reviewSourcePredictionId
+            reviewMatchMode = $matchMode
+            reviewIou = Format-Double $reviewIou
+            fullFrameReviewStatus = $fullFrameReviewStatus
+            fullFrameMissedFaceCount = $fullFrameMissedFaceCount
+            fullFrameMissedRowsAdded = $fullFrameMissedRowsAdded
+            baseFaceConfidence = $candidate.baseFaceConfidence
+            tileFaceConfidence = $candidate.tileFaceConfidence
+            tileSupportCount = $candidate.tileSupportCount
+            faceVerificationConfidence = $candidate.faceVerificationConfidence
+            faceVerificationDistance = $candidate.faceVerificationDistance
+            fpProbability = $candidate.fpProbability
+            missProbability = $candidate.missProbability
+            pseudoGtReason = $candidate.pseudoGtReason
+            reviewEvidenceNotes = $reviewEvidenceNotes
+            closureReason = $closureReason
+        }) | Out-Null
+}
+
+foreach ($path in @($outputPath, $summaryPathResolved)) {
+    $dir = Split-Path -Parent $path
+    if (-not [string]::IsNullOrWhiteSpace($dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+}
+
+$closureRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $outputPath
+
+$closed = @($closureRows | Where-Object { $_.closureStatus -eq "closed" }).Count
+$unreviewed = @($closureRows | Where-Object { $_.closureStatus -eq "unreviewed" }).Count
+$mismatch = @($closureRows | Where-Object { $_.closureStatus -eq "label-mismatch" }).Count
+$supportedClosed = @($closureRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.closureStatus -eq "closed" }).Count
+$falsePositiveClosed = @($closureRows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.closureStatus -eq "closed" }).Count
+$missClosed = @($closureRows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.closureStatus -eq "closed" }).Count
+
+$summary = @(
+    "# YOLO Pseudo-GT Review Closure",
+    "",
+    "This is test-only evidence. The app runtime path does not read this file.",
+    "",
+    "- pseudoGtCsv=$PseudoGtCsv",
+    "- reviewCsv=$ReviewCsv",
+    "- fullFrameReviewCsv=$FullFrameReviewCsv",
+    "- candidates=$($closureRows.Count)",
+    "- closed=$closed",
+    "- unreviewed=$unreviewed",
+    "- labelMismatch=$mismatch",
+    "- supportedFaceClosed=$supportedClosed",
+    "- falsePositiveClosed=$falsePositiveClosed",
+    "- missClosed=$missClosed",
+    "- minReviewIou=$($MinReviewIou.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
+    "",
+    "A pseudo-GT candidate is final only when the matching review CSV row has a human label.",
+    "For missCandidate rows, the matching row should be a manual face row in full-gt-review.csv and, when present, full-frame-review.csv should record the missed-face scan."
+)
+$summary | Set-Content -Encoding UTF8 -Path $summaryPathResolved
+
+Write-Host "[YoloPseudoGtReviewClosure] candidates=$($closureRows.Count), closed=$closed, unreviewed=$unreviewed, labelMismatch=$mismatch, output=$OutputCsv"
+Write-Host "[YoloPseudoGtReviewClosure] summary=$SummaryPath"
+
+if ($RequireAllClosed.IsPresent -and ($unreviewed -gt 0 -or $mismatch -gt 0)) {
+    throw "Pseudo-GT review closure is incomplete: unreviewed=$unreviewed, labelMismatch=$mismatch"
+}
