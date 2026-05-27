@@ -386,6 +386,7 @@ if (($tileRows.Count + $verificationRows.Count) -eq 0) {
 
 $candidateRows = [System.Collections.Generic.List[object]]::new()
 $matchedTileIds = [System.Collections.Generic.HashSet[string]]::new()
+$matchedVerificationIds = [System.Collections.Generic.HashSet[string]]::new()
 
 foreach ($base in $baseRows) {
     $tileMatch = Find-BestMatch $base $tileRows $MinSupportIou $MaxSupportCenterDistanceRatio
@@ -397,6 +398,9 @@ foreach ($base in $baseRows) {
     $hasFaceSupport = $hasTileSupport -or $hasVerificationSupport
     if ($hasTileSupport) {
         [void]$matchedTileIds.Add($tileMatch.Row.Id)
+    }
+    if ($hasVerificationSupport) {
+        [void]$matchedVerificationIds.Add($verificationMatch.Row.Id)
     }
 
     $candidateType = if ($hasFaceSupport) { "supportedFaceCandidate" } else { "falsePositiveCandidate" }
@@ -475,8 +479,14 @@ foreach ($tile in $tileRows) {
     }
 
     $personMatch = Find-BestPersonSupport $tile $personRows
+    $verificationMatch = Find-BestVerification $tile $verificationRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
+    $verificationConfidence = if ($null -ne $verificationMatch) { $verificationMatch.Row.Confidence } else { 0.0 }
+    $verificationDistance = if ($null -ne $verificationMatch) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
+    if ($null -ne $verificationMatch) {
+        [void]$matchedVerificationIds.Add($verificationMatch.Row.Id)
+    }
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10))
 
     $candidateRows.Add([pscustomobject]@{
@@ -486,7 +496,7 @@ foreach ($tile in $tileRows) {
             source = "tile-face"
             basePredictionId = ""
             tileDetectionId = $tile.Id
-            verificationId = ""
+            verificationId = if ($null -ne $verificationMatch) { $verificationMatch.Row.Id } else { "" }
             x = Format-Double $tile.X
             y = Format-Double $tile.Y
             w = Format-Double $tile.W
@@ -494,15 +504,67 @@ foreach ($tile in $tileRows) {
             baseFaceConfidence = "0"
             tileFaceConfidence = Format-Double $tile.Confidence
             tileSupportCount = [Math]::Max(1, $tile.TileSupportCount)
-            faceVerificationConfidence = "0"
-            faceVerificationDistance = "1"
+            faceVerificationConfidence = Format-Double $verificationConfidence
+            faceVerificationDistance = Format-Double $verificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
-            bestIou = "0"
-            centerDistanceRatio = "99"
+            bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
+            centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
             fpProbability = "0"
             missProbability = Format-Double $missProbability
-            pseudoGtReason = "test-only high-precision tile face was not matched by base YOLO; person/object support is auxiliary only"
+            pseudoGtReason = "test-only high-precision tile face was not matched by base YOLO; verification support is recorded when present; person/object support is auxiliary only"
+            reviewLabel = ""
+            reviewStatus = "pending-human"
+            evidenceNotes = "pseudo-GT miss candidate only; add/confirm as miss in review CSV after visual confirmation"
+        }) | Out-Null
+}
+
+foreach ($verification in $verificationRows) {
+    if ($matchedVerificationIds.Contains($verification.Id)) {
+        continue
+    }
+
+    $baseMatch = Find-BestVerification $verification $baseRows
+    if ($null -ne $baseMatch) {
+        continue
+    }
+
+    $tileMatch = Find-BestMatch $verification $tileRows $MinSupportIou $MaxSupportCenterDistanceRatio
+    if ($null -ne $tileMatch -and $matchedTileIds.Contains($tileMatch.Row.Id)) {
+        continue
+    }
+
+    $personMatch = Find-BestPersonSupport $verification $personRows
+    $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
+    $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
+    $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
+    $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
+    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10))
+
+    $candidateRows.Add([pscustomobject]@{
+            candidateId = "miss-$($verification.Frame)-$($verification.Id)"
+            frame = $verification.Frame
+            candidateType = "missCandidate"
+            source = "face-verification"
+            basePredictionId = ""
+            tileDetectionId = if ($null -ne $tileMatch) { $tileMatch.Row.Id } else { "" }
+            verificationId = $verification.Id
+            x = Format-Double $verification.X
+            y = Format-Double $verification.Y
+            w = Format-Double $verification.W
+            h = Format-Double $verification.H
+            baseFaceConfidence = "0"
+            tileFaceConfidence = Format-Double $tileConfidence
+            tileSupportCount = $tileSupportCount
+            faceVerificationConfidence = Format-Double $verification.Confidence
+            faceVerificationDistance = Format-Double $verification.VerificationDistance
+            personConfidence = Format-Double $personConfidence
+            personUpperOverlap = Format-Double $personUpperOverlap
+            bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
+            centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
+            fpProbability = "0"
+            missProbability = Format-Double $missProbability
+            pseudoGtReason = "test-only high-quality face verification was not matched by base YOLO; tile support is recorded when present; person/object support is auxiliary only"
             reviewLabel = ""
             reviewStatus = "pending-human"
             evidenceNotes = "pseudo-GT miss candidate only; add/confirm as miss in review CSV after visual confirmation"

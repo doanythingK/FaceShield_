@@ -64,7 +64,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileCsv
 
 @(
-    [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 }
+    [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 },
+    [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -91,14 +92,17 @@ $guideText = Get-Content -Raw -Path $guide
 $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 
-if ($rows.Count -ne 3) {
-    throw "Expected 3 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 4) {
+    throw "Expected 4 pseudo-GT rows, actual=$($rows.Count)"
 }
 
 $first = $rows[0]
 foreach ($column in @(
         "candidateId",
         "candidateType",
+        "source",
+        "tileDetectionId",
+        "verificationId",
         "baseFaceConfidence",
         "tileFaceConfidence",
         "tileSupportCount",
@@ -106,6 +110,8 @@ foreach ($column in @(
         "faceVerificationDistance",
         "personConfidence",
         "personUpperOverlap",
+        "bestIou",
+        "centerDistanceRatio",
         "fpProbability",
         "missProbability",
         "pseudoGtReason",
@@ -123,8 +129,12 @@ if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Co
     throw "Expected one falsePositiveCandidate."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 1) {
-    throw "Expected one missCandidate."
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 2) {
+    throw "Expected two missCandidate rows."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
+    throw "Expected one verification-only missCandidate."
 }
 
 if (@($rows | Where-Object { $_.reviewStatus -ne "pending-human" }).Count -ne 0) {
@@ -137,12 +147,13 @@ Assert-Contains "script accepts face verification CSV" $scriptText "FaceVerifica
 Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
+Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=1"
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=1"
-Assert-Contains "summary records miss count" $summaryText "missCandidate=1"
+Assert-Contains "summary records miss count" $summaryText "missCandidate=2"
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"

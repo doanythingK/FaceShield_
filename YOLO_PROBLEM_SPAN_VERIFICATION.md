@@ -86,7 +86,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
   -PseudoGtPersonObjectCsv ".tmp/local-heavy-model/person-object.csv"
 ```
 
-`PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
+`PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. tile 없이 face verification만 잡은 얼굴도 기본 YOLO와 매칭되지 않으면 `missCandidate`로 남긴다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
 
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
 
@@ -153,6 +153,8 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `faceVerificationDistance`
 - `personConfidence`
 - `personUpperOverlap`
+- `bestIou`
+- `centerDistanceRatio`
 - `fpProbability`
 - `missProbability`
 - `pseudoGtReason`
