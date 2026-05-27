@@ -610,6 +610,12 @@ namespace FaceShield.ViewModels.Pages
                             postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices);
                         System.Diagnostics.Debug.WriteLine(
                             $"[YoloSceneCutCarryCleanup] stage=post-gap-fill cutPairs={FormatTextList(postGapFillCutPairs)} removed={postGapFillCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(postGapFillCarryCleanup.RemovedFrameIndices)} removedUnsupportedStrong={postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces} removedUnsupportedStrongFrames={FormatFrameList(postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)} protectedStrong={postGapFillCarryCleanup.ProtectedStrongCarryLikeFaces} protectedStrongFrames={FormatFrameList(postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices)} blockedFrames={FormatFrameList(postGapFillBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
+                        RemoveYoloWeakIsolatedFinalMasks(
+                            FrameList.VideoPath,
+                            token,
+                            fillStableGaps: false,
+                            logLabel: "YoloFinalMaskPostGapFillCleanup",
+                            logWhenNoRemovals: true);
                     }
                 }
                 LogFinalMaskSummary(yoloProtectedSceneCarryFrames);

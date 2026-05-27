@@ -709,6 +709,7 @@ $autoSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[AutoRun
 $finalMaskCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskCleanup|YoloFinalMaskCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $sceneCutCarryCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloSceneCutCarryCleanup|YoloSceneCutCarryCleanup)\]' -ErrorAction SilentlyContinue)
 $finalMaskPostSceneCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneCleanup|YoloFinalMaskPostSceneCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$finalMaskPostGapFillCleanup = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostGapFillCleanup|YoloFinalMaskPostGapFillCleanup)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFill = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFill|YoloFinalMaskPostSceneGapFill|SmokeYoloFinalMaskGapFill|YoloFinalMaskGapFill)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard|YoloFinalMaskPostSceneGapFillSceneCutGuard|SmokeYoloFinalMaskGapFillSceneCutGuard|YoloFinalMaskGapFillSceneCutGuard)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
@@ -759,6 +760,12 @@ if ($detectionRows.Count -eq 0) {
     }
     foreach ($carryCleanup in $sceneCutCarryCleanup) {
         $noDetectionChecklist += "- ``$($carryCleanup.Line)``"
+    }
+    if ($finalMaskPostSceneCleanup.Count -gt 0) {
+        $noDetectionChecklist += "- ``$($finalMaskPostSceneCleanup[0].Line)``"
+    }
+    if ($finalMaskPostGapFillCleanup.Count -gt 0) {
+        $noDetectionChecklist += "- ``$($finalMaskPostGapFillCleanup[0].Line)``"
     }
     if ($finalMaskGapFill.Count -gt 0) {
         $noDetectionChecklist += "- ``$($finalMaskGapFill[0].Line)``"
@@ -937,6 +944,9 @@ foreach ($carryCleanup in $sceneCutCarryCleanup) {
 }
 if ($finalMaskPostSceneCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask post-scene cleanup: ``$($finalMaskPostSceneCleanup[0].Line)``")
+}
+if ($finalMaskPostGapFillCleanup.Count -gt 0) {
+    [void]$summary.AppendLine("- Final mask post-gap-fill cleanup: ``$($finalMaskPostGapFillCleanup[0].Line)``")
 }
 if ($finalMaskGapFill.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask gap fill: ``$($finalMaskGapFill[0].Line)``")
