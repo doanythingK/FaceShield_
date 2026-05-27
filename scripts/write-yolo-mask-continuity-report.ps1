@@ -13,6 +13,9 @@ param(
     [double]$LowerFrameCenterYThreshold = 0.58,
     [double]$LowerWeakNonEdgeMinAreaRatio = 0.015,
     [double]$LowerWeakNonEdgeMaxAreaRatio = 0.045,
+    [double]$TinyWeakMaxAreaRatio = 0.0012,
+    [double]$TinyShortMaxConfidence = 0.62,
+    [double]$TinyShortMaxAreaRatio = 0.0009,
     [double]$MinAspectRatio = 0.35,
     [double]$MaxAspectRatio = 1.65,
     [double]$EdgeMarginRatio = 0.02,
@@ -77,6 +80,52 @@ function Join-FrameRanges {
     }
 
     return ($ranges -join ",")
+}
+
+function Read-MatchValue {
+    param(
+        [string]$Line,
+        [string]$Pattern
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return "none"
+    }
+
+    $match = [regex]::Match($Line, $Pattern)
+    if (-not $match.Success) {
+        return "none"
+    }
+
+    return $match.Groups[1].Value.Trim()
+}
+
+function Expand-FrameList {
+    param([string]$Value)
+
+    $frames = New-Object System.Collections.Generic.List[int]
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -eq "none") {
+        return @()
+    }
+
+    foreach ($part in $Value.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        $token = $part.Trim()
+        if ($token -match '^(\d+)-(\d+)$') {
+            $start = [int]$Matches[1]
+            $end = [int]$Matches[2]
+            if ($end -lt $start) {
+                continue
+            }
+
+            for ($frame = $start; $frame -le $end; $frame++) {
+                $frames.Add($frame) | Out-Null
+            }
+        } elseif ($token -match '^\d+$') {
+            $frames.Add([int]$token) | Out-Null
+        }
+    }
+
+    return @($frames | Sort-Object -Unique)
 }
 
 $resolvedLog = Resolve-RepoPath $LogPath
@@ -437,6 +486,25 @@ $aspectOutlierRows = @($rows |
         ($_.AspectRatio -lt $MinAspectRatio -or $_.AspectRatio -gt $MaxAspectRatio)
     } |
     Sort-Object AspectRatio, Frame, Index)
+$tinyWeakRows = @($rows |
+    Where-Object {
+        $_.Confidence -le $WeakNonEdgeThreshold -and
+        $_.AreaRatio -le $TinyWeakMaxAreaRatio -and
+        -not (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
+    } |
+    Sort-Object Confidence, Frame, Index)
+$tinyShortRows = @($rows |
+    Where-Object {
+        $_.Confidence -le $TinyShortMaxConfidence -and
+        $_.AreaRatio -le $TinyShortMaxAreaRatio -and
+        -not (Test-NormalizedEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio)
+    } |
+    Sort-Object Confidence, Frame, Index)
+$finalMaskSummary = @(Select-String -Path $resolvedLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+$finalMaskSummaryLine = if ($finalMaskSummary.Count -gt 0) { $finalMaskSummary[0].Line } else { "" }
+$protectedSceneCarryFrames = @(Expand-FrameList (Read-MatchValue $finalMaskSummaryLine 'protectedSceneCarryFrames=(.*?), reviewRequired='))
+$summaryReviewRequired = Read-MatchValue $finalMaskSummaryLine 'reviewRequired=(.*?), reviewReasons='
+$summaryReviewReasons = Read-MatchValue $finalMaskSummaryLine 'reviewReasons=(.*)$'
 $frameRange = if ($frames.Count -eq 0) { "none" } else { "{0}-{1}" -f $frames[0], $frames[$frames.Count - 1] }
 $generatedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
@@ -459,11 +527,17 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("- Upper-frame weak non-edge final masks: $($upperWeakNonEdgeRows.Count)")
 [void]$builder.AppendLine("- Lower-frame weak non-edge final masks: $($lowerWeakNonEdgeRows.Count)")
 [void]$builder.AppendLine("- Aspect-ratio outlier final masks: $($aspectOutlierRows.Count)")
+[void]$builder.AppendLine("- Tiny weak final masks: $($tinyWeakRows.Count)")
+[void]$builder.AppendLine("- Tiny short final masks: $($tinyShortRows.Count)")
+[void]$builder.AppendLine("- Protected scene-carry frames: $($protectedSceneCarryFrames.Count)")
+[void]$builder.AppendLine("- Final summary review required: ``$summaryReviewRequired``")
+[void]$builder.AppendLine("- Final summary review reasons: ``$summaryReviewReasons``")
 [void]$builder.AppendLine()
 [void]$builder.AppendLine("## Interpretation")
 [void]$builder.AppendLine('- `[SmokeDetection]` rows in this smoke harness are final `FrameMaskProvider` face rectangles after tracking, scene-cut guard, and ROI refinement.')
 [void]$builder.AppendLine("- Empty gaps and isolated frames are review targets, not automatic ground truth errors.")
 [void]$builder.AppendLine("- Per-face short gaps flag one stable face disappearing even when another final mask exists in the same missing frame range.")
+[void]$builder.AppendLine('- Tiny weak/short and protected scene-carry entries are review targets; they do not close `face`/`nonface`/`miss` without review CSV labels.')
 [void]$builder.AppendLine('- Use the overlay video or review package to label each target as `face`, `nonface`, or `miss`.')
 [void]$builder.AppendLine()
 
@@ -596,6 +670,35 @@ foreach ($row in $aspectOutlierRows | Select-Object -First 80) {
 if ($aspectOutlierRows.Count -eq 0) {
     [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
 }
+[void]$builder.AppendLine()
+
+[void]$builder.AppendLine("## Tiny Weak Final Masks")
+[void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Review hint | Box |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- | --- |")
+foreach ($row in $tinyWeakRows | Select-Object -First 80) {
+    [void]$builder.AppendLine(("| {0} | {1} | {2:F3} | {3:F3},{4:F3} | {5:F6} | {6:F3} | tiny weak non-edge; review small face vs false positive | x={7:F1}, y={8:F1}, w={9:F1}, h={10:F1} |" -f
+        $row.Frame, $row.Index, $row.Confidence, $row.CenterX, $row.CenterY, $row.AreaRatio, $row.AspectRatio, $row.X, $row.Y, $row.W, $row.H))
+}
+if ($tinyWeakRows.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
+}
+[void]$builder.AppendLine()
+
+[void]$builder.AppendLine("## Tiny Short Final Masks")
+[void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Review hint | Box |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- | --- |")
+foreach ($row in $tinyShortRows | Select-Object -First 80) {
+    [void]$builder.AppendLine(("| {0} | {1} | {2:F3} | {3:F3},{4:F3} | {5:F6} | {6:F3} | tiny short candidate; review isolated small face vs false positive | x={7:F1}, y={8:F1}, w={9:F1}, h={10:F1} |" -f
+        $row.Frame, $row.Index, $row.Confidence, $row.CenterX, $row.CenterY, $row.AreaRatio, $row.AspectRatio, $row.X, $row.Y, $row.W, $row.H))
+}
+if ($tinyShortRows.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
+}
+[void]$builder.AppendLine()
+
+[void]$builder.AppendLine("## Protected Scene-Carry Frames")
+[void]$builder.AppendLine("- Frames: ``$(Join-Values @($protectedSceneCarryFrames | Select-Object -First 120))``")
+[void]$builder.AppendLine("- Review hint: protected scene-carry candidates survived automatic cleanup because later support exists; review them as possible new-scene faces or transition residue.")
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()
-Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count)"
+Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count), tinyWeak=$($tinyWeakRows.Count), tinyShort=$($tinyShortRows.Count), protectedSceneCarryFrames=$(Join-Values @($protectedSceneCarryFrames))"
