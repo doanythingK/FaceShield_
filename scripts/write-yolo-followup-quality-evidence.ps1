@@ -841,7 +841,7 @@ if ($detectionRows.Count -eq 0) {
         throw "Prediction log contains no [SmokeDetection] rows. Re-run with -AllowNoDetections to record this as no-detection evidence."
     }
 
-    if ($WithReviewContactSheet.IsPresent -or $WithPseudoGtTileInput.IsPresent) {
+    if ($WithReviewContactSheet.IsPresent -or $WithPseudoGtTileInput.IsPresent -or $WithPseudoGtPersonObjectInput.IsPresent) {
         $noDetectionReviewFrameNumbers = Get-SampledReviewFrameNumbers -FrameCount $VideoFrameCount
     }
 
@@ -967,6 +967,61 @@ if ($detectionRows.Count -eq 0) {
             -not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalOutputCsv)) {
             $PseudoGtTileFaceCsv = $PseudoGtTileExternalOutputCsv
             $resolvedPseudoGtTileFaceCsv = $resolvedPseudoGtTileExternalOutputCsv
+        }
+    }
+
+    if ($WithPseudoGtPersonObjectInput.IsPresent -and $noDetectionReviewFrameNumbers.Count -gt 0) {
+        Require-File "pseudo-GT no-detection person/object input video" $resolvedVideoPath
+
+        $personObjectInputArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtPersonObjectInputScript,
+            "-VideoPath",
+            $resolvedVideoPath,
+            "-Frames",
+            ($noDetectionReviewFrameNumbers -join ","),
+            "-OutputDir",
+            $resolvedPseudoGtPersonObjectInputDir,
+            "-MaxFrames",
+            $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
+
+        if ($PseudoGtPersonObjectScaleWidth -gt 0) {
+            $personObjectInputArgs += "-ScaleWidth"
+            $personObjectInputArgs += $PseudoGtPersonObjectScaleWidth.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        }
+
+        if ($PseudoGtPersonObjectSkipImageExtraction.IsPresent) {
+            $personObjectInputArgs += "-SkipImageExtraction"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalCommand)) {
+            $personObjectInputArgs += "-ExternalCommand"
+            $personObjectInputArgs += $PseudoGtPersonObjectExternalCommand
+            if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalArgumentsTemplate)) {
+                $personObjectInputArgs += "-ExternalArgumentsTemplate"
+                $personObjectInputArgs += $PseudoGtPersonObjectExternalArgumentsTemplate
+            }
+            $personObjectInputArgs += "-ExternalOutputCsv"
+            $personObjectInputArgs += $resolvedPseudoGtPersonObjectExternalOutputCsv
+            if ($PseudoGtPersonObjectExternalTimeoutSeconds -gt 0) {
+                $personObjectInputArgs += "-ExternalTimeoutSeconds"
+                $personObjectInputArgs += $PseudoGtPersonObjectExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            }
+        }
+
+        & powershell.exe @personObjectInputArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT no-detection person/object input."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($PseudoGtPersonObjectCsv) -and
+            -not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalOutputCsv)) {
+            $PseudoGtPersonObjectCsv = $PseudoGtPersonObjectExternalOutputCsv
+            $resolvedPseudoGtPersonObjectCsv = $resolvedPseudoGtPersonObjectExternalOutputCsv
         }
     }
 
@@ -1364,6 +1419,10 @@ if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Pseudo-GT person/object input manifest: ``$PseudoGtPersonObjectInputDir/person-object-manifest.csv``")
     [void]$summary.AppendLine("- Pseudo-GT person/object input summary: ``$PseudoGtPersonObjectInputDir/person-object-input-summary.md``")
 }
+if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
+    [void]$summary.AppendLine("- Pseudo-GT person/object input manifest: ``$PseudoGtPersonObjectInputDir/person-object-manifest.csv``")
+    [void]$summary.AppendLine("- Pseudo-GT person/object input summary: ``$PseudoGtPersonObjectInputDir/person-object-input-summary.md``")
+}
 if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
 }
@@ -1457,6 +1516,9 @@ if ($WithPseudoGtFaceVerificationInput.IsPresent -and $detectionRows.Count -gt 0
     Write-Host "[YoloFollowupQualityEvidence] pseudoGtFaceVerificationInput=$PseudoGtFaceVerificationInputDir/face-verification-manifest.csv"
 }
 if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGtPersonObjectInput=$PseudoGtPersonObjectInputDir/person-object-manifest.csv"
+}
+if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] pseudoGtPersonObjectInput=$PseudoGtPersonObjectInputDir/person-object-manifest.csv"
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
