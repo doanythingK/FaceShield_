@@ -57,6 +57,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 @'
 [SmokeDetection] label=synthetic-yolo, frame=1, index=0, x=100.0, y=100.0, w=50.0, h=60.0, area=3000.0, conf=0.820, cx=0.125, cy=0.150, areaRatio=0.003000, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=400.0, y=300.0, w=40.0, h=45.0, area=1800.0, conf=0.210, cx=0.420, cy=0.340, areaRatio=0.001800, aspectRatio=0.889
+[SmokeDetection] label=synthetic-yolo, frame=5, index=0, x=500.0, y=500.0, w=200.0, h=200.0, area=40000.0, conf=0.550, cx=0.600, cy=0.600, areaRatio=0.040000, aspectRatio=1.000
 '@ | Set-Content -Encoding UTF8 -Path $baseLog
 
 @(
@@ -67,7 +68,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @(
     [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 },
-    [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 }
+    [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
+    [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -97,12 +99,12 @@ $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 $reviewQueueRows = @(Import-Csv $reviewQueueCsv)
 
-if ($rows.Count -ne 5) {
-    throw "Expected 5 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 7) {
+    throw "Expected 7 pseudo-GT rows, actual=$($rows.Count)"
 }
 
-if ($reviewQueueRows.Count -ne 5) {
-    throw "Expected 5 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
+if ($reviewQueueRows.Count -ne 7) {
+    throw "Expected 7 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
 }
 
 $first = $rows[0]
@@ -188,16 +190,25 @@ if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Co
     throw "Expected one supportedFaceCandidate."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 1) {
-    throw "Expected one falsePositiveCandidate."
+if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 2) {
+    throw "Expected two falsePositiveCandidate rows."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 3) {
-    throw "Expected three missCandidate rows."
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 4) {
+    throw "Expected four missCandidate rows."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
     throw "Expected one verification-only missCandidate."
+}
+
+$largeGeometryMismatch = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.basePredictionId -eq "5-0" })[0]
+if ($null -eq $largeGeometryMismatch) {
+    throw "Expected center-aligned large YOLO box to remain a falsePositiveCandidate when area ratio is too different."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-small-face-5" }).Count -ne 1) {
+    throw "Expected center-aligned small verification face to remain a missCandidate when base YOLO geometry is too large."
 }
 
 $supportedRow = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.source -eq "base-yolo" })[0]
@@ -219,6 +230,7 @@ Assert-Contains "script accepts face verification CSV" $scriptText "FaceVerifica
 Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
+Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
@@ -230,11 +242,12 @@ Assert-Contains "script treats person object as auxiliary" $scriptText "person/o
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=1"
-Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=1"
-Assert-Contains "summary records miss count" $summaryText "missCandidate=3"
+Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=2"
+Assert-Contains "summary records miss count" $summaryText "missCandidate=4"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
 Assert-Contains "summary records top review candidates" $summaryText "topReviewCandidates="
 Assert-Contains "summary records temporal support window" $summaryText "temporalSupportWindowFrames=2"
+Assert-Contains "summary records support area ratio" $summaryText "maxSupportAreaChangeRatio=3"
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"

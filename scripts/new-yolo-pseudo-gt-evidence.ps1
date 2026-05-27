@@ -9,6 +9,7 @@ param(
     [string]$ReviewQueueCsv = "",
     [double]$MinSupportIou = 0.35,
     [double]$MaxSupportCenterDistanceRatio = 0.80,
+    [double]$MaxSupportAreaChangeRatio = 3.0,
     [double]$MaxVerificationDistance = 0.75,
     [double]$MinVerificationConfidence = 0.55,
     [int]$TemporalSupportWindowFrames = 2
@@ -233,6 +234,32 @@ function Get-CenterDistanceRatio {
     return $distance / $scale
 }
 
+function Get-AreaChangeRatio {
+    param(
+        [object]$A,
+        [object]$B
+    )
+
+    $areaA = [Math]::Max(1.0, $A.W * $A.H)
+    $areaB = [Math]::Max(1.0, $B.W * $B.H)
+    return [Math]::Max($areaA, $areaB) / [Math]::Min($areaA, $areaB)
+}
+
+function Test-FaceGeometrySupportValues {
+    param(
+        [double]$Iou,
+        [double]$CenterDistanceRatio,
+        [double]$AreaChangeRatio
+    )
+
+    if ($Iou -ge $MinSupportIou) {
+        return $true
+    }
+
+    return $CenterDistanceRatio -le $MaxSupportCenterDistanceRatio -and
+        $AreaChangeRatio -le $MaxSupportAreaChangeRatio
+}
+
 function Get-FaceAreaOverlap {
     param(
         [object]$Face,
@@ -262,17 +289,20 @@ function Find-BestMatch {
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
         $iou = Get-Iou $Target $candidate
         $centerDistance = Get-CenterDistanceRatio $Target $candidate
-        $supported = $iou -ge $MinIou -or $centerDistance -le $MaxCenterDistanceRatio
+        $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
+        $supported = $iou -ge $MinIou -or
+            ($centerDistance -le $MaxCenterDistanceRatio -and $areaChangeRatio -le $MaxSupportAreaChangeRatio)
         if (-not $supported) {
             continue
         }
 
-        $score = $iou - ($centerDistance * 0.1) + ($candidate.Confidence * 0.01)
+        $score = $iou - ($centerDistance * 0.1) - ($areaChangeRatio * 0.001) + ($candidate.Confidence * 0.01)
         if ($null -eq $best -or $score -gt $best.Score) {
             $best = [pscustomobject]@{
                 Row = $candidate
                 Iou = $iou
                 CenterDistanceRatio = $centerDistance
+                AreaChangeRatio = $areaChangeRatio
                 Score = $score
             }
         }
@@ -291,18 +321,20 @@ function Find-BestVerification {
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
         $iou = Get-Iou $Target $candidate
         $centerDistance = Get-CenterDistanceRatio $Target $candidate
-        $passesGeometry = $iou -ge $MinSupportIou -or $centerDistance -le $MaxSupportCenterDistanceRatio
+        $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
+        $passesGeometry = Test-FaceGeometrySupportValues $iou $centerDistance $areaChangeRatio
         $passesMetric = $candidate.Confidence -ge $MinVerificationConfidence -or $candidate.VerificationDistance -le $MaxVerificationDistance
         if (-not ($passesGeometry -and $passesMetric)) {
             continue
         }
 
-        $score = $iou + $candidate.Confidence - $candidate.VerificationDistance - ($centerDistance * 0.1)
+        $score = $iou + $candidate.Confidence - $candidate.VerificationDistance - ($centerDistance * 0.1) - ($areaChangeRatio * 0.001)
         if ($null -eq $best -or $score -gt $best.Score) {
             $best = [pscustomobject]@{
                 Row = $candidate
                 Iou = $iou
                 CenterDistanceRatio = $centerDistance
+                AreaChangeRatio = $areaChangeRatio
                 Score = $score
             }
         }
@@ -345,7 +377,8 @@ function Test-FaceGeometrySupport {
 
     $iou = Get-Iou $Target $Candidate
     $centerDistance = Get-CenterDistanceRatio $Target $Candidate
-    return ($iou -ge $MinSupportIou -or $centerDistance -le $MaxSupportCenterDistanceRatio)
+    $areaChangeRatio = Get-AreaChangeRatio $Target $Candidate
+    return Test-FaceGeometrySupportValues $iou $centerDistance $areaChangeRatio
 }
 
 function Test-VerificationMetricSupport {
@@ -781,6 +814,7 @@ $summary = @(
     "- missCandidate=$miss",
     "- minSupportIou=$(Format-Double $MinSupportIou)",
     "- maxSupportCenterDistanceRatio=$(Format-Double $MaxSupportCenterDistanceRatio)",
+    "- maxSupportAreaChangeRatio=$(Format-Double $MaxSupportAreaChangeRatio)",
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
     "- minVerificationConfidence=$(Format-Double $MinVerificationConfidence)",
     "- temporalSupportWindowFrames=$TemporalSupportWindowFrames",
