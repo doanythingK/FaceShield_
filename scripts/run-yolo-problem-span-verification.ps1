@@ -35,6 +35,13 @@ param(
     [string]$PseudoGtFaceVerificationExternalArgumentsTemplate = "",
     [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
     [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
+    [switch]$WithPseudoGtPersonObjectInput,
+    [switch]$PseudoGtPersonObjectSkipImageExtraction,
+    [int]$PseudoGtPersonObjectScaleWidth = 0,
+    [string]$PseudoGtPersonObjectExternalCommand = "",
+    [string]$PseudoGtPersonObjectExternalArgumentsTemplate = "",
+    [string]$PseudoGtPersonObjectExternalOutputCsv = "",
+    [int]$PseudoGtPersonObjectExternalTimeoutSeconds = 0,
     [switch]$Force
 )
 
@@ -154,6 +161,36 @@ if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv
 if ($PseudoGtFaceVerificationExternalTimeoutSeconds -gt 0) {
     $argsList.Add("-PseudoGtFaceVerificationExternalTimeoutSeconds") | Out-Null
     $argsList.Add($PseudoGtFaceVerificationExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+}
+
+if ($WithPseudoGtPersonObjectInput.IsPresent) {
+    $argsList.Add("-WithPseudoGtPersonObjectInput") | Out-Null
+    $argsList.Add("-PseudoGtPersonObjectScaleWidth") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectScaleWidth.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+}
+
+if ($PseudoGtPersonObjectSkipImageExtraction.IsPresent) {
+    $argsList.Add("-PseudoGtPersonObjectSkipImageExtraction") | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalCommand)) {
+    $argsList.Add("-PseudoGtPersonObjectExternalCommand") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectExternalCommand) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalArgumentsTemplate)) {
+    $argsList.Add("-PseudoGtPersonObjectExternalArgumentsTemplate") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectExternalArgumentsTemplate) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalOutputCsv)) {
+    $argsList.Add("-PseudoGtPersonObjectExternalOutputCsv") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectExternalOutputCsv) | Out-Null
+}
+
+if ($PseudoGtPersonObjectExternalTimeoutSeconds -gt 0) {
+    $argsList.Add("-PseudoGtPersonObjectExternalTimeoutSeconds") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 }
 
 if ($Force.IsPresent) {

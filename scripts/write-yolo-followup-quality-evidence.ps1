@@ -17,6 +17,7 @@ param(
     [string]$PseudoGtSummaryPath = "",
     [string]$PseudoGtTileInputDir = "",
     [string]$PseudoGtFaceVerificationInputDir = "",
+    [string]$PseudoGtPersonObjectInputDir = "",
     [string]$TrimStart = "",
     [int]$TrimSeconds = 0,
     [string]$ClipPath = "",
@@ -56,6 +57,13 @@ param(
     [string]$PseudoGtFaceVerificationExternalArgumentsTemplate = "",
     [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
     [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
+    [switch]$WithPseudoGtPersonObjectInput,
+    [switch]$PseudoGtPersonObjectSkipImageExtraction,
+    [int]$PseudoGtPersonObjectScaleWidth = 0,
+    [string]$PseudoGtPersonObjectExternalCommand = "",
+    [string]$PseudoGtPersonObjectExternalArgumentsTemplate = "",
+    [string]$PseudoGtPersonObjectExternalOutputCsv = "",
+    [int]$PseudoGtPersonObjectExternalTimeoutSeconds = 0,
     [int]$DetectionOverlayScaleWidth = 960
 )
 
@@ -623,10 +631,20 @@ if ([string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationInputDir)) {
     $PseudoGtFaceVerificationInputDir = Join-Path $OutputDir "pseudo-gt-face-verification-input"
 }
 
+if ([string]::IsNullOrWhiteSpace($PseudoGtPersonObjectInputDir)) {
+    $PseudoGtPersonObjectInputDir = Join-Path $OutputDir "pseudo-gt-person-object-input"
+}
+
 if ($WithPseudoGtFaceVerificationInput.IsPresent -and
     -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand) -and
     [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv)) {
     $PseudoGtFaceVerificationExternalOutputCsv = Join-Path $PseudoGtFaceVerificationInputDir "face-verification.csv"
+}
+
+if ($WithPseudoGtPersonObjectInput.IsPresent -and
+    -not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalCommand) -and
+    [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalOutputCsv)) {
+    $PseudoGtPersonObjectExternalOutputCsv = Join-Path $PseudoGtPersonObjectInputDir "person-object.csv"
 }
 
 $resolvedOutputDir = Resolve-RepoPath $OutputDir
@@ -645,7 +663,9 @@ $resolvedPseudoGtOutputCsv = Resolve-RepoPath $PseudoGtOutputCsv
 $resolvedPseudoGtSummaryPath = Resolve-RepoPath $PseudoGtSummaryPath
 $resolvedPseudoGtTileInputDir = Resolve-RepoPath $PseudoGtTileInputDir
 $resolvedPseudoGtFaceVerificationInputDir = Resolve-RepoPath $PseudoGtFaceVerificationInputDir
+$resolvedPseudoGtPersonObjectInputDir = Resolve-RepoPath $PseudoGtPersonObjectInputDir
 $resolvedPseudoGtFaceVerificationExternalOutputCsv = Resolve-RepoPath $PseudoGtFaceVerificationExternalOutputCsv
+$resolvedPseudoGtPersonObjectExternalOutputCsv = Resolve-RepoPath $PseudoGtPersonObjectExternalOutputCsv
 $resolvedVideoPath = Resolve-RepoPath $VideoPath
 
 New-Item -ItemType Directory -Force -Path $resolvedOutputDir | Out-Null
@@ -687,6 +707,7 @@ $reviewContactSheetScript = Join-Path $repo "scripts\new-yolo-review-contact-she
 $pseudoGtScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-evidence.ps1"
 $pseudoGtTileInputScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-tile-input.ps1"
 $pseudoGtFaceVerificationInputScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-face-verification-input.ps1"
+$pseudoGtPersonObjectInputScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-person-object-input.ps1"
 
 Require-File "run-srcTest-smoke.ps1" $smokeScript
 Require-File "write-yolo-quality-review-checklist.ps1" $checklistScript
@@ -707,6 +728,9 @@ if ($WithPseudoGtTileInput.IsPresent) {
 }
 if ($WithPseudoGtFaceVerificationInput.IsPresent) {
     Require-File "new-yolo-pseudo-gt-face-verification-input.ps1" $pseudoGtFaceVerificationInputScript
+}
+if ($WithPseudoGtPersonObjectInput.IsPresent) {
+    Require-File "new-yolo-pseudo-gt-person-object-input.ps1" $pseudoGtPersonObjectInputScript
 }
 if (-not $SkipReviewPackage) {
     Require-File "new-yolo-full-gt-review-package.ps1" $packageScript
@@ -927,6 +951,71 @@ else {
         }
     }
 
+    if ($WithPseudoGtPersonObjectInput.IsPresent) {
+        Require-File "pseudo-GT person/object input video" $resolvedVideoPath
+
+        $personObjectFrameSet = [System.Collections.Generic.SortedSet[int]]::new()
+        foreach ($frameNumber in $reviewFrameNumbers) {
+            [void]$personObjectFrameSet.Add([int]$frameNumber)
+        }
+
+        if ($personObjectFrameSet.Count -eq 0) {
+            foreach ($row in $detectionRows) {
+                if ($row.Line -match 'frame=(\d+)') {
+                    [void]$personObjectFrameSet.Add([int]$Matches[1])
+                }
+            }
+        }
+
+        if ($personObjectFrameSet.Count -gt 0) {
+            $personObjectInputArgs = @(
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                $pseudoGtPersonObjectInputScript,
+                "-VideoPath",
+                $resolvedVideoPath,
+                "-Frames",
+                (@($personObjectFrameSet) -join ","),
+                "-OutputDir",
+                $resolvedPseudoGtPersonObjectInputDir,
+                "-ScaleWidth",
+                $PseudoGtPersonObjectScaleWidth.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            )
+
+            if ($PseudoGtPersonObjectSkipImageExtraction.IsPresent) {
+                $personObjectInputArgs += "-SkipImageExtraction"
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalCommand)) {
+                $personObjectInputArgs += "-ExternalCommand"
+                $personObjectInputArgs += $PseudoGtPersonObjectExternalCommand
+                if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalArgumentsTemplate)) {
+                    $personObjectInputArgs += "-ExternalArgumentsTemplate"
+                    $personObjectInputArgs += $PseudoGtPersonObjectExternalArgumentsTemplate
+                }
+                $personObjectInputArgs += "-ExternalOutputCsv"
+                $personObjectInputArgs += $resolvedPseudoGtPersonObjectExternalOutputCsv
+                if ($PseudoGtPersonObjectExternalTimeoutSeconds -gt 0) {
+                    $personObjectInputArgs += "-ExternalTimeoutSeconds"
+                    $personObjectInputArgs += $PseudoGtPersonObjectExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+                }
+            }
+
+            & powershell.exe @personObjectInputArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to write YOLO pseudo-GT person/object input."
+            }
+
+            if ([string]::IsNullOrWhiteSpace($PseudoGtPersonObjectCsv) -and
+                -not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalOutputCsv)) {
+                $PseudoGtPersonObjectCsv = $PseudoGtPersonObjectExternalOutputCsv
+                $resolvedPseudoGtPersonObjectCsv = $resolvedPseudoGtPersonObjectExternalOutputCsv
+            }
+        }
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
         $pseudoGtArgs = @(
             "-NoProfile",
@@ -1106,6 +1195,10 @@ if ($WithPseudoGtFaceVerificationInput.IsPresent -and $detectionRows.Count -gt 0
     [void]$summary.AppendLine("- Pseudo-GT face verification input manifest: ``$PseudoGtFaceVerificationInputDir/face-verification-manifest.csv``")
     [void]$summary.AppendLine("- Pseudo-GT face verification input summary: ``$PseudoGtFaceVerificationInputDir/face-verification-input-summary.md``")
 }
+if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -gt 0) {
+    [void]$summary.AppendLine("- Pseudo-GT person/object input manifest: ``$PseudoGtPersonObjectInputDir/person-object-manifest.csv``")
+    [void]$summary.AppendLine("- Pseudo-GT person/object input summary: ``$PseudoGtPersonObjectInputDir/person-object-input-summary.md``")
+}
 if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
 }
@@ -1191,6 +1284,9 @@ if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $revie
 }
 if ($WithPseudoGtFaceVerificationInput.IsPresent -and $detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] pseudoGtFaceVerificationInput=$PseudoGtFaceVerificationInputDir/face-verification-manifest.csv"
+}
+if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGtPersonObjectInput=$PseudoGtPersonObjectInputDir/person-object-manifest.csv"
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"

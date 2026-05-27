@@ -395,6 +395,7 @@ Assert-Contains "auto verifier exposes full gt quality failure allowance" $autoV
 Assert-Contains "auto verifier exposes full gt candidate state" $autoVerify "RunYoloFullGtReviewedCandidateState"
 Assert-Contains "auto verifier runs pseudo gt separation state" $autoVerify "verify-yolo-pseudo-gt-separation-state.ps1"
 Assert-Contains "auto verifier runs pseudo gt face verification input state" $autoVerify "verify-yolo-pseudo-gt-face-verification-input-state.ps1"
+Assert-Contains "auto verifier runs pseudo gt person object input state" $autoVerify "verify-yolo-pseudo-gt-person-object-input-state.ps1"
 Assert-Contains "top-level verifier has completion audit path" $autoVerify "verify-yolo-completion-audit-state.ps1"
 Assert-Contains "top-level verifier has require complete guard" $autoVerify "yolo-require-complete-guard"
 Assert-Contains "top-level verifier promotes require complete to yolo state" $autoVerify '$RunYoloState = $true'
@@ -621,5 +622,6 @@ Assert-Contains "pseudo gt separation verifier scans runtime source" $pseudoGtSe
 Assert-Contains "pseudo gt separation verifier protects postprocess pipeline" $pseudoGtSeparationVerify "postprocess pipeline does not know pseudo-GT"
 Assert-Contains "pseudo gt separation verifier checks test-only scripts" $pseudoGtSeparationVerify "test-only evidence"
 Assert-Contains "pseudo gt separation verifier checks face verification input script" $pseudoGtSeparationVerify "face verification input script records runtime separation"
+Assert-Contains "pseudo gt separation verifier checks person object input script" $pseudoGtSeparationVerify "person/object input script records runtime separation"
 
 Write-Host "[YoloGoalAuditVerify] all requested checks passed"

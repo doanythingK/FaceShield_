@@ -132,10 +132,13 @@ Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTile
 Assert-Contains "script supports pseudo gt face verification input" $scriptText "PseudoGtFaceVerificationCsv"
 Assert-Contains "script can prepare pseudo gt face verification manifest" $scriptText "WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*PseudoGtFaceVerificationInputDir"
 Assert-Contains "script can use external face verification output as pseudo gt input" $scriptText 'PseudoGtFaceVerificationExternalOutputCsv[\s\S]*PseudoGtFaceVerificationCsv\s*=\s*\$PseudoGtFaceVerificationExternalOutputCsv'
+Assert-Contains "script can prepare pseudo gt person object manifest" $scriptText "WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*PseudoGtPersonObjectInputDir"
+Assert-Contains "script can use external person object output as pseudo gt input" $scriptText 'PseudoGtPersonObjectExternalOutputCsv[\s\S]*PseudoGtPersonObjectCsv\s*=\s*\$PseudoGtPersonObjectExternalOutputCsv'
 Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script can prepare pseudo gt tile manifest" $scriptText "WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*PseudoGtTileInputDir"
 Assert-Contains "script links pseudo gt summary" $scriptText "Pseudo-GT candidates"
 Assert-Contains "script links pseudo gt face verification input summary" $scriptText "Pseudo-GT face verification input manifest"
+Assert-Contains "script links pseudo gt person object input summary" $scriptText "Pseudo-GT person/object input manifest"
 Assert-Contains "script can write detection overlay video" $scriptText "WithDetectionOverlayVideo[\s\S]*new-yolo-detection-overlay-video\.ps1"
 Assert-Contains "script can write review contact sheet" $scriptText "WithReviewContactSheet[\s\S]*new-yolo-review-contact-sheet\.ps1[\s\S]*Review contact sheet"
 Assert-Contains "script can write no-detection contact sheet" $scriptText "Get-SampledReviewFrameNumbers[\s\S]*No detection rows were found[\s\S]*Sampled no-detection review frames"
