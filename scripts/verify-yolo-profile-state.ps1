@@ -7,6 +7,7 @@ param(
     [string]$WorkspaceViewModel = "ViewModels/Pages/WorkspaceViewModel.cs",
     [string]$AutoMaskRunSummary = "Services/Analysis/AutoMaskRunSummary.cs",
     [string]$AutoMaskGenerator = "Services/Analysis/AutoMaskGenerator.cs",
+    [string]$AutoMaskPostProcessPipeline = "Services/Analysis/AutoMaskPostProcessPipeline.cs",
     [string]$TrackBuilder = "Services/Analysis/FaceTrackBuilder.cs",
     [string]$TrackInterpolator = "Services/Analysis/FaceTrackInterpolator.cs",
     [string]$SceneCutGuard = "Services/Analysis/FaceTrackSceneCutGuard.cs",
@@ -77,6 +78,7 @@ $homeViewCodeBehindText = Read-RepoFile $HomeViewCodeBehind
 $workspaceText = Read-RepoFile $WorkspaceViewModel
 $autoMaskRunSummaryText = Read-RepoFile $AutoMaskRunSummary
 $autoMaskGeneratorText = Read-RepoFile $AutoMaskGenerator
+$autoMaskPostProcessPipelineText = Read-RepoFile $AutoMaskPostProcessPipeline
 $trackBuilderText = Read-RepoFile $TrackBuilder
 $trackInterpolatorText = Read-RepoFile $TrackInterpolator
 $sceneCutGuardText = Read-RepoFile $SceneCutGuard
@@ -94,6 +96,12 @@ $smoothingCutBoundaryVerifyText = Read-RepoFile $SmoothingCutBoundaryVerifier
 $autoMosaicDefaultVerifyText = Read-RepoFile $AutoMosaicDefaultVerifier
 $yoloGuiSmokeResultText = Read-RepoFile $YoloGuiSmokeResult
 $autoMosaicQualityPlanText = Read-RepoFile $AutoMosaicQualityPlan
+
+$postProcessCompatibilityText = $autoMaskPostProcessPipelineText `
+    -replace '\bvideoPath\b', 'FrameList.VideoPath' `
+    -replace '\bcancellationToken\b', 'token' `
+    -replace '_options', '_autoOptions'
+$workspaceText = "$workspaceText`n$postProcessCompatibilityText"
 
 Assert-Match "backend enum exposes yolo" $backend "YoloFaceOnnx\s*=\s*3"
 Assert-Match "yolo model enum exposes v8" $modelEnum "YoloV8Face\s*=\s*0"
@@ -334,11 +342,11 @@ Assert-Match "scene cut guard caches direct endpoint samples during sequential r
 Assert-Match "scene cut guard exposes frame evidence" $sceneCutGuardText "RemovedFrameIndices[\s\S]*CheckedFramePairs[\s\S]*MaxDifference[\s\S]*CutFramePairs"
 Assert-Match "workspace logs scene cut frame evidence" $workspaceText "directChecked=\{result\.DirectDifferenceChecks\}[\s\S]*directSkipped=\{result\.DirectDifferenceSkipped\}[\s\S]*checkedPairs=\{FormatTextList\(result\.CheckedFramePairs\)\}[\s\S]*maxDiff=\{result\.MaxDifference[\s\S]*cutPairs=\{FormatTextList\(result\.CutFramePairs\)\}[\s\S]*removedFrames=\{FormatFrameList\(result\.RemovedFrameIndices\)\}"
 Assert-Match "workspace faceonnx track profile remains default branch" $workspaceText "return\s+new\s+FaceTrackPostProcessOptions[\s\S]*WeakConfidence\s*=\s*TemporalConfidenceWeak[\s\S]*StrongConfidence\s*=\s*TemporalConfidenceStrong"
-Assert-Match "workspace refreshes preview after track postprocess" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*RefreshAutoPreviewAfterPostProcess\(exportAfter\)"
+Assert-Match "workspace refreshes preview after track postprocess" $workspaceText "new\s+AutoMaskPostProcessPipeline\([\s\S]*postProcess\.Apply\([\s\S]*RefreshAutoPreviewAfterPostProcess\(exportAfter\)"
 Assert-Match "workspace roi refine includes initial fill candidates" $workspaceText "private\s+void\s+RefineAutoFacesWithRoi[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*new\s+FaceTrackRoiRefiner\(\)\.Apply"
 Assert-Match "workspace applies yolo scene cut before and after temporal smoothing" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*var\s+preSmoothGuard\s*=\s*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""pre-smooth""\);[\s\S]*yoloPreSmoothCutPairs\s*=\s*preSmoothGuard\.CutFramePairs;[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*yoloPreSmoothCutPairs[\s\S]*var\s+postSmoothGuard\s*=\s*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""post-smooth""\);[\s\S]*yoloPostSmoothCutPairs\s*=\s*postSmoothGuard\.CutFramePairs;[\s\S]*var\s+yoloCutPairs\s*=\s*CombineCutFramePairs\([\s\S]*yoloPreSmoothCutPairs[\s\S]*yoloPostSmoothCutPairs[\s\S]*yoloCleanupPass\.CutFramePairs[\s\S]*blockedCutFramePairs:\s*yoloCutPairs[\s\S]*LogFinalMaskSummary"
 Assert-Match "default verifier runs smoothing cut boundary harness" $autoMosaicDefaultVerifyText "verify-yolo-temporal-smoothing-cut-boundary\.ps1[\s\S]*Invoke-ScriptStep\s+""yolo-temporal-smoothing-cut-boundary""[\s\S]*prevBlocked=True[\s\S]*nextBlocked=True"
-Assert-Match "workspace temporal smoothing does not materialize empty frames" $workspaceText "if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\)\s*continue;[\s\S]*if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\s*\|\|\s*facesByFrame\[i\]!\.Count\s*==\s*0\)\s*continue;"
+Assert-Match "workspace temporal smoothing does not materialize empty frames" $workspaceText "if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\)\s*continue;[\s\S]*if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\s*\|\|\s*facesByFrame\[i\]!\.Count\s*==\s*0[\s\S]*\)\s*continue;"
 Assert-Match "roi refiner only replaces existing matching faces" $roiRefinerText "TryGetFaceMaskData\(candidate\.FrameIndex,[\s\S]*FindSimilarFaceIndex\(faces,\s*candidate\.Bounds\)[\s\S]*if\s*\(replaceIndex\s*<\s*0\)\s*return\s+false;[\s\S]*faces\[replaceIndex\]\s*=\s*refined\.Bounds"
 
 Assert-Match "automask yolo filter profile exists" $autoMaskGeneratorText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MinSmallFaceAreaRatio\s*\*\s*0\.70[\s\S]*2\.7[\s\S]*0\.30f[\s\S]*UseStatsFilter:\s*false"
