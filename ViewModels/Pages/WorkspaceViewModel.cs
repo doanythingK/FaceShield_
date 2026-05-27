@@ -36,6 +36,7 @@ namespace FaceShield.ViewModels.Pages
         private const int SuspiciousNoFaceMaxGap = 8;
         private int _autoResumeIndex;
         private bool _autoCompleted;
+        private string? _autoRunSignature;
         private int _autoLastProcessedFrame = -1;
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private bool _sessionInitialized;
@@ -79,7 +80,8 @@ namespace FaceShield.ViewModels.Pages
         public bool NeedsAutoResumePrompt =>
             Mode == WorkspaceMode.Auto &&
             !_autoCompleted &&
-            _autoResumeIndex > 0;
+            _autoResumeIndex > 0 &&
+            IsAutoResumeSignatureCurrent(BuildAutoRunSignature(_autoOptions, _detectorFactoryOptions));
 
         public int AutoLastProcessedFrame => _autoLastProcessedFrame;
         public DateTime AutoLastProcessedAtUtc => _autoLastProcessedAtUtc;
@@ -366,6 +368,10 @@ namespace FaceShield.ViewModels.Pages
             {
                 var detectorOptions = _detectorOptions;
                 var detectorFactoryOptions = _detectorFactoryOptions;
+                string runSignature = BuildAutoRunSignature(_autoOptions, detectorFactoryOptions);
+                ResetStaleAutoResumeIfSettingsChanged(runSignature);
+                _autoRunSignature = runSignature;
+
                 int tunedSessions = Math.Max(1, _autoOptions.ParallelDetectorCount);
                 if (_detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
                     _detectorOptions.AllowAutoTune != false)
@@ -1139,7 +1145,8 @@ namespace FaceShield.ViewModels.Pages
                 FrameList.SecondsPerScreen,
                 DateTimeOffset.Now,
                 _autoResumeIndex,
-                _autoCompleted);
+                _autoCompleted,
+                _autoRunSignature);
         }
 
         private void ApplySnapshot(WorkspaceSnapshot snapshot)
@@ -1149,6 +1156,7 @@ namespace FaceShield.ViewModels.Pages
 
             _autoResumeIndex = snapshot.AutoResumeIndex;
             _autoCompleted = snapshot.AutoCompleted;
+            _autoRunSignature = snapshot.AutoRunSignature;
 
             double secondsPerScreen = snapshot.SecondsPerScreen;
             if (secondsPerScreen <= 0)
@@ -1165,6 +1173,117 @@ namespace FaceShield.ViewModels.Pages
                 index = Math.Clamp(snapshot.SelectedFrameIndex, 0, FrameList.TotalFrames - 1);
 
             FrameList.SelectedFrameIndex = index;
+        }
+
+        private bool IsAutoResumeSignatureCurrent(string currentSignature)
+            => !string.IsNullOrWhiteSpace(_autoRunSignature) &&
+                string.Equals(_autoRunSignature, currentSignature, StringComparison.Ordinal);
+
+        private void ResetStaleAutoResumeIfSettingsChanged(string currentSignature)
+        {
+            if (_autoResumeIndex <= 0 || IsAutoResumeSignatureCurrent(currentSignature))
+                return;
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskResumeReset] reason=settings-changed resumeIndex={_autoResumeIndex}");
+            _autoResumeIndex = 0;
+            _autoCompleted = false;
+        }
+
+        private static string BuildAutoRunSignature(
+            AutoMaskOptions autoOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions)
+        {
+            autoOptions ??= new AutoMaskOptions();
+            detectorFactoryOptions ??= FaceDetectorFactoryOptions.ForOnnx(new FaceOnnxDetectorOptions());
+
+            var parts = new List<string>
+            {
+                "v2",
+                $"backend={detectorFactoryOptions.Backend}",
+                $"profile={autoOptions.FilterProfile}",
+                $"downscale={autoOptions.DownscaleRatio:0.###}",
+                $"quality={autoOptions.DownscaleQuality}",
+                $"tracking={autoOptions.UseTracking}",
+                $"everyN={autoOptions.DetectEveryNFrames}",
+                $"parallel={autoOptions.ParallelDetectorCount}",
+                $"dump={autoOptions.DumpDetectionDiagnostics}"
+            };
+
+            switch (detectorFactoryOptions.Backend)
+            {
+                case FaceDetectorBackend.YoloFaceOnnx:
+                    AppendYoloSignature(parts, detectorFactoryOptions.YoloFaceOnnxOptions);
+                    break;
+                case FaceDetectorBackend.FaceOnnx:
+                    AppendFaceOnnxSignature(parts, detectorFactoryOptions.FaceOnnxOptions);
+                    break;
+                default:
+                    parts.Add($"detector={detectorFactoryOptions.Backend}");
+                    break;
+            }
+
+            return string.Join("|", parts);
+        }
+
+        private static void AppendFaceOnnxSignature(List<string> parts, FaceOnnxDetectorOptions? options)
+        {
+            options ??= new FaceOnnxDetectorOptions();
+            parts.Add($"ort={options.UseOrtOptimization}");
+            parts.Add($"gpu={options.UseGpu}");
+            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
+            parts.Add($"detect={options.DetectionThreshold?.ToString("0.###") ?? "null"}");
+            parts.Add($"conf={options.ConfidenceThreshold?.ToString("0.###") ?? "null"}");
+            parts.Add($"nms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
+        }
+
+        private static void AppendYoloSignature(List<string> parts, YoloFaceOnnxDetectorOptions? options)
+        {
+            if (options == null)
+            {
+                parts.Add("yolo=null");
+                return;
+            }
+
+            parts.Add($"model={NormalizeSignaturePath(options.ModelPath)}");
+            parts.Add($"type={options.ModelType}");
+            parts.Add($"ort={options.UseOrtOptimization}");
+            parts.Add($"gpu={options.UseGpu}");
+            parts.Add($"input={options.InputWidth?.ToString() ?? "null"}x{options.InputHeight?.ToString() ?? "null"}");
+            parts.Add($"obj={options.ObjectnessThreshold:0.###}");
+            parts.Add($"conf={options.ConfidenceThreshold:0.###}");
+            parts.Add($"nms={options.NmsThreshold:0.###}");
+            parts.Add($"max={options.MaxDetections}");
+            parts.Add($"tiling={options.UseTiling}");
+            parts.Add($"tileOnly={!options.IncludeFullFrameWhenTiling}");
+            parts.Add($"tiles={options.TileColumns}x{options.TileRows}");
+            parts.Add($"tileOverlap={options.TileOverlapRatio:0.###}");
+            parts.Add($"letterbox={options.UseLetterboxResize}");
+            parts.Add($"centerPad={options.CenterLetterboxPadding}");
+            parts.Add($"rgb={options.UseRgbInput}");
+            parts.Add($"lowPos={options.UseLowConfidencePositionFilter}:{options.LowConfidencePositionMaxConfidence:0.###}:{options.LowConfidencePositionMinCenterYRatio:0.###}");
+            parts.Add($"small={options.UseSmallAreaFilter}:{options.SmallAreaMaxAreaRatio:0.####}");
+            parts.Add($"aspect={options.UseAspectRatioFilter}:{options.MinAspectRatio:0.###}:{options.MaxAspectRatio:0.###}");
+            parts.Add($"topSmall={options.UseTopSmallLowConfidenceFilter}:{options.TopSmallLowConfidenceMaxConfidence:0.###}:{options.TopSmallLowConfidenceMaxCenterYRatio:0.###}:{options.TopSmallLowConfidenceMaxAreaRatio:0.####}");
+            parts.Add($"largeScale={options.LargeBoxWidthScale:0.###}:{options.LargeBoxHeightScale:0.###}:{options.LargeBoxMinAreaRatio:0.####}");
+            parts.Add($"landmark={options.UseYolo5LandmarkBoxRefine}:{options.Yolo5LandmarkBoxMinAreaRatio:0.####}:{options.Yolo5LandmarkBoxWidthScale:0.###}:{options.Yolo5LandmarkBoxHeightScale:0.###}:{options.Yolo5LandmarkBoxCenterYOffsetRatio:0.###}:{options.Yolo5LandmarkBoxMinOriginalIou:0.###}");
+        }
+
+        private static string NormalizeSignaturePath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return "null";
+
+            try
+            {
+                return Path.GetFullPath(path).Trim();
+            }
+            catch
+            {
+                return path.Trim();
+            }
         }
 
     }

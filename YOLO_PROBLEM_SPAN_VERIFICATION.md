@@ -313,8 +313,10 @@ goal 완료로 볼 수 있는 최소 증거:
 
 - fresh run: 기존 auto face-rect mask 전체를 지운다.
 - resume run: resume frame 이후의 stale auto face-rect mask를 먼저 지운다.
+- resume prompt는 저장된 자동 실행 signature가 현재 detector/YOLO 설정, threshold, tiling, tracking/downscale 설정과 같을 때만 표시한다. 설정이 바뀌면 stale partial run을 이어가지 않고 fresh run으로 전환한다.
 - manual bitmap mask는 별도 저장 경로라서 이 stale face-rect reset 대상이 아니다.
 - stale reset이 발생하면 `[AutoMaskResumeReset] start=... removedStaleFaceMasks=...`가 debug output에 남는다.
+- 설정 mismatch로 partial run을 버리면 `[AutoMaskResumeReset] reason=settings-changed resumeIndex=...`가 debug output에 남는다.
 - `[AutoRunSummary]`에는 `startFrame=...`이 함께 남아 `processed=1` 같은 짧은 실행이 새 전체 실행인지, 부분 재개인지 바로 구분할 수 있다.
 
 검증 스크립트: `scripts/verify-auto-resume-mask-reset.ps1`

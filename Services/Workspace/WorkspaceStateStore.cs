@@ -138,7 +138,8 @@ namespace FaceShield.Services.Workspace
                 state.SecondsPerScreen,
                 state.LastOpened,
                 state.AutoResumeIndex,
-                state.AutoCompleted);
+                state.AutoCompleted,
+                state.AutoRunSignature);
 
             return true;
         }
@@ -202,7 +203,8 @@ namespace FaceShield.Services.Workspace
                 MaskIndices = indices,
                 FaceMasks = faceMasks,
                 AutoResumeIndex = snapshot.AutoResumeIndex,
-                AutoCompleted = snapshot.AutoCompleted
+                AutoCompleted = snapshot.AutoCompleted,
+                AutoRunSignature = snapshot.AutoRunSignature
             });
 
             SaveState();
@@ -322,6 +324,7 @@ namespace FaceShield.Services.Workspace
             public List<FaceMaskState> FaceMasks { get; set; } = new();
             public int AutoResumeIndex { get; set; }
             public bool AutoCompleted { get; set; }
+            public string? AutoRunSignature { get; set; }
         }
 
         private sealed class FaceMaskState
@@ -413,6 +416,7 @@ namespace FaceShield.Services.Workspace
         public DateTimeOffset LastOpened { get; }
         public int AutoResumeIndex { get; }
         public bool AutoCompleted { get; }
+        public string? AutoRunSignature { get; }
 
         public WorkspaceSnapshot(
             string videoPath,
@@ -422,7 +426,8 @@ namespace FaceShield.Services.Workspace
             double secondsPerScreen,
             DateTimeOffset lastOpened,
             int autoResumeIndex,
-            bool autoCompleted)
+            bool autoCompleted,
+            string? autoRunSignature)
         {
             VideoPath = videoPath;
             Mode = mode;
@@ -432,6 +437,7 @@ namespace FaceShield.Services.Workspace
             LastOpened = lastOpened;
             AutoResumeIndex = autoResumeIndex;
             AutoCompleted = autoCompleted;
+            AutoRunSignature = autoRunSignature;
         }
     }
 }
