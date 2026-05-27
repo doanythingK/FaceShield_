@@ -6,6 +6,7 @@ param(
     [string]$PersonObjectCsv = "",
     [string]$OutputCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
     [string]$SummaryPath = ".tmp\yolo-pseudo-gt\pseudo-gt-summary.md",
+    [string]$ReviewQueueCsv = "",
     [double]$MinSupportIou = 0.35,
     [double]$MaxSupportCenterDistanceRatio = 0.80,
     [double]$MaxVerificationDistance = 0.75,
@@ -400,6 +401,29 @@ function Format-Double {
     return $Value.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Read-CandidateDouble {
+    param(
+        [object]$Row,
+        [string]$Name
+    )
+
+    $property = $Row.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return 0.0
+    }
+
+    $parsed = 0.0
+    if ([double]::TryParse(
+            [string]$property.Value,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed)) {
+        return $parsed
+    }
+
+    return 0.0
+}
+
 if ([string]::IsNullOrWhiteSpace($BasePredictionCsv) -and [string]::IsNullOrWhiteSpace($BasePredictionLog)) {
     throw "BasePredictionCsv or BasePredictionLog is required."
 }
@@ -646,7 +670,18 @@ if ($candidateRows.Count -eq 0) {
 
 $outputPath = Resolve-RepoPath $OutputCsv
 $summaryPathResolved = Resolve-RepoPath $SummaryPath
-foreach ($path in @($outputPath, $summaryPathResolved)) {
+if ([string]::IsNullOrWhiteSpace($ReviewQueueCsv)) {
+    $outputParent = Split-Path -Parent $OutputCsv
+    if ([string]::IsNullOrWhiteSpace($outputParent)) {
+        $ReviewQueueCsv = "pseudo-gt-review-queue.csv"
+    }
+    else {
+        $ReviewQueueCsv = Join-Path $outputParent "pseudo-gt-review-queue.csv"
+    }
+}
+
+$reviewQueuePath = Resolve-RepoPath $ReviewQueueCsv
+foreach ($path in @($outputPath, $summaryPathResolved, $reviewQueuePath)) {
     $dir = Split-Path -Parent $path
     if (-not [string]::IsNullOrWhiteSpace($dir)) {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -656,9 +691,65 @@ foreach ($path in @($outputPath, $summaryPathResolved)) {
 $orderedRows = @($candidateRows | Sort-Object frame, candidateType, candidateId)
 $orderedRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $outputPath
 
+$reviewQueueSourceRows = @($orderedRows | ForEach-Object {
+        $fpProbability = Read-CandidateDouble $_ "fpProbability"
+        $missProbability = Read-CandidateDouble $_ "missProbability"
+        $priorityScore = [Math]::Max($fpProbability, $missProbability)
+        $priorityGroup = if ($_.candidateType -eq "supportedFaceCandidate") { 1 } else { 0 }
+        $dominantProbability = if ($missProbability -gt $fpProbability) { "missProbability" } else { "fpProbability" }
+        $priorityReason = switch ($_.candidateType) {
+            "falsePositiveCandidate" { "review likely false-positive first; base YOLO lacks test-only face support" }
+            "missCandidate" { "review likely miss first; high-precision face evidence was not matched by base YOLO" }
+            default { "supported face candidate; lower priority unless visual QA needs confirmation" }
+        }
+
+        [pscustomobject]@{
+            Row = $_
+            PriorityGroup = $priorityGroup
+            PriorityScore = $priorityScore
+            DominantProbability = $dominantProbability
+            PriorityReason = $priorityReason
+        }
+    } | Sort-Object @{ Expression = "PriorityGroup"; Ascending = $true }, @{ Expression = "PriorityScore"; Descending = $true }, @{ Expression = { $_.Row.frame }; Ascending = $true }, @{ Expression = { $_.Row.candidateId }; Ascending = $true })
+
+$reviewRank = 1
+$reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
+        $row = $_.Row
+        $queueRow = [pscustomobject]@{
+            reviewRank = $reviewRank
+            frame = $row.frame
+            candidateId = $row.candidateId
+            candidateType = $row.candidateType
+            source = $row.source
+            reviewPriorityScore = Format-Double $_.PriorityScore
+            dominantProbability = $_.DominantProbability
+            baseFaceConfidence = $row.baseFaceConfidence
+            tileFaceConfidence = $row.tileFaceConfidence
+            tileSupportCount = $row.tileSupportCount
+            faceVerificationConfidence = $row.faceVerificationConfidence
+            faceVerificationDistance = $row.faceVerificationDistance
+            personConfidence = $row.personConfidence
+            personUpperOverlap = $row.personUpperOverlap
+            supportFrameCount = $row.supportFrameCount
+            supportSources = $row.supportSources
+            bestIou = $row.bestIou
+            centerDistanceRatio = $row.centerDistanceRatio
+            fpProbability = $row.fpProbability
+            missProbability = $row.missProbability
+            reviewPriorityReason = $_.PriorityReason
+            pseudoGtReason = $row.pseudoGtReason
+            reviewStatus = $row.reviewStatus
+        }
+        $script:reviewRank++
+        $queueRow
+    })
+
+$reviewQueueRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $reviewQueuePath
+
 $supported = @($orderedRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count
 $falsePositive = @($orderedRows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count
 $miss = @($orderedRows | Where-Object { $_.candidateType -eq "missCandidate" }).Count
+$topReviewFrames = @($reviewQueueRows | Where-Object { $_.candidateType -ne "supportedFaceCandidate" } | Select-Object -First 10 | ForEach-Object { "$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore)" })
 
 $summary = @(
     "# YOLO Pseudo-GT Evidence",
@@ -670,6 +761,7 @@ $summary = @(
     "- faceVerificationRows=$($verificationRows.Count)",
     "- personObjectRows=$($personRows.Count)",
     "- outputRows=$($orderedRows.Count)",
+    "- reviewQueue=$ReviewQueueCsv",
     "- supportedFaceCandidate=$supported",
     "- falsePositiveCandidate=$falsePositive",
     "- missCandidate=$miss",
@@ -678,6 +770,7 @@ $summary = @(
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
     "- minVerificationConfidence=$(Format-Double $MinVerificationConfidence)",
     "- temporalSupportWindowFrames=$TemporalSupportWindowFrames",
+    "- topReviewCandidates=$(if ($topReviewFrames.Count -gt 0) { [string]::Join(';', $topReviewFrames) } else { 'none' })",
     "",
     "Final labels must be copied into the review CSV only after visual confirmation."
 )
@@ -686,3 +779,4 @@ $summary | Set-Content -Encoding UTF8 -Path $summaryPathResolved
 
 Write-Host "[YoloPseudoGtEvidence] rows=$($orderedRows.Count), supportedFaceCandidate=$supported, falsePositiveCandidate=$falsePositive, missCandidate=$miss, output=$OutputCsv"
 Write-Host "[YoloPseudoGtEvidence] summary=$SummaryPath"
+Write-Host "[YoloPseudoGtEvidence] reviewQueue=$ReviewQueueCsv"

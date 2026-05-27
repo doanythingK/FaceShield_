@@ -12,6 +12,7 @@ $verificationCsv = Join-Path $work "face-verification.csv"
 $personCsv = Join-Path $work "person-object.csv"
 $outputCsv = Join-Path $work "pseudo-gt-candidates.csv"
 $summaryPath = Join-Path $work "pseudo-gt-summary.md"
+$reviewQueueCsv = Join-Path $work "pseudo-gt-review-queue.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -79,7 +80,8 @@ $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -FaceVerificationCsv $verificationCsv `
     -PersonObjectCsv $personCsv `
     -OutputCsv $outputCsv `
-    -SummaryPath $summaryPath 2>&1
+    -SummaryPath $summaryPath `
+    -ReviewQueueCsv $reviewQueueCsv 2>&1
 
 if ($LASTEXITCODE -ne 0) {
     throw "new-yolo-pseudo-gt-evidence.ps1 failed: $($output | Out-String)"
@@ -87,14 +89,20 @@ if ($LASTEXITCODE -ne 0) {
 
 Assert-File "pseudo-GT output CSV" $outputCsv
 Assert-File "pseudo-GT summary" $summaryPath
+Assert-File "pseudo-GT review queue CSV" $reviewQueueCsv
 
 $scriptText = Get-Content -Raw -Path $script
 $guideText = Get-Content -Raw -Path $guide
 $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
+$reviewQueueRows = @(Import-Csv $reviewQueueCsv)
 
 if ($rows.Count -ne 5) {
     throw "Expected 5 pseudo-GT rows, actual=$($rows.Count)"
+}
+
+if ($reviewQueueRows.Count -ne 5) {
+    throw "Expected 5 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
 }
 
 $first = $rows[0]
@@ -122,6 +130,24 @@ foreach ($column in @(
         "reviewStatus",
         "evidenceNotes")) {
     Assert-Column $first $column
+}
+
+$queueFirst = $reviewQueueRows[0]
+foreach ($column in @(
+        "reviewRank",
+        "candidateId",
+        "candidateType",
+        "reviewPriorityScore",
+        "dominantProbability",
+        "reviewPriorityReason",
+        "fpProbability",
+        "missProbability",
+        "reviewStatus")) {
+    Assert-Column $queueFirst $column
+}
+
+if ($queueFirst.candidateType -eq "supportedFaceCandidate") {
+    throw "Expected review queue to prioritize miss/false-positive candidates before supported face candidates."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
@@ -160,6 +186,8 @@ Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
+Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
+Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
@@ -167,6 +195,8 @@ Assert-Contains "summary records test-only boundary" $summaryText "test-only evi
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=1"
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=1"
 Assert-Contains "summary records miss count" $summaryText "missCandidate=3"
+Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
+Assert-Contains "summary records top review candidates" $summaryText "topReviewCandidates="
 Assert-Contains "summary records temporal support window" $summaryText "temporalSupportWindowFrames=2"
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"

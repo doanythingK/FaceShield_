@@ -15,6 +15,7 @@ param(
     [string]$PseudoGtPersonObjectCsv = "",
     [string]$PseudoGtOutputCsv = "",
     [string]$PseudoGtSummaryPath = "",
+    [string]$PseudoGtReviewQueueCsv = "",
     [string]$PseudoGtTileInputDir = "",
     [string]$PseudoGtFaceVerificationInputDir = "",
     [string]$PseudoGtPersonObjectInputDir = "",
@@ -623,6 +624,10 @@ if ([string]::IsNullOrWhiteSpace($PseudoGtSummaryPath)) {
     $PseudoGtSummaryPath = Join-Path $OutputDir "pseudo-gt-summary.md"
 }
 
+if ([string]::IsNullOrWhiteSpace($PseudoGtReviewQueueCsv)) {
+    $PseudoGtReviewQueueCsv = Join-Path $OutputDir "pseudo-gt-review-queue.csv"
+}
+
 if ([string]::IsNullOrWhiteSpace($PseudoGtTileInputDir)) {
     $PseudoGtTileInputDir = Join-Path $OutputDir "pseudo-gt-tile-input"
 }
@@ -661,6 +666,7 @@ $resolvedPseudoGtFaceVerificationCsv = Resolve-RepoPath $PseudoGtFaceVerificatio
 $resolvedPseudoGtPersonObjectCsv = Resolve-RepoPath $PseudoGtPersonObjectCsv
 $resolvedPseudoGtOutputCsv = Resolve-RepoPath $PseudoGtOutputCsv
 $resolvedPseudoGtSummaryPath = Resolve-RepoPath $PseudoGtSummaryPath
+$resolvedPseudoGtReviewQueueCsv = Resolve-RepoPath $PseudoGtReviewQueueCsv
 $resolvedPseudoGtTileInputDir = Resolve-RepoPath $PseudoGtTileInputDir
 $resolvedPseudoGtFaceVerificationInputDir = Resolve-RepoPath $PseudoGtFaceVerificationInputDir
 $resolvedPseudoGtPersonObjectInputDir = Resolve-RepoPath $PseudoGtPersonObjectInputDir
@@ -1028,7 +1034,9 @@ else {
             "-OutputCsv",
             $resolvedPseudoGtOutputCsv,
             "-SummaryPath",
-            $resolvedPseudoGtSummaryPath
+            $resolvedPseudoGtSummaryPath,
+            "-ReviewQueueCsv",
+            $resolvedPseudoGtReviewQueueCsv
         )
 
         if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv)) {
@@ -1175,6 +1183,7 @@ if ($detectionRows.Count -gt 0) {
 if ($detectionRows.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv))) {
     [void]$summary.AppendLine("- Pseudo-GT candidates: ``$PseudoGtOutputCsv``")
     [void]$summary.AppendLine("- Pseudo-GT summary: ``$PseudoGtSummaryPath``")
+    [void]$summary.AppendLine("- Pseudo-GT review queue: ``$PseudoGtReviewQueueCsv``")
 }
 if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Review index: ``$ReviewPackageDir/review-index.html``")
@@ -1269,6 +1278,7 @@ if ($detectionRows.Count -gt 0) {
 }
 if ($detectionRows.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv))) {
     Write-Host "[YoloFollowupQualityEvidence] pseudoGt=$PseudoGtOutputCsv"
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGtReviewQueue=$PseudoGtReviewQueueCsv"
 }
 if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewIndex=$ReviewPackageDir/review-index.html"
