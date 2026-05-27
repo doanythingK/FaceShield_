@@ -264,7 +264,12 @@ function Get-ReviewFrameNumbers {
 
     if ($FinalMaskSummaryLines.Count -gt 0) {
         $summaryLine = $FinalMaskSummaryLines[0].Line
-        Add-FrameRangeValues $frames (Read-MatchValue $summaryLine 'shortGapRanges=(.*?), largeJumpGaps=')
+        $shortGapRanges = Read-MatchValue $summaryLine 'shortGapRanges=(.*?), perFaceShortGaps='
+        if ($shortGapRanges -eq "none") {
+            $shortGapRanges = Read-MatchValue $summaryLine 'shortGapRanges=(.*?), largeJumpGaps='
+        }
+        Add-FrameRangeValues $frames $shortGapRanges
+        Add-FrameRangeValues $frames (Read-MatchValue $summaryLine 'perFaceShortGapRanges=(.*?), largeJumpGaps=')
         Add-FrameRangeValues $frames (Read-MatchValue $summaryLine 'largeJumpRanges=(.*?), isolated=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'isolatedFrames=(.*?), lowConf=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'lowConfFrames=(.*?), weakNonEdge=')
