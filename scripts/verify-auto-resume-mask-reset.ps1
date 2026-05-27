@@ -37,5 +37,9 @@ Assert-Contains "workspace resets masks before generator run" $workspace "ResetA
 Assert-Contains "fresh run clears all face masks" $workspace "_maskProvider.ClearFaceMasks();"
 Assert-Contains "resume run clears stale future face masks" $workspace "_maskProvider.RemoveFaceMasksFrom(startFrameIndex)"
 Assert-Contains "resume reset is logged" $workspace "[AutoMaskResumeReset]"
+Assert-Contains "workspace tracks detection completion across export cancel" $workspace "bool detectionCompleted = false;"
+Assert-Contains "workspace marks detection completion before export" $workspace "detectionCompleted = true;"
+Assert-Contains "workspace preserves completed state on export cancel" $workspace "_autoCompleted = detectionCompleted;"
+Assert-Contains "workspace clears resume index after completed cancel" $workspace "if (detectionCompleted)"
 
 Write-Host "[AutoResumeMaskResetVerify] all requested checks passed"

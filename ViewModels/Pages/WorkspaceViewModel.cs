@@ -360,6 +360,7 @@ namespace FaceShield.ViewModels.Pages
             IProgress<ExportProgress>? exportProgress)
         {
             bool persisted = false;
+            bool detectionCompleted = false;
             string runId = $"auto-{Guid.NewGuid():N}";
             try
             {
@@ -476,6 +477,7 @@ namespace FaceShield.ViewModels.Pages
                 // canceled afterwards, do not reopen as a partial detection resume.
                 _autoCompleted = true;
                 _autoResumeIndex = 0;
+                detectionCompleted = true;
 
                 if (exportAfter)
                 {
@@ -499,7 +501,9 @@ namespace FaceShield.ViewModels.Pages
             }
             catch (OperationCanceledException)
             {
-                _autoCompleted = false;
+                _autoCompleted = detectionCompleted;
+                if (detectionCompleted)
+                    _autoResumeIndex = 0;
                 PersistWorkspaceState(includePreviewMask: !exportAfter);
                 persisted = true;
                 return false;
