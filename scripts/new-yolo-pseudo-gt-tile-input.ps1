@@ -8,6 +8,7 @@ param(
     [int]$TileColumns = 2,
     [int]$TileRows = 2,
     [double]$TileOverlapRatio = 0.20,
+    [double]$TileScale = 2.0,
     [int]$FrameWidth = 0,
     [int]$FrameHeight = 0,
     [switch]$SkipImageExtraction,
@@ -341,7 +342,7 @@ function Invoke-FfmpegTileExtraction {
     }
 
     foreach ($row in $Rows) {
-        $filter = "select='eq(n\,$($row.frame))',crop=$($row.tileW):$($row.tileH):$($row.tileX):$($row.tileY),scale=$($row.tileW):$($row.tileH)"
+        $filter = "select='eq(n\,$($row.frame))',crop=$($row.tileW):$($row.tileH):$($row.tileX):$($row.tileY),scale=$($row.tileImageW):$($row.tileImageH)"
         $args = @(
             "-y",
             "-hide_banner",
@@ -519,6 +520,10 @@ if ($TileOverlapRatio -lt 0.0 -or $TileOverlapRatio -ge 0.90) {
     throw "TileOverlapRatio must be between 0.0 and 0.90."
 }
 
+if ($TileScale -lt 1.0 -or $TileScale -gt 8.0) {
+    throw "TileScale must be between 1.0 and 8.0."
+}
+
 if ($MaxFrames -lt 1) {
     throw "MaxFrames must be at least 1."
 }
@@ -564,6 +569,8 @@ foreach ($frame in $framesToUse) {
         foreach ($x in $xStarts) {
             $w = [Math]::Min([int]$tileWidth, $FrameWidth - $x)
             $h = [Math]::Min([int]$tileHeight, $FrameHeight - $y)
+            $scaledW = [Math]::Max(1, [int][Math]::Round($w * $TileScale))
+            $scaledH = [Math]::Max(1, [int][Math]::Round($h * $TileScale))
             $tileImagePath = Join-Path $tilesDir ("frame-{0:D06}-tile-{1:D02}.png" -f $frame, $tileIndex)
             $manifestRows.Add([pscustomobject]@{
                     frame = $frame
@@ -572,6 +579,9 @@ foreach ($frame in $framesToUse) {
                     tileY = $y
                     tileW = $w
                     tileH = $h
+                    tileScale = $TileScale.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
+                    tileImageW = $scaledW
+                    tileImageH = $scaledH
                     frameWidth = $FrameWidth
                     frameHeight = $FrameHeight
                     tileImagePath = $tileImagePath
@@ -611,6 +621,7 @@ $summary = @(
     "- tileColumns=$TileColumns",
     "- tileRows=$TileRows",
     "- tileOverlapRatio=$($TileOverlapRatio.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
+    "- tileScale=$($TileScale.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
     "- frameWidth=$FrameWidth",
     "- frameHeight=$FrameHeight",
     "- tiles=$($manifestRows.Count)",

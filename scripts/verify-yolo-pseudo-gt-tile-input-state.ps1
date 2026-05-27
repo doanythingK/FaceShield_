@@ -125,6 +125,7 @@ $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -TileColumns 3 `
     -TileRows 2 `
     -TileOverlapRatio 0.25 `
+    -TileScale 2.5 `
     -FrameWidth 300 `
     -FrameHeight 200 `
     -SkipImageExtraction `
@@ -212,10 +213,23 @@ if ($manifestRows.Count -ne 18) {
     throw "Expected 18 tile manifest rows, actual=$($manifestRows.Count)"
 }
 
-foreach ($column in @("frame", "tileIndex", "tileX", "tileY", "tileW", "tileH", "frameWidth", "frameHeight", "tileImagePath", "tileRelativePath")) {
+foreach ($column in @("frame", "tileIndex", "tileX", "tileY", "tileW", "tileH", "tileScale", "tileImageW", "tileImageH", "frameWidth", "frameHeight", "tileImagePath", "tileRelativePath")) {
     if ($null -eq $manifestRows[0].PSObject.Properties[$column]) {
         throw "Missing manifest column: $column"
     }
+}
+
+$firstManifestRow = $manifestRows[0]
+if ([double]::Parse($firstManifestRow.tileScale, [System.Globalization.CultureInfo]::InvariantCulture) -ne 2.5) {
+    throw "Expected manifest to record tileScale=2.5."
+}
+
+$tileW = [double]::Parse($firstManifestRow.tileW, [System.Globalization.CultureInfo]::InvariantCulture)
+$tileH = [double]::Parse($firstManifestRow.tileH, [System.Globalization.CultureInfo]::InvariantCulture)
+$tileImageW = [double]::Parse($firstManifestRow.tileImageW, [System.Globalization.CultureInfo]::InvariantCulture)
+$tileImageH = [double]::Parse($firstManifestRow.tileImageH, [System.Globalization.CultureInfo]::InvariantCulture)
+if ($tileImageW -le $tileW -or $tileImageH -le $tileH) {
+    throw "Expected tile input manifest to describe enlarged tile images."
 }
 
 $externalRows = @(Import-Csv $externalCsv)
@@ -231,6 +245,8 @@ Assert-Contains "script supports frame ranges" $scriptText "Get-FrameList"
 Assert-Contains "script limits large frame sets" $scriptText "MaxFrames"
 Assert-Contains "script has explicit large frame override" $scriptText "AllowLargeFrameSet"
 Assert-Contains "script builds overlap tile starts" $scriptText "Get-TileStarts"
+Assert-Contains "script supports tile scaling" $scriptText "TileScale"
+Assert-Contains "script extracts enlarged tiles" $scriptText 'scale=\$\(\$row\.tileImageW\):\$\(\$row\.tileImageH\)'
 Assert-Contains "script writes manifest" $scriptText "tile-manifest\.csv"
 Assert-Contains "script supports ffmpeg extraction" $scriptText "Invoke-FfmpegTileExtraction"
 Assert-Contains "script supports wsl ffmpeg fallback" $scriptText "wsl\.exe"
@@ -242,6 +258,7 @@ Assert-Contains "script validates external output against manifest tile" $script
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records frame count" $summaryText "frameCount=3"
 Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
+Assert-Contains "summary records tile scale" $summaryText "tileScale=2.5"
 Assert-Contains "summary records tile count" $summaryText "tiles=18"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
 Assert-Contains "summary records tile output binding" $summaryText "tileIndex/sourceTileIndex/manifestTileIndex"
