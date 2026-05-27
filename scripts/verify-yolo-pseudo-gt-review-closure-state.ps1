@@ -136,6 +136,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0
         personUpperOverlap = 0
         supportFrameCount = 2
+        supportRowCount = 3
         supportSources = "tile+verification"
         bestIou = 0.9
         centerDistanceRatio = 0.1
@@ -167,6 +168,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0.72
         personUpperOverlap = 0.62
         supportFrameCount = 0
+        supportRowCount = 0
         supportSources = ""
         bestIou = 0
         centerDistanceRatio = 99
@@ -198,6 +200,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0
         personUpperOverlap = 0
         supportFrameCount = 2
+        supportRowCount = 2
         supportSources = "tile"
         bestIou = 0
         centerDistanceRatio = 99
@@ -253,6 +256,7 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "supportFrameCount",
+        "supportRowCount",
         "supportSources",
         "bestIou",
         "centerDistanceRatio",
@@ -264,7 +268,7 @@ foreach ($column in @(
 }
 
 $supportedClosure = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" })[0]
-if ($supportedClosure.supportFrameCount -ne "2" -or $supportedClosure.supportSources -ne "tile+verification") {
+if ($supportedClosure.supportFrameCount -ne "2" -or $supportedClosure.supportRowCount -ne "3" -or $supportedClosure.supportSources -ne "tile+verification") {
     throw "Expected closure output to preserve repeated pseudo-GT support evidence."
 }
 
@@ -386,6 +390,7 @@ $guideText = Get-Content -Raw -Path $guide
 Assert-Contains "script matches source prediction ids" $scriptText "sourcePredictionId"
 Assert-Contains "script supports manual miss iou matching" $scriptText "PreferManualMiss"
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
+Assert-Contains "script preserves repeated support row evidence" $scriptText "supportRowCount"
 Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
 Assert-Contains "script preserves area ratio evidence" $scriptText "areaChangeRatio"
 Assert-Contains "script requires completed review status" $scriptText "Test-ReviewedStatus"

@@ -324,6 +324,7 @@ foreach ($candidate in $pseudoRows) {
             personConfidence = $candidate.personConfidence
             personUpperOverlap = $candidate.personUpperOverlap
             supportFrameCount = $candidate.supportFrameCount
+            supportRowCount = $candidate.supportRowCount
             supportSources = $candidate.supportSources
             bestIou = $candidate.bestIou
             centerDistanceRatio = $candidate.centerDistanceRatio

@@ -136,6 +136,7 @@ $row = $rows[0]
 @(
     [pscustomobject]@{
         frame = $row.frame
+        tileIndex = $row.tileIndex
         detectionId = "tile-face-$($row.frame)-$($row.tileIndex)"
         x = ([double]$row.tileX + 10.0).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
         y = ([double]$row.tileY + 10.0).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
