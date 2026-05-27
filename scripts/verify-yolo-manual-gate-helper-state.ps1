@@ -175,6 +175,8 @@ $completedFrameCsv = Assert-FileNonEmpty "completed fixture full-frame review CS
 
 $helperText = Get-Content -Raw -Path $helperPath
 Assert-Contains "helper prints completed manual readiness command" $helperText "completedManualReadinessCommand"
+Assert-Contains "helper prints pseudo GT review closure command" $helperText "completedPseudoGtReviewClosureCommand"
+Assert-Contains "helper uses pseudo GT review closure script" $helperText "close-yolo-pseudo-gt-review.ps1"
 Assert-Contains "helper supports ready verification" $helperText "VerifyReady"
 Assert-Contains "helper supports completed verification" $helperText "VerifyCompleted"
 Assert-Contains "helper completed path allows full GT" $helperText "AllowCompletedFullGt"
@@ -244,6 +246,7 @@ if ($ready.ExitCode -ne 0) {
     throw "Manual gate helper -VerifyReady failed with exit code $($ready.ExitCode)"
 }
 Assert-Contains "ready output includes completed readiness command" $ready.Text "completedManualReadinessCommand"
+Assert-Contains "ready output includes pseudo GT closure command" $ready.Text "completedPseudoGtReviewClosureCommand"
 Assert-Contains "ready output includes final yolo state command" $ready.Text "completedYoloStateCommand"
 Assert-Contains "ready output includes completion finalizer command" $ready.Text "completionFinalizerCommand"
 Assert-Contains "ready output includes pending report command" $ready.Text "pendingReportCommand"
@@ -279,6 +282,7 @@ Assert-Contains "summary records gui smoke gate" $summaryText "gui-smoke"
 Assert-Contains "summary records completed full GT command" $summaryText "verify-yolo-full-gt-reviewed-state.ps1"
 Assert-Contains "summary records completed GUI command" $summaryText "verify-yolo-gui-smoke-state.ps1"
 Assert-Contains "summary records completed readiness command" $summaryText "verify-yolo-manual-readiness-state.ps1"
+Assert-Contains "summary records pseudo GT closure command" $summaryText "close-yolo-pseudo-gt-review.ps1"
 Assert-Contains "summary records final yolo state command" $summaryText "verify-yolo-state.ps1"
 Assert-Contains "summary records completion finalizer command" $summaryText "complete-yolo-goal-after-manual-gates.ps1"
 Assert-Contains "summary records pending report command" $summaryText "write-yolo-manual-pending-report.ps1"
@@ -288,6 +292,7 @@ Assert-Contains "summary records pending report path" $summaryText "manual-pendi
 Assert-Contains "summary records dashboard path" $summaryText "manual-gate-dashboard.html"
 Assert-Contains "summary records AI candidate reference" $summaryText "aiCandidateFullGtReviewCsv"
 Assert-Contains "summary records AI candidate rule" $summaryText "reference-only-not-final-gt"
+Assert-Contains "summary records pseudo GT closure rule" $summaryText "pseudoGtReviewClosureRule"
 if ($expectedRemaining -eq "remaining=full-gt-label,gui-smoke") {
     Assert-Contains "summary records human review draft command" $summaryText "new-yolo-human-review-draft.ps1"
     Assert-Contains "summary records human review draft report" $summaryText "human-review-draft-report.md"
@@ -337,6 +342,7 @@ Assert-Contains "dashboard records GUI progress" $dashboardText "GUI smoke check
 Assert-Contains "dashboard records pending wording" $dashboardText "pending of"
 Assert-Contains "dashboard records preview track hold" $dashboardText "preview-track-hold"
 Assert-Contains "dashboard records completion finalizer" $dashboardText "complete-yolo-goal-after-manual-gates.ps1"
+Assert-Contains "dashboard records pseudo GT closure command" $dashboardText "close-yolo-pseudo-gt-review.ps1"
 
 $preparedGuiCsv = ".tmp\yolo-manual-gate-helper\prepared-fixture\manual-smoke-checklist.csv"
 $preparedGuiPath = Resolve-RepoPath $preparedGuiCsv
@@ -443,6 +449,7 @@ Assert-Contains "completed fixture runs manual readiness" $completedFixture.Text
 Assert-Contains "completed fixture passes manual readiness" $completedFixture.Text "pass manual-readiness-completed-state"
 Assert-Contains "completed fixture runs full GT reviewed verifier" $completedFixture.Text "full-gt-reviewed-state"
 Assert-Contains "completed fixture runs GUI smoke verifier" $completedFixture.Text "gui-smoke-state"
+Assert-Contains "completed fixture records pseudo GT closure path" $completedFixture.Text "pseudoGtCsv="
 Assert-Contains "completed fixture passes helper" $completedFixture.Text "[YoloManualGate] all requested checks passed"
 
 Write-Host "[YoloManualGateHelperVerify] all requested checks passed"

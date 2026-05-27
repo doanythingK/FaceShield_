@@ -85,6 +85,8 @@ Assert-Contains "finalizer requires strict full GT" $finalizerText "full-gt-revi
 Assert-Contains "finalizer requires GUI smoke" $finalizerText "gui-smoke-state"
 Assert-Contains "finalizer runs completion audit" $finalizerText "completion-audit-complete"
 Assert-Contains "finalizer writes evidence report" $finalizerText "goal-evidence-report-complete"
+Assert-Contains "finalizer closes pseudo gt review loop" $finalizerText "pseudo-gt-review-closure"
+Assert-Contains "finalizer requires pseudo gt candidates closed" $finalizerText "RequireAllClosed"
 Assert-Contains "finalizer forwards quality failure allowance" $finalizerText "allowQualityGateFailureArgs"
 Assert-Contains "finalizer has selftest" $finalizerText "SelfTest"
 

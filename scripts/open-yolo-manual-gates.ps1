@@ -6,6 +6,9 @@ param(
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
     [string]$AiCandidateReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-gt-review-reviewed-candidate.csv",
     [string]$AiCandidateFullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review-reviewed-candidate.csv",
+    [string]$PseudoGtCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
+    [string]$PseudoGtReviewClosureCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
+    [string]$PseudoGtReviewClosureSummary = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md",
     [string]$HumanReviewDraftDir = ".tmp\yolo-manual-gates\human-review-draft",
     [double]$MinIou = 0.50,
     [int]$MaxMisses = 0,
@@ -37,6 +40,7 @@ $completionFinalizer = Join-Path $repo "scripts\complete-yolo-goal-after-manual-
 $pendingReportWriter = Join-Path $repo "scripts\write-yolo-manual-pending-report.ps1"
 $humanReviewDraftWriter = Join-Path $repo "scripts\new-yolo-human-review-draft.ps1"
 $guiEvidencePrep = Join-Path $repo "scripts\prepare-yolo-gui-smoke-evidence.ps1"
+$pseudoGtReviewClosure = Join-Path $repo "scripts\close-yolo-pseudo-gt-review.ps1"
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -198,6 +202,15 @@ function Write-ManualGateDashboard {
         [pscustomobject]@{ Label = "Full-frame review CSV"; Path = $FullFrameReviewCsvPath },
         [pscustomobject]@{ Label = "GUI smoke checklist CSV"; Path = $GuiChecklistCsvPath }
     )
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtCsv) -and (Test-Path $resolvedPseudoGtCsv)) {
+        $links += [pscustomobject]@{ Label = "Pseudo-GT candidates CSV"; Path = $resolvedPseudoGtCsv }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtReviewClosureCsv) -and (Test-Path $resolvedPseudoGtReviewClosureCsv)) {
+        $links += [pscustomobject]@{ Label = "Pseudo-GT review closure CSV"; Path = $resolvedPseudoGtReviewClosureCsv }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtReviewClosureSummary) -and (Test-Path $resolvedPseudoGtReviewClosureSummary)) {
+        $links += [pscustomobject]@{ Label = "Pseudo-GT review closure summary"; Path = $resolvedPseudoGtReviewClosureSummary }
+    }
     if (-not [string]::IsNullOrWhiteSpace($AiCandidateReviewCsvPath) -and (Test-Path $AiCandidateReviewCsvPath)) {
         $links += [pscustomobject]@{ Label = "AI candidate full-GT CSV"; Path = $AiCandidateReviewCsvPath }
     }
@@ -357,6 +370,9 @@ $resolvedGuiEvidenceGuidePath = Resolve-RepoPath $GuiEvidenceGuidePath
 $resolvedPredictionLog = Assert-FileNonEmpty "prediction log" $PredictionLog
 $resolvedAiCandidateReviewCsv = Resolve-RepoPath $AiCandidateReviewCsv
 $resolvedAiCandidateFullFrameReviewCsv = Resolve-RepoPath $AiCandidateFullFrameReviewCsv
+$resolvedPseudoGtCsv = Resolve-RepoPath $PseudoGtCsv
+$resolvedPseudoGtReviewClosureCsv = Resolve-RepoPath $PseudoGtReviewClosureCsv
+$resolvedPseudoGtReviewClosureSummary = Resolve-RepoPath $PseudoGtReviewClosureSummary
 
 if ($PrepareGuiEvidence) {
     if (-not (Test-Path $guiEvidencePrep)) {
@@ -396,9 +412,10 @@ else {
 }
 $completedManualReadinessCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-manual-readiness-state.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -FullGtPredictionLog `"$PredictionLog`" -FullGtMinIou $MinIou -FullGtMaxMisses $MaxMisses -FullGtMaxFalsePositives $MaxFalsePositives -FullGtMaxLowIou $MaxLowIou -AllowCompletedFullGt -AllowCompletedGuiSmoke -AllowQualityGateFailure"
 $completedFullGtCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-full-gt-reviewed-state.ps1 -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -PredictionLog `"$PredictionLog`" -RequireFullFrameReview -RequireEvidence -RequireArtifacts -MinIou $MinIou -MaxMisses $MaxMisses -MaxFalsePositives $MaxFalsePositives -MaxLowIou $MaxLowIou -AllowQualityGateFailure"
+$completedPseudoGtReviewClosureCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\close-yolo-pseudo-gt-review.ps1 -PseudoGtCsv `"$PseudoGtCsv`" -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -OutputCsv `"$PseudoGtReviewClosureCsv`" -SummaryPath `"$PseudoGtReviewClosureSummary`" -RequireAllClosed"
 $completedGuiSmokeCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-gui-smoke-state.ps1 -ChecklistCsv `"$GuiChecklistCsv`" -RequireManualPass"
     $completedYoloStateCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-state.ps1 -AllowCompletedFullGt -AllowCompletedGuiSmoke -RequireComplete -FullGtPredictionLog `"$PredictionLog`" -FullGtMinIou $MinIou -FullGtMaxMisses $MaxMisses -FullGtMaxFalsePositives $MaxFalsePositives -FullGtMaxLowIou $MaxLowIou -AllowFullGtQualityGateFailure"
-    $completionFinalizerCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\complete-yolo-goal-after-manual-gates.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -PredictionLog `"$PredictionLog`" -MinIou $MinIou -MaxMisses $MaxMisses -MaxFalsePositives $MaxFalsePositives -MaxLowIou $MaxLowIou -AllowQualityGateFailure -UpdatePlan -RunYoloState"
+    $completionFinalizerCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\complete-yolo-goal-after-manual-gates.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -PredictionLog `"$PredictionLog`" -PseudoGtCsv `"$PseudoGtCsv`" -PseudoGtReviewClosureCsv `"$PseudoGtReviewClosureCsv`" -PseudoGtReviewClosureSummary `"$PseudoGtReviewClosureSummary`" -MinIou $MinIou -MaxMisses $MaxMisses -MaxFalsePositives $MaxFalsePositives -MaxLowIou $MaxLowIou -AllowQualityGateFailure -UpdatePlan -RunYoloState"
     $pendingReportCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\write-yolo-manual-pending-report.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -ReviewIndex `"$ReviewIndex`" -OutputPath `"$PendingReportPath`" -Verify"
     $prepareGuiEvidenceCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\prepare-yolo-gui-smoke-evidence.ps1 -ChecklistCsv `"$GuiChecklistCsv`" -EvidenceDir `"$GuiEvidenceDir`" -GuidePath `"$GuiEvidenceGuidePath`" -UpdateChecklist -Verify"
     $humanReviewDraftCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\new-yolo-human-review-draft.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -AiCandidateReviewCsv `"$AiCandidateReviewCsv`" -AiCandidateFullFrameReviewCsv `"$AiCandidateFullFrameReviewCsv`" -OutputDir `"$HumanReviewDraftDir`" -Force -Verify"
@@ -421,8 +438,12 @@ Write-Host "[YoloManualGate] predictionLog=$resolvedPredictionLog"
 Write-Host "[YoloManualGate] aiCandidateFullGtReviewCsv=$resolvedAiCandidateReviewCsv"
 Write-Host "[YoloManualGate] aiCandidateFullFrameReviewCsv=$resolvedAiCandidateFullFrameReviewCsv"
 Write-Host "[YoloManualGate] aiCandidateRule=reference-only-not-final-gt"
+Write-Host "[YoloManualGate] pseudoGtCsv=$resolvedPseudoGtCsv"
+Write-Host "[YoloManualGate] pseudoGtReviewClosureCsv=$resolvedPseudoGtReviewClosureCsv"
+Write-Host "[YoloManualGate] pseudoGtReviewClosureSummary=$resolvedPseudoGtReviewClosureSummary"
 Write-Host "[YoloManualGate] completedManualReadinessCommand=$completedManualReadinessCommand"
 Write-Host "[YoloManualGate] completedFullGtCommand=$completedFullGtCommand"
+Write-Host "[YoloManualGate] completedPseudoGtReviewClosureCommand=$completedPseudoGtReviewClosureCommand"
 Write-Host "[YoloManualGate] completedGuiSmokeCommand=$completedGuiSmokeCommand"
 Write-Host "[YoloManualGate] completedYoloStateCommand=$completedYoloStateCommand"
     Write-Host "[YoloManualGate] completionFinalizerCommand=$completionFinalizerCommand"
@@ -466,6 +487,7 @@ if ($WriteSummary) {
         $completedFullGtCommand,
         $completedGuiSmokeCommand,
         $completedManualReadinessCommand,
+        $completedPseudoGtReviewClosureCommand,
         $completedYoloStateCommand,
         $completionFinalizerCommand,
         $pendingReportCommand,
@@ -491,6 +513,10 @@ if ($WriteSummary) {
         "- aiCandidateFullGtReviewCsv: $resolvedAiCandidateReviewCsv",
         "- aiCandidateFullFrameReviewCsv: $resolvedAiCandidateFullFrameReviewCsv",
         "- aiCandidateRule: reference-only-not-final-gt",
+        "- pseudoGtCsv: $resolvedPseudoGtCsv",
+        "- pseudoGtReviewClosureCsv: $resolvedPseudoGtReviewClosureCsv",
+        "- pseudoGtReviewClosureSummary: $resolvedPseudoGtReviewClosureSummary",
+        "- pseudoGtReviewClosureRule: require-all-closed-when-candidates-exist",
         "- humanReviewDraftReport: $resolvedHumanReviewDraftReportPath",
         "- guiEvidenceGuidePath: $resolvedGuiEvidenceGuidePath",
         "- openSmokeManualCommand: $openSmokeManualCommand",
@@ -661,6 +687,16 @@ if ($VerifyCompleted) {
         "-ChecklistCsv", $resolvedGuiChecklistCsv,
         "-RequireManualPass"
     )
+    if (Test-Path $resolvedPseudoGtCsv) {
+        Invoke-RequiredVerifier "pseudo-gt-review-closure" $pseudoGtReviewClosure @(
+            "-PseudoGtCsv", $resolvedPseudoGtCsv,
+            "-ReviewCsv", $resolvedFullGtReviewCsv,
+            "-FullFrameReviewCsv", $resolvedFullFrameReviewCsv,
+            "-OutputCsv", $resolvedPseudoGtReviewClosureCsv,
+            "-SummaryPath", $resolvedPseudoGtReviewClosureSummary,
+            "-RequireAllClosed"
+        )
+    }
 }
 
 Write-Host "[YoloManualGate] all requested checks passed"

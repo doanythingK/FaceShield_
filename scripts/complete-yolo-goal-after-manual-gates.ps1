@@ -5,6 +5,9 @@ param(
     [string]$GuiChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
     [string]$PredictionCsv = "",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [string]$PseudoGtCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
+    [string]$PseudoGtReviewClosureCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
+    [string]$PseudoGtReviewClosureSummary = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md",
     [string]$ManualGateSummary = ".tmp\yolo-manual-gates\manual-gate-summary.md",
     [string]$EvidenceReport = ".tmp\yolo-manual-gates\goal-evidence-report.md",
     [double]$MinIou = 0.50,
@@ -26,6 +29,7 @@ $guiSmokeVerifier = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $completionAuditVerifier = Join-Path $repo "scripts\verify-yolo-completion-audit-state.ps1"
 $evidenceReportWriter = Join-Path $repo "scripts\write-yolo-goal-evidence-report.ps1"
 $yoloStateVerifier = Join-Path $repo "scripts\verify-yolo-state.ps1"
+$pseudoGtReviewClosure = Join-Path $repo "scripts\close-yolo-pseudo-gt-review.ps1"
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -336,6 +340,21 @@ Invoke-RequiredStep "gui-smoke-state" $guiSmokeVerifier @(
     "-ChecklistCsv", $guiCsv,
     "-RequireManualPass"
 )
+
+$resolvedPseudoGtCsv = Resolve-RepoPath $PseudoGtCsv
+if (Test-Path $resolvedPseudoGtCsv) {
+    Invoke-RequiredStep "pseudo-gt-review-closure" $pseudoGtReviewClosure @(
+        "-PseudoGtCsv", $resolvedPseudoGtCsv,
+        "-ReviewCsv", $reviewCsv,
+        "-FullFrameReviewCsv", $frameCsv,
+        "-OutputCsv", (Resolve-RepoPath $PseudoGtReviewClosureCsv),
+        "-SummaryPath", (Resolve-RepoPath $PseudoGtReviewClosureSummary),
+        "-RequireAllClosed"
+    )
+}
+else {
+    Write-Host "[YoloCompletionFinalizer] pseudoGtReviewClosure=skipped-missing-candidates, pseudoGtCsv=$resolvedPseudoGtCsv"
+}
 
 if (-not $UpdatePlan) {
     Write-Host "[YoloCompletionFinalizer] verified completed manual evidence. Pass -UpdatePlan to update yolo-goal-audit-state and run completion audit."
