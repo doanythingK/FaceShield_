@@ -401,13 +401,13 @@ Focused 2-second probe at `00:06:00`:
 
 ## 2026-05-27 Strong Carry Independence Guard
 
-Synthetic scene-cut carry cleanup now distinguishes a real post-cut strong face from a same-position strong carry residue:
+Synthetic scene-cut carry cleanup now distinguishes a real post-cut strong face from same-size post-cut carry residue:
 
 - Code path: `YoloFinalMaskPostProcessor.RemoveSceneCutCarryRemnants`
-- Rule: a high-confidence carry-like candidate is protected only when later strong matching support also shows independent movement or scale change away from the pre-cut reference.
+- Rule: a high-confidence carry-like candidate is protected only when later strong matching support also shows independent scale change away from the pre-cut reference. Motion-only same-size support is treated as possible scene-transition residue and is removed.
 - Verifier: `scripts/verify-yolo-final-mask-cleanup.ps1`
-- Evidence: `stickyStrongCarryRemoved=5`, `stickyStrongCarryRemovedUnsupportedStrong=5`, `driftingStrongCarryProtected=2`
-- Meaning: same-position high-confidence blur residue after a confirmed cut is no longer protected only because it repeats for several frames. A drifting supported post-cut face can still remain for visual review.
+- Evidence: `stickyStrongCarryRemoved=5`, `stickyStrongCarryRemovedUnsupportedStrong=5`, `driftingStrongCarryRemoved=5`, `areaChangedStrongCarryProtected=3`
+- Meaning: same-position and same-size drifting high-confidence blur residue after a confirmed cut is no longer protected only because it repeats for several frames. A post-cut strong candidate with scale change can still remain for visual review.
 
 ## 2026-05-27 Strong Carry Scene-Cut Probe
 
