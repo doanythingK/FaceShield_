@@ -5,6 +5,9 @@ $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $work = Join-Path $repo ".tmp\yolo-followup-quality-evidence-verify"
 $log = Join-Path $work "synthetic-yolo.log"
+$tileFaceCsv = Join-Path $work "tile-face.csv"
+$faceVerificationCsv = Join-Path $work "face-verification.csv"
+$personObjectCsv = Join-Path $work "person-object.csv"
 $outDir = Join-Path $work "out"
 $script = Join-Path $repo "scripts\write-yolo-followup-quality-evidence.ps1"
 $plan = Join-Path $repo "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
@@ -51,9 +54,25 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetectionSummary] label=synthetic-yolo, frames=4, detections=4, frameRange=2-10, confMin=0.180, confAvg=0.280, confMax=0.410, areaRatioMin=0.000210, areaRatioAvg=0.000748, areaRatioMax=0.002000, aspectRatioMin=0.833, aspectRatioAvg=0.959, aspectRatioMax=1.133
 '@ | Set-Content -Encoding UTF8 -Path $log
 
+@(
+    [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 10.0; y = 20.0; w = 50.0; h = 60.0; confidence = 0.920; tileSupportCount = 3 },
+    [pscustomobject]@{ frame = 7; detectionId = "tile-face-7"; x = 60.0; y = 80.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2 }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileFaceCsv
+
+@(
+    [pscustomobject]@{ frame = 2; verificationId = "verify-face-2"; x = 12.0; y = 21.0; w = 48.0; h = 58.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.210 }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $faceVerificationCsv
+
+@(
+    [pscustomobject]@{ frame = 6; detectionId = "person-6"; x = 490.0; y = 400.0; w = 220.0; h = 300.0; confidence = 0.720 }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personObjectCsv
+
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -PredictionLog $log `
     -OutputDir $outDir `
+    -PseudoGtTileFaceCsv $tileFaceCsv `
+    -PseudoGtFaceVerificationCsv $faceVerificationCsv `
+    -PseudoGtPersonObjectCsv $personObjectCsv `
     -SkipReviewPackage 2>&1
 if ($LASTEXITCODE -ne 0) {
     throw "write-yolo-followup-quality-evidence.ps1 failed: $($output | Out-String)"
@@ -63,8 +82,10 @@ $checklist = Join-Path $outDir "yolo-quality-review-checklist.md"
 $continuity = Join-Path $outDir "yolo-mask-continuity-report.md"
 $template = Join-Path $outDir "yolo-quality-full-gt-template.csv"
 $summary = Join-Path $outDir "yolo-followup-quality-evidence.md"
+$pseudoGt = Join-Path $outDir "pseudo-gt-candidates.csv"
+$pseudoGtSummary = Join-Path $outDir "pseudo-gt-summary.md"
 
-foreach ($required in @($checklist, $continuity, $template, $summary)) {
+foreach ($required in @($checklist, $continuity, $template, $summary, $pseudoGt, $pseudoGtSummary)) {
     if (-not (Test-Path $required)) {
         throw "Expected output was not created: $required"
     }
@@ -107,6 +128,11 @@ Assert-Contains "script parses final mask gap-fill scene guard" $scriptText "Smo
 Assert-Contains "script parses final mask summary" $scriptText "SmokeFinalMaskSummary|FinalMaskSummary"
 Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-review-package\.ps1"
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
+Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTileFaceCsv"
+Assert-Contains "script supports pseudo gt face verification input" $scriptText "PseudoGtFaceVerificationCsv"
+Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
+Assert-Contains "script can prepare pseudo gt tile manifest" $scriptText "WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*PseudoGtTileInputDir"
+Assert-Contains "script links pseudo gt summary" $scriptText "Pseudo-GT candidates"
 Assert-Contains "script can write detection overlay video" $scriptText "WithDetectionOverlayVideo[\s\S]*new-yolo-detection-overlay-video\.ps1"
 Assert-Contains "script can write review contact sheet" $scriptText "WithReviewContactSheet[\s\S]*new-yolo-review-contact-sheet\.ps1[\s\S]*Review contact sheet"
 Assert-Contains "script can write no-detection contact sheet" $scriptText "Get-SampledReviewFrameNumbers[\s\S]*No detection rows were found[\s\S]*Sampled no-detection review frames"
@@ -143,6 +169,8 @@ Assert-Contains "continuity includes weak edge table" $continuityText "Weak Edge
 Assert-Contains "continuity includes lower weak table" $continuityText "Lower Weak-To-Medium Non-Edge Final Masks[\s\S]*0\.220"
 Assert-Contains "continuity includes aspect outlier table" $continuityText "Aspect-Ratio Outlier Final Masks[\s\S]*too narrow for YOLO face profile"
 Assert-Contains "summary records detection rows" $summaryText "Detection rows: 4"
+Assert-Contains "summary records pseudo gt candidates" $summaryText "Pseudo-GT candidates"
+Assert-Contains "summary records pseudo gt summary" $summaryText "Pseudo-GT summary"
 Assert-Contains "summary records auto start frame" $summaryText "startFrame=0"
 Assert-Contains "summary links final mask continuity report" $summaryText "Final mask continuity"
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"

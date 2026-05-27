@@ -10,6 +10,12 @@ param(
     [string]$ReviewContactSheetPath = "",
     [string]$SummaryPath = "",
     [string]$MaskContinuityPath = "",
+    [string]$PseudoGtTileFaceCsv = "",
+    [string]$PseudoGtFaceVerificationCsv = "",
+    [string]$PseudoGtPersonObjectCsv = "",
+    [string]$PseudoGtOutputCsv = "",
+    [string]$PseudoGtSummaryPath = "",
+    [string]$PseudoGtTileInputDir = "",
     [string]$TrimStart = "",
     [int]$TrimSeconds = 0,
     [string]$ClipPath = "",
@@ -37,6 +43,11 @@ param(
     [switch]$ForceReviewPackage,
     [switch]$WithDetectionOverlayVideo,
     [switch]$WithReviewContactSheet,
+    [switch]$WithPseudoGtTileInput,
+    [switch]$PseudoGtTileSkipImageExtraction,
+    [int]$PseudoGtTileColumns = 3,
+    [int]$PseudoGtTileRows = 3,
+    [double]$PseudoGtTileOverlapRatio = 0.25,
     [int]$DetectionOverlayScaleWidth = 960
 )
 
@@ -588,6 +599,18 @@ if ([string]::IsNullOrWhiteSpace($MaskContinuityPath)) {
     $MaskContinuityPath = Join-Path $OutputDir "yolo-mask-continuity-report.md"
 }
 
+if ([string]::IsNullOrWhiteSpace($PseudoGtOutputCsv)) {
+    $PseudoGtOutputCsv = Join-Path $OutputDir "pseudo-gt-candidates.csv"
+}
+
+if ([string]::IsNullOrWhiteSpace($PseudoGtSummaryPath)) {
+    $PseudoGtSummaryPath = Join-Path $OutputDir "pseudo-gt-summary.md"
+}
+
+if ([string]::IsNullOrWhiteSpace($PseudoGtTileInputDir)) {
+    $PseudoGtTileInputDir = Join-Path $OutputDir "pseudo-gt-tile-input"
+}
+
 $resolvedOutputDir = Resolve-RepoPath $OutputDir
 $resolvedPredictionLog = Resolve-RepoPath $PredictionLog
 $resolvedChecklistPath = Resolve-RepoPath $ChecklistPath
@@ -597,6 +620,12 @@ $resolvedDetectionOverlayPath = Resolve-RepoPath $DetectionOverlayPath
 $resolvedReviewContactSheetPath = Resolve-RepoPath $ReviewContactSheetPath
 $resolvedSummaryPath = Resolve-RepoPath $SummaryPath
 $resolvedMaskContinuityPath = Resolve-RepoPath $MaskContinuityPath
+$resolvedPseudoGtTileFaceCsv = Resolve-RepoPath $PseudoGtTileFaceCsv
+$resolvedPseudoGtFaceVerificationCsv = Resolve-RepoPath $PseudoGtFaceVerificationCsv
+$resolvedPseudoGtPersonObjectCsv = Resolve-RepoPath $PseudoGtPersonObjectCsv
+$resolvedPseudoGtOutputCsv = Resolve-RepoPath $PseudoGtOutputCsv
+$resolvedPseudoGtSummaryPath = Resolve-RepoPath $PseudoGtSummaryPath
+$resolvedPseudoGtTileInputDir = Resolve-RepoPath $PseudoGtTileInputDir
 $resolvedVideoPath = Resolve-RepoPath $VideoPath
 
 New-Item -ItemType Directory -Force -Path $resolvedOutputDir | Out-Null
@@ -635,6 +664,8 @@ $packageScript = Join-Path $repo "scripts\new-yolo-full-gt-review-package.ps1"
 $maskContinuityScript = Join-Path $repo "scripts\write-yolo-mask-continuity-report.ps1"
 $detectionOverlayScript = Join-Path $repo "scripts\new-yolo-detection-overlay-video.ps1"
 $reviewContactSheetScript = Join-Path $repo "scripts\new-yolo-review-contact-sheet.ps1"
+$pseudoGtScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-evidence.ps1"
+$pseudoGtTileInputScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-tile-input.ps1"
 
 Require-File "run-srcTest-smoke.ps1" $smokeScript
 Require-File "write-yolo-quality-review-checklist.ps1" $checklistScript
@@ -644,6 +675,12 @@ if ($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent) 
 }
 if ($WithReviewContactSheet.IsPresent) {
     Require-File "new-yolo-review-contact-sheet.ps1" $reviewContactSheetScript
+}
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+    Require-File "new-yolo-pseudo-gt-evidence.ps1" $pseudoGtScript
+}
+if ($WithPseudoGtTileInput.IsPresent) {
+    Require-File "new-yolo-pseudo-gt-tile-input.ps1" $pseudoGtTileInputScript
 }
 if (-not $SkipReviewPackage) {
     Require-File "new-yolo-full-gt-review-package.ps1" $packageScript
@@ -814,6 +851,42 @@ else {
         throw "Failed to write YOLO full-GT template."
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+        $pseudoGtArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtScript,
+            "-BasePredictionLog",
+            $resolvedPredictionLog,
+            "-OutputCsv",
+            $resolvedPseudoGtOutputCsv,
+            "-SummaryPath",
+            $resolvedPseudoGtSummaryPath
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv)) {
+            $pseudoGtArgs += "-TileFaceCsv"
+            $pseudoGtArgs += $resolvedPseudoGtTileFaceCsv
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+            $pseudoGtArgs += "-FaceVerificationCsv"
+            $pseudoGtArgs += $resolvedPseudoGtFaceVerificationCsv
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectCsv)) {
+            $pseudoGtArgs += "-PersonObjectCsv"
+            $pseudoGtArgs += $resolvedPseudoGtPersonObjectCsv
+        }
+
+        & powershell.exe @pseudoGtArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT evidence."
+        }
+    }
+
     $reviewIndex = Join-Path $resolvedReviewPackageDir "review-index.html"
     $reviewCsv = Join-Path $resolvedReviewPackageDir "full-gt-review.csv"
     $fullFrameReviewCsv = Join-Path $resolvedReviewPackageDir "full-frame-review.csv"
@@ -890,6 +963,39 @@ else {
             throw "Failed to write YOLO review contact sheet."
         }
     }
+
+    if ($WithPseudoGtTileInput.IsPresent -and $reviewFrameNumbers.Count -gt 0) {
+        Require-File "pseudo-GT tile input video" $resolvedVideoPath
+
+        $tileInputArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtTileInputScript,
+            "-VideoPath",
+            $resolvedVideoPath,
+            "-Frames",
+            ($reviewFrameNumbers -join ","),
+            "-OutputDir",
+            $resolvedPseudoGtTileInputDir,
+            "-TileColumns",
+            $PseudoGtTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileRows",
+            $PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileOverlapRatio",
+            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
+
+        if ($PseudoGtTileSkipImageExtraction.IsPresent) {
+            $tileInputArgs += "-SkipImageExtraction"
+        }
+
+        & powershell.exe @tileInputArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT tile input."
+        }
+    }
 }
 
 $summary = New-Object System.Text.StringBuilder
@@ -901,6 +1007,10 @@ if ($detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask continuity: ``$MaskContinuityPath``")
     [void]$summary.AppendLine("- Full-GT template: ``$TemplateCsv``")
 }
+if ($detectionRows.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv))) {
+    [void]$summary.AppendLine("- Pseudo-GT candidates: ``$PseudoGtOutputCsv``")
+    [void]$summary.AppendLine("- Pseudo-GT summary: ``$PseudoGtSummaryPath``")
+}
 if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Review index: ``$ReviewPackageDir/review-index.html``")
     [void]$summary.AppendLine("- Crop review CSV: ``$ReviewPackageDir/full-gt-review.csv``")
@@ -911,6 +1021,10 @@ if (($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent)
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Review contact sheet: ``$ReviewContactSheetPath``")
+}
+if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    [void]$summary.AppendLine("- Pseudo-GT tile input manifest: ``$PseudoGtTileInputDir/tile-manifest.csv``")
+    [void]$summary.AppendLine("- Pseudo-GT tile input summary: ``$PseudoGtTileInputDir/tile-input-summary.md``")
 }
 if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
@@ -980,6 +1094,9 @@ if ($detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] maskContinuity=$MaskContinuityPath"
     Write-Host "[YoloFollowupQualityEvidence] template=$TemplateCsv"
 }
+if ($detectionRows.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv))) {
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGt=$PseudoGtOutputCsv"
+}
 if (-not $SkipReviewPackage -and $detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewIndex=$ReviewPackageDir/review-index.html"
 }
@@ -988,6 +1105,9 @@ if (($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent)
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"
+}
+if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGtTileInput=$PseudoGtTileInputDir/tile-manifest.csv"
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"

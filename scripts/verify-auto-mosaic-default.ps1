@@ -65,6 +65,8 @@ $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-autom
 $yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
 $yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-followup-quality-evidence.ps1"
 $yoloProblemSpanRunnerVerify = Join-Path $repo "scripts\verify-yolo-problem-span-runner-state.ps1"
+$yoloPseudoGtEvidenceVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-evidence-state.ps1"
+$yoloPseudoGtTileInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-tile-input-state.ps1"
 $yoloDetectionOverlayVideoVerify = Join-Path $repo "scripts\verify-yolo-detection-overlay-video.ps1"
 $yoloAspectRatioFilterVerify = Join-Path $repo "scripts\verify-yolo-aspect-ratio-filter.ps1"
 $yoloFinalMaskCleanupVerify = Join-Path $repo "scripts\verify-yolo-final-mask-cleanup.ps1"
@@ -222,7 +224,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloPseudoGtEvidenceVerify, $yoloPseudoGtTileInputVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -298,6 +300,12 @@ Assert-Contains "yolo-followup-quality-evidence" $followupEvidenceOutput "\[Yolo
 
 $problemSpanRunnerOutput = Invoke-ScriptStep "yolo-problem-span-runner" $yoloProblemSpanRunnerVerify @()
 Assert-Contains "yolo-problem-span-runner" $problemSpanRunnerOutput "\[YoloProblemSpanRunnerVerify\] all requested checks passed"
+
+$pseudoGtEvidenceOutput = Invoke-ScriptStep "yolo-pseudo-gt-evidence" $yoloPseudoGtEvidenceVerify @()
+Assert-Contains "yolo-pseudo-gt-evidence" $pseudoGtEvidenceOutput "\[YoloPseudoGtEvidenceVerify\] all requested checks passed"
+
+$pseudoGtTileInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-tile-input" $yoloPseudoGtTileInputVerify @()
+Assert-Contains "yolo-pseudo-gt-tile-input" $pseudoGtTileInputOutput "\[YoloPseudoGtTileInputVerify\] all requested checks passed"
 
 $detectionOverlayOutput = Invoke-ScriptStep "yolo-detection-overlay-video" $yoloDetectionOverlayVideoVerify @()
 Assert-Contains "yolo-detection-overlay-video" $detectionOverlayOutput "\[YoloDetectionOverlayVideoVerify\] all requested checks passed"

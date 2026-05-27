@@ -4,6 +4,7 @@ $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $runnerPath = Join-Path $repo "scripts\run-yolo-problem-span-verification.ps1"
+$srcSmokeHarnessPath = Join-Path $repo "scripts\run-srcTest-smoke.ps1"
 $guidePath = Join-Path $repo "YOLO_PROBLEM_SPAN_VERIFICATION.md"
 $planPath = Join-Path $repo "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
 $smokePath = Join-Path $repo "YOLO_GUI_SMOKE_RESULT.md"
@@ -27,11 +28,13 @@ function Assert-Match {
 }
 
 Assert-File "problem-span runner" $runnerPath
+Assert-File "srcTest smoke harness" $srcSmokeHarnessPath
 Assert-File "problem-span guide" $guidePath
 Assert-File "auto mosaic plan" $planPath
 Assert-File "yolo smoke result" $smokePath
 
 $runner = Get-Content -Raw -Path $runnerPath
+$srcSmokeHarness = Get-Content -Raw -Path $srcSmokeHarnessPath
 $guide = Get-Content -Raw -Path $guidePath
 $plan = Get-Content -Raw -Path $planPath
 $smoke = Get-Content -Raw -Path $smokePath
@@ -42,11 +45,17 @@ Assert-Match "runner requires bounded trim seconds" $runner '\[Parameter\(Mandat
 Assert-Match "runner defaults to yolo5" $runner '\[ValidateSet\("YoloV8Face",\s*"Yolo5Face"\)\][\s\S]*\$YoloModelType\s*=\s*"Yolo5Face"'
 Assert-Match "runner uses followup wrapper" $runner 'write-yolo-followup-quality-evidence\.ps1[\s\S]*-RunSmoke[\s\S]*-TrimStart[\s\S]*-TrimSeconds[\s\S]*-OutputDir'
 Assert-Match "runner forwards yolo thresholds" $runner '-YoloObjectnessThreshold[\s\S]*-YoloConfidenceThreshold[\s\S]*-YoloNmsThreshold'
+Assert-Match "runner forwards pseudo gt tile face csv" $runner '\[string\]\$PseudoGtTileFaceCsv[\s\S]*-PseudoGtTileFaceCsv'
+Assert-Match "runner forwards pseudo gt face verification csv" $runner '\[string\]\$PseudoGtFaceVerificationCsv[\s\S]*-PseudoGtFaceVerificationCsv'
+Assert-Match "runner forwards pseudo gt person object csv" $runner '\[string\]\$PseudoGtPersonObjectCsv[\s\S]*-PseudoGtPersonObjectCsv'
 Assert-Match "runner supports no-detection evidence" $runner '\[switch\]\$AllowNoDetections[\s\S]*-AllowNoDetections'
 Assert-Match "runner skips review package by default" $runner 'if\s*\(-not\s*\$WithReviewPackage\.IsPresent\)[\s\S]*-SkipReviewPackage'
 Assert-Match "runner supports detection overlay video" $runner '\[switch\]\$WithDetectionOverlayVideo[\s\S]*-WithDetectionOverlayVideo'
 Assert-Match "runner supports review contact sheet" $runner '\[switch\]\$WithReviewContactSheet[\s\S]*-WithReviewContactSheet'
+Assert-Match "runner supports pseudo gt tile input manifest" $runner '\[switch\]\$WithPseudoGtTileInput[\s\S]*-WithPseudoGtTileInput[\s\S]*-PseudoGtTileColumns[\s\S]*-PseudoGtTileRows[\s\S]*-PseudoGtTileOverlapRatio'
+Assert-Match "runner supports pseudo gt tile manifest without image extraction" $runner '\[switch\]\$PseudoGtTileSkipImageExtraction[\s\S]*-PseudoGtTileSkipImageExtraction'
 Assert-Match "runner supports forced rerun" $runner 'if\s*\(\$Force\.IsPresent\)[\s\S]*-ForceTrim[\s\S]*-ForceRunSmoke'
+Assert-Match "srcTest smoke cleans generated harness by default" $srcSmokeHarness '\[switch\]\$KeepHarness[\s\S]*finally\s*\{[\s\S]*-not\s+\$KeepHarness\.IsPresent[\s\S]*Remove-Item\s+-Recurse\s+-Force\s+-Path\s+\$harness'
 
 if ($runner -match "AllowLongSmokeSource") {
     throw "runner should not expose or forward AllowLongSmokeSource"
@@ -56,6 +65,8 @@ Write-Host "[YoloProblemSpanRunnerVerify] pass runner does not expose long sourc
 Assert-Match "guide uses runner" $guide 'scripts/run-yolo-problem-span-verification\.ps1[\s\S]*-TrimStart[\s\S]*-TrimSeconds'
 Assert-Match "guide documents detection overlay option" $guide '-WithDetectionOverlayVideo[\s\S]*yolo-detection-overlay\.mp4'
 Assert-Match "guide documents contact sheet option" $guide '-WithReviewContactSheet[\s\S]*yolo-review-contact-sheet\.png'
+Assert-Match "guide documents pseudo gt evidence" $guide 'Pseudo-GT[\s\S]*faceVerificationConfidence[\s\S]*faceVerificationDistance'
+Assert-Match "guide documents pseudo gt tile input" $guide 'WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*-TileColumns[\s\S]*-ExternalCommand[\s\S]*tileImagePath[\s\S]*tileSupportCount'
 Assert-Match "guide says no full video smoke override" $guide '-AllowLongSmokeSource'
 Assert-Match "guide records wrapper smoke evidence" $guide 'Wrapper Smoke[\s\S]*yolo-problem-span-wrapper-smoke[\s\S]*Detection rows:\s*`96`[\s\S]*removedFrames=33,34,35[\s\S]*blockedByCleanup=3[\s\S]*cleanupBlockedFrames=33,34,35'
 Assert-Match "guide documents cleanup-block pass criteria" $guide 'blockedByCleanup=\.\.\.[\s\S]*cleanupBlockedFrames=\.\.\.[\s\S]*후속 anti-flicker fill'

@@ -28,14 +28,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Avalonia;
-using FaceShield.ViewModels.Pages;
+using FaceShield.Services.Analysis;
 
-var viewModelType = typeof(WorkspaceViewModel);
-var buildCutStarts = viewModelType.GetMethod("BuildTemporalSmoothingCutStarts", BindingFlags.NonPublic | BindingFlags.Static)
+var postProcessorType = typeof(AutoMaskTemporalPostProcessor);
+var buildCutStarts = postProcessorType.GetMethod("BuildTemporalSmoothingCutStarts", BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("BuildTemporalSmoothingCutStarts not found.");
-var isBlockedStep = viewModelType.GetMethod("IsBlockedTemporalSmoothingStep", BindingFlags.NonPublic | BindingFlags.Static)
+var isBlockedStep = postProcessorType.GetMethod("IsBlockedTemporalSmoothingStep", BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("IsBlockedTemporalSmoothingStep not found.");
-var findNearest = viewModelType.GetMethod("FindNearestTemporalFaces", BindingFlags.NonPublic | BindingFlags.Static)
+var findNearest = postProcessorType.GetMethod("FindNearestTemporalFaces", BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("FindNearestTemporalFaces not found.");
 
 var blocked = (IReadOnlySet<int>)buildCutStarts.Invoke(null, new object?[] { new[] { "10->13", "30->31", "bad", "40->x" } })!;

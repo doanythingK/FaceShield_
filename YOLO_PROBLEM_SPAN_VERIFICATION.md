@@ -50,6 +50,43 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 기본 실행은 review package 생성을 생략한다. crop/full-frame HTML 검토가 필요하면 `-WithReviewPackage`를 추가한다.
 검출 박스가 짧은 clip 위에서 시간 순서대로 어떻게 이어지는지 확인하려면 `-WithDetectionOverlayVideo`를 추가한다. 이 경우 `yolo-detection-overlay.mp4`가 함께 생성된다.
 review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewContactSheet`를 추가한다. 이 옵션은 `yolo-detection-overlay.mp4`와 `yolo-review-contact-sheet.png`를 함께 생성한다.
+고품질 검증용 tile manifest까지 같은 run에서 만들려면 `-WithPseudoGtTileInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtTileSkipImageExtraction`을 함께 쓴다.
+
+고품질 검증 모델을 별도 로컬 runner로 실행했다면, 그 산출 CSV를 problem-span runner에 붙여 test-only pseudo-GT evidence를 만들 수 있다. 이 CSV들은 기본 앱 런타임 입력이 아니며, review 후보 우선순위용 증거로만 사용한다.
+
+먼저 `new-yolo-pseudo-gt-tile-input.ps1`로 짧은 clip의 review frame을 tile/overlap manifest로 만들고, 필요하면 로컬 외부 모델 runner를 호출한다. 모델 파일과 runner 출력은 `.tmp` 또는 로컬 경로에 두며 커밋하지 않는다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-tile-input.ps1 `
+  -VideoPath ".tmp/yolo-problem-span-0900/followup-00-09-00-2s.mp4" `
+  -Frames "4,6,7,17,20,24,25,32" `
+  -OutputDir ".tmp/local-heavy-model/tile-input" `
+  -TileColumns 3 `
+  -TileRows 3 `
+  -TileOverlapRatio 0.25 `
+  -ExternalCommand "powershell.exe" `
+  -ExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-heavy-face.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+  -ExternalOutputCsv ".tmp/local-heavy-model/tile-face.csv"
+```
+
+외부 runner는 manifest의 `tileImagePath`, `frame`, `tileX`, `tileY`, `tileW`, `tileH`를 읽어 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-problem-span-verification.ps1 `
+  -Source "srcTest/260102_jp_10.mp4" `
+  -TrimStart "00:09:00" `
+  -TrimSeconds 2 `
+  -OutputDir ".tmp/yolo-problem-span-0900-pseudo-gt" `
+  -WithPseudoGtTileInput `
+  -PseudoGtTileColumns 3 `
+  -PseudoGtTileRows 3 `
+  -PseudoGtTileOverlapRatio 0.25 `
+  -PseudoGtTileFaceCsv ".tmp/local-heavy-model/tile-face.csv" `
+  -PseudoGtFaceVerificationCsv ".tmp/local-heavy-model/face-verification.csv" `
+  -PseudoGtPersonObjectCsv ".tmp/local-heavy-model/person-object.csv"
+```
+
+`PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
 
 ## 산출물
 
@@ -61,6 +98,10 @@ review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewConta
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
 - `yolo-detection-overlay.mp4`: `-WithDetectionOverlayVideo` 사용 시 생성되는 연속 검출 overlay 영상
 - `yolo-review-contact-sheet.png`: `-WithReviewContactSheet` 사용 시 생성되는 frame-number-labeled review contact sheet
+- `pseudo-gt-tile-input/tile-manifest.csv`: `-WithPseudoGtTileInput` 사용 시 생성되는 test-only 고품질 모델 입력 manifest
+- `pseudo-gt-tile-input/tile-input-summary.md`: tile frame/overlap/해상도/외부 runner 연결 요약
+- `pseudo-gt-candidates.csv`: test-only high-precision tile/verification 결과를 기본 YOLO 후보와 비교한 후보 CSV
+- `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
 
 review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`에 `-WithReviewPackage`를 붙여 다시 실행한다. 그러면 `review-package/review-index.html`에서 crop/full-frame overlay를 확인한다.
 연속 재생에서 깜박임이나 화면전환 잔상을 먼저 빠르게 보려면 `-WithDetectionOverlayVideo`를 함께 사용한다. 단, 이 overlay 영상도 참고 증거이며 최종 오탐/미탐 판정은 CSV review row로 닫는다.

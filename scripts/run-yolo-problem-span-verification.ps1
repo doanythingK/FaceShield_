@@ -16,10 +16,18 @@ param(
     [double]$YoloNmsThreshold = 0.45,
     [int]$ParallelDetectorCount = 2,
     [int]$MaxFullFrameRows = 24,
+    [string]$PseudoGtTileFaceCsv = "",
+    [string]$PseudoGtFaceVerificationCsv = "",
+    [string]$PseudoGtPersonObjectCsv = "",
     [switch]$AllowNoDetections,
     [switch]$WithReviewPackage,
     [switch]$WithDetectionOverlayVideo,
     [switch]$WithReviewContactSheet,
+    [switch]$WithPseudoGtTileInput,
+    [switch]$PseudoGtTileSkipImageExtraction,
+    [int]$PseudoGtTileColumns = 3,
+    [int]$PseudoGtTileRows = 3,
+    [double]$PseudoGtTileOverlapRatio = 0.25,
     [switch]$Force
 )
 
@@ -70,6 +78,21 @@ if (-not [string]::IsNullOrWhiteSpace($YoloModelPath)) {
     $argsList.Add($YoloModelPath) | Out-Null
 }
 
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv)) {
+    $argsList.Add("-PseudoGtTileFaceCsv") | Out-Null
+    $argsList.Add($PseudoGtTileFaceCsv) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+    $argsList.Add("-PseudoGtFaceVerificationCsv") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationCsv) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectCsv)) {
+    $argsList.Add("-PseudoGtPersonObjectCsv") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectCsv) | Out-Null
+}
+
 if (-not $WithReviewPackage.IsPresent) {
     $argsList.Add("-SkipReviewPackage") | Out-Null
 }
@@ -80,6 +103,20 @@ if ($WithDetectionOverlayVideo.IsPresent) {
 
 if ($WithReviewContactSheet.IsPresent) {
     $argsList.Add("-WithReviewContactSheet") | Out-Null
+}
+
+if ($WithPseudoGtTileInput.IsPresent) {
+    $argsList.Add("-WithPseudoGtTileInput") | Out-Null
+    $argsList.Add("-PseudoGtTileColumns") | Out-Null
+    $argsList.Add($PseudoGtTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+    $argsList.Add("-PseudoGtTileRows") | Out-Null
+    $argsList.Add($PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+    $argsList.Add("-PseudoGtTileOverlapRatio") | Out-Null
+    $argsList.Add($PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+}
+
+if ($PseudoGtTileSkipImageExtraction.IsPresent) {
+    $argsList.Add("-PseudoGtTileSkipImageExtraction") | Out-Null
 }
 
 if ($Force.IsPresent) {

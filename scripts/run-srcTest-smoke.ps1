@@ -85,7 +85,8 @@ param(
     [string]$CompareCropDir = "",
     [double]$CompareCropPaddingRatio = 0.65,
     [int]$CompareCropMaxOnlyFrames = 16,
-    [int]$CompareCropMaxBoxDiffFrames = 16
+    [int]$CompareCropMaxBoxDiffFrames = 16,
+    [switch]$KeepHarness
 )
 
 $ErrorActionPreference = "Stop"
@@ -1910,90 +1911,100 @@ if ([string]::IsNullOrWhiteSpace($CompareCropDir)) {
 $compareCropPaddingRatioArg = $CompareCropPaddingRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $compareCropMaxOnlyFramesArg = $CompareCropMaxOnlyFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 $compareCropMaxBoxDiffFramesArg = $CompareCropMaxBoxDiffFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-dotnet run --project $project -- `
-    $clip `
-    $output `
-    ([bool]$SkipBaseline).ToString().ToLowerInvariant() `
-    $baselineOutput `
-    $downscaleArg `
-    $DownscaleQuality `
-    $trackingArg `
-    $gpuArg `
-    $skipExportArg `
-    $autoTuneArg `
-    $detectEveryArg `
-    $parallelArg `
-    $minAvgIouArg `
-    $minBestIouArg `
-    $allowFrameMismatchArg `
-    $dumpDetectionsArg `
-    $detectionThresholdArg `
-    $confidenceThresholdArg `
-    $nmsThresholdArg `
-    $scrfdModelPathArg `
-    $scrfdUseBgrArg `
-    $scrfdStretchInputArg `
-    $scrfdDebugDumpArg `
-    $scrfdNoStrideScaleArg `
-    $scrfdHalfStrideAnchorArg `
-    $scrfdCenterLetterboxArg `
-    $scrfdInputSizeArg `
-    $scrfdInputMeanArg `
-    $scrfdInputStdArg `
-    $scrfdPaddingValueArg `
-    $yuNetModelPathArg `
-    $yuNetUseTilingArg `
-    $yuNetTileOnlyArg `
-    $yuNetTileColumnsArg `
-    $yuNetTileRowsArg `
-    $yuNetTileOverlapRatioArg `
-    $yoloModelPathArg `
-    $YoloModelType `
-    $yoloInputSizeArg `
-    $yoloObjectnessThresholdArg `
-    $yoloConfidenceThresholdArg `
-    $yoloNmsThresholdArg `
-    $yoloLargeBoxWidthScaleArg `
-    $yoloLargeBoxHeightScaleArg `
-    $yoloLargeBoxMinAreaRatioArg `
-    $yoloUseLandmarkBoxRefineArg `
-    $yoloLandmarkBoxMinAreaRatioArg `
-    $yoloLandmarkBoxWidthScaleArg `
-    $yoloLandmarkBoxHeightScaleArg `
-    $yoloLandmarkBoxCenterYOffsetRatioArg `
-    $yoloLandmarkBoxMinOriginalIouArg `
-    $yoloUseTilingArg `
-    $yoloUseFaceOnnxRoiRefineArg `
-    $yoloFaceOnnxRoiMinAreaRatioArg `
-    $yoloFaceOnnxRoiMaxCandidatesArg `
-    $yoloTileOnlyArg `
-    $yoloTileColumnsArg `
-    $yoloTileRowsArg `
-    $yoloTileOverlapRatioArg `
-    $yoloDropShortTrackMaxDetectionsArg `
-    $yoloShortTrackMaxConfidenceArg `
-    $yoloLowerFrameTrackMaxConfidenceArg `
-    $yoloDebugDumpArg `
-    $dumpCompareDetailsArg `
-    $dumpCompareOverlaysArg `
-    $compareOverlayDirArg `
-    $compareOverlayMaxFramesArg `
-    $dumpCompareCropsArg `
-    $compareCropDirArg `
-    $compareCropPaddingRatioArg `
-    $compareCropMaxOnlyFramesArg `
-    $compareCropMaxBoxDiffFramesArg `
-    $yoloUseLowConfidencePositionFilterArg `
-    $yoloLowConfidencePositionMaxConfidenceArg `
-    $yoloLowConfidencePositionMinCenterYRatioArg `
-    $yoloUseSmallAreaFilterArg `
-    $yoloSmallAreaMaxAreaRatioArg `
-    $skipOptimizedArg `
-    $yoloMaxLostFillFramesArg `
-    $yoloUseAspectRatioFilterArg `
-    $yoloMinAspectRatioArg `
-    $yoloMaxAspectRatioArg `
-    $yoloMaxInitialFillFramesArg
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+$runExitCode = 0
+try {
+    dotnet run --project $project -- `
+        $clip `
+        $output `
+        ([bool]$SkipBaseline).ToString().ToLowerInvariant() `
+        $baselineOutput `
+        $downscaleArg `
+        $DownscaleQuality `
+        $trackingArg `
+        $gpuArg `
+        $skipExportArg `
+        $autoTuneArg `
+        $detectEveryArg `
+        $parallelArg `
+        $minAvgIouArg `
+        $minBestIouArg `
+        $allowFrameMismatchArg `
+        $dumpDetectionsArg `
+        $detectionThresholdArg `
+        $confidenceThresholdArg `
+        $nmsThresholdArg `
+        $scrfdModelPathArg `
+        $scrfdUseBgrArg `
+        $scrfdStretchInputArg `
+        $scrfdDebugDumpArg `
+        $scrfdNoStrideScaleArg `
+        $scrfdHalfStrideAnchorArg `
+        $scrfdCenterLetterboxArg `
+        $scrfdInputSizeArg `
+        $scrfdInputMeanArg `
+        $scrfdInputStdArg `
+        $scrfdPaddingValueArg `
+        $yuNetModelPathArg `
+        $yuNetUseTilingArg `
+        $yuNetTileOnlyArg `
+        $yuNetTileColumnsArg `
+        $yuNetTileRowsArg `
+        $yuNetTileOverlapRatioArg `
+        $yoloModelPathArg `
+        $YoloModelType `
+        $yoloInputSizeArg `
+        $yoloObjectnessThresholdArg `
+        $yoloConfidenceThresholdArg `
+        $yoloNmsThresholdArg `
+        $yoloLargeBoxWidthScaleArg `
+        $yoloLargeBoxHeightScaleArg `
+        $yoloLargeBoxMinAreaRatioArg `
+        $yoloUseLandmarkBoxRefineArg `
+        $yoloLandmarkBoxMinAreaRatioArg `
+        $yoloLandmarkBoxWidthScaleArg `
+        $yoloLandmarkBoxHeightScaleArg `
+        $yoloLandmarkBoxCenterYOffsetRatioArg `
+        $yoloLandmarkBoxMinOriginalIouArg `
+        $yoloUseTilingArg `
+        $yoloUseFaceOnnxRoiRefineArg `
+        $yoloFaceOnnxRoiMinAreaRatioArg `
+        $yoloFaceOnnxRoiMaxCandidatesArg `
+        $yoloTileOnlyArg `
+        $yoloTileColumnsArg `
+        $yoloTileRowsArg `
+        $yoloTileOverlapRatioArg `
+        $yoloDropShortTrackMaxDetectionsArg `
+        $yoloShortTrackMaxConfidenceArg `
+        $yoloLowerFrameTrackMaxConfidenceArg `
+        $yoloDebugDumpArg `
+        $dumpCompareDetailsArg `
+        $dumpCompareOverlaysArg `
+        $compareOverlayDirArg `
+        $compareOverlayMaxFramesArg `
+        $dumpCompareCropsArg `
+        $compareCropDirArg `
+        $compareCropPaddingRatioArg `
+        $compareCropMaxOnlyFramesArg `
+        $compareCropMaxBoxDiffFramesArg `
+        $yoloUseLowConfidencePositionFilterArg `
+        $yoloLowConfidencePositionMaxConfidenceArg `
+        $yoloLowConfidencePositionMinCenterYRatioArg `
+        $yoloUseSmallAreaFilterArg `
+        $yoloSmallAreaMaxAreaRatioArg `
+        $skipOptimizedArg `
+        $yoloMaxLostFillFramesArg `
+        $yoloUseAspectRatioFilterArg `
+        $yoloMinAspectRatioArg `
+        $yoloMaxAspectRatioArg `
+        $yoloMaxInitialFillFramesArg
+    $runExitCode = $LASTEXITCODE
+}
+finally {
+    if (-not $KeepHarness.IsPresent -and (Test-Path $harness)) {
+        Remove-Item -Recurse -Force -Path $harness -ErrorAction SilentlyContinue
+    }
+}
+
+if ($runExitCode -ne 0) {
+    exit $runExitCode
 }
