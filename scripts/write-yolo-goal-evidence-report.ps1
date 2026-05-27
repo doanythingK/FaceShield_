@@ -7,6 +7,7 @@ param(
     [string]$OutputPath = ".tmp\yolo-manual-gates\goal-evidence-report.md",
     [string]$PredictionCsv = "",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [string]$FinalMaskCleanupLog = ".tmp\yolo-final-mask-cleanup\verify-output.log",
     [string]$PseudoGtCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
     [string]$PseudoGtReviewQueueCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-queue.csv",
     [string]$PseudoGtReviewClosureCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
@@ -167,6 +168,91 @@ function Read-OptionalCsv {
     return @(Import-Csv $resolved)
 }
 
+function Read-OptionalText {
+    param([string]$Path)
+
+    $resolved = Resolve-RepoPath $Path
+    if (-not (Test-Path $resolved)) {
+        return $null
+    }
+
+    return Get-Content -Raw -Path $resolved
+}
+
+function Read-LogIntValue {
+    param(
+        [string]$Line,
+        [string]$Name,
+        [int]$DefaultValue = 0
+    )
+
+    $match = [regex]::Match(
+        $Line,
+        "(?:^|,\s*)$([regex]::Escape($Name))=(?<value>-?\d+)",
+        [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if (-not $match.Success) {
+        return $DefaultValue
+    }
+
+    return [int]::Parse($match.Groups["value"].Value, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-FinalMaskCleanupEvidence {
+    param([string]$Path)
+
+    $text = Read-OptionalText $Path
+    $resolved = Resolve-RepoPath $Path
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return [pscustomobject]@{
+            Status = "pending-log"
+            Evidence = "verify-yolo-final-mask-cleanup output log not found; run scripts/verify-yolo-final-mask-cleanup.ps1 before strict completion; source=$resolved"
+            DriftingStrongCarryRemoved = 0
+            AreaChangedStrongCarryProtected = 0
+            StickyStrongCarryRemoved = 0
+            SceneCutCarryRemoved = 0
+        }
+    }
+
+    $line = @(($text -split "`r?`n") | Where-Object { $_.StartsWith("[YoloFinalMaskCleanupVerify]") } | Select-Object -Last 1)
+    if ($line.Count -eq 0 -or [string]::IsNullOrWhiteSpace($line[-1])) {
+        return [pscustomobject]@{
+            Status = "invalid-log"
+            Evidence = "verify-yolo-final-mask-cleanup output log has no YoloFinalMaskCleanupVerify row; source=$resolved"
+            DriftingStrongCarryRemoved = 0
+            AreaChangedStrongCarryProtected = 0
+            StickyStrongCarryRemoved = 0
+            SceneCutCarryRemoved = 0
+        }
+    }
+
+    $summaryLine = $line[-1]
+    $stickyStrongCarryRemoved = Read-LogIntValue $summaryLine "stickyStrongCarryRemoved"
+    $driftingStrongCarryRemoved = Read-LogIntValue $summaryLine "driftingStrongCarryRemoved"
+    $areaChangedStrongCarryProtected = Read-LogIntValue $summaryLine "areaChangedStrongCarryProtected"
+    $sceneCutCarryRemoved = Read-LogIntValue $summaryLine "sceneCutCarryRemoved"
+    $sceneCarryAnchorRefillBlocked = Read-LogIntValue $summaryLine "sceneCarryAnchorRefillBlocked"
+    $partialSceneCarryRefillBlocked = Read-LogIntValue $summaryLine "partialSceneCarryRefillBlocked"
+
+    $status = if ($stickyStrongCarryRemoved -gt 0 -and
+        $driftingStrongCarryRemoved -gt 0 -and
+        $areaChangedStrongCarryProtected -gt 0 -and
+        $sceneCutCarryRemoved -gt 0) {
+        "pass"
+    }
+    else {
+        "fail"
+    }
+
+    return [pscustomobject]@{
+        Status = $status
+        Evidence = "source=$resolved, stickyStrongCarryRemoved=$stickyStrongCarryRemoved, driftingStrongCarryRemoved=$driftingStrongCarryRemoved, areaChangedStrongCarryProtected=$areaChangedStrongCarryProtected, sceneCutCarryRemoved=$sceneCutCarryRemoved, sceneCarryAnchorRefillBlocked=$sceneCarryAnchorRefillBlocked, partialSceneCarryRefillBlocked=$partialSceneCarryRefillBlocked"
+        DriftingStrongCarryRemoved = $driftingStrongCarryRemoved
+        AreaChangedStrongCarryProtected = $areaChangedStrongCarryProtected
+        StickyStrongCarryRemoved = $stickyStrongCarryRemoved
+        SceneCutCarryRemoved = $sceneCutCarryRemoved
+    }
+}
+
 function Escape-Cell {
     param([string]$Value)
 
@@ -323,6 +409,7 @@ $pseudoGtClosureRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtClosureRo
 $pseudoGtClosureRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtClosureRows "personUpperOverlap"
 $pseudoGtClosureRowsWithGeometryEvidence = Count-AnyColumnPresent $pseudoGtClosureRows @("bestIou", "centerDistanceRatio", "areaChangeRatio")
 $pseudoGtClosureRowsWithAreaRatioEvidence = Count-ColumnPresent $pseudoGtClosureRows "areaChangeRatio"
+$finalMaskCleanupEvidence = Get-FinalMaskCleanupEvidence $FinalMaskCleanupLog
 $pseudoGtOpenRows = if ($pseudoGtRows.Count -eq 0) {
     0
 }
@@ -374,12 +461,13 @@ $guiStatus = if ($guiFilled) { "filled-pending-strict-gate" } else { "pending-hu
 $previewTrackHoldStatus = if ($previewTrackHoldPassed) { "pass" } else { "pending-human" }
 $qualityGateReady = $qualityGateStatus -eq "pass" -or $qualityGateStatus -eq "fail-documented"
 $pseudoGtReady = $pseudoGtStatus -eq "closed" -or $pseudoGtStatus -eq "skipped-no-candidates"
-$goalStatus = if ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady) { "ready-for-strict-completion-audit" } else { "incomplete" }
+$sceneCarryReady = $finalMaskCleanupEvidence.Status -eq "pass"
+$goalStatus = if ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady -and $sceneCarryReady) { "ready-for-strict-completion-audit" } else { "incomplete" }
 $planCompletionText = if ($planComplete) { "complete=true" } else { "complete=false" }
 $planRemainingText = if ($planComplete) { "remaining=none" } elseif ($goalMarker.Contains("remaining=gui-smoke")) { "remaining=gui-smoke" } else { "remaining=full-gt-label,gui-smoke" }
 
-if ($RequireComplete -and -not ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady)) {
-    throw "Evidence report is not ready for strict completion audit: planComplete=$planComplete, fullGtFilled=$fullGtFilled, guiFilled=$guiFilled, qualityGateStatus=$qualityGateStatus, pseudoGtStatus=$pseudoGtStatus, pseudoGtRows=$($pseudoGtRows.Count), pseudoGtClosedRows=$pseudoGtClosedRows, fullGtRows=$($fullGtRows.Count), fullGtReviewed=$fullGtReviewed, fullGtLabels=$fullGtLabels, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, fullFrameMissCounts=$fullFrameMissCounts, guiRows=$($guiRows.Count), guiPassed=$guiPassed, guiArtifacts=$guiArtifacts"
+if ($RequireComplete -and -not ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady -and $sceneCarryReady)) {
+    throw "Evidence report is not ready for strict completion audit: planComplete=$planComplete, fullGtFilled=$fullGtFilled, guiFilled=$guiFilled, qualityGateStatus=$qualityGateStatus, pseudoGtStatus=$pseudoGtStatus, finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status), pseudoGtRows=$($pseudoGtRows.Count), pseudoGtClosedRows=$pseudoGtClosedRows, fullGtRows=$($fullGtRows.Count), fullGtReviewed=$fullGtReviewed, fullGtLabels=$fullGtLabels, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, fullFrameMissCounts=$fullFrameMissCounts, guiRows=$($guiRows.Count), guiPassed=$guiPassed, guiArtifacts=$guiArtifacts"
 }
 
 $rows = @(
@@ -391,7 +479,7 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Failure-axis classification"; Status = "pass"; Evidence = "axes=model/decode/preprocess/post-filter/track/roi/tiling/small-face/box-refine/speed documented" },
     [pscustomobject]@{ Requirement = "Anti-flicker track hold algorithm"; Status = "pass"; Evidence = "track-hold-state=pass, app YOLO MaxLostFillFrames=0, app YOLO MaxInitialFillFrames=3, app keeps internal gap-fill but does not carry final tracks into the next scene, YOLO synthetic track-fill confidence capped at 0.78 for opt-in lost-fill scene-cut cleanup, sceneCutLostRemoved=6 verifies capped high-confidence lost-fill tails are cleared after a hard cut, stable final-mask gap fill up to 5 frames, synthetic cap verifier still covers MaxLostFillFrames=6" },
     [pscustomobject]@{ Requirement = "Scene-cut track reset guard"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes scene-cut-guard=pass, final YOLO scene-cut cleanup runs after ROI/smoothing, post-scene weak cleanup runs without gap-fill, gap/lost track fill plus weak and medium-confidence direct carry-tail transitions checked, hardCutRemoved=True, sameSceneKept=True, directRemoved=3, mediumDirectRemoved=3, checkedPairs and removedFrames logged" },
-    [pscustomobject]@{ Requirement = "Scene-cut high-confidence carry cleanup"; Status = "pass"; Evidence = "verify-yolo-final-mask-cleanup=pass, stickyStrongCarryRemoved=5, driftingStrongCarryRemoved=5, areaChangedStrongCarryProtected=3; same-size post-cut carry support is not enough to preserve a mask, while scale-changed strong support remains reviewable" },
+    [pscustomobject]@{ Requirement = "Scene-cut high-confidence carry cleanup"; Status = $finalMaskCleanupEvidence.Status; Evidence = "$($finalMaskCleanupEvidence.Evidence); same-size post-cut carry support is not enough to preserve a mask, while scale-changed strong support remains reviewable" },
     [pscustomobject]@{ Requirement = "Sparse auto-detect scene-cut guard"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes automask-sparse-scene-cut-guard=pass and automask-sparse-materialize-scene-cut=pass, YOLO hard cut interpolated=0 sceneCutStops=1, yoloSceneCutTransitions=0->5, cutBeforePositiveInterpolated=0, sparseSceneCutPairs logged" },
     [pscustomobject]@{ Requirement = "Sparse/unstable-tail/edge-tail temporal false-positive filter"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes face-track-postprocess=pass, removedSparse=3, removedUnstableTail=1, removedEdgeTail=1, YOLO sparse weak track profile active, low-confidence edge lost-fill blocked" },
     [pscustomobject]@{ Requirement = "YOLO aspect-ratio candidate filter"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes yolo-aspect-ratio-filter=pass; YoloFaceOnnxDetectorOptions exposes UseAspectRatioFilter/MinAspectRatio/MaxAspectRatio, app YOLO path sets 0.35-1.65, smoke harness can exercise the filter" },
@@ -454,6 +542,9 @@ $lines = @(
     "- fullGtReviewed=$fullGtReviewed",
     "- fullGtFilled=$fullGtFilled",
     "- fullGtQualityGate=$qualityGateStatus",
+    "- finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status)",
+    "- finalMaskCleanupDriftingStrongCarryRemoved=$($finalMaskCleanupEvidence.DriftingStrongCarryRemoved)",
+    "- finalMaskCleanupAreaChangedStrongCarryProtected=$($finalMaskCleanupEvidence.AreaChangedStrongCarryProtected)",
     "- pseudoGtStatus=$pseudoGtStatus",
     "- pseudoGtRows=$($pseudoGtRows.Count)",
     "- pseudoGtClosedRows=$pseudoGtClosedRows",
@@ -493,6 +584,7 @@ foreach ($requiredReportToken in @(
     "Test-only pseudo-GT closure evidence preservation",
     "Avalonia GUI smoke",
     "Preview track-hold GUI evidence",
+    "Scene-cut high-confidence carry cleanup",
     "YOLOv8 candidate A/B comparison",
     "YOLO5Face candidate A/B comparison",
     "Failure-axis classification",
@@ -533,6 +625,9 @@ if ($Verify) {
         }
 
         Assert-ReportContains "report records pseudo-GT closure state" $report "pseudoGtStatus=$pseudoGtStatus"
+        Assert-ReportContains "report records final-mask cleanup state" $report "finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status)"
+        Assert-ReportContains "report records same-size carry removal count" $report "finalMaskCleanupDriftingStrongCarryRemoved=$($finalMaskCleanupEvidence.DriftingStrongCarryRemoved)"
+        Assert-ReportContains "report records area-changed carry protection count" $report "finalMaskCleanupAreaChangedStrongCarryProtected=$($finalMaskCleanupEvidence.AreaChangedStrongCarryProtected)"
         Assert-ReportContains "report records pseudo-GT candidate evidence" $report "Test-only pseudo-GT candidate evidence | $pseudoGtStatus"
         Assert-ReportContains "report records pseudo-GT review queue" $report "Test-only pseudo-GT review queue | $pseudoGtReviewQueueStatus"
         Assert-ReportContains "report records pseudo-GT review queue state" $report "pseudoGtReviewQueueStatus=$pseudoGtReviewQueueStatus"

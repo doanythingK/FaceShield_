@@ -1,4 +1,6 @@
-param()
+param(
+    [string]$OutputLog = ".tmp\yolo-final-mask-cleanup\verify-output.log"
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -831,4 +833,31 @@ Console.WriteLine(
     $"[YoloFinalMaskCleanupVerify] removedWeakIsolated={result.RemovedWeakIsolatedFaces}, removedWeakUnsupported={result.RemovedWeakUnsupportedFaces}, removedMediumUnsupported={result.RemovedMediumUnsupportedFaces}, removedWeakShortClusters={result.RemovedWeakShortClusterFaces}, removedWeakTinyClusters={result.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={result.RemovedTinyShortClusterFaces}, removedTinyIsolated={result.RemovedTinyIsolatedFaces}, removedTopEdgeWeakClusters={result.RemovedTopEdgeWeakClusterFaces}, removedUpperWeakClusters={result.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={result.RemovedLowerWeakClusterFaces}, removedAspectOutliers={result.RemovedAspectOutlierClusterFaces}, removedFrames={string.Join(",", result.RemovedFrameIndices)}, remainingFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}, gapFilled={gapFill.FilledFaces}, gapFrames={filledFrames}, supportedWeakGapFilled={supportedWeakGapFill.FilledFaces}, supportedWeakGapFrames={supportedWeakGapFrames}, unsupportedWeakGapFilled={unsupportedWeakGapFill.FilledFaces}, weakEdgeAnchorGapFilled={weakEdgeAnchorGapFill.FilledFaces}, strongEdgeAnchorGapFilled={strongEdgeAnchorGapFill.FilledFaces}, mediumRiskyAnchorGapFilled={mediumRiskyAnchorGapFill.FilledFaces}, mediumRiskyAnchorSuppressed={mediumRiskyAnchorGapFill.SuppressedRiskyGeometryAnchorChecks}, supportedMediumRiskyAnchorGapFilled={supportedMediumRiskyAnchorGapFill.FilledFaces}, supportedMediumRiskyAnchorGapFrames={supportedMediumRiskyAnchorGapFrames}, supportedMediumRiskyAnchorSuppressed={supportedMediumRiskyAnchorGapFill.SuppressedRiskyGeometryAnchorChecks}, cleanupBlockedGapFilled={blockedFrameGapFill.FilledFaces}, cleanupBlockedGapFrames={blockedFrameGapFill.BlockedCleanupGapFrames}, cleanupBlockedFrames={string.Join(",", blockedFrameGapFill.BlockedCleanupFrameIndices)}, partialCleanupBlockedGapFilled={partialBlockedFrameGapFill.FilledFaces}, partialCleanupBlockedGapFrames={partialBlockedFrameGapFill.BlockedCleanupGapFrames}, partialCleanupBlockedFrames={string.Join(",", partialBlockedFrameGapFill.BlockedCleanupFrameIndices)}, extendedGapFilled={appExtendedGapFill.FilledFaces}, extendedGapFrames={extendedGapFrames}, mixedFrameGapFilled={mixedFrameGapFill.FilledFaces}, gapCutRemoved={cutGuard.Removed + afterCutGuard.Removed}, gapCutAnchorCandidates={cutGapFill.CutGuardFacesInfo.Count}, blockedCutGapFilled={blockedCutGapFill.FilledFaces}, blockedCutGapFaces={blockedCutGapFill.BlockedCutGapFaces}, blockedCutGapFrames={string.Join(",", blockedCutGapFill.BlockedCutFrameIndices)}, gapCutAfterRemoved={afterCutGuard.Removed}, postSceneCleanupRemoved={preSceneCleanup.RemovedWeakIsolatedFaces}, sceneCutCarryRemoved={sceneCutCarryCleanup.RemovedFaces}, sceneCutCarryFrames={sceneCutCarryFrames}, sceneCutCarryRemovedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, sceneCutCarryRemovedUnsupportedStrongFrames={string.Join(",", sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, sceneCutCarryProtected={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, sceneCutCarryProtectedFrames={sceneCutCarryProtectedFrames}, lookbackSceneCutCarryRemoved={lookbackCarryCleanup.RemovedFaces}, lookbackSceneCutCarryFrames={lookbackCarryFrames}, sceneCutCarryBlockedFrames={sceneCutCarryBlockedFrameText}, sceneCutCarryRefillBlocked={sceneCutCarryBlockedFill.BlockedSceneCarryGapFrames}, emptyPostCutRemovedUnsupportedStrong={postCutWindowCleanup.RemovedUnsupportedStrongCarryLikeFaces}, emptyPostCutProtected={postCutWindowCleanup.ProtectedStrongCarryLikeFaces}, emptyPostCutRefillBlocked={postCutWindowGapFill.BlockedSceneCarryGapFrames}, stickyStrongCarryRemoved={stickyStrongCarryCleanup.RemovedFaces}, stickyStrongCarryRemovedUnsupportedStrong={stickyStrongCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, driftingStrongCarryRemoved={driftingStrongCarryCleanup.RemovedFaces}, areaChangedStrongCarryProtected={areaChangedStrongCarryCleanup.ProtectedStrongCarryLikeFaces}, partialSceneCarryRefillBlocked={partialPostCutWindowGapFill.BlockedSceneCarryGapFrames}, partialSceneCarryBlockedFrames={string.Join(",", partialPostCutWindowGapFill.BlockedSceneCarryFrameIndices)}, sceneCarryAnchorRefillBlocked={sceneCarryAnchorGapFill.BlockedSceneCarryGapFrames}, sceneCarryAnchorBlockedFrames={string.Join(",", sceneCarryAnchorGapFill.BlockedSceneCarryFrameIndices)}, storedCleanupRefillBlocked={storedCleanupBlockedGapFill.BlockedCleanupGapFrames}, storedCleanupBlockedFrames={string.Join(",", storedCleanupBlockedGapFill.BlockedCleanupFrameIndices)}, storedSceneCarryRefillBlocked={storedSceneCarryBlockedGapFill.BlockedSceneCarryGapFrames}, storedSceneCarryBlockedFrames={string.Join(",", storedSceneCarryBlockedGapFill.BlockedSceneCarryFrameIndices)}");
 '@ | Set-Content -Encoding UTF8 $program
 
-dotnet run --project $project
+$resolvedOutputLog = if ([IO.Path]::IsPathRooted($OutputLog)) {
+    $OutputLog
+}
+else {
+    Join-Path $repo $OutputLog
+}
+$outputLogDir = Split-Path -Parent $resolvedOutputLog
+if (-not [string]::IsNullOrWhiteSpace($outputLogDir)) {
+    New-Item -ItemType Directory -Force -Path $outputLogDir | Out-Null
+}
+
+$oldErrorAction = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    $output = & dotnet run --project $project 2>&1
+    $exitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $oldErrorAction
+}
+
+$text = ($output | Out-String)
+$text | Set-Content -Encoding UTF8 -Path $resolvedOutputLog
+Write-Host $text
+
+if ($exitCode -ne 0) {
+    throw "YoloFinalMaskCleanupHarness failed with exit code $exitCode. Output log: $resolvedOutputLog"
+}
