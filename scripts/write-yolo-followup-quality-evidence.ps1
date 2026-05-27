@@ -53,6 +53,10 @@ param(
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
+    [string]$PseudoGtTileExternalCommand = "",
+    [string]$PseudoGtTileExternalArgumentsTemplate = "",
+    [string]$PseudoGtTileExternalOutputCsv = "",
+    [int]$PseudoGtTileExternalTimeoutSeconds = 0,
     [switch]$WithPseudoGtFaceVerificationInput,
     [switch]$PseudoGtFaceVerificationSkipImageExtraction,
     [double]$PseudoGtFaceVerificationCropPaddingRatio = 0.35,
@@ -655,6 +659,12 @@ if ([string]::IsNullOrWhiteSpace($PseudoGtPersonObjectInputDir)) {
     $PseudoGtPersonObjectInputDir = Join-Path $OutputDir "pseudo-gt-person-object-input"
 }
 
+if ($WithPseudoGtTileInput.IsPresent -and
+    -not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalCommand) -and
+    [string]::IsNullOrWhiteSpace($PseudoGtTileExternalOutputCsv)) {
+    $PseudoGtTileExternalOutputCsv = Join-Path $PseudoGtTileInputDir "tile-face.csv"
+}
+
 if ($WithPseudoGtFaceVerificationInput.IsPresent -and
     -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand) -and
     [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv)) {
@@ -685,6 +695,7 @@ $resolvedPseudoGtReviewQueueCsv = Resolve-RepoPath $PseudoGtReviewQueueCsv
 $resolvedPseudoGtTileInputDir = Resolve-RepoPath $PseudoGtTileInputDir
 $resolvedPseudoGtFaceVerificationInputDir = Resolve-RepoPath $PseudoGtFaceVerificationInputDir
 $resolvedPseudoGtPersonObjectInputDir = Resolve-RepoPath $PseudoGtPersonObjectInputDir
+$resolvedPseudoGtTileExternalOutputCsv = Resolve-RepoPath $PseudoGtTileExternalOutputCsv
 $resolvedPseudoGtFaceVerificationExternalOutputCsv = Resolve-RepoPath $PseudoGtFaceVerificationExternalOutputCsv
 $resolvedPseudoGtPersonObjectExternalOutputCsv = Resolve-RepoPath $PseudoGtPersonObjectExternalOutputCsv
 $resolvedVideoPath = Resolve-RepoPath $VideoPath
@@ -741,6 +752,7 @@ if ($WithReviewContactSheet.IsPresent) {
 }
 if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or
     -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv) -or
+    ($WithPseudoGtTileInput.IsPresent -and -not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalCommand)) -or
     ($WithPseudoGtFaceVerificationInput.IsPresent -and -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand))) {
     Require-File "new-yolo-pseudo-gt-evidence.ps1" $pseudoGtScript
 }
@@ -920,6 +932,62 @@ else {
         -OutputCsv $resolvedTemplateCsv
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to write YOLO full-GT template."
+    }
+
+    if ($WithPseudoGtTileInput.IsPresent -and $reviewFrameNumbers.Count -gt 0) {
+        Require-File "pseudo-GT tile input video" $resolvedVideoPath
+
+        $tileInputArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtTileInputScript,
+            "-VideoPath",
+            $resolvedVideoPath,
+            "-Frames",
+            ($reviewFrameNumbers -join ","),
+            "-OutputDir",
+            $resolvedPseudoGtTileInputDir,
+            "-MaxFrames",
+            $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileColumns",
+            $PseudoGtTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileRows",
+            $PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileOverlapRatio",
+            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
+
+        if ($PseudoGtTileSkipImageExtraction.IsPresent) {
+            $tileInputArgs += "-SkipImageExtraction"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalCommand)) {
+            $tileInputArgs += "-ExternalCommand"
+            $tileInputArgs += $PseudoGtTileExternalCommand
+            if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalArgumentsTemplate)) {
+                $tileInputArgs += "-ExternalArgumentsTemplate"
+                $tileInputArgs += $PseudoGtTileExternalArgumentsTemplate
+            }
+            $tileInputArgs += "-ExternalOutputCsv"
+            $tileInputArgs += $resolvedPseudoGtTileExternalOutputCsv
+            if ($PseudoGtTileExternalTimeoutSeconds -gt 0) {
+                $tileInputArgs += "-ExternalTimeoutSeconds"
+                $tileInputArgs += $PseudoGtTileExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            }
+        }
+
+        & powershell.exe @tileInputArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT tile input."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -and
+            -not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalOutputCsv)) {
+            $PseudoGtTileFaceCsv = $PseudoGtTileExternalOutputCsv
+            $resolvedPseudoGtTileFaceCsv = $resolvedPseudoGtTileExternalOutputCsv
+        }
     }
 
     if ($WithPseudoGtFaceVerificationInput.IsPresent) {
@@ -1156,40 +1224,6 @@ else {
         }
     }
 
-    if ($WithPseudoGtTileInput.IsPresent -and $reviewFrameNumbers.Count -gt 0) {
-        Require-File "pseudo-GT tile input video" $resolvedVideoPath
-
-        $tileInputArgs = @(
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            $pseudoGtTileInputScript,
-            "-VideoPath",
-            $resolvedVideoPath,
-            "-Frames",
-            ($reviewFrameNumbers -join ","),
-            "-OutputDir",
-            $resolvedPseudoGtTileInputDir,
-            "-MaxFrames",
-            $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture),
-            "-TileColumns",
-            $PseudoGtTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture),
-            "-TileRows",
-            $PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
-            "-TileOverlapRatio",
-            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-        )
-
-        if ($PseudoGtTileSkipImageExtraction.IsPresent) {
-            $tileInputArgs += "-SkipImageExtraction"
-        }
-
-        & powershell.exe @tileInputArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to write YOLO pseudo-GT tile input."
-        }
-    }
 }
 
 $summary = New-Object System.Text.StringBuilder

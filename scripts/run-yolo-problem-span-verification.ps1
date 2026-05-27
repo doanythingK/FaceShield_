@@ -29,6 +29,10 @@ param(
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
+    [string]$PseudoGtTileExternalCommand = "",
+    [string]$PseudoGtTileExternalArgumentsTemplate = "",
+    [string]$PseudoGtTileExternalOutputCsv = "",
+    [int]$PseudoGtTileExternalTimeoutSeconds = 0,
     [switch]$WithPseudoGtFaceVerificationInput,
     [switch]$PseudoGtFaceVerificationSkipImageExtraction,
     [double]$PseudoGtFaceVerificationCropPaddingRatio = 0.35,
@@ -138,6 +142,26 @@ if ($WithPseudoGtTileInput.IsPresent) {
 
 if ($PseudoGtTileSkipImageExtraction.IsPresent) {
     $argsList.Add("-PseudoGtTileSkipImageExtraction") | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalCommand)) {
+    $argsList.Add("-PseudoGtTileExternalCommand") | Out-Null
+    $argsList.Add($PseudoGtTileExternalCommand) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalArgumentsTemplate)) {
+    $argsList.Add("-PseudoGtTileExternalArgumentsTemplate") | Out-Null
+    $argsList.Add($PseudoGtTileExternalArgumentsTemplate) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalOutputCsv)) {
+    $argsList.Add("-PseudoGtTileExternalOutputCsv") | Out-Null
+    $argsList.Add($PseudoGtTileExternalOutputCsv) | Out-Null
+}
+
+if ($PseudoGtTileExternalTimeoutSeconds -gt 0) {
+    $argsList.Add("-PseudoGtTileExternalTimeoutSeconds") | Out-Null
+    $argsList.Add($PseudoGtTileExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 }
 
 if ($WithPseudoGtFaceVerificationInput.IsPresent) {
