@@ -127,6 +127,63 @@ function Count-NonZeroNumber {
     }).Count
 }
 
+function Test-ReviewedStatus {
+    param([string]$Status)
+
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        return $false
+    }
+
+    return $Status.Trim().ToLowerInvariant() -in @("pass", "reviewed", "complete", "completed", "closed", "done")
+}
+
+function Test-PseudoGtClosureStrictlyClosed {
+    param([object]$Row)
+
+    if ($null -eq $Row.PSObject.Properties["closureStatus"] -or
+        $Row.closureStatus.Trim().ToLowerInvariant() -ne "closed") {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewStatus"] -or
+        -not (Test-ReviewedStatus ([string]$Row.reviewStatus))) {
+        return $false
+    }
+
+    if ($null -ne $Row.PSObject.Properties["expectedReviewLabel"] -and
+        $null -ne $Row.PSObject.Properties["reviewLabel"] -and
+        -not [string]::IsNullOrWhiteSpace([string]$Row.expectedReviewLabel) -and
+        $Row.expectedReviewLabel.Trim().ToLowerInvariant() -ne $Row.reviewLabel.Trim().ToLowerInvariant()) {
+        return $false
+    }
+
+    $candidateType = if ($null -ne $Row.PSObject.Properties["candidateType"]) {
+        $Row.candidateType.Trim().ToLowerInvariant()
+    }
+    else {
+        ""
+    }
+
+    if ($candidateType -eq "misscandidate") {
+        if ($null -eq $Row.PSObject.Properties["fullFrameReviewStatus"] -or
+            -not (Test-ReviewedStatus ([string]$Row.fullFrameReviewStatus))) {
+            return $false
+        }
+
+        if ($null -eq $Row.PSObject.Properties["fullFrameMissedRowsAdded"]) {
+            return $false
+        }
+
+        $missedRowsAdded = 0
+        if (-not [int]::TryParse([string]$Row.fullFrameMissedRowsAdded, [ref]$missedRowsAdded) -or
+            $missedRowsAdded -le 0) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Get-MaxNumber {
     param(
         [object[]]$Rows,
@@ -402,7 +459,8 @@ $pseudoGtRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtRows "supportFra
 $pseudoGtRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtRows "personUpperOverlap"
 $pseudoGtRowsWithGeometryEvidence = Count-AnyColumnPresent $pseudoGtRows @("bestIou", "centerDistanceRatio", "areaChangeRatio")
 $pseudoGtRowsWithAreaRatioEvidence = Count-ColumnPresent $pseudoGtRows "areaChangeRatio"
-$pseudoGtClosedRows = @($pseudoGtClosureRows | Where-Object {
+$pseudoGtClosedRows = @($pseudoGtClosureRows | Where-Object { Test-PseudoGtClosureStrictlyClosed $_ }).Count
+$pseudoGtLooseClosedRows = @($pseudoGtClosureRows | Where-Object {
     $null -ne $_.PSObject.Properties["closureStatus"] -and $_.closureStatus.Trim().ToLowerInvariant() -eq "closed"
 }).Count
 $pseudoGtClosureRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtClosureRows "supportFrameCount"
@@ -467,7 +525,7 @@ $planCompletionText = if ($planComplete) { "complete=true" } else { "complete=fa
 $planRemainingText = if ($planComplete) { "remaining=none" } elseif ($goalMarker.Contains("remaining=gui-smoke")) { "remaining=gui-smoke" } else { "remaining=full-gt-label,gui-smoke" }
 
 if ($RequireComplete -and -not ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady -and $sceneCarryReady)) {
-    throw "Evidence report is not ready for strict completion audit: planComplete=$planComplete, fullGtFilled=$fullGtFilled, guiFilled=$guiFilled, qualityGateStatus=$qualityGateStatus, pseudoGtStatus=$pseudoGtStatus, finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status), pseudoGtRows=$($pseudoGtRows.Count), pseudoGtClosedRows=$pseudoGtClosedRows, fullGtRows=$($fullGtRows.Count), fullGtReviewed=$fullGtReviewed, fullGtLabels=$fullGtLabels, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, fullFrameMissCounts=$fullFrameMissCounts, guiRows=$($guiRows.Count), guiPassed=$guiPassed, guiArtifacts=$guiArtifacts"
+    throw "Evidence report is not ready for strict completion audit: planComplete=$planComplete, fullGtFilled=$fullGtFilled, guiFilled=$guiFilled, qualityGateStatus=$qualityGateStatus, pseudoGtStatus=$pseudoGtStatus, finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status), pseudoGtRows=$($pseudoGtRows.Count), pseudoGtClosedRows=$pseudoGtClosedRows, pseudoGtLooseClosedRows=$pseudoGtLooseClosedRows, fullGtRows=$($fullGtRows.Count), fullGtReviewed=$fullGtReviewed, fullGtLabels=$fullGtLabels, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, fullFrameMissCounts=$fullFrameMissCounts, guiRows=$($guiRows.Count), guiPassed=$guiPassed, guiArtifacts=$guiArtifacts"
 }
 
 $rows = @(
@@ -548,6 +606,7 @@ $lines = @(
     "- pseudoGtStatus=$pseudoGtStatus",
     "- pseudoGtRows=$($pseudoGtRows.Count)",
     "- pseudoGtClosedRows=$pseudoGtClosedRows",
+    "- pseudoGtLooseClosedRows=$pseudoGtLooseClosedRows",
     "- pseudoGtSupportedRows=$pseudoGtSupportedRows",
     "- pseudoGtFalsePositiveRows=$pseudoGtFalsePositiveRows",
     "- pseudoGtMissRows=$pseudoGtMissRows",
@@ -625,6 +684,8 @@ if ($Verify) {
         }
 
         Assert-ReportContains "report records pseudo-GT closure state" $report "pseudoGtStatus=$pseudoGtStatus"
+        Assert-ReportContains "report records strict pseudo-GT closure count" $report "pseudoGtClosedRows=$pseudoGtClosedRows"
+        Assert-ReportContains "report records loose pseudo-GT closure count" $report "pseudoGtLooseClosedRows=$pseudoGtLooseClosedRows"
         Assert-ReportContains "report records final-mask cleanup state" $report "finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status)"
         Assert-ReportContains "report records same-size carry removal count" $report "finalMaskCleanupDriftingStrongCarryRemoved=$($finalMaskCleanupEvidence.DriftingStrongCarryRemoved)"
         Assert-ReportContains "report records area-changed carry protection count" $report "finalMaskCleanupAreaChangedStrongCarryProtected=$($finalMaskCleanupEvidence.AreaChangedStrongCarryProtected)"

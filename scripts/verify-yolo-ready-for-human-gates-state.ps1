@@ -143,6 +143,8 @@ Assert-Contains "report records YOLO5Face candidate comparison" $report "YOLO5Fa
 Assert-Contains "report records failure axis classification" $report "Failure-axis classification | pass"
 Assert-Contains "report records pseudo-GT review queue" $report "Test-only pseudo-GT review queue |"
 Assert-Contains "report records pseudo-GT review queue status" $report "pseudoGtReviewQueueStatus="
+Assert-Contains "report records strict pseudo-GT closure count" $report "pseudoGtClosedRows="
+Assert-Contains "report records loose pseudo-GT closure count" $report "pseudoGtLooseClosedRows="
 Assert-Contains "report records pseudo-GT auxiliary boost count" $report "pseudoGtReviewQueueAuxiliaryBoostedRows="
 Assert-Contains "report records pseudo-GT max auxiliary boost" $report "pseudoGtReviewQueueMaxAuxiliaryBoost="
 Assert-Contains "report keeps recommendation none" $report "Final YOLO recommendation | none"
