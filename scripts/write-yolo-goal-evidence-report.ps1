@@ -127,6 +127,32 @@ function Count-NonZeroNumber {
     }).Count
 }
 
+function Count-FaceVerificationEvidence {
+    param([object[]]$Rows)
+
+    return @($Rows | Where-Object {
+        if ($null -eq $_.PSObject.Properties["faceVerificationConfidence"] -or
+            $null -eq $_.PSObject.Properties["faceVerificationDistance"]) {
+            return $false
+        }
+
+        $confidence = 0.0
+        $distance = 0.0
+        $hasConfidence = [double]::TryParse(
+            [string]$_.faceVerificationConfidence,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$confidence)
+        $hasDistance = [double]::TryParse(
+            [string]$_.faceVerificationDistance,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$distance)
+
+        return $hasConfidence -and $confidence -gt 0.0 -and $hasDistance -and $distance -ge 0.0
+    }).Count
+}
+
 function Test-ReviewedStatus {
     param([string]$Status)
 
@@ -457,7 +483,7 @@ $pseudoGtQueueTopRows = @($pseudoGtReviewQueueRows | Select-Object -First 5 | Fo
     })
 $pseudoGtRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtRows "supportFrameCount"
 $pseudoGtRowsWithSupportRowEvidence = Count-NonZeroNumber $pseudoGtRows "supportRowCount"
-$pseudoGtRowsWithFaceVerificationEvidence = Count-NonZeroNumber $pseudoGtRows "faceVerificationConfidence"
+$pseudoGtRowsWithFaceVerificationEvidence = Count-FaceVerificationEvidence $pseudoGtRows
 $pseudoGtRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtRows "personUpperOverlap"
 $pseudoGtRowsWithGeometryEvidence = Count-AnyColumnPresent $pseudoGtRows @("bestIou", "centerDistanceRatio", "areaChangeRatio")
 $pseudoGtRowsWithAreaRatioEvidence = Count-ColumnPresent $pseudoGtRows "areaChangeRatio"
@@ -467,7 +493,7 @@ $pseudoGtLooseClosedRows = @($pseudoGtClosureRows | Where-Object {
 }).Count
 $pseudoGtClosureRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtClosureRows "supportFrameCount"
 $pseudoGtClosureRowsWithSupportRowEvidence = Count-NonZeroNumber $pseudoGtClosureRows "supportRowCount"
-$pseudoGtClosureRowsWithFaceVerificationEvidence = Count-NonZeroNumber $pseudoGtClosureRows "faceVerificationConfidence"
+$pseudoGtClosureRowsWithFaceVerificationEvidence = Count-FaceVerificationEvidence $pseudoGtClosureRows
 $pseudoGtClosureRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtClosureRows "personUpperOverlap"
 $pseudoGtClosureRowsWithGeometryEvidence = Count-AnyColumnPresent $pseudoGtClosureRows @("bestIou", "centerDistanceRatio", "areaChangeRatio")
 $pseudoGtClosureRowsWithAreaRatioEvidence = Count-ColumnPresent $pseudoGtClosureRows "areaChangeRatio"
