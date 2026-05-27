@@ -137,6 +137,13 @@ foreach ($column in @(
         "reviewRank",
         "candidateId",
         "candidateType",
+        "basePredictionId",
+        "tileDetectionId",
+        "verificationId",
+        "x",
+        "y",
+        "w",
+        "h",
         "reviewPriorityScore",
         "dominantProbability",
         "reviewPriorityReason",
@@ -148,6 +155,14 @@ foreach ($column in @(
 
 if ($queueFirst.candidateType -eq "supportedFaceCandidate") {
     throw "Expected review queue to prioritize miss/false-positive candidates before supported face candidates."
+}
+
+if ([string]::IsNullOrWhiteSpace($queueFirst.x) -or [string]::IsNullOrWhiteSpace($queueFirst.y) -or [string]::IsNullOrWhiteSpace($queueFirst.w) -or [string]::IsNullOrWhiteSpace($queueFirst.h)) {
+    throw "Expected review queue to preserve candidate geometry columns."
+}
+
+if ($queueFirst.candidateType -eq "missCandidate" -and [string]::IsNullOrWhiteSpace($queueFirst.tileDetectionId) -and [string]::IsNullOrWhiteSpace($queueFirst.verificationId)) {
+    throw "Expected miss review queue row to preserve tile or verification source id."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
@@ -188,6 +203,7 @@ Assert-Contains "script calculates center distance" $scriptText "Get-CenterDista
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
+Assert-Contains "script preserves review queue geometry" $scriptText "basePredictionId[\s\S]*tileDetectionId[\s\S]*verificationId[\s\S]*x ="
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
