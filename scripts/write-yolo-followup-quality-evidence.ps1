@@ -48,6 +48,7 @@ param(
     [switch]$WithReviewContactSheet,
     [switch]$WithPseudoGtTileInput,
     [switch]$PseudoGtTileSkipImageExtraction,
+    [int]$PseudoGtMaxFrames = 900,
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
@@ -73,6 +74,10 @@ $LowConfidenceReviewThreshold = 0.38
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "resolve-yolo-model-path.ps1")
+
+if ($PseudoGtMaxFrames -lt 1) {
+    throw "PseudoGtMaxFrames must be at least 1."
+}
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -922,6 +927,8 @@ else {
             $resolvedPredictionLog,
             "-OutputDir",
             $resolvedPseudoGtFaceVerificationInputDir,
+            "-MaxFrames",
+            $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture),
             "-CropPaddingRatio",
             $PseudoGtFaceVerificationCropPaddingRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
@@ -986,6 +993,8 @@ else {
                 (@($personObjectFrameSet) -join ","),
                 "-OutputDir",
                 $resolvedPseudoGtPersonObjectInputDir,
+                "-MaxFrames",
+                $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture),
                 "-ScaleWidth",
                 $PseudoGtPersonObjectScaleWidth.ToString([System.Globalization.CultureInfo]::InvariantCulture)
             )
@@ -1152,6 +1161,8 @@ else {
             ($reviewFrameNumbers -join ","),
             "-OutputDir",
             $resolvedPseudoGtTileInputDir,
+            "-MaxFrames",
+            $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture),
             "-TileColumns",
             $PseudoGtTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture),
             "-TileRows",

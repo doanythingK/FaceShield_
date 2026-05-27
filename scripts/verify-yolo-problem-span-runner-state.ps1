@@ -52,6 +52,7 @@ Assert-Match "runner supports no-detection evidence" $runner '\[switch\]\$AllowN
 Assert-Match "runner skips review package by default" $runner 'if\s*\(-not\s*\$WithReviewPackage\.IsPresent\)[\s\S]*-SkipReviewPackage'
 Assert-Match "runner supports detection overlay video" $runner '\[switch\]\$WithDetectionOverlayVideo[\s\S]*-WithDetectionOverlayVideo'
 Assert-Match "runner supports review contact sheet" $runner '\[switch\]\$WithReviewContactSheet[\s\S]*-WithReviewContactSheet'
+Assert-Match "runner forwards pseudo gt frame cap" $runner '\[int\]\$PseudoGtMaxFrames\s*=\s*900[\s\S]*-PseudoGtMaxFrames[\s\S]*\$PseudoGtMaxFrames'
 Assert-Match "runner supports pseudo gt tile input manifest" $runner '\[switch\]\$WithPseudoGtTileInput[\s\S]*-WithPseudoGtTileInput[\s\S]*-PseudoGtTileColumns[\s\S]*-PseudoGtTileRows[\s\S]*-PseudoGtTileOverlapRatio'
 Assert-Match "runner supports pseudo gt tile manifest without image extraction" $runner '\[switch\]\$PseudoGtTileSkipImageExtraction[\s\S]*-PseudoGtTileSkipImageExtraction'
 Assert-Match "runner supports pseudo gt face verification input manifest" $runner '\[switch\]\$WithPseudoGtFaceVerificationInput[\s\S]*-WithPseudoGtFaceVerificationInput[\s\S]*-PseudoGtFaceVerificationCropPaddingRatio'

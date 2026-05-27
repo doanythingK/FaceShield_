@@ -54,6 +54,7 @@ review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewConta
 기본 YOLO 후보 박스를 고품질 face verification 모델로 재검증할 crop manifest까지 같은 run에서 만들려면 `-WithPseudoGtFaceVerificationInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtFaceVerificationSkipImageExtraction`을 함께 쓴다.
 사람/사물 보조 검증용 full-frame manifest까지 같은 run에서 만들려면 `-WithPseudoGtPersonObjectInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtPersonObjectSkipImageExtraction`을 함께 쓴다.
 test-only manifest 스크립트도 기본적으로 큰 frame set을 막는다. 독립 실행 시 `MaxFrames=900`을 넘는 `-Frames`/base prediction frame set은 거부되며, 이는 30fps 기준 30초 문제 구간 상한에 맞춘 안전장치다. `-AllowLargeFrameSet`은 명시적 로컬 감사 목적 외에는 사용하지 않는다.
+problem-span runner와 follow-up evidence wrapper는 이 상한을 `-PseudoGtMaxFrames`로 manifest 생성 단계에 전달한다. 기본값은 `900`이며, 일반 검증에서는 이 값을 늘리지 않는다.
 
 고품질 검증 모델을 별도 로컬 runner로 실행했다면, 그 산출 CSV를 problem-span runner에 붙여 test-only pseudo-GT evidence를 만들 수 있다. 이 CSV들은 기본 앱 런타임 입력이 아니며, review 후보 우선순위용 증거로만 사용한다.
 

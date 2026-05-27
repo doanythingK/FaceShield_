@@ -129,14 +129,15 @@ Assert-Contains "script parses final mask summary" $scriptText "SmokeFinalMaskSu
 Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-review-package\.ps1"
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
 Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTileFaceCsv"
+Assert-Contains "script supports pseudo gt frame cap" $scriptText "PseudoGtMaxFrames"
 Assert-Contains "script supports pseudo gt face verification input" $scriptText "PseudoGtFaceVerificationCsv"
-Assert-Contains "script can prepare pseudo gt face verification manifest" $scriptText "WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*PseudoGtFaceVerificationInputDir"
+Assert-Contains "script can prepare pseudo gt face verification manifest" $scriptText "WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*PseudoGtFaceVerificationInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script can use external face verification output as pseudo gt input" $scriptText 'PseudoGtFaceVerificationExternalOutputCsv[\s\S]*PseudoGtFaceVerificationCsv\s*=\s*\$PseudoGtFaceVerificationExternalOutputCsv'
-Assert-Contains "script can prepare pseudo gt person object manifest" $scriptText "WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*PseudoGtPersonObjectInputDir"
+Assert-Contains "script can prepare pseudo gt person object manifest" $scriptText "WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*PseudoGtPersonObjectInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script can use external person object output as pseudo gt input" $scriptText 'PseudoGtPersonObjectExternalOutputCsv[\s\S]*PseudoGtPersonObjectCsv\s*=\s*\$PseudoGtPersonObjectExternalOutputCsv'
 Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script forwards pseudo gt review queue" $scriptText "PseudoGtReviewQueueCsv[\s\S]*-ReviewQueueCsv"
-Assert-Contains "script can prepare pseudo gt tile manifest" $scriptText "WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*PseudoGtTileInputDir"
+Assert-Contains "script can prepare pseudo gt tile manifest" $scriptText "WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*PseudoGtTileInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script links pseudo gt summary" $scriptText "Pseudo-GT candidates"
 Assert-Contains "script links pseudo gt review queue" $scriptText "Pseudo-GT review queue"
 Assert-Contains "script links pseudo gt face verification input summary" $scriptText "Pseudo-GT face verification input manifest"

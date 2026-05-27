@@ -25,6 +25,7 @@ param(
     [switch]$WithReviewContactSheet,
     [switch]$WithPseudoGtTileInput,
     [switch]$PseudoGtTileSkipImageExtraction,
+    [int]$PseudoGtMaxFrames = 900,
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
@@ -58,6 +59,10 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = ".tmp/yolo-problem-span-$safeStart-${TrimSeconds}s"
 }
 
+if ($PseudoGtMaxFrames -lt 1) {
+    throw "PseudoGtMaxFrames must be at least 1."
+}
+
 $argsList = [System.Collections.Generic.List[string]]::new()
 $argsList.Add("-RunSmoke") | Out-Null
 $argsList.Add("-Source") | Out-Null
@@ -82,6 +87,8 @@ $argsList.Add("-ParallelDetectorCount") | Out-Null
 $argsList.Add($ParallelDetectorCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 $argsList.Add("-MaxFullFrameRows") | Out-Null
 $argsList.Add($MaxFullFrameRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+$argsList.Add("-PseudoGtMaxFrames") | Out-Null
+$argsList.Add($PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 
 if ($AllowNoDetections.IsPresent) {
     $argsList.Add("-AllowNoDetections") | Out-Null
