@@ -58,10 +58,10 @@ $rows | ForEach-Object {
     [pscustomobject]@{
         frame = $_.frame
         detectionId = "person-$($_.frame)"
-        x = 40
-        y = 20
-        w = 120
-        h = 180
+        x = 80
+        y = 40
+        w = 240
+        h = 360
         confidence = 0.82
     }
 } | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
@@ -120,7 +120,8 @@ $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -SkipImageExtraction `
     -ExternalCommand "powershell.exe" `
     -ExternalArgumentsTemplate $template `
-    -ExternalOutputCsv $externalCsv 2>&1
+    -ExternalOutputCsv $externalCsv `
+    -ExternalOutputCoordinateSpace ScaledFrame 2>&1
 
 if ($LASTEXITCODE -ne 0) {
     throw "new-yolo-pseudo-gt-person-object-input.ps1 failed: $($output | Out-String)"
@@ -202,7 +203,7 @@ if ($rows.Count -ne 3) {
     throw "Expected three manifest rows, actual=$($rows.Count)"
 }
 
-foreach ($column in @("frame", "frameWidth", "frameHeight", "scaleWidth", "coordinateSpace", "frameImagePath", "frameRelativePath")) {
+foreach ($column in @("frame", "frameWidth", "frameHeight", "scaleWidth", "coordinateSpace", "scaledFrameWidth", "scaledFrameHeight", "inputCoordinateSpace", "frameImagePath", "frameRelativePath")) {
     if ($null -eq $rows[0].PSObject.Properties[$column]) {
         throw "Missing manifest column: $column"
     }
@@ -212,9 +213,22 @@ if ($rows[0].coordinateSpace -ne "original-frame") {
     throw "Expected person/object manifest to keep original-frame coordinate space."
 }
 
+if ($rows[0].scaledFrameWidth -ne "640" -or $rows[0].scaledFrameHeight -ne "480") {
+    throw "Expected scaled person/object manifest dimensions to be 640x480."
+}
+
 $externalRows = @(Import-Csv $externalCsv)
 if ($externalRows.Count -ne 3) {
     throw "Expected three external person/object rows, actual=$($externalRows.Count)"
+}
+
+if ($externalRows[0].x -ne "40" -or $externalRows[0].y -ne "20" -or
+    $externalRows[0].w -ne "120" -or $externalRows[0].h -ne "180") {
+    throw "Expected ScaledFrame external person/object rows to be normalized to original-frame geometry."
+}
+
+if ($externalRows[0].inputCoordinateSpace -ne "ScaledFrame" -or $externalRows[0].normalizedCoordinateSpace -ne "Frame") {
+    throw "Expected external person/object CSV to keep coordinate-space audit columns."
 }
 
 $scriptText = Get-Content -Raw -Path $script
@@ -227,6 +241,8 @@ Assert-Contains "script has explicit large frame override" $scriptText "AllowLar
 Assert-Contains "script writes person object manifest" $scriptText "person-object-manifest\.csv"
 Assert-Contains "script extracts full frames" $scriptText "Invoke-FfmpegFrameExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
+Assert-Contains "script supports external output coordinate space" $scriptText "ExternalOutputCoordinateSpace"
+Assert-Contains "script normalizes external person object coordinates" $scriptText "Convert-ExternalPersonObjectCsvCoordinateSpace"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script validates external output against frame bounds" $scriptText "outside the manifest frame bounds"
@@ -237,6 +253,8 @@ Assert-Contains "summary records frame count" $summaryText "frameCount=3"
 Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records frame count" $summaryText "framesPrepared=3"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
+Assert-Contains "summary records external coordinate space" $summaryText "externalOutputCoordinateSpace=ScaledFrame"
 Assert-Contains "guide documents person object input" $guideText "new-yolo-pseudo-gt-person-object-input\.ps1"
+Assert-Contains "guide documents person object coordinate space" $guideText "PseudoGtPersonObjectExternalOutputCoordinateSpace|ExternalOutputCoordinateSpace ScaledFrame"
 
 Write-Host "[YoloPseudoGtPersonObjectInputVerify] all requested checks passed"

@@ -92,7 +92,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -ExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv"
 ```
 
-사람/사물 보조 신호는 `new-yolo-pseudo-gt-person-object-input.ps1`가 만든 `person-object-manifest.csv`를 사용한다. 이 manifest는 `frameImagePath`, `frame`, `frameWidth`, `frameHeight`, `scaleWidth`를 담는다. 외부 runner는 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence` CSV를 만들어야 하며, 검출 중심점은 해당 frame의 manifest bounds 안에 있어야 한다. 이 값은 얼굴 정답이 아니라 `personConfidence`, `personUpperOverlap` 같은 후보 우선순위 보조 신호로만 사용한다.
+사람/사물 보조 신호는 `new-yolo-pseudo-gt-person-object-input.ps1`가 만든 `person-object-manifest.csv`를 사용한다. 이 manifest는 `frameImagePath`, `frame`, `frameWidth`, `frameHeight`, `scaleWidth`, `scaledFrameWidth`, `scaledFrameHeight`를 담는다. 외부 runner는 기본값으로 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence` CSV를 만들어야 하며, 검출 중심점은 해당 frame의 manifest bounds 안에 있어야 한다. 외부 runner가 `ScaleWidth`로 만든 스케일된 frame 이미지 좌표계로 출력하면 `-ExternalOutputCoordinateSpace ScaledFrame`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. 이 값은 얼굴 정답이 아니라 `personConfidence`, `personUpperOverlap` 같은 후보 우선순위 보조 신호로만 사용한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-person-object-input.ps1 `
@@ -102,6 +102,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -ScaleWidth 960 `
   -ExternalCommand "powershell.exe" `
   -ExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-heavy-person-object.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+  -ExternalOutputCoordinateSpace ScaledFrame `
   -ExternalOutputCsv ".tmp/local-heavy-model/person-object.csv"
 ```
 
@@ -126,10 +127,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
   -PseudoGtFaceVerificationExternalOutputCoordinateSpace CropImage `
   -PseudoGtFaceVerificationExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv" `
   -WithPseudoGtPersonObjectInput `
-  -PseudoGtPersonObjectCsv ".tmp/local-heavy-model/person-object.csv"
+  -PseudoGtPersonObjectScaleWidth 960 `
+  -PseudoGtPersonObjectExternalCommand "powershell.exe" `
+  -PseudoGtPersonObjectExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-heavy-person-object.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+  -PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame `
+  -PseudoGtPersonObjectExternalOutputCsv ".tmp/local-heavy-model/person-object.csv"
 ```
 
 `PseudoGtTileExternalCommand`를 쓰면 problem-span runner가 tile manifest 생성 뒤 외부 고정밀 tile face runner를 실행하고, `PseudoGtTileExternalOutputCsv`를 곧바로 `PseudoGtTileFaceCsv`로 연결해 `pseudo-gt-candidates.csv` 생성에 사용한다. 이미 외부 모델을 따로 실행해 둔 경우에는 `PseudoGtTileFaceCsv`만 직접 넘겨도 된다.
+`PseudoGtPersonObjectExternalCommand`를 쓰면 runner가 full-frame person/object manifest 생성 뒤 외부 보조 runner를 실행하고, `PseudoGtPersonObjectExternalOutputCsv`를 곧바로 `PseudoGtPersonObjectCsv`로 연결한다. 외부 runner가 스케일된 frame 이미지 좌표로 출력하면 `PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame`을 지정해야 한다.
 
 `PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. tile 없이 face verification만 잡은 얼굴도 기본 YOLO와 매칭되지 않으면 `missCandidate`로 남긴다. 기본 YOLO 박스와 고품질 face evidence는 IoU 또는 중심 거리로 매칭하되, 중심만 맞고 크기 차이가 큰 후보는 geometry support로 보지 않는다. 이렇게 큰 YOLO 박스 안의 작은 얼굴처럼 과대 박스/미탐이 섞인 경우가 `supportedFaceCandidate`로 묻히지 않고 review queue에 남는다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
 `pseudo-gt-review-queue.csv`는 같은 후보를 `fpProbability`/`missProbability` 기준으로 정렬해 먼저 볼 frame/candidate를 알려준다. 이 queue도 참고 증거이며, 최종 판정은 review CSV 라벨로만 닫는다.

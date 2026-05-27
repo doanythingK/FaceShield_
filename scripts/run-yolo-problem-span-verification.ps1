@@ -51,6 +51,8 @@ param(
     [string]$PseudoGtPersonObjectExternalCommand = "",
     [string]$PseudoGtPersonObjectExternalArgumentsTemplate = "",
     [string]$PseudoGtPersonObjectExternalOutputCsv = "",
+    [ValidateSet("Frame", "ScaledFrame")]
+    [string]$PseudoGtPersonObjectExternalOutputCoordinateSpace = "Frame",
     [int]$PseudoGtPersonObjectExternalTimeoutSeconds = 0,
     [switch]$Force
 )
@@ -234,6 +236,11 @@ if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalArgumentsTemp
 if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectExternalOutputCsv)) {
     $argsList.Add("-PseudoGtPersonObjectExternalOutputCsv") | Out-Null
     $argsList.Add($PseudoGtPersonObjectExternalOutputCsv) | Out-Null
+}
+
+if ($PseudoGtPersonObjectExternalOutputCoordinateSpace -ne "Frame") {
+    $argsList.Add("-PseudoGtPersonObjectExternalOutputCoordinateSpace") | Out-Null
+    $argsList.Add($PseudoGtPersonObjectExternalOutputCoordinateSpace) | Out-Null
 }
 
 if ($PseudoGtPersonObjectExternalTimeoutSeconds -gt 0) {

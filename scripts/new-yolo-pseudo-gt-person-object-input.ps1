@@ -12,6 +12,8 @@ param(
     [string]$ExternalCommand = "",
     [string]$ExternalArgumentsTemplate = "",
     [string]$ExternalOutputCsv = "",
+    [ValidateSet("Frame", "ScaledFrame")]
+    [string]$ExternalOutputCoordinateSpace = "Frame",
     [int]$ExternalTimeoutSeconds = 0
 )
 
@@ -317,6 +319,92 @@ function Assert-ExternalPersonObjectCsv {
     }
 }
 
+function Format-DoubleValue {
+    param([double]$Value)
+
+    return $Value.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-ScaledFrameHeight {
+    param(
+        [int]$SourceWidth,
+        [int]$SourceHeight,
+        [int]$TargetWidth
+    )
+
+    if ($TargetWidth -le 0) {
+        return $SourceHeight
+    }
+
+    $height = [Math]::Max(1, [int][Math]::Round($SourceHeight * ($TargetWidth / [double]$SourceWidth)))
+    if ($height -gt 1 -and ($height % 2) -ne 0) {
+        $height += 1
+    }
+
+    return $height
+}
+
+function Convert-ExternalPersonObjectCsvCoordinateSpace {
+    param(
+        [string]$Path,
+        [object[]]$ManifestRows,
+        [string]$CoordinateSpace
+    )
+
+    if ($CoordinateSpace -eq "Frame") {
+        return
+    }
+
+    $manifestByFrame = @{}
+    foreach ($row in $ManifestRows) {
+        $manifestByFrame[[int]$row.frame] = $row
+    }
+
+    $normalizedRows = [System.Collections.Generic.List[object]]::new()
+    $index = 0
+    foreach ($row in (Import-Csv $Path)) {
+        $frame = Read-RequiredIntValue $row @("frame", "Frame") "person-object" $index
+        if (-not $manifestByFrame.ContainsKey($frame)) {
+            throw "person-object CSV row $index references frame $frame outside the manifest."
+        }
+
+        $manifestFrame = $manifestByFrame[$frame]
+        $frameWidth = [double]::Parse([string]$manifestFrame.frameWidth, [System.Globalization.CultureInfo]::InvariantCulture)
+        $frameHeight = [double]::Parse([string]$manifestFrame.frameHeight, [System.Globalization.CultureInfo]::InvariantCulture)
+        $scaledFrameWidth = [double]::Parse([string]$manifestFrame.scaledFrameWidth, [System.Globalization.CultureInfo]::InvariantCulture)
+        $scaledFrameHeight = [double]::Parse([string]$manifestFrame.scaledFrameHeight, [System.Globalization.CultureInfo]::InvariantCulture)
+
+        $x = Read-RequiredDoubleValue $row @("x", "X") "person-object" $index
+        $y = Read-RequiredDoubleValue $row @("y", "Y") "person-object" $index
+        $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "person-object" $index
+        $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "person-object" $index
+
+        $scaleX = $frameWidth / [Math]::Max(1.0, $scaledFrameWidth)
+        $scaleY = $frameHeight / [Math]::Max(1.0, $scaledFrameHeight)
+
+        $output = [ordered]@{}
+        foreach ($property in $row.PSObject.Properties) {
+            $name = $property.Name
+            if ($name -match '^(x|y|w|h|width|height)$') {
+                continue
+            }
+
+            $output[$name] = $property.Value
+        }
+
+        $output["x"] = Format-DoubleValue ($x * $scaleX)
+        $output["y"] = Format-DoubleValue ($y * $scaleY)
+        $output["w"] = Format-DoubleValue ($width * $scaleX)
+        $output["h"] = Format-DoubleValue ($height * $scaleY)
+        $output["inputCoordinateSpace"] = $CoordinateSpace
+        $output["normalizedCoordinateSpace"] = "Frame"
+        $normalizedRows.Add([pscustomobject]$output) | Out-Null
+        $index++
+    }
+
+    $normalizedRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Path
+}
+
 function Invoke-FfmpegFrameExtraction {
     param(
         [string]$SourceVideo,
@@ -399,6 +487,7 @@ function Invoke-ExternalModel {
         [string]$FramesDir,
         [string]$OutputPath,
         [string]$Video,
+        [string]$OutputCoordinateSpace,
         [int]$TimeoutSeconds
     )
 
@@ -443,7 +532,12 @@ function Invoke-ExternalModel {
         throw "External high-precision person/object command did not create output CSV: $OutputPath"
     }
 
-    Assert-ExternalPersonObjectCsv -Path $OutputPath -ManifestRows @(Import-Csv $ManifestPath)
+    $manifestRows = @(Import-Csv $ManifestPath)
+    Convert-ExternalPersonObjectCsvCoordinateSpace `
+        -Path $OutputPath `
+        -ManifestRows $manifestRows `
+        -CoordinateSpace $OutputCoordinateSpace
+    Assert-ExternalPersonObjectCsv -Path $OutputPath -ManifestRows $manifestRows
 }
 
 if ($ScaleWidth -lt 0) {
@@ -486,12 +580,17 @@ New-Item -ItemType Directory -Force -Path $framesDir | Out-Null
 $manifestRows = [System.Collections.Generic.List[object]]::new()
 foreach ($frame in $framesToUse) {
     $frameImagePath = Join-Path $framesDir ("frame-{0:D06}.png" -f $frame)
+    $scaledFrameWidth = if ($ScaleWidth -gt 0) { $ScaleWidth } else { $FrameWidth }
+    $scaledFrameHeight = Get-ScaledFrameHeight -SourceWidth $FrameWidth -SourceHeight $FrameHeight -TargetWidth $ScaleWidth
     $manifestRows.Add([pscustomobject]@{
             frame = $frame
             frameWidth = $FrameWidth
             frameHeight = $FrameHeight
             scaleWidth = $ScaleWidth
             coordinateSpace = "original-frame"
+            scaledFrameWidth = $scaledFrameWidth
+            scaledFrameHeight = $scaledFrameHeight
+            inputCoordinateSpace = if ($ScaleWidth -gt 0) { "scaled-frame" } else { "original-frame" }
             frameImagePath = $frameImagePath
             frameRelativePath = Get-RelativePathCompat $resolvedOutputDir $frameImagePath
         }) | Out-Null
@@ -511,6 +610,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExternalCommand)) {
         -FramesDir $framesDir `
         -OutputPath $resolvedExternalOutputCsv `
         -Video $resolvedVideoPath `
+        -OutputCoordinateSpace $ExternalOutputCoordinateSpace `
         -TimeoutSeconds $ExternalTimeoutSeconds
 }
 
@@ -531,8 +631,10 @@ $summary = @(
     "- imageExtractionSkipped=$($SkipImageExtraction.IsPresent)",
     "- externalCommandUsed=$(-not [string]::IsNullOrWhiteSpace($ExternalCommand))",
     "- externalOutputCsv=$ExternalOutputCsv",
+    "- externalOutputCoordinateSpace=$ExternalOutputCoordinateSpace",
     "",
     "External model output should be converted to PersonObjectCsv fields before running new-yolo-pseudo-gt-evidence.ps1: frame, detectionId, x, y, w, h, confidence.",
+    "If external output uses ScaledFrame coordinates, this script normalizes it to original frame coordinates before validation.",
     "Every external person/object detection center must stay inside the original-frame manifest bounds for that frame.",
     "Person/object detections are auxiliary evidence only and must not be used as face ground truth without review CSV labels."
 )

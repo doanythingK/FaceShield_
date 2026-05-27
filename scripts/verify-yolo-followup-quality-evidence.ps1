@@ -278,6 +278,7 @@ Assert-Contains "script supports pseudo gt face verification external coordinate
 Assert-Contains "script can use external face verification output as pseudo gt input" $scriptText 'PseudoGtFaceVerificationExternalOutputCsv[\s\S]*PseudoGtFaceVerificationCsv\s*=\s*\$PseudoGtFaceVerificationExternalOutputCsv'
 Assert-Contains "script can prepare pseudo gt person object manifest" $scriptText "WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*PseudoGtPersonObjectInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script can use external person object output as pseudo gt input" $scriptText 'PseudoGtPersonObjectExternalOutputCsv[\s\S]*PseudoGtPersonObjectCsv\s*=\s*\$PseudoGtPersonObjectExternalOutputCsv'
+Assert-Contains "script supports pseudo gt person object external coordinate space" $scriptText "PseudoGtPersonObjectExternalOutputCoordinateSpace"
 Assert-Contains "script can prepare no-detection pseudo gt person object manifest" $scriptText 'noDetectionReviewFrameNumbers[\s\S]*WithPseudoGtPersonObjectInput[\s\S]*pseudoGtPersonObjectInputScript[\s\S]*PseudoGtPersonObjectInputDir'
 Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script forwards pseudo gt review queue" $scriptText "PseudoGtReviewQueueCsv[\s\S]*-ReviewQueueCsv"

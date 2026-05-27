@@ -75,6 +75,8 @@ param(
     [string]$PseudoGtPersonObjectExternalCommand = "",
     [string]$PseudoGtPersonObjectExternalArgumentsTemplate = "",
     [string]$PseudoGtPersonObjectExternalOutputCsv = "",
+    [ValidateSet("Frame", "ScaledFrame")]
+    [string]$PseudoGtPersonObjectExternalOutputCoordinateSpace = "Frame",
     [int]$PseudoGtPersonObjectExternalTimeoutSeconds = 0,
     [int]$DetectionOverlayScaleWidth = 960
 )
@@ -1055,6 +1057,10 @@ if ($detectionRows.Count -eq 0) {
             }
             $personObjectInputArgs += "-ExternalOutputCsv"
             $personObjectInputArgs += $resolvedPseudoGtPersonObjectExternalOutputCsv
+            if ($PseudoGtPersonObjectExternalOutputCoordinateSpace -ne "Frame") {
+                $personObjectInputArgs += "-ExternalOutputCoordinateSpace"
+                $personObjectInputArgs += $PseudoGtPersonObjectExternalOutputCoordinateSpace
+            }
             if ($PseudoGtPersonObjectExternalTimeoutSeconds -gt 0) {
                 $personObjectInputArgs += "-ExternalTimeoutSeconds"
                 $personObjectInputArgs += $PseudoGtPersonObjectExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -1296,6 +1302,10 @@ else {
                 }
                 $personObjectInputArgs += "-ExternalOutputCsv"
                 $personObjectInputArgs += $resolvedPseudoGtPersonObjectExternalOutputCsv
+                if ($PseudoGtPersonObjectExternalOutputCoordinateSpace -ne "Frame") {
+                    $personObjectInputArgs += "-ExternalOutputCoordinateSpace"
+                    $personObjectInputArgs += $PseudoGtPersonObjectExternalOutputCoordinateSpace
+                }
                 if ($PseudoGtPersonObjectExternalTimeoutSeconds -gt 0) {
                     $personObjectInputArgs += "-ExternalTimeoutSeconds"
                     $personObjectInputArgs += $PseudoGtPersonObjectExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
