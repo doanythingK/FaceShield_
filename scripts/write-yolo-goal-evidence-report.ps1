@@ -109,6 +109,36 @@ function Count-NonZeroNumber {
     }).Count
 }
 
+function Get-MaxNumber {
+    param(
+        [object[]]$Rows,
+        [string]$Column
+    )
+
+    $max = 0.0
+    foreach ($row in $Rows) {
+        if ($null -eq $row.PSObject.Properties[$Column]) {
+            continue
+        }
+
+        $parsed = 0.0
+        if ([double]::TryParse(
+                [string]$row.$Column,
+                [System.Globalization.NumberStyles]::Float,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$parsed) -and $parsed -gt $max) {
+            $max = $parsed
+        }
+    }
+
+    return $max
+}
+
+function Format-Double {
+    param([double]$Value)
+    return $Value.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Read-OptionalCsv {
     param([string]$Path)
 
@@ -260,8 +290,10 @@ $pseudoGtMissRows = Count-Matching $pseudoGtRows "candidateType" "misscandidate"
 $pseudoGtQueueFalsePositiveRows = Count-Matching $pseudoGtReviewQueueRows "candidateType" "falsepositivecandidate"
 $pseudoGtQueueMissRows = Count-Matching $pseudoGtReviewQueueRows "candidateType" "misscandidate"
 $pseudoGtQueueSupportedRows = Count-Matching $pseudoGtReviewQueueRows "candidateType" "supportedfacecandidate"
+$pseudoGtQueueAuxiliaryBoostedRows = Count-NonZeroNumber $pseudoGtReviewQueueRows "auxiliaryPriorityBoost"
+$pseudoGtQueueMaxAuxiliaryBoost = Get-MaxNumber $pseudoGtReviewQueueRows "auxiliaryPriorityBoost"
 $pseudoGtQueueTopRows = @($pseudoGtReviewQueueRows | Select-Object -First 5 | ForEach-Object {
-        "$($_.reviewRank):$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore)"
+        "$($_.reviewRank):$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore):aux=$($_.auxiliaryPriorityBoost)"
     })
 $pseudoGtRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtRows "supportFrameCount"
 $pseudoGtRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtRows "personUpperOverlap"
@@ -351,7 +383,7 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Full-GT label review"; Status = $fullGtStatus; Evidence = "rows=$($fullGtRows.Count), labels=$fullGtLabels, reviewed=$fullGtReviewed, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, missedFaceCountFilled=$fullFrameMissCounts" },
     [pscustomobject]@{ Requirement = "Full-GT quality gate"; Status = $qualityGateStatus; Evidence = $qualityGateEvidence },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT candidate evidence"; Status = $pseudoGtStatus; Evidence = "supportedFaceCandidate=$pseudoGtSupportedRows, falsePositiveCandidate=$pseudoGtFalsePositiveRows, missCandidate=$pseudoGtMissRows, supportEvidenceRows=$pseudoGtRowsWithSupportEvidence, personEvidenceRows=$pseudoGtRowsWithPersonEvidence, geometryEvidenceRows=$pseudoGtRowsWithGeometryEvidence; source=$PseudoGtCsv" },
-    [pscustomobject]@{ Requirement = "Test-only pseudo-GT review queue"; Status = $pseudoGtReviewQueueStatus; Evidence = "rows=$($pseudoGtReviewQueueRows.Count), falsePositiveCandidate=$pseudoGtQueueFalsePositiveRows, missCandidate=$pseudoGtQueueMissRows, supportedFaceCandidate=$pseudoGtQueueSupportedRows, top=$(if ($pseudoGtQueueTopRows.Count -gt 0) { [string]::Join(';', $pseudoGtQueueTopRows) } else { 'none' }); source=$PseudoGtReviewQueueCsv" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT review queue"; Status = $pseudoGtReviewQueueStatus; Evidence = "rows=$($pseudoGtReviewQueueRows.Count), falsePositiveCandidate=$pseudoGtQueueFalsePositiveRows, missCandidate=$pseudoGtQueueMissRows, supportedFaceCandidate=$pseudoGtQueueSupportedRows, auxiliaryBoostedRows=$pseudoGtQueueAuxiliaryBoostedRows, maxAuxiliaryPriorityBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost), top=$(if ($pseudoGtQueueTopRows.Count -gt 0) { [string]::Join(';', $pseudoGtQueueTopRows) } else { 'none' }); source=$PseudoGtReviewQueueCsv" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, open=$pseudoGtOpenRows; runtimePath=not-used-by-app" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence; source=$PseudoGtReviewClosureCsv" },
     [pscustomobject]@{ Requirement = "Avalonia GUI smoke"; Status = $guiStatus; Evidence = "steps=$($guiRows.Count), pass=$guiPassed, artifactPathFilled=$guiArtifacts, required=preview-track-hold/manual-edit/export/reopen-state" },
@@ -410,6 +442,8 @@ $lines = @(
     "- pseudoGtMissRows=$pseudoGtMissRows",
     "- pseudoGtReviewQueueStatus=$pseudoGtReviewQueueStatus",
     "- pseudoGtReviewQueueRows=$($pseudoGtReviewQueueRows.Count)",
+    "- pseudoGtReviewQueueAuxiliaryBoostedRows=$pseudoGtQueueAuxiliaryBoostedRows",
+    "- pseudoGtReviewQueueMaxAuxiliaryBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost)",
     "- pseudoGtSupportEvidenceRows=$pseudoGtRowsWithSupportEvidence",
     "- pseudoGtClosureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence",
     "- fullFrameRows=$($fullFrameRows.Count)",
@@ -482,6 +516,8 @@ if ($Verify) {
         Assert-ReportContains "report records pseudo-GT candidate evidence" $report "Test-only pseudo-GT candidate evidence | $pseudoGtStatus"
         Assert-ReportContains "report records pseudo-GT review queue" $report "Test-only pseudo-GT review queue | $pseudoGtReviewQueueStatus"
         Assert-ReportContains "report records pseudo-GT review queue state" $report "pseudoGtReviewQueueStatus=$pseudoGtReviewQueueStatus"
+        Assert-ReportContains "report records pseudo-GT auxiliary boost count" $report "pseudoGtReviewQueueAuxiliaryBoostedRows=$pseudoGtQueueAuxiliaryBoostedRows"
+        Assert-ReportContains "report records pseudo-GT max auxiliary boost" $report "pseudoGtReviewQueueMaxAuxiliaryBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost)"
         Assert-ReportContains "report records pseudo-GT closure evidence preservation" $report "Test-only pseudo-GT closure evidence preservation | $pseudoGtStatus"
 
         if ($previewTrackHoldPassed) {
