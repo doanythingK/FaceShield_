@@ -188,6 +188,99 @@ function Split-ArgumentString {
     return @($args)
 }
 
+function Get-RequiredCsvValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    foreach ($name in $Names) {
+        $property = $Row.PSObject.Properties[$name]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return $property.Value
+        }
+    }
+
+    throw "$Source CSV row $Index missing required value: $([string]::Join('/', $Names))"
+}
+
+function Read-RequiredDoubleValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $value = Get-RequiredCsvValue $Row $Names $Source $Index
+    $parsed = 0.0
+    if ([double]::TryParse(
+            [string]$value,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed)) {
+        return $parsed
+    }
+
+    throw "$Source CSV row $Index has invalid numeric value for $([string]::Join('/', $Names)): $value"
+}
+
+function Read-RequiredIntValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $value = Get-RequiredCsvValue $Row $Names $Source $Index
+    $parsed = 0
+    if ([int]::TryParse([string]$value, [ref]$parsed)) {
+        return $parsed
+    }
+
+    throw "$Source CSV row $Index has invalid integer value for $([string]::Join('/', $Names)): $value"
+}
+
+function Assert-ExternalTileFaceCsv {
+    param(
+        [string]$Path,
+        [object[]]$ManifestRows
+    )
+
+    $manifestFrames = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($row in $ManifestRows) {
+        [void]$manifestFrames.Add([int]$row.frame)
+    }
+
+    $rows = @(Import-Csv $Path)
+    $index = 0
+    foreach ($row in $rows) {
+        $frame = Read-RequiredIntValue $row @("frame", "Frame") "tile-face" $index
+        if (-not $manifestFrames.Contains($frame)) {
+            throw "tile-face CSV row $index references frame $frame outside the manifest."
+        }
+
+        $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "tile-face" $index
+        $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "tile-face" $index
+        if ($width -le 0 -or $height -le 0) {
+            throw "tile-face CSV row $index has non-positive geometry: w=$width, h=$height"
+        }
+
+        [void](Read-RequiredDoubleValue $row @("x", "X") "tile-face" $index)
+        [void](Read-RequiredDoubleValue $row @("y", "Y") "tile-face" $index)
+        [void](Read-RequiredDoubleValue $row @("confidence", "conf", "tileFaceConfidence", "Confidence") "tile-face" $index)
+        $supportCount = Read-RequiredIntValue $row @("tileSupportCount", "supportCount", "TileSupportCount") "tile-face" $index
+        if ($supportCount -lt 1) {
+            throw "tile-face CSV row $index must have tileSupportCount >= 1."
+        }
+
+        $index++
+    }
+}
+
 function Invoke-FfmpegTileExtraction {
     param(
         [string]$SourceVideo,
@@ -309,6 +402,8 @@ function Invoke-ExternalModel {
     if (-not (Test-Path $OutputPath)) {
         throw "External high-precision model command did not create output CSV: $OutputPath"
     }
+
+    Assert-ExternalTileFaceCsv -Path $OutputPath -ManifestRows @(Import-Csv $ManifestPath)
 }
 
 function Get-VideoFrameSize {

@@ -9,6 +9,8 @@ $work = Join-Path $repo ".tmp\yolo-pseudo-gt-tile-input-verify"
 $outDir = Join-Path $work "out"
 $externalGenerator = Join-Path $work "external-generator.ps1"
 $externalCsv = Join-Path $work "external-tile-face.csv"
+$badExternalGenerator = Join-Path $work "bad-external-generator.ps1"
+$badExternalCsv = Join-Path $work "bad-external-tile-face.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -65,6 +67,28 @@ $first = $rows[0]
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $externalGenerator
 
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+@(
+    [pscustomobject]@{
+        frame = 999
+        detectionId = "bad-outside-manifest"
+        x = 0
+        y = 0
+        w = 24
+        h = 28
+        confidence = 0.91
+        tileSupportCount = 1
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $badExternalGenerator
+
 $template = "-NoProfile -ExecutionPolicy Bypass -File `"$externalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -Frames "1,3-4" `
@@ -103,6 +127,28 @@ if ($tooManyFramesExitCode -eq 0 -or (($tooManyFramesOutput | Out-String) -notma
     throw "Expected tile input to reject oversized pseudo-GT frame sets by default."
 }
 
+$badTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$badExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+try {
+    $ErrorActionPreference = "Continue"
+    $badExternalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -Frames "1" `
+        -OutputDir (Join-Path $work "bad-external") `
+        -FrameWidth 300 `
+        -FrameHeight 200 `
+        -SkipImageExtraction `
+        -ExternalCommand "powershell.exe" `
+        -ExternalArgumentsTemplate $badTemplate `
+        -ExternalOutputCsv $badExternalCsv 2>&1
+    $badExternalExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badExternalExitCode -eq 0 -or (($badExternalOutput | Out-String) -notmatch "outside the manifest")) {
+    throw "Expected tile input to reject external CSV rows outside the manifest."
+}
+
 $manifest = Join-Path $outDir "tile-manifest.csv"
 $summary = Join-Path $outDir "tile-input-summary.md"
 
@@ -139,6 +185,7 @@ Assert-Contains "script supports ffmpeg extraction" $scriptText "Invoke-FfmpegTi
 Assert-Contains "script supports wsl ffmpeg fallback" $scriptText "wsl\.exe"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
+Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records frame count" $summaryText "frameCount=3"
 Assert-Contains "summary records max frames" $summaryText "maxFrames=900"

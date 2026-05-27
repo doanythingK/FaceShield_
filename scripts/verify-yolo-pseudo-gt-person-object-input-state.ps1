@@ -9,6 +9,8 @@ $work = Join-Path $repo ".tmp\yolo-pseudo-gt-person-object-input-verify"
 $outDir = Join-Path $work "out"
 $externalGenerator = Join-Path $work "external-person-object.ps1"
 $externalCsv = Join-Path $work "external-person-object.csv"
+$badExternalGenerator = Join-Path $work "bad-external-person-object.ps1"
+$badExternalCsv = Join-Path $work "bad-external-person-object.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -63,6 +65,27 @@ $rows | ForEach-Object {
 } | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $externalGenerator
 
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+@(
+    [pscustomobject]@{
+        frame = 999
+        detectionId = "bad-outside-manifest"
+        x = 40
+        y = 20
+        w = 120
+        h = 180
+        confidence = 0.82
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $badExternalGenerator
+
 $template = "-NoProfile -ExecutionPolicy Bypass -File `"$externalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -Frames "1,3-4" `
@@ -97,6 +120,28 @@ finally {
 
 if ($tooManyFramesExitCode -eq 0 -or (($tooManyFramesOutput | Out-String) -notmatch "limited to 2 frames")) {
     throw "Expected person/object input to reject oversized pseudo-GT frame sets by default."
+}
+
+$badTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$badExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+try {
+    $ErrorActionPreference = "Continue"
+    $badExternalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -Frames "1" `
+        -OutputDir (Join-Path $work "bad-external") `
+        -FrameWidth 320 `
+        -FrameHeight 240 `
+        -SkipImageExtraction `
+        -ExternalCommand "powershell.exe" `
+        -ExternalArgumentsTemplate $badTemplate `
+        -ExternalOutputCsv $badExternalCsv 2>&1
+    $badExternalExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badExternalExitCode -eq 0 -or (($badExternalOutput | Out-String) -notmatch "outside the manifest")) {
+    throw "Expected person/object input to reject external CSV rows outside the manifest."
 }
 
 $manifest = Join-Path $outDir "person-object-manifest.csv"
@@ -137,6 +182,7 @@ Assert-Contains "script writes person object manifest" $scriptText "person-objec
 Assert-Contains "script extracts full frames" $scriptText "Invoke-FfmpegFrameExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
+Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records auxiliary-only rule" $summaryText "auxiliary evidence only"
 Assert-Contains "summary records frame count" $summaryText "frameCount=3"

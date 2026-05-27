@@ -371,6 +371,95 @@ function Split-ArgumentString {
     return @($args)
 }
 
+function Get-RequiredCsvValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    foreach ($name in $Names) {
+        $property = $Row.PSObject.Properties[$name]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return $property.Value
+        }
+    }
+
+    throw "$Source CSV row $Index missing required value: $([string]::Join('/', $Names))"
+}
+
+function Read-RequiredDoubleValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $value = Get-RequiredCsvValue $Row $Names $Source $Index
+    $parsed = 0.0
+    if ([double]::TryParse(
+            [string]$value,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed)) {
+        return $parsed
+    }
+
+    throw "$Source CSV row $Index has invalid numeric value for $([string]::Join('/', $Names)): $value"
+}
+
+function Read-RequiredIntValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $value = Get-RequiredCsvValue $Row $Names $Source $Index
+    $parsed = 0
+    if ([int]::TryParse([string]$value, [ref]$parsed)) {
+        return $parsed
+    }
+
+    throw "$Source CSV row $Index has invalid integer value for $([string]::Join('/', $Names)): $value"
+}
+
+function Assert-ExternalFaceVerificationCsv {
+    param(
+        [string]$Path,
+        [object[]]$ManifestRows
+    )
+
+    $manifestFrames = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($row in $ManifestRows) {
+        [void]$manifestFrames.Add([int]$row.frame)
+    }
+
+    $rows = @(Import-Csv $Path)
+    $index = 0
+    foreach ($row in $rows) {
+        $frame = Read-RequiredIntValue $row @("frame", "Frame") "face-verification" $index
+        if (-not $manifestFrames.Contains($frame)) {
+            throw "face-verification CSV row $index references frame $frame outside the manifest."
+        }
+
+        $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "face-verification" $index
+        $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "face-verification" $index
+        if ($width -le 0 -or $height -le 0) {
+            throw "face-verification CSV row $index has non-positive geometry: w=$width, h=$height"
+        }
+
+        [void](Read-RequiredDoubleValue $row @("x", "X") "face-verification" $index)
+        [void](Read-RequiredDoubleValue $row @("y", "Y") "face-verification" $index)
+        [void](Read-RequiredDoubleValue $row @("faceVerificationConfidence", "confidence", "conf", "Confidence") "face-verification" $index)
+        [void](Read-RequiredDoubleValue $row @("faceVerificationDistance", "verificationDistance", "distance", "FaceVerificationDistance") "face-verification" $index)
+        $index++
+    }
+}
+
 function Invoke-FfmpegCropExtraction {
     param(
         [string]$SourceVideo,
@@ -492,6 +581,8 @@ function Invoke-ExternalModel {
     if (-not (Test-Path $OutputPath)) {
         throw "External high-quality face verification command did not create output CSV: $OutputPath"
     }
+
+    Assert-ExternalFaceVerificationCsv -Path $OutputPath -ManifestRows @(Import-Csv $ManifestPath)
 }
 
 function Format-Double {

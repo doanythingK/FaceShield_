@@ -10,6 +10,8 @@ $outDir = Join-Path $work "out"
 $baseLog = Join-Path $work "base-yolo.log"
 $externalGenerator = Join-Path $work "external-verifier.ps1"
 $externalCsv = Join-Path $work "external-face-verification.csv"
+$badExternalGenerator = Join-Path $work "bad-external-verifier.ps1"
+$badExternalCsv = Join-Path $work "bad-external-face-verification.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -70,6 +72,28 @@ $rows | ForEach-Object {
 } | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $externalGenerator
 
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+@(
+    [pscustomobject]@{
+        frame = 999
+        verificationId = "bad-outside-manifest"
+        x = 10
+        y = 10
+        w = 20
+        h = 20
+        faceVerificationConfidence = 0.91
+        faceVerificationDistance = 0.18
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $badExternalGenerator
+
 $template = "-NoProfile -ExecutionPolicy Bypass -File `"$externalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -BasePredictionLog $baseLog `
@@ -105,6 +129,28 @@ finally {
 
 if ($tooManyFramesExitCode -eq 0 -or (($tooManyFramesOutput | Out-String) -notmatch "limited to 1 frames")) {
     throw "Expected face verification input to reject oversized pseudo-GT frame sets by default."
+}
+
+$badTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$badExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+try {
+    $ErrorActionPreference = "Continue"
+    $badExternalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -BasePredictionLog $baseLog `
+        -OutputDir (Join-Path $work "bad-external") `
+        -FrameWidth 320 `
+        -FrameHeight 240 `
+        -SkipImageExtraction `
+        -ExternalCommand "powershell.exe" `
+        -ExternalArgumentsTemplate $badTemplate `
+        -ExternalOutputCsv $badExternalCsv 2>&1
+    $badExternalExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badExternalExitCode -eq 0 -or (($badExternalOutput | Out-String) -notmatch "outside the manifest")) {
+    throw "Expected face verification input to reject external CSV rows outside the manifest."
 }
 
 $manifest = Join-Path $outDir "face-verification-manifest.csv"
@@ -150,6 +196,7 @@ Assert-Contains "script writes face verification manifest" $scriptText "face-ver
 Assert-Contains "script extracts candidate crops" $scriptText "Invoke-FfmpegCropExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
+Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records crop count" $summaryText "crops=2"
 Assert-Contains "summary records frame count" $summaryText "frameCount=2"
