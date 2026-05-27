@@ -9,6 +9,11 @@ $tileFaceCsv = Join-Path $work "tile-face.csv"
 $faceVerificationCsv = Join-Path $work "face-verification.csv"
 $personObjectCsv = Join-Path $work "person-object.csv"
 $outDir = Join-Path $work "out"
+$noDetectionLog = Join-Path $work "synthetic-no-detection-yolo.log"
+$noDetectionOutDir = Join-Path $work "no-detection-out"
+$noDetectionTileRunner = Join-Path $work "write-synthetic-tile-face.ps1"
+$noDetectionPersonObjectRunner = Join-Path $work "write-synthetic-person-object.ps1"
+$noDetectionVideo = Join-Path $repo ".tmp\srcTest-smoke\yolo-quality-2s.mp4"
 $script = Join-Path $repo "scripts\write-yolo-followup-quality-evidence.ps1"
 $plan = Join-Path $repo "AUTO_MOSAIC_QUALITY_SPEED_PLAN.md"
 $smokeResult = Join-Path $repo "YOLO_GUI_SMOKE_RESULT.md"
@@ -22,6 +27,19 @@ function Assert-Contains {
 
     if ($Text -notmatch $Pattern) {
         throw "$Name did not contain expected pattern: $Pattern"
+    }
+
+    Write-Host "[YoloFollowupQualityEvidenceVerify] pass $Name"
+}
+
+function Assert-File {
+    param(
+        [string]$Name,
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        throw "$Name not found: $Path"
     }
 
     Write-Host "[YoloFollowupQualityEvidenceVerify] pass $Name"
@@ -93,6 +111,118 @@ foreach ($required in @($checklist, $continuity, $template, $summary, $pseudoGt,
         throw "Expected output was not created: $required"
     }
 }
+
+Assert-File "no-detection verification video" $noDetectionVideo
+
+@'
+[AutoRunSummary] runId=synthetic-no-detection, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, startFrame=0, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=0, small=0, rejected=0, statsRejected=0
+[SmokeFinalMaskSummary] label=synthetic-no-detection, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, perFaceShortGaps=0, perFaceShortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, protectedSceneCarry=0, protectedSceneCarryFrames=none, reviewRequired=False, reviewReasons=none
+'@ | Set-Content -Encoding UTF8 -Path $noDetectionLog
+
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+$rows = @(Import-Csv $ManifestCsv)
+if ($rows.Count -eq 0) {
+    throw "No tile manifest rows."
+}
+
+$row = $rows[0]
+@(
+    [pscustomobject]@{
+        frame = $row.frame
+        detectionId = "tile-face-$($row.frame)-$($row.tileIndex)"
+        x = ([double]$row.tileX + 10.0).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
+        y = ([double]$row.tileY + 10.0).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
+        w = "40"
+        h = "40"
+        confidence = "0.91"
+        tileSupportCount = "2"
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $noDetectionTileRunner
+
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+$rows = @(Import-Csv $ManifestCsv)
+if ($rows.Count -eq 0) {
+    throw "No person/object manifest rows."
+}
+
+$row = $rows[0]
+@(
+    [pscustomobject]@{
+        frame = $row.frame
+        detectionId = "person-$($row.frame)"
+        x = "0"
+        y = "0"
+        w = "120"
+        h = "220"
+        confidence = "0.77"
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $noDetectionPersonObjectRunner
+
+$noDetectionOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+    -PredictionLog $noDetectionLog `
+    -VideoPath $noDetectionVideo `
+    -OutputDir $noDetectionOutDir `
+    -AllowNoDetections `
+    -WithPseudoGtTileInput `
+    -PseudoGtTileSkipImageExtraction `
+    -PseudoGtTileExternalCommand "powershell.exe" `
+    -PseudoGtTileExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File `"$noDetectionTileRunner`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+    -WithPseudoGtPersonObjectInput `
+    -PseudoGtPersonObjectSkipImageExtraction `
+    -PseudoGtPersonObjectExternalCommand "powershell.exe" `
+    -PseudoGtPersonObjectExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File `"$noDetectionPersonObjectRunner`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+    -SkipReviewPackage 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "write-yolo-followup-quality-evidence.ps1 no-detection pseudo-GT run failed: $($noDetectionOutput | Out-String)"
+}
+
+$noDetectionSummary = Join-Path $noDetectionOutDir "yolo-followup-quality-evidence.md"
+$noDetectionPseudoGt = Join-Path $noDetectionOutDir "pseudo-gt-candidates.csv"
+$noDetectionReviewQueue = Join-Path $noDetectionOutDir "pseudo-gt-review-queue.csv"
+$noDetectionTileManifest = Join-Path $noDetectionOutDir "pseudo-gt-tile-input\tile-manifest.csv"
+$noDetectionPersonObjectManifest = Join-Path $noDetectionOutDir "pseudo-gt-person-object-input\person-object-manifest.csv"
+foreach ($required in @($noDetectionSummary, $noDetectionPseudoGt, $noDetectionReviewQueue, $noDetectionTileManifest, $noDetectionPersonObjectManifest)) {
+    Assert-File "no-detection pseudo-GT output $(Split-Path -Leaf $required)" $required
+}
+
+$noDetectionSummaryText = Get-Content -Raw -Path $noDetectionSummary
+$noDetectionPseudoGtRows = @(Import-Csv $noDetectionPseudoGt)
+$noDetectionQueueRows = @(Import-Csv $noDetectionReviewQueue)
+if ($noDetectionPseudoGtRows.Count -eq 0) {
+    throw "Expected no-detection pseudo-GT candidate rows."
+}
+if (@($noDetectionPseudoGtRows | Where-Object { $_.candidateType -ne "missCandidate" }).Count -ne 0) {
+    throw "Expected no-detection pseudo-GT rows to all be missCandidate."
+}
+$noDetectionMiss = $noDetectionPseudoGtRows[0]
+if ([string]::IsNullOrWhiteSpace($noDetectionMiss.personConfidence) -or [double]::Parse($noDetectionMiss.personConfidence, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected no-detection miss candidate to carry personConfidence."
+}
+if ([string]::IsNullOrWhiteSpace($noDetectionMiss.personUpperOverlap) -or [double]::Parse($noDetectionMiss.personUpperOverlap, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected no-detection miss candidate to carry personUpperOverlap."
+}
+if (@($noDetectionQueueRows | Where-Object { [double]::Parse($_.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -gt 0 }).Count -eq 0) {
+    throw "Expected no-detection review queue to carry auxiliary person/object priority boost."
+}
+Assert-Contains "no-detection summary links person object input" $noDetectionSummaryText "Pseudo-GT person/object input manifest"
+Assert-Contains "no-detection summary records sampled frames" $noDetectionSummaryText "Sampled no-detection review frames"
+Write-Host "[YoloFollowupQualityEvidenceVerify] pass no-detection tile plus person/object external evidence run"
 
 $scriptText = Get-Content -Raw -Path $script
 $checklistText = Get-Content -Raw -Path $checklist

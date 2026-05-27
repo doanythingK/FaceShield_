@@ -256,7 +256,7 @@ function Read-DetectionCsvRows {
         $index++
     }
 
-    return @($rows)
+    return $rows.ToArray()
 }
 
 function Read-BasePredictionLogRows {
@@ -587,33 +587,24 @@ if ([string]::IsNullOrWhiteSpace($TileFaceCsv) -and [string]::IsNullOrWhiteSpace
     throw "TileFaceCsv or FaceVerificationCsv is required for pseudo-GT support."
 }
 
-$baseRows = if (-not [string]::IsNullOrWhiteSpace($BasePredictionCsv)) {
-    @(Read-DetectionCsvRows $BasePredictionCsv "base-yolo-csv")
-}
-else {
-    @(Read-BasePredictionLogRows $BasePredictionLog)
-}
+$baseRows = @(if (-not [string]::IsNullOrWhiteSpace($BasePredictionCsv)) {
+        Read-DetectionCsvRows $BasePredictionCsv "base-yolo-csv"
+    }
+    else {
+        Read-BasePredictionLogRows $BasePredictionLog
+    })
 
-$tileRows = if (-not [string]::IsNullOrWhiteSpace($TileFaceCsv)) {
-    @(Read-DetectionCsvRows $TileFaceCsv "tile-face")
-}
-else {
-    @()
-}
+$tileRows = @(if (-not [string]::IsNullOrWhiteSpace($TileFaceCsv)) {
+        Read-DetectionCsvRows $TileFaceCsv "tile-face"
+    })
 
-$verificationRows = if (-not [string]::IsNullOrWhiteSpace($FaceVerificationCsv)) {
-    @(Read-DetectionCsvRows $FaceVerificationCsv "face-verification")
-}
-else {
-    @()
-}
+$verificationRows = @(if (-not [string]::IsNullOrWhiteSpace($FaceVerificationCsv)) {
+        Read-DetectionCsvRows $FaceVerificationCsv "face-verification"
+    })
 
-$personRows = if (-not [string]::IsNullOrWhiteSpace($PersonObjectCsv)) {
-    @(Read-DetectionCsvRows $PersonObjectCsv "person-object")
-}
-else {
-    @()
-}
+$personRows = @(if (-not [string]::IsNullOrWhiteSpace($PersonObjectCsv)) {
+        Read-DetectionCsvRows $PersonObjectCsv "person-object"
+    })
 
 if (($tileRows.Count + $verificationRows.Count) -eq 0) {
     throw "No pseudo-GT face support rows were found."
