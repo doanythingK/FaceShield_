@@ -594,6 +594,8 @@ Assert-Contains "evidence report writer records pseudo gt review queue" $goalEvi
 Assert-Contains "evidence report writer records pseudo gt review queue status" $goalEvidenceReportWriter "pseudoGtReviewQueueStatus="
 Assert-Contains "evidence report writer records pseudo gt auxiliary boost count" $goalEvidenceReportWriter "pseudoGtReviewQueueAuxiliaryBoostedRows="
 Assert-Contains "evidence report writer records pseudo gt max auxiliary boost" $goalEvidenceReportWriter "pseudoGtReviewQueueMaxAuxiliaryBoost="
+Assert-Contains "evidence report writer records pseudo gt support row evidence" $goalEvidenceReportWriter "pseudoGtSupportRowEvidenceRows="
+Assert-Contains "evidence report writer records pseudo gt closure support row evidence" $goalEvidenceReportWriter "pseudoGtClosureSupportRowEvidenceRows="
 Assert-Contains "evidence report writer records pseudo gt closure" $goalEvidenceReportWriter "Test-only pseudo-GT review closure"
 Assert-Contains "evidence report writer records pseudo gt closure evidence preservation" $goalEvidenceReportWriter "Test-only pseudo-GT closure evidence preservation"
 Assert-Contains "evidence report writer independently validates strict pseudo gt closure" $goalEvidenceReportWriter "Test-PseudoGtClosureStrictlyClosed"
