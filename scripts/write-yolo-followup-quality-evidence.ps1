@@ -66,6 +66,8 @@ param(
     [string]$PseudoGtFaceVerificationExternalCommand = "",
     [string]$PseudoGtFaceVerificationExternalArgumentsTemplate = "",
     [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
+    [ValidateSet("Frame", "CropImage", "CropOriginal")]
+    [string]$PseudoGtFaceVerificationExternalOutputCoordinateSpace = "Frame",
     [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
     [switch]$WithPseudoGtPersonObjectInput,
     [switch]$PseudoGtPersonObjectSkipImageExtraction,
@@ -1226,6 +1228,8 @@ else {
             }
             $faceVerificationInputArgs += "-ExternalOutputCsv"
             $faceVerificationInputArgs += $resolvedPseudoGtFaceVerificationExternalOutputCsv
+            $faceVerificationInputArgs += "-ExternalOutputCoordinateSpace"
+            $faceVerificationInputArgs += $PseudoGtFaceVerificationExternalOutputCoordinateSpace
             if ($PseudoGtFaceVerificationExternalTimeoutSeconds -gt 0) {
                 $faceVerificationInputArgs += "-ExternalTimeoutSeconds"
                 $faceVerificationInputArgs += $PseudoGtFaceVerificationExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)

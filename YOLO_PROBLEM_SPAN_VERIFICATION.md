@@ -77,8 +77,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
 
 외부 runner는 manifest의 `tileImagePath`, `frame`, `tileIndex`, `tileX`, `tileY`, `tileW`, `tileH`, `tileScale`, `tileImageW`, `tileImageH`를 읽어 `frame,tileIndex,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. `tileImagePath`는 `TileScale`이 적용된 확대 tile 이미지다. 외부 runner가 원본 frame 좌표계로 출력하면 기본값 `Frame`을 쓰고, 확대 tile 이미지 좌표로 출력하면 `-ExternalOutputCoordinateSpace TileImage`, 확대 전 tile-local 좌표로 출력하면 `TileOriginal`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. `tileIndex`는 `sourceTileIndex` 또는 `manifestTileIndex` 이름으로도 받을 수 있다. 외부 tile-face 출력은 같은 frame이라는 이유만으로 통과하지 않고, 정규화 뒤 검출 중심점이 해당 manifest tile 안에 있어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다. `new-yolo-pseudo-gt-evidence.ps1`는 이 필수 evidence 컬럼이 빠진 CSV를 거부하므로, 누락된 confidence/distance/geometry 기본값으로 오탐/미탐 후보가 조용히 분류되지 않는다.
 
-기본 YOLO 후보 자체를 고품질 face verification 모델에 넣을 때는 `new-yolo-pseudo-gt-face-verification-input.ps1`가 만든 `face-verification-manifest.csv`를 사용한다. 이 manifest는 `cropImagePath`, `candidateId`, `basePredictionId`, 원본 YOLO box, 확장 crop 좌표를 담고, 외부 runner는 원본 frame 좌표계 기준 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만들어야 한다.
-같은 frame에 manifest crop이 여러 개 있으면 외부 runner는 `candidateId`, `sourceCandidateId`, `basePredictionId` 중 하나를 출력해야 하며, 그 값은 manifest의 후보와 일치해야 한다. 또한 외부 face verification 출력은 같은 frame이라는 이유만으로 통과하지 않고, 검출 중심점이 해당 frame의 matching manifest crop 안에 있어야 한다. 이 검증은 test-only evidence에 엉뚱한 같은-frame 검출이 섞여 오탐/미탐 후보를 왜곡하지 않게 하기 위한 것이다.
+기본 YOLO 후보 자체를 고품질 face verification 모델에 넣을 때는 `new-yolo-pseudo-gt-face-verification-input.ps1`가 만든 `face-verification-manifest.csv`를 사용한다. 이 manifest는 `cropImagePath`, `candidateId`, `basePredictionId`, 원본 YOLO box, 확장 crop 좌표를 담고, 외부 runner는 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만들어야 한다.
+같은 frame에 manifest crop이 여러 개 있으면 외부 runner는 `candidateId`, `sourceCandidateId`, `basePredictionId` 중 하나를 출력해야 하며, 그 값은 manifest의 후보와 일치해야 한다. 외부 runner가 원본 frame 좌표계로 출력하면 기본값 `Frame`을 쓰고, crop 이미지 좌표로 출력하면 `-ExternalOutputCoordinateSpace CropImage`, 확대 전 crop-local 좌표로 출력하면 `CropOriginal`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. 또한 외부 face verification 출력은 같은 frame이라는 이유만으로 통과하지 않고, 정규화 뒤 검출 중심점이 해당 frame의 matching manifest crop 안에 있어야 한다. 이 검증은 test-only evidence에 엉뚱한 같은-frame 검출이 섞여 오탐/미탐 후보를 왜곡하지 않게 하기 위한 것이다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-face-verification-input.ps1 `
@@ -88,6 +88,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -CropPaddingRatio 0.35 `
   -ExternalCommand "powershell.exe" `
   -ExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-face-verifier.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+  -ExternalOutputCoordinateSpace CropImage `
   -ExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv"
 ```
 
@@ -120,8 +121,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
   -PseudoGtTileExternalOutputCoordinateSpace TileImage `
   -PseudoGtTileExternalOutputCsv ".tmp/local-heavy-model/tile-face.csv" `
   -WithPseudoGtFaceVerificationInput `
+  -PseudoGtFaceVerificationExternalCommand "powershell.exe" `
+  -PseudoGtFaceVerificationExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-face-verifier.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+  -PseudoGtFaceVerificationExternalOutputCoordinateSpace CropImage `
+  -PseudoGtFaceVerificationExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv" `
   -WithPseudoGtPersonObjectInput `
-  -PseudoGtFaceVerificationCsv ".tmp/local-heavy-model/face-verification.csv" `
   -PseudoGtPersonObjectCsv ".tmp/local-heavy-model/person-object.csv"
 ```
 

@@ -15,6 +15,8 @@ param(
     [string]$ExternalCommand = "",
     [string]$ExternalArgumentsTemplate = "",
     [string]$ExternalOutputCsv = "",
+    [ValidateSet("Frame", "CropImage", "CropOriginal")]
+    [string]$ExternalOutputCoordinateSpace = "Frame",
     [int]$ExternalTimeoutSeconds = 0
 )
 
@@ -492,6 +494,112 @@ function Assert-ExternalFaceVerificationCsv {
     }
 }
 
+function Convert-ExternalFaceVerificationCsvCoordinateSpace {
+    param(
+        [string]$Path,
+        [object[]]$ManifestRows,
+        [string]$CoordinateSpace
+    )
+
+    if ($CoordinateSpace -eq "Frame") {
+        return
+    }
+
+    $manifestByCandidate = @{}
+    $manifestByFrame = @{}
+    foreach ($row in $ManifestRows) {
+        $frame = [int]$row.frame
+        if (-not $manifestByFrame.ContainsKey($frame)) {
+            $manifestByFrame[$frame] = [System.Collections.Generic.List[object]]::new()
+        }
+
+        $manifestByFrame[$frame].Add($row) | Out-Null
+        $manifestByCandidate[[string]$row.candidateId] = $row
+        $manifestByCandidate[[string]$row.basePredictionId] = $row
+    }
+
+    $normalizedRows = [System.Collections.Generic.List[object]]::new()
+    $index = 0
+    foreach ($row in (Import-Csv $Path)) {
+        $frame = Read-RequiredIntValue $row @("frame", "Frame") "face-verification" $index
+        if (-not $manifestByFrame.ContainsKey($frame)) {
+            throw "face-verification CSV row $index references frame $frame outside the manifest."
+        }
+
+        $candidateId = [string](Get-PropertyValue $row @("candidateId", "sourceCandidateId", "basePredictionId") "")
+        $manifestRow = $null
+        if (-not [string]::IsNullOrWhiteSpace($candidateId)) {
+            if (-not $manifestByCandidate.ContainsKey($candidateId)) {
+                throw "face-verification CSV row $index references candidate $candidateId outside the manifest."
+            }
+
+            $manifestRow = $manifestByCandidate[$candidateId]
+            if ([int]$manifestRow.frame -ne $frame) {
+                throw "face-verification CSV row $index references candidate $candidateId outside frame $frame."
+            }
+        }
+        else {
+            $frameManifestRows = @($manifestByFrame[$frame])
+            if ($frameManifestRows.Count -gt 1) {
+                throw "face-verification CSV row $index must include candidateId/sourceCandidateId/basePredictionId when frame $frame has multiple manifest crops."
+            }
+
+            $manifestRow = $frameManifestRows[0]
+        }
+
+        $cropX = [double]::Parse([string]$manifestRow.cropX, [System.Globalization.CultureInfo]::InvariantCulture)
+        $cropY = [double]::Parse([string]$manifestRow.cropY, [System.Globalization.CultureInfo]::InvariantCulture)
+        $cropW = [double]::Parse([string]$manifestRow.cropW, [System.Globalization.CultureInfo]::InvariantCulture)
+        $cropH = [double]::Parse([string]$manifestRow.cropH, [System.Globalization.CultureInfo]::InvariantCulture)
+        $cropImageW = if ($null -ne $manifestRow.PSObject.Properties["cropImageW"]) {
+            [double]::Parse([string]$manifestRow.cropImageW, [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+        else {
+            $cropW
+        }
+        $cropImageH = if ($null -ne $manifestRow.PSObject.Properties["cropImageH"]) {
+            [double]::Parse([string]$manifestRow.cropImageH, [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+        else {
+            $cropH
+        }
+
+        $x = Read-RequiredDoubleValue $row @("x", "X") "face-verification" $index
+        $y = Read-RequiredDoubleValue $row @("y", "Y") "face-verification" $index
+        $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "face-verification" $index
+        $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "face-verification" $index
+
+        $scaleX = if ($CoordinateSpace -eq "CropImage") { $cropW / [Math]::Max(1.0, $cropImageW) } else { 1.0 }
+        $scaleY = if ($CoordinateSpace -eq "CropImage") { $cropH / [Math]::Max(1.0, $cropImageH) } else { 1.0 }
+
+        $normalizedX = $cropX + ($x * $scaleX)
+        $normalizedY = $cropY + ($y * $scaleY)
+        $normalizedW = $width * $scaleX
+        $normalizedH = $height * $scaleY
+
+        $output = [ordered]@{}
+        foreach ($property in $row.PSObject.Properties) {
+            $name = $property.Name
+            if ($name -match '^(x|y|w|h|width|height)$') {
+                continue
+            }
+
+            $output[$name] = $property.Value
+        }
+
+        $output["x"] = Format-Double $normalizedX
+        $output["y"] = Format-Double $normalizedY
+        $output["w"] = Format-Double $normalizedW
+        $output["h"] = Format-Double $normalizedH
+        $output["inputCoordinateSpace"] = $CoordinateSpace
+        $output["normalizedCoordinateSpace"] = "Frame"
+        $normalizedRows.Add([pscustomobject]$output) | Out-Null
+        $index++
+    }
+
+    $normalizedRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Path
+}
+
 function Invoke-FfmpegCropExtraction {
     param(
         [string]$SourceVideo,
@@ -570,6 +678,7 @@ function Invoke-ExternalModel {
         [string]$CropsDir,
         [string]$OutputPath,
         [string]$Video,
+        [string]$OutputCoordinateSpace,
         [int]$TimeoutSeconds
     )
 
@@ -614,7 +723,12 @@ function Invoke-ExternalModel {
         throw "External high-quality face verification command did not create output CSV: $OutputPath"
     }
 
-    Assert-ExternalFaceVerificationCsv -Path $OutputPath -ManifestRows @(Import-Csv $ManifestPath)
+    $manifestRows = @(Import-Csv $ManifestPath)
+    Convert-ExternalFaceVerificationCsvCoordinateSpace `
+        -Path $OutputPath `
+        -ManifestRows $manifestRows `
+        -CoordinateSpace $OutputCoordinateSpace
+    Assert-ExternalFaceVerificationCsv -Path $OutputPath -ManifestRows $manifestRows
 }
 
 function Format-Double {
@@ -723,6 +837,8 @@ foreach ($row in @($baseRows | Sort-Object Frame, Id)) {
             cropY = $cropY
             cropW = $cropW
             cropH = $cropH
+            cropImageW = $cropW
+            cropImageH = $cropH
             frameWidth = $FrameWidth
             frameHeight = $FrameHeight
             cropImagePath = $cropImagePath
@@ -744,6 +860,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExternalCommand)) {
         -CropsDir $cropsDir `
         -OutputPath $resolvedExternalOutputCsv `
         -Video $resolvedVideoPath `
+        -OutputCoordinateSpace $ExternalOutputCoordinateSpace `
         -TimeoutSeconds $ExternalTimeoutSeconds
 }
 
@@ -766,9 +883,10 @@ $summary = @(
     "- imageExtractionSkipped=$($SkipImageExtraction.IsPresent)",
     "- externalCommandUsed=$(-not [string]::IsNullOrWhiteSpace($ExternalCommand))",
     "- externalOutputCsv=$ExternalOutputCsv",
+    "- externalOutputCoordinateSpace=$ExternalOutputCoordinateSpace",
     "",
     "External model output should be converted to FaceVerificationCsv fields before running new-yolo-pseudo-gt-evidence.ps1: frame, verificationId, x, y, w, h, faceVerificationConfidence, faceVerificationDistance.",
-    "When a frame has multiple manifest crops, external output must include candidateId/sourceCandidateId/basePredictionId. When present, that value must match the manifest. Every output detection center must also stay inside the matching manifest crop for that frame.",
+    "When a frame has multiple manifest crops, external output must include candidateId/sourceCandidateId/basePredictionId. When present, that value must match the manifest. If external output uses CropImage or CropOriginal coordinates, this script normalizes it to original frame coordinates before validation. Every output detection center must stay inside the matching manifest crop after normalization.",
     "Final face/nonface/miss decisions still require review CSV labels."
 )
 

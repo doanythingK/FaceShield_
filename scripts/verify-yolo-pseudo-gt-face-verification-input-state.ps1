@@ -74,8 +74,8 @@ $rows | ForEach-Object {
     [pscustomobject]@{
         frame = $_.frame
         verificationId = "verify-$($_.frame)-$($_.basePredictionId)"
-        x = $_.x
-        y = $_.y
+        x = ([double]$_.x - [double]$_.cropX)
+        y = ([double]$_.y - [double]$_.cropY)
         w = $_.w
         h = $_.h
         faceVerificationConfidence = 0.91
@@ -189,7 +189,8 @@ $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -SkipImageExtraction `
     -ExternalCommand "powershell.exe" `
     -ExternalArgumentsTemplate $template `
-    -ExternalOutputCsv $externalCsv 2>&1
+    -ExternalOutputCsv $externalCsv `
+    -ExternalOutputCoordinateSpace CropImage 2>&1
 
 if ($LASTEXITCODE -ne 0) {
     throw "new-yolo-pseudo-gt-face-verification-input.ps1 failed: $($output | Out-String)"
@@ -308,7 +309,7 @@ if ($rows.Count -ne 2) {
     throw "Expected two manifest rows, actual=$($rows.Count)"
 }
 
-foreach ($column in @("frame", "candidateId", "basePredictionId", "x", "y", "w", "h", "baseFaceConfidence", "cropX", "cropY", "cropW", "cropH", "frameWidth", "frameHeight", "cropImagePath", "cropRelativePath")) {
+foreach ($column in @("frame", "candidateId", "basePredictionId", "x", "y", "w", "h", "baseFaceConfidence", "cropX", "cropY", "cropW", "cropH", "cropImageW", "cropImageH", "frameWidth", "frameHeight", "cropImagePath", "cropRelativePath")) {
     if ($null -eq $rows[0].PSObject.Properties[$column]) {
         throw "Missing manifest column: $column"
     }
@@ -327,6 +328,21 @@ if ($externalRows.Count -ne 2) {
     throw "Expected two external verification rows, actual=$($externalRows.Count)"
 }
 
+$secondExternalRow = $externalRows[1]
+$secondManifestRow = $rows[1]
+$normalizedX = [double]::Parse($secondExternalRow.x, [System.Globalization.CultureInfo]::InvariantCulture)
+$normalizedY = [double]::Parse($secondExternalRow.y, [System.Globalization.CultureInfo]::InvariantCulture)
+$expectedX = [double]::Parse($secondManifestRow.x, [System.Globalization.CultureInfo]::InvariantCulture)
+$expectedY = [double]::Parse($secondManifestRow.y, [System.Globalization.CultureInfo]::InvariantCulture)
+if ([Math]::Abs($normalizedX - $expectedX) -gt 0.001 -or
+    [Math]::Abs($normalizedY - $expectedY) -gt 0.001) {
+    throw "Expected CropImage external face verification output to be normalized to original frame coordinates."
+}
+
+if ($secondExternalRow.inputCoordinateSpace -ne "CropImage" -or $secondExternalRow.normalizedCoordinateSpace -ne "Frame") {
+    throw "Expected normalized face verification output to preserve coordinate-space audit columns."
+}
+
 $scriptText = Get-Content -Raw -Path $script
 $guideText = Get-Content -Raw -Path $guide
 $summaryText = Get-Content -Raw -Path $summary
@@ -339,6 +355,8 @@ Assert-Contains "script writes face verification manifest" $scriptText "face-ver
 Assert-Contains "script extracts candidate crops" $scriptText "Invoke-FfmpegCropExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
+Assert-Contains "script supports external output coordinate space" $scriptText "ExternalOutputCoordinateSpace"
+Assert-Contains "script normalizes crop image coordinates" $scriptText "Convert-ExternalFaceVerificationCsvCoordinateSpace"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script validates external output against manifest crop" $scriptText "outside the manifest crop"
 Assert-Contains "script validates optional external candidate id" $scriptText "candidateId[\s\S]*sourceCandidateId[\s\S]*basePredictionId"
@@ -348,6 +366,7 @@ Assert-Contains "summary records crop count" $summaryText "crops=2"
 Assert-Contains "summary records frame count" $summaryText "frameCount=2"
 Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
+Assert-Contains "summary records external coordinate space" $summaryText "externalOutputCoordinateSpace=CropImage"
 Assert-Contains "summary records face verification output fields" $summaryText "faceVerificationConfidence"
 Assert-Contains "summary records manifest crop validation" $summaryText "manifest crops"
 Assert-Contains "summary records multi-crop binding rule" $summaryText "multiple manifest crops"

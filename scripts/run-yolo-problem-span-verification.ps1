@@ -42,6 +42,8 @@ param(
     [string]$PseudoGtFaceVerificationExternalCommand = "",
     [string]$PseudoGtFaceVerificationExternalArgumentsTemplate = "",
     [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
+    [ValidateSet("Frame", "CropImage", "CropOriginal")]
+    [string]$PseudoGtFaceVerificationExternalOutputCoordinateSpace = "Frame",
     [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
     [switch]$WithPseudoGtPersonObjectInput,
     [switch]$PseudoGtPersonObjectSkipImageExtraction,
@@ -197,6 +199,11 @@ if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalArguments
 if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv)) {
     $argsList.Add("-PseudoGtFaceVerificationExternalOutputCsv") | Out-Null
     $argsList.Add($PseudoGtFaceVerificationExternalOutputCsv) | Out-Null
+}
+
+if ($PseudoGtFaceVerificationExternalOutputCoordinateSpace -ne "Frame") {
+    $argsList.Add("-PseudoGtFaceVerificationExternalOutputCoordinateSpace") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationExternalOutputCoordinateSpace) | Out-Null
 }
 
 if ($PseudoGtFaceVerificationExternalTimeoutSeconds -gt 0) {
