@@ -9,6 +9,24 @@
 - 오탐: 얼굴이 아닌 영역의 후보를 `face`/`nonface`/`miss` 기준으로 분리한다.
 - FaceONNX 기본 경로는 별도 회귀 게이트로만 확인하고, YOLO 문제 구간 검증과 섞지 않는다.
 
+## Current Quality Goal
+
+현재 목표는 YOLO 자동 모자이크에서 남은 깜박임, 화면전환 잔상, 오탐/미탐 의심을 짧은 문제 구간 기준으로 더 정확히 검증하고 줄이는 것이다.
+
+- 앱 기본 런타임 경로와 별도로, 테스트/고도화 전용 high-precision pseudo-GT 검출 파이프라인을 둔다.
+- 기본 YOLO 런타임 경로는 빠른 자동 모자이크용으로 유지하고, pseudo-GT 경로는 느려도 되는 검증 보조 단계로만 사용한다.
+- 문제 구간 검증은 전체 원본 영상이 아니라 30초 이하 clip, frame dump, 기존 run log/evidence bundle을 기준으로 진행한다.
+- 작은 얼굴 미탐 검증을 위해 frame을 tile/overlap으로 나누고, tile을 확대해 고정밀 face 검출을 수행한다.
+- 테스트/고도화 단계에서는 기본 YOLO 후보를 고품질 face verification/face detection 모델로 재검증한다.
+- 고품질 검증 모델은 앱 기본 런타임에 포함하지 않고, 짧은 문제 구간의 evidence 생성과 오탐/미탐 후보 분류에만 사용한다.
+- 필요하면 무거운 face/person/object 모델을 로컬 경로로 받아 보조 검증에 사용한다. 모델 파일은 커밋하지 않는다.
+- 기본 YOLO 결과와 고정밀 tile 검출/face verification 결과를 비교해 `missCandidate`, `falsePositiveCandidate`, `supportedFaceCandidate`를 기록한다.
+- YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 반복 support를 비교해 후보 유형을 나눈다.
+- person/object 검출은 얼굴 정답으로 단정하지 않고, 오탐/미탐 후보 우선순위를 높이는 보조 신호로만 사용한다.
+- 후보별 `baseFaceConfidence`, `tileFaceConfidence`, `tileSupportCount`, `faceVerificationConfidence`, `faceVerificationDistance`, `personConfidence`, `personUpperOverlap`, `fpProbability`, `missProbability`, `pseudoGtReason`을 evidence log/CSV에 남긴다.
+- 최종 `face`/`nonface`/`miss` 확정은 review CSV 라벨로 닫는다.
+- 기존 FaceONNX 기본 경로와 앱 기본 YOLO 런타임 성능 경로는 회귀시키지 않는다.
+
 ## 짧은 구간 생성 및 실행
 
 긴 원본 영상을 그대로 smoke로 돌리지 않는다. 문제 구간 시작 시각과 길이를 정해서 30초 이하로 자른다.
@@ -55,12 +73,17 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 
 오탐/미탐 고도화 단계에서는 앱 기본 런타임 경로와 별도로, 느려도 더 강한 테스트 전용 pseudo-GT 검출을 사용한다. 이 경로는 배포 기본값이나 실시간 자동 모자이크 속도 목표가 아니라, 짧은 문제 구간에서 사람이 리뷰하기 전 후보 우선순위를 높이는 검증 보조 단계다.
 
+현재 자동 모자이크 후처리는 runtime pipeline과 temporal/ROI/scene-cut 단계가 분리되어 있으므로, pseudo-GT도 기본 detector 실행에 직접 섞지 않는다. 별도 test-only evidence pipeline으로 기본 YOLO 결과를 읽고, 고정밀 tile/person/object 보조 결과와 비교해 review CSV 초안을 보강한다.
+
 - 기본 YOLO 결과와 별도로, 테스트 전용 고정밀 검출을 같은 짧은 clip/frame에 실행한다.
 - 작은 얼굴 미탐을 줄이기 위해 frame을 tile/overlap으로 나누고, tile을 모델 입력 크기로 확대해서 검출한다.
+- 기본 YOLO 후보는 고품질 face verification/face detection 모델로 재검증한다.
+- 이 고품질 검증 모델은 앱 기본 런타임에는 포함하지 않고, 짧은 문제 구간의 evidence 생성과 오탐/미탐 후보 분류에만 사용한다.
 - 필요하면 무거운 face/person/object 모델을 로컬 경로로 받아 사용한다. 모델 파일은 커밋하지 않고, 기본 앱 실행 경로에도 넣지 않는다.
-- 기본 YOLO에는 없고 고정밀 tile 검출에는 있는 후보를 `missCandidate`로 기록한다.
-- 기본 YOLO에는 있는데 고정밀 face/person/object/context 근거가 약한 후보를 `falsePositiveCandidate`로 기록한다.
-- 기본 YOLO와 고정밀 tile 검출이 같은 위치를 반복 지지하면 `supportedFaceCandidate`로 기록한다.
+- 기본 YOLO에는 없고 고정밀 tile 검출/face verification에는 있는 후보를 `missCandidate`로 기록한다.
+- 기본 YOLO에는 있는데 고정밀 face verification/tile/person/object/context 근거가 약한 후보를 `falsePositiveCandidate`로 기록한다.
+- 기본 YOLO와 고정밀 tile 검출 또는 face verification이 같은 위치를 반복 지지하면 `supportedFaceCandidate`로 기록한다.
+- YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 반복 support를 비교해 후보 유형을 나눈다.
 - person/object 결과는 얼굴 정답이 아니므로 단독으로 `face`/`nonface`/`miss` 확정에 쓰지 않는다. 사람 검출은 얼굴 미탐 후보나 오탐 후보의 우선순위를 높이는 보조 신호로만 사용한다.
 - 최종 확정은 여전히 review CSV의 `face`/`nonface`/`miss` 라벨로 닫는다.
 
@@ -69,6 +92,8 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `baseFaceConfidence`
 - `tileFaceConfidence`
 - `tileSupportCount`
+- `faceVerificationConfidence`
+- `faceVerificationDistance`
 - `personConfidence`
 - `personUpperOverlap`
 - `fpProbability`
