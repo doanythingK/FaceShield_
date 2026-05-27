@@ -461,8 +461,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.32;
     const int yoloSceneCutDirectDifferenceMaxCandidates = 96;
-    const int yoloSceneCutMatchingTailMaxFrames = 5;
     const int yoloSceneCutCarryBlockFrames = 8;
+    const int yoloSceneCutCarryProbeFrames = yoloSceneCutCarryBlockFrames;
+    const int yoloSceneCutMatchingTailMaxFrames = yoloSceneCutCarryBlockFrames;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.98f;
     const float yoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
@@ -586,12 +587,12 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             maxTargetConfidence: yoloSceneCutDirectCarryMaxConfidence,
             maxTransitionGap: 8,
             minConfidenceDrop: 0.0f,
-            maxPostCutCarryFrames: 5,
+            maxPostCutCarryFrames: yoloSceneCutCarryProbeFrames,
             minSourceConfidence: yoloSceneCutDirectCarryMinSourceConfidence);
         var postCutCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
             maxTargetConfidence: yoloSceneCutPostCutCarryMaxConfidence,
-            maxCarryFrames: 5,
+            maxCarryFrames: yoloSceneCutCarryProbeFrames,
             sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames,
             includeEdgeCandidates: true);
         var sceneCutCandidates = directCandidates
@@ -616,7 +617,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var strongCarryProbeCandidates = sceneCutGuard.BuildWeakPostCutCarryCandidates(
             maskProvider,
             maxTargetConfidence: yoloSceneCutStrongCarryProbeMaxConfidence,
-            maxCarryFrames: 5,
+            maxCarryFrames: yoloSceneCutCarryProbeFrames,
             sourceLookbackFrames: yoloSceneCutPostCutLookbackFrames,
             minSourceConfidence: yoloSceneCutStrongCarryProbeMinSourceConfidence,
             minTargetConfidence: yoloSceneCutStrongCarryProbeMinConfidence,

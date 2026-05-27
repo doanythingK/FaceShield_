@@ -17,7 +17,8 @@ namespace FaceShield.Services.Analysis
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
         private const int YoloSceneCutDirectDifferenceMaxCandidates = 96;
-        private const int YoloSceneCutMatchingTailMaxFrames = 5;
+        private const int YoloSceneCutCarryProbeFrames = SuspiciousNoFaceMaxGap;
+        private const int YoloSceneCutMatchingTailMaxFrames = SuspiciousNoFaceMaxGap;
         private const float YoloSceneCutMatchingTailMaxConfidence = 0.98f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
         private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
@@ -38,12 +39,12 @@ namespace FaceShield.Services.Analysis
                 maxTargetConfidence: YoloSceneCutDirectCarryMaxConfidence,
                 maxTransitionGap: SuspiciousNoFaceMaxGap,
                 minConfidenceDrop: 0.0f,
-                maxPostCutCarryFrames: 5,
+                maxPostCutCarryFrames: YoloSceneCutCarryProbeFrames,
                 minSourceConfidence: YoloSceneCutDirectCarryMinSourceConfidence);
             var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
                 maskProvider,
                 maxTargetConfidence: YoloSceneCutPostCutCarryMaxConfidence,
-                maxCarryFrames: 5,
+                maxCarryFrames: YoloSceneCutCarryProbeFrames,
                 sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
                 includeEdgeCandidates: true);
             var candidates = directCandidates
@@ -99,7 +100,7 @@ namespace FaceShield.Services.Analysis
             var candidates = guard.BuildWeakPostCutCarryCandidates(
                 maskProvider,
                 maxTargetConfidence: YoloSceneCutStrongCarryProbeMaxConfidence,
-                maxCarryFrames: 5,
+                maxCarryFrames: YoloSceneCutCarryProbeFrames,
                 sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
                 minSourceConfidence: YoloSceneCutStrongCarryProbeMinSourceConfidence,
                 minTargetConfidence: YoloSceneCutStrongCarryProbeMinConfidence,
