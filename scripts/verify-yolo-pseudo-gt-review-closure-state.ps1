@@ -11,6 +11,12 @@ $reviewCsv = Join-Path $work "full-gt-review.csv"
 $fullFrameCsv = Join-Path $work "full-frame-review.csv"
 $outputCsv = Join-Path $work "pseudo-gt-review-closure.csv"
 $summaryPath = Join-Path $work "pseudo-gt-review-closure-summary.md"
+$unreviewedReviewCsv = Join-Path $work "full-gt-review-unreviewed.csv"
+$unreviewedOutputCsv = Join-Path $work "pseudo-gt-review-closure-unreviewed.csv"
+$unreviewedSummaryPath = Join-Path $work "pseudo-gt-review-closure-unreviewed-summary.md"
+$mismatchReviewCsv = Join-Path $work "full-gt-review-label-mismatch.csv"
+$mismatchOutputCsv = Join-Path $work "pseudo-gt-review-closure-label-mismatch.csv"
+$mismatchSummaryPath = Join-Path $work "pseudo-gt-review-closure-label-mismatch-summary.md"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -32,6 +38,68 @@ function Assert-Contains {
     }
 
     Write-Host "[YoloPseudoGtReviewClosureVerify] pass $Name"
+}
+
+function Invoke-ReviewClosure {
+    param(
+        [string]$ReviewPath,
+        [string]$OutputPath,
+        [string]$SummaryOutputPath,
+        [switch]$RequireAllClosed
+    )
+
+    $arguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        $script,
+        "-PseudoGtCsv",
+        $pseudoCsv,
+        "-ReviewCsv",
+        $ReviewPath,
+        "-FullFrameReviewCsv",
+        $fullFrameCsv,
+        "-OutputCsv",
+        $OutputPath,
+        "-SummaryPath",
+        $SummaryOutputPath
+    )
+    if ($RequireAllClosed) {
+        $arguments += "-RequireAllClosed"
+    }
+
+    & powershell.exe @arguments 2>&1
+}
+
+function Invoke-ExpectedReviewClosureFailure {
+    param(
+        [string]$Name,
+        [string]$ReviewPath,
+        [string]$OutputPath,
+        [string]$SummaryOutputPath,
+        [string]$ExpectedPattern
+    )
+
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $failureOutput = Invoke-ReviewClosure `
+            -ReviewPath $ReviewPath `
+            -OutputPath $OutputPath `
+            -SummaryOutputPath $SummaryOutputPath `
+            -RequireAllClosed
+        $failureExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    if ($failureExitCode -eq 0) {
+        throw "$Name expected RequireAllClosed to fail."
+    }
+
+    Assert-Contains $Name ($failureOutput | Out-String) $ExpectedPattern
 }
 
 Assert-File "review closure script" $script
@@ -141,13 +209,11 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     [pscustomobject]@{ frame = 7; frameImagePath = ""; overlayFrameImagePath = ""; detectedCandidateCount = 0; candidateSummary = ""; missedFaceCount = 1; missedFaceRowsAdded = 1; reviewStatus = "pass"; evidenceNotes = "manual miss added"; notes = "" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $fullFrameCsv
 
-$output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
-    -PseudoGtCsv $pseudoCsv `
-    -ReviewCsv $reviewCsv `
-    -FullFrameReviewCsv $fullFrameCsv `
-    -OutputCsv $outputCsv `
-    -SummaryPath $summaryPath `
-    -RequireAllClosed 2>&1
+$output = Invoke-ReviewClosure `
+    -ReviewPath $reviewCsv `
+    -OutputPath $outputCsv `
+    -SummaryOutputPath $summaryPath `
+    -RequireAllClosed
 if ($LASTEXITCODE -ne 0) {
     throw "close-yolo-pseudo-gt-review.ps1 failed: $($output | Out-String)"
 }
@@ -193,6 +259,56 @@ $falsePositiveClosure = @($rows | Where-Object { $_.candidateType -eq "falsePosi
 if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
     throw "Expected closure output to preserve auxiliary person/object overlap evidence."
 }
+
+$unreviewedReviewRows = @(Import-Csv $reviewCsv)
+(@($unreviewedReviewRows | Where-Object { $_.frame -eq "6" }))[0].label = ""
+$unreviewedReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $unreviewedReviewCsv
+
+$unreviewedOutput = Invoke-ReviewClosure `
+    -ReviewPath $unreviewedReviewCsv `
+    -OutputPath $unreviewedOutputCsv `
+    -SummaryOutputPath $unreviewedSummaryPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict unreviewed closure run to pass: $($unreviewedOutput | Out-String)"
+}
+
+$unreviewedRows = @(Import-Csv $unreviewedOutputCsv)
+$unreviewedSummaryText = Get-Content -Raw -Path $unreviewedSummaryPath
+Assert-Contains "summary records unreviewed row" $unreviewedSummaryText "unreviewed=1"
+if (@($unreviewedRows | Where-Object { $_.closureStatus -eq "unreviewed" }).Count -ne 1) {
+    throw "Expected exactly one unreviewed closure row."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks unreviewed rows" `
+    -ReviewPath $unreviewedReviewCsv `
+    -OutputPath $unreviewedOutputCsv `
+    -SummaryOutputPath $unreviewedSummaryPath `
+    -ExpectedPattern "unreviewed=1"
+
+$mismatchReviewRows = @(Import-Csv $reviewCsv)
+(@($mismatchReviewRows | Where-Object { $_.frame -eq "6" }))[0].label = "face"
+$mismatchReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $mismatchReviewCsv
+
+$mismatchOutput = Invoke-ReviewClosure `
+    -ReviewPath $mismatchReviewCsv `
+    -OutputPath $mismatchOutputCsv `
+    -SummaryOutputPath $mismatchSummaryPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict label-mismatch closure run to pass: $($mismatchOutput | Out-String)"
+}
+
+$mismatchRows = @(Import-Csv $mismatchOutputCsv)
+$mismatchSummaryText = Get-Content -Raw -Path $mismatchSummaryPath
+Assert-Contains "summary records label mismatch row" $mismatchSummaryText "labelMismatch=1"
+if (@($mismatchRows | Where-Object { $_.closureStatus -eq "label-mismatch" }).Count -ne 1) {
+    throw "Expected exactly one label-mismatch closure row."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks label mismatch rows" `
+    -ReviewPath $mismatchReviewCsv `
+    -OutputPath $mismatchOutputCsv `
+    -SummaryOutputPath $mismatchSummaryPath `
+    -ExpectedPattern "labelMismatch=1"
 
 $scriptText = Get-Content -Raw -Path $script
 $summaryText = Get-Content -Raw -Path $summaryPath
