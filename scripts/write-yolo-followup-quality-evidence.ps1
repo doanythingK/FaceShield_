@@ -841,8 +841,11 @@ if ($detectionRows.Count -eq 0) {
         throw "Prediction log contains no [SmokeDetection] rows. Re-run with -AllowNoDetections to record this as no-detection evidence."
     }
 
-    if ($WithReviewContactSheet.IsPresent) {
+    if ($WithReviewContactSheet.IsPresent -or $WithPseudoGtTileInput.IsPresent) {
         $noDetectionReviewFrameNumbers = Get-SampledReviewFrameNumbers -FrameCount $VideoFrameCount
+    }
+
+    if ($WithReviewContactSheet.IsPresent) {
         Require-File "review video" $resolvedVideoPath
 
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $reviewContactSheetScript `
@@ -910,6 +913,100 @@ if ($detectionRows.Count -eq 0) {
         '- `miss`: visible face not covered by any candidate row; add a manual GT row before quality-gate claims.'
     )
     Set-Content -Encoding UTF8 -Path $resolvedChecklistPath -Value ($noDetectionChecklist -join [Environment]::NewLine)
+
+    if ($WithPseudoGtTileInput.IsPresent -and $noDetectionReviewFrameNumbers.Count -gt 0) {
+        Require-File "pseudo-GT no-detection tile input video" $resolvedVideoPath
+
+        $tileInputArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtTileInputScript,
+            "-VideoPath",
+            $resolvedVideoPath,
+            "-Frames",
+            ($noDetectionReviewFrameNumbers -join ","),
+            "-OutputDir",
+            $resolvedPseudoGtTileInputDir,
+            "-MaxFrames",
+            $PseudoGtMaxFrames.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileColumns",
+            $PseudoGtTileColumns.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileRows",
+            $PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileOverlapRatio",
+            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
+
+        if ($PseudoGtTileSkipImageExtraction.IsPresent) {
+            $tileInputArgs += "-SkipImageExtraction"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalCommand)) {
+            $tileInputArgs += "-ExternalCommand"
+            $tileInputArgs += $PseudoGtTileExternalCommand
+            if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalArgumentsTemplate)) {
+                $tileInputArgs += "-ExternalArgumentsTemplate"
+                $tileInputArgs += $PseudoGtTileExternalArgumentsTemplate
+            }
+            $tileInputArgs += "-ExternalOutputCsv"
+            $tileInputArgs += $resolvedPseudoGtTileExternalOutputCsv
+            if ($PseudoGtTileExternalTimeoutSeconds -gt 0) {
+                $tileInputArgs += "-ExternalTimeoutSeconds"
+                $tileInputArgs += $PseudoGtTileExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            }
+        }
+
+        & powershell.exe @tileInputArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT no-detection tile input."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -and
+            -not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalOutputCsv)) {
+            $PseudoGtTileFaceCsv = $PseudoGtTileExternalOutputCsv
+            $resolvedPseudoGtTileFaceCsv = $resolvedPseudoGtTileExternalOutputCsv
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+        $pseudoGtArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtScript,
+            "-BasePredictionLog",
+            $resolvedPredictionLog,
+            "-OutputCsv",
+            $resolvedPseudoGtOutputCsv,
+            "-SummaryPath",
+            $resolvedPseudoGtSummaryPath,
+            "-ReviewQueueCsv",
+            $resolvedPseudoGtReviewQueueCsv
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv)) {
+            $pseudoGtArgs += "-TileFaceCsv"
+            $pseudoGtArgs += $resolvedPseudoGtTileFaceCsv
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+            $pseudoGtArgs += "-FaceVerificationCsv"
+            $pseudoGtArgs += $resolvedPseudoGtFaceVerificationCsv
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectCsv)) {
+            $pseudoGtArgs += "-PersonObjectCsv"
+            $pseudoGtArgs += $resolvedPseudoGtPersonObjectCsv
+        }
+
+        & powershell.exe @pseudoGtArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT no-detection evidence."
+        }
+    }
 }
 else {
 
@@ -1235,7 +1332,7 @@ if ($detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask continuity: ``$MaskContinuityPath``")
     [void]$summary.AppendLine("- Full-GT template: ``$TemplateCsv``")
 }
-if ($detectionRows.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv))) {
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
     [void]$summary.AppendLine("- Pseudo-GT candidates: ``$PseudoGtOutputCsv``")
     [void]$summary.AppendLine("- Pseudo-GT summary: ``$PseudoGtSummaryPath``")
     [void]$summary.AppendLine("- Pseudo-GT review queue: ``$PseudoGtReviewQueueCsv``")
@@ -1252,6 +1349,10 @@ if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $revi
     [void]$summary.AppendLine("- Review contact sheet: ``$ReviewContactSheetPath``")
 }
 if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    [void]$summary.AppendLine("- Pseudo-GT tile input manifest: ``$PseudoGtTileInputDir/tile-manifest.csv``")
+    [void]$summary.AppendLine("- Pseudo-GT tile input summary: ``$PseudoGtTileInputDir/tile-input-summary.md``")
+}
+if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Pseudo-GT tile input manifest: ``$PseudoGtTileInputDir/tile-manifest.csv``")
     [void]$summary.AppendLine("- Pseudo-GT tile input summary: ``$PseudoGtTileInputDir/tile-input-summary.md``")
 }
@@ -1273,6 +1374,8 @@ if ($detectionRows.Count -eq 0) {
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Review contact sheet: ``$ReviewContactSheetPath``")
+}
+if ($detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Sampled no-detection review frames: ``$($noDetectionReviewFrameNumbers -join ",")``")
 }
 if ($autoSummary.Count -gt 0) {
@@ -1331,7 +1434,7 @@ if ($detectionRows.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] maskContinuity=$MaskContinuityPath"
     Write-Host "[YoloFollowupQualityEvidence] template=$TemplateCsv"
 }
-if ($detectionRows.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv))) {
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
     Write-Host "[YoloFollowupQualityEvidence] pseudoGt=$PseudoGtOutputCsv"
     Write-Host "[YoloFollowupQualityEvidence] pseudoGtReviewQueue=$PseudoGtReviewQueueCsv"
 }
@@ -1345,6 +1448,9 @@ if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $revi
     Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"
 }
 if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGtTileInput=$PseudoGtTileInputDir/tile-manifest.csv"
+}
+if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] pseudoGtTileInput=$PseudoGtTileInputDir/tile-manifest.csv"
 }
 if ($WithPseudoGtFaceVerificationInput.IsPresent -and $detectionRows.Count -gt 0) {

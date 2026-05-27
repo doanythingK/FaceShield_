@@ -115,6 +115,7 @@ Assert-Contains "script uses ffprobe metadata for duration" $scriptText "ffprobe
 Assert-Contains "script blocks long smoke source by default" $scriptText "RunSmoke source is too long"
 Assert-Contains "script blocks overlong trimmed problem spans" $scriptText "TrimSeconds is too long"
 Assert-Contains "script supports no-detection evidence" $scriptText "AllowNoDetections"
+Assert-Contains "script supports no-detection tile pseudo gt" $scriptText '\$detectionRows\.Count\s+-eq\s+0[\s\S]*WithPseudoGtTileInput[\s\S]*pseudo-GT no-detection tile input'
 Assert-Contains "script supports trim start" $scriptText "TrimStart"
 Assert-Contains "script supports trim seconds" $scriptText "TrimSeconds"
 Assert-Contains "script bounds trim seconds to focused spans" $scriptText '\[ValidateRange\(0,\s*30\)\][\s\S]*\[int\]\$TrimSeconds'

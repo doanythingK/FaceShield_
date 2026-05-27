@@ -615,10 +615,6 @@ else {
     @()
 }
 
-if ($baseRows.Count -eq 0) {
-    throw "No base YOLO prediction rows were found."
-}
-
 if (($tileRows.Count + $verificationRows.Count) -eq 0) {
     throw "No pseudo-GT face support rows were found."
 }

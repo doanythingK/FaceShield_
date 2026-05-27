@@ -11,9 +11,13 @@ $tileCsv = Join-Path $work "tile-face.csv"
 $verificationCsv = Join-Path $work "face-verification.csv"
 $personCsv = Join-Path $work "person-object.csv"
 $badVerificationCsv = Join-Path $work "bad-face-verification.csv"
+$emptyBaseLog = Join-Path $work "empty-base-yolo.log"
 $outputCsv = Join-Path $work "pseudo-gt-candidates.csv"
 $summaryPath = Join-Path $work "pseudo-gt-summary.md"
 $reviewQueueCsv = Join-Path $work "pseudo-gt-review-queue.csv"
+$emptyBaseOutputCsv = Join-Path $work "empty-base-pseudo-gt-candidates.csv"
+$emptyBaseSummaryPath = Join-Path $work "empty-base-pseudo-gt-summary.md"
+$emptyBaseReviewQueueCsv = Join-Path $work "empty-base-pseudo-gt-review-queue.csv"
 $badOutputCsv = Join-Path $work "bad-pseudo-gt-candidates.csv"
 $badSummaryPath = Join-Path $work "bad-pseudo-gt-summary.md"
 
@@ -62,6 +66,10 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=400.0, y=300.0, w=40.0, h=45.0, area=1800.0, conf=0.210, cx=0.420, cy=0.340, areaRatio=0.001800, aspectRatio=0.889
 [SmokeDetection] label=synthetic-yolo, frame=5, index=0, x=500.0, y=500.0, w=200.0, h=200.0, area=40000.0, conf=0.550, cx=0.600, cy=0.600, areaRatio=0.040000, aspectRatio=1.000
 '@ | Set-Content -Encoding UTF8 -Path $baseLog
+
+@'
+[AutoRunSummary] runId=empty-base, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, startFrame=0, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=0, small=0, rejected=0, statsRejected=0
+'@ | Set-Content -Encoding UTF8 -Path $emptyBaseLog
 
 @(
     [pscustomobject]@{ frame = 1; detectionId = "tile-face-1"; x = 101.0; y = 102.0; w = 51.0; h = 58.0; confidence = 0.910; tileSupportCount = 3 },
@@ -238,6 +246,33 @@ if (@($rows | Where-Object { $_.reviewStatus -ne "pending-human" }).Count -ne 0)
     throw "Pseudo-GT rows must remain pending-human."
 }
 
+$emptyBaseOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+    -BasePredictionLog $emptyBaseLog `
+    -TileFaceCsv $tileCsv `
+    -OutputCsv $emptyBaseOutputCsv `
+    -SummaryPath $emptyBaseSummaryPath `
+    -ReviewQueueCsv $emptyBaseReviewQueueCsv 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "new-yolo-pseudo-gt-evidence.ps1 empty-base run failed: $($emptyBaseOutput | Out-String)"
+}
+
+Assert-File "empty-base pseudo-GT output CSV" $emptyBaseOutputCsv
+Assert-File "empty-base pseudo-GT summary" $emptyBaseSummaryPath
+Assert-File "empty-base pseudo-GT review queue CSV" $emptyBaseReviewQueueCsv
+
+$emptyBaseRows = @(Import-Csv $emptyBaseOutputCsv)
+$emptyBaseSummaryText = Get-Content -Raw -Path $emptyBaseSummaryPath
+if ($emptyBaseRows.Count -ne 3) {
+    throw "Expected 3 empty-base pseudo-GT rows, actual=$($emptyBaseRows.Count)"
+}
+if (@($emptyBaseRows | Where-Object { $_.candidateType -ne "missCandidate" }).Count -ne 0) {
+    throw "Expected no-base pseudo-GT rows to all be missCandidate."
+}
+if ($emptyBaseSummaryText -notmatch "baseRows=0" -or $emptyBaseSummaryText -notmatch "missCandidate=3") {
+    throw "Expected empty-base pseudo-GT summary to record baseRows=0 and missCandidate=3."
+}
+Write-Host "[YoloPseudoGtEvidenceVerify] pass no-base tile rows become miss candidates"
+
 @(
     [pscustomobject]@{ frame = 1; verificationId = "bad-verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.920 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $badVerificationCsv
@@ -278,6 +313,7 @@ Assert-Contains "script records support area ratio" $scriptText "areaChangeRatio
 Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
+Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$\(\$baseRows.Count\)'
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
 Assert-Contains "script records auxiliary priority boost" $scriptText "auxiliaryPriorityBoost"
 Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
@@ -298,5 +334,6 @@ Assert-Contains "guide documents high-quality verification" $guideText "face ver
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"
 Assert-Contains "guide documents area ratio evidence" $guideText "areaChangeRatio"
+Assert-Contains "guide documents no-detection pseudo gt miss evidence" $guideText "AllowNoDetections[\s\S]*WithPseudoGtTileInput[\s\S]*missCandidate"
 
 Write-Host "[YoloPseudoGtEvidenceVerify] all requested checks passed"
