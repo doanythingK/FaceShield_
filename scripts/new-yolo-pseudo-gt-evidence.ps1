@@ -460,13 +460,23 @@ function Read-CandidateDouble {
 function Get-MinMatchAreaChangeRatio {
     param([object[]]$Matches)
 
-    $best = 99.0
+    return Get-MinMatchProperty $Matches "AreaChangeRatio" 99.0
+}
+
+function Get-MinMatchProperty {
+    param(
+        [object[]]$Matches,
+        [string]$PropertyName,
+        [double]$DefaultValue
+    )
+
+    $best = $DefaultValue
     foreach ($match in @($Matches)) {
-        if ($null -eq $match -or $null -eq $match.PSObject.Properties["AreaChangeRatio"]) {
+        if ($null -eq $match -or $null -eq $match.PSObject.Properties[$PropertyName]) {
             continue
         }
 
-        $best = [Math]::Min($best, [double]$match.AreaChangeRatio)
+        $best = [Math]::Min($best, [double]$match.PSObject.Properties[$PropertyName].Value)
     }
 
     return $best
@@ -546,15 +556,7 @@ foreach ($base in $baseRows) {
     $bestIou = [Math]::Max(
         $(if ($hasTileSupport) { $tileMatch.Iou } else { 0.0 }),
         $(if ($hasVerificationSupport) { $verificationMatch.Iou } else { 0.0 }))
-    $bestCenterDistance = if ($hasTileSupport) {
-        $tileMatch.CenterDistanceRatio
-    }
-    elseif ($hasVerificationSupport) {
-        $verificationMatch.CenterDistanceRatio
-    }
-    else {
-        99.0
-    }
+    $bestCenterDistance = Get-MinMatchProperty @($tileMatch, $verificationMatch) "CenterDistanceRatio" 99.0
     $bestAreaChangeRatio = Get-MinMatchAreaChangeRatio @($tileMatch, $verificationMatch)
 
     $fpProbability = if ($hasFaceSupport) {

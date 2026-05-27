@@ -222,6 +222,11 @@ if ([int]$supportedRow.supportFrameCount -lt 2) {
     throw "Expected supported row to record repeated support frames."
 }
 
+$supportedCenterDistance = [double]::Parse($supportedRow.centerDistanceRatio, [System.Globalization.CultureInfo]::InvariantCulture)
+if ($supportedCenterDistance -gt 0.028) {
+    throw "Expected supported row to preserve the best tile/verification centerDistanceRatio."
+}
+
 if ($supportedRow.supportSources -notmatch "tile" -or $supportedRow.supportSources -notmatch "verification") {
     throw "Expected supported row to record tile and verification support sources."
 }
@@ -238,6 +243,7 @@ Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"
 Assert-Contains "script records support area ratio" $scriptText "areaChangeRatio"
+Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
