@@ -73,7 +73,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -ExternalOutputCsv ".tmp/local-heavy-model/tile-face.csv"
 ```
 
-외부 runner는 manifest의 `tileImagePath`, `frame`, `tileX`, `tileY`, `tileW`, `tileH`를 읽어 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다.
+외부 runner는 manifest의 `tileImagePath`, `frame`, `tileX`, `tileY`, `tileW`, `tileH`를 읽어 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다. `new-yolo-pseudo-gt-evidence.ps1`는 이 필수 evidence 컬럼이 빠진 CSV를 거부하므로, 누락된 confidence/distance/geometry 기본값으로 오탐/미탐 후보가 조용히 분류되지 않는다.
 
 기본 YOLO 후보 자체를 고품질 face verification 모델에 넣을 때는 `new-yolo-pseudo-gt-face-verification-input.ps1`가 만든 `face-verification-manifest.csv`를 사용한다. 이 manifest는 `cropImagePath`, `candidateId`, `basePredictionId`, 원본 YOLO box, 확장 crop 좌표를 담고, 외부 runner는 원본 frame 좌표계 기준 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만들어야 한다.
 

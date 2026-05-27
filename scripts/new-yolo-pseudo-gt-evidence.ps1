@@ -94,6 +94,101 @@ function Read-IntValue {
     return $Default
 }
 
+function Get-CsvValueOrThrow {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    foreach ($name in $Names) {
+        $property = $Row.PSObject.Properties[$name]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return $property.Value
+        }
+    }
+
+    throw "$Source CSV row $Index missing required value: $([string]::Join('/', $Names))"
+}
+
+function Read-RequiredDoubleValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $value = Get-CsvValueOrThrow $Row $Names $Source $Index
+    $parsed = 0.0
+    if ([double]::TryParse(
+            [string]$value,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed)) {
+        return $parsed
+    }
+
+    throw "$Source CSV row $Index has invalid numeric value for $([string]::Join('/', $Names)): $value"
+}
+
+function Read-RequiredIntValue {
+    param(
+        [object]$Row,
+        [string[]]$Names,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $value = Get-CsvValueOrThrow $Row $Names $Source $Index
+    $parsed = 0
+    if ([int]::TryParse([string]$value, [ref]$parsed)) {
+        return $parsed
+    }
+
+    throw "$Source CSV row $Index has invalid integer value for $([string]::Join('/', $Names)): $value"
+}
+
+function Assert-RequiredDetectionCsvShape {
+    param(
+        [object]$Row,
+        [string]$Source,
+        [int]$Index
+    )
+
+    $frame = Read-RequiredIntValue $Row @("frame", "Frame") $Source $Index
+    if ($frame -lt 0) {
+        throw "$Source CSV row $Index has negative frame: $frame"
+    }
+
+    $width = Read-RequiredDoubleValue $Row @("w", "W", "width", "Width") $Source $Index
+    $height = Read-RequiredDoubleValue $Row @("h", "H", "height", "Height") $Source $Index
+    if ($width -le 0 -or $height -le 0) {
+        throw "$Source CSV row $Index has non-positive geometry: w=$width, h=$height"
+    }
+
+    [void](Read-RequiredDoubleValue $Row @("x", "X") $Source $Index)
+    [void](Read-RequiredDoubleValue $Row @("y", "Y") $Source $Index)
+
+    switch ($Source) {
+        "tile-face" {
+            [void](Read-RequiredDoubleValue $Row @("confidence", "conf", "tileFaceConfidence", "Confidence") $Source $Index)
+            [void](Read-RequiredIntValue $Row @("tileSupportCount", "supportCount", "TileSupportCount") $Source $Index)
+        }
+        "face-verification" {
+            [void](Read-RequiredDoubleValue $Row @("faceVerificationConfidence", "confidence", "conf", "Confidence") $Source $Index)
+            [void](Read-RequiredDoubleValue $Row @("faceVerificationDistance", "verificationDistance", "distance", "FaceVerificationDistance") $Source $Index)
+        }
+        "person-object" {
+            [void](Read-RequiredDoubleValue $Row @("confidence", "conf", "Confidence") $Source $Index)
+        }
+        default {
+            [void](Read-RequiredDoubleValue $Row @("confidence", "conf", "faceVerificationConfidence", "tileFaceConfidence", "Confidence") $Source $Index)
+        }
+    }
+}
+
 function New-DetectionRow {
     param(
         [int]$Frame,
@@ -136,6 +231,8 @@ function Read-DetectionCsvRows {
     $rows = [System.Collections.Generic.List[object]]::new()
     $index = 0
     foreach ($row in (Import-Csv $resolved)) {
+        Assert-RequiredDetectionCsvShape $row $Source $index
+
         $frame = Read-IntValue $row @("frame", "Frame")
         $id = [string](Get-PropertyValue $row @("predictionId", "detectionId", "verificationId", "sourcePredictionId", "id", "Id") "")
         if ([string]::IsNullOrWhiteSpace($id)) {
@@ -840,6 +937,7 @@ $summary = @(
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
     "- minVerificationConfidence=$(Format-Double $MinVerificationConfidence)",
     "- temporalSupportWindowFrames=$TemporalSupportWindowFrames",
+    "- inputValidation=strict-required-columns",
     "- topReviewCandidates=$(if ($topReviewFrames.Count -gt 0) { [string]::Join(';', $topReviewFrames) } else { 'none' })",
     "",
     "Final labels must be copied into the review CSV only after visual confirmation."

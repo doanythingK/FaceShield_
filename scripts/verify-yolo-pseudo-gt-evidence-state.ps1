@@ -10,9 +10,12 @@ $baseLog = Join-Path $work "base-yolo.log"
 $tileCsv = Join-Path $work "tile-face.csv"
 $verificationCsv = Join-Path $work "face-verification.csv"
 $personCsv = Join-Path $work "person-object.csv"
+$badVerificationCsv = Join-Path $work "bad-face-verification.csv"
 $outputCsv = Join-Path $work "pseudo-gt-candidates.csv"
 $summaryPath = Join-Path $work "pseudo-gt-summary.md"
 $reviewQueueCsv = Join-Path $work "pseudo-gt-review-queue.csv"
+$badOutputCsv = Join-Path $work "bad-pseudo-gt-candidates.csv"
+$badSummaryPath = Join-Path $work "bad-pseudo-gt-summary.md"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -235,10 +238,39 @@ if (@($rows | Where-Object { $_.reviewStatus -ne "pending-human" }).Count -ne 0)
     throw "Pseudo-GT rows must remain pending-human."
 }
 
+@(
+    [pscustomobject]@{ frame = 1; verificationId = "bad-verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.920 }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $badVerificationCsv
+
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $badOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -BasePredictionLog $baseLog `
+        -FaceVerificationCsv $badVerificationCsv `
+        -OutputCsv $badOutputCsv `
+        -SummaryPath $badSummaryPath 2>&1
+    $badExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badExitCode -eq 0) {
+    throw "Expected malformed face verification CSV to fail."
+}
+
+if (($badOutput | Out-String) -notmatch "face-verification CSV row 0 missing required value: faceVerificationDistance") {
+    throw "Expected malformed face verification CSV to report missing faceVerificationDistance. Output: $($badOutput | Out-String)"
+}
+Write-Host "[YoloPseudoGtEvidenceVerify] pass malformed face verification CSV rejected"
+
 Assert-Contains "script accepts base prediction log" $scriptText "BasePredictionLog"
 Assert-Contains "script accepts tile face CSV" $scriptText "TileFaceCsv"
 Assert-Contains "script accepts face verification CSV" $scriptText "FaceVerificationCsv"
 Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
+Assert-Contains "script validates required input columns" $scriptText "strict-required-columns"
+Assert-Contains "script requires face verification distance" $scriptText "faceVerificationDistance"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"
@@ -258,6 +290,7 @@ Assert-Contains "summary records supported count" $summaryText "supportedFaceCan
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=2"
 Assert-Contains "summary records miss count" $summaryText "missCandidate=4"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
+Assert-Contains "summary records strict input validation" $summaryText "inputValidation=strict-required-columns"
 Assert-Contains "summary records top review candidates" $summaryText "topReviewCandidates="
 Assert-Contains "summary records temporal support window" $summaryText "temporalSupportWindowFrames=2"
 Assert-Contains "summary records support area ratio" $summaryText "maxSupportAreaChangeRatio=3"
