@@ -222,8 +222,12 @@ if ($null -eq $largeGeometryMismatch) {
     throw "Expected center-aligned large YOLO box to remain a falsePositiveCandidate when area ratio is too different."
 }
 
-if ($largeGeometryMismatch.areaChangeRatio -ne "99") {
-    throw "Expected unsupported geometry mismatch to preserve sentinel areaChangeRatio=99."
+if ([double]::Parse($largeGeometryMismatch.areaChangeRatio, [System.Globalization.CultureInfo]::InvariantCulture) -lt 15.0) {
+    throw "Expected unsupported geometry mismatch to preserve nearest high-precision areaChangeRatio evidence."
+}
+
+if ($largeGeometryMismatch.pseudoGtReason -notmatch "same-frame high-precision face evidence but fails IoU/center/area support thresholds") {
+    throw "Expected unsupported geometry mismatch reason to explain failed support thresholds."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-small-face-5" }).Count -ne 1) {
@@ -316,6 +320,7 @@ Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"
 Assert-Contains "script records support area ratio" $scriptText "areaChangeRatio"
+Assert-Contains "script records unsupported nearest high-quality comparison" $scriptText "Find-BestComparison"
 Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script records repeated support rows" $scriptText "supportRowCount"

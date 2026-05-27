@@ -440,6 +440,32 @@ function Find-BestVerification {
     return $best
 }
 
+function Find-BestComparison {
+    param(
+        [object]$Target,
+        [object[]]$Candidates
+    )
+
+    $best = $null
+    foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        $iou = Get-Iou $Target $candidate
+        $centerDistance = Get-CenterDistanceRatio $Target $candidate
+        $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
+        $score = $iou - ($centerDistance * 0.1) - ([Math]::Log([Math]::Max(1.0, $areaChangeRatio)) * 0.05) + ($candidate.Confidence * 0.01)
+        if ($null -eq $best -or $score -gt $best.Score) {
+            $best = [pscustomobject]@{
+                Row = $candidate
+                Iou = $iou
+                CenterDistanceRatio = $centerDistance
+                AreaChangeRatio = $areaChangeRatio
+                Score = $score
+            }
+        }
+    }
+
+    return $best
+}
+
 function Find-BestPersonSupport {
     param(
         [object]$Target,
@@ -619,6 +645,7 @@ foreach ($base in $baseRows) {
     $verificationMatch = Find-BestVerification $base $verificationRows
     $personMatch = Find-BestPersonSupport $base $personRows
     $temporalSupport = Get-TemporalFaceSupport $base $tileRows $verificationRows
+    $comparisonMatch = Find-BestComparison $base @($tileRows + $verificationRows)
 
     $hasTileSupport = $null -ne $tileMatch
     $hasVerificationSupport = $null -ne $verificationMatch
@@ -637,11 +664,30 @@ foreach ($base in $baseRows) {
     $verificationDistance = if ($hasVerificationSupport) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
-    $bestIou = [Math]::Max(
-        $(if ($hasTileSupport) { $tileMatch.Iou } else { 0.0 }),
-        $(if ($hasVerificationSupport) { $verificationMatch.Iou } else { 0.0 }))
-    $bestCenterDistance = Get-MinMatchProperty @($tileMatch, $verificationMatch) "CenterDistanceRatio" 99.0
-    $bestAreaChangeRatio = Get-MinMatchAreaChangeRatio @($tileMatch, $verificationMatch)
+    $supportMatches = @($tileMatch, $verificationMatch)
+    $bestIou = if ($hasFaceSupport) {
+        [Math]::Max(
+            $(if ($hasTileSupport) { $tileMatch.Iou } else { 0.0 }),
+            $(if ($hasVerificationSupport) { $verificationMatch.Iou } else { 0.0 }))
+    } elseif ($null -ne $comparisonMatch) {
+        $comparisonMatch.Iou
+    } else {
+        0.0
+    }
+    $bestCenterDistance = if ($hasFaceSupport) {
+        Get-MinMatchProperty $supportMatches "CenterDistanceRatio" 99.0
+    } elseif ($null -ne $comparisonMatch) {
+        $comparisonMatch.CenterDistanceRatio
+    } else {
+        99.0
+    }
+    $bestAreaChangeRatio = if ($hasFaceSupport) {
+        Get-MinMatchAreaChangeRatio $supportMatches
+    } elseif ($null -ne $comparisonMatch) {
+        $comparisonMatch.AreaChangeRatio
+    } else {
+        99.0
+    }
 
     $fpProbability = if ($hasFaceSupport) {
         [Math]::Max(0.0, 0.25 - ($tileSupportCount * 0.05) - ($temporalSupport.FrameCount * 0.04))
@@ -653,6 +699,9 @@ foreach ($base in $baseRows) {
 
     $reason = if ($hasFaceSupport) {
         "base YOLO candidate is supported by test-only high-precision face evidence; final label still requires review CSV"
+    }
+    elseif ($null -ne $comparisonMatch) {
+        "base YOLO candidate has same-frame high-precision face evidence but fails IoU/center/area support thresholds; person/object support is auxiliary only"
     }
     else {
         "base YOLO candidate lacks tile/verification face support; person/object support is auxiliary only"
