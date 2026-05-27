@@ -77,6 +77,37 @@ function Count-Matching {
     }).Count
 }
 
+function Count-ColumnPresent {
+    param(
+        [object[]]$Rows,
+        [string]$Column
+    )
+
+    return @($Rows | Where-Object {
+        $null -ne $_.PSObject.Properties[$Column] -and -not [string]::IsNullOrWhiteSpace([string]$_.$Column)
+    }).Count
+}
+
+function Count-NonZeroNumber {
+    param(
+        [object[]]$Rows,
+        [string]$Column
+    )
+
+    return @($Rows | Where-Object {
+        if ($null -eq $_.PSObject.Properties[$Column]) {
+            return $false
+        }
+
+        $parsed = 0.0
+        return [double]::TryParse(
+            [string]$_.$Column,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed) -and $parsed -gt 0.0
+    }).Count
+}
+
 function Read-OptionalCsv {
     param([string]$Path)
 
@@ -221,9 +252,18 @@ $guiFilled = $guiRows.Count -gt 0 -and $guiPassed -eq $guiRows.Count -and $guiAr
 
 $pseudoGtRows = @(Read-OptionalCsv $PseudoGtCsv)
 $pseudoGtClosureRows = @(Read-OptionalCsv $PseudoGtReviewClosureCsv)
+$pseudoGtSupportedRows = Count-Matching $pseudoGtRows "candidateType" "supportedfacecandidate"
+$pseudoGtFalsePositiveRows = Count-Matching $pseudoGtRows "candidateType" "falsepositivecandidate"
+$pseudoGtMissRows = Count-Matching $pseudoGtRows "candidateType" "misscandidate"
+$pseudoGtRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtRows "supportFrameCount"
+$pseudoGtRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtRows "personUpperOverlap"
+$pseudoGtRowsWithGeometryEvidence = Count-ColumnPresent $pseudoGtRows "centerDistanceRatio"
 $pseudoGtClosedRows = @($pseudoGtClosureRows | Where-Object {
     $null -ne $_.PSObject.Properties["closureStatus"] -and $_.closureStatus.Trim().ToLowerInvariant() -eq "closed"
 }).Count
+$pseudoGtClosureRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtClosureRows "supportFrameCount"
+$pseudoGtClosureRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtClosureRows "personUpperOverlap"
+$pseudoGtClosureRowsWithGeometryEvidence = Count-ColumnPresent $pseudoGtClosureRows "centerDistanceRatio"
 $pseudoGtOpenRows = if ($pseudoGtRows.Count -eq 0) {
     0
 }
@@ -293,7 +333,9 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Final YOLO recommendation"; Status = "none"; Evidence = "recommendation=none, no-final-yolo-recommendation" },
     [pscustomobject]@{ Requirement = "Full-GT label review"; Status = $fullGtStatus; Evidence = "rows=$($fullGtRows.Count), labels=$fullGtLabels, reviewed=$fullGtReviewed, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, missedFaceCountFilled=$fullFrameMissCounts" },
     [pscustomobject]@{ Requirement = "Full-GT quality gate"; Status = $qualityGateStatus; Evidence = $qualityGateEvidence },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT candidate evidence"; Status = $pseudoGtStatus; Evidence = "supportedFaceCandidate=$pseudoGtSupportedRows, falsePositiveCandidate=$pseudoGtFalsePositiveRows, missCandidate=$pseudoGtMissRows, supportEvidenceRows=$pseudoGtRowsWithSupportEvidence, personEvidenceRows=$pseudoGtRowsWithPersonEvidence, geometryEvidenceRows=$pseudoGtRowsWithGeometryEvidence; source=$PseudoGtCsv" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, open=$pseudoGtOpenRows; runtimePath=not-used-by-app" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence; source=$PseudoGtReviewClosureCsv" },
     [pscustomobject]@{ Requirement = "Avalonia GUI smoke"; Status = $guiStatus; Evidence = "steps=$($guiRows.Count), pass=$guiPassed, artifactPathFilled=$guiArtifacts, required=preview-track-hold/manual-edit/export/reopen-state" },
     [pscustomobject]@{ Requirement = "Model license/distribution policy"; Status = "pass"; Evidence = "license-source=pass, bundle=blocked" },
     [pscustomobject]@{ Requirement = "10-minute/whole-video decision"; Status = "deferred"; Evidence = "ten-minute-full=not-required-after-extended-fail" },
@@ -345,6 +387,11 @@ $lines = @(
     "- pseudoGtStatus=$pseudoGtStatus",
     "- pseudoGtRows=$($pseudoGtRows.Count)",
     "- pseudoGtClosedRows=$pseudoGtClosedRows",
+    "- pseudoGtSupportedRows=$pseudoGtSupportedRows",
+    "- pseudoGtFalsePositiveRows=$pseudoGtFalsePositiveRows",
+    "- pseudoGtMissRows=$pseudoGtMissRows",
+    "- pseudoGtSupportEvidenceRows=$pseudoGtRowsWithSupportEvidence",
+    "- pseudoGtClosureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence",
     "- fullFrameRows=$($fullFrameRows.Count)",
     "- fullFrameReviewed=$fullFrameReviewed",
     "- guiSteps=$($guiRows.Count)",
@@ -366,7 +413,9 @@ $report = Get-Content -Raw -Path $resolvedOutput
 foreach ($requiredReportToken in @(
     "Full-GT label review",
     "Full-GT quality gate",
+    "Test-only pseudo-GT candidate evidence",
     "Test-only pseudo-GT review closure",
+    "Test-only pseudo-GT closure evidence preservation",
     "Avalonia GUI smoke",
     "Preview track-hold GUI evidence",
     "YOLOv8 candidate A/B comparison",
@@ -408,6 +457,8 @@ if ($Verify) {
         }
 
         Assert-ReportContains "report records pseudo-GT closure state" $report "pseudoGtStatus=$pseudoGtStatus"
+        Assert-ReportContains "report records pseudo-GT candidate evidence" $report "Test-only pseudo-GT candidate evidence | $pseudoGtStatus"
+        Assert-ReportContains "report records pseudo-GT closure evidence preservation" $report "Test-only pseudo-GT closure evidence preservation | $pseudoGtStatus"
 
         if ($previewTrackHoldPassed) {
             Assert-ReportContains "report keeps preview track-hold passed" $report "Preview track-hold GUI evidence | pass"

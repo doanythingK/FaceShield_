@@ -2300,6 +2300,7 @@ Current validation after the follow-up changes:
 - 2026-05-28 pseudo-GT miss evidence update: verification-only high-quality face rows now produce `missCandidate` when they do not match a base YOLO row. Tile-based miss rows also carry matched face verification confidence/distance when available, so missed-face evidence can come from tile, verification, or both without entering the app runtime path.
 - 2026-05-28 pseudo-GT repeated-support update: candidate CSV rows now include `supportFrameCount` and `supportSources`, computed from nearby tile/verification rows inside a short frame window. Supported candidates use this repeated support to reduce `fpProbability`, while miss candidates use it to raise `missProbability`; final labels still require review CSV closure.
 - 2026-05-28 pseudo-GT closure evidence update: `close-yolo-pseudo-gt-review.ps1` now preserves person/object auxiliary evidence, repeated support, and IoU/center-distance fields in the closure CSV, so reviewed `face`/`nonface`/`miss` labels keep the evidence that produced each candidate.
+- 2026-05-28 pseudo-GT report evidence update: `write-yolo-goal-evidence-report.ps1` now summarizes `supportedFaceCandidate`/`falsePositiveCandidate`/`missCandidate` counts and records support/person/geometry evidence row counts for both candidate CSV and closure CSV. This keeps the test-only high-precision evidence visible in the final goal report without using it in the app runtime path.
 
 Completion state:
 
