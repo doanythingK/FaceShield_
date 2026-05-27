@@ -298,6 +298,7 @@ Assert-Contains "script derives review frames from final summary residuals" $scr
 Assert-Contains "script derives review frames from low-confidence detections" $scriptText "LowConfidenceReviewThreshold[\s\S]*Add-LowConfidenceDetectionFrames[\s\S]*DetectionRows[\s\S]*conf="
 Assert-Contains "script passes required full-frame review frames" $scriptText "RequiredFullFrameNumbers[\s\S]*reviewFrameNumbers"
 Assert-Contains "script expands review video frame count for required frames" $scriptText "reviewVideoFrameCount[\s\S]*maxRequiredFrame\s*\+\s*1"
+Assert-Contains "script merges pseudo gt review frames into full-frame review requirements" $scriptText "Merge-ReviewFrameNumbers[\s\S]*PseudoGtReviewQueuePath[\s\S]*resolvedPseudoGtReviewQueueCsv"
 Assert-Contains "script writes summary" $scriptText "YOLO Follow-Up Quality Evidence"
 Assert-Contains "checklist has scene-cut evidence" $checklistText "directCandidates=1"
 Assert-Contains "checklist has post-cut scene-cut evidence" $checklistText "postCutCandidates=2"
@@ -363,6 +364,7 @@ Assert-Contains "summary records final mask review reasons" $summaryText "review
 Assert-Contains "summary records required full-frame review frames when packaged" $scriptText "Required full-frame review frames"
 Assert-Contains "summary includes protected carry review frame output" $summaryText "Required full-frame review frames:[\s\S]*14[\s\S]*15"
 Assert-Contains "summary includes post-gap protected carry review frame output" $summaryText "Required full-frame review frames:[\s\S]*19[\s\S]*20"
+Assert-Contains "summary includes pseudo gt candidate review frame output" $summaryText "Required full-frame review frames:[\s\S]*3[\s\S]*4[\s\S]*5"
 Assert-Contains "summary preserves face label markdown" $summaryText 'Use `face` only'
 Assert-Contains "summary preserves nonface label markdown" $summaryText 'Use `nonface` for'
 Assert-Contains "summary records partial visual review boundary" $summaryText "Partial Visual Review Rule"

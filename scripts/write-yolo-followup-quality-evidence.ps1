@@ -314,6 +314,45 @@ function Get-SampledReviewFrameNumbers {
     return @($frames | ForEach-Object { $_ })
 }
 
+function Add-PseudoGtReviewQueueFrames {
+    param(
+        [System.Collections.Generic.SortedSet[int]]$Frames,
+        [string]$ReviewQueuePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ReviewQueuePath) -or -not (Test-Path $ReviewQueuePath)) {
+        return
+    }
+
+    foreach ($row in @(Import-Csv $ReviewQueuePath)) {
+        if ($row.candidateType -eq "supportedFaceCandidate") {
+            continue
+        }
+
+        $frame = 0
+        if ([int]::TryParse([string]$row.frame, [ref]$frame) -and $frame -ge 0) {
+            [void]$Frames.Add($frame)
+        }
+    }
+}
+
+function Merge-ReviewFrameNumbers {
+    param(
+        [int[]]$BaseFrames,
+        [string]$PseudoGtReviewQueuePath = ""
+    )
+
+    $frames = New-Object System.Collections.Generic.SortedSet[int]
+    foreach ($frame in @($BaseFrames)) {
+        if ($frame -ge 0) {
+            [void]$frames.Add([int]$frame)
+        }
+    }
+
+    Add-PseudoGtReviewQueueFrames $frames $PseudoGtReviewQueuePath
+    return @($frames | ForEach-Object { $_ })
+}
+
 function Convert-ToWslPath {
     param([string]$Path)
 
@@ -1297,6 +1336,10 @@ else {
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to write YOLO pseudo-GT evidence."
         }
+
+        $reviewFrameNumbers = Merge-ReviewFrameNumbers `
+            -BaseFrames $reviewFrameNumbers `
+            -PseudoGtReviewQueuePath $resolvedPseudoGtReviewQueueCsv
     }
 
     $reviewIndex = Join-Path $resolvedReviewPackageDir "review-index.html"
