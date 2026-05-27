@@ -51,7 +51,10 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=6, index=0, x=500.0, y=440.0, w=180.0, h=180.0, area=32400.0, conf=0.220, cx=0.461, cy=0.736, areaRatio=0.015625, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=9, index=0, x=700.0, y=120.0, w=8.0, h=40.0, area=320.0, conf=0.180, cx=0.550, cy=0.222, areaRatio=0.000154, aspectRatio=0.200
 [SmokeDetection] label=synthetic-yolo, frame=10, index=0, x=610.0, y=0.0, w=34.0, h=30.0, area=1020.0, conf=0.310, cx=0.490, cy=0.021, areaRatio=0.000492, aspectRatio=1.133
-[SmokeDetectionSummary] label=synthetic-yolo, frames=4, detections=4, frameRange=2-10, confMin=0.180, confAvg=0.280, confMax=0.410, areaRatioMin=0.000210, areaRatioAvg=0.000748, areaRatioMax=0.002000, aspectRatioMin=0.833, aspectRatioAvg=0.959, aspectRatioMax=1.133
+[SmokeDetection] label=synthetic-yolo, frame=30, index=0, x=100.0, y=100.0, w=80.0, h=80.0, area=6400.0, conf=0.860, cx=0.109, cy=0.194, areaRatio=0.006944, aspectRatio=1.000
+[SmokeDetection] label=synthetic-yolo, frame=31, index=0, x=900.0, y=300.0, w=90.0, h=90.0, area=8100.0, conf=0.890, cx=0.738, cy=0.479, areaRatio=0.008789, aspectRatio=1.000
+[SmokeDetection] label=synthetic-yolo, frame=32, index=0, x=104.0, y=102.0, w=80.0, h=80.0, area=6400.0, conf=0.840, cx=0.113, cy=0.197, areaRatio=0.006944, aspectRatio=1.000
+[SmokeDetectionSummary] label=synthetic-yolo, frames=7, detections=7, frameRange=2-32, confMin=0.180, confAvg=0.530, confMax=0.890, areaRatioMin=0.000210, areaRatioAvg=0.003658, areaRatioMax=0.008789, aspectRatioMin=0.833, aspectRatioAvg=0.977, aspectRatioMax=1.133
 '@ | Set-Content -Encoding UTF8 -Path $log
 
 @(
@@ -166,6 +169,7 @@ Assert-Contains "checklist has strong carry scene-cut probe evidence" $checklist
 Assert-Contains "checklist has false-positive label rule" $checklistText "do not treat YOLO or FaceONNX as ground truth"
 Assert-Contains "continuity says rows are final masks" $continuityText 'final `FrameMaskProvider` face rectangles'
 Assert-Contains "continuity reports short gaps" $continuityText "Short empty gaps: 2"
+Assert-Contains "continuity reports per-face short gaps" $continuityText "Per-face short gaps: 1"
 Assert-Contains "continuity reports isolated masks" $continuityText "Isolated final mask frames: 2"
 Assert-Contains "continuity reports low confidence masks" $continuityText "Low-confidence final masks: 3"
 Assert-Contains "continuity reports weak non-edge masks" $continuityText "Weak non-edge final masks: 2"
@@ -176,11 +180,12 @@ Assert-Contains "continuity reports lower-frame weak non-edge masks" $continuity
 Assert-Contains "continuity reports aspect outliers" $continuityText "Aspect-ratio outlier final masks: 1"
 Assert-Contains "continuity reports gap diagnostics" $continuityText "AreaChange[\s\S]*CenterShift[\s\S]*Review hint"
 Assert-Contains "continuity reports large jump hint" $continuityText "large box jump; review before fill"
+Assert-Contains "continuity includes per-face gap table" $continuityText "Per-Face Short Gaps[\s\S]*specific face missing while another mask may exist"
 Assert-Contains "continuity includes weak non-edge table" $continuityText "Weak Non-Edge Final Masks[\s\S]*weak non-edge; review false positive"
 Assert-Contains "continuity includes weak edge table" $continuityText "Weak Edge Final Masks[\s\S]*top-edge weak candidate; review partial face vs edge false positive"
 Assert-Contains "continuity includes lower weak table" $continuityText "Lower Weak-To-Medium Non-Edge Final Masks[\s\S]*0\.220"
 Assert-Contains "continuity includes aspect outlier table" $continuityText "Aspect-Ratio Outlier Final Masks[\s\S]*too narrow for YOLO face profile"
-Assert-Contains "summary records detection rows" $summaryText "Detection rows: 4"
+Assert-Contains "summary records detection rows" $summaryText "Detection rows: 7"
 Assert-Contains "summary records pseudo gt candidates" $summaryText "Pseudo-GT candidates"
 Assert-Contains "summary records pseudo gt summary" $summaryText "Pseudo-GT summary"
 Assert-Contains "summary records auto start frame" $summaryText "startFrame=0"

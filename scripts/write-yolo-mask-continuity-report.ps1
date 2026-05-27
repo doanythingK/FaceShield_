@@ -43,6 +43,42 @@ function Join-Values {
     return ($Values -join ",")
 }
 
+function Join-FrameRanges {
+    param([int[]]$Frames)
+
+    $ordered = @($Frames | Sort-Object -Unique)
+    if ($ordered.Count -eq 0) {
+        return "none"
+    }
+
+    $ranges = New-Object System.Collections.Generic.List[string]
+    $start = [int]$ordered[0]
+    $end = $start
+    for ($i = 1; $i -lt $ordered.Count; $i++) {
+        $current = [int]$ordered[$i]
+        if ($current -eq $end + 1) {
+            $end = $current
+            continue
+        }
+
+        if ($start -eq $end) {
+            $ranges.Add([string]$start) | Out-Null
+        } else {
+            $ranges.Add(("{0}-{1}" -f $start, $end)) | Out-Null
+        }
+        $start = $current
+        $end = $current
+    }
+
+    if ($start -eq $end) {
+        $ranges.Add([string]$start) | Out-Null
+    } else {
+        $ranges.Add(("{0}-{1}" -f $start, $end)) | Out-Null
+    }
+
+    return ($ranges -join ",")
+}
+
 $resolvedLog = Resolve-RepoPath $LogPath
 if (-not (Test-Path $resolvedLog)) {
     throw "Log not found: $resolvedLog"
@@ -146,6 +182,41 @@ function Get-GapReviewHint {
     return "short gap; review flicker"
 }
 
+function Test-StableFaceMatch {
+    param(
+        [object]$Previous,
+        [object]$Next,
+        [double]$MaxAreaChange = 4.0,
+        [double]$MaxCenterShift = 0.20
+    )
+
+    if ($null -eq $Previous -or $null -eq $Next) {
+        return $false
+    }
+
+    return (Get-AreaChange $Previous $Next) -le $MaxAreaChange -and
+        (Get-CenterShift $Previous $Next) -le $MaxCenterShift
+}
+
+function Test-FrameHasMatchingFace {
+    param(
+        [int]$Frame,
+        [object]$Anchor
+    )
+
+    if (-not $rowsByFrame.ContainsKey($Frame)) {
+        return $false
+    }
+
+    foreach ($candidate in $rowsByFrame[$Frame]) {
+        if (Test-StableFaceMatch $Anchor $candidate) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Test-NormalizedEdgeTouch {
     param(
         [object]$Row,
@@ -244,6 +315,67 @@ for ($i = 1; $i -lt $frames.Count; $i++) {
     }
 }
 
+$perFaceShortGaps = New-Object System.Collections.Generic.List[object]
+$perFaceGapKeys = [System.Collections.Generic.HashSet[string]]::new()
+foreach ($previous in $frames) {
+    $previousFrame = [int]$previous
+    if (-not $rowsByFrame.ContainsKey($previousFrame)) {
+        continue
+    }
+
+    foreach ($previousRow in $rowsByFrame[$previousFrame]) {
+        for ($missing = 1; $missing -le $ShortGapMaxFrames; $missing++) {
+            $nextFrame = $previousFrame + $missing + 1
+            if (-not $rowsByFrame.ContainsKey($nextFrame)) {
+                continue
+            }
+
+            foreach ($nextRow in $rowsByFrame[$nextFrame]) {
+                if (-not (Test-StableFaceMatch $previousRow $nextRow)) {
+                    continue
+                }
+
+                $hasAnyIntermediateMask = $false
+                $missingFaceFrames = New-Object System.Collections.Generic.List[int]
+                for ($frame = $previousFrame + 1; $frame -lt $nextFrame; $frame++) {
+                    if ($rowsByFrame.ContainsKey($frame) -and @($rowsByFrame[$frame]).Count -gt 0) {
+                        $hasAnyIntermediateMask = $true
+                    }
+                    if (-not (Test-FrameHasMatchingFace $frame $previousRow)) {
+                        $missingFaceFrames.Add($frame) | Out-Null
+                    }
+                }
+
+                if (-not $hasAnyIntermediateMask -or $missingFaceFrames.Count -eq 0) {
+                    continue
+                }
+
+                $range = Join-FrameRanges @($missingFaceFrames)
+                $key = "{0}:{1}:{2}:{3}:{4}" -f $previousFrame, $previousRow.Index, $nextFrame, $nextRow.Index, $range
+                if (-not $perFaceGapKeys.Add($key)) {
+                    continue
+                }
+
+                $areaChange = Get-AreaChange $previousRow $nextRow
+                $centerShift = Get-CenterShift $previousRow $nextRow
+                $perFaceShortGaps.Add([pscustomobject]@{
+                    PreviousFrame = $previousFrame
+                    NextFrame = $nextFrame
+                    MissingFrames = $missingFaceFrames.Count
+                    Range = $range
+                    PreviousConfidence = [double]$previousRow.Confidence
+                    NextConfidence = [double]$nextRow.Confidence
+                    AreaChange = $areaChange
+                    CenterShift = $centerShift
+                    Hint = "specific face missing while another mask may exist; review flicker"
+                }) | Out-Null
+
+                break
+            }
+        }
+    }
+}
+
 $isolatedFrames = New-Object System.Collections.Generic.List[int]
 foreach ($frame in $frames) {
     $hasNeighbor = $false
@@ -317,6 +449,7 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("- Final mask frames: $($frames.Count)")
 [void]$builder.AppendLine("- Frame range: ``$frameRange``")
 [void]$builder.AppendLine("- Short empty gaps: $($shortGaps.Count)")
+[void]$builder.AppendLine("- Per-face short gaps: $($perFaceShortGaps.Count)")
 [void]$builder.AppendLine("- Long empty gaps: $($longGaps.Count)")
 [void]$builder.AppendLine("- Isolated final mask frames: $($isolatedFrames.Count)")
 [void]$builder.AppendLine("- Low-confidence final masks: $($lowConfidenceRows.Count)")
@@ -330,6 +463,7 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("## Interpretation")
 [void]$builder.AppendLine('- `[SmokeDetection]` rows in this smoke harness are final `FrameMaskProvider` face rectangles after tracking, scene-cut guard, and ROI refinement.')
 [void]$builder.AppendLine("- Empty gaps and isolated frames are review targets, not automatic ground truth errors.")
+[void]$builder.AppendLine("- Per-face short gaps flag one stable face disappearing even when another final mask exists in the same missing frame range.")
 [void]$builder.AppendLine('- Use the overlay video or review package to label each target as `face`, `nonface`, or `miss`.')
 [void]$builder.AppendLine()
 
@@ -349,6 +483,26 @@ foreach ($gap in $shortGaps | Select-Object -First 80) {
         $gap.Hint))
 }
 if ($shortGaps.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | none | - | - | - | - |")
+}
+[void]$builder.AppendLine()
+
+[void]$builder.AppendLine("## Per-Face Short Gaps")
+[void]$builder.AppendLine("| Previous | Next | Missing | Range | Confidence | AreaChange | CenterShift | Review hint |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | --- | ---: | ---: | --- |")
+foreach ($gap in $perFaceShortGaps | Select-Object -First 80) {
+    [void]$builder.AppendLine(("| {0} | {1} | {2} | `{3}` | {4:F3}->{5:F3} | {6:F2} | {7:F3} | {8} |" -f
+        $gap.PreviousFrame,
+        $gap.NextFrame,
+        $gap.MissingFrames,
+        $gap.Range,
+        $gap.PreviousConfidence,
+        $gap.NextConfidence,
+        $gap.AreaChange,
+        $gap.CenterShift,
+        $gap.Hint))
+}
+if ($perFaceShortGaps.Count -eq 0) {
     [void]$builder.AppendLine("| - | - | - | none | - | - | - | - |")
 }
 [void]$builder.AppendLine()
@@ -444,4 +598,4 @@ if ($aspectOutlierRows.Count -eq 0) {
 }
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()
-Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count)"
+Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count)"

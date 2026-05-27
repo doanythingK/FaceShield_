@@ -141,7 +141,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pse
 `-OutputDir` 아래에서 다음 파일을 확인한다.
 
 - `yolo-followup-quality-evidence.md`: 실행 summary, scene-cut 제거 결과, 최종 mask summary
-- `yolo-mask-continuity-report.md`: 짧은 gap, isolated mask, low-confidence mask 목록
+- `yolo-mask-continuity-report.md`: 짧은 gap, per-face short gap, isolated mask, low-confidence mask 목록
 - `yolo-quality-review-checklist.md`: 깜박임/잔상/오탐 review frame 목록
 - `yolo-quality-full-gt-template.csv`: 필요 시 수동 `face`/`nonface`/`miss` 라벨 입력용
 - `yolo-detection-overlay.mp4`: `-WithDetectionOverlayVideo` 사용 시 생성되는 연속 검출 overlay 영상
