@@ -678,6 +678,7 @@ foreach ($base in $baseRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             supportFrameCount = $temporalSupport.FrameCount
+            supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
             bestIou = Format-Double $bestIou
             centerDistanceRatio = Format-Double $bestCenterDistance
@@ -733,6 +734,7 @@ foreach ($tile in $tileRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             supportFrameCount = $temporalSupport.FrameCount
+            supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
             bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
@@ -789,6 +791,7 @@ foreach ($verification in $verificationRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             supportFrameCount = $temporalSupport.FrameCount
+            supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
             bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
@@ -883,6 +886,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             personConfidence = $row.personConfidence
             personUpperOverlap = $row.personUpperOverlap
             supportFrameCount = $row.supportFrameCount
+            supportRowCount = $row.supportRowCount
             supportSources = $row.supportSources
             bestIou = $row.bestIou
             centerDistanceRatio = $row.centerDistanceRatio

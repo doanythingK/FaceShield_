@@ -23,7 +23,7 @@
 - 기본 YOLO 결과와 고정밀 tile 검출/face verification 결과를 비교해 `missCandidate`, `falsePositiveCandidate`, `supportedFaceCandidate`를 기록한다.
 - YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 면적 변화율, 반복 support를 비교해 후보 유형을 나눈다.
 - person/object 검출은 얼굴 정답으로 단정하지 않고, 오탐/미탐 후보 우선순위를 높이는 보조 신호로만 사용한다.
-- 후보별 `baseFaceConfidence`, `tileFaceConfidence`, `tileSupportCount`, `faceVerificationConfidence`, `faceVerificationDistance`, `personConfidence`, `personUpperOverlap`, `bestIou`, `centerDistanceRatio`, `areaChangeRatio`, `fpProbability`, `missProbability`, `pseudoGtReason`을 evidence log/CSV에 남긴다.
+- 후보별 `baseFaceConfidence`, `tileFaceConfidence`, `tileSupportCount`, `faceVerificationConfidence`, `faceVerificationDistance`, `personConfidence`, `personUpperOverlap`, `supportFrameCount`, `supportRowCount`, `bestIou`, `centerDistanceRatio`, `areaChangeRatio`, `fpProbability`, `missProbability`, `pseudoGtReason`을 evidence log/CSV에 남긴다.
 - 최종 `face`/`nonface`/`miss` 확정은 review CSV 라벨로 닫는다.
 - 기존 FaceONNX 기본 경로와 앱 기본 YOLO 런타임 성능 경로는 회귀시키지 않는다.
 
@@ -200,6 +200,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `personConfidence`
 - `personUpperOverlap`
 - `supportFrameCount`
+- `supportRowCount`
 - `supportSources`
 - `bestIou`
 - `centerDistanceRatio`

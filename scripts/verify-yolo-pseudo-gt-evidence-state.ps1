@@ -133,6 +133,7 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "supportFrameCount",
+        "supportRowCount",
         "supportSources",
         "bestIou",
         "centerDistanceRatio",
@@ -164,6 +165,7 @@ foreach ($column in @(
         "reviewPriorityReason",
         "fpProbability",
         "missProbability",
+        "supportRowCount",
         "areaChangeRatio",
         "reviewStatus")) {
     Assert-Column $queueFirst $column
@@ -231,6 +233,10 @@ if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verifi
 $supportedRow = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.source -eq "base-yolo" })[0]
 if ([int]$supportedRow.supportFrameCount -lt 2) {
     throw "Expected supported row to record repeated support frames."
+}
+
+if ([int]$supportedRow.supportRowCount -lt 3) {
+    throw "Expected supported row to record repeated tile/verification support rows."
 }
 
 $supportedCenterDistance = [double]::Parse($supportedRow.centerDistanceRatio, [System.Globalization.CultureInfo]::InvariantCulture)
@@ -312,6 +318,7 @@ Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaCh
 Assert-Contains "script records support area ratio" $scriptText "areaChangeRatio"
 Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
+Assert-Contains "script records repeated support rows" $scriptText "supportRowCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$\(\$baseRows.Count\)'
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
