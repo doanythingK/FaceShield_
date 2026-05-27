@@ -457,6 +457,21 @@ function Read-CandidateDouble {
     return 0.0
 }
 
+function Get-MinMatchAreaChangeRatio {
+    param([object[]]$Matches)
+
+    $best = 99.0
+    foreach ($match in @($Matches)) {
+        if ($null -eq $match -or $null -eq $match.PSObject.Properties["AreaChangeRatio"]) {
+            continue
+        }
+
+        $best = [Math]::Min($best, [double]$match.AreaChangeRatio)
+    }
+
+    return $best
+}
+
 if ([string]::IsNullOrWhiteSpace($BasePredictionCsv) -and [string]::IsNullOrWhiteSpace($BasePredictionLog)) {
     throw "BasePredictionCsv or BasePredictionLog is required."
 }
@@ -540,6 +555,7 @@ foreach ($base in $baseRows) {
     else {
         99.0
     }
+    $bestAreaChangeRatio = Get-MinMatchAreaChangeRatio @($tileMatch, $verificationMatch)
 
     $fpProbability = if ($hasFaceSupport) {
         [Math]::Max(0.0, 0.25 - ($tileSupportCount * 0.05) - ($temporalSupport.FrameCount * 0.04))
@@ -579,6 +595,7 @@ foreach ($base in $baseRows) {
             supportSources = $temporalSupport.Sources
             bestIou = Format-Double $bestIou
             centerDistanceRatio = Format-Double $bestCenterDistance
+            areaChangeRatio = Format-Double $bestAreaChangeRatio
             fpProbability = Format-Double $fpProbability
             missProbability = Format-Double $missProbability
             pseudoGtReason = $reason
@@ -633,6 +650,7 @@ foreach ($tile in $tileRows) {
             supportSources = $temporalSupport.Sources
             bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
+            areaChangeRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.AreaChangeRatio } else { "99" }
             fpProbability = "0"
             missProbability = Format-Double $missProbability
             pseudoGtReason = "test-only high-precision tile face was not matched by base YOLO; verification support is recorded when present; person/object support is auxiliary only"
@@ -688,6 +706,7 @@ foreach ($verification in $verificationRows) {
             supportSources = $temporalSupport.Sources
             bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
+            areaChangeRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.AreaChangeRatio } else { "99" }
             fpProbability = "0"
             missProbability = Format-Double $missProbability
             pseudoGtReason = "test-only high-quality face verification was not matched by base YOLO; tile support is recorded when present; person/object support is auxiliary only"
@@ -781,6 +800,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             supportSources = $row.supportSources
             bestIou = $row.bestIou
             centerDistanceRatio = $row.centerDistanceRatio
+            areaChangeRatio = $row.areaChangeRatio
             fpProbability = $row.fpProbability
             missProbability = $row.missProbability
             reviewPriorityReason = $_.PriorityReason

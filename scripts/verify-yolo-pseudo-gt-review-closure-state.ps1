@@ -130,6 +130,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         supportSources = "tile+verification"
         bestIou = 0.9
         centerDistanceRatio = 0.1
+        areaChangeRatio = 1.02
         fpProbability = 0.1
         missProbability = 0
         pseudoGtReason = "supported"
@@ -160,6 +161,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         supportSources = ""
         bestIou = 0
         centerDistanceRatio = 99
+        areaChangeRatio = 99
         fpProbability = 0.85
         missProbability = 0.1
         pseudoGtReason = "unsupported"
@@ -190,6 +192,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         supportSources = "tile"
         bestIou = 0
         centerDistanceRatio = 99
+        areaChangeRatio = 99
         fpProbability = 0
         missProbability = 0.82
         pseudoGtReason = "miss"
@@ -244,6 +247,7 @@ foreach ($column in @(
         "supportSources",
         "bestIou",
         "centerDistanceRatio",
+        "areaChangeRatio",
         "closureReason")) {
     if ($null -eq $rows[0].PSObject.Properties[$column]) {
         throw "Missing closure column: $column"
@@ -253,6 +257,10 @@ foreach ($column in @(
 $supportedClosure = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" })[0]
 if ($supportedClosure.supportFrameCount -ne "2" -or $supportedClosure.supportSources -ne "tile+verification") {
     throw "Expected closure output to preserve repeated pseudo-GT support evidence."
+}
+
+if ($supportedClosure.areaChangeRatio -ne "1.02") {
+    throw "Expected closure output to preserve support area-ratio evidence."
 }
 
 $falsePositiveClosure = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
@@ -318,6 +326,7 @@ Assert-Contains "script matches source prediction ids" $scriptText "sourcePredic
 Assert-Contains "script supports manual miss iou matching" $scriptText "PreferManualMiss"
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
 Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
+Assert-Contains "script preserves area ratio evidence" $scriptText "areaChangeRatio"
 Assert-Contains "script enforces require all closed" $scriptText "RequireAllClosed"
 Assert-Contains "summary records closed count" $summaryText "closed=3"
 Assert-Contains "summary records no unreviewed rows" $summaryText "unreviewed=0"

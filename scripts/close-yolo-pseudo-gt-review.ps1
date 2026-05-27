@@ -301,6 +301,7 @@ foreach ($candidate in $pseudoRows) {
             supportSources = $candidate.supportSources
             bestIou = $candidate.bestIou
             centerDistanceRatio = $candidate.centerDistanceRatio
+            areaChangeRatio = $candidate.areaChangeRatio
             fpProbability = $candidate.fpProbability
             missProbability = $candidate.missProbability
             pseudoGtReason = $candidate.pseudoGtReason

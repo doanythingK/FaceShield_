@@ -125,6 +125,7 @@ foreach ($column in @(
         "supportSources",
         "bestIou",
         "centerDistanceRatio",
+        "areaChangeRatio",
         "fpProbability",
         "missProbability",
         "pseudoGtReason",
@@ -152,6 +153,7 @@ foreach ($column in @(
         "reviewPriorityReason",
         "fpProbability",
         "missProbability",
+        "areaChangeRatio",
         "reviewStatus")) {
     Assert-Column $queueFirst $column
 }
@@ -207,6 +209,10 @@ if ($null -eq $largeGeometryMismatch) {
     throw "Expected center-aligned large YOLO box to remain a falsePositiveCandidate when area ratio is too different."
 }
 
+if ($largeGeometryMismatch.areaChangeRatio -ne "99") {
+    throw "Expected unsupported geometry mismatch to preserve sentinel areaChangeRatio=99."
+}
+
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-small-face-5" }).Count -ne 1) {
     throw "Expected center-aligned small verification face to remain a missCandidate when base YOLO geometry is too large."
 }
@@ -231,6 +237,7 @@ Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"
+Assert-Contains "script records support area ratio" $scriptText "areaChangeRatio"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
@@ -251,5 +258,6 @@ Assert-Contains "summary records support area ratio" $summaryText "maxSupportAre
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"
+Assert-Contains "guide documents area ratio evidence" $guideText "areaChangeRatio"
 
 Write-Host "[YoloPseudoGtEvidenceVerify] all requested checks passed"

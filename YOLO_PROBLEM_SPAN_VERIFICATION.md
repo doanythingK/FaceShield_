@@ -21,9 +21,9 @@
 - 고품질 검증 모델은 앱 기본 런타임에 포함하지 않고, 짧은 문제 구간의 evidence 생성과 오탐/미탐 후보 분류에만 사용한다.
 - 필요하면 무거운 face/person/object 모델을 로컬 경로로 받아 보조 검증에 사용한다. 모델 파일은 커밋하지 않는다.
 - 기본 YOLO 결과와 고정밀 tile 검출/face verification 결과를 비교해 `missCandidate`, `falsePositiveCandidate`, `supportedFaceCandidate`를 기록한다.
-- YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 반복 support를 비교해 후보 유형을 나눈다.
+- YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 면적 변화율, 반복 support를 비교해 후보 유형을 나눈다.
 - person/object 검출은 얼굴 정답으로 단정하지 않고, 오탐/미탐 후보 우선순위를 높이는 보조 신호로만 사용한다.
-- 후보별 `baseFaceConfidence`, `tileFaceConfidence`, `tileSupportCount`, `faceVerificationConfidence`, `faceVerificationDistance`, `personConfidence`, `personUpperOverlap`, `fpProbability`, `missProbability`, `pseudoGtReason`을 evidence log/CSV에 남긴다.
+- 후보별 `baseFaceConfidence`, `tileFaceConfidence`, `tileSupportCount`, `faceVerificationConfidence`, `faceVerificationDistance`, `personConfidence`, `personUpperOverlap`, `bestIou`, `centerDistanceRatio`, `areaChangeRatio`, `fpProbability`, `missProbability`, `pseudoGtReason`을 evidence log/CSV에 남긴다.
 - 최종 `face`/`nonface`/`miss` 확정은 review CSV 라벨로 닫는다.
 - 기존 FaceONNX 기본 경로와 앱 기본 YOLO 런타임 성능 경로는 회귀시키지 않는다.
 
@@ -180,7 +180,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - 기본 YOLO에는 없고 고정밀 tile 검출/face verification에는 있는 후보를 `missCandidate`로 기록한다.
 - 기본 YOLO에는 있는데 고정밀 face verification/tile/person/object/context 근거가 약한 후보를 `falsePositiveCandidate`로 기록한다.
 - 기본 YOLO와 고정밀 tile 검출 또는 face verification이 같은 위치를 반복 지지하면 `supportedFaceCandidate`로 기록한다.
-- YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 반복 support를 비교해 후보 유형을 나눈다.
+- YOLO 후보와 고품질 검증 결과의 IoU, 중심 거리, 면적 변화율, 반복 support를 비교해 후보 유형을 나눈다.
 - person/object 결과는 얼굴 정답이 아니므로 단독으로 `face`/`nonface`/`miss` 확정에 쓰지 않는다. 사람 검출은 얼굴 미탐 후보나 오탐 후보의 우선순위를 높이는 보조 신호로만 사용한다.
 - 최종 확정은 여전히 review CSV의 `face`/`nonface`/`miss` 라벨로 닫는다.
 
@@ -197,6 +197,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `supportSources`
 - `bestIou`
 - `centerDistanceRatio`
+- `areaChangeRatio`
 - `fpProbability`
 - `missProbability`
 - `pseudoGtReason`
