@@ -567,7 +567,7 @@ namespace FaceShield.Services.Analysis
                 int cutStartFrame = Math.Min(sourceFrame, targetFrame);
                 int confirmedTargetFrame = Math.Max(sourceFrame, targetFrame);
                 int firstTargetFrame = cutStartFrame + 1;
-                var references = GetSceneCutCarryReferences(maskProvider, cutStartFrame, options);
+                var references = GetSceneCutCarryReferences(maskProvider, cutStartFrame, options).ToList();
                 if (references.Count == 0)
                 {
                     continue;
@@ -611,6 +611,7 @@ namespace FaceShield.Services.Analysis
                                     options))
                             {
                                 var removedFaceInfo = new FaceTrackFilledFace(frameIndex, faces[i], data.Size, confidence);
+                                references.Add(faces[i]);
                                 faces.RemoveAt(i);
                                 if (i < confidences.Count)
                                     confidences.RemoveAt(i);
@@ -633,6 +634,7 @@ namespace FaceShield.Services.Analysis
                         }
 
                         removedFacesInfo.Add(new FaceTrackFilledFace(frameIndex, faces[i], data.Size, confidence));
+                        references.Add(faces[i]);
                         faces.RemoveAt(i);
                         if (i < confidences.Count)
                             confidences.RemoveAt(i);
@@ -819,22 +821,25 @@ namespace FaceShield.Services.Analysis
             Rect candidate,
             YoloSceneCutCarryCleanupOptions options)
         {
-            if (options.StrongCarryProtectionMinReferenceCenterShiftRatio > 0.0 &&
+            bool hasIndependentCenterShift = options.StrongCarryProtectionMinReferenceCenterShiftRatio > 0.0 &&
                 FaceTrackBuilder.GetNormalizedCenterShift(reference, candidate) >=
-                    options.StrongCarryProtectionMinReferenceCenterShiftRatio)
-            {
-                return true;
-            }
-
+                options.StrongCarryProtectionMinReferenceCenterShiftRatio;
+            bool hasIndependentAreaChange = false;
             if (options.StrongCarryProtectionMinReferenceAreaChangeRatio > 1.0)
             {
                 double areaRatio = FaceTrackBuilder.GetAreaRatio(reference, candidate);
                 if (areaRatio >= options.StrongCarryProtectionMinReferenceAreaChangeRatio ||
                     areaRatio <= 1.0 / options.StrongCarryProtectionMinReferenceAreaChangeRatio)
                 {
-                    return true;
+                    hasIndependentAreaChange = true;
                 }
             }
+
+            if (options.StrongCarryProtectionRequiresAreaChange)
+                return hasIndependentAreaChange;
+
+            if (hasIndependentCenterShift || hasIndependentAreaChange)
+                return true;
 
             return !RequiresIndependentStrongCarrySupport(options);
         }
@@ -1971,6 +1976,7 @@ namespace FaceShield.Services.Analysis
         public float StrongCarrySupportMinConfidence { get; init; } = 0.80f;
         public double StrongCarryProtectionMinReferenceCenterShiftRatio { get; init; } = 0.22;
         public double StrongCarryProtectionMinReferenceAreaChangeRatio { get; init; } = 1.65;
+        public bool StrongCarryProtectionRequiresAreaChange { get; init; } = true;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
         public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;
