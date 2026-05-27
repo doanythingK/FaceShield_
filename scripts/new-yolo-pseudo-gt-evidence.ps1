@@ -9,7 +9,8 @@ param(
     [double]$MinSupportIou = 0.35,
     [double]$MaxSupportCenterDistanceRatio = 0.80,
     [double]$MaxVerificationDistance = 0.75,
-    [double]$MinVerificationConfidence = 0.55
+    [double]$MinVerificationConfidence = 0.55,
+    [int]$TemporalSupportWindowFrames = 2
 )
 
 $ErrorActionPreference = "Stop"
@@ -335,6 +336,65 @@ function Find-BestPersonSupport {
     return $best
 }
 
+function Test-FaceGeometrySupport {
+    param(
+        [object]$Target,
+        [object]$Candidate
+    )
+
+    $iou = Get-Iou $Target $Candidate
+    $centerDistance = Get-CenterDistanceRatio $Target $Candidate
+    return ($iou -ge $MinSupportIou -or $centerDistance -le $MaxSupportCenterDistanceRatio)
+}
+
+function Test-VerificationMetricSupport {
+    param([object]$Candidate)
+
+    return ($Candidate.Confidence -ge $MinVerificationConfidence -or $Candidate.VerificationDistance -le $MaxVerificationDistance)
+}
+
+function Get-TemporalFaceSupport {
+    param(
+        [object]$Target,
+        [object[]]$TileCandidates,
+        [object[]]$VerificationCandidates
+    )
+
+    $frames = [System.Collections.Generic.HashSet[int]]::new()
+    $sources = [System.Collections.Generic.HashSet[string]]::new()
+    $rowCount = 0
+
+    foreach ($candidate in @($TileCandidates | Where-Object { [Math]::Abs($_.Frame - $Target.Frame) -le $TemporalSupportWindowFrames })) {
+        if (-not (Test-FaceGeometrySupport $Target $candidate)) {
+            continue
+        }
+
+        [void]$frames.Add($candidate.Frame)
+        [void]$sources.Add("tile")
+        $rowCount++
+    }
+
+    foreach ($candidate in @($VerificationCandidates | Where-Object { [Math]::Abs($_.Frame - $Target.Frame) -le $TemporalSupportWindowFrames })) {
+        if (-not (Test-FaceGeometrySupport $Target $candidate)) {
+            continue
+        }
+        if (-not (Test-VerificationMetricSupport $candidate)) {
+            continue
+        }
+
+        [void]$frames.Add($candidate.Frame)
+        [void]$sources.Add("verification")
+        $rowCount++
+    }
+
+    $sourceValues = @($sources | Sort-Object)
+    return [pscustomobject]@{
+        FrameCount = $frames.Count
+        RowCount = $rowCount
+        Sources = if ($sourceValues.Count -gt 0) { [string]::Join("+", $sourceValues) } else { "" }
+    }
+}
+
 function Format-Double {
     param([double]$Value)
     return $Value.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
@@ -392,6 +452,7 @@ foreach ($base in $baseRows) {
     $tileMatch = Find-BestMatch $base $tileRows $MinSupportIou $MaxSupportCenterDistanceRatio
     $verificationMatch = Find-BestVerification $base $verificationRows
     $personMatch = Find-BestPersonSupport $base $personRows
+    $temporalSupport = Get-TemporalFaceSupport $base $tileRows $verificationRows
 
     $hasTileSupport = $null -ne $tileMatch
     $hasVerificationSupport = $null -ne $verificationMatch
@@ -424,7 +485,7 @@ foreach ($base in $baseRows) {
     }
 
     $fpProbability = if ($hasFaceSupport) {
-        [Math]::Max(0.0, 0.25 - ($tileSupportCount * 0.05))
+        [Math]::Max(0.0, 0.25 - ($tileSupportCount * 0.05) - ($temporalSupport.FrameCount * 0.04))
     }
     else {
         [Math]::Min(0.98, 0.55 + ((1.0 - [Math]::Min(1.0, $base.Confidence)) * 0.30) - ($personUpperOverlap * 0.10))
@@ -457,6 +518,8 @@ foreach ($base in $baseRows) {
             faceVerificationDistance = Format-Double $verificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
+            supportFrameCount = $temporalSupport.FrameCount
+            supportSources = $temporalSupport.Sources
             bestIou = Format-Double $bestIou
             centerDistanceRatio = Format-Double $bestCenterDistance
             fpProbability = Format-Double $fpProbability
@@ -480,6 +543,7 @@ foreach ($tile in $tileRows) {
 
     $personMatch = Find-BestPersonSupport $tile $personRows
     $verificationMatch = Find-BestVerification $tile $verificationRows
+    $temporalSupport = Get-TemporalFaceSupport $tile $tileRows $verificationRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $verificationConfidence = if ($null -ne $verificationMatch) { $verificationMatch.Row.Confidence } else { 0.0 }
@@ -487,7 +551,7 @@ foreach ($tile in $tileRows) {
     if ($null -ne $verificationMatch) {
         [void]$matchedVerificationIds.Add($verificationMatch.Row.Id)
     }
-    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10))
+    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
 
     $candidateRows.Add([pscustomobject]@{
             candidateId = "miss-$($tile.Frame)-$($tile.Id)"
@@ -508,6 +572,8 @@ foreach ($tile in $tileRows) {
             faceVerificationDistance = Format-Double $verificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
+            supportFrameCount = $temporalSupport.FrameCount
+            supportSources = $temporalSupport.Sources
             bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
             fpProbability = "0"
@@ -535,11 +601,12 @@ foreach ($verification in $verificationRows) {
     }
 
     $personMatch = Find-BestPersonSupport $verification $personRows
+    $temporalSupport = Get-TemporalFaceSupport $verification $tileRows $verificationRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
     $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
-    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10))
+    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
 
     $candidateRows.Add([pscustomobject]@{
             candidateId = "miss-$($verification.Frame)-$($verification.Id)"
@@ -560,6 +627,8 @@ foreach ($verification in $verificationRows) {
             faceVerificationDistance = Format-Double $verification.VerificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
+            supportFrameCount = $temporalSupport.FrameCount
+            supportSources = $temporalSupport.Sources
             bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
             fpProbability = "0"
@@ -608,6 +677,7 @@ $summary = @(
     "- maxSupportCenterDistanceRatio=$(Format-Double $MaxSupportCenterDistanceRatio)",
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
     "- minVerificationConfidence=$(Format-Double $MinVerificationConfidence)",
+    "- temporalSupportWindowFrames=$TemporalSupportWindowFrames",
     "",
     "Final labels must be copied into the review CSV only after visual confirmation."
 )

@@ -153,6 +153,8 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `faceVerificationDistance`
 - `personConfidence`
 - `personUpperOverlap`
+- `supportFrameCount`
+- `supportSources`
 - `bestIou`
 - `centerDistanceRatio`
 - `fpProbability`

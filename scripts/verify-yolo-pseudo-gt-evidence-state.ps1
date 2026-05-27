@@ -60,6 +60,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @(
     [pscustomobject]@{ frame = 1; detectionId = "tile-face-1"; x = 101.0; y = 102.0; w = 51.0; h = 58.0; confidence = 0.910; tileSupportCount = 3 },
+    [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 103.0; y = 103.0; w = 50.0; h = 58.0; confidence = 0.900; tileSupportCount = 2 },
     [pscustomobject]@{ frame = 3; detectionId = "tile-face-3"; x = 45.0; y = 60.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileCsv
 
@@ -92,8 +93,8 @@ $guideText = Get-Content -Raw -Path $guide
 $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 
-if ($rows.Count -ne 4) {
-    throw "Expected 4 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 5) {
+    throw "Expected 5 pseudo-GT rows, actual=$($rows.Count)"
 }
 
 $first = $rows[0]
@@ -110,6 +111,8 @@ foreach ($column in @(
         "faceVerificationDistance",
         "personConfidence",
         "personUpperOverlap",
+        "supportFrameCount",
+        "supportSources",
         "bestIou",
         "centerDistanceRatio",
         "fpProbability",
@@ -129,12 +132,21 @@ if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Co
     throw "Expected one falsePositiveCandidate."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 2) {
-    throw "Expected two missCandidate rows."
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 3) {
+    throw "Expected three missCandidate rows."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
     throw "Expected one verification-only missCandidate."
+}
+
+$supportedRow = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.source -eq "base-yolo" })[0]
+if ([int]$supportedRow.supportFrameCount -lt 2) {
+    throw "Expected supported row to record repeated support frames."
+}
+
+if ($supportedRow.supportSources -notmatch "tile" -or $supportedRow.supportSources -notmatch "verification") {
+    throw "Expected supported row to record tile and verification support sources."
 }
 
 if (@($rows | Where-Object { $_.reviewStatus -ne "pending-human" }).Count -ne 0) {
@@ -147,13 +159,15 @@ Assert-Contains "script accepts face verification CSV" $scriptText "FaceVerifica
 Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
+Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=1"
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=1"
-Assert-Contains "summary records miss count" $summaryText "missCandidate=2"
+Assert-Contains "summary records miss count" $summaryText "missCandidate=3"
+Assert-Contains "summary records temporal support window" $summaryText "temporalSupportWindowFrames=2"
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"
