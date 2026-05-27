@@ -512,7 +512,7 @@ foreach ($base in $baseRows) {
         [Math]::Max(0.0, 0.25 - ($tileSupportCount * 0.05) - ($temporalSupport.FrameCount * 0.04))
     }
     else {
-        [Math]::Min(0.98, 0.55 + ((1.0 - [Math]::Min(1.0, $base.Confidence)) * 0.30) - ($personUpperOverlap * 0.10))
+        [Math]::Min(0.98, 0.55 + ((1.0 - [Math]::Min(1.0, $base.Confidence)) * 0.30))
     }
     $missProbability = if ($hasFaceSupport) { 0.0 } else { 0.10 }
 

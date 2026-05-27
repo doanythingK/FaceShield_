@@ -171,6 +171,11 @@ if ($null -eq $falsePositiveQueueRow) {
     throw "Expected falsePositiveCandidate in review queue."
 }
 
+$falsePositiveCandidateRow = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
+if ([double]::Parse($falsePositiveCandidateRow.fpProbability, [System.Globalization.CultureInfo]::InvariantCulture) -lt 0.78) {
+    throw "Expected person/object support to avoid lowering falsePositiveCandidate probability."
+}
+
 if ([double]::Parse($falsePositiveQueueRow.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
     throw "Expected person/object support to raise falsePositiveCandidate review priority."
 }
