@@ -110,6 +110,16 @@ function Normalize-Label {
     return $normalized
 }
 
+function Test-ReviewedStatus {
+    param([string]$Status)
+
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        return $false
+    }
+
+    return $Status.Trim().ToLowerInvariant() -in @("pass", "reviewed", "complete", "completed", "closed", "done")
+}
+
 function New-Box {
     param([object]$Row)
 
@@ -239,13 +249,34 @@ foreach ($candidate in $pseudoRows) {
     $reviewSourcePredictionId = ""
     $reviewIou = 0.0
     $matchMode = "none"
+    $reviewStatusAccepted = $false
     if ($null -ne $match) {
         $reviewLabel = Normalize-Label ([string](Get-PropertyValue $match.Row "label" ""))
         $reviewStatus = [string](Get-PropertyValue $match.Row "reviewStatus" "")
+        $reviewStatusAccepted = Test-ReviewedStatus $reviewStatus
         $reviewEvidenceNotes = [string](Get-PropertyValue $match.Row "evidenceNotes" "")
         $reviewSourcePredictionId = [string](Get-PropertyValue $match.Row "sourcePredictionId" "")
         $reviewIou = $match.Iou
         $matchMode = $match.MatchMode
+    }
+
+    $fullFrameReviewStatus = ""
+    $fullFrameMissedFaceCount = ""
+    $fullFrameMissedRowsAdded = ""
+    $fullFrameMissScanClosed = $true
+    if ($candidateType -eq "missCandidate" -and $fullFrameRows.Count -gt 0) {
+        $fullFrameMissScanClosed = $false
+        $frame = Read-IntValue $candidate "frame"
+        $frameReview = @($fullFrameRows | Where-Object { (Read-IntValue $_ "frame") -eq $frame } | Select-Object -First 1)
+        if ($frameReview.Count -gt 0) {
+            $fullFrameReviewStatus = [string](Get-PropertyValue $frameReview[0] "reviewStatus" "")
+            $fullFrameMissedFaceCount = [string](Get-PropertyValue $frameReview[0] "missedFaceCount" "")
+            $fullFrameMissedRowsAdded = [string](Get-PropertyValue $frameReview[0] "missedFaceRowsAdded" "")
+            $fullFrameMissedRowsAddedValue = 0
+            $fullFrameMissScanClosed = (Test-ReviewedStatus $fullFrameReviewStatus) -and
+                [int]::TryParse([string]$fullFrameMissedRowsAdded, [ref]$fullFrameMissedRowsAddedValue) -and
+                $fullFrameMissedRowsAddedValue -gt 0
+        }
     }
 
     $closureStatus = "unreviewed"
@@ -254,26 +285,21 @@ foreach ($candidate in $pseudoRows) {
         $closureStatus = "unreviewed"
         $closureReason = "matching row has no label"
     }
-    elseif ($null -ne $match -and $reviewLabel -eq $expectedLabel) {
-        $closureStatus = "closed"
-        $closureReason = "review CSV label matches expected pseudo-GT candidate closure"
+    elseif ($null -ne $match -and -not $reviewStatusAccepted) {
+        $closureStatus = "unreviewed"
+        $closureReason = "matching row reviewStatus '$reviewStatus' is not a completed review state"
     }
-    elseif ($null -ne $match) {
+    elseif ($null -ne $match -and $reviewLabel -ne $expectedLabel) {
         $closureStatus = "label-mismatch"
         $closureReason = "review CSV label '$reviewLabel' does not match expected '$expectedLabel'"
     }
-
-    $fullFrameReviewStatus = ""
-    $fullFrameMissedFaceCount = ""
-    $fullFrameMissedRowsAdded = ""
-    if ($candidateType -eq "missCandidate" -and $fullFrameRows.Count -gt 0) {
-        $frame = Read-IntValue $candidate "frame"
-        $frameReview = @($fullFrameRows | Where-Object { (Read-IntValue $_ "frame") -eq $frame } | Select-Object -First 1)
-        if ($frameReview.Count -gt 0) {
-            $fullFrameReviewStatus = [string](Get-PropertyValue $frameReview[0] "reviewStatus" "")
-            $fullFrameMissedFaceCount = [string](Get-PropertyValue $frameReview[0] "missedFaceCount" "")
-            $fullFrameMissedRowsAdded = [string](Get-PropertyValue $frameReview[0] "missedFaceRowsAdded" "")
-        }
+    elseif ($null -ne $match -and -not $fullFrameMissScanClosed) {
+        $closureStatus = "unreviewed"
+        $closureReason = "missCandidate requires completed full-frame missed-face scan with missedFaceRowsAdded > 0"
+    }
+    elseif ($null -ne $match) {
+        $closureStatus = "closed"
+        $closureReason = "review CSV label and reviewStatus match expected pseudo-GT candidate closure"
     }
 
     $closureRows.Add([pscustomobject]@{
@@ -343,8 +369,8 @@ $summary = @(
     "- missClosed=$missClosed",
     "- minReviewIou=$($MinReviewIou.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
     "",
-    "A pseudo-GT candidate is final only when the matching review CSV row has a human label.",
-    "For missCandidate rows, the matching row should be a manual face row in full-gt-review.csv and, when present, full-frame-review.csv should record the missed-face scan."
+    "A pseudo-GT candidate is final only when the matching review CSV row has a human label and completed reviewStatus.",
+    "For missCandidate rows, the matching row should be a manual face row in full-gt-review.csv and, when present, full-frame-review.csv must record a completed missed-face scan with missedFaceRowsAdded > 0."
 )
 $summary | Set-Content -Encoding UTF8 -Path $summaryPathResolved
 

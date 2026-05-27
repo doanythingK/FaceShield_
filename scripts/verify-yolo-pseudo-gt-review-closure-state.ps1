@@ -17,6 +17,12 @@ $unreviewedSummaryPath = Join-Path $work "pseudo-gt-review-closure-unreviewed-su
 $mismatchReviewCsv = Join-Path $work "full-gt-review-label-mismatch.csv"
 $mismatchOutputCsv = Join-Path $work "pseudo-gt-review-closure-label-mismatch.csv"
 $mismatchSummaryPath = Join-Path $work "pseudo-gt-review-closure-label-mismatch-summary.md"
+$pendingStatusReviewCsv = Join-Path $work "full-gt-review-pending-status.csv"
+$pendingStatusOutputCsv = Join-Path $work "pseudo-gt-review-closure-pending-status.csv"
+$pendingStatusSummaryPath = Join-Path $work "pseudo-gt-review-closure-pending-status-summary.md"
+$incompleteFullFrameCsv = Join-Path $work "full-frame-review-incomplete-miss.csv"
+$incompleteFullFrameOutputCsv = Join-Path $work "pseudo-gt-review-closure-incomplete-full-frame.csv"
+$incompleteFullFrameSummaryPath = Join-Path $work "pseudo-gt-review-closure-incomplete-full-frame-summary.md"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -45,6 +51,7 @@ function Invoke-ReviewClosure {
         [string]$ReviewPath,
         [string]$OutputPath,
         [string]$SummaryOutputPath,
+        [string]$FullFrameReviewPath = $fullFrameCsv,
         [switch]$RequireAllClosed
     )
 
@@ -59,7 +66,7 @@ function Invoke-ReviewClosure {
         "-ReviewCsv",
         $ReviewPath,
         "-FullFrameReviewCsv",
-        $fullFrameCsv,
+        $FullFrameReviewPath,
         "-OutputCsv",
         $OutputPath,
         "-SummaryPath",
@@ -78,6 +85,7 @@ function Invoke-ExpectedReviewClosureFailure {
         [string]$ReviewPath,
         [string]$OutputPath,
         [string]$SummaryOutputPath,
+        [string]$FullFrameReviewPath = $fullFrameCsv,
         [string]$ExpectedPattern
     )
 
@@ -88,6 +96,7 @@ function Invoke-ExpectedReviewClosureFailure {
             -ReviewPath $ReviewPath `
             -OutputPath $OutputPath `
             -SummaryOutputPath $SummaryOutputPath `
+            -FullFrameReviewPath $FullFrameReviewPath `
             -RequireAllClosed
         $failureExitCode = $LASTEXITCODE
     }
@@ -318,6 +327,58 @@ Invoke-ExpectedReviewClosureFailure `
     -SummaryOutputPath $mismatchSummaryPath `
     -ExpectedPattern "labelMismatch=1"
 
+$pendingStatusReviewRows = @(Import-Csv $reviewCsv)
+(@($pendingStatusReviewRows | Where-Object { $_.frame -eq "2" }))[0].reviewStatus = "pending-human"
+$pendingStatusReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $pendingStatusReviewCsv
+
+$pendingStatusOutput = Invoke-ReviewClosure `
+    -ReviewPath $pendingStatusReviewCsv `
+    -OutputPath $pendingStatusOutputCsv `
+    -SummaryOutputPath $pendingStatusSummaryPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict pending-status closure run to pass: $($pendingStatusOutput | Out-String)"
+}
+
+$pendingStatusRows = @(Import-Csv $pendingStatusOutputCsv)
+$pendingStatusSummaryText = Get-Content -Raw -Path $pendingStatusSummaryPath
+Assert-Contains "summary records pending review status row" $pendingStatusSummaryText "unreviewed=1"
+if (@($pendingStatusRows | Where-Object { $_.closureStatus -eq "unreviewed" -and $_.closureReason -match "pending-human" }).Count -ne 1) {
+    throw "Expected pending reviewStatus to keep one closure row unreviewed."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks pending review status rows" `
+    -ReviewPath $pendingStatusReviewCsv `
+    -OutputPath $pendingStatusOutputCsv `
+    -SummaryOutputPath $pendingStatusSummaryPath `
+    -ExpectedPattern "unreviewed=1"
+
+$incompleteFullFrameRows = @(Import-Csv $fullFrameCsv)
+(@($incompleteFullFrameRows | Where-Object { $_.frame -eq "7" }))[0].missedFaceRowsAdded = 0
+$incompleteFullFrameRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $incompleteFullFrameCsv
+
+$incompleteFullFrameOutput = Invoke-ReviewClosure `
+    -ReviewPath $reviewCsv `
+    -OutputPath $incompleteFullFrameOutputCsv `
+    -SummaryOutputPath $incompleteFullFrameSummaryPath `
+    -FullFrameReviewPath $incompleteFullFrameCsv
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict incomplete full-frame closure run to pass: $($incompleteFullFrameOutput | Out-String)"
+}
+
+$incompleteFullFrameRowsOut = @(Import-Csv $incompleteFullFrameOutputCsv)
+$incompleteFullFrameSummaryText = Get-Content -Raw -Path $incompleteFullFrameSummaryPath
+Assert-Contains "summary records incomplete full-frame miss scan" $incompleteFullFrameSummaryText "unreviewed=1"
+if (@($incompleteFullFrameRowsOut | Where-Object { $_.closureReason -match "missed-face scan" }).Count -ne 1) {
+    throw "Expected incomplete full-frame missed-face scan to keep missCandidate unreviewed."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks incomplete full-frame miss scan" `
+    -ReviewPath $reviewCsv `
+    -OutputPath $incompleteFullFrameOutputCsv `
+    -SummaryOutputPath $incompleteFullFrameSummaryPath `
+    -FullFrameReviewPath $incompleteFullFrameCsv `
+    -ExpectedPattern "unreviewed=1"
+
 $scriptText = Get-Content -Raw -Path $script
 $summaryText = Get-Content -Raw -Path $summaryPath
 $guideText = Get-Content -Raw -Path $guide
@@ -327,6 +388,8 @@ Assert-Contains "script supports manual miss iou matching" $scriptText "PreferMa
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
 Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
 Assert-Contains "script preserves area ratio evidence" $scriptText "areaChangeRatio"
+Assert-Contains "script requires completed review status" $scriptText "Test-ReviewedStatus"
+Assert-Contains "script requires completed full-frame miss scan" $scriptText "missedFaceRowsAdded > 0"
 Assert-Contains "script enforces require all closed" $scriptText "RequireAllClosed"
 Assert-Contains "summary records closed count" $summaryText "closed=3"
 Assert-Contains "summary records no unreviewed rows" $summaryText "unreviewed=0"

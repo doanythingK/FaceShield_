@@ -22,6 +22,7 @@ param(
     [string]$YoloManualPendingReportWriter = "scripts/write-yolo-manual-pending-report.ps1",
     [string]$YoloHumanReviewDraftWriter = "scripts/new-yolo-human-review-draft.ps1",
     [string]$YoloCompletionFinalizer = "scripts/complete-yolo-goal-after-manual-gates.ps1",
+    [string]$YoloPseudoGtReviewClosure = "scripts/close-yolo-pseudo-gt-review.ps1",
     [string]$YoloPseudoGtSeparationVerify = "scripts/verify-yolo-pseudo-gt-separation-state.ps1"
 )
 
@@ -101,6 +102,7 @@ $goalEvidenceReportWriter = Read-RepoFile $YoloGoalEvidenceReportWriter
 $manualPendingReportWriter = Read-RepoFile $YoloManualPendingReportWriter
 $humanReviewDraftWriter = Read-RepoFile $YoloHumanReviewDraftWriter
 $completionFinalizer = Read-RepoFile $YoloCompletionFinalizer
+$pseudoGtReviewClosure = Read-RepoFile $YoloPseudoGtReviewClosure
 $pseudoGtSeparationVerify = Read-RepoFile $YoloPseudoGtSeparationVerify
 
 $goalAuditMarkerMatch = [regex]::Match($plan, "yolo-goal-audit-state:[^<]+")
@@ -629,6 +631,9 @@ Assert-Contains "completion finalizer allows documented quality failure" $comple
 Assert-Contains "completion finalizer forwards state quality failure flag" $completionFinalizer "AllowFullGtQualityGateFailure"
 Assert-Contains "completion finalizer writes complete evidence report" $completionFinalizer "goal-evidence-report-complete"
 Assert-Contains "completion finalizer has selftest" $completionFinalizer "pass selftest completed fixture"
+Assert-Contains "pseudo gt review closure requires completed status" $pseudoGtReviewClosure "Test-ReviewedStatus"
+Assert-Contains "pseudo gt review closure requires completed missed scan" $pseudoGtReviewClosure "missedFaceRowsAdded > 0"
+Assert-Contains "pseudo gt review closure keeps pending status open" $pseudoGtReviewClosure "is not a completed review state"
 Assert-Contains "pseudo gt separation verifier scans runtime source" $pseudoGtSeparationVerify "runtime source has no pseudo-GT references"
 Assert-Contains "pseudo gt separation verifier protects postprocess pipeline" $pseudoGtSeparationVerify "postprocess pipeline does not know pseudo-GT"
 Assert-Contains "pseudo gt separation verifier checks test-only scripts" $pseudoGtSeparationVerify "test-only evidence"
