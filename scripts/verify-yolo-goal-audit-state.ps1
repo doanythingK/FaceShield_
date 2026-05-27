@@ -583,6 +583,8 @@ Assert-Contains "evidence report writer records failure axes" $goalEvidenceRepor
 Assert-Contains "evidence report writer keeps preview track hold human pending separate" $goalEvidenceReportWriter "previewTrackHoldStatus"
 Assert-Contains "evidence report writer records full gt quality gate" $goalEvidenceReportWriter "Full-GT quality gate"
 Assert-Contains "evidence report writer records pseudo gt candidate evidence" $goalEvidenceReportWriter "Test-only pseudo-GT candidate evidence"
+Assert-Contains "evidence report writer records pseudo gt review queue" $goalEvidenceReportWriter "Test-only pseudo-GT review queue"
+Assert-Contains "evidence report writer records pseudo gt review queue status" $goalEvidenceReportWriter "pseudoGtReviewQueueStatus="
 Assert-Contains "evidence report writer records pseudo gt closure" $goalEvidenceReportWriter "Test-only pseudo-GT review closure"
 Assert-Contains "evidence report writer records pseudo gt closure evidence preservation" $goalEvidenceReportWriter "Test-only pseudo-GT closure evidence preservation"
 Assert-Contains "evidence report writer runs full gt quality verifier" $goalEvidenceReportWriter "Invoke-FullGtQualityGate"

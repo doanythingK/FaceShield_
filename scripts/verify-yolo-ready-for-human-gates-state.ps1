@@ -141,6 +141,8 @@ else {
 Assert-Contains "report records YOLOv8 candidate comparison" $report "YOLOv8 candidate A/B comparison | pass"
 Assert-Contains "report records YOLO5Face candidate comparison" $report "YOLO5Face candidate A/B comparison | pass"
 Assert-Contains "report records failure axis classification" $report "Failure-axis classification | pass"
+Assert-Contains "report records pseudo-GT review queue" $report "Test-only pseudo-GT review queue |"
+Assert-Contains "report records pseudo-GT review queue status" $report "pseudoGtReviewQueueStatus="
 Assert-Contains "report keeps recommendation none" $report "Final YOLO recommendation | none"
 
 $remaining = if ($summary.Contains("remaining=none")) { "none" } else { "gui-smoke" }

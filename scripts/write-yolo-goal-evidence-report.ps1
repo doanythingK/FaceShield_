@@ -8,6 +8,7 @@ param(
     [string]$PredictionCsv = "",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
     [string]$PseudoGtCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
+    [string]$PseudoGtReviewQueueCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-queue.csv",
     [string]$PseudoGtReviewClosureCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
     [double]$MinIou = 0.50,
     [int]$MaxMisses = 0,
@@ -251,10 +252,17 @@ $fullGtFilled = $fullGtRows.Count -gt 0 -and
 $guiFilled = $guiRows.Count -gt 0 -and $guiPassed -eq $guiRows.Count -and $guiArtifacts -eq $guiRows.Count
 
 $pseudoGtRows = @(Read-OptionalCsv $PseudoGtCsv)
+$pseudoGtReviewQueueRows = @(Read-OptionalCsv $PseudoGtReviewQueueCsv)
 $pseudoGtClosureRows = @(Read-OptionalCsv $PseudoGtReviewClosureCsv)
 $pseudoGtSupportedRows = Count-Matching $pseudoGtRows "candidateType" "supportedfacecandidate"
 $pseudoGtFalsePositiveRows = Count-Matching $pseudoGtRows "candidateType" "falsepositivecandidate"
 $pseudoGtMissRows = Count-Matching $pseudoGtRows "candidateType" "misscandidate"
+$pseudoGtQueueFalsePositiveRows = Count-Matching $pseudoGtReviewQueueRows "candidateType" "falsepositivecandidate"
+$pseudoGtQueueMissRows = Count-Matching $pseudoGtReviewQueueRows "candidateType" "misscandidate"
+$pseudoGtQueueSupportedRows = Count-Matching $pseudoGtReviewQueueRows "candidateType" "supportedfacecandidate"
+$pseudoGtQueueTopRows = @($pseudoGtReviewQueueRows | Select-Object -First 5 | ForEach-Object {
+        "$($_.reviewRank):$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore)"
+    })
 $pseudoGtRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtRows "supportFrameCount"
 $pseudoGtRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtRows "personUpperOverlap"
 $pseudoGtRowsWithGeometryEvidence = Count-ColumnPresent $pseudoGtRows "centerDistanceRatio"
@@ -278,6 +286,15 @@ elseif ($pseudoGtClosureRows.Count -eq $pseudoGtRows.Count -and $pseudoGtOpenRow
 }
 else {
     "pending-human"
+}
+$pseudoGtReviewQueueStatus = if ($pseudoGtRows.Count -eq 0) {
+    "skipped-no-candidates"
+}
+elseif ($pseudoGtReviewQueueRows.Count -gt 0) {
+    "prepared"
+}
+else {
+    "missing"
 }
 
 $qualityGate = $null
@@ -334,6 +351,7 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Full-GT label review"; Status = $fullGtStatus; Evidence = "rows=$($fullGtRows.Count), labels=$fullGtLabels, reviewed=$fullGtReviewed, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, missedFaceCountFilled=$fullFrameMissCounts" },
     [pscustomobject]@{ Requirement = "Full-GT quality gate"; Status = $qualityGateStatus; Evidence = $qualityGateEvidence },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT candidate evidence"; Status = $pseudoGtStatus; Evidence = "supportedFaceCandidate=$pseudoGtSupportedRows, falsePositiveCandidate=$pseudoGtFalsePositiveRows, missCandidate=$pseudoGtMissRows, supportEvidenceRows=$pseudoGtRowsWithSupportEvidence, personEvidenceRows=$pseudoGtRowsWithPersonEvidence, geometryEvidenceRows=$pseudoGtRowsWithGeometryEvidence; source=$PseudoGtCsv" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT review queue"; Status = $pseudoGtReviewQueueStatus; Evidence = "rows=$($pseudoGtReviewQueueRows.Count), falsePositiveCandidate=$pseudoGtQueueFalsePositiveRows, missCandidate=$pseudoGtQueueMissRows, supportedFaceCandidate=$pseudoGtQueueSupportedRows, top=$(if ($pseudoGtQueueTopRows.Count -gt 0) { [string]::Join(';', $pseudoGtQueueTopRows) } else { 'none' }); source=$PseudoGtReviewQueueCsv" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, open=$pseudoGtOpenRows; runtimePath=not-used-by-app" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence; source=$PseudoGtReviewClosureCsv" },
     [pscustomobject]@{ Requirement = "Avalonia GUI smoke"; Status = $guiStatus; Evidence = "steps=$($guiRows.Count), pass=$guiPassed, artifactPathFilled=$guiArtifacts, required=preview-track-hold/manual-edit/export/reopen-state" },
@@ -390,6 +408,8 @@ $lines = @(
     "- pseudoGtSupportedRows=$pseudoGtSupportedRows",
     "- pseudoGtFalsePositiveRows=$pseudoGtFalsePositiveRows",
     "- pseudoGtMissRows=$pseudoGtMissRows",
+    "- pseudoGtReviewQueueStatus=$pseudoGtReviewQueueStatus",
+    "- pseudoGtReviewQueueRows=$($pseudoGtReviewQueueRows.Count)",
     "- pseudoGtSupportEvidenceRows=$pseudoGtRowsWithSupportEvidence",
     "- pseudoGtClosureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence",
     "- fullFrameRows=$($fullFrameRows.Count)",
@@ -414,6 +434,7 @@ foreach ($requiredReportToken in @(
     "Full-GT label review",
     "Full-GT quality gate",
     "Test-only pseudo-GT candidate evidence",
+    "Test-only pseudo-GT review queue",
     "Test-only pseudo-GT review closure",
     "Test-only pseudo-GT closure evidence preservation",
     "Avalonia GUI smoke",
@@ -434,6 +455,7 @@ if ($Verify) {
         Assert-ReportContains "report keeps full GT filled" $report "Full-GT label review | filled-pending-strict-gate"
         Assert-ReportContains "report keeps full GT quality checked" $report "Full-GT quality gate | $qualityGateStatus"
         Assert-ReportContains "report keeps pseudo-GT closure checked" $report "Test-only pseudo-GT review closure | $pseudoGtStatus"
+        Assert-ReportContains "report keeps pseudo-GT review queue checked" $report "Test-only pseudo-GT review queue | $pseudoGtReviewQueueStatus"
         Assert-ReportContains "report keeps GUI filled" $report "Avalonia GUI smoke | filled-pending-strict-gate"
         Assert-ReportContains "report keeps preview track-hold passed" $report "Preview track-hold GUI evidence | pass"
         Assert-ReportContains "report keeps completion ready for strict audit" $report "Goal completion | ready-for-strict-completion-audit"
@@ -458,6 +480,8 @@ if ($Verify) {
 
         Assert-ReportContains "report records pseudo-GT closure state" $report "pseudoGtStatus=$pseudoGtStatus"
         Assert-ReportContains "report records pseudo-GT candidate evidence" $report "Test-only pseudo-GT candidate evidence | $pseudoGtStatus"
+        Assert-ReportContains "report records pseudo-GT review queue" $report "Test-only pseudo-GT review queue | $pseudoGtReviewQueueStatus"
+        Assert-ReportContains "report records pseudo-GT review queue state" $report "pseudoGtReviewQueueStatus=$pseudoGtReviewQueueStatus"
         Assert-ReportContains "report records pseudo-GT closure evidence preservation" $report "Test-only pseudo-GT closure evidence preservation | $pseudoGtStatus"
 
         if ($previewTrackHoldPassed) {
