@@ -11,33 +11,13 @@ namespace FaceShield.Services.Analysis
 {
     public sealed class AutoMaskPostProcessPipeline
     {
-        private const float TemporalConfidenceStrong = 0.68f;
-        private const float TemporalConfidenceWeak = 0.50f;
-        private const double TemporalMaxCenterShiftRatio = 0.55;
-        private const double TemporalMaxAreaChangeRatio = 3.2;
-        private const double TemporalHoleFillIouMin = 0.12;
-        private const double TemporalDuplicateIouMin = 0.35;
-        private const double TemporalSmoothIouMin = 0.18;
-        private const double TemporalSmoothWeight = 0.42;
-        private const int TemporalSmoothPasses = 2;
-        private const int TemporalSmoothSearchWindowFrames = 2;
-        private const int SuspiciousNoFaceMaxGap = 8;
         private const float YoloFinalMaskLowConfidenceThreshold = 0.38f;
         private const int FinalMaskShortGapMaxFrames = 3;
         private const double FinalMaskLargeJumpAreaChangeRatio = 4.0;
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
-        private const float YoloSceneCutDirectCarryMaxConfidence = 0.98f;
-        private const float YoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
-        private const float YoloSceneCutPostCutCarryMaxConfidence = 0.78f;
-        private const float YoloSceneCutStrongCarryProbeMaxConfidence = 0.995f;
-        private const float YoloSceneCutStrongCarryProbeMinConfidence = 0.78f;
-        private const float YoloSceneCutStrongCarryProbeMinSourceConfidence = 0.80f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
-        private const int YoloSceneCutDirectDifferenceMaxCandidates = 96;
-        private const int YoloSceneCutMatchingTailMaxFrames = 5;
-        private const float YoloSceneCutMatchingTailMaxConfidence = 0.98f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
         private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
         private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
@@ -82,9 +62,23 @@ namespace FaceShield.Services.Analysis
             FaceOnnxDetectorOptions? detectorOptions = null,
             bool useFaceOnnxRoiDetector = false)
         {
-            var trackPost = ApplyAutoTemporalFixes();
+            var temporalPostProcessor = new AutoMaskTemporalPostProcessor();
+            var trackPost = temporalPostProcessor.ApplyTemporalFixes(
+                _maskProvider,
+                _totalFrames,
+                _options.FilterProfile,
+                _options.UseTracking);
             if (roiSourceDetector != null && detectorOptions != null)
-                RefineAutoFacesWithRoi(videoPath, roiSourceDetector, trackPost, detectorOptions, useFaceOnnxRoiDetector);
+            {
+                new AutoMaskRoiRefineStep().Apply(
+                    _maskProvider,
+                    videoPath,
+                    roiSourceDetector,
+                    trackPost,
+                    detectorOptions,
+                    _options,
+                    useFaceOnnxRoiDetector);
+            }
 
             YoloFinalMaskCleanupPassResult yoloCleanupPass = YoloFinalMaskCleanupPassResult.Empty;
             if (_options.FilterProfile == FaceFilterProfile.Yolo)
@@ -97,27 +91,49 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<string> yoloPreSmoothStrongCarryProbeCutPairs = Array.Empty<string>();
             IReadOnlyList<string> yoloPostSmoothCutPairs = Array.Empty<string>();
             IReadOnlyList<string> yoloStrongCarryProbeCutPairs = Array.Empty<string>();
+            var yoloSceneCutPostProcessor = new YoloSceneCutPostProcessor();
 
             if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo)
             {
-                var preSmoothGuard = RemoveYoloTrackFillAcrossSceneCuts(videoPath, trackPost, cancellationToken, "pre-smooth");
+                var preSmoothGuard = yoloSceneCutPostProcessor.RemoveTrackFillAcrossSceneCuts(
+                    _maskProvider,
+                    videoPath,
+                    trackPost,
+                    cancellationToken,
+                    "pre-smooth");
                 yoloPreSmoothCutPairs = preSmoothGuard.CutFramePairs;
-                var preSmoothStrongCarryProbe = ProbeYoloStrongCarrySceneCuts(videoPath, cancellationToken, "pre-smooth");
+                var preSmoothStrongCarryProbe = yoloSceneCutPostProcessor.ProbeStrongCarrySceneCuts(
+                    _maskProvider,
+                    videoPath,
+                    cancellationToken,
+                    "pre-smooth");
                 yoloPreSmoothStrongCarryProbeCutPairs = preSmoothStrongCarryProbe.CutFramePairs;
             }
 
             if (_options.UseTracking)
             {
-                ApplyAutoTemporalSmoothing(_options.FilterProfile == FaceFilterProfile.Yolo
-                    ? CombineCutFramePairs(yoloPreSmoothCutPairs, yoloPreSmoothStrongCarryProbeCutPairs)
-                    : Array.Empty<string>());
+                temporalPostProcessor.ApplyTemporalSmoothing(
+                    _maskProvider,
+                    _totalFrames,
+                    _options.FilterProfile == FaceFilterProfile.Yolo
+                        ? CombineCutFramePairs(yoloPreSmoothCutPairs, yoloPreSmoothStrongCarryProbeCutPairs)
+                        : Array.Empty<string>());
             }
 
             if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo)
             {
-                var postSmoothGuard = RemoveYoloTrackFillAcrossSceneCuts(videoPath, trackPost, cancellationToken, "post-smooth");
+                var postSmoothGuard = yoloSceneCutPostProcessor.RemoveTrackFillAcrossSceneCuts(
+                    _maskProvider,
+                    videoPath,
+                    trackPost,
+                    cancellationToken,
+                    "post-smooth");
                 yoloPostSmoothCutPairs = postSmoothGuard.CutFramePairs;
-                var strongCarryProbe = ProbeYoloStrongCarrySceneCuts(videoPath, cancellationToken, "post-smooth");
+                var strongCarryProbe = yoloSceneCutPostProcessor.ProbeStrongCarrySceneCuts(
+                    _maskProvider,
+                    videoPath,
+                    cancellationToken,
+                    "post-smooth");
                 yoloStrongCarryProbeCutPairs = strongCarryProbe.CutFramePairs;
             }
 
@@ -203,237 +219,6 @@ namespace FaceShield.Services.Analysis
 
             LogFinalMaskSummary(yoloProtectedSceneCarryFrames);
             return new AutoMaskPostProcessResult(trackPost, yoloProtectedSceneCarryFrames);
-        }
-
-        private FaceTrackPostProcessResult ApplyAutoTemporalFixes()
-        {
-            if (!_options.UseTracking)
-                return FaceTrackPostProcessResult.Empty;
-
-            var result = new FaceTrackInterpolator().Apply(
-                _maskProvider,
-                _totalFrames,
-                BuildTrackPostProcessOptions(_options.FilterProfile));
-
-            if (result.FilledGapFaces > 0 ||
-                result.FilledLostFaces > 0 ||
-                result.FilledInitialFaces > 0 ||
-                result.BlockedInitialFillTracks > 0 ||
-                result.RemovedShortFaces > 0 ||
-                result.RemovedSparseFaces > 0 ||
-                result.RemovedUnstableTailFaces > 0 ||
-                result.RemovedEdgeTailFaces > 0 ||
-                result.RemovedLowerFrameFaces > 0)
-            {
-                Debug.WriteLine(
-                    $"[FaceTrackPost] tracks={result.TrackCount} filled={result.FilledGapFaces} lostFilled={result.FilledLostFaces} initialFilled={result.FilledInitialFaces} blockedInitialFill={result.BlockedInitialFillTracks} lostFrames={FormatFrameList(result.FilledLostFrameIndices)} removedShort={result.RemovedShortFaces} removedSparse={result.RemovedSparseFaces} removedUnstableTail={result.RemovedUnstableTailFaces} removedEdgeTail={result.RemovedEdgeTailFaces} removedLower={result.RemovedLowerFrameFaces} rewritten={result.RewrittenFrames}");
-            }
-
-            return result;
-        }
-
-        private void ApplyAutoTemporalSmoothing(IReadOnlyList<string>? blockedCutPairs = null)
-        {
-            int total = _totalFrames;
-            if (total < 3)
-                return;
-
-            var blockedCutStarts = BuildTemporalSmoothingCutStarts(blockedCutPairs);
-            var facesByFrame = new List<Rect>?[total];
-            var confByFrame = new List<float>?[total];
-            var sizeByFrame = new PixelSize[total];
-            var hasStored = new bool[total];
-
-            foreach (int index in _maskProvider.GetStoredMaskFrameIndices())
-            {
-                if (index >= 0 && index < total)
-                    hasStored[index] = true;
-            }
-
-            foreach (var entry in _maskProvider.GetFaceMaskEntries())
-            {
-                int i = entry.Key;
-                if (i < 0 || i >= total || hasStored[i])
-                    continue;
-
-                var data = entry.Value;
-                if (data.Faces.Count > 0)
-                {
-                    facesByFrame[i] = new List<Rect>(data.Faces);
-                    confByFrame[i] = new List<float>(data.Confidences);
-                    sizeByFrame[i] = data.Size;
-                }
-            }
-
-            for (int pass = 0; pass < TemporalSmoothPasses; pass++)
-            {
-                for (int i = 1; i < total - 1; i++)
-                {
-                    if (hasStored[i] || facesByFrame[i] == null)
-                        continue;
-
-                    var currentFaces = facesByFrame[i]!;
-                    var smoothed = new List<Rect>(currentFaces.Count);
-                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1, TemporalSmoothSearchWindowFrames, blockedCutStarts);
-                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1, TemporalSmoothSearchWindowFrames, blockedCutStarts);
-
-                    for (int j = 0; j < currentFaces.Count; j++)
-                    {
-                        var current = currentFaces[j];
-                        Rect target = current;
-                        int targetCount = 0;
-
-                        double prevIou = GetMaxIoU(current, prevFaces, out var prevMatch);
-                        if (prevIou >= TemporalSmoothIouMin && IsReasonableTemporalMatch(current, prevMatch))
-                        {
-                            target = BlendRect(target, prevMatch, 1.0 / ++targetCount);
-                        }
-
-                        double nextIou = GetMaxIoU(current, nextFaces, out var nextMatch);
-                        if (nextIou >= TemporalSmoothIouMin && IsReasonableTemporalMatch(current, nextMatch))
-                        {
-                            target = targetCount == 0
-                                ? nextMatch
-                                : BlendRect(target, nextMatch, 1.0 / (targetCount + 1));
-                            targetCount++;
-                        }
-
-                        smoothed.Add(targetCount == 0 ? current : BlendRect(current, target, TemporalSmoothWeight));
-                    }
-
-                    facesByFrame[i] = smoothed;
-                }
-            }
-
-            for (int i = 0; i < total; i++)
-            {
-                if (hasStored[i] || facesByFrame[i] == null || facesByFrame[i]!.Count == 0 || sizeByFrame[i].Width <= 0 || sizeByFrame[i].Height <= 0)
-                    continue;
-
-                _maskProvider.SetFaceRects(
-                    i,
-                    facesByFrame[i]!,
-                    sizeByFrame[i],
-                    minConfidence: confByFrame[i] == null || confByFrame[i]!.Count == 0 ? null : confByFrame[i]!.Min(),
-                    confidences: confByFrame[i]);
-            }
-        }
-
-        private FaceTrackSceneCutGuardResult RemoveYoloTrackFillAcrossSceneCuts(
-            string videoPath,
-            FaceTrackPostProcessResult trackPost,
-            CancellationToken cancellationToken,
-            string stage)
-        {
-            var guard = new FaceTrackSceneCutGuard();
-            var directCandidates = guard.BuildWeakTrackTransitionCandidates(
-                _maskProvider,
-                BuildTrackPostProcessOptions(FaceFilterProfile.Yolo),
-                maxTargetConfidence: YoloSceneCutDirectCarryMaxConfidence,
-                maxTransitionGap: SuspiciousNoFaceMaxGap,
-                minConfidenceDrop: 0.0f,
-                maxPostCutCarryFrames: 5,
-                minSourceConfidence: YoloSceneCutDirectCarryMinSourceConfidence);
-            var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
-                _maskProvider,
-                maxTargetConfidence: YoloSceneCutPostCutCarryMaxConfidence,
-                maxCarryFrames: 5,
-                sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
-                includeEdgeCandidates: true);
-            var candidates = directCandidates
-                .Concat(postCutCandidates)
-                .Concat(trackPost.FilledGapFacesInfo)
-                .Concat(trackPost.FilledLostFacesInfo)
-                .Concat(trackPost.FilledInitialFacesInfo)
-                .ToArray();
-
-            if (candidates.Length > 0)
-            {
-                Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] stage={stage} start directCandidates={directCandidates.Count} filled={trackPost.FilledGapFacesInfo.Count} lostFilled={trackPost.FilledLostFacesInfo.Count} initialFilled={trackPost.FilledInitialFacesInfo.Count} totalCandidates={candidates.Length} directBudget={YoloSceneCutDirectDifferenceMaxCandidates}");
-            }
-
-            var result = guard.Apply(
-                _maskProvider,
-                videoPath,
-                candidates,
-                differenceThreshold: YoloSceneCutDifferenceThreshold,
-                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
-                directDifferenceMaxChecks: YoloSceneCutDirectDifferenceMaxCandidates,
-                removeMatchingTailFrames: YoloSceneCutMatchingTailMaxFrames,
-                removeMatchingTailMaxConfidence: YoloSceneCutMatchingTailMaxConfidence,
-                candidateMatchMinIou: YoloSceneCutCandidateMatchMinIou,
-                candidateMatchMaxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
-                candidateMatchMaxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
-                cancellationToken: cancellationToken);
-
-            if (!string.IsNullOrWhiteSpace(result.Error))
-            {
-                Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] stage={stage} skipped directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} error={result.Error}");
-                return result;
-            }
-
-            if (result.Checked > 0)
-            {
-                Debug.WriteLine(
-                    $"[FaceTrackSceneCutGuard] stage={stage} directCandidates={directCandidates.Count} postCutCandidates={postCutCandidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} removed={result.Removed} removedFrames={FormatFrameList(result.RemovedFrameIndices)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
-            }
-
-            return result;
-        }
-
-        private FaceTrackSceneCutGuardResult ProbeYoloStrongCarrySceneCuts(
-            string videoPath,
-            CancellationToken cancellationToken,
-            string stage)
-        {
-            var guard = new FaceTrackSceneCutGuard();
-            var candidates = guard.BuildWeakPostCutCarryCandidates(
-                _maskProvider,
-                maxTargetConfidence: YoloSceneCutStrongCarryProbeMaxConfidence,
-                maxCarryFrames: 5,
-                sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
-                minSourceConfidence: YoloSceneCutStrongCarryProbeMinSourceConfidence,
-                minTargetConfidence: YoloSceneCutStrongCarryProbeMinConfidence,
-                minIou: YoloSceneCutCandidateMatchMinIou,
-                maxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
-                maxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
-                includeEdgeCandidates: true);
-
-            if (candidates.Count > 0)
-            {
-                Debug.WriteLine(
-                    $"[YoloStrongCarrySceneCutProbe] stage={stage} start candidates={candidates.Count} minTarget={YoloSceneCutStrongCarryProbeMinConfidence:0.###} maxTarget={YoloSceneCutStrongCarryProbeMaxConfidence:0.###} minSource={YoloSceneCutStrongCarryProbeMinSourceConfidence:0.###}");
-            }
-
-            var result = guard.Apply(
-                _maskProvider,
-                videoPath,
-                candidates,
-                differenceThreshold: YoloSceneCutDifferenceThreshold,
-                directDifferenceThreshold: YoloSceneCutDirectDifferenceThreshold,
-                directDifferenceMaxChecks: YoloSceneCutDirectDifferenceMaxCandidates,
-                candidateMatchMinIou: YoloSceneCutCandidateMatchMinIou,
-                candidateMatchMaxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
-                candidateMatchMaxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
-                removeCandidates: false,
-                cancellationToken: cancellationToken);
-
-            if (!string.IsNullOrWhiteSpace(result.Error))
-            {
-                Debug.WriteLine(
-                    $"[YoloStrongCarrySceneCutProbe] stage={stage} skipped candidates={candidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} error={result.Error}");
-                return result;
-            }
-
-            if (result.Checked > 0)
-            {
-                Debug.WriteLine(
-                    $"[YoloStrongCarrySceneCutProbe] stage={stage} candidates={candidates.Count} checked={result.Checked} directChecked={result.DirectDifferenceChecks} directSkipped={result.DirectDifferenceSkipped} checkedPairs={FormatTextList(result.CheckedFramePairs)} maxDiff={result.MaxDifference:0.###} cutPairs={FormatTextList(result.CutFramePairs)} threshold={result.Threshold:0.###} elapsedMs={result.ElapsedMs}");
-            }
-
-            return result;
         }
 
         private YoloFinalMaskCleanupPassResult RemoveYoloWeakIsolatedFinalMasks(
@@ -736,135 +521,6 @@ namespace FaceShield.Services.Analysis
                 $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
         }
 
-        private void RefineAutoFacesWithRoi(
-            string videoPath,
-            IBgraFaceDetector detector,
-            FaceTrackPostProcessResult trackPost,
-            FaceOnnxDetectorOptions detectorOptions,
-            bool useFaceOnnxRoiDetector)
-        {
-            var candidates = trackPost.FilledGapFacesInfo
-                .Concat(trackPost.FilledLostFacesInfo)
-                .Concat(trackPost.FilledInitialFacesInfo)
-                .ToArray();
-            if (candidates.Length == 0)
-                return;
-
-            using var roiDetector = useFaceOnnxRoiDetector
-                ? new FaceOnnxDetector(CreateRoiRefinerDetectorOptions(detectorOptions))
-                : null;
-            var refineDetector = roiDetector ?? detector;
-            var refine = new FaceTrackRoiRefiner().Apply(
-                _maskProvider,
-                videoPath,
-                refineDetector,
-                candidates,
-                _options.DownscaleQuality);
-
-            if (refine.Attempts > 0)
-            {
-                Debug.WriteLine(
-                    $"[FaceTrackRoiRefine] attempts={refine.Attempts} hits={refine.Hits} seeks={refine.SeekCount} decoded={refine.DecodedFrames} elapsedMs={refine.ElapsedMs}");
-            }
-        }
-
-        private static FaceTrackPostProcessOptions BuildTrackPostProcessOptions(FaceFilterProfile profile)
-        {
-            if (profile == FaceFilterProfile.Yolo)
-            {
-                return new FaceTrackPostProcessOptions
-                {
-                    MaxTrackGap = SuspiciousNoFaceMaxGap,
-                    MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                    MaxLostFillFrames = 0,
-                    MaxInitialFillFrames = 3,
-                    InitialFillRequiresInwardMotion = true,
-                    MaxConfirmedTrackHoldFrames = SuspiciousNoFaceMaxGap,
-                    AllowSmallTrackLostFill = true,
-                    WeakConfidence = 0.38f,
-                    StrongConfidence = 0.58f,
-                    SyntheticFillConfidenceMax = YoloSceneCutPostCutCarryMaxConfidence,
-                    DropShortTrackMaxDetections = 2,
-                    DropShortSmallTrackMaxDetections = 3,
-                    ShortTrackMaxConfidence = 0.48f,
-                    DropSparseTrackMaxDetections = 3,
-                    DropSparseTrackMinSpanFrames = 8,
-                    DropSparseTrackMaxDensity = 0.42,
-                    SparseTrackMaxConfidence = 0.56f,
-                    EdgeTailMaxConfidence = 0.50f,
-                    EdgeTailMinStableDetections = 3,
-                    EdgeLostFillMaxConfidence = 0.60f,
-                    SmallTrackMaxAreaRatio = 0.00070,
-                    MinTrackIou = 0.08,
-                    MaxCenterShiftRatio = 0.72,
-                    MaxAreaChangeRatio = 4.0,
-                    DuplicateIou = TemporalDuplicateIouMin,
-                    UnstableTailMaxConfidence = 0.40f,
-                    UnstableTailMinStableDetections = 3,
-                    UnstableTailMinIou = 0.45,
-                    UnstableTailMaxAreaChangeRatio = 1.8,
-                    LowerFrameTrackMaxConfidence = 0.50f,
-                    LowerFrameTrackMinCenterYRatio = 0.58,
-                    LowerFrameTrackMinAreaRatio = 0.015,
-                    LowerFrameTrackMaxAreaRatio = 0.045
-                };
-            }
-
-            if (profile == FaceFilterProfile.Scrfd)
-            {
-                return new FaceTrackPostProcessOptions
-                {
-                    MaxTrackGap = SuspiciousNoFaceMaxGap,
-                    MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                    WeakConfidence = 0.35f,
-                    StrongConfidence = 0.55f,
-                    ShortTrackMaxConfidence = 0.55f,
-                    SmallTrackMaxAreaRatio = 0.00075,
-                    MinTrackIou = 0.08,
-                    MaxCenterShiftRatio = 0.75,
-                    MaxAreaChangeRatio = 4.0,
-                    DuplicateIou = TemporalDuplicateIouMin
-                };
-            }
-
-            return new FaceTrackPostProcessOptions
-            {
-                MaxTrackGap = SuspiciousNoFaceMaxGap,
-                MaxFillGap = Math.Min(5, SuspiciousNoFaceMaxGap),
-                WeakConfidence = TemporalConfidenceWeak,
-                StrongConfidence = TemporalConfidenceStrong,
-                ShortTrackMaxConfidence = TemporalConfidenceStrong,
-                SmallTrackMaxAreaRatio = 0.00075,
-                MinTrackIou = TemporalHoleFillIouMin,
-                MaxCenterShiftRatio = TemporalMaxCenterShiftRatio,
-                MaxAreaChangeRatio = TemporalMaxAreaChangeRatio,
-                DuplicateIou = TemporalDuplicateIouMin
-            };
-        }
-
-        private static FaceOnnxDetectorOptions CreateRoiRefinerDetectorOptions(FaceOnnxDetectorOptions source)
-        {
-            var defaults = FaceOnnxDetector.GetDefaultThresholds();
-            float detection = source.DetectionThreshold ?? defaults.Detection;
-            float confidence = source.ConfidenceThreshold ?? defaults.Confidence;
-            float nms = source.NmsThreshold ?? defaults.Nms;
-
-            return new FaceOnnxDetectorOptions
-            {
-                UseOrtOptimization = true,
-                UseGpu = false,
-                IntraOpNumThreads = source.IntraOpNumThreads,
-                InterOpNumThreads = source.InterOpNumThreads,
-                UseParallelExecution = false,
-                EnablePreprocessParallelism = true,
-                AllowAutoTune = false,
-                AllowAutoGpu = false,
-                DetectionThreshold = Math.Min(detection, 0.12f),
-                ConfidenceThreshold = Math.Min(confidence, 0.12f),
-                NmsThreshold = Math.Max(nms, 0.75f)
-            };
-        }
-
         private static IReadOnlyList<string> BuildFinalMaskReviewReasons(
             int shortGapCount,
             int largeJumpGapCount,
@@ -1091,158 +747,6 @@ namespace FaceShield.Services.Analysis
             return values.Count > maxValues
                 ? $"{text},+{values.Count - maxValues}"
                 : text;
-        }
-
-        private static IReadOnlyList<Rect>? FindNearestTemporalFaces(
-            IReadOnlyList<Rect>?[] facesByFrame,
-            int frameIndex,
-            int direction,
-            int maxDistanceFrames,
-            IReadOnlySet<int>? blockedCutStarts)
-        {
-            if (maxDistanceFrames <= 0)
-                return null;
-
-            int index = frameIndex + direction;
-            int searched = 0;
-            int previousIndex = frameIndex;
-            while (index >= 0 && index < facesByFrame.Length)
-            {
-                if (IsBlockedTemporalSmoothingStep(previousIndex, index, blockedCutStarts))
-                    break;
-
-                searched++;
-                if (searched > maxDistanceFrames)
-                    break;
-
-                var faces = facesByFrame[index];
-                if (faces != null && faces.Count > 0)
-                    return faces;
-
-                previousIndex = index;
-                index += direction;
-            }
-
-            return null;
-        }
-
-        private static IReadOnlySet<int> BuildTemporalSmoothingCutStarts(IReadOnlyList<string>? cutPairs)
-        {
-            if (cutPairs == null || cutPairs.Count == 0)
-                return new HashSet<int>();
-
-            var blocked = new HashSet<int>();
-            foreach (string pair in cutPairs)
-            {
-                if (string.IsNullOrWhiteSpace(pair))
-                    continue;
-
-                var parts = pair.Split("->", StringSplitOptions.TrimEntries);
-                if (parts.Length != 2)
-                    continue;
-
-                if (!int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int a) ||
-                    !int.TryParse(parts[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int b))
-                {
-                    continue;
-                }
-
-                int start = Math.Min(a, b);
-                int end = Math.Max(a, b);
-                for (int frame = start; frame < end; frame++)
-                    blocked.Add(frame);
-            }
-
-            return blocked;
-        }
-
-        private static bool IsBlockedTemporalSmoothingStep(int fromFrame, int toFrame, IReadOnlySet<int>? blockedCutStarts)
-        {
-            if (blockedCutStarts == null || blockedCutStarts.Count == 0)
-                return false;
-
-            int cutStart = Math.Min(fromFrame, toFrame);
-            return blockedCutStarts.Contains(cutStart);
-        }
-
-        private static bool IsReasonableTemporalMatch(Rect current, Rect match)
-        {
-            if (match.Width <= 0 || match.Height <= 0)
-                return false;
-
-            double area = Math.Max(1.0, current.Width * current.Height);
-            double matchArea = Math.Max(1.0, match.Width * match.Height);
-            double ratio = area / matchArea;
-            if (ratio > TemporalMaxAreaChangeRatio || ratio < 1.0 / TemporalMaxAreaChangeRatio)
-                return false;
-
-            double cx = current.X + current.Width * 0.5;
-            double cy = current.Y + current.Height * 0.5;
-            double mx = match.X + match.Width * 0.5;
-            double my = match.Y + match.Height * 0.5;
-            double shift = Math.Sqrt((cx - mx) * (cx - mx) + (cy - my) * (cy - my));
-            double maxDim = Math.Max(1.0, Math.Max(match.Width, match.Height));
-            return shift / maxDim <= TemporalMaxCenterShiftRatio;
-        }
-
-        private static Rect BlendRect(Rect current, Rect target, double weight)
-        {
-            double keep = 1.0 - weight;
-            return new Rect(
-                current.X * keep + target.X * weight,
-                current.Y * keep + target.Y * weight,
-                Math.Max(0.0, current.Width * keep + target.Width * weight),
-                Math.Max(0.0, current.Height * keep + target.Height * weight));
-        }
-
-        private static double GetMaxIoU(Rect rect, IReadOnlyList<Rect>? others, out Rect match)
-        {
-            match = default;
-            if (others == null || others.Count == 0)
-                return 0.0;
-
-            double best = 0.0;
-            for (int i = 0; i < others.Count; i++)
-            {
-                var other = others[i];
-                double iou = IoU(rect, other);
-                if (iou > best)
-                {
-                    best = iou;
-                    match = other;
-                }
-            }
-
-            return best;
-        }
-
-        private static double IoU(Rect a, Rect b)
-        {
-            double ax1 = a.X;
-            double ay1 = a.Y;
-            double ax2 = a.X + a.Width;
-            double ay2 = a.Y + a.Height;
-
-            double bx1 = b.X;
-            double by1 = b.Y;
-            double bx2 = b.X + b.Width;
-            double by2 = b.Y + b.Height;
-
-            double ix1 = Math.Max(ax1, bx1);
-            double iy1 = Math.Max(ay1, by1);
-            double ix2 = Math.Min(ax2, bx2);
-            double iy2 = Math.Min(ay2, by2);
-
-            double iw = Math.Max(0.0, ix2 - ix1);
-            double ih = Math.Max(0.0, iy2 - iy1);
-            double inter = iw * ih;
-            if (inter <= 0.0)
-                return 0.0;
-
-            double union = a.Width * a.Height + b.Width * b.Height - inter;
-            if (union <= 0.0)
-                return 0.0;
-            return inter / union;
         }
 
         private readonly record struct YoloFinalMaskCleanupPassResult(

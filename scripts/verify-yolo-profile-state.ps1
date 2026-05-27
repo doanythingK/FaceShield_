@@ -8,6 +8,9 @@ param(
     [string]$AutoMaskRunSummary = "Services/Analysis/AutoMaskRunSummary.cs",
     [string]$AutoMaskGenerator = "Services/Analysis/AutoMaskGenerator.cs",
     [string]$AutoMaskPostProcessPipeline = "Services/Analysis/AutoMaskPostProcessPipeline.cs",
+    [string]$AutoMaskTemporalPostProcessor = "Services/Analysis/AutoMaskTemporalPostProcessor.cs",
+    [string]$AutoMaskRoiRefineStep = "Services/Analysis/AutoMaskRoiRefineStep.cs",
+    [string]$YoloSceneCutPostProcessor = "Services/Analysis/YoloSceneCutPostProcessor.cs",
     [string]$TrackBuilder = "Services/Analysis/FaceTrackBuilder.cs",
     [string]$TrackInterpolator = "Services/Analysis/FaceTrackInterpolator.cs",
     [string]$SceneCutGuard = "Services/Analysis/FaceTrackSceneCutGuard.cs",
@@ -79,6 +82,9 @@ $workspaceText = Read-RepoFile $WorkspaceViewModel
 $autoMaskRunSummaryText = Read-RepoFile $AutoMaskRunSummary
 $autoMaskGeneratorText = Read-RepoFile $AutoMaskGenerator
 $autoMaskPostProcessPipelineText = Read-RepoFile $AutoMaskPostProcessPipeline
+$autoMaskTemporalPostProcessorText = Read-RepoFile $AutoMaskTemporalPostProcessor
+$autoMaskRoiRefineStepText = Read-RepoFile $AutoMaskRoiRefineStep
+$yoloSceneCutPostProcessorText = Read-RepoFile $YoloSceneCutPostProcessor
 $trackBuilderText = Read-RepoFile $TrackBuilder
 $trackInterpolatorText = Read-RepoFile $TrackInterpolator
 $sceneCutGuardText = Read-RepoFile $SceneCutGuard
@@ -97,9 +103,24 @@ $autoMosaicDefaultVerifyText = Read-RepoFile $AutoMosaicDefaultVerifier
 $yoloGuiSmokeResultText = Read-RepoFile $YoloGuiSmokeResult
 $autoMosaicQualityPlanText = Read-RepoFile $AutoMosaicQualityPlan
 
-$postProcessCompatibilityText = $autoMaskPostProcessPipelineText `
+$postProcessCompatibilityText = @(
+    $autoMaskPostProcessPipelineText
+    $autoMaskTemporalPostProcessorText
+    $autoMaskRoiRefineStepText
+    $yoloSceneCutPostProcessorText
+) -join "`n"
+$postProcessCompatibilityText = $postProcessCompatibilityText `
     -replace '\bvideoPath\b', 'FrameList.VideoPath' `
     -replace '\bcancellationToken\b', 'token' `
+    -replace '\bmaskProvider\b', '_maskProvider' `
+    -replace '\bprofile\b', '_autoOptions.FilterProfile' `
+    -replace '\buseTracking\b', '_autoOptions.UseTracking' `
+    -replace '\btotalFrames\b', 'FrameList.TotalFrames' `
+    -replace '\bApplyTemporalFixes\b', 'ApplyAutoTemporalFixes' `
+    -replace '\bApplyTemporalSmoothing\b', 'ApplyAutoTemporalSmoothing' `
+    -replace '\bRemoveTrackFillAcrossSceneCuts\b', 'RemoveYoloTrackFillAcrossSceneCuts' `
+    -replace '\bProbeStrongCarrySceneCuts\b', 'ProbeYoloStrongCarrySceneCuts' `
+    -replace '\bAutoMaskPostProcessLog\.', '' `
     -replace '_options', '_autoOptions'
 $workspaceText = "$workspaceText`n$postProcessCompatibilityText"
 
@@ -235,12 +256,12 @@ Assert-Match "workspace autotune updates faceonnx options only" $workspaceText "
 Assert-Match "workspace keeps configured filter profile in run options" $workspaceText "FilterProfile\s*=\s*_autoOptions\.FilterProfile"
 Assert-Match "auto summary logs start frame" $autoMaskRunSummaryText "int\s+StartFrameIndex[\s\S]*startFrame=\{StartFrameIndex\}"
 Assert-Match "auto generator passes start frame into summaries" $autoMaskGeneratorText "new\s+AutoMaskRunSummary\([\s\S]*totalFrames,\s*start,[\s\S]*processed[\s\S]*new\s+AutoMaskRunSummary\([\s\S]*totalFrames,\s*start,[\s\S]*decoded"
-Assert-Match "workspace tracking toggle gates temporal fixes" $workspaceText "private\s+FaceTrackPostProcessResult\s+ApplyAutoTemporalFixes\(\)[\s\S]*if\s*\(!_autoOptions\.UseTracking\)[\s\S]*return\s+FaceTrackPostProcessResult\.Empty"
-Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText "if\s*\(_autoOptions\.UseTracking\)\s*\{[\s\S]*ApplyAutoTemporalSmoothing\(_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*yoloPreSmoothCutPairs[\s\S]*Array\.Empty<string>\(\)\);[\s\S]*\}"
+Assert-Match "workspace tracking toggle gates temporal fixes" $workspaceText "FaceTrackPostProcessResult\s+ApplyAutoTemporalFixes\([\s\S]*if\s*\(!_autoOptions\.UseTracking\)[\s\S]*return\s+FaceTrackPostProcessResult\.Empty"
+Assert-Match "workspace tracking toggle gates temporal smoothing" $workspaceText "_autoOptions\.UseTracking[\s\S]*ApplyAutoTemporalSmoothing\("
 Assert-Match "workspace smoothing does not search across long scene gaps" $workspaceText "TemporalSmoothSearchWindowFrames\s*=\s*2[\s\S]*BuildTemporalSmoothingCutStarts\(blockedCutPairs\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*-1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*FindNearestTemporalFaces\(facesByFrame,\s*i,\s*1,\s*TemporalSmoothSearchWindowFrames,\s*blockedCutStarts\)[\s\S]*searched\s*>\s*maxDistanceFrames"
-Assert-Match "workspace smoothing blocks pre-smooth yolo scene cuts" $workspaceText "yoloPreSmoothCutPairs[\s\S]*preSmoothGuard\.CutFramePairs[\s\S]*yoloPreSmoothStrongCarryProbeCutPairs[\s\S]*preSmoothStrongCarryProbe\.CutFramePairs[\s\S]*ApplyAutoTemporalSmoothing\(_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*CombineCutFramePairs\(yoloPreSmoothCutPairs,\s*yoloPreSmoothStrongCarryProbeCutPairs\)[\s\S]*BuildTemporalSmoothingCutStarts[\s\S]*Split\(""->""[\s\S]*IsBlockedTemporalSmoothingStep"
+Assert-Match "workspace smoothing blocks pre-smooth yolo scene cuts" $workspaceText "yoloPreSmoothCutPairs[\s\S]*preSmoothGuard\.CutFramePairs[\s\S]*yoloPreSmoothStrongCarryProbeCutPairs[\s\S]*preSmoothStrongCarryProbe\.CutFramePairs[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*_autoOptions\.FilterProfile\s*==\s*FaceFilterProfile\.Yolo[\s\S]*CombineCutFramePairs\(yoloPreSmoothCutPairs,\s*yoloPreSmoothStrongCarryProbeCutPairs\)[\s\S]*BuildTemporalSmoothingCutStarts[\s\S]*Split\(""->""[\s\S]*IsBlockedTemporalSmoothingStep"
 Assert-Match "smoothing cut boundary verifier covers blocked direct pairs" $smoothingCutBoundaryVerifyText "10->13[\s\S]*AssertSet[\s\S]*13,\s*12[\s\S]*12,\s*13[\s\S]*InvokeFindNearest\(facesByFrame,\s*13,\s*-1,\s*2,\s*blocked\)"
-Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\(profile\s*==\s*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*0[\s\S]*MaxInitialFillFrames\s*=\s*3[\s\S]*InitialFillRequiresInwardMotion\s*=\s*true[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*StrongConfidence\s*=\s*0\.58f[\s\S]*DropShortTrackMaxDetections\s*=\s*2[\s\S]*DropShortSmallTrackMaxDetections\s*=\s*3[\s\S]*ShortTrackMaxConfidence\s*=\s*0\.48f[\s\S]*DropSparseTrackMaxDetections\s*=\s*3[\s\S]*DropSparseTrackMinSpanFrames\s*=\s*8[\s\S]*DropSparseTrackMaxDensity\s*=\s*0\.42[\s\S]*SparseTrackMaxConfidence\s*=\s*0\.56f[\s\S]*EdgeTailMaxConfidence\s*=\s*0\.50f[\s\S]*EdgeLostFillMaxConfidence\s*=\s*0\.60f[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
+Assert-Match "workspace yolo track profile exists" $workspaceText "if\s*\([^)]*FaceFilterProfile\.Yolo\)[\s\S]*MaxLostFillFrames\s*=\s*0[\s\S]*MaxInitialFillFrames\s*=\s*3[\s\S]*InitialFillRequiresInwardMotion\s*=\s*true[\s\S]*MaxConfirmedTrackHoldFrames\s*=\s*SuspiciousNoFaceMaxGap[\s\S]*AllowSmallTrackLostFill\s*=\s*true[\s\S]*StrongConfidence\s*=\s*0\.58f[\s\S]*DropShortTrackMaxDetections\s*=\s*2[\s\S]*DropShortSmallTrackMaxDetections\s*=\s*3[\s\S]*ShortTrackMaxConfidence\s*=\s*0\.48f[\s\S]*DropSparseTrackMaxDetections\s*=\s*3[\s\S]*DropSparseTrackMinSpanFrames\s*=\s*8[\s\S]*DropSparseTrackMaxDensity\s*=\s*0\.42[\s\S]*SparseTrackMaxConfidence\s*=\s*0\.56f[\s\S]*EdgeTailMaxConfidence\s*=\s*0\.50f[\s\S]*EdgeLostFillMaxConfidence\s*=\s*0\.60f[\s\S]*UnstableTailMaxConfidence\s*=\s*0\.40f[\s\S]*LowerFrameTrackMaxConfidence\s*=\s*0\.50f"
 Assert-Match "workspace logs sparse temporal removals" $workspaceText "removedSparse=\{result\.RemovedSparseFaces\}"
 Assert-Match "workspace logs unstable-tail temporal removals" $workspaceText "removedUnstableTail=\{result\.RemovedUnstableTailFaces\}"
 Assert-Match "workspace logs edge-tail temporal removals" $workspaceText "removedEdgeTail=\{result\.RemovedEdgeTailFaces\}"
@@ -262,7 +283,7 @@ Assert-Match "workspace passes yolo cut pairs to final gap fill" $workspaceText 
 Assert-Match "workspace fills stable yolo final gaps" $workspaceText "YoloFinalMaskStableGapMaxFrames\s*=\s*5[\s\S]*FillYoloStableFinalMaskGaps[\s\S]*FillShortStableGaps\([\s\S]*_maskProvider[\s\S]*MaxGapFrames\s*=\s*YoloFinalMaskStableGapMaxFrames[\s\S]*BlockedSceneCarryFrameIndices\s*=\s*sceneCarryBlockedFrameIndices[\s\S]*gapFillLogLabel[\s\S]*blockedByCut=\{gapFill\.BlockedCutGapFaces\}[\s\S]*blockedByCleanup=\{gapFill\.BlockedCleanupGapFrames\}[\s\S]*blockedBySceneCarry=\{gapFill\.BlockedSceneCarryGapFrames\}[\s\S]*suppressedWeakGeometryAnchors=\{gapFill\.SuppressedWeakGeometryAnchorChecks\}[\s\S]*suppressedRiskyGeometryAnchors=\{gapFill\.SuppressedRiskyGeometryAnchorChecks\}[\s\S]*unsupportedWeakAnchors=\{gapFill\.UnsupportedWeakAnchorChecks\}"
 Assert-Match "workspace blocks final gap fill across known yolo scene cuts" $workspaceText "FillYoloStableFinalMaskGaps[\s\S]*BlockedCutFramePairs\s*=\s*blockedCutFramePairs\s*\?\?\s*Array\.Empty<string>\(\)"
 Assert-Match "workspace carries cleanup removals and scene-cut carry windows into post-scene final gap fill" $workspaceText "yoloCleanupPass\s*=\s*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*RemoveSceneCutCarryRemnants\([\s\S]*_maskProvider[\s\S]*yoloCutPairs[\s\S]*BuildSceneCutCarryBlockedFrames\([\s\S]*yoloCutPairs[\s\S]*YoloSceneCutCarryBlockFrames[\s\S]*additionalBlockedFaces:\s*CombineFaceInfos\([\s\S]*yoloCleanupPass\.RemovedFacesInfo[\s\S]*yoloCarryCleanup\.RemovedFacesInfo[\s\S]*sceneCarryBlockedFaces:\s*yoloCarryCleanup\.RemovedFacesInfo[\s\S]*sceneCarryBlockedFrameIndices:\s*yoloSceneCutBlockedFrames[\s\S]*CombineFaceInfos\(additionalBlockedFaces,\s*cleanup\.RemovedFacesInfo\)"
-Assert-Match "workspace defers stable yolo gap fill until scene-cut blockers exist" $workspaceText "yoloCleanupPass\s*=\s*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""pre-smooth""\)[\s\S]*var\s+yoloCutPairs\s*=\s*CombineCutFramePairs\([\s\S]*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*blockedCutFramePairs:\s*yoloCutPairs"
+Assert-Match "workspace defers stable yolo gap fill until scene-cut blockers exist" $workspaceText "yoloCleanupPass\s*=\s*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\([\s\S]*trackPost[\s\S]*""pre-smooth""[\s\S]*var\s+yoloCutPairs\s*=\s*CombineCutFramePairs\([\s\S]*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*blockedCutFramePairs:\s*yoloCutPairs"
 Assert-Match "workspace reruns scene-cut carry cleanup for post-gap-fill cuts" $workspaceText "postSceneCleanupPass\s*=\s*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*postSceneCleanupPass\.CutFramePairs\.Count\s*>\s*0[\s\S]*postGapFillCutPairs\s*=\s*CombineCutFramePairs\(yoloCutPairs,\s*postSceneCleanupPass\.CutFramePairs\)[\s\S]*RemoveSceneCutCarryRemnants\([\s\S]*postGapFillCutPairs[\s\S]*BuildSceneCutCarryBlockedFrames\([\s\S]*postGapFillCutPairs[\s\S]*stage=post-gap-fill"
 Assert-Match "workspace cleans weak yolo remnants after post-gap-fill carry cleanup without refilling" $workspaceText "stage=post-gap-fill[\s\S]*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*logLabel:\s*""YoloFinalMaskPostGapFillCleanup"""
 Assert-Match "workspace blocks final gap fill from cleanup removals" $workspaceText "FillYoloStableFinalMaskGaps[\s\S]*BlockedFrameIndices\s*=\s*blockedFrameIndices\s*\?\?\s*Array\.Empty<int>\(\)[\s\S]*BlockedFaces\s*=\s*blockedFaces\s*\?\?\s*Array\.Empty<FaceTrackFilledFace>\(\)"
@@ -316,7 +337,7 @@ Assert-Match "final mask gap fill seeds mixed frames" $finalMaskPostProcessorTex
 Assert-Match "final mask gap fill dedupes against existing frame faces" $finalMaskPostProcessorText "HasMatchingFace\(fill\.Faces,\s*interpolated"
 Assert-Match "workspace yolo scene cut guard is gated to yolo" $workspaceText "FaceFilterProfile\.Yolo[\s\S]*RemoveYoloTrackFillAcrossSceneCuts"
 Assert-Match "workspace yolo scene cut guard uses shared service" $workspaceText "new\s+FaceTrackSceneCutGuard\(\)[\s\S]*BuildWeakTrackTransitionCandidates[\s\S]*BuildWeakPostCutCarryCandidates[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*guard\.Apply"
-Assert-Match "workspace yolo scene cut guard logs pre and post smooth stages" $workspaceText "RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""pre-smooth""\)[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""post-smooth""\)[\s\S]*stage=\{stage\}"
+Assert-Match "workspace yolo scene cut guard logs pre and post smooth stages" $workspaceText "RemoveYoloTrackFillAcrossSceneCuts\([\s\S]*trackPost[\s\S]*""pre-smooth""[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\([\s\S]*trackPost[\s\S]*""post-smooth""[\s\S]*stage=\{stage\}"
 Assert-Match "scene cut guard builds weak direct candidates" $sceneCutGuardText "BuildWeakTrackTransitionCandidates[\s\S]*FaceTrackBuilder\(\)\.Build[\s\S]*maxTargetConfidence[\s\S]*minSourceConfidence[\s\S]*FaceTrackFilledFace"
 Assert-Match "scene cut guard builds weak post-cut carry candidates" $sceneCutGuardText "BuildWeakPostCutCarryCandidates[\s\S]*maxCarryFrames[\s\S]*sourceLookbackFrames[\s\S]*includeEdgeCandidates[\s\S]*BuildWeakCarryRun[\s\S]*HasStrongContinuation[\s\S]*lookbackFrames[\s\S]*sourceFrame[\s\S]*HasMatchingSourceFace[\s\S]*maxTargetConfidence[\s\S]*FaceTrackFilledFace"
 Assert-Match "scene cut guard checks weak carry tails" $sceneCutGuardText "maxPostCutCarryFrames[\s\S]*carryEndFrame[\s\S]*lastAddedIndex[\s\S]*FaceTrackFilledFace"
@@ -331,7 +352,7 @@ Assert-Match "track interpolator gates initial fill by inward edge motion" $trac
 Assert-Match "track interpolator protects confirmed small tracks" $trackInterpolatorText "CouldBePartialFace[\s\S]*IsConfirmedSmallTrack[\s\S]*ConfirmedTrackMinDetections[\s\S]*StrongConfidence[\s\S]*IsSmallTrack"
 Assert-Match "track postprocess reports blocked initial fill" $trackInterpolatorText "blockedInitialFillTracks\+\+[\s\S]*BlockedInitialFillTracks"
 Assert-Match "track interpolation caps synthetic fill confidence" $trackInterpolatorText "ClampSyntheticFillConfidence[\s\S]*SyntheticFillConfidenceMax[\s\S]*Math\.Clamp\(sourceConfidence"
-Assert-Match "workspace caps yolo synthetic track fill confidence" $workspaceText "SyntheticFillConfidenceMax\s*=\s*YoloSceneCutPostCutCarryMaxConfidence"
+Assert-Match "workspace caps yolo synthetic track fill confidence" $workspaceText "SyntheticFillConfidenceMax\s*=\s*(YoloSceneCutPostCutCarryMaxConfidence|YoloSyntheticFillConfidenceMax)"
 Assert-Match "workspace logs blocked initial fill" $workspaceText "blockedInitialFill=\{result\.BlockedInitialFillTracks\}"
 Assert-Match "scene cut guard scans adjacent frame differences" $sceneCutGuardText "for\s*\(int\s+frame\s*=\s*sourceFrame;\s*frame\s*<\s*targetFrame;\s*frame\+\+\)[\s\S]*FormatFramePair\(maxSource,\s*maxTarget\)"
 Assert-Match "scene cut guard checks cumulative frame difference" $sceneCutGuardText "directDifferenceThreshold[\s\S]*GetFrameDifference\(\s*sourceFrame,\s*targetFrame[\s\S]*TryGetFramePairDifference[\s\S]*FormatFramePair\(sourceFrame,\s*targetFrame\)"
@@ -343,8 +364,8 @@ Assert-Match "scene cut guard exposes frame evidence" $sceneCutGuardText "Remove
 Assert-Match "workspace logs scene cut frame evidence" $workspaceText "directChecked=\{result\.DirectDifferenceChecks\}[\s\S]*directSkipped=\{result\.DirectDifferenceSkipped\}[\s\S]*checkedPairs=\{FormatTextList\(result\.CheckedFramePairs\)\}[\s\S]*maxDiff=\{result\.MaxDifference[\s\S]*cutPairs=\{FormatTextList\(result\.CutFramePairs\)\}[\s\S]*removedFrames=\{FormatFrameList\(result\.RemovedFrameIndices\)\}"
 Assert-Match "workspace faceonnx track profile remains default branch" $workspaceText "return\s+new\s+FaceTrackPostProcessOptions[\s\S]*WeakConfidence\s*=\s*TemporalConfidenceWeak[\s\S]*StrongConfidence\s*=\s*TemporalConfidenceStrong"
 Assert-Match "workspace refreshes preview after track postprocess" $workspaceText "new\s+AutoMaskPostProcessPipeline\([\s\S]*postProcess\.Apply\([\s\S]*RefreshAutoPreviewAfterPostProcess\(exportAfter\)"
-Assert-Match "workspace roi refine includes initial fill candidates" $workspaceText "private\s+void\s+RefineAutoFacesWithRoi[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*new\s+FaceTrackRoiRefiner\(\)\.Apply"
-Assert-Match "workspace applies yolo scene cut before and after temporal smoothing" $workspaceText "var\s+trackPost\s*=\s*ApplyAutoTemporalFixes\(\);[\s\S]*RefineAutoFacesWithRoi[\s\S]*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*var\s+preSmoothGuard\s*=\s*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""pre-smooth""\);[\s\S]*yoloPreSmoothCutPairs\s*=\s*preSmoothGuard\.CutFramePairs;[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*yoloPreSmoothCutPairs[\s\S]*var\s+postSmoothGuard\s*=\s*RemoveYoloTrackFillAcrossSceneCuts\(FrameList\.VideoPath,\s*trackPost,\s*token,\s*""post-smooth""\);[\s\S]*yoloPostSmoothCutPairs\s*=\s*postSmoothGuard\.CutFramePairs;[\s\S]*var\s+yoloCutPairs\s*=\s*CombineCutFramePairs\([\s\S]*yoloPreSmoothCutPairs[\s\S]*yoloPostSmoothCutPairs[\s\S]*yoloCleanupPass\.CutFramePairs[\s\S]*blockedCutFramePairs:\s*yoloCutPairs[\s\S]*LogFinalMaskSummary"
+Assert-Match "workspace roi refine includes initial fill candidates" $workspaceText "AutoMaskRoiRefineStep[\s\S]*trackPost\.FilledGapFacesInfo[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*new\s+FaceTrackRoiRefiner\(\)\.Apply"
+Assert-Match "workspace applies yolo scene cut before and after temporal smoothing" $workspaceText "ApplyAutoTemporalFixes[\s\S]*AutoMaskRoiRefineStep[\s\S]*RemoveYoloWeakIsolatedFinalMasks\([\s\S]*fillStableGaps:\s*false[\s\S]*var\s+preSmoothGuard\s*=[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\([\s\S]*""pre-smooth""[\s\S]*yoloPreSmoothCutPairs\s*=\s*preSmoothGuard\.CutFramePairs;[\s\S]*ApplyAutoTemporalSmoothing\([\s\S]*yoloPreSmoothCutPairs[\s\S]*var\s+postSmoothGuard\s*=[\s\S]*RemoveYoloTrackFillAcrossSceneCuts\([\s\S]*""post-smooth""[\s\S]*yoloPostSmoothCutPairs\s*=\s*postSmoothGuard\.CutFramePairs;[\s\S]*var\s+yoloCutPairs\s*=\s*CombineCutFramePairs\([\s\S]*yoloPreSmoothCutPairs[\s\S]*yoloPostSmoothCutPairs[\s\S]*yoloCleanupPass\.CutFramePairs[\s\S]*blockedCutFramePairs:\s*yoloCutPairs[\s\S]*LogFinalMaskSummary"
 Assert-Match "default verifier runs smoothing cut boundary harness" $autoMosaicDefaultVerifyText "verify-yolo-temporal-smoothing-cut-boundary\.ps1[\s\S]*Invoke-ScriptStep\s+""yolo-temporal-smoothing-cut-boundary""[\s\S]*prevBlocked=True[\s\S]*nextBlocked=True"
 Assert-Match "workspace temporal smoothing does not materialize empty frames" $workspaceText "if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\)\s*continue;[\s\S]*if\s*\(hasStored\[i\]\s*\|\|\s*facesByFrame\[i\]\s*==\s*null\s*\|\|\s*facesByFrame\[i\]!\.Count\s*==\s*0[\s\S]*\)\s*continue;"
 Assert-Match "roi refiner only replaces existing matching faces" $roiRefinerText "TryGetFaceMaskData\(candidate\.FrameIndex,[\s\S]*FindSimilarFaceIndex\(faces,\s*candidate\.Bounds\)[\s\S]*if\s*\(replaceIndex\s*<\s*0\)\s*return\s+false;[\s\S]*faces\[replaceIndex\]\s*=\s*refined\.Bounds"
