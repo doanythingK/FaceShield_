@@ -157,7 +157,7 @@ if ($SelfTest) {
     @(
         "# Synthetic YOLO Finalizer Plan",
         "",
-        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=false; remaining=full-gt-label,gui-smoke; completion-audit=pass-incomplete -->"
+        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; short-span-only-goal=pass; obsolete-sweep-harness=removed; obsolete-ten-minute-runner=removed; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=false; remaining=full-gt-label,gui-smoke; completion-audit=pass-incomplete -->"
     ) | Set-Content -Encoding UTF8 -Path $plan
 
     $summary = Join-Path $selfTestDir "manual-gate-summary.md"

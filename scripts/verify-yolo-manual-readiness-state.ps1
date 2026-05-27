@@ -15,9 +15,6 @@ param(
     [int]$FullGtMaxFalsePositives = 0,
     [int]$FullGtMaxLowIou = 0,
     [switch]$AllowQualityGateFailure,
-    [string]$TenMinuteOutputPath = ".tmp\srcTest-smoke\smoke-0200-600s_blur.mp4",
-    [string]$TenMinuteLogPath = ".tmp\yolo-ten-minute\yolo-ten-minute-20260523-000044.log",
-    [string]$IncompleteBaselineFullLogPath = ".tmp\yolo-ten-minute-baseline-full\yolo-ten-minute-baseline-only-20260523-032108.log",
     [switch]$AllowCompletedFullGt,
     [switch]$AllowCompletedGuiSmoke
 )
@@ -275,26 +272,6 @@ function Assert-GuiChecklistReady {
     Write-Host "[YoloManualReadinessVerify] pass GUI manual checklist rows=$($rows.Count), status=$statusState"
 }
 
-function Assert-TenMinuteArtifactsReady {
-    Assert-FileNonEmpty "10-minute YOLO output" $TenMinuteOutputPath | Out-Null
-    $tenMinuteLog = Assert-FileNonEmpty "10-minute YOLO log" $TenMinuteLogPath
-    $baselineLog = Assert-FileNonEmpty "incomplete FaceONNX baseline full log" $IncompleteBaselineFullLogPath
-
-    $tenMinuteText = Get-Content -Raw -Path $tenMinuteLog
-    Assert-Contains "10-minute log has yolo detector" $tenMinuteText "detector=YoloFaceOnnxDetector"
-    Assert-Contains "10-minute log has export summary" $tenMinuteText "[ExportRunSummary]"
-    Assert-Contains "10-minute log has smoke output marker" $tenMinuteText "[Smoke] label=optimized-track-1-scale-1-cpu-yolo"
-
-    $baselineText = Get-Content -Raw -Path $baselineLog
-    Assert-Contains "baseline full attempt has baseline-only mode" $baselineText "baselineOnly=True"
-    Assert-Contains "baseline full attempt has pipe-single mode" $baselineText "[AutoMask] mode=pipe-single"
-    if ($baselineText.Contains("[YoloTenMinuteFull] complete")) {
-        throw "incomplete baseline full log unexpectedly has complete marker"
-    }
-
-    Write-Host "[YoloManualReadinessVerify] pass 10-minute artifacts ready"
-}
-
 $planPathResolved = Assert-FileNonEmpty "plan document" $PlanPath
 $plan = Get-Content -Raw -Path $planPathResolved
 Assert-Contains "plan keeps goal incomplete" $plan "complete=false"
@@ -306,10 +283,10 @@ else {
 }
 Assert-Contains "plan keeps GUI smoke pending" $plan "gui-smoke"
 Assert-Contains "plan records ten minute full not required after extended fail" $plan "ten-minute-full=not-required-after-extended-fail"
+Assert-Contains "plan records short-span-only cleanup" $plan "short-span-only-goal=pass"
 
 Assert-ManualFullGtPackage
 Assert-AiCandidatePackage
 Assert-GuiChecklistReady
-Assert-TenMinuteArtifactsReady
 
 Write-Host "[YoloManualReadinessVerify] all requested checks passed"

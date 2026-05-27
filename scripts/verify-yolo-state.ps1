@@ -10,13 +10,6 @@ param(
     [switch]$RunExtendedExportGate,
     [string]$ExtendedExportQualityClip = ".tmp/srcTest-smoke/smoke-0600-30s.mp4",
     [string]$ExtendedExportYoloModelPath = "",
-    [switch]$RunTenMinuteState,
-    [switch]$RequireTenMinuteClip,
-    [switch]$RequireTenMinuteRun,
-    [switch]$RequireTenMinuteBaselineOnlyRun,
-    [switch]$RequireTenMinuteIncompleteBaselineFullAttempt,
-    [switch]$RequireTenMinuteFaceOnnxOptimizedOnlyRun,
-    [switch]$RequireTenMinutePartialSpeedCompareRun,
     [switch]$RunGuiSmokeState,
     [switch]$RequireGuiSmokeManualPass,
     [string]$GuiChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
@@ -172,7 +165,6 @@ function Test-YoloGoalAuditAlreadyComplete {
 
 $profileStateVerify = Join-Path $repo "scripts\verify-yolo-profile-state.ps1"
 $startupSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-startup-smoke-state.ps1"
-$sweepStateVerify = Join-Path $repo "scripts\verify-yolo-sweep-state.ps1"
 $trackHoldStateVerify = Join-Path $repo "scripts\verify-yolo-track-hold-state.ps1"
 $cropReviewVerify = Join-Path $repo "scripts\verify-yolo-crop-review.ps1"
 $gtLabelStateVerify = Join-Path $repo "scripts\verify-yolo-gt-label-state.ps1"
@@ -195,7 +187,6 @@ $guiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $representativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $extendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $extendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
-$tenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
 
 $fullGtReviewAlreadyCompleted = Test-CompletedFullGtReview
 $allowCompletedFullGtForCurrentState = $AllowCompletedFullGt -or $fullGtReviewAlreadyCompleted
@@ -211,7 +202,6 @@ if ($RequireComplete) {
 
 Invoke-YoloVerify "profile-state" $profileStateVerify @()
 Invoke-YoloVerify "startup-smoke-state" $startupSmokeStateVerify @()
-Invoke-YoloVerify "sweep-state" $sweepStateVerify @()
 Invoke-YoloVerify "track-hold-state" $trackHoldStateVerify @()
 Invoke-YoloVerify "crop-review" $cropReviewVerify @(
     "-PassReviewCsv", $YoloCropReviewPassCsv,
@@ -304,29 +294,6 @@ if ($RunExtendedExportGate) {
         "-QualityClip", $ExtendedExportQualityClip,
         "-YoloModelPath", $ExtendedExportYoloModelPath
     )
-}
-if ($RunTenMinuteState) {
-    $tenMinuteArgs = @()
-    if ($RequireTenMinuteClip) {
-        $tenMinuteArgs += "-RequireClip"
-    }
-    if ($RequireTenMinuteRun) {
-        $tenMinuteArgs += "-RequireRun"
-    }
-    if ($RequireTenMinuteBaselineOnlyRun) {
-        $tenMinuteArgs += "-RequireBaselineOnlyRun"
-    }
-    if ($RequireTenMinuteIncompleteBaselineFullAttempt) {
-        $tenMinuteArgs += "-RequireIncompleteBaselineFullAttempt"
-    }
-    if ($RequireTenMinuteFaceOnnxOptimizedOnlyRun) {
-        $tenMinuteArgs += "-RequireFaceOnnxOptimizedOnlyRun"
-    }
-    if ($RequireTenMinutePartialSpeedCompareRun) {
-        $tenMinuteArgs += "-RequirePartialSpeedCompareRun"
-    }
-
-    Invoke-YoloVerify "ten-minute-state" $tenMinuteStateVerify $tenMinuteArgs
 }
 if ($RunGuiSmokeState) {
     $guiSmokeArgs = @()

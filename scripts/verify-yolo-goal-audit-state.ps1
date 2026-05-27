@@ -4,7 +4,6 @@ param(
     [string]$YoloStateVerify = "scripts/verify-yolo-state.ps1",
     [string]$YoloProfileStateVerify = "scripts/verify-yolo-profile-state.ps1",
     [string]$YoloStartupSmokeStateVerify = "scripts/verify-yolo-startup-smoke-state.ps1",
-    [string]$YoloSweepStateVerify = "scripts/verify-yolo-sweep-state.ps1",
     [string]$YoloTrackHoldVerify = "scripts/verify-yolo-track-hold-state.ps1",
     [string]$YoloCompletionAuditVerify = "scripts/verify-yolo-completion-audit-state.ps1",
     [string]$YoloTopLevelRequireCompleteVerify = "scripts/verify-yolo-top-level-require-complete-state.ps1",
@@ -84,7 +83,6 @@ $autoVerify = Read-RepoFile $AutoMosaicDefaultVerify
 $yoloState = Read-RepoFile $YoloStateVerify
 $yoloProfileState = Read-RepoFile $YoloProfileStateVerify
 $yoloStartupSmokeState = Read-RepoFile $YoloStartupSmokeStateVerify
-$yoloSweepState = Read-RepoFile $YoloSweepStateVerify
 $yoloTrackHoldVerify = Read-RepoFile $YoloTrackHoldVerify
 $completionAuditVerify = Read-RepoFile $YoloCompletionAuditVerify
 $topLevelRequireCompleteVerify = Read-RepoFile $YoloTopLevelRequireCompleteVerify
@@ -143,6 +141,9 @@ foreach ($token in @(
     "license-source=pass",
     "manual-readiness=pass",
     "ten-minute-full=not-required-after-extended-fail",
+    "short-span-only-goal=pass",
+    "obsolete-sweep-harness=removed",
+    "obsolete-ten-minute-runner=removed",
     "top-level-require-complete=fast-fail-guarded",
     "top-level-ready-rerun=pass",
     "evidence-report=pass",
@@ -160,17 +161,7 @@ Assert-Contains "profile verifier recorded" $plan "verify-yolo-profile-state.ps1
 Assert-Contains "profile marker recorded" $plan "yolo-profile-state:"
 Assert-Contains "profile settings version recorded" $plan "settings-version=6"
 Assert-Contains "profile auto pipeline recorded" $plan "auto-pipeline-profile=downscale,quality,tracking,detectEvery,parallel"
-Assert-Contains "sweep verifier recorded" $plan "verify-yolo-sweep-state.ps1"
-Assert-Contains "sweep marker recorded" $plan "yolo-sweep-harness-state:"
-Assert-Contains "sweep threshold harness recorded" $plan "run-yolo-threshold-sweep.ps1"
-Assert-Contains "sweep review filter harness recorded" $plan "run-yolo-review-filter-sweep.ps1"
-Assert-Contains "sweep review filter candidates recorded" $plan "find-yolo-review-filter-candidates.ps1"
-Assert-Contains "sweep objectness recorded" $plan "9분 2초 YOLO5Face objectness sweep"
-Assert-Contains "sweep confidence recorded" $plan "9분 2초 YOLO5Face confidence sweep"
-Assert-Contains "sweep tiling recorded" $plan "6분 3초 YOLO5Face tiling mode sweep"
-Assert-Contains "sweep roi recorded" $plan "FaceONNX ROI verifier sweep"
-Assert-Contains "sweep yolo v8s rejection recorded" $plan "YOLOv8s 640"
-Assert-Contains "sweep yolo v8l rejection recorded" $plan "YOLOv8l 640"
+Assert-Contains "obsolete sweep harness cleanup recorded" $plan "obsolete-sweep-harness=removed"
 Assert-Contains "smoke harness faceonnx default recorded" $plan "smoke-harness-faceonnx-default=pass"
 Assert-Contains "representative verifier recorded" $plan "verify-yolo-representative-gate.ps1"
 Assert-Contains "representative pass recorded" $plan "SmokeQualityGate passed=True"
@@ -195,21 +186,7 @@ Assert-Contains "track hold smoothing toggle gate recorded" $plan "temporal-smoo
 Assert-Contains "representative iou recorded" $plan "avgBestIou=0.971"
 Assert-Contains "extended verifier recorded" $plan "verify-yolo-extended-gate.ps1"
 Assert-Contains "extended export verifier recorded" $plan "verify-yolo-extended-export-gate.ps1"
-Assert-Contains "ten minute runner recorded" $plan "run-yolo-ten-minute-full.ps1"
-Assert-Contains "ten minute state verifier recorded" $plan "verify-yolo-ten-minute-state.ps1"
-Assert-Contains "ten minute runner marker recorded" $plan "yolo-ten-minute-runner-state: prepared=true"
-Assert-Contains "ten minute optimized full run recorded" $plan "full-run=yolo-optimized-only-pass"
-Assert-Contains "ten minute output probe recorded" $plan "output-probe=pass-3840x2160-17980frames-599to601s"
-Assert-Contains "ten minute baseline full attempt recorded" $plan "baseline-only-full=attempted-incomplete-slow"
-Assert-Contains "ten minute baseline full incomplete progress recorded" $plan "baseline-only-full-progress=240frames-no-complete"
-Assert-Contains "ten minute faceonnx optimized-only runner recorded" $plan "faceonnx-optimized-only-runner=short-smoke-pass"
-Assert-Contains "ten minute partial speed compare recorded" $plan "partial-speed-compare=short-smoke-pass"
-Assert-Contains "ten minute partial speed yolo total recorded" $plan "partial-yolo-totalMs=20720"
-Assert-Contains "ten minute partial speed faceonnx total recorded" $plan "partial-faceonnx-totalMs=34039"
-Assert-Contains "ten minute partial speed ratio recorded" $plan "partial-faceonnx-yolo-ratio=1.643"
-Assert-Contains "ten minute auto total recorded" $plan "autoTotalMs=2536529"
-Assert-Contains "ten minute export total recorded" $plan "exportTotalMs=1375350"
-Assert-Contains "ten minute direct face frames recorded" $plan "directFaceFrames=8063"
+Assert-Contains "obsolete ten minute runner cleanup recorded" $plan "obsolete-ten-minute-runner=removed"
 Assert-Contains "gt label sample marker recorded" $plan "yolo-gt-label-sample-state:"
 Assert-Contains "gt label verifier recorded" $plan "verify-yolo-gt-label-state.ps1"
 Assert-Contains "gt label pass sample rows recorded" $plan "passRows=15"
@@ -371,13 +348,6 @@ Assert-Contains "auto verifier exposes yolo state" $autoVerify "RunYoloState"
 Assert-Contains "auto verifier exposes representative gate" $autoVerify "RunYoloRepresentativeGate"
 Assert-Contains "auto verifier exposes extended gate" $autoVerify "RunYoloExtendedGate"
 Assert-Contains "auto verifier exposes extended export gate" $autoVerify "RunYoloExtendedExportGate"
-Assert-Contains "auto verifier exposes ten minute state" $autoVerify "RunYoloTenMinuteState"
-Assert-Contains "auto verifier exposes ten minute clip requirement" $autoVerify "RequireYoloTenMinuteClip"
-Assert-Contains "auto verifier exposes ten minute run requirement" $autoVerify "RequireYoloTenMinuteRun"
-Assert-Contains "auto verifier exposes ten minute baseline-only requirement" $autoVerify "RequireYoloTenMinuteBaselineOnlyRun"
-Assert-Contains "auto verifier exposes ten minute incomplete baseline full requirement" $autoVerify "RequireYoloTenMinuteIncompleteBaselineFullAttempt"
-Assert-Contains "auto verifier exposes ten minute faceonnx optimized-only requirement" $autoVerify "RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun"
-Assert-Contains "auto verifier exposes ten minute partial speed compare requirement" $autoVerify "RequireYoloTenMinutePartialSpeedCompareRun"
 Assert-Contains "auto verifier exposes gui smoke state" $autoVerify "RunYoloGuiSmokeState"
 Assert-Contains "auto verifier exposes gui smoke manual pass" $autoVerify "RequireYoloGuiSmokeManualPass"
 Assert-Contains "auto verifier exposes manual readiness state" $autoVerify "RunYoloManualReadinessState"
@@ -409,13 +379,6 @@ Assert-Contains "yolo state runs top-level require complete state" $yoloState "t
 Assert-Contains "yolo state exposes representative gate" $yoloState "RunRepresentativeGate"
 Assert-Contains "yolo state exposes extended gate" $yoloState "RunExtendedGate"
 Assert-Contains "yolo state exposes extended export gate" $yoloState "RunExtendedExportGate"
-Assert-Contains "yolo state exposes ten minute state" $yoloState "RunTenMinuteState"
-Assert-Contains "yolo state exposes ten minute clip requirement" $yoloState "RequireTenMinuteClip"
-Assert-Contains "yolo state exposes ten minute run requirement" $yoloState "RequireTenMinuteRun"
-Assert-Contains "yolo state exposes ten minute baseline-only requirement" $yoloState "RequireTenMinuteBaselineOnlyRun"
-Assert-Contains "yolo state exposes ten minute incomplete baseline full requirement" $yoloState "RequireTenMinuteIncompleteBaselineFullAttempt"
-Assert-Contains "yolo state exposes ten minute faceonnx optimized-only requirement" $yoloState "RequireTenMinuteFaceOnnxOptimizedOnlyRun"
-Assert-Contains "yolo state exposes ten minute partial speed compare requirement" $yoloState "RequireTenMinutePartialSpeedCompareRun"
 Assert-Contains "yolo state exposes gui smoke state" $yoloState "RunGuiSmokeState"
 Assert-Contains "yolo state exposes gui smoke manual pass" $yoloState "RequireGuiSmokeManualPass"
 Assert-Contains "yolo state allows completed full gt" $yoloState "AllowCompletedFullGt"
@@ -430,7 +393,6 @@ Assert-Contains "yolo state runs completion audit selftest" $yoloState "completi
 Assert-Contains "yolo state runs completion finalizer state" $yoloState "completion-finalizer-state"
 Assert-Contains "yolo state runs gui evidence prep" $yoloState "gui-smoke-evidence-prep"
 Assert-Contains "yolo state runs manual pending report" $yoloState "manual-pending-report"
-Assert-Contains "yolo state runs sweep state" $yoloState "sweep-state"
 Assert-Contains "yolo state runs startup smoke state" $yoloState "startup-smoke-state"
 Assert-Contains "yolo state runs track hold state" $yoloState "track-hold-state"
 Assert-Contains "yolo state exposes require complete" $yoloState "RequireComplete"
@@ -456,12 +418,6 @@ Assert-Contains "profile verifier checks yolo profile restart suppression" $yolo
 Assert-Contains "profile verifier checks tracking toggle gate" $yoloProfileState "workspace tracking toggle gates temporal fixes"
 Assert-Contains "profile verifier checks tracking smoothing gate" $yoloProfileState "workspace tracking toggle gates temporal smoothing"
 Assert-Contains "profile verifier checks preview refresh after track postprocess" $yoloProfileState "workspace refreshes preview after track postprocess"
-Assert-Contains "sweep verifier checks threshold harness" $yoloSweepState "run-yolo-threshold-sweep.ps1"
-Assert-Contains "sweep verifier checks objectness axis" $yoloSweepState "ObjectnessThresholds"
-Assert-Contains "sweep verifier checks confidence axis" $yoloSweepState "ConfidenceThresholds"
-Assert-Contains "sweep verifier checks tiling axis" $yoloSweepState "IncludeTiling"
-Assert-Contains "sweep verifier checks roi axis" $yoloSweepState "IncludeFaceOnnxRoiRefine"
-Assert-Contains "sweep verifier checks review filter harness" $yoloSweepState "run-yolo-review-filter-sweep.ps1"
 Assert-Contains "track hold verifier checks internal confirmed gap hold" $yoloTrackHoldVerify "MaxConfirmedTrackHoldFrames = 8"
 Assert-Contains "track hold verifier checks six lost frames" $yoloTrackHoldVerify "Enumerable.Range(21, 6)"
 Assert-Contains "track hold verifier checks stop after cap" $yoloTrackHoldVerify "stop after MaxLostFillFrames=6"

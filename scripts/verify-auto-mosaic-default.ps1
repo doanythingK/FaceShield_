@@ -14,13 +14,6 @@ param(
     [switch]$RunYoloRepresentativeGate,
     [switch]$RunYoloExtendedGate,
     [switch]$RunYoloExtendedExportGate,
-    [switch]$RunYoloTenMinuteState,
-    [switch]$RequireYoloTenMinuteClip,
-    [switch]$RequireYoloTenMinuteRun,
-    [switch]$RequireYoloTenMinuteBaselineOnlyRun,
-    [switch]$RequireYoloTenMinuteIncompleteBaselineFullAttempt,
-    [switch]$RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun,
-    [switch]$RequireYoloTenMinutePartialSpeedCompareRun,
     [switch]$RunYoloGuiSmokeState,
     [switch]$RequireYoloGuiSmokeManualPass,
     [switch]$RunYoloManualReadinessState,
@@ -84,7 +77,6 @@ $yoloFullGtReviewedCandidateStateVerify = Join-Path $repo "scripts\verify-yolo-f
 $yoloRepresentativeGateVerify = Join-Path $repo "scripts\verify-yolo-representative-gate.ps1"
 $yoloExtendedGateVerify = Join-Path $repo "scripts\verify-yolo-extended-gate.ps1"
 $yoloExtendedExportGateVerify = Join-Path $repo "scripts\verify-yolo-extended-export-gate.ps1"
-$yoloTenMinuteStateVerify = Join-Path $repo "scripts\verify-yolo-ten-minute-state.ps1"
 $yoloGuiSmokeStateVerify = Join-Path $repo "scripts\verify-yolo-gui-smoke-state.ps1"
 $yoloManualReadinessStateVerify = Join-Path $repo "scripts\verify-yolo-manual-readiness-state.ps1"
 $yoloManualGateHelper = Join-Path $repo "scripts\open-yolo-manual-gates.ps1"
@@ -202,10 +194,6 @@ if ($RunYoloExtendedGate -and -not (Test-Path $yoloExtendedGateVerify)) {
 
 if ($RunYoloExtendedExportGate -and -not (Test-Path $yoloExtendedExportGateVerify)) {
     throw "YOLO extended export gate verifier not found: $yoloExtendedExportGateVerify"
-}
-
-if ($RunYoloTenMinuteState -and -not (Test-Path $yoloTenMinuteStateVerify)) {
-    throw "YOLO ten-minute state verifier not found: $yoloTenMinuteStateVerify"
 }
 
 if ($RunYoloGuiSmokeState -and -not (Test-Path $yoloGuiSmokeStateVerify)) {
@@ -532,27 +520,6 @@ if ($RunYoloState) {
     if ($RunYoloExtendedExportGate) {
         $yoloStateArgs += "-RunExtendedExportGate"
     }
-    if ($RunYoloTenMinuteState) {
-        $yoloStateArgs += "-RunTenMinuteState"
-    }
-    if ($RequireYoloTenMinuteClip) {
-        $yoloStateArgs += "-RequireTenMinuteClip"
-    }
-    if ($RequireYoloTenMinuteRun) {
-        $yoloStateArgs += "-RequireTenMinuteRun"
-    }
-    if ($RequireYoloTenMinuteBaselineOnlyRun) {
-        $yoloStateArgs += "-RequireTenMinuteBaselineOnlyRun"
-    }
-    if ($RequireYoloTenMinuteIncompleteBaselineFullAttempt) {
-        $yoloStateArgs += "-RequireTenMinuteIncompleteBaselineFullAttempt"
-    }
-    if ($RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun) {
-        $yoloStateArgs += "-RequireTenMinuteFaceOnnxOptimizedOnlyRun"
-    }
-    if ($RequireYoloTenMinutePartialSpeedCompareRun) {
-        $yoloStateArgs += "-RequireTenMinutePartialSpeedCompareRun"
-    }
     if ($RunYoloGuiSmokeState) {
         $yoloStateArgs += "-RunGuiSmokeState"
     }
@@ -625,31 +592,6 @@ if ($RunYoloExtendedExportGate -and -not $RunYoloState) {
         "-YoloModelPath", $YoloExtendedExportModelPath
     )
     Assert-Contains "yolo-extended-export-gate" $yoloExtendedExportOutput "\[YoloExtendedExportGateVerify\] all requested checks passed"
-}
-
-if ($RunYoloTenMinuteState -and -not $RunYoloState) {
-    $tenMinuteArgs = @()
-    if ($RequireYoloTenMinuteClip) {
-        $tenMinuteArgs += "-RequireClip"
-    }
-    if ($RequireYoloTenMinuteRun) {
-        $tenMinuteArgs += "-RequireRun"
-    }
-    if ($RequireYoloTenMinuteBaselineOnlyRun) {
-        $tenMinuteArgs += "-RequireBaselineOnlyRun"
-    }
-    if ($RequireYoloTenMinuteIncompleteBaselineFullAttempt) {
-        $tenMinuteArgs += "-RequireIncompleteBaselineFullAttempt"
-    }
-    if ($RequireYoloTenMinuteFaceOnnxOptimizedOnlyRun) {
-        $tenMinuteArgs += "-RequireFaceOnnxOptimizedOnlyRun"
-    }
-    if ($RequireYoloTenMinutePartialSpeedCompareRun) {
-        $tenMinuteArgs += "-RequirePartialSpeedCompareRun"
-    }
-
-    $yoloTenMinuteOutput = Invoke-ScriptStep "yolo-ten-minute-state" $yoloTenMinuteStateVerify $tenMinuteArgs
-    Assert-Contains "yolo-ten-minute-state" $yoloTenMinuteOutput "\[YoloTenMinuteStateVerify\] all requested checks passed"
 }
 
 if ($RunYoloGuiSmokeState -and -not $RunYoloState) {
