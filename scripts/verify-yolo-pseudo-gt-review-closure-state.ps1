@@ -58,6 +58,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         faceVerificationDistance = 0.21
         personConfidence = 0
         personUpperOverlap = 0
+        supportFrameCount = 2
+        supportSources = "tile+verification"
         bestIou = 0.9
         centerDistanceRatio = 0.1
         fpProbability = 0.1
@@ -86,6 +88,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         faceVerificationDistance = 1
         personConfidence = 0.72
         personUpperOverlap = 0.62
+        supportFrameCount = 0
+        supportSources = ""
         bestIou = 0
         centerDistanceRatio = 99
         fpProbability = 0.85
@@ -114,6 +118,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         faceVerificationDistance = 1
         personConfidence = 0
         personUpperOverlap = 0
+        supportFrameCount = 2
+        supportSources = "tile"
         bestIou = 0
         centerDistanceRatio = 99
         fpProbability = 0
@@ -158,10 +164,34 @@ if (@($rows | Where-Object { $_.closureStatus -ne "closed" }).Count -ne 0) {
     throw "Expected all closure rows to be closed."
 }
 
-foreach ($column in @("candidateId", "candidateType", "expectedReviewLabel", "closureStatus", "reviewLabel", "reviewStatus", "reviewIou", "closureReason")) {
+foreach ($column in @(
+        "candidateId",
+        "candidateType",
+        "expectedReviewLabel",
+        "closureStatus",
+        "reviewLabel",
+        "reviewStatus",
+        "reviewIou",
+        "personConfidence",
+        "personUpperOverlap",
+        "supportFrameCount",
+        "supportSources",
+        "bestIou",
+        "centerDistanceRatio",
+        "closureReason")) {
     if ($null -eq $rows[0].PSObject.Properties[$column]) {
         throw "Missing closure column: $column"
     }
+}
+
+$supportedClosure = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" })[0]
+if ($supportedClosure.supportFrameCount -ne "2" -or $supportedClosure.supportSources -ne "tile+verification") {
+    throw "Expected closure output to preserve repeated pseudo-GT support evidence."
+}
+
+$falsePositiveClosure = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
+if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
+    throw "Expected closure output to preserve auxiliary person/object overlap evidence."
 }
 
 $scriptText = Get-Content -Raw -Path $script
@@ -170,6 +200,8 @@ $guideText = Get-Content -Raw -Path $guide
 
 Assert-Contains "script matches source prediction ids" $scriptText "sourcePredictionId"
 Assert-Contains "script supports manual miss iou matching" $scriptText "PreferManualMiss"
+Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
+Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
 Assert-Contains "script enforces require all closed" $scriptText "RequireAllClosed"
 Assert-Contains "summary records closed count" $summaryText "closed=3"
 Assert-Contains "summary records no unreviewed rows" $summaryText "unreviewed=0"

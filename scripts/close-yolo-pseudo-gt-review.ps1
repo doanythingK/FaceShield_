@@ -295,6 +295,12 @@ foreach ($candidate in $pseudoRows) {
             tileSupportCount = $candidate.tileSupportCount
             faceVerificationConfidence = $candidate.faceVerificationConfidence
             faceVerificationDistance = $candidate.faceVerificationDistance
+            personConfidence = $candidate.personConfidence
+            personUpperOverlap = $candidate.personUpperOverlap
+            supportFrameCount = $candidate.supportFrameCount
+            supportSources = $candidate.supportSources
+            bestIou = $candidate.bestIou
+            centerDistanceRatio = $candidate.centerDistanceRatio
             fpProbability = $candidate.fpProbability
             missProbability = $candidate.missProbability
             pseudoGtReason = $candidate.pseudoGtReason
