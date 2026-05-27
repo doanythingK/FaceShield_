@@ -34,6 +34,7 @@ namespace FaceShield.ViewModels.Pages
         private int[] _autoAnomalies = Array.Empty<int>();
         private const float LowConfidenceMargin = 0.05f;
         private const int SuspiciousNoFaceMaxGap = 8;
+        private const int NoDetectionReviewSampleCount = 12;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private string? _autoRunSignature;
@@ -863,7 +864,10 @@ namespace FaceShield.ViewModels.Pages
                     }
                 }
 
-                AddSuspiciousNoFaceGaps(hasFace, noFace);
+                if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo && !hasFace.Any(static x => x))
+                    AddNoDetectionReviewFrames(total, noFace);
+                else
+                    AddSuspiciousNoFaceGaps(hasFace, noFace);
 
                 for (int i = 1; i < total - 1; i++)
                 {
@@ -928,6 +932,34 @@ namespace FaceShield.ViewModels.Pages
                 for (int frame = start; frame < endExclusive; frame++)
                     noFace.Add(frame);
             }
+        }
+
+        private static void AddNoDetectionReviewFrames(int totalFrames, List<int> noFace)
+        {
+            if (totalFrames <= 0)
+                return;
+
+            int sampleCount = Math.Min(NoDetectionReviewSampleCount, totalFrames);
+            if (sampleCount <= 0)
+                return;
+
+            var frames = new SortedSet<int>();
+            if (sampleCount == 1)
+            {
+                frames.Add(0);
+            }
+            else
+            {
+                for (int i = 0; i < sampleCount; i++)
+                {
+                    int frame = (int)Math.Round(i * (totalFrames - 1) / (double)(sampleCount - 1));
+                    frames.Add(Math.Clamp(frame, 0, totalFrames - 1));
+                }
+            }
+
+            noFace.AddRange(frames);
+            System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskNoDetectionReview] frames={string.Join(",", frames)} totalFrames={totalFrames}");
         }
 
         private static int[] MergeSortedFrames(IReadOnlyList<int> first, IReadOnlyList<int> second)

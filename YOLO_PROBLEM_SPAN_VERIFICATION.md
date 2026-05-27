@@ -473,6 +473,7 @@ The problem-span wrapper can now generate a review contact sheet directly:
 
 For no-detection spans, the same `-WithReviewContactSheet` option samples frames from the short source clip and records `Sampled no-detection review frames` in `yolo-followup-quality-evidence.md`.
 Even if `[SmokeFinalMaskSummary]` reports `reviewRequired=False` because there are no final mask rows, the wrapper summary records `No-detection review: reviewRequired=True, reviewReasons=no-detection-frame-scan` so visible-face misses are not accidentally treated as clean.
+GUI 자동 검토 목록도 YOLO no-detection 전체 구간을 조용히 통과시키지 않고, 샘플 frame을 `얼굴 없음` 검토 대상으로 올린다. 이때 debug log는 `[AutoMaskNoDetectionReview]`로 남는다.
 
 No-detection contact-sheet smoke:
 
