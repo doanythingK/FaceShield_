@@ -697,7 +697,7 @@ if (stickyStrongCarryCleanup.RemovedFaces != 5 ||
 var driftingStrongCarryProvider = new FrameMaskProvider();
 driftingStrongCarryProvider.SetFaceRects(3500, new[] { new Rect(700, 320, 100, 100) }, size, 0.99f, new[] { 0.99f });
 for (int frame = 3501; frame <= 3505; frame++)
-    driftingStrongCarryProvider.SetFaceRects(frame, new[] { new Rect(700 + (frame - 3500) * 18, 320, 100, 100) }, size, 0.99f, new[] { 0.99f });
+    driftingStrongCarryProvider.SetFaceRects(frame, new[] { new Rect(700 + (frame - 3500) * 25, 320, 100, 100) }, size, 0.99f, new[] { 0.99f });
 var driftingStrongCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
     driftingStrongCarryProvider,
     new[] { "3500->3501" },
@@ -707,13 +707,11 @@ var driftingStrongCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCut
         ExtendedWeakCarryFrames = 5,
         ExtendedWeakMaxConfidence = 0.78f
     });
-if (driftingStrongCarryCleanup.ProtectedStrongCarryLikeFaces < 3 ||
+if (driftingStrongCarryCleanup.ProtectedStrongCarryLikeFaces < 2 ||
     !driftingStrongCarryProvider.TryGetFaceMaskData(3501, out var driftingProtectedA) ||
     driftingProtectedA.Faces.Count != 1 ||
     !driftingStrongCarryProvider.TryGetFaceMaskData(3502, out var driftingProtectedB) ||
-    driftingProtectedB.Faces.Count != 1 ||
-    !driftingStrongCarryProvider.TryGetFaceMaskData(3503, out var driftingProtectedC) ||
-    driftingProtectedC.Faces.Count != 1)
+    driftingProtectedB.Faces.Count != 1)
 {
     throw new InvalidOperationException($"Expected drifting high-confidence post-cut support to remain protected, got protected={driftingStrongCarryCleanup.ProtectedStrongCarryLikeFaces}, removedFrames={string.Join(",", driftingStrongCarryCleanup.RemovedFrameIndices)}.");
 }

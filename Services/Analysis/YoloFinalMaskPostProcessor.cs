@@ -1969,8 +1969,8 @@ namespace FaceShield.Services.Analysis
         public int StrongCarrySupportLookaheadFrames { get; init; } = 5;
         public int StrongCarrySupportMinFrames { get; init; } = 2;
         public float StrongCarrySupportMinConfidence { get; init; } = 0.80f;
-        public double StrongCarryProtectionMinReferenceCenterShiftRatio { get; init; } = 0.10;
-        public double StrongCarryProtectionMinReferenceAreaChangeRatio { get; init; } = 1.35;
+        public double StrongCarryProtectionMinReferenceCenterShiftRatio { get; init; } = 0.22;
+        public double StrongCarryProtectionMinReferenceAreaChangeRatio { get; init; } = 1.65;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
         public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;
