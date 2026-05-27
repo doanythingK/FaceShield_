@@ -21,7 +21,8 @@ param(
     [string]$YoloGoalEvidenceReportWriter = "scripts/write-yolo-goal-evidence-report.ps1",
     [string]$YoloManualPendingReportWriter = "scripts/write-yolo-manual-pending-report.ps1",
     [string]$YoloHumanReviewDraftWriter = "scripts/new-yolo-human-review-draft.ps1",
-    [string]$YoloCompletionFinalizer = "scripts/complete-yolo-goal-after-manual-gates.ps1"
+    [string]$YoloCompletionFinalizer = "scripts/complete-yolo-goal-after-manual-gates.ps1",
+    [string]$YoloPseudoGtSeparationVerify = "scripts/verify-yolo-pseudo-gt-separation-state.ps1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,6 +101,7 @@ $goalEvidenceReportWriter = Read-RepoFile $YoloGoalEvidenceReportWriter
 $manualPendingReportWriter = Read-RepoFile $YoloManualPendingReportWriter
 $humanReviewDraftWriter = Read-RepoFile $YoloHumanReviewDraftWriter
 $completionFinalizer = Read-RepoFile $YoloCompletionFinalizer
+$pseudoGtSeparationVerify = Read-RepoFile $YoloPseudoGtSeparationVerify
 
 $goalAuditMarkerMatch = [regex]::Match($plan, "yolo-goal-audit-state:[^<]+")
 if (-not $goalAuditMarkerMatch.Success) {
@@ -135,6 +137,7 @@ foreach ($token in @(
     "full-gt-quality-failure-allowed=pass",
     "pseudo-gt-test-only=pass",
     "pseudo-gt-review-closure=conditional-gated",
+    "pseudo-gt-separation=pass",
     "license-source=pass",
     "manual-readiness=pass",
     "ten-minute-full=not-required-after-extended-fail",
@@ -390,6 +393,7 @@ Assert-Contains "auto verifier exposes full gt prediction log" $autoVerify "Yolo
 Assert-Contains "auto verifier exposes full gt quality limits" $autoVerify "YoloFullGtMaxFalsePositives"
 Assert-Contains "auto verifier exposes full gt quality failure allowance" $autoVerify "AllowFullGtQualityGateFailure"
 Assert-Contains "auto verifier exposes full gt candidate state" $autoVerify "RunYoloFullGtReviewedCandidateState"
+Assert-Contains "auto verifier runs pseudo gt separation state" $autoVerify "verify-yolo-pseudo-gt-separation-state.ps1"
 Assert-Contains "top-level verifier has completion audit path" $autoVerify "verify-yolo-completion-audit-state.ps1"
 Assert-Contains "top-level verifier has require complete guard" $autoVerify "yolo-require-complete-guard"
 Assert-Contains "top-level verifier promotes require complete to yolo state" $autoVerify '$RunYoloState = $true'
@@ -610,5 +614,8 @@ Assert-Contains "completion finalizer allows documented quality failure" $comple
 Assert-Contains "completion finalizer forwards state quality failure flag" $completionFinalizer "AllowFullGtQualityGateFailure"
 Assert-Contains "completion finalizer writes complete evidence report" $completionFinalizer "goal-evidence-report-complete"
 Assert-Contains "completion finalizer has selftest" $completionFinalizer "pass selftest completed fixture"
+Assert-Contains "pseudo gt separation verifier scans runtime source" $pseudoGtSeparationVerify "runtime source has no pseudo-GT references"
+Assert-Contains "pseudo gt separation verifier protects postprocess pipeline" $pseudoGtSeparationVerify "postprocess pipeline does not know pseudo-GT"
+Assert-Contains "pseudo gt separation verifier checks test-only scripts" $pseudoGtSeparationVerify "test-only evidence"
 
 Write-Host "[YoloGoalAuditVerify] all requested checks passed"
