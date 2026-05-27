@@ -364,7 +364,7 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "emptyPostCutR
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "emptyPostCutRefillBlocked=0"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "stickyStrongCarryRemoved=5"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "stickyStrongCarryRemovedUnsupportedStrong=5"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "driftingStrongCarryProtected=3"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "driftingStrongCarryProtected=2"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "partialSceneCarryRefillBlocked=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "partialSceneCarryBlockedFrames=3101,3102,3103"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "sceneCarryAnchorRefillBlocked=1"

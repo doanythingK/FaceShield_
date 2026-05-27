@@ -110,9 +110,11 @@ Assert-Contains "script supports explicit long smoke override" $scriptText "Allo
 Assert-Contains "script checks smoke source duration" $scriptText "Assert-SmokeSourceScope[\s\S]*Get-VideoDurationSeconds"
 Assert-Contains "script uses ffprobe metadata for duration" $scriptText "ffprobe[\s\S]*format=duration"
 Assert-Contains "script blocks long smoke source by default" $scriptText "RunSmoke source is too long"
+Assert-Contains "script blocks overlong trimmed problem spans" $scriptText "TrimSeconds is too long"
 Assert-Contains "script supports no-detection evidence" $scriptText "AllowNoDetections"
 Assert-Contains "script supports trim start" $scriptText "TrimStart"
 Assert-Contains "script supports trim seconds" $scriptText "TrimSeconds"
+Assert-Contains "script bounds trim seconds to focused spans" $scriptText '\[ValidateRange\(0,\s*30\)\][\s\S]*\[int\]\$TrimSeconds'
 Assert-Contains "script supports wsl ffmpeg trim" $scriptText "Convert-ToWslPath[\s\S]*wsl\.exe[\s\S]*ffmpeg"
 Assert-Contains "script handles blank process exit code" $scriptText '\$exitCode\s*=\s*if\s*\(\$null\s+-eq\s+\$process\.ExitCode\)\s*\{\s*0\s*\}'
 Assert-Contains "script enables dumped detections" $scriptText "DumpDetections"

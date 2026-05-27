@@ -20,6 +20,7 @@ param(
     [string]$PseudoGtFaceVerificationInputDir = "",
     [string]$PseudoGtPersonObjectInputDir = "",
     [string]$TrimStart = "",
+    [ValidateRange(0, 30)]
     [int]$TrimSeconds = 0,
     [string]$ClipPath = "",
     [switch]$ForceTrim,
@@ -515,6 +516,10 @@ function Assert-SmokeSourceScope {
         [int]$MaxSourceSeconds,
         [bool]$AllowLong
     )
+
+    if ($TrimSeconds -gt $MaxSourceSeconds) {
+        throw "TrimSeconds is too long ($TrimSeconds > $MaxSourceSeconds). Use a 30-second-or-shorter focused problem span."
+    }
 
     if ($AllowLong -or $TrimSeconds -gt 0) {
         return
