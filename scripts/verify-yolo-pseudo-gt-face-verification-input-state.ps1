@@ -8,12 +8,17 @@ $guide = Join-Path $repo "YOLO_PROBLEM_SPAN_VERIFICATION.md"
 $work = Join-Path $repo ".tmp\yolo-pseudo-gt-face-verification-input-verify"
 $outDir = Join-Path $work "out"
 $baseLog = Join-Path $work "base-yolo.log"
+$multiBaseLog = Join-Path $work "multi-base-yolo.log"
 $externalGenerator = Join-Path $work "external-verifier.ps1"
 $externalCsv = Join-Path $work "external-face-verification.csv"
 $badExternalGenerator = Join-Path $work "bad-external-verifier.ps1"
 $badExternalCsv = Join-Path $work "bad-external-face-verification.csv"
 $badCropExternalGenerator = Join-Path $work "bad-crop-external-verifier.ps1"
 $badCropExternalCsv = Join-Path $work "bad-crop-external-face-verification.csv"
+$badAmbiguousExternalGenerator = Join-Path $work "bad-ambiguous-external-verifier.ps1"
+$badAmbiguousExternalCsv = Join-Path $work "bad-ambiguous-external-face-verification.csv"
+$multiExternalGenerator = Join-Path $work "multi-external-verifier.ps1"
+$multiExternalCsv = Join-Path $work "multi-external-face-verification.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -46,6 +51,11 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=1, index=0, x=10.0, y=12.0, w=20.0, h=24.0, area=480.0, conf=0.720, cx=0.100, cy=0.120, areaRatio=0.000480, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=260.0, y=180.0, w=50.0, h=60.0, area=3000.0, conf=0.420, cx=0.700, cy=0.700, areaRatio=0.003000, aspectRatio=0.833
 '@ | Set-Content -Encoding UTF8 -Path $baseLog
+
+@'
+[SmokeDetection] label=synthetic-yolo, frame=7, index=0, x=20.0, y=30.0, w=30.0, h=34.0, area=1020.0, conf=0.710, cx=0.100, cy=0.120, areaRatio=0.001020, aspectRatio=0.882
+[SmokeDetection] label=synthetic-yolo, frame=7, index=1, x=180.0, y=90.0, w=40.0, h=44.0, area=1760.0, conf=0.650, cx=0.600, cy=0.420, areaRatio=0.001760, aspectRatio=0.909
+'@ | Set-Content -Encoding UTF8 -Path $multiBaseLog
 
 @'
 param(
@@ -119,6 +129,54 @@ $manifest = @(Import-Csv $ManifestCsv)
     }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $badCropExternalGenerator
+
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+$manifest = @(Import-Csv $ManifestCsv)
+$first = $manifest[0]
+@(
+    [pscustomobject]@{
+        frame = $first.frame
+        verificationId = "bad-ambiguous-crop"
+        x = $first.x
+        y = $first.y
+        w = $first.w
+        h = $first.h
+        faceVerificationConfidence = 0.91
+        faceVerificationDistance = 0.18
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $badAmbiguousExternalGenerator
+
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+$manifest = @(Import-Csv $ManifestCsv)
+$manifest | ForEach-Object {
+    [pscustomobject]@{
+        frame = $_.frame
+        candidateId = $_.candidateId
+        verificationId = "verify-$($_.frame)-$($_.basePredictionId)"
+        x = $_.x
+        y = $_.y
+        w = $_.w
+        h = $_.h
+        faceVerificationConfidence = 0.91
+        faceVerificationDistance = 0.18
+    }
+} | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $multiExternalGenerator
 
 $template = "-NoProfile -ExecutionPolicy Bypass -File `"$externalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -201,6 +259,43 @@ if ($badCropExternalExitCode -eq 0 -or (($badCropExternalOutput | Out-String) -n
     throw "Expected face verification input to reject external CSV rows outside the manifest crop."
 }
 
+$badAmbiguousTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$badAmbiguousExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+try {
+    $ErrorActionPreference = "Continue"
+    $badAmbiguousExternalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -BasePredictionLog $multiBaseLog `
+        -OutputDir (Join-Path $work "bad-ambiguous-external") `
+        -FrameWidth 320 `
+        -FrameHeight 240 `
+        -SkipImageExtraction `
+        -ExternalCommand "powershell.exe" `
+        -ExternalArgumentsTemplate $badAmbiguousTemplate `
+        -ExternalOutputCsv $badAmbiguousExternalCsv 2>&1
+    $badAmbiguousExternalExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badAmbiguousExternalExitCode -eq 0 -or (($badAmbiguousExternalOutput | Out-String) -notmatch "must include candidateId/sourceCandidateId/basePredictionId")) {
+    throw "Expected face verification input to require candidate id for multi-crop frames."
+}
+
+$multiTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$multiExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+$multiOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+    -BasePredictionLog $multiBaseLog `
+    -OutputDir (Join-Path $work "multi-external") `
+    -FrameWidth 320 `
+    -FrameHeight 240 `
+    -SkipImageExtraction `
+    -ExternalCommand "powershell.exe" `
+    -ExternalArgumentsTemplate $multiTemplate `
+    -ExternalOutputCsv $multiExternalCsv 2>&1
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected candidate-bound multi-crop face verification to pass: $($multiOutput | Out-String)"
+}
+
 $manifest = Join-Path $outDir "face-verification-manifest.csv"
 $summary = Join-Path $outDir "face-verification-input-summary.md"
 
@@ -247,6 +342,7 @@ Assert-Contains "script requires external output csv" $scriptText "ExternalOutpu
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script validates external output against manifest crop" $scriptText "outside the manifest crop"
 Assert-Contains "script validates optional external candidate id" $scriptText "candidateId[\s\S]*sourceCandidateId[\s\S]*basePredictionId"
+Assert-Contains "script requires candidate id for multi-crop frame" $scriptText "must include candidateId/sourceCandidateId/basePredictionId"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records crop count" $summaryText "crops=2"
 Assert-Contains "summary records frame count" $summaryText "frameCount=2"
@@ -254,6 +350,7 @@ Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
 Assert-Contains "summary records face verification output fields" $summaryText "faceVerificationConfidence"
 Assert-Contains "summary records manifest crop validation" $summaryText "manifest crops"
+Assert-Contains "summary records multi-crop binding rule" $summaryText "multiple manifest crops"
 Assert-Contains "guide documents face verification input" $guideText "new-yolo-pseudo-gt-face-verification-input\.ps1"
 
 Write-Host "[YoloPseudoGtFaceVerificationInputVerify] all requested checks passed"

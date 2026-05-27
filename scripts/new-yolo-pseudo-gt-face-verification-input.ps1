@@ -456,6 +456,10 @@ function Assert-ExternalFaceVerificationCsv {
 
         $candidateId = [string](Get-PropertyValue $row @("candidateId", "sourceCandidateId", "basePredictionId") "")
         $frameManifestRows = @($ManifestRows | Where-Object { [int]$_.frame -eq $frame })
+        if ([string]::IsNullOrWhiteSpace($candidateId) -and $frameManifestRows.Count -gt 1) {
+            throw "face-verification CSV row $index must include candidateId/sourceCandidateId/basePredictionId when frame $frame has multiple manifest crops."
+        }
+
         if (-not [string]::IsNullOrWhiteSpace($candidateId)) {
             $frameManifestRows = @($frameManifestRows | Where-Object { $_.candidateId -eq $candidateId -or $_.basePredictionId -eq $candidateId })
             if ($frameManifestRows.Count -eq 0) {
@@ -764,7 +768,7 @@ $summary = @(
     "- externalOutputCsv=$ExternalOutputCsv",
     "",
     "External model output should be converted to FaceVerificationCsv fields before running new-yolo-pseudo-gt-evidence.ps1: frame, verificationId, x, y, w, h, faceVerificationConfidence, faceVerificationDistance.",
-    "When the external CSV includes candidateId/sourceCandidateId/basePredictionId, it must match the manifest. Every output detection center must also stay inside one of the manifest crops for that frame.",
+    "When a frame has multiple manifest crops, external output must include candidateId/sourceCandidateId/basePredictionId. When present, that value must match the manifest. Every output detection center must also stay inside the matching manifest crop for that frame.",
     "Final face/nonface/miss decisions still require review CSV labels."
 )
 
