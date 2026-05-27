@@ -75,6 +75,7 @@ Assert-Match "guide documents pseudo gt evidence" $guide 'Pseudo-GT[\s\S]*faceVe
 Assert-Match "guide documents pseudo gt tile input" $guide 'WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*-TileColumns[\s\S]*-ExternalCommand[\s\S]*tileImagePath[\s\S]*tileSupportCount'
 Assert-Match "guide documents pseudo gt face verification input" $guide 'WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*face-verification-manifest\.csv[\s\S]*faceVerificationConfidence'
 Assert-Match "guide documents pseudo gt person object input" $guide 'WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*person-object-manifest\.csv[\s\S]*personUpperOverlap'
+Assert-Match "guide documents pseudo gt frame-set cap" $guide 'MaxFrames=900[\s\S]*-AllowLargeFrameSet'
 Assert-Match "guide says no full video smoke override" $guide '-AllowLongSmokeSource'
 Assert-Match "guide records wrapper smoke evidence" $guide 'Wrapper Smoke[\s\S]*yolo-problem-span-wrapper-smoke[\s\S]*Detection rows:\s*`96`[\s\S]*removedFrames=33,34,35[\s\S]*blockedByCleanup=3[\s\S]*cleanupBlockedFrames=33,34,35'
 Assert-Match "guide documents cleanup-block pass criteria" $guide 'blockedByCleanup=\.\.\.[\s\S]*cleanupBlockedFrames=\.\.\.[\s\S]*후속 anti-flicker fill'

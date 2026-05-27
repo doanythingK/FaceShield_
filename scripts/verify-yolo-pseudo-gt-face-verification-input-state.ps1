@@ -87,6 +87,26 @@ if ($LASTEXITCODE -ne 0) {
     throw "new-yolo-pseudo-gt-face-verification-input.ps1 failed: $($output | Out-String)"
 }
 
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    $tooManyFramesOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -BasePredictionLog $baseLog `
+        -OutputDir (Join-Path $work "too-many") `
+        -FrameWidth 320 `
+        -FrameHeight 240 `
+        -MaxFrames 1 `
+        -SkipImageExtraction 2>&1
+    $tooManyFramesExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($tooManyFramesExitCode -eq 0 -or (($tooManyFramesOutput | Out-String) -notmatch "limited to 1 frames")) {
+    throw "Expected face verification input to reject oversized pseudo-GT frame sets by default."
+}
+
 $manifest = Join-Path $outDir "face-verification-manifest.csv"
 $summary = Join-Path $outDir "face-verification-input-summary.md"
 
@@ -124,12 +144,16 @@ $summaryText = Get-Content -Raw -Path $summary
 
 Assert-Contains "script accepts base prediction log" $scriptText "BasePredictionLog"
 Assert-Contains "script accepts base prediction csv" $scriptText "BasePredictionCsv"
+Assert-Contains "script limits large frame sets" $scriptText "MaxFrames"
+Assert-Contains "script has explicit large frame override" $scriptText "AllowLargeFrameSet"
 Assert-Contains "script writes face verification manifest" $scriptText "face-verification-manifest\.csv"
 Assert-Contains "script extracts candidate crops" $scriptText "Invoke-FfmpegCropExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records crop count" $summaryText "crops=2"
+Assert-Contains "summary records frame count" $summaryText "frameCount=2"
+Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
 Assert-Contains "summary records face verification output fields" $summaryText "faceVerificationConfidence"
 Assert-Contains "guide documents face verification input" $guideText "new-yolo-pseudo-gt-face-verification-input\.ps1"

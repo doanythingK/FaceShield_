@@ -79,6 +79,26 @@ if ($LASTEXITCODE -ne 0) {
     throw "new-yolo-pseudo-gt-person-object-input.ps1 failed: $($output | Out-String)"
 }
 
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    $tooManyFramesOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -Frames "1-3" `
+        -OutputDir (Join-Path $work "too-many") `
+        -FrameWidth 320 `
+        -FrameHeight 240 `
+        -MaxFrames 2 `
+        -SkipImageExtraction 2>&1
+    $tooManyFramesExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($tooManyFramesExitCode -eq 0 -or (($tooManyFramesOutput | Out-String) -notmatch "limited to 2 frames")) {
+    throw "Expected person/object input to reject oversized pseudo-GT frame sets by default."
+}
+
 $manifest = Join-Path $outDir "person-object-manifest.csv"
 $summary = Join-Path $outDir "person-object-input-summary.md"
 
@@ -111,12 +131,16 @@ $guideText = Get-Content -Raw -Path $guide
 $summaryText = Get-Content -Raw -Path $summary
 
 Assert-Contains "script supports frame ranges" $scriptText "Get-FrameList"
+Assert-Contains "script limits large frame sets" $scriptText "MaxFrames"
+Assert-Contains "script has explicit large frame override" $scriptText "AllowLargeFrameSet"
 Assert-Contains "script writes person object manifest" $scriptText "person-object-manifest\.csv"
 Assert-Contains "script extracts full frames" $scriptText "Invoke-FfmpegFrameExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records auxiliary-only rule" $summaryText "auxiliary evidence only"
+Assert-Contains "summary records frame count" $summaryText "frameCount=3"
+Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records frame count" $summaryText "framesPrepared=3"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
 Assert-Contains "guide documents person object input" $guideText "new-yolo-pseudo-gt-person-object-input\.ps1"

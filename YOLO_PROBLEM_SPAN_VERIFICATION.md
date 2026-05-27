@@ -53,6 +53,7 @@ review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewConta
 고품질 검증용 tile manifest까지 같은 run에서 만들려면 `-WithPseudoGtTileInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtTileSkipImageExtraction`을 함께 쓴다.
 기본 YOLO 후보 박스를 고품질 face verification 모델로 재검증할 crop manifest까지 같은 run에서 만들려면 `-WithPseudoGtFaceVerificationInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtFaceVerificationSkipImageExtraction`을 함께 쓴다.
 사람/사물 보조 검증용 full-frame manifest까지 같은 run에서 만들려면 `-WithPseudoGtPersonObjectInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtPersonObjectSkipImageExtraction`을 함께 쓴다.
+test-only manifest 스크립트도 기본적으로 큰 frame set을 막는다. 독립 실행 시 `MaxFrames=900`을 넘는 `-Frames`/base prediction frame set은 거부되며, 이는 30fps 기준 30초 문제 구간 상한에 맞춘 안전장치다. `-AllowLargeFrameSet`은 명시적 로컬 감사 목적 외에는 사용하지 않는다.
 
 고품질 검증 모델을 별도 로컬 runner로 실행했다면, 그 산출 CSV를 problem-span runner에 붙여 test-only pseudo-GT evidence를 만들 수 있다. 이 CSV들은 기본 앱 런타임 입력이 아니며, review 후보 우선순위용 증거로만 사용한다.
 
@@ -170,6 +171,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 현재 자동 모자이크 후처리는 runtime pipeline과 temporal/ROI/scene-cut 단계가 분리되어 있으므로, pseudo-GT도 기본 detector 실행에 직접 섞지 않는다. 별도 test-only evidence pipeline으로 기본 YOLO 결과를 읽고, 고정밀 tile/person/object 보조 결과와 비교해 review CSV 초안을 보강한다.
 
 - 기본 YOLO 결과와 별도로, 테스트 전용 고정밀 검출을 같은 짧은 clip/frame에 실행한다.
+- tile/face verification/person-object manifest 생성은 기본 `MaxFrames=900` 상한으로 full-video frame sweep을 막고, 문제 구간 frame set만 받는다.
 - 작은 얼굴 미탐을 줄이기 위해 frame을 tile/overlap으로 나누고, tile을 모델 입력 크기로 확대해서 검출한다.
 - 기본 YOLO 후보는 고품질 face verification/face detection 모델로 재검증한다.
 - 이 고품질 검증 모델은 앱 기본 런타임에는 포함하지 않고, 짧은 문제 구간의 evidence 생성과 오탐/미탐 후보 분류에만 사용한다.

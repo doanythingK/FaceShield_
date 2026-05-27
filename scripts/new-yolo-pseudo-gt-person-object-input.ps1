@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Frames,
     [string]$OutputDir = ".tmp\yolo-pseudo-gt\person-object-input",
+    [int]$MaxFrames = 900,
+    [switch]$AllowLargeFrameSet,
     [int]$FrameWidth = 0,
     [int]$FrameHeight = 0,
     [int]$ScaleWidth = 0,
@@ -348,9 +350,17 @@ if ($ScaleWidth -lt 0) {
     throw "ScaleWidth must be 0 or greater."
 }
 
+if ($MaxFrames -lt 1) {
+    throw "MaxFrames must be at least 1."
+}
+
 $framesToUse = @(Get-FrameList $Frames)
 if ($framesToUse.Count -eq 0) {
     throw "At least one frame is required."
+}
+
+if (-not $AllowLargeFrameSet.IsPresent -and $framesToUse.Count -gt $MaxFrames) {
+    throw "Pseudo-GT person/object input is limited to $MaxFrames frames by default. Use a <=30s problem span, a smaller frame list, or pass -AllowLargeFrameSet only for an intentional local audit."
 }
 
 $resolvedOutputDir = Resolve-RepoPath $OutputDir
@@ -410,6 +420,9 @@ $summary = @(
     "This is test-only input for local high-precision person/object models. It is not part of the app runtime path and cannot decide face/nonface/miss labels by itself.",
     "",
     "- frames=$($framesToUse -join ',')",
+    "- frameCount=$($framesToUse.Count)",
+    "- maxFrames=$MaxFrames",
+    "- largeFrameSetAllowed=$($AllowLargeFrameSet.IsPresent)",
     "- frameWidth=$FrameWidth",
     "- frameHeight=$FrameHeight",
     "- scaleWidth=$ScaleWidth",

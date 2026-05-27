@@ -6,6 +6,8 @@ param(
     [string]$OutputDir = ".tmp\yolo-pseudo-gt\face-verification-input",
     [double]$CropPaddingRatio = 0.35,
     [int]$MinCropSize = 32,
+    [int]$MaxFrames = 900,
+    [switch]$AllowLargeFrameSet,
     [int]$FrameWidth = 0,
     [int]$FrameHeight = 0,
     [int]$MaxCrops = 0,
@@ -505,6 +507,10 @@ if ($MinCropSize -lt 1) {
     throw "MinCropSize must be at least 1."
 }
 
+if ($MaxFrames -lt 1) {
+    throw "MaxFrames must be at least 1."
+}
+
 if ([string]::IsNullOrWhiteSpace($BasePredictionCsv) -and [string]::IsNullOrWhiteSpace($BasePredictionLog)) {
     throw "BasePredictionCsv or BasePredictionLog is required."
 }
@@ -536,6 +542,11 @@ else {
 $frameSet = Get-FrameSet $Frames
 if ($null -ne $frameSet) {
     $baseRows = @($baseRows | Where-Object { $frameSet.Contains([int]$_.Frame) })
+}
+
+$distinctFrameCount = @($baseRows | Select-Object -ExpandProperty Frame -Unique).Count
+if (-not $AllowLargeFrameSet.IsPresent -and $distinctFrameCount -gt $MaxFrames) {
+    throw "Pseudo-GT face verification input is limited to $MaxFrames frames by default. Use a <=30s problem span, a smaller frame list, or pass -AllowLargeFrameSet only for an intentional local audit."
 }
 
 if ($MaxCrops -gt 0) {
@@ -621,6 +632,9 @@ $summary = @(
     "- baseRows=$($baseRows.Count)",
     "- crops=$($manifestRows.Count)",
     "- frames=$Frames",
+    "- frameCount=$distinctFrameCount",
+    "- maxFrames=$MaxFrames",
+    "- largeFrameSetAllowed=$($AllowLargeFrameSet.IsPresent)",
     "- cropPaddingRatio=$($CropPaddingRatio.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
     "- minCropSize=$MinCropSize",
     "- frameWidth=$FrameWidth",

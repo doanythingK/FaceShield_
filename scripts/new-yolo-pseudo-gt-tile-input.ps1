@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Frames,
     [string]$OutputDir = ".tmp\yolo-pseudo-gt\tile-input",
+    [int]$MaxFrames = 900,
+    [switch]$AllowLargeFrameSet,
     [int]$TileColumns = 2,
     [int]$TileRows = 2,
     [double]$TileOverlapRatio = 0.20,
@@ -384,9 +386,17 @@ if ($TileOverlapRatio -lt 0.0 -or $TileOverlapRatio -ge 0.90) {
     throw "TileOverlapRatio must be between 0.0 and 0.90."
 }
 
+if ($MaxFrames -lt 1) {
+    throw "MaxFrames must be at least 1."
+}
+
 $framesToUse = @(Get-FrameList $Frames)
 if ($framesToUse.Count -eq 0) {
     throw "At least one frame is required."
+}
+
+if (-not $AllowLargeFrameSet.IsPresent -and $framesToUse.Count -gt $MaxFrames) {
+    throw "Pseudo-GT tile input is limited to $MaxFrames frames by default. Use a <=30s problem span, a smaller frame list, or pass -AllowLargeFrameSet only for an intentional local audit."
 }
 
 $resolvedOutputDir = Resolve-RepoPath $OutputDir
@@ -462,6 +472,9 @@ $summary = @(
     "This is test-only input for local high-precision face/person/object models. It is not part of the app runtime path.",
     "",
     "- frames=$($framesToUse -join ',')",
+    "- frameCount=$($framesToUse.Count)",
+    "- maxFrames=$MaxFrames",
+    "- largeFrameSetAllowed=$($AllowLargeFrameSet.IsPresent)",
     "- tileColumns=$TileColumns",
     "- tileRows=$TileRows",
     "- tileOverlapRatio=$($TileOverlapRatio.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
