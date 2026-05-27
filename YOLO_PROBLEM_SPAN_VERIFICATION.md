@@ -89,7 +89,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -ExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv"
 ```
 
-사람/사물 보조 신호는 `new-yolo-pseudo-gt-person-object-input.ps1`가 만든 `person-object-manifest.csv`를 사용한다. 이 manifest는 `frameImagePath`, `frame`, `frameWidth`, `frameHeight`, `scaleWidth`를 담는다. 외부 runner는 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence` CSV를 만들어야 하며, 이 값은 얼굴 정답이 아니라 `personConfidence`, `personUpperOverlap` 같은 후보 우선순위 보조 신호로만 사용한다.
+사람/사물 보조 신호는 `new-yolo-pseudo-gt-person-object-input.ps1`가 만든 `person-object-manifest.csv`를 사용한다. 이 manifest는 `frameImagePath`, `frame`, `frameWidth`, `frameHeight`, `scaleWidth`를 담는다. 외부 runner는 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence` CSV를 만들어야 하며, 검출 중심점은 해당 frame의 manifest bounds 안에 있어야 한다. 이 값은 얼굴 정답이 아니라 `personConfidence`, `personUpperOverlap` 같은 후보 우선순위 보조 신호로만 사용한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-person-object-input.ps1 `

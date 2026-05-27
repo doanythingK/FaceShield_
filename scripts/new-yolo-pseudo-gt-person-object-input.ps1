@@ -294,14 +294,24 @@ function Assert-ExternalPersonObjectCsv {
             throw "person-object CSV row $index references frame $frame outside the manifest."
         }
 
+        $x = Read-RequiredDoubleValue $row @("x", "X") "person-object" $index
+        $y = Read-RequiredDoubleValue $row @("y", "Y") "person-object" $index
         $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "person-object" $index
         $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "person-object" $index
         if ($width -le 0 -or $height -le 0) {
             throw "person-object CSV row $index has non-positive geometry: w=$width, h=$height"
         }
 
-        [void](Read-RequiredDoubleValue $row @("x", "X") "person-object" $index)
-        [void](Read-RequiredDoubleValue $row @("y", "Y") "person-object" $index)
+        $manifestFrame = @($ManifestRows | Where-Object { [int]$_.frame -eq $frame })[0]
+        $frameWidth = [double]::Parse([string]$manifestFrame.frameWidth, [System.Globalization.CultureInfo]::InvariantCulture)
+        $frameHeight = [double]::Parse([string]$manifestFrame.frameHeight, [System.Globalization.CultureInfo]::InvariantCulture)
+        $centerX = $x + ($width / 2.0)
+        $centerY = $y + ($height / 2.0)
+        if ($centerX -lt 0 -or $centerX -gt $frameWidth -or
+            $centerY -lt 0 -or $centerY -gt $frameHeight) {
+            throw "person-object CSV row $index is outside the manifest frame bounds for frame $frame."
+        }
+
         [void](Read-RequiredDoubleValue $row @("confidence", "conf", "Confidence") "person-object" $index)
         $index++
     }
@@ -523,6 +533,7 @@ $summary = @(
     "- externalOutputCsv=$ExternalOutputCsv",
     "",
     "External model output should be converted to PersonObjectCsv fields before running new-yolo-pseudo-gt-evidence.ps1: frame, detectionId, x, y, w, h, confidence.",
+    "Every external person/object detection center must stay inside the original-frame manifest bounds for that frame.",
     "Person/object detections are auxiliary evidence only and must not be used as face ground truth without review CSV labels."
 )
 
