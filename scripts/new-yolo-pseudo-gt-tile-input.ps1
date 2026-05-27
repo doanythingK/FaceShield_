@@ -244,33 +244,71 @@ function Read-RequiredIntValue {
     throw "$Source CSV row $Index has invalid integer value for $([string]::Join('/', $Names)): $value"
 }
 
+function Get-OptionalCsvValue {
+    param(
+        [object]$Row,
+        [string[]]$Names
+    )
+
+    foreach ($name in $Names) {
+        $property = $Row.PSObject.Properties[$name]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return [string]$property.Value
+        }
+    }
+
+    return ""
+}
+
 function Assert-ExternalTileFaceCsv {
     param(
         [string]$Path,
         [object[]]$ManifestRows
     )
 
-    $manifestFrames = [System.Collections.Generic.HashSet[int]]::new()
+    $manifestKeys = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($row in $ManifestRows) {
-        [void]$manifestFrames.Add([int]$row.frame)
+        [void]$manifestKeys.Add("$([int]$row.frame):$([int]$row.tileIndex)")
     }
 
     $rows = @(Import-Csv $Path)
     $index = 0
     foreach ($row in $rows) {
         $frame = Read-RequiredIntValue $row @("frame", "Frame") "tile-face" $index
-        if (-not $manifestFrames.Contains($frame)) {
-            throw "tile-face CSV row $index references frame $frame outside the manifest."
+        $tileIndexValue = Get-OptionalCsvValue $row @("tileIndex", "sourceTileIndex", "manifestTileIndex", "TileIndex")
+        if ([string]::IsNullOrWhiteSpace($tileIndexValue)) {
+            throw "tile-face CSV row $index missing required value: tileIndex/sourceTileIndex/manifestTileIndex"
         }
 
+        $tileIndex = 0
+        if (-not [int]::TryParse($tileIndexValue, [ref]$tileIndex)) {
+            throw "tile-face CSV row $index has invalid integer value for tileIndex/sourceTileIndex/manifestTileIndex: $tileIndexValue"
+        }
+
+        if (-not $manifestKeys.Contains("$($frame):$tileIndex")) {
+            throw "tile-face CSV row $index references frame/tile $frame/$tileIndex outside the manifest."
+        }
+
+        $x = Read-RequiredDoubleValue $row @("x", "X") "tile-face" $index
+        $y = Read-RequiredDoubleValue $row @("y", "Y") "tile-face" $index
         $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "tile-face" $index
         $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "tile-face" $index
         if ($width -le 0 -or $height -le 0) {
             throw "tile-face CSV row $index has non-positive geometry: w=$width, h=$height"
         }
 
-        [void](Read-RequiredDoubleValue $row @("x", "X") "tile-face" $index)
-        [void](Read-RequiredDoubleValue $row @("y", "Y") "tile-face" $index)
+        $manifestTile = @($ManifestRows | Where-Object { [int]$_.frame -eq $frame -and [int]$_.tileIndex -eq $tileIndex })[0]
+        $tileX = [double]::Parse([string]$manifestTile.tileX, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileY = [double]::Parse([string]$manifestTile.tileY, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileW = [double]::Parse([string]$manifestTile.tileW, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileH = [double]::Parse([string]$manifestTile.tileH, [System.Globalization.CultureInfo]::InvariantCulture)
+        $centerX = $x + ($width / 2.0)
+        $centerY = $y + ($height / 2.0)
+        if ($centerX -lt $tileX -or $centerX -gt ($tileX + $tileW) -or
+            $centerY -lt $tileY -or $centerY -gt ($tileY + $tileH)) {
+            throw "tile-face CSV row $index is outside the manifest tile for frame/tile $frame/$tileIndex."
+        }
+
         [void](Read-RequiredDoubleValue $row @("confidence", "conf", "tileFaceConfidence", "Confidence") "tile-face" $index)
         $supportCount = Read-RequiredIntValue $row @("tileSupportCount", "supportCount", "TileSupportCount") "tile-face" $index
         if ($supportCount -lt 1) {
@@ -581,7 +619,8 @@ $summary = @(
     "- externalCommandUsed=$(-not [string]::IsNullOrWhiteSpace($ExternalCommand))",
     "- externalOutputCsv=$ExternalOutputCsv",
     "",
-    "External model output should be converted to TileFaceCsv, FaceVerificationCsv, or PersonObjectCsv before running new-yolo-pseudo-gt-evidence.ps1."
+    "External model output should be converted to TileFaceCsv, FaceVerificationCsv, or PersonObjectCsv before running new-yolo-pseudo-gt-evidence.ps1.",
+    "External tile-face output from this manifest must include tileIndex/sourceTileIndex/manifestTileIndex. The detection center must stay inside that manifest tile."
 )
 
 $summary | Set-Content -Encoding UTF8 -Path $summaryPath

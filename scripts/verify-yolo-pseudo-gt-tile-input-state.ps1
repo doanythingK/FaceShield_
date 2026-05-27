@@ -11,6 +11,8 @@ $externalGenerator = Join-Path $work "external-generator.ps1"
 $externalCsv = Join-Path $work "external-tile-face.csv"
 $badExternalGenerator = Join-Path $work "bad-external-generator.ps1"
 $badExternalCsv = Join-Path $work "bad-external-tile-face.csv"
+$badTileExternalGenerator = Join-Path $work "bad-tile-external-generator.ps1"
+$badTileExternalCsv = Join-Path $work "bad-tile-external-tile-face.csv"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -56,6 +58,7 @@ $first = $rows[0]
 @(
     [pscustomobject]@{
         frame = $first.frame
+        tileIndex = $first.tileIndex
         detectionId = "external-tile-face-$($first.frame)-$($first.tileIndex)"
         x = $first.tileX
         y = $first.tileY
@@ -78,6 +81,7 @@ param(
 @(
     [pscustomobject]@{
         frame = 999
+        tileIndex = 0
         detectionId = "bad-outside-manifest"
         x = 0
         y = 0
@@ -88,6 +92,31 @@ param(
     }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $badExternalGenerator
+
+@'
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ManifestCsv,
+    [Parameter(Mandatory = $true)]
+    [string]$OutputCsv
+)
+
+$manifest = @(Import-Csv $ManifestCsv)
+$first = $manifest[0]
+@(
+    [pscustomobject]@{
+        frame = $first.frame
+        tileIndex = $first.tileIndex
+        detectionId = "bad-outside-tile"
+        x = 280
+        y = 180
+        w = 16
+        h = 16
+        confidence = 0.91
+        tileSupportCount = 1
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
+'@ | Set-Content -Encoding UTF8 -Path $badTileExternalGenerator
 
 $template = "-NoProfile -ExecutionPolicy Bypass -File `"$externalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -149,6 +178,28 @@ if ($badExternalExitCode -eq 0 -or (($badExternalOutput | Out-String) -notmatch 
     throw "Expected tile input to reject external CSV rows outside the manifest."
 }
 
+$badTileTemplate = "-NoProfile -ExecutionPolicy Bypass -File `"$badTileExternalGenerator`" -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`""
+try {
+    $ErrorActionPreference = "Continue"
+    $badTileExternalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -Frames "1" `
+        -OutputDir (Join-Path $work "bad-tile-external") `
+        -FrameWidth 300 `
+        -FrameHeight 200 `
+        -SkipImageExtraction `
+        -ExternalCommand "powershell.exe" `
+        -ExternalArgumentsTemplate $badTileTemplate `
+        -ExternalOutputCsv $badTileExternalCsv 2>&1
+    $badTileExternalExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($badTileExternalExitCode -eq 0 -or (($badTileExternalOutput | Out-String) -notmatch "outside the manifest tile")) {
+    throw "Expected tile input to reject external CSV rows outside the manifest tile."
+}
+
 $manifest = Join-Path $outDir "tile-manifest.csv"
 $summary = Join-Path $outDir "tile-input-summary.md"
 
@@ -186,11 +237,14 @@ Assert-Contains "script supports wsl ffmpeg fallback" $scriptText "wsl\.exe"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
+Assert-Contains "script requires external tile index" $scriptText "tileIndex/sourceTileIndex/manifestTileIndex"
+Assert-Contains "script validates external output against manifest tile" $scriptText "outside the manifest tile"
 Assert-Contains "script records runtime separation" $summaryText "not part of the app runtime path"
 Assert-Contains "summary records frame count" $summaryText "frameCount=3"
 Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records tile count" $summaryText "tiles=18"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
+Assert-Contains "summary records tile output binding" $summaryText "tileIndex/sourceTileIndex/manifestTileIndex"
 Assert-Contains "guide documents tile pseudo gt" $guideText "PseudoGtTileFaceCsv"
 
 Write-Host "[YoloPseudoGtTileInputVerify] all requested checks passed"
