@@ -133,6 +133,8 @@ foreach ($token in @(
     "full-gt-harness=pass",
     "full-gt-reviewed=pass",
     "full-gt-quality-failure-allowed=pass",
+    "pseudo-gt-test-only=pass",
+    "pseudo-gt-review-closure=conditional-gated",
     "license-source=pass",
     "manual-readiness=pass",
     "ten-minute-full=not-required-after-extended-fail",
@@ -486,8 +488,12 @@ Assert-Contains "completion audit invokes strict full gt" $completionAuditVerify
 Assert-Contains "completion audit allows documented quality failure" $completionAuditVerify "AllowQualityGateFailure"
 Assert-Contains "completion audit accepts prediction csv" $completionAuditVerify "PredictionCsv"
 Assert-Contains "completion audit selftests prediction csv complete path" $completionAuditVerify "pass selftest complete PredictionCsv path"
+Assert-Contains "completion audit checks pseudo-GT test-only marker" $completionAuditVerify "pseudo-gt-test-only=pass"
+Assert-Contains "completion audit checks pseudo-GT review closure marker" $completionAuditVerify "pseudo-gt-review-closure=conditional-gated"
+Assert-Contains "completion audit requires pseudo-GT closure when candidates exist" $completionAuditVerify "Assert-PseudoGtReviewClosure"
 Assert-Contains "completion audit invokes strict gui smoke" $completionAuditVerify "verify-yolo-gui-smoke-state.ps1"
 Assert-Contains "completion finalizer state checks selftest" $completionFinalizerStateVerify "finalizer selftest"
+Assert-Contains "completion finalizer state checks pseudo gt closure selftest" $completionFinalizerStateVerify "pseudo-GT closure"
 Assert-Contains "completion finalizer state checks pending evidence blocks" $completionFinalizerStateVerify "current pending evidence blocks finalizer"
 Assert-Contains "completion finalizer state checks strict full gt" $completionFinalizerStateVerify "full-gt-reviewed-state"
 Assert-Contains "completion finalizer state checks gui smoke" $completionFinalizerStateVerify "gui-smoke-state"
@@ -570,6 +576,7 @@ Assert-Contains "evidence report writer records YOLO5Face comparison" $goalEvide
 Assert-Contains "evidence report writer records failure axes" $goalEvidenceReportWriter "Failure-axis classification"
 Assert-Contains "evidence report writer keeps preview track hold human pending separate" $goalEvidenceReportWriter "previewTrackHoldStatus"
 Assert-Contains "evidence report writer records full gt quality gate" $goalEvidenceReportWriter "Full-GT quality gate"
+Assert-Contains "evidence report writer records pseudo gt closure" $goalEvidenceReportWriter "Test-only pseudo-GT review closure"
 Assert-Contains "evidence report writer runs full gt quality verifier" $goalEvidenceReportWriter "Invoke-FullGtQualityGate"
 Assert-Contains "evidence report writer records quality gate status" $goalEvidenceReportWriter "fullGtQualityGate="
 Assert-Contains "evidence report writer allows documented quality failure" $goalEvidenceReportWriter "fail-documented"
@@ -597,6 +604,7 @@ Assert-Contains "human review draft writer records candidate full-frame counts" 
 Assert-Contains "human review draft writer records manual missed candidates" $humanReviewDraftWriter "manualMissedCandidateRows"
 Assert-Contains "completion finalizer verifies manual readiness" $completionFinalizer "manual-readiness-completed-state"
 Assert-Contains "completion finalizer updates plan marker" $completionFinalizer "Update-GoalAuditMarker"
+Assert-Contains "completion finalizer gates pseudo gt closure" $completionFinalizer "pseudo-gt-review-closure"
 Assert-Contains "completion finalizer requires strict completion audit" $completionFinalizer "completion-audit-complete"
 Assert-Contains "completion finalizer allows documented quality failure" $completionFinalizer "AllowQualityGateFailure"
 Assert-Contains "completion finalizer forwards state quality failure flag" $completionFinalizer "AllowFullGtQualityGateFailure"

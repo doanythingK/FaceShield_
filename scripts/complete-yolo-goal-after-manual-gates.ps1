@@ -128,6 +128,13 @@ function Update-GoalAuditMarker {
     else {
         $updatedMarker = "$updatedMarker; completion-audit=pass-complete"
     }
+    foreach ($token in @(
+        "pseudo-gt-test-only=pass",
+        "pseudo-gt-review-closure=conditional-gated")) {
+        if (-not $updatedMarker.Contains($token)) {
+            $updatedMarker = "$updatedMarker; $token"
+        }
+    }
 
     $updatedComment = "<!-- $updatedMarker -->"
     $updatedText = $text.Substring(0, $match.Index) + $updatedComment + $text.Substring($match.Index + $match.Length)
@@ -150,7 +157,7 @@ if ($SelfTest) {
     @(
         "# Synthetic YOLO Finalizer Plan",
         "",
-        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=full-gt-label,gui-smoke; completion-audit=pass-incomplete -->"
+        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=false; remaining=full-gt-label,gui-smoke; completion-audit=pass-incomplete -->"
     ) | Set-Content -Encoding UTF8 -Path $plan
 
     $summary = Join-Path $selfTestDir "manual-gate-summary.md"
@@ -221,6 +228,40 @@ if ($SelfTest) {
         }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $predictionCsvPath
 
+    $pseudoGtCsvPath = Join-Path $selfTestDir "pseudo-gt-candidates.csv"
+    @(
+        [pscustomobject]@{
+            candidateId = "base-1-0"
+            frame = "1"
+            candidateType = "supportedFaceCandidate"
+            source = "base-yolo"
+            basePredictionId = "pred-face-1"
+            tileDetectionId = "tile-face-1"
+            verificationId = "verify-face-1"
+            x = "100"
+            y = "100"
+            w = "80"
+            h = "80"
+            baseFaceConfidence = "0.91"
+            tileFaceConfidence = "0.93"
+            tileSupportCount = "2"
+            faceVerificationConfidence = "0.90"
+            faceVerificationDistance = "0.2"
+            personConfidence = "0"
+            personUpperOverlap = "0"
+            bestIou = "1"
+            centerDistanceRatio = "0"
+            fpProbability = "0.05"
+            missProbability = "0.01"
+            pseudoGtReason = "synthetic finalizer closure"
+            reviewLabel = ""
+            reviewStatus = "pending-human"
+            evidenceNotes = ""
+        }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $pseudoGtCsvPath
+    $pseudoGtClosureCsvPath = Join-Path $selfTestDir "pseudo-gt-review-closure.csv"
+    $pseudoGtClosureSummaryPath = Join-Path $selfTestDir "pseudo-gt-review-closure-summary.md"
+
     $guiCsv = Join-Path $selfTestDir "manual-smoke-checklist.csv"
     $guiSpecs = @{
         "open-video" = @{ File = "open-video.png"; Type = "screenshot-or-recording" }
@@ -265,6 +306,9 @@ if ($SelfTest) {
         -FullFrameReviewCsv $frameCsv `
         -GuiChecklistCsv $guiCsv `
         -PredictionCsv $predictionCsvPath `
+        -PseudoGtCsv $pseudoGtCsvPath `
+        -PseudoGtReviewClosureCsv $pseudoGtClosureCsvPath `
+        -PseudoGtReviewClosureSummary $pseudoGtClosureSummaryPath `
         -ManualGateSummary $summary `
         -EvidenceReport $report `
         -UpdatePlan
@@ -279,6 +323,13 @@ if ($SelfTest) {
     }
     if (-not $reportText.Contains("ready-for-strict-completion-audit")) {
         throw "Finalizer selftest did not write completed evidence report."
+    }
+    if (-not (Test-Path $pseudoGtClosureCsvPath)) {
+        throw "Finalizer selftest did not create pseudo-GT closure CSV."
+    }
+    $pseudoGtClosureRows = @(Import-Csv $pseudoGtClosureCsvPath)
+    if ($pseudoGtClosureRows.Count -ne 1 -or $pseudoGtClosureRows[0].closureStatus -ne "closed") {
+        throw "Finalizer selftest did not close pseudo-GT review rows."
     }
 
     Write-Host "[YoloCompletionFinalizer] pass selftest completed fixture"
@@ -369,6 +420,8 @@ Invoke-RequiredStep "completion-audit-complete" $completionAuditVerifier (@(
     "-FullGtReviewCsv", $reviewCsv,
     "-FullFrameReviewCsv", $frameCsv,
     "-GuiChecklistCsv", $guiCsv,
+    "-PseudoGtCsv", $resolvedPseudoGtCsv,
+    "-PseudoGtReviewClosureCsv", (Resolve-RepoPath $PseudoGtReviewClosureCsv),
     "-ManualGateSummary", $summaryPath,
     "-RequireComplete"
 ) + $predictionArgs + $qualityArgs + $allowQualityGateFailureArgs)
@@ -378,6 +431,8 @@ Invoke-RequiredStep "goal-evidence-report-complete" $evidenceReportWriter (@(
     "-FullGtReviewCsv", $reviewCsv,
     "-FullFrameReviewCsv", $frameCsv,
     "-GuiChecklistCsv", $guiCsv,
+    "-PseudoGtCsv", $resolvedPseudoGtCsv,
+    "-PseudoGtReviewClosureCsv", (Resolve-RepoPath $PseudoGtReviewClosureCsv),
     "-ManualGateSummary", $summaryPath,
     "-OutputPath", $EvidenceReport,
     "-Verify",

@@ -5,6 +5,8 @@ param(
     [string]$GuiChecklistCsv = ".tmp\yolo-gui-smoke\manual-smoke-checklist.csv",
     [string]$PredictionCsv = "",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [string]$PseudoGtCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
+    [string]$PseudoGtReviewClosureCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
     [string]$ManualGateSummary = ".tmp\yolo-manual-gates\manual-gate-summary.md",
     [double]$MinIou = 0.50,
     [int]$MaxMisses = 0,
@@ -108,6 +110,40 @@ function Get-FilledCount {
     }).Count
 }
 
+function Assert-PseudoGtReviewClosure {
+    param(
+        [string]$CandidateCsv,
+        [string]$ClosureCsv
+    )
+
+    $candidatePath = Resolve-RepoPath $CandidateCsv
+    if (-not (Test-Path $candidatePath)) {
+        Write-Host "[YoloCompletionAuditVerify] pseudoGtReviewClosure=skipped-no-candidates, pseudoGtCsv=$candidatePath"
+        return "skipped-no-candidates"
+    }
+
+    $closurePath = Assert-FileNonEmpty "pseudo-GT review closure CSV" $ClosureCsv
+    $candidateRows = @(Import-Csv $candidatePath)
+    $closureRows = @(Import-Csv $closurePath)
+
+    if ($candidateRows.Count -eq 0) {
+        throw "Pseudo-GT candidate CSV has no rows: $candidatePath"
+    }
+    if ($closureRows.Count -ne $candidateRows.Count) {
+        throw "Pseudo-GT closure row count mismatch: candidates=$($candidateRows.Count), closureRows=$($closureRows.Count), closureCsv=$closurePath"
+    }
+
+    $openRows = @($closureRows | Where-Object {
+        $null -eq $_.PSObject.Properties["closureStatus"] -or $_.closureStatus.Trim().ToLowerInvariant() -ne "closed"
+    })
+    if ($openRows.Count -gt 0) {
+        throw "Pseudo-GT review closure is incomplete: openRows=$($openRows.Count), closureCsv=$closurePath"
+    }
+
+    Write-Host "[YoloCompletionAuditVerify] pseudoGtReviewClosure=closed, candidates=$($candidateRows.Count), closureCsv=$closurePath"
+    return "closed"
+}
+
 if ($SelfTest) {
     $selfTestDir = Join-Path $repo ".tmp\yolo-completion-audit-state"
     New-Item -ItemType Directory -Force -Path $selfTestDir | Out-Null
@@ -116,7 +152,7 @@ if ($SelfTest) {
     @(
         "# Synthetic YOLO Completion Audit Plan",
         "",
-        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=true; remaining=none; completion-audit=pass-complete -->"
+        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=true; remaining=none; completion-audit=pass-complete -->"
     ) | Set-Content -Encoding UTF8 -Path $planPath
 
     $summaryPath = Join-Path $selfTestDir "manual-gate-summary.md"
@@ -188,6 +224,43 @@ if ($SelfTest) {
         }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $predictionCsv
 
+    $pseudoGtCsv = Join-Path $selfTestDir "pseudo-gt-candidates.csv"
+    @(
+        [pscustomobject]@{
+            candidateId = "base-1-0"
+            frame = "1"
+            candidateType = "supportedFaceCandidate"
+            basePredictionId = "pred-face-1"
+            x = "100"
+            y = "100"
+            w = "80"
+            h = "80"
+            baseFaceConfidence = "0.91"
+            tileFaceConfidence = "0.93"
+            tileSupportCount = "2"
+            personConfidence = "0"
+            personUpperOverlap = "0"
+            fpProbability = "0.05"
+            missProbability = "0.01"
+            pseudoGtReason = "synthetic supported face"
+        }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $pseudoGtCsv
+
+    $pseudoGtClosureCsv = Join-Path $selfTestDir "pseudo-gt-review-closure.csv"
+    @(
+        [pscustomobject]@{
+            candidateId = "base-1-0"
+            frame = "1"
+            candidateType = "supportedFaceCandidate"
+            expectedReviewLabel = "face"
+            closureStatus = "closed"
+            reviewLabel = "face"
+            reviewStatus = "pass"
+            reviewIou = "1"
+            closureReason = "synthetic closure"
+        }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $pseudoGtClosureCsv
+
     $guiChecklistCsv = Join-Path $selfTestDir "manual-smoke-checklist.csv"
     $guiArtifacts = @{
         "open-video" = @{ File = "open-video.png"; Type = "screenshot-or-recording" }
@@ -236,6 +309,8 @@ if ($SelfTest) {
             -FullFrameReviewCsv $frameCsv `
             -GuiChecklistCsv $guiChecklistCsv `
             -PredictionCsv $predictionCsv `
+            -PseudoGtCsv $pseudoGtCsv `
+            -PseudoGtReviewClosureCsv $pseudoGtClosureCsv `
             -ManualGateSummary $summaryPath `
             -MinIou 0.50 `
             -MaxMisses 0 `
@@ -253,7 +328,7 @@ if ($SelfTest) {
     if ($exitCode -ne 0) {
         throw "Completion audit complete PredictionCsv selftest failed with exit code $exitCode"
     }
-    if ($text -notmatch "complete=true" -or $text -notmatch "full-gt-reviewed-state" -or $text -notmatch "gui-smoke-state") {
+    if ($text -notmatch "complete=true" -or $text -notmatch "full-gt-reviewed-state" -or $text -notmatch "gui-smoke-state" -or $text -notmatch "pseudoGtReviewClosure=closed") {
         throw "Completion audit complete PredictionCsv selftest did not exercise expected branches. output=$text"
     }
 
@@ -266,7 +341,7 @@ if ($SelfTest) {
         "This prose intentionally says complete=true and remaining=none outside the goal marker.",
         "The audit must ignore this prose when RequireComplete is used.",
         "",
-        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=false; remaining=full-gt-label,gui-smoke; completion-audit=pass-incomplete -->"
+        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=false; remaining=full-gt-label,gui-smoke; completion-audit=pass-incomplete -->"
     ) | Set-Content -Encoding UTF8 -Path $misleadingBodyPlanPath
 
     $oldErrorAction = $ErrorActionPreference
@@ -305,7 +380,7 @@ if ($SelfTest) {
     @(
         "# Synthetic YOLO Completion Audit Negative Plan",
         "",
-        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; complete=true; remaining=none; completion-audit=pass-complete -->"
+        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=true; remaining=none; completion-audit=pass-complete -->"
     ) | Set-Content -Encoding UTF8 -Path $pendingPlanPath
 
     $pendingReviewCsv = Join-Path $selfTestDir "pending-full-gt-review.csv"
@@ -410,6 +485,8 @@ Assert-Contains "extended gate failed" $goalMarker "extended=fail"
 Assert-Contains "extended export failed" $goalMarker "extended-export=fail"
 Assert-Contains "track hold state passed" $goalMarker "track-hold-state=pass"
 Assert-Contains "ten minute full deferred" $goalMarker "ten-minute-full=not-required-after-extended-fail"
+Assert-Contains "pseudo-GT test-only boundary" $goalMarker "pseudo-gt-test-only=pass"
+Assert-Contains "pseudo-GT review closure gate" $goalMarker "pseudo-gt-review-closure=conditional-gated"
 Assert-Contains "manual summary remaining GUI smoke" $manualGateSummaryText "gui-smoke"
 Assert-Contains "manual summary track hold GUI step" $manualGateSummaryText "preview-track-hold"
 Assert-Contains "manual summary full GT command" $manualGateSummaryText "verify-yolo-full-gt-reviewed-state.ps1"
@@ -473,8 +550,9 @@ if ($RequireComplete) {
         "-ChecklistCsv", $guiCsv,
         "-RequireManualPass"
     )
+    $pseudoGtClosureState = Assert-PseudoGtReviewClosure -CandidateCsv $PseudoGtCsv -ClosureCsv $PseudoGtReviewClosureCsv
 
-    Write-Host "[YoloCompletionAuditVerify] complete=true, fullGtRows=$($reviewRows.Count), guiRows=$($guiRows.Count)"
+    Write-Host "[YoloCompletionAuditVerify] complete=true, fullGtRows=$($reviewRows.Count), guiRows=$($guiRows.Count), pseudoGtReviewClosure=$pseudoGtClosureState"
     Write-Host "[YoloCompletionAuditVerify] all requested checks passed"
     exit 0
 }

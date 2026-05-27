@@ -7,6 +7,8 @@ param(
     [string]$OutputPath = ".tmp\yolo-manual-gates\goal-evidence-report.md",
     [string]$PredictionCsv = "",
     [string]$PredictionLog = ".tmp\yolo-ten-minute-detection-smoke\yolo-ten-minute-yolo-only-20260523-022022.log",
+    [string]$PseudoGtCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
+    [string]$PseudoGtReviewClosureCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv",
     [double]$MinIou = 0.50,
     [int]$MaxMisses = 0,
     [int]$MaxFalsePositives = 0,
@@ -73,6 +75,17 @@ function Count-Matching {
     return @($Rows | Where-Object {
         $null -ne $_.PSObject.Properties[$Column] -and $_.$Column.Trim().ToLowerInvariant() -eq $Value
     }).Count
+}
+
+function Read-OptionalCsv {
+    param([string]$Path)
+
+    $resolved = Resolve-RepoPath $Path
+    if (-not (Test-Path $resolved)) {
+        return @()
+    }
+
+    return @(Import-Csv $resolved)
 }
 
 function Escape-Cell {
@@ -206,6 +219,27 @@ $fullGtFilled = $fullGtRows.Count -gt 0 -and
     $fullFrameMissCounts -eq $fullFrameRows.Count
 $guiFilled = $guiRows.Count -gt 0 -and $guiPassed -eq $guiRows.Count -and $guiArtifacts -eq $guiRows.Count
 
+$pseudoGtRows = @(Read-OptionalCsv $PseudoGtCsv)
+$pseudoGtClosureRows = @(Read-OptionalCsv $PseudoGtReviewClosureCsv)
+$pseudoGtClosedRows = @($pseudoGtClosureRows | Where-Object {
+    $null -ne $_.PSObject.Properties["closureStatus"] -and $_.closureStatus.Trim().ToLowerInvariant() -eq "closed"
+}).Count
+$pseudoGtOpenRows = if ($pseudoGtRows.Count -eq 0) {
+    0
+}
+else {
+    [Math]::Max(0, $pseudoGtRows.Count - $pseudoGtClosedRows)
+}
+$pseudoGtStatus = if ($pseudoGtRows.Count -eq 0) {
+    "skipped-no-candidates"
+}
+elseif ($pseudoGtClosureRows.Count -eq $pseudoGtRows.Count -and $pseudoGtOpenRows -eq 0) {
+    "closed"
+}
+else {
+    "pending-human"
+}
+
 $qualityGate = $null
 if ($fullGtFilled) {
     $qualityGate = Invoke-FullGtQualityGate -ReviewCsv $FullGtReviewCsv -FrameReviewCsv $FullFrameReviewCsv
@@ -231,12 +265,13 @@ $fullGtStatus = if ($fullGtFilled) { "filled-pending-strict-gate" } else { "pend
 $guiStatus = if ($guiFilled) { "filled-pending-strict-gate" } else { "pending-human" }
 $previewTrackHoldStatus = if ($previewTrackHoldPassed) { "pass" } else { "pending-human" }
 $qualityGateReady = $qualityGateStatus -eq "pass" -or $qualityGateStatus -eq "fail-documented"
-$goalStatus = if ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady) { "ready-for-strict-completion-audit" } else { "incomplete" }
+$pseudoGtReady = $pseudoGtStatus -eq "closed" -or $pseudoGtStatus -eq "skipped-no-candidates"
+$goalStatus = if ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady) { "ready-for-strict-completion-audit" } else { "incomplete" }
 $planCompletionText = if ($planComplete) { "complete=true" } else { "complete=false" }
 $planRemainingText = if ($planComplete) { "remaining=none" } elseif ($goalMarker.Contains("remaining=gui-smoke")) { "remaining=gui-smoke" } else { "remaining=full-gt-label,gui-smoke" }
 
-if ($RequireComplete -and -not ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady)) {
-    throw "Evidence report is not ready for strict completion audit: planComplete=$planComplete, fullGtFilled=$fullGtFilled, guiFilled=$guiFilled, qualityGateStatus=$qualityGateStatus, fullGtRows=$($fullGtRows.Count), fullGtReviewed=$fullGtReviewed, fullGtLabels=$fullGtLabels, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, fullFrameMissCounts=$fullFrameMissCounts, guiRows=$($guiRows.Count), guiPassed=$guiPassed, guiArtifacts=$guiArtifacts"
+if ($RequireComplete -and -not ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady)) {
+    throw "Evidence report is not ready for strict completion audit: planComplete=$planComplete, fullGtFilled=$fullGtFilled, guiFilled=$guiFilled, qualityGateStatus=$qualityGateStatus, pseudoGtStatus=$pseudoGtStatus, pseudoGtRows=$($pseudoGtRows.Count), pseudoGtClosedRows=$pseudoGtClosedRows, fullGtRows=$($fullGtRows.Count), fullGtReviewed=$fullGtReviewed, fullGtLabels=$fullGtLabels, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, fullFrameMissCounts=$fullFrameMissCounts, guiRows=$($guiRows.Count), guiPassed=$guiPassed, guiArtifacts=$guiArtifacts"
 }
 
 $rows = @(
@@ -258,6 +293,7 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Final YOLO recommendation"; Status = "none"; Evidence = "recommendation=none, no-final-yolo-recommendation" },
     [pscustomobject]@{ Requirement = "Full-GT label review"; Status = $fullGtStatus; Evidence = "rows=$($fullGtRows.Count), labels=$fullGtLabels, reviewed=$fullGtReviewed, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, missedFaceCountFilled=$fullFrameMissCounts" },
     [pscustomobject]@{ Requirement = "Full-GT quality gate"; Status = $qualityGateStatus; Evidence = $qualityGateEvidence },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, open=$pseudoGtOpenRows; runtimePath=not-used-by-app" },
     [pscustomobject]@{ Requirement = "Avalonia GUI smoke"; Status = $guiStatus; Evidence = "steps=$($guiRows.Count), pass=$guiPassed, artifactPathFilled=$guiArtifacts, required=preview-track-hold/manual-edit/export/reopen-state" },
     [pscustomobject]@{ Requirement = "Model license/distribution policy"; Status = "pass"; Evidence = "license-source=pass, bundle=blocked" },
     [pscustomobject]@{ Requirement = "10-minute/whole-video decision"; Status = "deferred"; Evidence = "ten-minute-full=not-required-after-extended-fail" },
@@ -306,6 +342,9 @@ $lines = @(
     "- fullGtReviewed=$fullGtReviewed",
     "- fullGtFilled=$fullGtFilled",
     "- fullGtQualityGate=$qualityGateStatus",
+    "- pseudoGtStatus=$pseudoGtStatus",
+    "- pseudoGtRows=$($pseudoGtRows.Count)",
+    "- pseudoGtClosedRows=$pseudoGtClosedRows",
     "- fullFrameRows=$($fullFrameRows.Count)",
     "- fullFrameReviewed=$fullFrameReviewed",
     "- guiSteps=$($guiRows.Count)",
@@ -327,6 +366,7 @@ $report = Get-Content -Raw -Path $resolvedOutput
 foreach ($requiredReportToken in @(
     "Full-GT label review",
     "Full-GT quality gate",
+    "Test-only pseudo-GT review closure",
     "Avalonia GUI smoke",
     "Preview track-hold GUI evidence",
     "YOLOv8 candidate A/B comparison",
@@ -344,6 +384,7 @@ if ($Verify) {
     if ($RequireComplete) {
         Assert-ReportContains "report keeps full GT filled" $report "Full-GT label review | filled-pending-strict-gate"
         Assert-ReportContains "report keeps full GT quality checked" $report "Full-GT quality gate | $qualityGateStatus"
+        Assert-ReportContains "report keeps pseudo-GT closure checked" $report "Test-only pseudo-GT review closure | $pseudoGtStatus"
         Assert-ReportContains "report keeps GUI filled" $report "Avalonia GUI smoke | filled-pending-strict-gate"
         Assert-ReportContains "report keeps preview track-hold passed" $report "Preview track-hold GUI evidence | pass"
         Assert-ReportContains "report keeps completion ready for strict audit" $report "Goal completion | ready-for-strict-completion-audit"
@@ -365,6 +406,8 @@ if ($Verify) {
         else {
             Assert-ReportContains "report keeps GUI pending" $report "Avalonia GUI smoke | pending-human"
         }
+
+        Assert-ReportContains "report records pseudo-GT closure state" $report "pseudoGtStatus=$pseudoGtStatus"
 
         if ($previewTrackHoldPassed) {
             Assert-ReportContains "report keeps preview track-hold passed" $report "Preview track-hold GUI evidence | pass"
