@@ -29,9 +29,12 @@ param(
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
+    [double]$PseudoGtTileScale = 2.0,
     [string]$PseudoGtTileExternalCommand = "",
     [string]$PseudoGtTileExternalArgumentsTemplate = "",
     [string]$PseudoGtTileExternalOutputCsv = "",
+    [ValidateSet("Frame", "TileImage", "TileOriginal")]
+    [string]$PseudoGtTileExternalOutputCoordinateSpace = "Frame",
     [int]$PseudoGtTileExternalTimeoutSeconds = 0,
     [switch]$WithPseudoGtFaceVerificationInput,
     [switch]$PseudoGtFaceVerificationSkipImageExtraction,
@@ -138,6 +141,8 @@ if ($WithPseudoGtTileInput.IsPresent) {
     $argsList.Add($PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
     $argsList.Add("-PseudoGtTileOverlapRatio") | Out-Null
     $argsList.Add($PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+    $argsList.Add("-PseudoGtTileScale") | Out-Null
+    $argsList.Add($PseudoGtTileScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 }
 
 if ($PseudoGtTileSkipImageExtraction.IsPresent) {
@@ -157,6 +162,11 @@ if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalArgumentsTemplate)) {
 if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileExternalOutputCsv)) {
     $argsList.Add("-PseudoGtTileExternalOutputCsv") | Out-Null
     $argsList.Add($PseudoGtTileExternalOutputCsv) | Out-Null
+}
+
+if ($PseudoGtTileExternalOutputCoordinateSpace -ne "Frame") {
+    $argsList.Add("-PseudoGtTileExternalOutputCoordinateSpace") | Out-Null
+    $argsList.Add($PseudoGtTileExternalOutputCoordinateSpace) | Out-Null
 }
 
 if ($PseudoGtTileExternalTimeoutSeconds -gt 0) {

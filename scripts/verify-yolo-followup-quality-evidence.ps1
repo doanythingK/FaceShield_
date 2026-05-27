@@ -269,6 +269,8 @@ Assert-Contains "script writes final mask continuity report" $scriptText "write-
 Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTileFaceCsv"
 Assert-Contains "script supports pseudo gt frame cap" $scriptText "PseudoGtMaxFrames"
 Assert-Contains "script supports pseudo gt tile external command" $scriptText "PseudoGtTileExternalCommand"
+Assert-Contains "script supports pseudo gt tile scale" $scriptText "PseudoGtTileScale"
+Assert-Contains "script supports pseudo gt tile external coordinate space" $scriptText "PseudoGtTileExternalOutputCoordinateSpace"
 Assert-Contains "script can use external tile output as pseudo gt input" $scriptText 'PseudoGtTileExternalOutputCsv[\s\S]*PseudoGtTileFaceCsv\s*=\s*\$PseudoGtTileExternalOutputCsv'
 Assert-Contains "script supports pseudo gt face verification input" $scriptText "PseudoGtFaceVerificationCsv"
 Assert-Contains "script can prepare pseudo gt face verification manifest" $scriptText "WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*PseudoGtFaceVerificationInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"

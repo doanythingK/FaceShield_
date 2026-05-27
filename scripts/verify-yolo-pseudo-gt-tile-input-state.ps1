@@ -60,10 +60,10 @@ $first = $rows[0]
         frame = $first.frame
         tileIndex = $first.tileIndex
         detectionId = "external-tile-face-$($first.frame)-$($first.tileIndex)"
-        x = $first.tileX
-        y = $first.tileY
-        w = 24
-        h = 28
+        x = 0
+        y = 0
+        w = 60
+        h = 70
         confidence = 0.91
         tileSupportCount = 1
     }
@@ -131,7 +131,8 @@ $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -SkipImageExtraction `
     -ExternalCommand "powershell.exe" `
     -ExternalArgumentsTemplate $template `
-    -ExternalOutputCsv $externalCsv 2>&1
+    -ExternalOutputCsv $externalCsv `
+    -ExternalOutputCoordinateSpace TileImage 2>&1
 
 if ($LASTEXITCODE -ne 0) {
     throw "new-yolo-pseudo-gt-tile-input.ps1 failed: $($output | Out-String)"
@@ -237,6 +238,26 @@ if ($externalRows.Count -ne 1) {
     throw "Expected one external output row, actual=$($externalRows.Count)"
 }
 
+$externalRow = $externalRows[0]
+$normalizedX = [double]::Parse($externalRow.x, [System.Globalization.CultureInfo]::InvariantCulture)
+$normalizedY = [double]::Parse($externalRow.y, [System.Globalization.CultureInfo]::InvariantCulture)
+$normalizedW = [double]::Parse($externalRow.w, [System.Globalization.CultureInfo]::InvariantCulture)
+$normalizedH = [double]::Parse($externalRow.h, [System.Globalization.CultureInfo]::InvariantCulture)
+$expectedX = [double]::Parse($firstManifestRow.tileX, [System.Globalization.CultureInfo]::InvariantCulture)
+$expectedY = [double]::Parse($firstManifestRow.tileY, [System.Globalization.CultureInfo]::InvariantCulture)
+$expectedW = 60.0 * ($tileW / $tileImageW)
+$expectedH = 70.0 * ($tileH / $tileImageH)
+if ([Math]::Abs($normalizedX - $expectedX) -gt 0.001 -or
+    [Math]::Abs($normalizedY - $expectedY) -gt 0.001 -or
+    [Math]::Abs($normalizedW - $expectedW) -gt 0.001 -or
+    [Math]::Abs($normalizedH - $expectedH) -gt 0.001) {
+    throw "Expected TileImage external output to be normalized to original frame coordinates."
+}
+
+if ($externalRow.inputCoordinateSpace -ne "TileImage" -or $externalRow.normalizedCoordinateSpace -ne "Frame") {
+    throw "Expected normalized external output to preserve coordinate-space audit columns."
+}
+
 $scriptText = Get-Content -Raw -Path $script
 $guideText = Get-Content -Raw -Path $guide
 $summaryText = Get-Content -Raw -Path $summary
@@ -247,6 +268,8 @@ Assert-Contains "script has explicit large frame override" $scriptText "AllowLar
 Assert-Contains "script builds overlap tile starts" $scriptText "Get-TileStarts"
 Assert-Contains "script supports tile scaling" $scriptText "TileScale"
 Assert-Contains "script extracts enlarged tiles" $scriptText 'scale=\$\(\$row\.tileImageW\):\$\(\$row\.tileImageH\)'
+Assert-Contains "script supports external output coordinate space" $scriptText "ExternalOutputCoordinateSpace"
+Assert-Contains "script normalizes tile image coordinates" $scriptText "Convert-ExternalTileFaceCsvCoordinateSpace"
 Assert-Contains "script writes manifest" $scriptText "tile-manifest\.csv"
 Assert-Contains "script supports ffmpeg extraction" $scriptText "Invoke-FfmpegTileExtraction"
 Assert-Contains "script supports wsl ffmpeg fallback" $scriptText "wsl\.exe"
@@ -261,6 +284,7 @@ Assert-Contains "summary records max frames" $summaryText "maxFrames=900"
 Assert-Contains "summary records tile scale" $summaryText "tileScale=2.5"
 Assert-Contains "summary records tile count" $summaryText "tiles=18"
 Assert-Contains "summary records external command" $summaryText "externalCommandUsed=True"
+Assert-Contains "summary records external coordinate space" $summaryText "externalOutputCoordinateSpace=TileImage"
 Assert-Contains "summary records tile output binding" $summaryText "tileIndex/sourceTileIndex/manifestTileIndex"
 Assert-Contains "guide documents tile pseudo gt" $guideText "PseudoGtTileFaceCsv"
 

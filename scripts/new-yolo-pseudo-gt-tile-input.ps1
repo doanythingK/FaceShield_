@@ -15,6 +15,8 @@ param(
     [string]$ExternalCommand = "",
     [string]$ExternalArgumentsTemplate = "",
     [string]$ExternalOutputCsv = "",
+    [ValidateSet("Frame", "TileImage", "TileOriginal")]
+    [string]$ExternalOutputCoordinateSpace = "Frame",
     [int]$ExternalTimeoutSeconds = 0
 )
 
@@ -320,6 +322,91 @@ function Assert-ExternalTileFaceCsv {
     }
 }
 
+function Format-DoubleValue {
+    param([double]$Value)
+
+    return $Value.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Convert-ExternalTileFaceCsvCoordinateSpace {
+    param(
+        [string]$Path,
+        [object[]]$ManifestRows,
+        [string]$CoordinateSpace
+    )
+
+    if ($CoordinateSpace -eq "Frame") {
+        return
+    }
+
+    $manifestByKey = @{}
+    foreach ($row in $ManifestRows) {
+        $manifestByKey["$([int]$row.frame):$([int]$row.tileIndex)"] = $row
+    }
+
+    $normalizedRows = [System.Collections.Generic.List[object]]::new()
+    $index = 0
+    foreach ($row in (Import-Csv $Path)) {
+        $frame = Read-RequiredIntValue $row @("frame", "Frame") "tile-face" $index
+        $tileIndexValue = Get-OptionalCsvValue $row @("tileIndex", "sourceTileIndex", "manifestTileIndex", "TileIndex")
+        if ([string]::IsNullOrWhiteSpace($tileIndexValue)) {
+            throw "tile-face CSV row $index missing required value: tileIndex/sourceTileIndex/manifestTileIndex"
+        }
+
+        $tileIndex = 0
+        if (-not [int]::TryParse($tileIndexValue, [ref]$tileIndex)) {
+            throw "tile-face CSV row $index has invalid integer value for tileIndex/sourceTileIndex/manifestTileIndex: $tileIndexValue"
+        }
+
+        $key = "$($frame):$tileIndex"
+        if (-not $manifestByKey.ContainsKey($key)) {
+            throw "tile-face CSV row $index references frame/tile $frame/$tileIndex outside the manifest."
+        }
+
+        $manifestTile = $manifestByKey[$key]
+        $tileX = [double]::Parse([string]$manifestTile.tileX, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileY = [double]::Parse([string]$manifestTile.tileY, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileW = [double]::Parse([string]$manifestTile.tileW, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileH = [double]::Parse([string]$manifestTile.tileH, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileImageW = [double]::Parse([string]$manifestTile.tileImageW, [System.Globalization.CultureInfo]::InvariantCulture)
+        $tileImageH = [double]::Parse([string]$manifestTile.tileImageH, [System.Globalization.CultureInfo]::InvariantCulture)
+
+        $x = Read-RequiredDoubleValue $row @("x", "X") "tile-face" $index
+        $y = Read-RequiredDoubleValue $row @("y", "Y") "tile-face" $index
+        $width = Read-RequiredDoubleValue $row @("w", "W", "width", "Width") "tile-face" $index
+        $height = Read-RequiredDoubleValue $row @("h", "H", "height", "Height") "tile-face" $index
+
+        $scaleX = if ($CoordinateSpace -eq "TileImage") { $tileW / [Math]::Max(1.0, $tileImageW) } else { 1.0 }
+        $scaleY = if ($CoordinateSpace -eq "TileImage") { $tileH / [Math]::Max(1.0, $tileImageH) } else { 1.0 }
+
+        $normalizedX = $tileX + ($x * $scaleX)
+        $normalizedY = $tileY + ($y * $scaleY)
+        $normalizedW = $width * $scaleX
+        $normalizedH = $height * $scaleY
+
+        $output = [ordered]@{}
+        foreach ($property in $row.PSObject.Properties) {
+            $name = $property.Name
+            if ($name -match '^(x|y|w|h|width|height)$') {
+                continue
+            }
+
+            $output[$name] = $property.Value
+        }
+
+        $output["x"] = Format-DoubleValue $normalizedX
+        $output["y"] = Format-DoubleValue $normalizedY
+        $output["w"] = Format-DoubleValue $normalizedW
+        $output["h"] = Format-DoubleValue $normalizedH
+        $output["inputCoordinateSpace"] = $CoordinateSpace
+        $output["normalizedCoordinateSpace"] = "Frame"
+        $normalizedRows.Add([pscustomobject]$output) | Out-Null
+        $index++
+    }
+
+    $normalizedRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $Path
+}
+
 function Invoke-FfmpegTileExtraction {
     param(
         [string]$SourceVideo,
@@ -398,6 +485,7 @@ function Invoke-ExternalModel {
         [string]$TilesDir,
         [string]$OutputPath,
         [string]$Video,
+        [string]$OutputCoordinateSpace,
         [int]$TimeoutSeconds
     )
 
@@ -442,7 +530,12 @@ function Invoke-ExternalModel {
         throw "External high-precision model command did not create output CSV: $OutputPath"
     }
 
-    Assert-ExternalTileFaceCsv -Path $OutputPath -ManifestRows @(Import-Csv $ManifestPath)
+    $manifestRows = @(Import-Csv $ManifestPath)
+    Convert-ExternalTileFaceCsvCoordinateSpace `
+        -Path $OutputPath `
+        -ManifestRows $manifestRows `
+        -CoordinateSpace $OutputCoordinateSpace
+    Assert-ExternalTileFaceCsv -Path $OutputPath -ManifestRows $manifestRows
 }
 
 function Get-VideoFrameSize {
@@ -606,6 +699,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExternalCommand)) {
         -TilesDir $tilesDir `
         -OutputPath $resolvedExternalOutputCsv `
         -Video $resolvedVideoPath `
+        -OutputCoordinateSpace $ExternalOutputCoordinateSpace `
         -TimeoutSeconds $ExternalTimeoutSeconds
 }
 
@@ -629,9 +723,10 @@ $summary = @(
     "- imageExtractionSkipped=$($SkipImageExtraction.IsPresent)",
     "- externalCommandUsed=$(-not [string]::IsNullOrWhiteSpace($ExternalCommand))",
     "- externalOutputCsv=$ExternalOutputCsv",
+    "- externalOutputCoordinateSpace=$ExternalOutputCoordinateSpace",
     "",
     "External model output should be converted to TileFaceCsv, FaceVerificationCsv, or PersonObjectCsv before running new-yolo-pseudo-gt-evidence.ps1.",
-    "External tile-face output from this manifest must include tileIndex/sourceTileIndex/manifestTileIndex. The detection center must stay inside that manifest tile."
+    "External tile-face output from this manifest must include tileIndex/sourceTileIndex/manifestTileIndex. The detection center must stay inside that manifest tile after any configured coordinate-space normalization."
 )
 
 $summary | Set-Content -Encoding UTF8 -Path $summaryPath

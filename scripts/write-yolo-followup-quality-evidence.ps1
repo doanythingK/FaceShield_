@@ -53,9 +53,12 @@ param(
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
+    [double]$PseudoGtTileScale = 2.0,
     [string]$PseudoGtTileExternalCommand = "",
     [string]$PseudoGtTileExternalArgumentsTemplate = "",
     [string]$PseudoGtTileExternalOutputCsv = "",
+    [ValidateSet("Frame", "TileImage", "TileOriginal")]
+    [string]$PseudoGtTileExternalOutputCoordinateSpace = "Frame",
     [int]$PseudoGtTileExternalTimeoutSeconds = 0,
     [switch]$WithPseudoGtFaceVerificationInput,
     [switch]$PseudoGtFaceVerificationSkipImageExtraction,
@@ -975,7 +978,9 @@ if ($detectionRows.Count -eq 0) {
             "-TileRows",
             $PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
             "-TileOverlapRatio",
-            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileScale",
+            $PseudoGtTileScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
 
         if ($PseudoGtTileSkipImageExtraction.IsPresent) {
@@ -991,6 +996,8 @@ if ($detectionRows.Count -eq 0) {
             }
             $tileInputArgs += "-ExternalOutputCsv"
             $tileInputArgs += $resolvedPseudoGtTileExternalOutputCsv
+            $tileInputArgs += "-ExternalOutputCoordinateSpace"
+            $tileInputArgs += $PseudoGtTileExternalOutputCoordinateSpace
             if ($PseudoGtTileExternalTimeoutSeconds -gt 0) {
                 $tileInputArgs += "-ExternalTimeoutSeconds"
                 $tileInputArgs += $PseudoGtTileExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -1147,7 +1154,9 @@ else {
             "-TileRows",
             $PseudoGtTileRows.ToString([System.Globalization.CultureInfo]::InvariantCulture),
             "-TileOverlapRatio",
-            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            $PseudoGtTileOverlapRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+            "-TileScale",
+            $PseudoGtTileScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
 
         if ($PseudoGtTileSkipImageExtraction.IsPresent) {
@@ -1163,6 +1172,8 @@ else {
             }
             $tileInputArgs += "-ExternalOutputCsv"
             $tileInputArgs += $resolvedPseudoGtTileExternalOutputCsv
+            $tileInputArgs += "-ExternalOutputCoordinateSpace"
+            $tileInputArgs += $PseudoGtTileExternalOutputCoordinateSpace
             if ($PseudoGtTileExternalTimeoutSeconds -gt 0) {
                 $tileInputArgs += "-ExternalTimeoutSeconds"
                 $tileInputArgs += $PseudoGtTileExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
