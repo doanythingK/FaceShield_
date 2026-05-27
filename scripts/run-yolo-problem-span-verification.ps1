@@ -28,6 +28,13 @@ param(
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
+    [switch]$WithPseudoGtFaceVerificationInput,
+    [switch]$PseudoGtFaceVerificationSkipImageExtraction,
+    [double]$PseudoGtFaceVerificationCropPaddingRatio = 0.35,
+    [string]$PseudoGtFaceVerificationExternalCommand = "",
+    [string]$PseudoGtFaceVerificationExternalArgumentsTemplate = "",
+    [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
+    [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
     [switch]$Force
 )
 
@@ -117,6 +124,36 @@ if ($WithPseudoGtTileInput.IsPresent) {
 
 if ($PseudoGtTileSkipImageExtraction.IsPresent) {
     $argsList.Add("-PseudoGtTileSkipImageExtraction") | Out-Null
+}
+
+if ($WithPseudoGtFaceVerificationInput.IsPresent) {
+    $argsList.Add("-WithPseudoGtFaceVerificationInput") | Out-Null
+    $argsList.Add("-PseudoGtFaceVerificationCropPaddingRatio") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationCropPaddingRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+}
+
+if ($PseudoGtFaceVerificationSkipImageExtraction.IsPresent) {
+    $argsList.Add("-PseudoGtFaceVerificationSkipImageExtraction") | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand)) {
+    $argsList.Add("-PseudoGtFaceVerificationExternalCommand") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationExternalCommand) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalArgumentsTemplate)) {
+    $argsList.Add("-PseudoGtFaceVerificationExternalArgumentsTemplate") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationExternalArgumentsTemplate) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv)) {
+    $argsList.Add("-PseudoGtFaceVerificationExternalOutputCsv") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationExternalOutputCsv) | Out-Null
+}
+
+if ($PseudoGtFaceVerificationExternalTimeoutSeconds -gt 0) {
+    $argsList.Add("-PseudoGtFaceVerificationExternalTimeoutSeconds") | Out-Null
+    $argsList.Add($PseudoGtFaceVerificationExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 }
 
 if ($Force.IsPresent) {

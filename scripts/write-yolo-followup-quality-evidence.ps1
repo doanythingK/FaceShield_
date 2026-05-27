@@ -16,6 +16,7 @@ param(
     [string]$PseudoGtOutputCsv = "",
     [string]$PseudoGtSummaryPath = "",
     [string]$PseudoGtTileInputDir = "",
+    [string]$PseudoGtFaceVerificationInputDir = "",
     [string]$TrimStart = "",
     [int]$TrimSeconds = 0,
     [string]$ClipPath = "",
@@ -48,6 +49,13 @@ param(
     [int]$PseudoGtTileColumns = 3,
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
+    [switch]$WithPseudoGtFaceVerificationInput,
+    [switch]$PseudoGtFaceVerificationSkipImageExtraction,
+    [double]$PseudoGtFaceVerificationCropPaddingRatio = 0.35,
+    [string]$PseudoGtFaceVerificationExternalCommand = "",
+    [string]$PseudoGtFaceVerificationExternalArgumentsTemplate = "",
+    [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
+    [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
     [int]$DetectionOverlayScaleWidth = 960
 )
 
@@ -611,6 +619,16 @@ if ([string]::IsNullOrWhiteSpace($PseudoGtTileInputDir)) {
     $PseudoGtTileInputDir = Join-Path $OutputDir "pseudo-gt-tile-input"
 }
 
+if ([string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationInputDir)) {
+    $PseudoGtFaceVerificationInputDir = Join-Path $OutputDir "pseudo-gt-face-verification-input"
+}
+
+if ($WithPseudoGtFaceVerificationInput.IsPresent -and
+    -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand) -and
+    [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv)) {
+    $PseudoGtFaceVerificationExternalOutputCsv = Join-Path $PseudoGtFaceVerificationInputDir "face-verification.csv"
+}
+
 $resolvedOutputDir = Resolve-RepoPath $OutputDir
 $resolvedPredictionLog = Resolve-RepoPath $PredictionLog
 $resolvedChecklistPath = Resolve-RepoPath $ChecklistPath
@@ -626,6 +644,8 @@ $resolvedPseudoGtPersonObjectCsv = Resolve-RepoPath $PseudoGtPersonObjectCsv
 $resolvedPseudoGtOutputCsv = Resolve-RepoPath $PseudoGtOutputCsv
 $resolvedPseudoGtSummaryPath = Resolve-RepoPath $PseudoGtSummaryPath
 $resolvedPseudoGtTileInputDir = Resolve-RepoPath $PseudoGtTileInputDir
+$resolvedPseudoGtFaceVerificationInputDir = Resolve-RepoPath $PseudoGtFaceVerificationInputDir
+$resolvedPseudoGtFaceVerificationExternalOutputCsv = Resolve-RepoPath $PseudoGtFaceVerificationExternalOutputCsv
 $resolvedVideoPath = Resolve-RepoPath $VideoPath
 
 New-Item -ItemType Directory -Force -Path $resolvedOutputDir | Out-Null
@@ -666,6 +686,7 @@ $detectionOverlayScript = Join-Path $repo "scripts\new-yolo-detection-overlay-vi
 $reviewContactSheetScript = Join-Path $repo "scripts\new-yolo-review-contact-sheet.ps1"
 $pseudoGtScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-evidence.ps1"
 $pseudoGtTileInputScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-tile-input.ps1"
+$pseudoGtFaceVerificationInputScript = Join-Path $repo "scripts\new-yolo-pseudo-gt-face-verification-input.ps1"
 
 Require-File "run-srcTest-smoke.ps1" $smokeScript
 Require-File "write-yolo-quality-review-checklist.ps1" $checklistScript
@@ -676,11 +697,16 @@ if ($WithDetectionOverlayVideo.IsPresent -or $WithReviewContactSheet.IsPresent) 
 if ($WithReviewContactSheet.IsPresent) {
     Require-File "new-yolo-review-contact-sheet.ps1" $reviewContactSheetScript
 }
-if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or
+    -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv) -or
+    ($WithPseudoGtFaceVerificationInput.IsPresent -and -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand))) {
     Require-File "new-yolo-pseudo-gt-evidence.ps1" $pseudoGtScript
 }
 if ($WithPseudoGtTileInput.IsPresent) {
     Require-File "new-yolo-pseudo-gt-tile-input.ps1" $pseudoGtTileInputScript
+}
+if ($WithPseudoGtFaceVerificationInput.IsPresent) {
+    Require-File "new-yolo-pseudo-gt-face-verification-input.ps1" $pseudoGtFaceVerificationInputScript
 }
 if (-not $SkipReviewPackage) {
     Require-File "new-yolo-full-gt-review-package.ps1" $packageScript
@@ -849,6 +875,56 @@ else {
         -OutputCsv $resolvedTemplateCsv
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to write YOLO full-GT template."
+    }
+
+    if ($WithPseudoGtFaceVerificationInput.IsPresent) {
+        Require-File "pseudo-GT face verification input video" $resolvedVideoPath
+
+        $faceVerificationInputArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $pseudoGtFaceVerificationInputScript,
+            "-VideoPath",
+            $resolvedVideoPath,
+            "-BasePredictionLog",
+            $resolvedPredictionLog,
+            "-OutputDir",
+            $resolvedPseudoGtFaceVerificationInputDir,
+            "-CropPaddingRatio",
+            $PseudoGtFaceVerificationCropPaddingRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        )
+
+        if ($PseudoGtFaceVerificationSkipImageExtraction.IsPresent) {
+            $faceVerificationInputArgs += "-SkipImageExtraction"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand)) {
+            $faceVerificationInputArgs += "-ExternalCommand"
+            $faceVerificationInputArgs += $PseudoGtFaceVerificationExternalCommand
+            if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalArgumentsTemplate)) {
+                $faceVerificationInputArgs += "-ExternalArgumentsTemplate"
+                $faceVerificationInputArgs += $PseudoGtFaceVerificationExternalArgumentsTemplate
+            }
+            $faceVerificationInputArgs += "-ExternalOutputCsv"
+            $faceVerificationInputArgs += $resolvedPseudoGtFaceVerificationExternalOutputCsv
+            if ($PseudoGtFaceVerificationExternalTimeoutSeconds -gt 0) {
+                $faceVerificationInputArgs += "-ExternalTimeoutSeconds"
+                $faceVerificationInputArgs += $PseudoGtFaceVerificationExternalTimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            }
+        }
+
+        & powershell.exe @faceVerificationInputArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to write YOLO pseudo-GT face verification input."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv) -and
+            -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalOutputCsv)) {
+            $PseudoGtFaceVerificationCsv = $PseudoGtFaceVerificationExternalOutputCsv
+            $resolvedPseudoGtFaceVerificationCsv = $resolvedPseudoGtFaceVerificationExternalOutputCsv
+        }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
@@ -1026,6 +1102,10 @@ if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $revie
     [void]$summary.AppendLine("- Pseudo-GT tile input manifest: ``$PseudoGtTileInputDir/tile-manifest.csv``")
     [void]$summary.AppendLine("- Pseudo-GT tile input summary: ``$PseudoGtTileInputDir/tile-input-summary.md``")
 }
+if ($WithPseudoGtFaceVerificationInput.IsPresent -and $detectionRows.Count -gt 0) {
+    [void]$summary.AppendLine("- Pseudo-GT face verification input manifest: ``$PseudoGtFaceVerificationInputDir/face-verification-manifest.csv``")
+    [void]$summary.AppendLine("- Pseudo-GT face verification input summary: ``$PseudoGtFaceVerificationInputDir/face-verification-input-summary.md``")
+}
 if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
 }
@@ -1108,6 +1188,9 @@ if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -gt 0 -and $revi
 }
 if ($WithPseudoGtTileInput.IsPresent -and $detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] pseudoGtTileInput=$PseudoGtTileInputDir/tile-manifest.csv"
+}
+if ($WithPseudoGtFaceVerificationInput.IsPresent -and $detectionRows.Count -gt 0) {
+    Write-Host "[YoloFollowupQualityEvidence] pseudoGtFaceVerificationInput=$PseudoGtFaceVerificationInputDir/face-verification-manifest.csv"
 }
 if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     Write-Host "[YoloFollowupQualityEvidence] reviewContactSheet=$ReviewContactSheetPath"

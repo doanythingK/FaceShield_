@@ -54,6 +54,9 @@ Assert-Match "runner supports detection overlay video" $runner '\[switch\]\$With
 Assert-Match "runner supports review contact sheet" $runner '\[switch\]\$WithReviewContactSheet[\s\S]*-WithReviewContactSheet'
 Assert-Match "runner supports pseudo gt tile input manifest" $runner '\[switch\]\$WithPseudoGtTileInput[\s\S]*-WithPseudoGtTileInput[\s\S]*-PseudoGtTileColumns[\s\S]*-PseudoGtTileRows[\s\S]*-PseudoGtTileOverlapRatio'
 Assert-Match "runner supports pseudo gt tile manifest without image extraction" $runner '\[switch\]\$PseudoGtTileSkipImageExtraction[\s\S]*-PseudoGtTileSkipImageExtraction'
+Assert-Match "runner supports pseudo gt face verification input manifest" $runner '\[switch\]\$WithPseudoGtFaceVerificationInput[\s\S]*-WithPseudoGtFaceVerificationInput[\s\S]*-PseudoGtFaceVerificationCropPaddingRatio'
+Assert-Match "runner supports pseudo gt face verification manifest without image extraction" $runner '\[switch\]\$PseudoGtFaceVerificationSkipImageExtraction[\s\S]*-PseudoGtFaceVerificationSkipImageExtraction'
+Assert-Match "runner supports pseudo gt face verification external command" $runner 'PseudoGtFaceVerificationExternalCommand[\s\S]*-PseudoGtFaceVerificationExternalCommand[\s\S]*PseudoGtFaceVerificationExternalOutputCsv[\s\S]*-PseudoGtFaceVerificationExternalOutputCsv'
 Assert-Match "runner supports forced rerun" $runner 'if\s*\(\$Force\.IsPresent\)[\s\S]*-ForceTrim[\s\S]*-ForceRunSmoke'
 Assert-Match "srcTest smoke cleans generated harness by default" $srcSmokeHarness '\[switch\]\$KeepHarness[\s\S]*finally\s*\{[\s\S]*-not\s+\$KeepHarness\.IsPresent[\s\S]*Remove-Item\s+-Recurse\s+-Force\s+-Path\s+\$harness'
 
@@ -67,6 +70,7 @@ Assert-Match "guide documents detection overlay option" $guide '-WithDetectionOv
 Assert-Match "guide documents contact sheet option" $guide '-WithReviewContactSheet[\s\S]*yolo-review-contact-sheet\.png'
 Assert-Match "guide documents pseudo gt evidence" $guide 'Pseudo-GT[\s\S]*faceVerificationConfidence[\s\S]*faceVerificationDistance'
 Assert-Match "guide documents pseudo gt tile input" $guide 'WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*-TileColumns[\s\S]*-ExternalCommand[\s\S]*tileImagePath[\s\S]*tileSupportCount'
+Assert-Match "guide documents pseudo gt face verification input" $guide 'WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*face-verification-manifest\.csv[\s\S]*faceVerificationConfidence'
 Assert-Match "guide says no full video smoke override" $guide '-AllowLongSmokeSource'
 Assert-Match "guide records wrapper smoke evidence" $guide 'Wrapper Smoke[\s\S]*yolo-problem-span-wrapper-smoke[\s\S]*Detection rows:\s*`96`[\s\S]*removedFrames=33,34,35[\s\S]*blockedByCleanup=3[\s\S]*cleanupBlockedFrames=33,34,35'
 Assert-Match "guide documents cleanup-block pass criteria" $guide 'blockedByCleanup=\.\.\.[\s\S]*cleanupBlockedFrames=\.\.\.[\s\S]*후속 anti-flicker fill'

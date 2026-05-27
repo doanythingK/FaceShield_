@@ -51,6 +51,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 검출 박스가 짧은 clip 위에서 시간 순서대로 어떻게 이어지는지 확인하려면 `-WithDetectionOverlayVideo`를 추가한다. 이 경우 `yolo-detection-overlay.mp4`가 함께 생성된다.
 review frame을 한 장 이미지로 빠르게 훑어보려면 `-WithReviewContactSheet`를 추가한다. 이 옵션은 `yolo-detection-overlay.mp4`와 `yolo-review-contact-sheet.png`를 함께 생성한다.
 고품질 검증용 tile manifest까지 같은 run에서 만들려면 `-WithPseudoGtTileInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtTileSkipImageExtraction`을 함께 쓴다.
+기본 YOLO 후보 박스를 고품질 face verification 모델로 재검증할 crop manifest까지 같은 run에서 만들려면 `-WithPseudoGtFaceVerificationInput`을 추가한다. 이미지만 바로 만들지 않고 manifest만 확인하려면 `-PseudoGtFaceVerificationSkipImageExtraction`을 함께 쓴다.
 
 고품질 검증 모델을 별도 로컬 runner로 실행했다면, 그 산출 CSV를 problem-span runner에 붙여 test-only pseudo-GT evidence를 만들 수 있다. 이 CSV들은 기본 앱 런타임 입력이 아니며, review 후보 우선순위용 증거로만 사용한다.
 
@@ -71,6 +72,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
 
 외부 runner는 manifest의 `tileImagePath`, `frame`, `tileX`, `tileY`, `tileW`, `tileH`를 읽어 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다.
 
+기본 YOLO 후보 자체를 고품질 face verification 모델에 넣을 때는 `new-yolo-pseudo-gt-face-verification-input.ps1`가 만든 `face-verification-manifest.csv`를 사용한다. 이 manifest는 `cropImagePath`, `candidateId`, `basePredictionId`, 원본 YOLO box, 확장 crop 좌표를 담고, 외부 runner는 원본 frame 좌표계 기준 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만들어야 한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-face-verification-input.ps1 `
+  -VideoPath ".tmp/yolo-problem-span-0900/followup-00-09-00-2s.mp4" `
+  -BasePredictionLog ".tmp/yolo-problem-span-0900/yolo-quality-2s-dump.log" `
+  -OutputDir ".tmp/local-heavy-model/face-verification-input" `
+  -CropPaddingRatio 0.35 `
+  -ExternalCommand "powershell.exe" `
+  -ExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-face-verifier.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
+  -ExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv"
+```
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-problem-span-verification.ps1 `
   -Source "srcTest/260102_jp_10.mp4" `
@@ -81,6 +95,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
   -PseudoGtTileColumns 3 `
   -PseudoGtTileRows 3 `
   -PseudoGtTileOverlapRatio 0.25 `
+  -WithPseudoGtFaceVerificationInput `
   -PseudoGtTileFaceCsv ".tmp/local-heavy-model/tile-face.csv" `
   -PseudoGtFaceVerificationCsv ".tmp/local-heavy-model/face-verification.csv" `
   -PseudoGtPersonObjectCsv ".tmp/local-heavy-model/person-object.csv"
@@ -115,6 +130,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pse
 - `yolo-review-contact-sheet.png`: `-WithReviewContactSheet` 사용 시 생성되는 frame-number-labeled review contact sheet
 - `pseudo-gt-tile-input/tile-manifest.csv`: `-WithPseudoGtTileInput` 사용 시 생성되는 test-only 고품질 모델 입력 manifest
 - `pseudo-gt-tile-input/tile-input-summary.md`: tile frame/overlap/해상도/외부 runner 연결 요약
+- `pseudo-gt-face-verification-input/face-verification-manifest.csv`: `-WithPseudoGtFaceVerificationInput` 사용 시 생성되는 base YOLO 후보 crop manifest
+- `pseudo-gt-face-verification-input/face-verification-input-summary.md`: crop padding/해상도/외부 face verification runner 연결 요약
 - `pseudo-gt-candidates.csv`: test-only high-precision tile/verification 결과를 기본 YOLO 후보와 비교한 후보 CSV
 - `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
 - `pseudo-gt-review-closure.csv`: review CSV 라벨로 pseudo-GT 후보가 닫혔는지 확인한 결과
