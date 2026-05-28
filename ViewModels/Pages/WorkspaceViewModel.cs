@@ -35,6 +35,8 @@ namespace FaceShield.ViewModels.Pages
         private const float LowConfidenceMargin = 0.05f;
         private const int SuspiciousNoFaceMaxGap = 8;
         private const int NoDetectionReviewSampleCount = 12;
+        private const int SparseNoFaceReviewSampleCount = 12;
+        private const double SparseNoFaceReviewMaxCoverageRatio = 0.20;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private string? _autoRunSignature;
@@ -864,10 +866,21 @@ namespace FaceShield.ViewModels.Pages
                     }
                 }
 
-                if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo && !hasFace.Any(static x => x))
-                    AddNoDetectionReviewFrames(total, noFace);
+                int faceFrameCount = hasFace.Count(static x => x);
+                if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
+                {
+                    if (faceFrameCount == 0)
+                        AddNoDetectionReviewFrames(total, noFace);
+                    else
+                    {
+                        AddSuspiciousNoFaceGaps(hasFace, noFace);
+                        AddSparseNoFaceReviewFrames(hasFace, faceFrameCount, noFace);
+                    }
+                }
                 else
+                {
                     AddSuspiciousNoFaceGaps(hasFace, noFace);
+                }
 
                 for (int i = 1; i < total - 1; i++)
                 {
@@ -971,6 +984,75 @@ namespace FaceShield.ViewModels.Pages
             noFace.AddRange(frames);
             System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskNoDetectionReview] frames={string.Join(",", frames)} totalFrames={totalFrames}");
+        }
+
+        private static void AddSparseNoFaceReviewFrames(bool[] hasFace, int faceFrameCount, List<int> noFace)
+        {
+            int totalFrames = hasFace.Length;
+            if (totalFrames <= 0 || faceFrameCount <= 0)
+                return;
+
+            double coverage = faceFrameCount / (double)totalFrames;
+            if (coverage > SparseNoFaceReviewMaxCoverageRatio)
+                return;
+
+            int firstFace = Array.FindIndex(hasFace, static x => x);
+            int lastFace = Array.FindLastIndex(hasFace, static x => x);
+            if (firstFace < 0 || lastFace <= firstFace)
+                return;
+
+            var candidateFrames = new List<int>();
+            int i = 0;
+            while (i < totalFrames)
+            {
+                if (hasFace[i])
+                {
+                    i++;
+                    continue;
+                }
+
+                int start = i;
+                while (i < totalFrames && !hasFace[i])
+                    i++;
+
+                int endExclusive = i;
+                int length = endExclusive - start;
+                if (length <= SuspiciousNoFaceMaxGap)
+                    continue;
+
+                bool hasPreviousFace = start > firstFace;
+                bool hasNextFace = endExclusive <= lastFace;
+                if (!hasPreviousFace || !hasNextFace)
+                    continue;
+
+                candidateFrames.Add(start);
+                if (length > 2)
+                    candidateFrames.Add(start + length / 2);
+                candidateFrames.Add(endExclusive - 1);
+            }
+
+            if (candidateFrames.Count == 0)
+                return;
+
+            var frames = new SortedSet<int>(noFace);
+            int sampleCount = Math.Min(SparseNoFaceReviewSampleCount, candidateFrames.Count);
+            if (sampleCount == 1)
+            {
+                frames.Add(candidateFrames[0]);
+            }
+            else
+            {
+                for (int sample = 0; sample < sampleCount; sample++)
+                {
+                    int index = (int)Math.Round(sample * (candidateFrames.Count - 1) / (double)(sampleCount - 1));
+                    frames.Add(Math.Clamp(candidateFrames[index], 0, totalFrames - 1));
+                }
+            }
+
+            noFace.Clear();
+            noFace.AddRange(frames);
+            System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskSparseNoFaceReview] faceFrames={faceFrameCount} totalFrames={totalFrames} coverage={coverage:0.000} frames={string.Join(",", frames)}");
         }
 
         private static int[] MergeSortedFrames(IReadOnlyList<int> first, IReadOnlyList<int> second)
