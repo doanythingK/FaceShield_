@@ -899,7 +899,18 @@ namespace FaceShield.ViewModels.Pages
         private float GetLowConfidenceCutoff()
         {
             var defaults = FaceOnnxDetector.GetDefaultThresholds();
-            float baseThreshold = _detectorOptions.ConfidenceThreshold ?? defaults.Confidence;
+            float baseThreshold = _detectorFactoryOptions.Backend switch
+            {
+                FaceDetectorBackend.YoloFaceOnnx when _detectorFactoryOptions.YoloFaceOnnxOptions != null =>
+                    _detectorFactoryOptions.YoloFaceOnnxOptions.ConfidenceThreshold,
+                FaceDetectorBackend.ScrfdOnnx when _detectorFactoryOptions.ScrfdOnnxOptions != null =>
+                    _detectorFactoryOptions.ScrfdOnnxOptions.ConfidenceThreshold,
+                FaceDetectorBackend.YuNetOnnx when _detectorFactoryOptions.YuNetOnnxOptions != null =>
+                    _detectorFactoryOptions.YuNetOnnxOptions.ConfidenceThreshold,
+                FaceDetectorBackend.FaceOnnx when _detectorFactoryOptions.FaceOnnxOptions != null =>
+                    _detectorFactoryOptions.FaceOnnxOptions.ConfidenceThreshold ?? defaults.Confidence,
+                _ => _detectorOptions.ConfidenceThreshold ?? defaults.Confidence
+            };
             return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);
         }
 
