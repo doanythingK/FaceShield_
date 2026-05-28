@@ -13,6 +13,8 @@ namespace FaceShield.Services.Analysis
     {
         public const double DefaultDifferenceThreshold = 0.32;
         public const double DefaultDirectDifferenceThreshold = 0.36;
+        private const double StrongContinuationIndependentCenterShiftRatio = 0.22;
+        private const double StrongContinuationIndependentAreaChangeRatio = 1.65;
 
         public IReadOnlyList<FaceTrackFilledFace> BuildWeakTrackTransitionCandidates(
             FrameMaskProvider maskProvider,
@@ -166,23 +168,6 @@ namespace FaceShield.Services.Analysis
                     if (run.Count == 0)
                         continue;
 
-                    // Long weak runs are still worth checking when they begin
-                    // immediately after a scene cut. Skipping them entirely lets
-                    // a carried blur survive just because it lasted past the
-                    // conservative carry window. A strong continuation still
-                    // protects real after-cut detections.
-                    if (HasStrongContinuation(
-                            entries,
-                            run[^1].FrameIndex + 1,
-                            run[^1].Bounds,
-                            maxTargetConfidence,
-                            minIou,
-                            maxCenterShiftRatio,
-                            maxAreaChangeRatio))
-                    {
-                        continue;
-                    }
-
                     int lookbackFrames = Math.Max(1, sourceLookbackFrames);
                     foreach (var item in run)
                     {
@@ -196,11 +181,25 @@ namespace FaceShield.Services.Analysis
                             float sourceConfidenceThreshold = minSourceConfidence > 0
                                 ? minSourceConfidence
                                 : maxTargetConfidence;
-                            if (!HasMatchingSourceFace(
+                            if (!TryFindMatchingSourceFace(
                                     entries,
                                     sourceFrame,
                                     item.Bounds,
                                     sourceConfidenceThreshold,
+                                    minIou,
+                                    maxCenterShiftRatio,
+                                    maxAreaChangeRatio,
+                                    out var sourceFace))
+                            {
+                                continue;
+                            }
+
+                            if (HasIndependentStrongContinuation(
+                                    entries,
+                                    run[^1].FrameIndex + 1,
+                                    run[^1].Bounds,
+                                    sourceFace,
+                                    maxTargetConfidence,
                                     minIou,
                                     maxCenterShiftRatio,
                                     maxAreaChangeRatio))
@@ -680,10 +679,11 @@ namespace FaceShield.Services.Analysis
             return bestScore > double.NegativeInfinity;
         }
 
-        private static bool HasStrongContinuation(
+        private static bool HasIndependentStrongContinuation(
             IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
             int frameIndex,
             Rect face,
+            Rect sourceFace,
             float maxTargetConfidence,
             double minIou,
             double maxCenterShiftRatio,
@@ -697,7 +697,17 @@ namespace FaceShield.Services.Analysis
                 if (GetConfidence(data, i) <= maxTargetConfidence)
                     continue;
                 if (IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
-                    return true;
+                {
+                    if (GetNormalizedCenterShift(sourceFace, data.Faces[i]) >= StrongContinuationIndependentCenterShiftRatio)
+                        return true;
+
+                    double areaRatio = GetAreaRatio(sourceFace, data.Faces[i]);
+                    if (areaRatio >= StrongContinuationIndependentAreaChangeRatio ||
+                        areaRatio <= 1.0 / StrongContinuationIndependentAreaChangeRatio)
+                    {
+                        return true;
+                    }
+                }
             }
 
             return false;
@@ -723,27 +733,37 @@ namespace FaceShield.Services.Analysis
             return false;
         }
 
-        private static bool HasMatchingSourceFace(
+        private static bool TryFindMatchingSourceFace(
             IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
             int frameIndex,
             Rect face,
             float minConfidenceExclusive,
             double minIou,
             double maxCenterShiftRatio,
-            double maxAreaChangeRatio)
+            double maxAreaChangeRatio,
+            out Rect sourceFace)
         {
+            sourceFace = default;
             if (!entries.TryGetValue(frameIndex, out var data))
                 return false;
 
+            double bestScore = double.NegativeInfinity;
             for (int i = 0; i < data.Faces.Count; i++)
             {
                 if (GetConfidence(data, i) <= minConfidenceExclusive)
                     continue;
-                if (IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
-                    return true;
+                if (!IsMatchingFace(face, data.Faces[i], minIou, maxCenterShiftRatio, maxAreaChangeRatio))
+                    continue;
+
+                double score = IoU(face, data.Faces[i]);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    sourceFace = data.Faces[i];
+                }
             }
 
-            return false;
+            return bestScore > double.NegativeInfinity;
         }
 
         private static bool IsWeakCandidate(
