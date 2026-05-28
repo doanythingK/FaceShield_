@@ -200,7 +200,8 @@ function New-DetectionRow {
         [double]$Confidence,
         [string]$Source,
         [int]$TileSupportCount = 0,
-        [double]$VerificationDistance = 1.0
+        [double]$VerificationDistance = 1.0,
+        [string]$ClassLabel = ""
     )
 
     [pscustomobject]@{
@@ -214,6 +215,7 @@ function New-DetectionRow {
         Source = $Source
         TileSupportCount = $TileSupportCount
         VerificationDistance = $VerificationDistance
+        ClassLabel = $ClassLabel
     }
 }
 
@@ -241,6 +243,7 @@ function Read-DetectionCsvRows {
 
         $tileSupport = Read-IntValue $row @("tileSupportCount", "supportCount", "TileSupportCount") 1
         $distance = Read-DoubleValue $row @("faceVerificationDistance", "verificationDistance", "distance", "FaceVerificationDistance") 1.0
+        $classLabel = [string](Get-PropertyValue $row @("class", "Class", "label", "Label", "name", "Name", "category", "Category") "")
 
         $rows.Add((New-DetectionRow `
                     -Frame $frame `
@@ -252,7 +255,8 @@ function Read-DetectionCsvRows {
                     -Confidence (Read-DoubleValue $row @("confidence", "conf", "faceVerificationConfidence", "tileFaceConfidence", "Confidence")) `
                     -Source $Source `
                     -TileSupportCount $tileSupport `
-                    -VerificationDistance $distance)) | Out-Null
+                    -VerificationDistance $distance `
+                    -ClassLabel $classLabel)) | Out-Null
         $index++
     }
 
@@ -474,6 +478,10 @@ function Find-BestPersonSupport {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-PersonClassLabel $candidate.ClassLabel)) {
+            continue
+        }
+
         $upperOverlap = Get-FaceAreaOverlap $Target $candidate 0.45
         if ($upperOverlap -le 0) {
             continue
@@ -490,6 +498,21 @@ function Find-BestPersonSupport {
     }
 
     return $best
+}
+
+function Test-PersonClassLabel {
+    param([string]$ClassLabel)
+
+    if ([string]::IsNullOrWhiteSpace($ClassLabel)) {
+        return $true
+    }
+
+    $normalized = $ClassLabel.Trim().ToLowerInvariant()
+    return $normalized -eq "person" -or
+        $normalized -eq "human" -or
+        $normalized -eq "people" -or
+        $normalized -eq "man" -or
+        $normalized -eq "woman"
 }
 
 function Test-FaceGeometrySupport {
@@ -664,6 +687,7 @@ foreach ($base in $baseRows) {
     $verificationDistance = if ($hasVerificationSupport) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
+    $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
     $supportMatches = @($tileMatch, $verificationMatch)
     $bestIou = if ($hasFaceSupport) {
         [Math]::Max(
@@ -726,6 +750,7 @@ foreach ($base in $baseRows) {
             faceVerificationDistance = Format-Double $verificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
+            personObjectClass = $personObjectClass
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
@@ -756,6 +781,7 @@ foreach ($tile in $tileRows) {
     $temporalSupport = Get-TemporalFaceSupport $tile $tileRows $verificationRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
+    $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
     $verificationConfidence = if ($null -ne $verificationMatch) { $verificationMatch.Row.Confidence } else { 0.0 }
     $verificationDistance = if ($null -ne $verificationMatch) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
     if ($null -ne $verificationMatch) {
@@ -782,6 +808,7 @@ foreach ($tile in $tileRows) {
             faceVerificationDistance = Format-Double $verificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
+            personObjectClass = $personObjectClass
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
@@ -816,6 +843,7 @@ foreach ($verification in $verificationRows) {
     $temporalSupport = Get-TemporalFaceSupport $verification $tileRows $verificationRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
+    $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
     $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
     $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
@@ -839,6 +867,7 @@ foreach ($verification in $verificationRows) {
             faceVerificationDistance = Format-Double $verification.VerificationDistance
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
+            personObjectClass = $personObjectClass
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
@@ -934,6 +963,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             faceVerificationDistance = $row.faceVerificationDistance
             personConfidence = $row.personConfidence
             personUpperOverlap = $row.personUpperOverlap
+            personObjectClass = $row.personObjectClass
             supportFrameCount = $row.supportFrameCount
             supportRowCount = $row.supportRowCount
             supportSources = $row.supportSources

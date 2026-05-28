@@ -84,7 +84,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
-    [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760 }
+    [pscustomobject]@{ frame = 2; detectionId = "car-2"; x = 398.0; y = 298.0; w = 48.0; h = 58.0; confidence = 0.990; class = "car" },
+    [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760; class = "person" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personCsv
 
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -132,6 +133,7 @@ foreach ($column in @(
         "faceVerificationDistance",
         "personConfidence",
         "personUpperOverlap",
+        "personObjectClass",
         "supportFrameCount",
         "supportRowCount",
         "supportSources",
@@ -165,6 +167,9 @@ foreach ($column in @(
         "reviewPriorityReason",
         "fpProbability",
         "missProbability",
+        "personConfidence",
+        "personUpperOverlap",
+        "personObjectClass",
         "supportRowCount",
         "areaChangeRatio",
         "reviewStatus")) {
@@ -191,6 +196,14 @@ if ($null -eq $falsePositiveQueueRow) {
 $falsePositiveCandidateRow = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
 if ([double]::Parse($falsePositiveCandidateRow.fpProbability, [System.Globalization.CultureInfo]::InvariantCulture) -lt 0.78) {
     throw "Expected person/object support to avoid lowering falsePositiveCandidate probability."
+}
+
+if ($falsePositiveCandidateRow.personObjectClass -ne "person") {
+    throw "Expected non-person object class rows to be ignored for person support."
+}
+
+if ([double]::Parse($falsePositiveCandidateRow.personConfidence, [System.Globalization.CultureInfo]::InvariantCulture) -ge 0.99) {
+    throw "Expected non-person object confidence to stay out of personConfidence."
 }
 
 if ([double]::Parse($falsePositiveQueueRow.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
@@ -314,6 +327,7 @@ Assert-Contains "script accepts base prediction log" $scriptText "BasePrediction
 Assert-Contains "script accepts tile face CSV" $scriptText "TileFaceCsv"
 Assert-Contains "script accepts face verification CSV" $scriptText "FaceVerificationCsv"
 Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
+Assert-Contains "script filters person object class labels" $scriptText "Test-PersonClassLabel"
 Assert-Contains "script validates required input columns" $scriptText "strict-required-columns"
 Assert-Contains "script requires face verification distance" $scriptText "faceVerificationDistance"
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
