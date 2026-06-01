@@ -20,6 +20,8 @@ param(
     [string]$YoloGoalEvidenceReportWriter = "scripts/write-yolo-goal-evidence-report.ps1",
     [string]$YoloManualPendingReportWriter = "scripts/write-yolo-manual-pending-report.ps1",
     [string]$YoloHumanReviewDraftWriter = "scripts/new-yolo-human-review-draft.ps1",
+    [string]$YoloPseudoGtReviewDraftWriter = "scripts/new-yolo-pseudo-gt-review-draft.ps1",
+    [string]$YoloPseudoGtReviewDraftVerify = "scripts/verify-yolo-pseudo-gt-review-draft-state.ps1",
     [string]$YoloCompletionFinalizer = "scripts/complete-yolo-goal-after-manual-gates.ps1",
     [string]$YoloPseudoGtReviewClosure = "scripts/close-yolo-pseudo-gt-review.ps1",
     [string]$YoloPseudoGtSeparationVerify = "scripts/verify-yolo-pseudo-gt-separation-state.ps1"
@@ -99,6 +101,8 @@ $appCodeBehind = Read-RepoFile $AppCodeBehind
 $goalEvidenceReportWriter = Read-RepoFile $YoloGoalEvidenceReportWriter
 $manualPendingReportWriter = Read-RepoFile $YoloManualPendingReportWriter
 $humanReviewDraftWriter = Read-RepoFile $YoloHumanReviewDraftWriter
+$pseudoGtReviewDraftWriter = Read-RepoFile $YoloPseudoGtReviewDraftWriter
+$pseudoGtReviewDraftVerify = Read-RepoFile $YoloPseudoGtReviewDraftVerify
 $completionFinalizer = Read-RepoFile $YoloCompletionFinalizer
 $pseudoGtReviewClosure = Read-RepoFile $YoloPseudoGtReviewClosure
 $pseudoGtSeparationVerify = Read-RepoFile $YoloPseudoGtSeparationVerify
@@ -368,6 +372,7 @@ Assert-Contains "auto verifier exposes full gt candidate state" $autoVerify "Run
 Assert-Contains "auto verifier runs pseudo gt separation state" $autoVerify "verify-yolo-pseudo-gt-separation-state.ps1"
 Assert-Contains "auto verifier runs pseudo gt face verification input state" $autoVerify "verify-yolo-pseudo-gt-face-verification-input-state.ps1"
 Assert-Contains "auto verifier runs pseudo gt person object input state" $autoVerify "verify-yolo-pseudo-gt-person-object-input-state.ps1"
+Assert-Contains "auto verifier runs pseudo gt review draft state" $autoVerify "verify-yolo-pseudo-gt-review-draft-state.ps1"
 Assert-Contains "top-level verifier has completion audit path" $autoVerify "verify-yolo-completion-audit-state.ps1"
 Assert-Contains "top-level verifier has require complete guard" $autoVerify "yolo-require-complete-guard"
 Assert-Contains "top-level verifier promotes require complete to yolo state" $autoVerify '$RunYoloState = $true'
@@ -475,6 +480,7 @@ Assert-Contains "manual gate helper opens review index" $manualGateHelper "Revie
 Assert-Contains "manual gate helper verifies ready state" $manualGateHelper "VerifyReady"
 Assert-Contains "manual gate helper verifies completed state" $manualGateHelper "VerifyCompleted"
 Assert-Contains "manual gate helper computes remaining gates" $manualGateHelper "Get-RemainingManualGates"
+Assert-Contains "manual gate helper checks strict pseudo GT closure readiness" $manualGateHelper "Test-PseudoGtReviewClosureReady"
 Assert-Contains "manual gate helper prints remaining gates" $manualGateHelper "remaining="
 Assert-Contains "manual gate helper includes missing pseudo GT in remaining gates" $manualGateHelper "pseudo-gt-evidence"
 Assert-Contains "manual gate helper includes pseudo GT closure in remaining gates" $manualGateHelper "pseudo-gt-review-closure"
@@ -491,6 +497,10 @@ Assert-Contains "manual gate helper supports gui evidence prep" $manualGateHelpe
 Assert-Contains "manual gate helper runs gui evidence prep" $manualGateHelper "prepare-yolo-gui-smoke-evidence.ps1"
 Assert-Contains "manual gate helper prints human review draft command" $manualGateHelper "humanReviewDraftCommand"
 Assert-Contains "manual gate helper runs human review draft writer" $manualGateHelper "new-yolo-human-review-draft.ps1"
+Assert-Contains "manual gate helper prints pseudo GT review draft command" $manualGateHelper "pseudoGtReviewDraftCommand"
+Assert-Contains "manual gate helper records pseudo GT review queue csv" $manualGateHelper "PseudoGtReviewQueueCsv"
+Assert-Contains "manual gate helper records pseudo GT review draft dir" $manualGateHelper "PseudoGtReviewDraftDir"
+Assert-Contains "manual gate helper runs pseudo GT review draft writer" $manualGateHelper "new-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "manual gate helper prints completion plan action" $manualGateHelper "completionPlanAction"
 Assert-Contains "manual gate helper prints full GT action" $manualGateHelper "fullGtAction"
 Assert-Contains "manual gate helper prints GUI smoke action" $manualGateHelper "guiSmokeAction"
@@ -516,6 +526,7 @@ Assert-Contains "manual gate helper verifier checks completed pass" $manualGateH
 Assert-Contains "manual gate helper verifier builds completed fixture" $manualGateHelperVerify "New-CompletedGuiChecklistFixture"
 Assert-Contains "manual gate helper verifier uses AI candidate fixture" $manualGateHelperVerify "full-gt-review-reviewed-candidate.csv"
 Assert-Contains "manual gate helper verifier checks completed fixture pass" $manualGateHelperVerify "completed fixture passes helper"
+Assert-Contains "manual gate helper verifier blocks incomplete pseudo GT closure" $manualGateHelperVerify "incomplete pseudo-GT closure"
 Assert-Contains "manual gate helper verifier checks summary writing" $manualGateHelperVerify "summary records completed readiness command"
 Assert-Contains "manual gate helper verifier checks dashboard" $manualGateHelperVerify "manual gate dashboard"
 Assert-Contains "manual gate helper verifier checks progress counts" $manualGateHelperVerify "summary records full GT pending count"
@@ -526,6 +537,8 @@ Assert-Contains "manual gate helper verifier checks pending report summary" $man
 Assert-Contains "manual gate helper verifier checks gui evidence prep summary" $manualGateHelperVerify "summary records GUI evidence prep command"
 Assert-Contains "manual gate helper verifier checks gui evidence prep path" $manualGateHelperVerify "prepared GUI evidence guide"
 Assert-Contains "manual gate helper verifier checks human review draft summary" $manualGateHelperVerify "summary records human review draft command"
+Assert-Contains "manual gate helper verifier checks pseudo GT review draft command" $manualGateHelperVerify "summary records pseudo GT review draft command"
+Assert-Contains "manual gate helper verifier checks pseudo GT review draft dashboard" $manualGateHelperVerify "dashboard records pseudo GT review draft command"
 Assert-Contains "manual gate helper verifier checks completion plan action summary" $manualGateHelperVerify "summary records completion plan action"
 Assert-Contains "manual gate helper verifier checks track hold summary" $manualGateHelperVerify "summary records preview track hold step"
 Assert-Contains "manual gate helper verifier checks app open summary" $manualGateHelperVerify "summary records app open command"
@@ -617,6 +630,14 @@ Assert-Contains "human review draft writer keeps final fields blank" $humanRevie
 Assert-Contains "human review draft writer records candidate labels" $humanReviewDraftWriter "candidateLabel"
 Assert-Contains "human review draft writer records candidate full-frame counts" $humanReviewDraftWriter "candidateMissedFaceCount"
 Assert-Contains "human review draft writer records manual missed candidates" $humanReviewDraftWriter "manualMissedCandidateRows"
+Assert-Contains "pseudo gt review draft writer records test-only rule" $pseudoGtReviewDraftWriter "test-only-reference-not-final-gt"
+Assert-Contains "pseudo gt review draft writer keeps final review fields blank" $pseudoGtReviewDraftWriter 'label = ""'
+Assert-Contains "pseudo gt review draft writer preserves base source ids" $pseudoGtReviewDraftWriter "basePredictionId"
+Assert-Contains "pseudo gt review draft writer requires miss source id blank" $pseudoGtReviewDraftWriter "sourcePredictionId blank"
+Assert-Contains "pseudo gt review draft writer creates full gt draft csv" $pseudoGtReviewDraftWriter "pseudo-gt-full-gt-review-draft.csv"
+Assert-Contains "pseudo gt review draft writer creates full frame draft csv" $pseudoGtReviewDraftWriter "pseudo-gt-full-frame-review-draft.csv"
+Assert-Contains "pseudo gt review draft verifier selftests draft output" $pseudoGtReviewDraftVerify "YoloPseudoGtReviewDraftVerify"
+Assert-Contains "pseudo gt review draft verifier checks source id geometry" $pseudoGtReviewDraftVerify "source id plus IoU geometry"
 Assert-Contains "completion finalizer verifies manual readiness" $completionFinalizer "manual-readiness-completed-state"
 Assert-Contains "completion finalizer updates plan marker" $completionFinalizer "Update-GoalAuditMarker"
 Assert-Contains "completion finalizer gates pseudo gt closure" $completionFinalizer "pseudo-gt-review-closure"

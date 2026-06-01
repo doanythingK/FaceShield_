@@ -111,6 +111,26 @@ function Get-ColumnFillState {
     return "partial"
 }
 
+function Test-PseudoGtReviewClosureReady {
+    param(
+        [string]$ClosureCsvPath,
+        [string]$ClosureSummaryPath
+    )
+
+    $resolvedClosureCsv = Resolve-RepoPath $ClosureCsvPath
+    $resolvedClosureSummary = Resolve-RepoPath $ClosureSummaryPath
+    if (-not (Test-Path $resolvedClosureCsv) -or -not (Test-Path $resolvedClosureSummary)) {
+        return $false
+    }
+
+    $rows = @(Import-Csv $resolvedClosureCsv)
+    if ($rows.Count -eq 0) {
+        return $false
+    }
+
+    return @($rows | Where-Object { $_.closureStatus -ne "closed" }).Count -eq 0
+}
+
 function New-CompletedGuiChecklistFixture {
     param([string]$OutputCsv)
 
@@ -258,6 +278,10 @@ Assert-Contains "helper prints pseudo GT review closure command" $helperText "co
 Assert-Contains "helper uses pseudo GT review closure script" $helperText "close-yolo-pseudo-gt-review.ps1"
 Assert-Contains "helper prints pseudo GT status" $helperText "pseudoGtStatus"
 Assert-Contains "helper prints pseudo GT action" $helperText "pseudoGtAction"
+Assert-Contains "helper prints pseudo GT review draft command" $helperText "pseudoGtReviewDraftCommand"
+Assert-Contains "helper records pseudo GT review queue csv" $helperText "PseudoGtReviewQueueCsv"
+Assert-Contains "helper records pseudo GT review draft dir" $helperText "PseudoGtReviewDraftDir"
+Assert-Contains "helper uses pseudo GT review draft writer" $helperText "new-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "helper documents goal evidence publish switch" $helperText "PublishPseudoGtToGoalEvidence"
 Assert-Contains "helper requires pseudo GT before completion" $helperText "Pseudo-GT candidate CSV is required before completed manual gates"
 Assert-Contains "helper supports ready verification" $helperText "VerifyReady"
@@ -311,8 +335,9 @@ $reviewState = Get-ColumnFillState $reviewRows "label"
 $frameState = Get-ColumnFillState $frameRows "missedFaceCount"
 $guiState = Get-ColumnFillState $guiRows "status"
 $defaultPseudoGtExists = Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv")
-$defaultPseudoGtClosureExists = (Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv")) -and
-    (Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md"))
+$defaultPseudoGtClosureReady = Test-PseudoGtReviewClosureReady `
+    -ClosureCsvPath ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv" `
+    -ClosureSummaryPath ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md"
 $allPending = $reviewState -eq "pending" -and $frameState -eq "pending" -and $guiState -eq "pending"
 $allCompleted = $reviewState -eq "completed" -and $frameState -eq "completed" -and $guiState -eq "completed"
 $expectedRemainingParts = @()
@@ -325,7 +350,7 @@ if ($guiState -ne "completed") {
 if (-not $defaultPseudoGtExists) {
     $expectedRemainingParts += "pseudo-gt-evidence"
 }
-elseif (-not $defaultPseudoGtClosureExists) {
+elseif (-not $defaultPseudoGtClosureReady) {
     $expectedRemainingParts += "pseudo-gt-review-closure"
 }
 if ($expectedRemainingParts.Count -eq 0) {
@@ -343,6 +368,10 @@ Assert-Contains "ready output includes completed readiness command" $ready.Text 
 Assert-Contains "ready output includes pseudo GT closure command" $ready.Text "completedPseudoGtReviewClosureCommand"
 Assert-Contains "ready output includes pseudo GT status" $ready.Text "pseudoGtStatus="
 Assert-Contains "ready output includes pseudo GT action" $ready.Text "pseudoGtAction="
+Assert-Contains "ready output includes pseudo GT review queue csv" $ready.Text "pseudoGtReviewQueueCsv="
+Assert-Contains "ready output includes pseudo GT review draft dir" $ready.Text "pseudoGtReviewDraftDir="
+Assert-Contains "ready output includes pseudo GT review draft report" $ready.Text "pseudoGtReviewDraftReport="
+Assert-Contains "ready output includes pseudo GT review draft command" $ready.Text "pseudoGtReviewDraftCommand="
 Assert-Contains "ready output points to goal evidence publish switch" $ready.Text "PublishPseudoGtToGoalEvidence"
 Assert-Contains "ready output includes final yolo state command" $ready.Text "completedYoloStateCommand"
 Assert-Contains "ready output includes completion finalizer command" $ready.Text "completionFinalizerCommand"
@@ -383,6 +412,10 @@ Assert-Contains "summary records pseudo GT closure command" $summaryText "close-
 Assert-Contains "summary records final yolo state command" $summaryText "verify-yolo-state.ps1"
 Assert-Contains "summary records pseudo GT status" $summaryText "pseudoGtStatus"
 Assert-Contains "summary records pseudo GT action" $summaryText "pseudoGtAction"
+Assert-Contains "summary records pseudo GT review queue" $summaryText "pseudoGtReviewQueueCsv"
+Assert-Contains "summary records pseudo GT review draft dir" $summaryText "pseudoGtReviewDraftDir"
+Assert-Contains "summary records pseudo GT review draft report" $summaryText "pseudo-gt-review-draft-report.md"
+Assert-Contains "summary records pseudo GT review draft command" $summaryText "new-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "summary records goal evidence publish switch" $summaryText "PublishPseudoGtToGoalEvidence"
 Assert-Contains "summary records completion finalizer command" $summaryText "complete-yolo-goal-after-manual-gates.ps1"
 Assert-Contains "summary records pending report command" $summaryText "write-yolo-manual-pending-report.ps1"
@@ -444,6 +477,8 @@ Assert-Contains "dashboard records preview track hold" $dashboardText "preview-t
 Assert-Contains "dashboard records completion finalizer" $dashboardText "complete-yolo-goal-after-manual-gates.ps1"
 Assert-Contains "dashboard records pseudo GT closure command" $dashboardText "close-yolo-pseudo-gt-review.ps1"
 Assert-Contains "dashboard records pseudo GT evidence section" $dashboardText "Pseudo-GT Completion Evidence"
+Assert-Contains "dashboard records pseudo GT review draft command" $dashboardText "Prepare review draft"
+Assert-Contains "dashboard records pseudo GT review draft writer" $dashboardText "new-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "dashboard records goal evidence publish switch" $dashboardText "PublishPseudoGtToGoalEvidence"
 
 $preparedGuiCsv = ".tmp\yolo-manual-gate-helper\prepared-fixture\manual-smoke-checklist.csv"
@@ -509,14 +544,24 @@ Assert-Contains "prepared output verifies evidence custom GUI checklist" $prepar
 $completed = Invoke-Helper @("-VerifyCompleted")
 if ($allCompleted) {
     if ($defaultPseudoGtExists) {
-        if ($completed.ExitCode -ne 0) {
-            throw "Manual gate helper -VerifyCompleted failed on completed manual files with exit code $($completed.ExitCode)"
-        }
+        if ($defaultPseudoGtClosureReady) {
+            if ($completed.ExitCode -ne 0) {
+                throw "Manual gate helper -VerifyCompleted failed on completed manual files with exit code $($completed.ExitCode)"
+            }
 
-        Assert-Contains "completed output runs manual readiness" $completed.Text "manual-readiness-completed-state"
-        Assert-Contains "completed output runs full GT reviewed verifier" $completed.Text "full-gt-reviewed-state"
-        Assert-Contains "completed output runs GUI smoke verifier" $completed.Text "gui-smoke-state"
-        Assert-Contains "completed output passes" $completed.Text "[YoloManualGate] all requested checks passed"
+            Assert-Contains "completed output runs manual readiness" $completed.Text "manual-readiness-completed-state"
+            Assert-Contains "completed output runs full GT reviewed verifier" $completed.Text "full-gt-reviewed-state"
+            Assert-Contains "completed output runs GUI smoke verifier" $completed.Text "gui-smoke-state"
+            Assert-Contains "completed output passes" $completed.Text "[YoloManualGate] all requested checks passed"
+        }
+        else {
+            if ($completed.ExitCode -eq 0) {
+                throw "Manual gate helper -VerifyCompleted unexpectedly passed with incomplete pseudo-GT closure"
+            }
+
+            Assert-Contains "completed output runs pseudo GT closure" $completed.Text "pseudo-gt-review-closure"
+            Assert-Contains "completed output blocks incomplete pseudo GT closure" $completed.Text "Pseudo-GT review closure is incomplete"
+        }
     }
     else {
         if ($completed.ExitCode -eq 0) {
