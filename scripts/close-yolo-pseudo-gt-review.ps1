@@ -175,6 +175,32 @@ function Format-Double {
     return $Value.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Get-ClosureCount {
+    param(
+        [object[]]$Rows,
+        [string]$CandidateType,
+        [string]$Status = ""
+    )
+
+    return @($Rows | Where-Object {
+            $_.candidateType -eq $CandidateType -and
+            ([string]::IsNullOrWhiteSpace($Status) -or $_.closureStatus -eq $Status)
+        }).Count
+}
+
+function New-CandidateTypeBreakdownLine {
+    param(
+        [object[]]$Rows,
+        [string]$CandidateType
+    )
+
+    $total = Get-ClosureCount -Rows $Rows -CandidateType $CandidateType
+    $closedCount = Get-ClosureCount -Rows $Rows -CandidateType $CandidateType -Status "closed"
+    $unreviewedCount = Get-ClosureCount -Rows $Rows -CandidateType $CandidateType -Status "unreviewed"
+    $mismatchCount = Get-ClosureCount -Rows $Rows -CandidateType $CandidateType -Status "label-mismatch"
+    return "- ${CandidateType}: total=$total, closed=$closedCount, unreviewed=$unreviewedCount, labelMismatch=$mismatchCount"
+}
+
 function Find-BestReviewMatch {
     param(
         [object]$Candidate,
@@ -387,6 +413,19 @@ $mismatch = @($closureRows | Where-Object { $_.closureStatus -eq "label-mismatch
 $supportedClosed = @($closureRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.closureStatus -eq "closed" }).Count
 $falsePositiveClosed = @($closureRows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.closureStatus -eq "closed" }).Count
 $missClosed = @($closureRows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.closureStatus -eq "closed" }).Count
+$closureRowArray = $closureRows.ToArray()
+$candidateTypeBreakdown = foreach ($candidateTypeName in @("supportedFaceCandidate", "falsePositiveCandidate", "missCandidate")) {
+    New-CandidateTypeBreakdownLine -Rows $closureRowArray -CandidateType $candidateTypeName
+}
+$unreviewedReasonBreakdown = @($closureRows |
+        Where-Object { $_.closureStatus -eq "unreviewed" } |
+        Group-Object closureReason |
+        Sort-Object -Property @{ Expression = "Count"; Descending = $true }, Name |
+        Select-Object -First 8)
+$unreviewedPreview = @($closureRows |
+        Where-Object { $_.closureStatus -eq "unreviewed" } |
+        Sort-Object { [int]$_.frame }, candidateId |
+        Select-Object -First 12)
 
 $summary = @(
     "# YOLO Pseudo-GT Review Closure",
@@ -404,6 +443,30 @@ $summary = @(
     "- falsePositiveClosed=$falsePositiveClosed",
     "- missClosed=$missClosed",
     "- minReviewIou=$($MinReviewIou.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
+    "",
+    "## Candidate Type Breakdown",
+    "",
+    $candidateTypeBreakdown,
+    "",
+    "## Unreviewed Reason Breakdown",
+    "",
+    $(if ($unreviewedReasonBreakdown.Count -eq 0) {
+        "- none"
+    }
+    else {
+        $unreviewedReasonBreakdown | ForEach-Object { "- $($_.Name): $($_.Count)" }
+    }),
+    "",
+    "## First Unreviewed Candidates",
+    "",
+    $(if ($unreviewedPreview.Count -eq 0) {
+        "- none"
+    }
+    else {
+        $unreviewedPreview | ForEach-Object {
+            "- candidateId=$($_.candidateId), frame=$($_.frame), candidateType=$($_.candidateType), expected=$($_.expectedReviewLabel), reason=$($_.closureReason), fpProbability=$($_.fpProbability), missProbability=$($_.missProbability)"
+        }
+    }),
     "",
     "A pseudo-GT candidate is final only when the matching review CSV row has a human label, completed reviewStatus, and evidenceNotes.",
     "For missCandidate rows, the matching row should be a manual face/miss row in full-gt-review.csv and, when present, full-frame-review.csv must record a completed missed-face scan with missedFaceRowsAdded > 0 and evidenceNotes."
