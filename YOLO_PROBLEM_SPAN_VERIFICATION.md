@@ -131,11 +131,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
   -PseudoGtPersonObjectExternalCommand "powershell.exe" `
   -PseudoGtPersonObjectExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File C:\local-models\run-heavy-person-object.ps1 -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`"" `
   -PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame `
-  -PseudoGtPersonObjectExternalOutputCsv ".tmp/local-heavy-model/person-object.csv"
+  -PseudoGtPersonObjectExternalOutputCsv ".tmp/local-heavy-model/person-object.csv" `
+  -PublishPseudoGtToGoalEvidence
 ```
 
 `PseudoGtTileExternalCommand`를 쓰면 problem-span runner가 tile manifest 생성 뒤 외부 고정밀 tile face runner를 실행하고, `PseudoGtTileExternalOutputCsv`를 곧바로 `PseudoGtTileFaceCsv`로 연결해 `pseudo-gt-candidates.csv` 생성에 사용한다. 이미 외부 모델을 따로 실행해 둔 경우에는 `PseudoGtTileFaceCsv`만 직접 넘겨도 된다.
 `PseudoGtPersonObjectExternalCommand`를 쓰면 runner가 full-frame person/object manifest 생성 뒤 외부 보조 runner를 실행하고, `PseudoGtPersonObjectExternalOutputCsv`를 곧바로 `PseudoGtPersonObjectCsv`로 연결한다. 외부 runner가 스케일된 frame 이미지 좌표로 출력하면 `PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame`을 지정해야 한다.
+
+`-PublishPseudoGtToGoalEvidence`를 붙이면 problem-span run의 pseudo-GT 후보를 completion gate가 읽는 `.tmp/yolo-pseudo-gt/pseudo-gt-candidates.csv`, `.tmp/yolo-pseudo-gt/pseudo-gt-summary.md`, `.tmp/yolo-pseudo-gt/pseudo-gt-review-queue.csv`로 발행한다. 이 스위치는 tile-face 또는 face-verification CSV/외부 runner가 있을 때만 허용된다. person/object 결과만으로는 얼굴 정답을 만들 수 없으므로 goal evidence 발행 조건이 아니다.
 
 `PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. tile 없이 face verification만 잡은 얼굴도 기본 YOLO와 매칭되지 않으면 `missCandidate`로 남긴다. 단, tile face row는 `MinTileFaceConfidence` 이상일 때만 support/miss/temporal evidence로 쓰고, face verification row도 confidence/distance threshold를 통과해야 verification-only miss 후보가 된다. 기본 YOLO 박스와 고품질 face evidence는 IoU 또는 중심 거리로 매칭하되, 중심만 맞고 크기 차이가 큰 후보는 geometry support로 보지 않는다. 이렇게 큰 YOLO 박스 안의 작은 얼굴처럼 과대 박스/미탐이 섞인 경우가 `supportedFaceCandidate`로 묻히지 않고 review queue에 남는다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
 `pseudo-gt-review-queue.csv`는 같은 후보를 `fpProbability`/`missProbability` 기준으로 정렬해 먼저 볼 frame/candidate를 알려준다. queue에는 사람이 라벨을 옮길 때 참고할 `expectedReviewLabel`과 candidate `evidenceNotes`도 포함하지만, 이 값도 참고 증거이며 최종 판정은 review CSV 라벨로만 닫는다. `expectedReviewLabel`은 `supportedFaceCandidate=face`, `falsePositiveCandidate=nonface`, `missCandidate=miss`로 안내한다.

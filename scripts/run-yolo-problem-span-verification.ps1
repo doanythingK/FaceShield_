@@ -19,6 +19,10 @@ param(
     [string]$PseudoGtTileFaceCsv = "",
     [string]$PseudoGtFaceVerificationCsv = "",
     [string]$PseudoGtPersonObjectCsv = "",
+    [string]$PseudoGtOutputCsv = "",
+    [string]$PseudoGtSummaryPath = "",
+    [string]$PseudoGtReviewQueueCsv = "",
+    [switch]$PublishPseudoGtToGoalEvidence,
     [switch]$AllowNoDetections,
     [switch]$WithReviewPackage,
     [switch]$WithDetectionOverlayVideo,
@@ -74,6 +78,25 @@ if ($PseudoGtMaxFrames -lt 1) {
     throw "PseudoGtMaxFrames must be at least 1."
 }
 
+if ($PublishPseudoGtToGoalEvidence.IsPresent) {
+    if ([string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -and
+        [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv) -and
+        [string]::IsNullOrWhiteSpace($PseudoGtTileExternalCommand) -and
+        [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationExternalCommand)) {
+        throw "PublishPseudoGtToGoalEvidence requires tile-face or face-verification evidence, either as CSV input or an external runner."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PseudoGtOutputCsv)) {
+        $PseudoGtOutputCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv"
+    }
+    if ([string]::IsNullOrWhiteSpace($PseudoGtSummaryPath)) {
+        $PseudoGtSummaryPath = ".tmp\yolo-pseudo-gt\pseudo-gt-summary.md"
+    }
+    if ([string]::IsNullOrWhiteSpace($PseudoGtReviewQueueCsv)) {
+        $PseudoGtReviewQueueCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-review-queue.csv"
+    }
+}
+
 $argsList = [System.Collections.Generic.List[string]]::new()
 $argsList.Add("-RunSmoke") | Out-Null
 $argsList.Add("-Source") | Out-Null
@@ -123,6 +146,21 @@ if (-not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
 if (-not [string]::IsNullOrWhiteSpace($PseudoGtPersonObjectCsv)) {
     $argsList.Add("-PseudoGtPersonObjectCsv") | Out-Null
     $argsList.Add($PseudoGtPersonObjectCsv) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtOutputCsv)) {
+    $argsList.Add("-PseudoGtOutputCsv") | Out-Null
+    $argsList.Add($PseudoGtOutputCsv) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtSummaryPath)) {
+    $argsList.Add("-PseudoGtSummaryPath") | Out-Null
+    $argsList.Add($PseudoGtSummaryPath) | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtReviewQueueCsv)) {
+    $argsList.Add("-PseudoGtReviewQueueCsv") | Out-Null
+    $argsList.Add($PseudoGtReviewQueueCsv) | Out-Null
 }
 
 if (-not $WithReviewPackage.IsPresent) {
