@@ -9,6 +9,10 @@ param(
     [double]$UpperWeakNonEdgeThreshold = 0.60,
     [double]$UpperFrameCenterYThreshold = 0.10,
     [double]$UpperWeakNonEdgeMaxAreaRatio = 0.0065,
+    [double]$TopEdgeLargeThreshold = 0.88,
+    [double]$TopEdgeLargeMaxCenterYRatio = 0.38,
+    [double]$TopEdgeLargeMinAreaRatio = 0.035,
+    [double]$TopEdgeLargeMaxAreaRatio = 0.12,
     [double]$LowerWeakNonEdgeThreshold = 0.50,
     [double]$LowerFrameCenterYThreshold = 0.58,
     [double]$LowerWeakNonEdgeMinAreaRatio = 0.015,
@@ -304,6 +308,31 @@ function Test-NormalizedEdgeTouch {
         $bottom -ge 1.0 - $MarginRatio
 }
 
+function Test-NormalizedTopEdgeTouch {
+    param(
+        [object]$Row,
+        [double]$MarginRatio,
+        [double]$FrameAspectRatio
+    )
+
+    if ($MarginRatio -le 0) {
+        return $false
+    }
+
+    $dimensions = Get-InferredFrameDimensions $Row
+    if ($null -ne $dimensions -and $dimensions.Height -gt 0) {
+        return $Row.Y -le ($dimensions.Height * $MarginRatio)
+    }
+
+    if ($FrameAspectRatio -le 0 -or $Row.AspectRatio -le 0 -or $Row.AreaRatio -le 0) {
+        return $false
+    }
+
+    $heightRatio = [Math]::Sqrt([Math]::Max(0.0, $Row.AreaRatio * $FrameAspectRatio / $Row.AspectRatio))
+    $top = $Row.CenterY - ($heightRatio * 0.5)
+    return $top -le $MarginRatio
+}
+
 function Get-InferredFrameDimensions {
     param([object]$Row)
 
@@ -463,6 +492,15 @@ $topEdgeWeakRows = @($edgeWeakRows |
         $_.AreaRatio -le $UpperWeakNonEdgeMaxAreaRatio
     } |
     Sort-Object Confidence, Frame, Index)
+$topEdgeLargeRows = @($rows |
+    Where-Object {
+        $_.Confidence -le $TopEdgeLargeThreshold -and
+        (Test-NormalizedTopEdgeTouch $_ $EdgeMarginRatio $FrameAspectRatio) -and
+        $_.CenterY -le $TopEdgeLargeMaxCenterYRatio -and
+        $_.AreaRatio -ge $TopEdgeLargeMinAreaRatio -and
+        $_.AreaRatio -le $TopEdgeLargeMaxAreaRatio
+    } |
+    Sort-Object Confidence, Frame, Index)
 $upperWeakNonEdgeRows = @($rows |
     Where-Object {
         $_.Confidence -le $UpperWeakNonEdgeThreshold -and
@@ -524,6 +562,7 @@ $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("- Weak non-edge final masks: $($weakNonEdgeRows.Count)")
 [void]$builder.AppendLine("- Weak edge final masks: $($edgeWeakRows.Count)")
 [void]$builder.AppendLine("- Top-edge weak final masks: $($topEdgeWeakRows.Count)")
+[void]$builder.AppendLine("- Top-edge large final masks: $($topEdgeLargeRows.Count)")
 [void]$builder.AppendLine("- Upper-frame weak non-edge final masks: $($upperWeakNonEdgeRows.Count)")
 [void]$builder.AppendLine("- Lower-frame weak non-edge final masks: $($lowerWeakNonEdgeRows.Count)")
 [void]$builder.AppendLine("- Aspect-ratio outlier final masks: $($aspectOutlierRows.Count)")
@@ -631,6 +670,18 @@ if ($edgeWeakRows.Count -eq 0) {
 }
 [void]$builder.AppendLine()
 
+[void]$builder.AppendLine("## Top-Edge Large Final Masks")
+[void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Review hint | Box |")
+[void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- | --- |")
+foreach ($row in $topEdgeLargeRows | Select-Object -First 80) {
+    [void]$builder.AppendLine(("| {0} | {1} | {2:F3} | {3:F3},{4:F3} | {5:F6} | {6:F3} | large top-edge candidate; review cropped face vs transition residue/false positive | x={7:F1}, y={8:F1}, w={9:F1}, h={10:F1} |" -f
+        $row.Frame, $row.Index, $row.Confidence, $row.CenterX, $row.CenterY, $row.AreaRatio, $row.AspectRatio, $row.X, $row.Y, $row.W, $row.H))
+}
+if ($topEdgeLargeRows.Count -eq 0) {
+    [void]$builder.AppendLine("| - | - | - | - | - | - | - | none |")
+}
+[void]$builder.AppendLine()
+
 [void]$builder.AppendLine("## Upper Weak-To-Medium Non-Edge Final Masks")
 [void]$builder.AppendLine("| Frame | Index | Confidence | Center | AreaRatio | Aspect | Box |")
 [void]$builder.AppendLine("| ---: | ---: | ---: | --- | ---: | ---: | --- |")
@@ -701,4 +752,4 @@ if ($tinyShortRows.Count -eq 0) {
 [void]$builder.AppendLine("- Review hint: protected scene-carry candidates survived automatic cleanup because later support exists; review them as possible new-scene faces or transition residue.")
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()
-Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count), tinyWeak=$($tinyWeakRows.Count), tinyShort=$($tinyShortRows.Count), protectedSceneCarryFrames=$(Join-Values @($protectedSceneCarryFrames))"
+Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), topEdgeLarge=$($topEdgeLargeRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count), tinyWeak=$($tinyWeakRows.Count), tinyShort=$($tinyShortRows.Count), protectedSceneCarryFrames=$(Join-Values @($protectedSceneCarryFrames))"

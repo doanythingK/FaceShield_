@@ -288,7 +288,12 @@ function Get-ReviewFrameNumbers {
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'lowConfFrames=(.*?), weakNonEdge=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'weakNonEdgeFrames=(.*?), edgeWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'edgeWeakFrames=(.*?), topEdgeWeak=')
-        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'topEdgeWeakFrames=(.*?), upperWeak=')
+        $topEdgeWeakFrames = Read-MatchValue $summaryLine 'topEdgeWeakFrames=(.*?), topEdgeLarge='
+        if ($topEdgeWeakFrames -eq "none") {
+            $topEdgeWeakFrames = Read-MatchValue $summaryLine 'topEdgeWeakFrames=(.*?), upperWeak='
+        }
+        Add-FrameListValues $frames $topEdgeWeakFrames
+        Add-FrameListValues $frames (Read-MatchValue $summaryLine 'topEdgeLargeFrames=(.*?), upperWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'upperWeakFrames=(.*?), lowerWeak=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'lowerWeakFrames=(.*?), aspectBad=')
         Add-FrameListValues $frames (Read-MatchValue $summaryLine 'aspectBadFrames=(.*?), tinyWeak=')
@@ -1558,7 +1563,7 @@ if ($finalMaskSummary.Count -gt 0) {
 [void]$summary.AppendLine("## Partial Visual Review Rule")
 [void]$summary.AppendLine("- Assistant/AI overlay observations are reference evidence only unless the crop and full-frame CSV rows are reviewed and filled.")
 [void]$summary.AppendLine("- A reviewed subset can explain why a candidate was kept or removed, but it cannot close the full false-positive/miss gate.")
-[void]$summary.AppendLine("- Do not convert edge or top-edge weak candidates to automatic false positives without visual confirmation that the box does not cover a protectable partial face.")
+[void]$summary.AppendLine("- Do not convert edge, top-edge weak, or top-edge large candidates to automatic false positives without visual confirmation that the box does not cover a protectable partial face.")
 [void]$summary.AppendLine()
 [void]$summary.AppendLine("## Completion Note")
 [void]$summary.AppendLine("- Follow-up completion still requires visual confirmation on the user-reported problem span.")

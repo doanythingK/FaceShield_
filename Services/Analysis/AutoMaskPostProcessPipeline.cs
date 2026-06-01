@@ -34,6 +34,10 @@ namespace FaceShield.Services.Analysis
         private const float YoloFinalMaskUpperWeakConfidenceMax = 0.60f;
         private const double YoloFinalMaskUpperWeakCenterYRatio = 0.10;
         private const double YoloFinalMaskUpperWeakAreaRatio = 0.0065;
+        private const float YoloFinalMaskTopEdgeLargeConfidenceMax = 0.88f;
+        private const double YoloFinalMaskTopEdgeLargeCenterYRatio = 0.38;
+        private const double YoloFinalMaskTopEdgeLargeMinAreaRatio = 0.035;
+        private const double YoloFinalMaskTopEdgeLargeMaxAreaRatio = 0.12;
         private const float YoloFinalMaskLowerWeakConfidenceMax = 0.50f;
         private const double YoloFinalMaskLowerWeakCenterYRatio = 0.58;
         private const double YoloFinalMaskLowerWeakMinAreaRatio = 0.015;
@@ -367,8 +371,8 @@ namespace FaceShield.Services.Analysis
                 .ToArray();
             if (entries.Length == 0)
             {
-                var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
-                Debug.WriteLine($"[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none perFaceShortGaps=0 perFaceShortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0 lowConfFrames=none weakNonEdge=0 weakNonEdgeFrames=none edgeWeak=0 edgeWeakFrames=none topEdgeWeak=0 topEdgeWeakFrames=none upperWeak=0 upperWeakFrames=none lowerWeak=0 lowerWeakFrames=none aspectBad=0 aspectBadFrames=none tinyWeak=0 tinyWeakFrames=none tinyShort=0 tinyShortFrames=none protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} reviewRequired={emptyReviewReasons.Count > 0} reviewReasons={FormatTextList(emptyReviewReasons)}");
+                var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
+                Debug.WriteLine($"[FinalMaskSummary] profile=Yolo frames=0 rows=0 frameRange=none shortGaps=0 shortGapRanges=none perFaceShortGaps=0 perFaceShortGapRanges=none largeJumpGaps=0 largeJumpRanges=none isolated=0 isolatedFrames=none lowConf=0 lowConfFrames=none weakNonEdge=0 weakNonEdgeFrames=none edgeWeak=0 edgeWeakFrames=none topEdgeWeak=0 topEdgeWeakFrames=none topEdgeLarge=0 topEdgeLargeFrames=none upperWeak=0 upperWeakFrames=none lowerWeak=0 lowerWeakFrames=none aspectBad=0 aspectBadFrames=none tinyWeak=0 tinyWeakFrames=none tinyShort=0 tinyShortFrames=none protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} reviewRequired={emptyReviewReasons.Count > 0} reviewReasons={FormatTextList(emptyReviewReasons)}");
                 return;
             }
 
@@ -416,6 +420,7 @@ namespace FaceShield.Services.Analysis
             int weakNonEdgeRows = 0;
             int edgeWeakRows = 0;
             int topEdgeWeakRows = 0;
+            int topEdgeLargeRows = 0;
             int upperWeakRows = 0;
             int lowerWeakRows = 0;
             int aspectBadRows = 0;
@@ -425,6 +430,7 @@ namespace FaceShield.Services.Analysis
             var weakNonEdgeFrames = new HashSet<int>();
             var edgeWeakFrames = new HashSet<int>();
             var topEdgeWeakFrames = new HashSet<int>();
+            var topEdgeLargeFrames = new HashSet<int>();
             var upperWeakFrames = new HashSet<int>();
             var lowerWeakFrames = new HashSet<int>();
             var aspectBadFrames = new HashSet<int>();
@@ -471,6 +477,13 @@ namespace FaceShield.Services.Analysis
                         }
                     }
 
+                    if (confidence <= YoloFinalMaskTopEdgeLargeConfidenceMax &&
+                        IsTopEdgeLargeFinalMaskFace(face, data.Size))
+                    {
+                        topEdgeLargeRows++;
+                        topEdgeLargeFrames.Add(frameIndex);
+                    }
+
                     if (confidence <= YoloFinalMaskUpperWeakConfidenceMax &&
                         !touchesEdge &&
                         IsUpperWeakFinalMaskFace(face, data.Size))
@@ -512,6 +525,7 @@ namespace FaceShield.Services.Analysis
                 weakNonEdgeRows,
                 edgeWeakRows,
                 topEdgeWeakRows,
+                topEdgeLargeRows,
                 upperWeakRows,
                 lowerWeakRows,
                 aspectBadRows,
@@ -520,7 +534,7 @@ namespace FaceShield.Services.Analysis
                 protectedSceneCarryFrames.Length);
 
             Debug.WriteLine(
-                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
+                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeLarge={topEdgeLargeRows} topEdgeLargeFrames={FormatFrameList(topEdgeLargeFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
         }
 
         private static IReadOnlyList<string> BuildFinalMaskReviewReasons(
@@ -532,6 +546,7 @@ namespace FaceShield.Services.Analysis
             int weakNonEdgeRows,
             int edgeWeakRows,
             int topEdgeWeakRows,
+            int topEdgeLargeRows,
             int upperWeakRows,
             int lowerWeakRows,
             int aspectBadRows,
@@ -556,6 +571,8 @@ namespace FaceShield.Services.Analysis
                 reasons.Add("edge-weak-review");
             if (topEdgeWeakRows > 0)
                 reasons.Add("top-edge-weak-review");
+            if (topEdgeLargeRows > 0)
+                reasons.Add("top-edge-large-review");
             if (upperWeakRows > 0)
                 reasons.Add("upper-weak");
             if (lowerWeakRows > 0)
@@ -672,6 +689,20 @@ namespace FaceShield.Services.Analysis
             double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
             return centerYRatio <= YoloFinalMaskUpperWeakCenterYRatio &&
                 areaRatio <= YoloFinalMaskUpperWeakAreaRatio;
+        }
+
+        private static bool IsTopEdgeLargeFinalMaskFace(Rect face, PixelSize size)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            return face.Y <= size.Height * YoloFinalMaskEdgeMarginRatio &&
+                centerYRatio <= YoloFinalMaskTopEdgeLargeCenterYRatio &&
+                areaRatio >= YoloFinalMaskTopEdgeLargeMinAreaRatio &&
+                areaRatio <= YoloFinalMaskTopEdgeLargeMaxAreaRatio;
         }
 
         private static bool IsLowerWeakFinalMaskFace(Rect face, PixelSize size)

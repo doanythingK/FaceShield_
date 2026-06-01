@@ -64,7 +64,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeYoloFinalMaskPostSceneGapFillSceneCutGuard] label=synthetic-yolo, candidates=0, checked=0, checkedPairs=none, maxDiff=0.000, cutPairs=none, removed=0, removedFrames=none, threshold=0.000, elapsedMs=0, error=none
 [SmokeYoloSceneCutCarryCleanup] stage=post-gap-fill label=synthetic-yolo, removed=2, removedFrames=18,19, removedUnsupportedStrong=1, removedUnsupportedStrongFrames=19, protectedStrong=1, protectedStrongFrames=20, blockedFrames=18,19,20,21,22,23,24,25, purgeFrames=5, blockFrames=8, extendedWeakMaxConfidence=0.78
 [SmokeYoloFinalMaskPostGapFillCleanup] label=synthetic-yolo, removedWeakIsolated=1, removedWeakUnsupported=1, removedMediumUnsupported=0, removedWeakShortClusters=0, removedWeakTinyClusters=0, removedTinyShortClusters=0, removedTinyIsolated=0, removedTopEdgeWeakClusters=0, removedUpperWeakClusters=0, removedLowerWeakClusters=0, removedAspectOutliers=0, removedFrames=21
-[SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, perFaceShortGaps=1, perFaceShortGapRanges=4-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, lowConfFrames=2, weakNonEdge=1, weakNonEdgeFrames=2, edgeWeak=1, edgeWeakFrames=10, topEdgeWeak=1, topEdgeWeakFrames=10, upperWeak=1, upperWeakFrames=2, lowerWeak=1, lowerWeakFrames=6, aspectBad=1, aspectBadFrames=9, tinyWeak=1, tinyWeakFrames=2, tinyShort=1, tinyShortFrames=2, protectedSceneCarry=2, protectedSceneCarryFrames=14,15, reviewRequired=True, reviewReasons=short-gap,per-face-short-gap,large-jump-gap,isolated-mask,low-confidence-review,weak-non-edge,edge-weak-review,top-edge-weak-review,upper-weak,lower-weak,aspect-outlier,tiny-weak,tiny-short,scene-carry-protected
+[SmokeFinalMaskSummary] label=synthetic-yolo, frames=2, rows=2, frameRange=2-6, shortGaps=1, shortGapRanges=3-5, perFaceShortGaps=1, perFaceShortGapRanges=4-5, largeJumpGaps=1, largeJumpRanges=3-5, isolated=2, isolatedFrames=2,6, lowConf=1, lowConfFrames=2, weakNonEdge=1, weakNonEdgeFrames=2, edgeWeak=1, edgeWeakFrames=10, topEdgeWeak=1, topEdgeWeakFrames=10, topEdgeLarge=0, topEdgeLargeFrames=none, upperWeak=1, upperWeakFrames=2, lowerWeak=1, lowerWeakFrames=6, aspectBad=1, aspectBadFrames=9, tinyWeak=1, tinyWeakFrames=2, tinyShort=1, tinyShortFrames=2, protectedSceneCarry=2, protectedSceneCarryFrames=14,15, reviewRequired=True, reviewReasons=short-gap,per-face-short-gap,large-jump-gap,isolated-mask,low-confidence-review,weak-non-edge,edge-weak-review,top-edge-weak-review,upper-weak,lower-weak,aspect-outlier,tiny-weak,tiny-short,scene-carry-protected
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=10.0, y=20.0, w=50.0, h=60.0, area=3000.0, conf=0.410, cx=0.055, cy=0.120, areaRatio=0.002000, aspectRatio=0.833
 [SmokeDetection] label=synthetic-yolo, frame=6, index=0, x=500.0, y=440.0, w=180.0, h=180.0, area=32400.0, conf=0.220, cx=0.461, cy=0.736, areaRatio=0.015625, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=9, index=0, x=700.0, y=120.0, w=8.0, h=40.0, area=320.0, conf=0.180, cx=0.550, cy=0.222, areaRatio=0.000154, aspectRatio=0.200
@@ -134,7 +134,7 @@ Assert-File "no-detection verification video" $noDetectionVideo
 
 @'
 [AutoRunSummary] runId=synthetic-no-detection, detector=YoloFaceOnnxDetector/CPU, mode=pipe-parallel, totalFrames=12, startFrame=0, processed=12, decoded=12, detects=12, interpolated=0, readMs=0, decodeMs=10, detectMs=20, maskMs=0, totalMs=30, downscale=1.000, quality=BalancedBilinear, tracking=True, everyN=1, parallel=2, roi=regular=0, small=0, rejected=0, statsRejected=0
-[SmokeFinalMaskSummary] label=synthetic-no-detection, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, perFaceShortGaps=0, perFaceShortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, protectedSceneCarry=0, protectedSceneCarryFrames=none, reviewRequired=False, reviewReasons=none
+[SmokeFinalMaskSummary] label=synthetic-no-detection, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, perFaceShortGaps=0, perFaceShortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, topEdgeLarge=0, topEdgeLargeFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, protectedSceneCarry=0, protectedSceneCarryFrames=none, reviewRequired=False, reviewReasons=none
 '@ | Set-Content -Encoding UTF8 -Path $noDetectionLog
 
 @'
@@ -325,7 +325,7 @@ Assert-Contains "script derives review frames from strong carry probe" $scriptTe
 Assert-Contains "script derives protected carry review frames" $scriptText "SceneCutCarryCleanupLines[\s\S]*removedUnsupportedStrongFrames=.*protectedStrong[\s\S]*protectedStrongFrames=.*blockedFrames"
 Assert-Contains "script derives review frames from final summary gaps" $scriptText "FinalMaskSummaryLines[\s\S]*shortGapRanges=.*perFaceShortGaps=[\s\S]*perFaceShortGapRanges=.*largeJumpGaps[\s\S]*largeJumpRanges=.*isolated="
 Assert-Contains "script preserves legacy final summary gap parsing" $scriptText "shortGapRanges=.*largeJumpGaps="
-Assert-Contains "script derives review frames from final summary residuals" $scriptText "lowConfFrames=.*weakNonEdge[\s\S]*weakNonEdgeFrames=.*edgeWeak[\s\S]*edgeWeakFrames=.*topEdgeWeak[\s\S]*topEdgeWeakFrames=.*upperWeak[\s\S]*upperWeakFrames=.*lowerWeak[\s\S]*lowerWeakFrames=.*aspectBad[\s\S]*aspectBadFrames=.*tinyWeak[\s\S]*tinyWeakFrames=.*tinyShort[\s\S]*tinyShortFrames=.*protectedSceneCarry[\s\S]*protectedSceneCarryFrames="
+Assert-Contains "script derives review frames from final summary residuals" $scriptText "lowConfFrames=.*weakNonEdge[\s\S]*weakNonEdgeFrames=.*edgeWeak[\s\S]*edgeWeakFrames=.*topEdgeWeak[\s\S]*topEdgeWeakFrames=.*topEdgeLarge[\s\S]*topEdgeLargeFrames=.*upperWeak[\s\S]*upperWeakFrames=.*lowerWeak[\s\S]*lowerWeakFrames=.*aspectBad[\s\S]*aspectBadFrames=.*tinyWeak[\s\S]*tinyWeakFrames=.*tinyShort[\s\S]*tinyShortFrames=.*protectedSceneCarry[\s\S]*protectedSceneCarryFrames="
 Assert-Contains "script derives review frames from low-confidence detections" $scriptText "LowConfidenceReviewThreshold[\s\S]*Add-LowConfidenceDetectionFrames[\s\S]*DetectionRows[\s\S]*conf="
 Assert-Contains "script passes required full-frame review frames" $scriptText "RequiredFullFrameNumbers[\s\S]*reviewFrameNumbers"
 Assert-Contains "script expands review video frame count for required frames" $scriptText "reviewVideoFrameCount[\s\S]*maxRequiredFrame\s*\+\s*1"
@@ -343,6 +343,7 @@ Assert-Contains "continuity reports low confidence masks" $continuityText "Low-c
 Assert-Contains "continuity reports weak non-edge masks" $continuityText "Weak non-edge final masks: 2"
 Assert-Contains "continuity reports weak edge masks" $continuityText "Weak edge final masks: 2"
 Assert-Contains "continuity reports top-edge weak masks" $continuityText "Top-edge weak final masks: 1"
+Assert-Contains "continuity reports top-edge large masks" $continuityText "Top-edge large final masks: 0"
 Assert-Contains "continuity reports upper-frame weak non-edge masks" $continuityText "Upper-frame weak non-edge final masks: 0"
 Assert-Contains "continuity reports lower-frame weak non-edge masks" $continuityText "Lower-frame weak non-edge final masks: 1"
 Assert-Contains "continuity reports aspect outliers" $continuityText "Aspect-ratio outlier final masks: 1"
@@ -355,6 +356,7 @@ Assert-Contains "continuity reports large jump hint" $continuityText "large box 
 Assert-Contains "continuity includes per-face gap table" $continuityText "Per-Face Short Gaps[\s\S]*specific face missing while another mask may exist"
 Assert-Contains "continuity includes weak non-edge table" $continuityText "Weak Non-Edge Final Masks[\s\S]*weak non-edge; review false positive"
 Assert-Contains "continuity includes weak edge table" $continuityText "Weak Edge Final Masks[\s\S]*top-edge weak candidate; review partial face vs edge false positive"
+Assert-Contains "continuity includes top-edge large table" $continuityText "Top-Edge Large Final Masks"
 Assert-Contains "continuity includes lower weak table" $continuityText "Lower Weak-To-Medium Non-Edge Final Masks[\s\S]*0\.220"
 Assert-Contains "continuity includes aspect outlier table" $continuityText "Aspect-Ratio Outlier Final Masks[\s\S]*too narrow for YOLO face profile"
 Assert-Contains "continuity includes tiny weak table" $continuityText "Tiny Weak Final Masks[\s\S]*tiny weak non-edge; review small face vs false positive"
@@ -386,6 +388,7 @@ Assert-Contains "summary records per-face gap summary" $summaryText "perFaceShor
 Assert-Contains "summary records weak final mask evidence" $summaryText "weakNonEdge=1"
 Assert-Contains "summary records edge weak final mask evidence" $summaryText "edgeWeak=1"
 Assert-Contains "summary records top-edge weak final mask evidence" $summaryText "topEdgeWeak=1"
+Assert-Contains "summary records top-edge large final mask evidence" $summaryText "topEdgeLarge=0"
 Assert-Contains "summary records lower weak final mask evidence" $summaryText "lowerWeak=1"
 Assert-Contains "summary records aspect outlier final mask evidence" $summaryText "aspectBad=1"
 Assert-Contains "summary records tiny weak final mask evidence" $summaryText "tinyWeak=1"
@@ -401,7 +404,7 @@ Assert-Contains "summary preserves nonface label markdown" $summaryText 'Use `no
 Assert-Contains "summary records partial visual review boundary" $summaryText "Partial Visual Review Rule"
 Assert-Contains "summary keeps assistant observations reference-only" $summaryText "Assistant/AI overlay observations are reference evidence only"
 Assert-Contains "summary blocks subset review from closing gate" $summaryText "reviewed subset can explain why a candidate was kept or removed, but it cannot close the full false-positive/miss gate"
-Assert-Contains "summary protects partial top-edge faces" $summaryText "Do not convert edge or top-edge weak candidates to automatic false positives"
+Assert-Contains "summary protects partial top-edge faces" $summaryText "Do not convert edge, top-edge weak, or top-edge large candidates to automatic false positives"
 Assert-Contains "summary records pending visual completion" $summaryText "visual confirmation"
 Assert-Contains "plan records follow-up incomplete" $planText "yolo-followup-quality-state:[\s\S]*complete=false"
 Assert-Contains "plan records per-face flicker evidence" $planText "perFaceShortGaps"
