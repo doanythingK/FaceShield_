@@ -462,6 +462,10 @@ function Find-BestComparison {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-FaceEvidenceMetricSupport $candidate)) {
+            continue
+        }
+
         $iou = Get-Iou $Target $candidate
         $centerDistance = Get-CenterDistanceRatio $Target $candidate
         $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
