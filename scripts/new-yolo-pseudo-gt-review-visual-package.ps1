@@ -206,12 +206,65 @@ function Get-CropRect {
         [double]$Padding
     )
 
+    if ($ImageWidth -le 0 -or $ImageHeight -le 0) {
+        throw "Invalid image size: $($ImageWidth)x$($ImageHeight)"
+    }
+
     $padX = $W * $Padding
     $padY = $H * $Padding
-    $left = [Math]::Max(0, [Math]::Floor($X - $padX))
-    $top = [Math]::Max(0, [Math]::Floor($Y - $padY))
-    $right = [Math]::Min($ImageWidth, [Math]::Ceiling($X + $W + $padX))
-    $bottom = [Math]::Min($ImageHeight, [Math]::Ceiling($Y + $H + $padY))
+    $left = [Math]::Min($ImageWidth - 1, [Math]::Max(0, [Math]::Floor($X - $padX)))
+    $top = [Math]::Min($ImageHeight - 1, [Math]::Max(0, [Math]::Floor($Y - $padY)))
+    $right = [Math]::Max($left + 1, [Math]::Min($ImageWidth, [Math]::Ceiling($X + $W + $padX)))
+    $bottom = [Math]::Max($top + 1, [Math]::Min($ImageHeight, [Math]::Ceiling($Y + $H + $padY)))
+
+    [pscustomobject]@{
+        X = [int]$left
+        Y = [int]$top
+        W = [Math]::Max(1, [int]($right - $left))
+        H = [Math]::Max(1, [int]($bottom - $top))
+    }
+}
+
+function Get-VisualSourceSize {
+    param(
+        [string]$SourceFrame,
+        [int]$FallbackWidth,
+        [int]$FallbackHeight
+    )
+
+    $sourceSize = Get-MediaSize $SourceFrame
+    if ($null -ne $sourceSize -and $sourceSize.Width -gt 0 -and $sourceSize.Height -gt 0) {
+        return $sourceSize
+    }
+
+    if ($FallbackWidth -gt 0 -and $FallbackHeight -gt 0) {
+        return [pscustomobject]@{
+            Width = $FallbackWidth
+            Height = $FallbackHeight
+        }
+    }
+
+    throw "Could not determine frame size. Pass -FrameWidth and -FrameHeight."
+}
+
+function Get-ClampedBoxRect {
+    param(
+        [double]$X,
+        [double]$Y,
+        [double]$W,
+        [double]$H,
+        [int]$ImageWidth,
+        [int]$ImageHeight
+    )
+
+    if ($ImageWidth -le 0 -or $ImageHeight -le 0) {
+        throw "Invalid image size: $($ImageWidth)x$($ImageHeight)"
+    }
+
+    $left = [Math]::Min($ImageWidth - 1, [Math]::Max(0, [Math]::Floor($X)))
+    $top = [Math]::Min($ImageHeight - 1, [Math]::Max(0, [Math]::Floor($Y)))
+    $right = [Math]::Max($left + 1, [Math]::Min($ImageWidth, [Math]::Ceiling($X + $W)))
+    $bottom = [Math]::Max($top + 1, [Math]::Min($ImageHeight, [Math]::Ceiling($Y + $H)))
 
     [pscustomobject]@{
         X = [int]$left
@@ -491,17 +544,14 @@ foreach ($row in $draftRows) {
         continue
     }
 
-    if ($FrameWidth -le 0 -or $FrameHeight -le 0) {
-        $sourceSize = Get-MediaSize $sourceFrame
-        if ($null -eq $sourceSize) {
-            throw "Could not determine frame size. Pass -FrameWidth and -FrameHeight."
-        }
+    $sourceSize = Get-VisualSourceSize `
+        -SourceFrame $sourceFrame `
+        -FallbackWidth $FrameWidth `
+        -FallbackHeight $FrameHeight
+    $imageWidth = [int]$sourceSize.Width
+    $imageHeight = [int]$sourceSize.Height
 
-        $FrameWidth = $sourceSize.Width
-        $FrameHeight = $sourceSize.Height
-    }
-
-    $rect = Get-CropRect -X $x -Y $y -W $w -H $h -ImageWidth $FrameWidth -ImageHeight $FrameHeight -Padding $PaddingRatio
+    $rect = Get-CropRect -X $x -Y $y -W $w -H $h -ImageWidth $imageWidth -ImageHeight $imageHeight -Padding $PaddingRatio
     $safeId = Convert-ToSafeName $candidateId
     $cropPath = Join-Path $cropDir ("frame-{0:D6}-candidate-{1}.png" -f $frame, $safeId)
     $overlayPath = Join-Path $overlayDir ("frame-{0:D6}-candidate-{1}-overlay.png" -f $frame, $safeId)
@@ -512,12 +562,9 @@ foreach ($row in $draftRows) {
         throw "ffmpeg pseudo-GT crop failed for frame $frame with exit code $LASTEXITCODE"
     }
 
-    $boxX = [int]([Math]::Max(0, [Math]::Floor($x)))
-    $boxY = [int]([Math]::Max(0, [Math]::Floor($y)))
-    $boxW = [int]([Math]::Max(1, [Math]::Ceiling($w)))
-    $boxH = [int]([Math]::Max(1, [Math]::Ceiling($h)))
+    $box = Get-ClampedBoxRect -X $x -Y $y -W $w -H $h -ImageWidth $imageWidth -ImageHeight $imageHeight
     $boxColor = if ((Get-CsvValue $row "pseudoGt_candidateType") -eq "falsePositiveCandidate") { "0xff0000" } elseif ((Get-CsvValue $row "pseudoGt_candidateType") -eq "missCandidate") { "0xffff00" } else { "0x00ff00" }
-    $overlayFilter = "drawbox=x=$($boxX):y=$($boxY):w=$($boxW):h=$($boxH):c=$($boxColor):t=4"
+    $overlayFilter = "drawbox=x=$($box.X):y=$($box.Y):w=$($box.W):h=$($box.H):c=$($boxColor):t=4"
     Invoke-Tool $ffmpeg @("-y", "-hide_banner", "-loglevel", "error", "-i", $sourceFrame, "-vf", $overlayFilter, "-frames:v", "1", $overlayPath) | Out-Null
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $overlayPath)) {
         throw "ffmpeg pseudo-GT overlay failed for frame $frame with exit code $LASTEXITCODE"

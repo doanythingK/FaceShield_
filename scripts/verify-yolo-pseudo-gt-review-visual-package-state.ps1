@@ -110,6 +110,8 @@ Assert-Contains "script writes crop path" $scriptText "cropPath"
 Assert-Contains "script writes overlay path" $scriptText "visualOverlayPath"
 Assert-Contains "script records missing visual frames" $scriptText "missingVisualFrames"
 Assert-Contains "script records missing visual recovery command" $scriptText "suggestedVideoRerunCommand"
+Assert-Contains "script uses per-source frame visual size" $scriptText "Get-VisualSourceSize"
+Assert-Contains "script clamps overlay box to source frame" $scriptText "Get-ClampedBoxRect"
 
 if (Test-Path $work) {
     Remove-Item -Recurse -Force -Path $work
@@ -354,6 +356,85 @@ Assert-Contains "missing report records missing visual candidate ids" $missingRe
 Assert-Contains "missing report records short clip recovery rule" $missingReportText "rerun with the short problem clip"
 Assert-Contains "missing report records video rerun command" $missingReportText "suggestedVideoRerunCommand"
 Assert-Contains "missing report records video placeholder" $missingReportText "<short problem clip path>"
+
+$clampFrameDir = Join-Path $work "clamp-frames"
+New-Item -ItemType Directory -Force -Path $clampFrameDir | Out-Null
+$clampFramePath = Join-Path $clampFrameDir "frame-000008.png"
+Invoke-Tool $ffmpeg @(
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc2=size=320x180:rate=1:duration=1",
+    "-frames:v",
+    "1",
+    $clampFramePath
+) | Out-Null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $clampFramePath)) {
+    throw "ffmpeg clamp source frame fixture failed"
+}
+
+$clampDraftCsv = Join-Path $work "clamp-pseudo-gt-review-draft.csv"
+@(
+    [pscustomobject]@{
+        frame = 8
+        x = -20
+        y = -15
+        w = 1195
+        h = 1082
+        pseudoGt_candidateId = "clamp-out-of-frame"
+        pseudoGt_candidateType = "falsePositiveCandidate"
+        suggestedLabel = "nonface"
+        label = ""
+        reviewStatus = ""
+        evidenceNotes = ""
+    },
+    [pscustomobject]@{
+        frame = 8
+        x = 500
+        y = 250
+        w = 50
+        h = 50
+        pseudoGt_candidateId = "clamp-beyond-frame"
+        pseudoGt_candidateType = "falsePositiveCandidate"
+        suggestedLabel = "nonface"
+        label = ""
+        reviewStatus = ""
+        evidenceNotes = ""
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $clampDraftCsv
+
+$clampOutputDir = Join-Path $work "visual-clamp"
+$clampOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
+    -DraftReviewCsv $clampDraftCsv `
+    -DraftFullFrameReviewCsv $frameDraftCsv `
+    -FrameSourceDir $clampFrameDir `
+    -OutputDir $clampOutputDir `
+    -FrameWidth 1920 `
+    -FrameHeight 1080 `
+    -Force `
+    -Verify `
+    -RequireAllVisuals 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "new-yolo-pseudo-gt-review-visual-package.ps1 clamp run failed: $($clampOutput | Out-String)"
+}
+$clampDraftOut = Join-Path $clampOutputDir "pseudo-gt-full-gt-review-visual-draft.csv"
+Assert-FileNonEmpty "clamp visual draft CSV" $clampDraftOut
+$clampRows = @(Import-Csv $clampDraftOut)
+if ($clampRows.Count -ne 2) {
+    throw "Expected two clamp visual rows, got $($clampRows.Count)"
+}
+foreach ($clampRow in $clampRows) {
+    Assert-FileNonEmpty "clamp crop" $clampRow.cropPath
+    Assert-FileNonEmpty "clamp overlay" $clampRow.visualOverlayPath
+    if ([int]$clampRow.cropW -gt 320 -or [int]$clampRow.cropH -gt 180) {
+        throw "Expected clamp crop to use source frame size 320x180, got candidate=$($clampRow.pseudoGt_candidateId), cropW=$($clampRow.cropW), cropH=$($clampRow.cropH)"
+    }
+}
+Write-Host "[YoloPseudoGtReviewVisualVerify] pass source-size clamp for out-of-frame crops"
 
 $videoPath = Join-Path $work "source-video.mp4"
 Invoke-Tool $ffmpeg @(
