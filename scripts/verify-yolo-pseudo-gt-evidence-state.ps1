@@ -74,7 +74,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 @(
     [pscustomobject]@{ frame = 1; detectionId = "tile-face-1"; x = 101.0; y = 102.0; w = 51.0; h = 58.0; confidence = 0.910; tileSupportCount = 3 },
     [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 103.0; y = 103.0; w = 50.0; h = 58.0; confidence = 0.900; tileSupportCount = 2 },
-    [pscustomobject]@{ frame = 3; detectionId = "tile-face-3"; x = 45.0; y = 60.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2 }
+    [pscustomobject]@{ frame = 3; detectionId = "tile-face-3"; x = 45.0; y = 60.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2 },
+    [pscustomobject]@{ frame = 7; detectionId = "tile-low-quality-7"; x = 720.0; y = 240.0; w = 44.0; h = 44.0; confidence = 0.120; tileSupportCount = 1 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileCsv
 
 @(
@@ -251,6 +252,10 @@ if (@($rows | Where-Object { $_.verificationId -eq "verify-low-quality-6" }).Cou
     throw "Expected low-confidence/high-distance verification-only row to be ignored instead of becoming a missCandidate."
 }
 
+if (@($rows | Where-Object { $_.tileDetectionId -eq "tile-low-quality-7" }).Count -ne 0) {
+    throw "Expected low-confidence tile row to be ignored instead of becoming pseudo-GT support or miss evidence."
+}
+
 $largeGeometryMismatch = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.basePredictionId -eq "5-0" })[0]
 if ($null -eq $largeGeometryMismatch) {
     throw "Expected center-aligned large YOLO box to remain a falsePositiveCandidate when area ratio is too different."
@@ -369,6 +374,8 @@ Assert-Contains "script preserves queue evidence notes" $scriptText 'evidenceNot
 Assert-Contains "script preserves review queue geometry" $scriptText "basePredictionId[\s\S]*tileDetectionId[\s\S]*verificationId[\s\S]*x ="
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script filters weak verification-only misses" $scriptText 'Test-VerificationMetricSupport \$verification'
+Assert-Contains "script filters weak tile evidence" $scriptText "MinTileFaceConfidence"
+Assert-Contains "script skips weak tile-only misses" $scriptText 'Test-TileFaceMetricSupport \$tile'
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
@@ -379,9 +386,11 @@ Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
 Assert-Contains "summary records strict input validation" $summaryText "inputValidation=strict-required-columns"
 Assert-Contains "summary records top review candidates" $summaryText "topReviewCandidates="
 Assert-Contains "summary records temporal support window" $summaryText "temporalSupportWindowFrames=2"
+Assert-Contains "summary records tile confidence threshold" $summaryText "minTileFaceConfidence=0.55"
 Assert-Contains "summary records support area ratio" $summaryText "maxSupportAreaChangeRatio=3"
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
+Assert-Contains "guide documents tile confidence threshold" $guideText "MinTileFaceConfidence"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"
 Assert-Contains "guide documents area ratio evidence" $guideText "areaChangeRatio"
 Assert-Contains "guide documents no-detection pseudo gt miss evidence" $guideText "AllowNoDetections[\s\S]*WithPseudoGtTileInput[\s\S]*missCandidate"

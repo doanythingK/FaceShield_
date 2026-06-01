@@ -8,6 +8,7 @@ param(
     [string]$SummaryPath = ".tmp\yolo-pseudo-gt\pseudo-gt-summary.md",
     [string]$ReviewQueueCsv = "",
     [double]$MinSupportIou = 0.35,
+    [double]$MinTileFaceConfidence = 0.55,
     [double]$MaxSupportCenterDistanceRatio = 0.80,
     [double]$MaxSupportAreaChangeRatio = 3.0,
     [double]$MaxVerificationDistance = 0.75,
@@ -388,6 +389,10 @@ function Find-BestMatch {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-FaceEvidenceMetricSupport $candidate)) {
+            continue
+        }
+
         $iou = Get-Iou $Target $candidate
         $centerDistance = Get-CenterDistanceRatio $Target $candidate
         $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
@@ -420,6 +425,10 @@ function Find-BestVerification {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-FaceEvidenceMetricSupport $candidate)) {
+            continue
+        }
+
         $iou = Get-Iou $Target $candidate
         $centerDistance = Get-CenterDistanceRatio $Target $candidate
         $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
@@ -533,6 +542,26 @@ function Test-VerificationMetricSupport {
     return ($Candidate.Confidence -ge $MinVerificationConfidence -or $Candidate.VerificationDistance -le $MaxVerificationDistance)
 }
 
+function Test-TileFaceMetricSupport {
+    param([object]$Candidate)
+
+    return $Candidate.Confidence -ge $MinTileFaceConfidence
+}
+
+function Test-FaceEvidenceMetricSupport {
+    param([object]$Candidate)
+
+    if ($Candidate.Source -eq "tile-face") {
+        return Test-TileFaceMetricSupport $Candidate
+    }
+
+    if ($Candidate.Source -eq "face-verification") {
+        return Test-VerificationMetricSupport $Candidate
+    }
+
+    return $true
+}
+
 function Get-TemporalFaceSupport {
     param(
         [object]$Target,
@@ -545,6 +574,9 @@ function Get-TemporalFaceSupport {
     $rowCount = 0
 
     foreach ($candidate in @($TileCandidates | Where-Object { [Math]::Abs($_.Frame - $Target.Frame) -le $TemporalSupportWindowFrames })) {
+        if (-not (Test-TileFaceMetricSupport $candidate)) {
+            continue
+        }
         if (-not (Test-FaceGeometrySupport $Target $candidate)) {
             continue
         }
@@ -767,6 +799,10 @@ foreach ($base in $baseRows) {
 }
 
 foreach ($tile in $tileRows) {
+    if (-not (Test-TileFaceMetricSupport $tile)) {
+        continue
+    }
+
     if ($matchedTileIds.Contains($tile.Id)) {
         continue
     }
@@ -1012,6 +1048,7 @@ $summary = @(
     "- falsePositiveCandidate=$falsePositive",
     "- missCandidate=$miss",
     "- minSupportIou=$(Format-Double $MinSupportIou)",
+    "- minTileFaceConfidence=$(Format-Double $MinTileFaceConfidence)",
     "- maxSupportCenterDistanceRatio=$(Format-Double $MaxSupportCenterDistanceRatio)",
     "- maxSupportAreaChangeRatio=$(Format-Double $MaxSupportAreaChangeRatio)",
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
