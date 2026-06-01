@@ -825,6 +825,10 @@ foreach ($tile in $tileRows) {
 }
 
 foreach ($verification in $verificationRows) {
+    if (-not (Test-VerificationMetricSupport $verification)) {
+        continue
+    }
+
     if ($matchedVerificationIds.Contains($verification.Id)) {
         continue
     }

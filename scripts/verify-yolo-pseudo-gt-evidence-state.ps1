@@ -80,7 +80,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 @(
     [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 },
     [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
-    [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 }
+    [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 },
+    [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -246,6 +247,10 @@ if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source
     throw "Expected one verification-only missCandidate."
 }
 
+if (@($rows | Where-Object { $_.verificationId -eq "verify-low-quality-6" }).Count -ne 0) {
+    throw "Expected low-confidence/high-distance verification-only row to be ignored instead of becoming a missCandidate."
+}
+
 $largeGeometryMismatch = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.basePredictionId -eq "5-0" })[0]
 if ($null -eq $largeGeometryMismatch) {
     throw "Expected center-aligned large YOLO box to remain a falsePositiveCandidate when area ratio is too different."
@@ -363,6 +368,7 @@ Assert-Contains "script records expected review label in queue" $scriptText "exp
 Assert-Contains "script preserves queue evidence notes" $scriptText 'evidenceNotes = \$row\.evidenceNotes'
 Assert-Contains "script preserves review queue geometry" $scriptText "basePredictionId[\s\S]*tileDetectionId[\s\S]*verificationId[\s\S]*x ="
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
+Assert-Contains "script filters weak verification-only misses" $scriptText 'Test-VerificationMetricSupport \$verification'
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
