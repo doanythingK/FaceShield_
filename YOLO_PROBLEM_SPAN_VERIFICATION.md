@@ -154,7 +154,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pse
   -RequireAllClosed
 ```
 
-`supportedFaceCandidate`는 완료된 `reviewStatus`의 `face`, `falsePositiveCandidate`는 완료된 `reviewStatus`의 `nonface`, `missCandidate`는 수동 추가한 `face` row로 닫힌다. `missCandidate`는 같은 frame의 manual row와 IoU로 매칭하며, `full-frame-review.csv`가 있으면 해당 frame의 missed-face scan도 완료 상태이고 `missedFaceRowsAdded > 0`이어야 닫힌다.
+`supportedFaceCandidate`는 완료된 `reviewStatus`의 `face`, `falsePositiveCandidate`는 완료된 `reviewStatus`의 `nonface`, `missCandidate`는 수동 추가한 `face` 또는 `miss` row로 닫힌다. `missCandidate`는 같은 frame의 manual row와 IoU로 매칭하며, `full-frame-review.csv`가 있으면 해당 frame의 missed-face scan도 완료 상태이고 `missedFaceRowsAdded > 0`이어야 닫힌다.
 
 ## 산출물
 

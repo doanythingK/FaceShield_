@@ -23,6 +23,9 @@ $pendingStatusSummaryPath = Join-Path $work "pseudo-gt-review-closure-pending-st
 $incompleteFullFrameCsv = Join-Path $work "full-frame-review-incomplete-miss.csv"
 $incompleteFullFrameOutputCsv = Join-Path $work "pseudo-gt-review-closure-incomplete-full-frame.csv"
 $incompleteFullFrameSummaryPath = Join-Path $work "pseudo-gt-review-closure-incomplete-full-frame-summary.md"
+$explicitMissReviewCsv = Join-Path $work "full-gt-review-explicit-miss.csv"
+$explicitMissOutputCsv = Join-Path $work "pseudo-gt-review-closure-explicit-miss.csv"
+$explicitMissSummaryPath = Join-Path $work "pseudo-gt-review-closure-explicit-miss-summary.md"
 
 function Assert-File {
     param([string]$Name, [string]$Path)
@@ -391,12 +394,31 @@ Invoke-ExpectedReviewClosureFailure `
     -FullFrameReviewPath $incompleteFullFrameCsv `
     -ExpectedPattern "unreviewed=1"
 
+$explicitMissReviewRows = @(Import-Csv $reviewCsv)
+(@($explicitMissReviewRows | Where-Object { $_.frame -eq "7" }))[0].label = "miss"
+$explicitMissReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $explicitMissReviewCsv
+
+$explicitMissOutput = Invoke-ReviewClosure `
+    -ReviewPath $explicitMissReviewCsv `
+    -OutputPath $explicitMissOutputCsv `
+    -SummaryOutputPath $explicitMissSummaryPath `
+    -RequireAllClosed
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected explicit miss label closure run to pass: $($explicitMissOutput | Out-String)"
+}
+
+$explicitMissRows = @(Import-Csv $explicitMissOutputCsv)
+if (@($explicitMissRows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.reviewLabel -eq "miss" -and $_.expectedReviewLabel -eq "face|miss" -and $_.closureStatus -eq "closed" }).Count -ne 1) {
+    throw "Expected explicit miss label to close the missCandidate row."
+}
+
 $scriptText = Get-Content -Raw -Path $script
 $summaryText = Get-Content -Raw -Path $summaryPath
 $guideText = Get-Content -Raw -Path $guide
 
 Assert-Contains "script matches source prediction ids" $scriptText "sourcePredictionId"
 Assert-Contains "script supports manual miss iou matching" $scriptText "PreferManualMiss"
+Assert-Contains "script accepts explicit miss closure label" $scriptText '"missCandidate"\s*\{\s*return @\("face",\s*"miss"\)'
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
 Assert-Contains "script preserves repeated support row evidence" $scriptText "supportRowCount"
 Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
@@ -408,5 +430,6 @@ Assert-Contains "summary records closed count" $summaryText "closed=3"
 Assert-Contains "summary records no unreviewed rows" $summaryText "unreviewed=0"
 Assert-Contains "summary records miss closure" $summaryText "missClosed=1"
 Assert-Contains "guide documents review closure" $guideText "close-yolo-pseudo-gt-review\.ps1"
+Assert-Contains "guide documents explicit miss label closure" $guideText "face/nonface/miss"
 
 Write-Host "[YoloPseudoGtReviewClosureVerify] all requested checks passed"

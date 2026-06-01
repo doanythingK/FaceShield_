@@ -120,6 +120,17 @@ function Test-ReviewedStatus {
     return $Status.Trim().ToLowerInvariant() -in @("pass", "reviewed", "complete", "completed", "closed", "done")
 }
 
+function Get-ExpectedReviewLabels {
+    param([string]$CandidateType)
+
+    switch ($CandidateType) {
+        "supportedFaceCandidate" { return @("face") }
+        "falsePositiveCandidate" { return @("nonface") }
+        "missCandidate" { return @("face", "miss") }
+        default { return @() }
+    }
+}
+
 function New-Box {
     param([object]$Row)
 
@@ -234,12 +245,8 @@ if (-not [string]::IsNullOrWhiteSpace($frameReviewPath)) {
 $closureRows = [System.Collections.Generic.List[object]]::new()
 foreach ($candidate in $pseudoRows) {
     $candidateType = [string](Get-PropertyValue $candidate "candidateType" "")
-    $expectedLabel = switch ($candidateType) {
-        "supportedFaceCandidate" { "face" }
-        "falsePositiveCandidate" { "nonface" }
-        "missCandidate" { "face" }
-        default { "" }
-    }
+    $expectedLabels = @(Get-ExpectedReviewLabels $candidateType)
+    $expectedLabel = $expectedLabels -join "|"
 
     $preferManualMiss = $candidateType -eq "missCandidate"
     $match = Find-BestReviewMatch -Candidate $candidate -ReviewRows $reviewRows -PreferManualMiss $preferManualMiss
@@ -289,7 +296,7 @@ foreach ($candidate in $pseudoRows) {
         $closureStatus = "unreviewed"
         $closureReason = "matching row reviewStatus '$reviewStatus' is not a completed review state"
     }
-    elseif ($null -ne $match -and $reviewLabel -ne $expectedLabel) {
+    elseif ($null -ne $match -and $reviewLabel -notin $expectedLabels) {
         $closureStatus = "label-mismatch"
         $closureReason = "review CSV label '$reviewLabel' does not match expected '$expectedLabel'"
     }
@@ -372,7 +379,7 @@ $summary = @(
     "- minReviewIou=$($MinReviewIou.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
     "",
     "A pseudo-GT candidate is final only when the matching review CSV row has a human label and completed reviewStatus.",
-    "For missCandidate rows, the matching row should be a manual face row in full-gt-review.csv and, when present, full-frame-review.csv must record a completed missed-face scan with missedFaceRowsAdded > 0."
+    "For missCandidate rows, the matching row should be a manual face/miss row in full-gt-review.csv and, when present, full-frame-review.csv must record a completed missed-face scan with missedFaceRowsAdded > 0."
 )
 $summary | Set-Content -Encoding UTF8 -Path $summaryPathResolved
 
