@@ -634,6 +634,7 @@ if ($WriteSummary) {
         $openSmokeAutoCommand,
         $nextGuiEvidenceSetterCommand,
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\open-yolo-manual-gates.ps1 -PreparePseudoGtReviewVisual -WriteSummary",
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\open-yolo-manual-gates.ps1 -PreparePseudoGtReviewVisual -PseudoGtReviewVisualVideoPath `"<short problem clip path>`" -WriteSummary",
         $completedFullGtCommand,
         $completedGuiSmokeCommand,
         $completedManualReadinessCommand,

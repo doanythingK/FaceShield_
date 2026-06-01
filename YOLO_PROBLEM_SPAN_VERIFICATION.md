@@ -178,11 +178,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -Verify
 ```
 
+`missingVisualRows`가 남으면 전체 원본 영상을 쓰지 말고, 해당 문제 구간의 30초 이하 clip을 `-VideoPath`로 넘겨 누락 frame만 보강한다. visual report의 `suggestedVideoRerunCommand`에도 같은 복구 명령이 남는다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-review-visual-package.ps1 `
+  -DraftReviewCsv ".tmp/yolo-pseudo-gt/review-draft/pseudo-gt-full-gt-review-draft.csv" `
+  -DraftFullFrameReviewCsv ".tmp/yolo-pseudo-gt/review-draft/pseudo-gt-full-frame-review-draft.csv" `
+  -FrameSourceDir ".tmp/yolo-full-gt/review-package-smoke/frames" `
+  -OutputDir ".tmp/yolo-pseudo-gt/review-visual" `
+  -VideoPath "<short problem clip path>" `
+  -Force `
+  -Verify `
+  -RequireAllVisuals
+```
+
 수동 게이트 dashboard와 함께 draft/visual package를 바로 준비하려면 아래처럼 실행한다. 이 명령도 최종 라벨을 채우지 않고, crop/overlay evidence만 만든다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/open-yolo-manual-gates.ps1 `
   -PreparePseudoGtReviewVisual `
+  -WriteSummary
+```
+
+수동 게이트 helper에서도 같은 방식으로 짧은 clip을 지정할 수 있다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/open-yolo-manual-gates.ps1 `
+  -PreparePseudoGtReviewVisual `
+  -PseudoGtReviewVisualVideoPath "<short problem clip path>" `
   -WriteSummary
 ```
 

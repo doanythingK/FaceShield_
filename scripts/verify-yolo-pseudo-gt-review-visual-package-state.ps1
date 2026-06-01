@@ -108,6 +108,8 @@ Assert-Contains "script rejects suggestedLabel inference" $scriptText "does not 
 Assert-Contains "script writes visual draft csv" $scriptText "pseudo-gt-full-gt-review-visual-draft.csv"
 Assert-Contains "script writes crop path" $scriptText "cropPath"
 Assert-Contains "script writes overlay path" $scriptText "visualOverlayPath"
+Assert-Contains "script records missing visual frames" $scriptText "missingVisualFrames"
+Assert-Contains "script records missing visual recovery command" $scriptText "suggestedVideoRerunCommand"
 
 if (Test-Path $work) {
     Remove-Item -Recurse -Force -Path $work
@@ -327,5 +329,80 @@ Assert-Contains "index warns suggested label is not final" $indexText "Do not co
 $reportText = Get-Content -Raw -Path $reportPath
 Assert-Contains "report records zero missing visuals" $reportText "missingVisualRows: 0"
 Assert-Contains "report records final fields blank" $reportText "finalFilledRows: 0"
+
+$missingFrameDir = Join-Path $work "missing-frames"
+New-Item -ItemType Directory -Force -Path $missingFrameDir | Out-Null
+$missingOutputDir = Join-Path $work "visual-missing"
+$missingOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
+    -DraftReviewCsv $draftCsv `
+    -DraftFullFrameReviewCsv $frameDraftCsv `
+    -FrameSourceDir $missingFrameDir `
+    -OutputDir $missingOutputDir `
+    -FrameWidth 320 `
+    -FrameHeight 180 `
+    -Force `
+    -Verify 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "new-yolo-pseudo-gt-review-visual-package.ps1 missing-visual run failed: $($missingOutput | Out-String)"
+}
+$missingReportPath = Join-Path $missingOutputDir "pseudo-gt-review-visual-report.md"
+Assert-FileNonEmpty "missing visual report" $missingReportPath
+$missingReportText = Get-Content -Raw -Path $missingReportPath
+Assert-Contains "missing report records missing visual count" $missingReportText "missingVisualRows: 2"
+Assert-Contains "missing report records missing visual frames" $missingReportText "missingVisualFrames: 17,20"
+Assert-Contains "missing report records missing visual candidate ids" $missingReportText "missingVisualCandidateIds: fp-17,support-20"
+Assert-Contains "missing report records short clip recovery rule" $missingReportText "rerun with the short problem clip"
+Assert-Contains "missing report records video rerun command" $missingReportText "suggestedVideoRerunCommand"
+Assert-Contains "missing report records video placeholder" $missingReportText "<short problem clip path>"
+
+$videoPath = Join-Path $work "source-video.mp4"
+Invoke-Tool $ffmpeg @(
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc2=size=320x180:rate=10:duration=3",
+    "-pix_fmt",
+    "yuv420p",
+    $videoPath
+) | Out-Null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $videoPath)) {
+    throw "ffmpeg source video fixture failed"
+}
+
+$videoFallbackOutputDir = Join-Path $work "visual-video-fallback"
+$videoFallbackOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
+    -DraftReviewCsv $draftCsv `
+    -DraftFullFrameReviewCsv $frameDraftCsv `
+    -FrameSourceDir $missingFrameDir `
+    -OutputDir $videoFallbackOutputDir `
+    -VideoPath $videoPath `
+    -Force `
+    -Verify `
+    -RequireAllVisuals 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "new-yolo-pseudo-gt-review-visual-package.ps1 video fallback run failed: $($videoFallbackOutput | Out-String)"
+}
+$videoFallbackText = ($videoFallbackOutput | Out-String)
+Assert-Contains "video fallback selftest completed" $videoFallbackText "[YoloPseudoGtReviewVisual] all requested checks passed"
+$videoFallbackReportPath = Join-Path $videoFallbackOutputDir "pseudo-gt-review-visual-report.md"
+$videoFallbackDraftCsv = Join-Path $videoFallbackOutputDir "pseudo-gt-full-gt-review-visual-draft.csv"
+Assert-FileNonEmpty "video fallback report" $videoFallbackReportPath
+Assert-FileNonEmpty "video fallback visual draft CSV" $videoFallbackDraftCsv
+$videoFallbackReportText = Get-Content -Raw -Path $videoFallbackReportPath
+Assert-Contains "video fallback report records zero missing visuals" $videoFallbackReportText "missingVisualRows: 0"
+Assert-Contains "video fallback report records concrete video path" $videoFallbackReportText $videoPath
+$videoFallbackRows = @(Import-Csv $videoFallbackDraftCsv)
+foreach ($row in $videoFallbackRows) {
+    Assert-FileNonEmpty "video fallback crop for frame $($row.frame)" $row.cropPath
+    Assert-FileNonEmpty "video fallback overlay for frame $($row.frame)" $row.visualOverlayPath
+    if ($row.visualReviewStatus -ne "visual-ready-test-only") {
+        throw "Unexpected video fallback visualReviewStatus for frame $($row.frame): $($row.visualReviewStatus)"
+    }
+}
+Write-Host "[YoloPseudoGtReviewVisualVerify] pass video fallback fills missing visuals"
 
 Write-Host "[YoloPseudoGtReviewVisualVerify] all requested checks passed"

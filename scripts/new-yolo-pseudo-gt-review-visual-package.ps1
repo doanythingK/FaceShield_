@@ -331,7 +331,10 @@ function Write-ReviewIndexHtml {
         [object[]]$Rows,
         [string]$VisualDraftCsv,
         [string]$VisualFrameCsv,
-        [int]$MissingVisualRows
+        [int]$MissingVisualRows,
+        [string[]]$MissingVisualFrames,
+        [string[]]$MissingVisualCandidateIds,
+        [string]$SuggestedVideoRerunCommand
     )
 
     $baseDir = Split-Path -Parent $Path
@@ -354,6 +357,11 @@ function Write-ReviewIndexHtml {
     [void]$builder.AppendLine("<p>Visual draft: <code>$(Convert-ToHtmlText (Convert-ToRelativeLink -BaseDir $baseDir -TargetPath $VisualDraftCsv))</code></p>")
     [void]$builder.AppendLine("<p>Full-frame draft: <code>$(Convert-ToHtmlText (Convert-ToRelativeLink -BaseDir $baseDir -TargetPath $VisualFrameCsv))</code></p>")
     [void]$builder.AppendLine("<p class=""warn"">missingVisualRows=$MissingVisualRows</p>")
+    if ($MissingVisualRows -gt 0) {
+        [void]$builder.AppendLine("<p class=""warn"">missingVisualFrames=$(Convert-ToHtmlText (($MissingVisualFrames | Select-Object -First 80) -join ","))</p>")
+        [void]$builder.AppendLine("<p class=""warn"">missingVisualCandidateIds=$(Convert-ToHtmlText (($MissingVisualCandidateIds | Select-Object -First 80) -join ","))</p>")
+        [void]$builder.AppendLine("<p>To fill missing visuals, rerun with the short problem clip: <code>$(Convert-ToHtmlText $SuggestedVideoRerunCommand)</code></p>")
+    }
     [void]$builder.AppendLine("</section>")
     [void]$builder.AppendLine("<div class=""grid"">")
     foreach ($row in $Rows) {
@@ -442,6 +450,8 @@ if (($FrameWidth -le 0 -or $FrameHeight -le 0) -and -not [string]::IsNullOrWhite
 
 $visualRows = New-Object System.Collections.Generic.List[object]
 $missingVisualRows = 0
+$missingVisualFrames = New-Object System.Collections.Generic.List[string]
+$missingVisualCandidateIds = New-Object System.Collections.Generic.List[string]
 $index = 0
 foreach ($row in $draftRows) {
     $frame = Read-IntValue $row "frame"
@@ -471,6 +481,8 @@ foreach ($row in $draftRows) {
     $values = Copy-RowToDictionary $row
     if ([string]::IsNullOrWhiteSpace($sourceFrame) -or -not (Test-Path $sourceFrame)) {
         $missingVisualRows++
+        $missingVisualFrames.Add("$frame") | Out-Null
+        $missingVisualCandidateIds.Add($candidateId) | Out-Null
         Add-OutputProperty $values "visualFramePath" ""
         Add-OutputProperty $values "visualOverlayPath" ""
         Add-OutputProperty $values "visualReviewStatus" "missing-visual-source"
@@ -533,11 +545,21 @@ $visualDraftCsv = Join-Path $resolvedOutputDir "pseudo-gt-full-gt-review-visual-
 $visualFrameCsv = Join-Path $resolvedOutputDir "pseudo-gt-full-frame-review-visual-draft.csv"
 $indexHtml = Join-Path $resolvedOutputDir "pseudo-gt-review-visual-index.html"
 $reportPath = Join-Path $resolvedOutputDir "pseudo-gt-review-visual-report.md"
+$suggestedVideoPath = if ([string]::IsNullOrWhiteSpace($VideoPath)) { "<short problem clip path>" } else { $VideoPath }
+$suggestedVideoRerunCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\new-yolo-pseudo-gt-review-visual-package.ps1 -DraftReviewCsv `"$DraftReviewCsv`" -DraftFullFrameReviewCsv `"$DraftFullFrameReviewCsv`" -FrameSourceDir `"$FrameSourceDir`" -OutputDir `"$OutputDir`" -VideoPath `"$suggestedVideoPath`" -Force -Verify -RequireAllVisuals"
 
 $visualRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $visualDraftCsv
 $frameDraftRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $visualFrameCsv
 $visualRowsArray = @($visualRows | ForEach-Object { $_ })
-Write-ReviewIndexHtml -Path $indexHtml -Rows $visualRowsArray -VisualDraftCsv $visualDraftCsv -VisualFrameCsv $visualFrameCsv -MissingVisualRows $missingVisualRows
+Write-ReviewIndexHtml `
+    -Path $indexHtml `
+    -Rows $visualRowsArray `
+    -VisualDraftCsv $visualDraftCsv `
+    -VisualFrameCsv $visualFrameCsv `
+    -MissingVisualRows $missingVisualRows `
+    -MissingVisualFrames @($missingVisualFrames) `
+    -MissingVisualCandidateIds @($missingVisualCandidateIds) `
+    -SuggestedVideoRerunCommand $suggestedVideoRerunCommand
 
 $visualReadyCount = @($visualRows | Where-Object { (Get-CsvValue $_ "visualReviewStatus") -eq "visual-ready-test-only" }).Count
 $finalFilledCount = @($visualRows | Where-Object {
@@ -562,13 +584,19 @@ $report = @(
     "- candidateRows: $($draftRows.Count)",
     "- visualReadyRows: $visualReadyCount",
     "- missingVisualRows: $missingVisualRows",
+    "- missingVisualFrames: $(@($missingVisualFrames) -join ',')",
+    "- missingVisualCandidateIds: $(@($missingVisualCandidateIds) -join ',')",
     "- finalFilledRows: $finalFilledCount",
     "",
     "## Rule",
     "- test-only-reference-not-final-gt",
     "- visualReviewStatus=visual-ready-test-only only means evidence was generated.",
     "- Human review must fill label/reviewStatus/evidenceNotes before apply-yolo-pseudo-gt-review-draft.ps1.",
-    "- The script does not infer labels from suggestedLabel."
+    "- The script does not infer labels from suggestedLabel.",
+    "",
+    "## Missing Visual Recovery",
+    "- If missingVisualRows is greater than 0, rerun with the short problem clip, not the full original video.",
+    "- suggestedVideoRerunCommand: $suggestedVideoRerunCommand"
 )
 $report | Set-Content -Encoding UTF8 -Path $reportPath
 
