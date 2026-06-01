@@ -91,7 +91,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @(
     [pscustomobject]@{ frame = 2; detectionId = "car-2"; x = 398.0; y = 298.0; w = 48.0; h = 58.0; confidence = 0.990; class = "car" },
-    [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760; class = "person" }
+    [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760; class = "person" },
+    [pscustomobject]@{ frame = 4; detectionId = "person-low-confidence-4"; x = 205.0; y = 110.0; w = 80.0; h = 180.0; confidence = 0.120; class = "person" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personCsv
 
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -234,6 +235,28 @@ if ([string]::IsNullOrWhiteSpace($falsePositiveQueueRow.evidenceNotes)) {
 $missQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "missCandidate" })[0]
 if ($null -eq $missQueueRow -or $missQueueRow.expectedReviewLabel -ne "miss") {
     throw "Expected missCandidate queue row to tell the reviewer to close it as miss after visual confirmation."
+}
+
+$lowConfidencePersonMiss = @($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-face-4" })[0]
+if ($null -eq $lowConfidencePersonMiss) {
+    throw "Expected verification-only missCandidate for low-confidence person/object auxiliary test."
+}
+
+if ([double]::Parse($lowConfidencePersonMiss.personConfidence, [System.Globalization.CultureInfo]::InvariantCulture) -ne 0) {
+    throw "Expected low-confidence person/object support to stay out of personConfidence."
+}
+
+if ([double]::Parse($lowConfidencePersonMiss.personUpperOverlap, [System.Globalization.CultureInfo]::InvariantCulture) -ne 0) {
+    throw "Expected low-confidence person/object support to stay out of personUpperOverlap."
+}
+
+$lowConfidencePersonQueue = @($reviewQueueRows | Where-Object { $_.verificationId -eq "verify-face-4" })[0]
+if ($null -eq $lowConfidencePersonQueue) {
+    throw "Expected review queue row for low-confidence person/object auxiliary test."
+}
+
+if ([double]::Parse($lowConfidencePersonQueue.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -ne 0) {
+    throw "Expected low-confidence person/object support not to raise review priority."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
@@ -383,6 +406,7 @@ Assert-Contains "script accepts tile face CSV" $scriptText "TileFaceCsv"
 Assert-Contains "script accepts face verification CSV" $scriptText "FaceVerificationCsv"
 Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script filters person object class labels" $scriptText "Test-PersonClassLabel"
+Assert-Contains "script filters low-confidence person object support" $scriptText 'candidate\.Confidence -lt \$MinPersonObjectConfidence'
 Assert-Contains "script validates required input columns" $scriptText "strict-required-columns"
 Assert-Contains "script requires face verification distance" $scriptText "faceVerificationDistance"
 Assert-Contains "script requires face verification confidence and distance support" $scriptText 'Candidate\.Confidence -ge \$MinVerificationConfidence -and[\s\S]*Candidate\.VerificationDistance -le \$MaxVerificationDistance'
@@ -420,6 +444,7 @@ Assert-Contains "summary records top review candidates" $summaryText "topReviewC
 Assert-Contains "summary records temporal support window" $summaryText "temporalSupportWindowFrames=2"
 Assert-Contains "summary records tile confidence threshold" $summaryText "minTileFaceConfidence=0.55"
 Assert-Contains "summary records tile support threshold" $summaryText "minTileSupportCount=2"
+Assert-Contains "summary records person object confidence threshold" $summaryText "minPersonObjectConfidence=0.5"
 Assert-Contains "summary records support area ratio" $summaryText "maxSupportAreaChangeRatio=3"
 Assert-Contains "guide documents high-quality verification" $guideText "face verification/face detection"
 Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"

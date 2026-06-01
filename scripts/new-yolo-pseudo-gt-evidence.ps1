@@ -14,6 +14,7 @@ param(
     [double]$MaxSupportAreaChangeRatio = 3.0,
     [double]$MaxVerificationDistance = 0.75,
     [double]$MinVerificationConfidence = 0.55,
+    [double]$MinPersonObjectConfidence = 0.50,
     [int]$TemporalSupportWindowFrames = 2
 )
 
@@ -493,6 +494,9 @@ function Find-BestPersonSupport {
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
         if (-not (Test-PersonClassLabel $candidate.ClassLabel)) {
+            continue
+        }
+        if ($candidate.Confidence -lt $MinPersonObjectConfidence) {
             continue
         }
 
@@ -1062,6 +1066,7 @@ $summary = @(
     "- maxSupportAreaChangeRatio=$(Format-Double $MaxSupportAreaChangeRatio)",
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
     "- minVerificationConfidence=$(Format-Double $MinVerificationConfidence)",
+    "- minPersonObjectConfidence=$(Format-Double $MinPersonObjectConfidence)",
     "- temporalSupportWindowFrames=$TemporalSupportWindowFrames",
     "- inputValidation=strict-required-columns",
     "- topReviewCandidates=$(if ($topReviewFrames.Count -gt 0) { [string]::Join(';', $topReviewFrames) } else { 'none' })",
