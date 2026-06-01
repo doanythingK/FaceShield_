@@ -323,6 +323,7 @@ foreach ($candidate in $pseudoRows) {
             faceVerificationDistance = $candidate.faceVerificationDistance
             personConfidence = $candidate.personConfidence
             personUpperOverlap = $candidate.personUpperOverlap
+            personObjectClass = $candidate.personObjectClass
             supportFrameCount = $candidate.supportFrameCount
             supportRowCount = $candidate.supportRowCount
             supportSources = $candidate.supportSources

@@ -135,6 +135,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         faceVerificationDistance = 0.21
         personConfidence = 0
         personUpperOverlap = 0
+        personObjectClass = ""
         supportFrameCount = 2
         supportRowCount = 3
         supportSources = "tile+verification"
@@ -167,6 +168,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         faceVerificationDistance = 1
         personConfidence = 0.72
         personUpperOverlap = 0.62
+        personObjectClass = "person"
         supportFrameCount = 0
         supportRowCount = 0
         supportSources = ""
@@ -199,6 +201,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         faceVerificationDistance = 1
         personConfidence = 0
         personUpperOverlap = 0
+        personObjectClass = ""
         supportFrameCount = 2
         supportRowCount = 2
         supportSources = "tile"
@@ -255,6 +258,7 @@ foreach ($column in @(
         "reviewIou",
         "personConfidence",
         "personUpperOverlap",
+        "personObjectClass",
         "supportFrameCount",
         "supportRowCount",
         "supportSources",
@@ -279,6 +283,10 @@ if ($supportedClosure.areaChangeRatio -ne "1.02") {
 $falsePositiveClosure = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
 if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
     throw "Expected closure output to preserve auxiliary person/object overlap evidence."
+}
+
+if ($falsePositiveClosure.personObjectClass -ne "person") {
+    throw "Expected closure output to preserve auxiliary person/object class evidence."
 }
 
 $unreviewedReviewRows = @(Import-Csv $reviewCsv)
