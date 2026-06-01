@@ -306,6 +306,8 @@ foreach ($column in @(
         "reviewLabel",
         "reviewStatus",
         "reviewIou",
+        "eligibleReviewRowsOnFrame",
+        "bestFrameReviewIou",
         "fullFrameEvidenceNotes",
         "personConfidence",
         "personUpperOverlap",
@@ -453,6 +455,9 @@ Assert-Contains "summary records wrong source id geometry row" $sourceIdWrongGeo
 if (@($sourceIdWrongGeometryRows | Where-Object { $_.closureStatus -eq "unreviewed" -and $_.reviewMatchMode -eq "none" }).Count -ne 1) {
     throw "Expected sourcePredictionId with wrong geometry to leave one closure row unreviewed."
 }
+if (@($sourceIdWrongGeometryRows | Where-Object { $_.closureStatus -eq "unreviewed" -and $_.closureReason -eq "no matching reviewed geometry on candidate frame" -and $_.eligibleReviewRowsOnFrame -eq "1" }).Count -ne 1) {
+    throw "Expected sourcePredictionId wrong-geometry closure to report frame review coverage and geometry mismatch."
+}
 Invoke-ExpectedReviewClosureFailure `
     -Name "strict mode blocks source id wrong geometry rows" `
     -ReviewPath $sourceIdWrongGeometryReviewCsv `
@@ -588,6 +593,10 @@ $guideText = Get-Content -Raw -Path $guide
 
 Assert-Contains "script matches source prediction ids" $scriptText "sourcePredictionId"
 Assert-Contains "script requires source prediction id geometry" $scriptText "sourcePredictionId\+iou"
+Assert-Contains "script records frame review diagnostics" $scriptText "Get-FrameReviewDiagnostics"
+Assert-Contains "script records eligible frame review rows" $scriptText "eligibleReviewRowsOnFrame"
+Assert-Contains "script records best frame review iou" $scriptText "bestFrameReviewIou"
+Assert-Contains "script distinguishes geometry mismatch" $scriptText "no matching reviewed geometry on candidate frame"
 Assert-Contains "script supports manual miss iou matching" $scriptText "PreferManualMiss"
 Assert-Contains "script accepts explicit miss closure label" $scriptText '"missCandidate"\s*\{\s*return @\("face",\s*"miss"\)'
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"

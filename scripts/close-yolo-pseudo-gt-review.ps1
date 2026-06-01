@@ -245,6 +245,35 @@ function Find-BestReviewMatch {
     return $null
 }
 
+function Get-FrameReviewDiagnostics {
+    param(
+        [object]$Candidate,
+        [object[]]$ReviewRows,
+        [bool]$PreferManualMiss
+    )
+
+    $candidateFrame = Read-IntValue $Candidate "frame"
+    $candidateBox = New-Box $Candidate
+    $eligibleRows = [System.Collections.Generic.List[object]]::new()
+    $bestIou = 0.0
+
+    foreach ($row in @($ReviewRows | Where-Object { (Read-IntValue $_ "frame") -eq $candidateFrame })) {
+        $sourcePredictionId = [string](Get-PropertyValue $row "sourcePredictionId" "")
+        if ($PreferManualMiss -and -not [string]::IsNullOrWhiteSpace($sourcePredictionId)) {
+            continue
+        }
+
+        $eligibleRows.Add($row) | Out-Null
+        $reviewBox = New-Box $row
+        $bestIou = [Math]::Max($bestIou, (Get-Iou $candidateBox $reviewBox))
+    }
+
+    [pscustomobject]@{
+        EligibleRowsOnFrame = $eligibleRows.Count
+        BestFrameReviewIou = $bestIou
+    }
+}
+
 $pseudoPath = Resolve-RepoPath $PseudoGtCsv
 $reviewPath = Resolve-RepoPath $ReviewCsv
 $frameReviewPath = Resolve-RepoPath $FullFrameReviewCsv
@@ -282,6 +311,7 @@ foreach ($candidate in $pseudoRows) {
 
     $preferManualMiss = $candidateType -eq "missCandidate"
     $match = Find-BestReviewMatch -Candidate $candidate -ReviewRows $reviewRows -PreferManualMiss $preferManualMiss
+    $frameReviewDiagnostics = Get-FrameReviewDiagnostics -Candidate $candidate -ReviewRows $reviewRows -PreferManualMiss $preferManualMiss
     $reviewLabel = ""
     $reviewStatus = ""
     $reviewEvidenceNotes = ""
@@ -323,6 +353,12 @@ foreach ($candidate in $pseudoRows) {
 
     $closureStatus = "unreviewed"
     $closureReason = "no matching reviewed row"
+    if ($null -eq $match -and $frameReviewDiagnostics.EligibleRowsOnFrame -eq 0) {
+        $closureReason = "no eligible review row on candidate frame"
+    }
+    elseif ($null -eq $match) {
+        $closureReason = "no matching reviewed geometry on candidate frame"
+    }
     if ($null -ne $match -and [string]::IsNullOrWhiteSpace($reviewLabel)) {
         $closureStatus = "unreviewed"
         $closureReason = "matching row has no label"
@@ -359,6 +395,8 @@ foreach ($candidate in $pseudoRows) {
             reviewSourcePredictionId = $reviewSourcePredictionId
             reviewMatchMode = $matchMode
             reviewIou = Format-Double $reviewIou
+            eligibleReviewRowsOnFrame = $frameReviewDiagnostics.EligibleRowsOnFrame
+            bestFrameReviewIou = Format-Double $frameReviewDiagnostics.BestFrameReviewIou
             fullFrameReviewStatus = $fullFrameReviewStatus
             fullFrameMissedFaceCount = $fullFrameMissedFaceCount
             fullFrameMissedRowsAdded = $fullFrameMissedRowsAdded
