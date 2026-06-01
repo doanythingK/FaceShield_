@@ -329,6 +329,8 @@ Assert-Contains "helper supports GUI checklist preparation" $helperText "Prepare
 Assert-Contains "helper uses GUI checklist generator" $helperText "new-yolo-gui-smoke-checklist.ps1"
 Assert-Contains "helper supports GUI evidence preparation" $helperText "PrepareGuiEvidence"
 Assert-Contains "helper uses GUI evidence prep script" $helperText "prepare-yolo-gui-smoke-evidence.ps1"
+Assert-Contains "helper supports pseudo GT visual preparation" $helperText "PreparePseudoGtReviewVisual"
+Assert-Contains "helper prepares pseudo GT visual package" $helperText "Prepare-PseudoGtReviewVisual"
 Assert-Contains "helper computes pending GUI rows" $helperText "Get-PendingGuiSmokeRows"
 Assert-Contains "helper prints next GUI step" $helperText "nextGuiStep="
 Assert-Contains "helper prints next GUI evidence setter" $helperText "nextGuiEvidenceSetterCommand"
@@ -456,6 +458,7 @@ Assert-Contains "summary records finalizer update plan" $summaryText "UpdatePlan
 Assert-Contains "summary records require complete command" $summaryText "RequireComplete"
 Assert-Contains "summary records documented quality failure flag" $summaryText "AllowQualityGateFailure"
 Assert-Contains "summary records completion plan action" $summaryText "completionPlanAction"
+Assert-Contains "summary records pseudo GT visual prep command" $summaryText "PreparePseudoGtReviewVisual"
 Assert-Contains "summary records open command" $summaryText "open-yolo-manual-gates.ps1 -Open"
 Assert-Contains "summary records dashboard open command" $summaryText "open-yolo-manual-gates.ps1 -WriteSummary -OpenDashboard"
 Assert-Contains "summary records app open command" $summaryText "open-yolo-manual-gates.ps1 -OpenApp"
@@ -556,6 +559,35 @@ if ($preparedEvidenceRows | Where-Object { $_.status -eq "pass" -or -not [string
 Assert-FileNonEmpty "prepared GUI evidence guide" $preparedEvidenceGuide | Out-Null
 Assert-Contains "prepared output runs GUI evidence prep" $preparedEvidence.Text "pass gui-smoke-evidence-prep"
 Assert-Contains "prepared output verifies evidence custom GUI checklist" $preparedEvidence.Text "pass manual-readiness-state"
+
+$preparedPseudoGtVisual = Invoke-Helper @(
+    "-PreparePseudoGtReviewVisual",
+    "-WriteSummary",
+    "-SummaryPath", ".tmp\yolo-manual-gate-helper\pseudo-gt-visual-fixture\manual-gate-summary.md",
+    "-PendingReportPath", ".tmp\yolo-manual-gate-helper\pseudo-gt-visual-fixture\manual-pending-report.md"
+)
+if ($preparedPseudoGtVisual.ExitCode -ne 0) {
+    throw "Manual gate helper -PreparePseudoGtReviewVisual failed with exit code $($preparedPseudoGtVisual.ExitCode)"
+}
+$visualDraftCsv = Assert-FileNonEmpty "prepared pseudo GT visual draft" ".tmp\yolo-pseudo-gt\review-visual\pseudo-gt-full-gt-review-visual-draft.csv"
+$visualIndex = Assert-FileNonEmpty "prepared pseudo GT visual index" ".tmp\yolo-pseudo-gt\review-visual\pseudo-gt-review-visual-index.html"
+$visualReport = Assert-FileNonEmpty "prepared pseudo GT visual report" ".tmp\yolo-pseudo-gt\review-visual\pseudo-gt-review-visual-report.md"
+$visualRows = @(Import-Csv $visualDraftCsv)
+if ($visualRows.Count -eq 0) {
+    throw "Prepared pseudo GT visual draft has no rows: $visualDraftCsv"
+}
+if ($visualRows | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_.label) -or
+    -not [string]::IsNullOrWhiteSpace($_.reviewStatus) -or
+    -not [string]::IsNullOrWhiteSpace($_.evidenceNotes)
+}) {
+    throw "Prepared pseudo GT visual draft unexpectedly filled final review fields"
+}
+Assert-Contains "prepared pseudo GT visual output runs draft writer" $preparedPseudoGtVisual.Text "pass pseudo-gt-review-draft"
+Assert-Contains "prepared pseudo GT visual output runs visual package" $preparedPseudoGtVisual.Text "pass pseudo-gt-review-visual-package"
+Assert-Contains "prepared pseudo GT visual output prints visual index" $preparedPseudoGtVisual.Text "pseudoGtReviewVisualIndex="
+Assert-Contains "prepared pseudo GT visual index records test-only boundary" (Get-Content -Raw -Path $visualIndex) "test-only visual review evidence"
+Assert-Contains "prepared pseudo GT visual report records final fields blank" (Get-Content -Raw -Path $visualReport) "finalFilledRows: 0"
 
 $completed = Invoke-Helper @("-VerifyCompleted")
 if ($allCompleted) {

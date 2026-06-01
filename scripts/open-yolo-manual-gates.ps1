@@ -31,7 +31,8 @@ param(
     [switch]$VerifyCompleted,
     [switch]$WriteSummary,
     [switch]$PrepareGuiChecklist,
-    [switch]$PrepareGuiEvidence
+    [switch]$PrepareGuiEvidence,
+    [switch]$PreparePseudoGtReviewVisual
 )
 
 $ErrorActionPreference = "Stop"
@@ -424,6 +425,51 @@ function Ensure-GuiChecklist {
     return Assert-FileNonEmpty "GUI checklist CSV" $resolved
 }
 
+function Prepare-PseudoGtReviewVisual {
+    param(
+        [string]$QueueCsvPath,
+        [string]$FullFrameReviewCsvPath,
+        [string]$DraftDirPath,
+        [string]$VisualDirPath,
+        [string]$FrameSourceDirPath,
+        [string]$VideoPath
+    )
+
+    if (-not (Test-Path $QueueCsvPath)) {
+        throw "Pseudo-GT review queue CSV not found: $QueueCsvPath"
+    }
+    if (-not (Test-Path $pseudoGtReviewDraftWriter)) {
+        throw "Pseudo-GT review draft writer not found: $pseudoGtReviewDraftWriter"
+    }
+    if (-not (Test-Path $pseudoGtReviewVisualPackageWriter)) {
+        throw "Pseudo-GT visual package writer not found: $pseudoGtReviewVisualPackageWriter"
+    }
+
+    Invoke-RequiredVerifier "pseudo-gt-review-draft" $pseudoGtReviewDraftWriter @(
+        "-PseudoGtReviewQueueCsv", $QueueCsvPath,
+        "-FullFrameReviewCsv", $FullFrameReviewCsvPath,
+        "-OutputDir", $DraftDirPath,
+        "-Force",
+        "-Verify"
+    )
+
+    $draftReviewCsv = Join-Path $DraftDirPath "pseudo-gt-full-gt-review-draft.csv"
+    $draftFullFrameCsv = Join-Path $DraftDirPath "pseudo-gt-full-frame-review-draft.csv"
+    $args = @(
+        "-DraftReviewCsv", $draftReviewCsv,
+        "-DraftFullFrameReviewCsv", $draftFullFrameCsv,
+        "-FrameSourceDir", $FrameSourceDirPath,
+        "-OutputDir", $VisualDirPath,
+        "-Force",
+        "-Verify"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($VideoPath)) {
+        $args += @("-VideoPath", (Resolve-RepoPath $VideoPath))
+    }
+
+    Invoke-RequiredVerifier "pseudo-gt-review-visual-package" $pseudoGtReviewVisualPackageWriter $args
+}
+
 $resolvedReviewIndex = Assert-FileNonEmpty "review index" $ReviewIndex
 $resolvedFullGtReviewCsv = Assert-FileNonEmpty "full GT review CSV" $FullGtReviewCsv
 $resolvedFullFrameReviewCsv = Assert-FileNonEmpty "full-frame review CSV" $FullFrameReviewCsv
@@ -443,6 +489,16 @@ $resolvedPseudoGtReviewVisualIndex = Join-Path $resolvedPseudoGtReviewVisualDir 
 $resolvedPseudoGtReviewVisualReport = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-review-visual-report.md"
 $resolvedPseudoGtReviewVisualDraftCsv = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-full-gt-review-visual-draft.csv"
 $resolvedPseudoGtReviewVisualFrameDraftCsv = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-full-frame-review-visual-draft.csv"
+
+if ($PreparePseudoGtReviewVisual) {
+    Prepare-PseudoGtReviewVisual `
+        -QueueCsvPath $resolvedPseudoGtReviewQueueCsv `
+        -FullFrameReviewCsvPath $resolvedFullFrameReviewCsv `
+        -DraftDirPath $resolvedPseudoGtReviewDraftDir `
+        -VisualDirPath $resolvedPseudoGtReviewVisualDir `
+        -FrameSourceDirPath (Resolve-RepoPath $PseudoGtReviewVisualFrameSourceDir) `
+        -VideoPath $PseudoGtReviewVisualVideoPath
+}
 
 if ($PrepareGuiEvidence) {
     if (-not (Test-Path $guiEvidencePrep)) {
@@ -577,6 +633,7 @@ if ($WriteSummary) {
         $openSmokeManualCommand,
         $openSmokeAutoCommand,
         $nextGuiEvidenceSetterCommand,
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\open-yolo-manual-gates.ps1 -PreparePseudoGtReviewVisual -WriteSummary",
         $completedFullGtCommand,
         $completedGuiSmokeCommand,
         $completedManualReadinessCommand,

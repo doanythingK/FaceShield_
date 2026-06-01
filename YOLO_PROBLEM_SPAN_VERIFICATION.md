@@ -178,6 +178,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -Verify
 ```
 
+수동 게이트 dashboard와 함께 draft/visual package를 바로 준비하려면 아래처럼 실행한다. 이 명령도 최종 라벨을 채우지 않고, crop/overlay evidence만 만든다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/open-yolo-manual-gates.ps1 `
+  -PreparePseudoGtReviewVisual `
+  -WriteSummary
+```
+
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
 closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, `auxiliarySignalRole`, 반복 support, IoU/center-distance evidence, normalized geometry evidence와 `geometryTag`, review row의 `evidenceNotes`를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
 `-PublishPseudoGtToGoalEvidence`로 goal evidence에 발행한 경우에는 completion gate 기본 경로인 `.tmp/yolo-pseudo-gt/`의 후보 CSV를 닫아야 한다. problem-span 출력 폴더만 검증하는 임시 실행이면 아래 경로들을 해당 run의 `-OutputDir` 아래 파일로 바꿔서 실행한다.
