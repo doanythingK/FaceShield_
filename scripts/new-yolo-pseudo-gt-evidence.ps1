@@ -940,11 +940,16 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
 $reviewRank = 1
 $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
         $row = $_.Row
+        $expectedReviewLabel = switch ($row.candidateType) {
+            "falsePositiveCandidate" { "nonface" }
+            default { "face" }
+        }
         $queueRow = [pscustomobject]@{
             reviewRank = $reviewRank
             frame = $row.frame
             candidateId = $row.candidateId
             candidateType = $row.candidateType
+            expectedReviewLabel = $expectedReviewLabel
             source = $row.source
             basePredictionId = $row.basePredictionId
             tileDetectionId = $row.tileDetectionId
@@ -975,6 +980,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             reviewPriorityReason = $_.PriorityReason
             pseudoGtReason = $row.pseudoGtReason
             reviewStatus = $row.reviewStatus
+            evidenceNotes = $row.evidenceNotes
         }
         $script:reviewRank++
         $queueRow

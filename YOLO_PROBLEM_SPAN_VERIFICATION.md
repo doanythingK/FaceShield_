@@ -138,7 +138,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 `PseudoGtPersonObjectExternalCommand`를 쓰면 runner가 full-frame person/object manifest 생성 뒤 외부 보조 runner를 실행하고, `PseudoGtPersonObjectExternalOutputCsv`를 곧바로 `PseudoGtPersonObjectCsv`로 연결한다. 외부 runner가 스케일된 frame 이미지 좌표로 출력하면 `PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame`을 지정해야 한다.
 
 `PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. tile 없이 face verification만 잡은 얼굴도 기본 YOLO와 매칭되지 않으면 `missCandidate`로 남긴다. 기본 YOLO 박스와 고품질 face evidence는 IoU 또는 중심 거리로 매칭하되, 중심만 맞고 크기 차이가 큰 후보는 geometry support로 보지 않는다. 이렇게 큰 YOLO 박스 안의 작은 얼굴처럼 과대 박스/미탐이 섞인 경우가 `supportedFaceCandidate`로 묻히지 않고 review queue에 남는다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
-`pseudo-gt-review-queue.csv`는 같은 후보를 `fpProbability`/`missProbability` 기준으로 정렬해 먼저 볼 frame/candidate를 알려준다. 이 queue도 참고 증거이며, 최종 판정은 review CSV 라벨로만 닫는다.
+`pseudo-gt-review-queue.csv`는 같은 후보를 `fpProbability`/`missProbability` 기준으로 정렬해 먼저 볼 frame/candidate를 알려준다. queue에는 사람이 라벨을 옮길 때 참고할 `expectedReviewLabel`과 candidate `evidenceNotes`도 포함하지만, 이 값도 참고 증거이며 최종 판정은 review CSV 라벨로만 닫는다.
 기본 YOLO 검출이 0개인 구간에서도 `-AllowNoDetections -WithPseudoGtTileInput`과 tile 외부 runner를 함께 쓰면 sampled frame tile 결과가 `missCandidate`로 기록된다. 이때 `-WithPseudoGtPersonObjectInput`과 person/object 외부 runner를 함께 쓰면 같은 sampled frame의 person/object 보조 신호도 `personConfidence`, `personUpperOverlap`, `auxiliaryPriorityBoost`로 연결된다. 이 경로는 작은 얼굴 미탐 검증용 test-only 증거이며, person/object 결과는 얼굴 정답이 아니라 review 우선순위 보조 신호이고 실제 `miss` 확정은 review CSV 라벨로 닫는다.
 
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
@@ -173,7 +173,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pse
 - `pseudo-gt-person-object-input/person-object-manifest.csv`: `-WithPseudoGtPersonObjectInput` 사용 시 생성되는 full-frame person/object 보조 검증 manifest
 - `pseudo-gt-person-object-input/person-object-input-summary.md`: frame/해상도/외부 person/object runner 연결 요약
 - `pseudo-gt-candidates.csv`: test-only high-precision tile/verification 결과를 기본 YOLO 후보와 비교한 후보 CSV
-- `pseudo-gt-review-queue.csv`: `falsePositiveCandidate`/`missCandidate` 우선 확인용 review queue CSV. 사람이 후보를 바로 추적할 수 있도록 `basePredictionId`, `tileDetectionId`, `verificationId`, `x/y/w/h`, IoU/center-distance/support/probability 근거를 함께 보존한다. person/object overlap은 class가 person 계열인 경우에만 `auxiliaryPriorityBoost`로 review 우선순위만 올리며, face/nonface/miss 결론으로 쓰지 않는다.
+- `pseudo-gt-review-queue.csv`: `falsePositiveCandidate`/`missCandidate` 우선 확인용 review queue CSV. 사람이 후보를 바로 추적할 수 있도록 `expectedReviewLabel`, `basePredictionId`, `tileDetectionId`, `verificationId`, `x/y/w/h`, IoU/center-distance/support/probability 근거와 `evidenceNotes`를 함께 보존한다. person/object overlap은 class가 person 계열인 경우에만 `auxiliaryPriorityBoost`로 review 우선순위만 올리며, face/nonface/miss 결론으로 쓰지 않는다.
 - `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
 - `pseudo-gt-review-closure.csv`: review CSV 라벨로 pseudo-GT 후보가 닫혔는지 확인한 결과
 - `pseudo-gt-review-closure-summary.md`: 닫힌 후보, 미검토 후보, 라벨 불일치 후보 수 요약
@@ -223,6 +223,8 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `fpProbability`
 - `missProbability`
 - `pseudoGtReason`
+- `expectedReviewLabel`
+- `evidenceNotes`
 
 ## 판정 기준
 

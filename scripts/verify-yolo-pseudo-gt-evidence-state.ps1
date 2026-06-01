@@ -154,6 +154,8 @@ foreach ($column in @(
         "reviewRank",
         "candidateId",
         "candidateType",
+        "expectedReviewLabel",
+        "source",
         "basePredictionId",
         "tileDetectionId",
         "verificationId",
@@ -172,7 +174,8 @@ foreach ($column in @(
         "personObjectClass",
         "supportRowCount",
         "areaChangeRatio",
-        "reviewStatus")) {
+        "reviewStatus",
+        "evidenceNotes")) {
     Assert-Column $queueFirst $column
 }
 
@@ -212,6 +215,19 @@ if ([double]::Parse($falsePositiveQueueRow.auxiliaryPriorityBoost, [System.Globa
 
 if ($falsePositiveQueueRow.reviewPriorityReason -notmatch "auxiliary person/object support raises review priority") {
     throw "Expected review priority reason to explain auxiliary person/object boost."
+}
+
+if ($falsePositiveQueueRow.expectedReviewLabel -ne "nonface") {
+    throw "Expected falsePositiveCandidate queue row to tell the reviewer to close it as nonface after visual confirmation."
+}
+
+if ([string]::IsNullOrWhiteSpace($falsePositiveQueueRow.evidenceNotes)) {
+    throw "Expected review queue to preserve candidate evidenceNotes for human review."
+}
+
+$missQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "missCandidate" })[0]
+if ($null -eq $missQueueRow -or $missQueueRow.expectedReviewLabel -ne "face") {
+    throw "Expected missCandidate queue row to tell the reviewer to close it as face after visual confirmation."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
@@ -343,6 +359,8 @@ Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
 Assert-Contains "script records auxiliary priority boost" $scriptText "auxiliaryPriorityBoost"
 Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
+Assert-Contains "script records expected review label in queue" $scriptText "expectedReviewLabel"
+Assert-Contains "script preserves queue evidence notes" $scriptText 'evidenceNotes = \$row\.evidenceNotes'
 Assert-Contains "script preserves review queue geometry" $scriptText "basePredictionId[\s\S]*tileDetectionId[\s\S]*verificationId[\s\S]*x ="
 Assert-Contains "script records verification-only misses" $scriptText "test-only high-quality face verification was not matched by base YOLO"
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
