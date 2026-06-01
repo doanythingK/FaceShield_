@@ -89,7 +89,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     [pscustomobject]@{ frame = 8; verificationId = "verify-high-conf-bad-distance-8"; x = 730.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.990; faceVerificationDistance = 0.990 },
     [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120 },
     [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-primary-10"; x = 301.0; y = 201.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
-    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-secondary-10"; x = 302.0; y = 202.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.190 }
+    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-secondary-10"; x = 302.0; y = 202.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.190 },
+    [pscustomobject]@{ frame = 12; verificationId = "verify-low-base-primary-10"; x = 303.0; y = 203.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -122,12 +123,12 @@ $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 $reviewQueueRows = @(Import-Csv $reviewQueueCsv)
 
-if ($rows.Count -ne 9) {
-    throw "Expected 9 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 10) {
+    throw "Expected 10 pseudo-GT rows, actual=$($rows.Count)"
 }
 
-if ($reviewQueueRows.Count -ne 9) {
-    throw "Expected 9 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
+if ($reviewQueueRows.Count -ne 10) {
+    throw "Expected 10 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
 }
 
 $first = $rows[0]
@@ -316,8 +317,8 @@ if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Co
     throw "Expected three falsePositiveCandidate rows."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 4) {
-    throw "Expected four missCandidate rows."
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 5) {
+    throw "Expected five missCandidate rows."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
@@ -330,6 +331,10 @@ if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verifi
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.basePredictionId -eq "10-0" }).Count -ne 1) {
     throw "Expected low-confidence base YOLO row with high-quality verification support to remain a supportedFaceCandidate."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.frame -eq "12" -and $_.verificationId -eq "verify-low-base-primary-10" }).Count -ne 1) {
+    throw "Expected repeated verification IDs on different frames to stay frame-scoped and preserve the later missCandidate."
 }
 
 if (@($rows | Where-Object { $_.verificationId -eq "verify-low-quality-6" }).Count -ne 0) {
@@ -476,6 +481,7 @@ Assert-Contains "script filters weak comparison evidence" $scriptText 'Find-Best
 Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script records repeated support rows" $scriptText "supportRowCount"
+Assert-Contains "script scopes matched pseudo gt ids by frame" $scriptText "Get-DetectionMatchKey"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$\(\$baseRows.Count\)'
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
@@ -500,7 +506,7 @@ Assert-Contains "script does not finalize labels" $scriptText "final face/nonfac
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=2"
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=3"
-Assert-Contains "summary records miss count" $summaryText "missCandidate=4"
+Assert-Contains "summary records miss count" $summaryText "missCandidate=5"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
 Assert-Contains "summary records strict input validation" $summaryText "inputValidation=strict-required-columns"
 Assert-Contains "summary records top review candidates" $summaryText "topReviewCandidates="

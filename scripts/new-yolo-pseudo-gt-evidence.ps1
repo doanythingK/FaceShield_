@@ -222,6 +222,12 @@ function New-DetectionRow {
     }
 }
 
+function Get-DetectionMatchKey {
+    param([object]$Row)
+
+    return "$($Row.Source):$($Row.Frame):$($Row.Id)"
+}
+
 function Read-DetectionCsvRows {
     param(
         [string]$Path,
@@ -716,10 +722,10 @@ foreach ($base in $baseRows) {
     $hasVerificationSupport = $null -ne $verificationMatch
     $hasFaceSupport = $hasTileSupport -or $hasVerificationSupport
     if ($hasTileSupport) {
-        [void]$matchedTileIds.Add($tileMatch.Row.Id)
+        [void]$matchedTileIds.Add((Get-DetectionMatchKey $tileMatch.Row))
     }
     if ($hasVerificationSupport) {
-        [void]$matchedVerificationIds.Add($verificationMatch.Row.Id)
+        [void]$matchedVerificationIds.Add((Get-DetectionMatchKey $verificationMatch.Row))
     }
 
     $candidateType = if ($hasFaceSupport) { "supportedFaceCandidate" } else { "falsePositiveCandidate" }
@@ -815,7 +821,7 @@ foreach ($tile in $tileRows) {
         continue
     }
 
-    if ($matchedTileIds.Contains($tile.Id)) {
+    if ($matchedTileIds.Contains((Get-DetectionMatchKey $tile))) {
         continue
     }
 
@@ -834,7 +840,7 @@ foreach ($tile in $tileRows) {
     $verificationConfidence = if ($null -ne $verificationMatch) { $verificationMatch.Row.Confidence } else { 0.0 }
     $verificationDistance = if ($null -ne $verificationMatch) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
     if ($null -ne $verificationMatch) {
-        [void]$matchedVerificationIds.Add($verificationMatch.Row.Id)
+        [void]$matchedVerificationIds.Add((Get-DetectionMatchKey $verificationMatch.Row))
     }
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
 
@@ -879,7 +885,7 @@ foreach ($verification in $verificationRows) {
         continue
     }
 
-    if ($matchedVerificationIds.Contains($verification.Id)) {
+    if ($matchedVerificationIds.Contains((Get-DetectionMatchKey $verification))) {
         continue
     }
 
@@ -889,7 +895,7 @@ foreach ($verification in $verificationRows) {
     }
 
     $tileMatch = Find-BestMatch $verification $tileRows $MinSupportIou $MaxSupportCenterDistanceRatio
-    if ($null -ne $tileMatch -and $matchedTileIds.Contains($tileMatch.Row.Id)) {
+    if ($null -ne $tileMatch -and $matchedTileIds.Contains((Get-DetectionMatchKey $tileMatch.Row))) {
         continue
     }
 
