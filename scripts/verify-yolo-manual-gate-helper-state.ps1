@@ -6,6 +6,11 @@ param(
     [string]$CompletedFixtureReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-gt-review-reviewed-candidate.csv",
     [string]$CompletedFixtureFullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review-reviewed-candidate.csv",
     [string]$CompletedFixtureGuiChecklistCsv = ".tmp\yolo-manual-gate-helper\completed-fixture\manual-smoke-checklist.csv",
+    [string]$CompletedFixtureManualReviewCsv = ".tmp\yolo-manual-gate-helper\completed-fixture\full-gt-review-reviewed.csv",
+    [string]$CompletedFixtureManualFullFrameReviewCsv = ".tmp\yolo-manual-gate-helper\completed-fixture\full-frame-review-reviewed.csv",
+    [string]$CompletedFixturePseudoGtCsv = ".tmp\yolo-manual-gate-helper\completed-fixture\pseudo-gt-candidates.csv",
+    [string]$CompletedFixturePseudoGtReviewClosureCsv = ".tmp\yolo-manual-gate-helper\completed-fixture\pseudo-gt-review-closure.csv",
+    [string]$CompletedFixturePseudoGtReviewClosureSummary = ".tmp\yolo-manual-gate-helper\completed-fixture\pseudo-gt-review-closure-summary.md",
     [string]$SummaryPath = ".tmp\yolo-manual-gates\manual-gate-summary.md"
 )
 
@@ -166,6 +171,80 @@ function New-CompletedGuiChecklistFixture {
     return $outputPath
 }
 
+function New-ReviewedCsvFixture {
+    param(
+        [string]$InputCsv,
+        [string]$OutputCsv
+    )
+
+    $inputPath = Resolve-RepoPath $InputCsv
+    $outputPath = Resolve-RepoPath $OutputCsv
+    $outputDir = Split-Path -Parent $outputPath
+    New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+    $rows = @(Import-Csv $inputPath)
+    foreach ($row in $rows) {
+        if ($null -ne $row.PSObject.Properties["reviewStatus"]) {
+            $row.reviewStatus = "reviewed"
+        }
+        if ($null -ne $row.PSObject.Properties["evidenceNotes"] -and [string]::IsNullOrWhiteSpace([string]$row.evidenceNotes)) {
+            $row.evidenceNotes = "manual gate helper reviewed fixture evidence"
+        }
+    }
+
+    $rows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $outputPath
+    return $outputPath
+}
+
+function New-CompletedPseudoGtFixture {
+    param(
+        [string]$ReviewCsv,
+        [string]$OutputCsv
+    )
+
+    $reviewPath = Resolve-RepoPath $ReviewCsv
+    $outputPath = Resolve-RepoPath $OutputCsv
+    $outputDir = Split-Path -Parent $outputPath
+    New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+    $reviewRow = @(Import-Csv $reviewPath | Select-Object -First 1)
+    if ($reviewRow.Count -eq 0) {
+        throw "Cannot create pseudo-GT fixture because review CSV has no rows: $reviewPath"
+    }
+
+    $row = $reviewRow[0]
+    $candidate = [pscustomobject]@{
+        candidateId = "fixture-supported-face-0"
+        frame = $row.frame
+        candidateType = "supportedFaceCandidate"
+        x = $row.x
+        y = $row.y
+        w = $row.w
+        h = $row.h
+        basePredictionId = $row.sourcePredictionId
+        baseFaceConfidence = $row.sourceConfidence
+        tileFaceConfidence = "0.93"
+        tileSupportCount = "1"
+        faceVerificationConfidence = "0.91"
+        faceVerificationDistance = "0.11"
+        personConfidence = ""
+        personUpperOverlap = ""
+        personObjectClass = ""
+        supportFrameCount = "1"
+        supportRowCount = "2"
+        supportSources = "tile-face;face-verification"
+        bestIou = "1"
+        centerDistanceRatio = "0"
+        areaChangeRatio = "0"
+        fpProbability = "0.01"
+        missProbability = "0.01"
+        pseudoGtReason = "fixture high-precision support closes through human reviewed face label"
+    }
+
+    @($candidate) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $outputPath
+    return $outputPath
+}
+
 $helperPath = Assert-FileNonEmpty "manual gate helper" $ManualGateHelper
 $reviewCsv = Assert-FileNonEmpty "full GT review CSV" $FullGtReviewCsv
 $frameCsv = Assert-FileNonEmpty "full-frame review CSV" $FullFrameReviewCsv
@@ -177,6 +256,10 @@ $helperText = Get-Content -Raw -Path $helperPath
 Assert-Contains "helper prints completed manual readiness command" $helperText "completedManualReadinessCommand"
 Assert-Contains "helper prints pseudo GT review closure command" $helperText "completedPseudoGtReviewClosureCommand"
 Assert-Contains "helper uses pseudo GT review closure script" $helperText "close-yolo-pseudo-gt-review.ps1"
+Assert-Contains "helper prints pseudo GT status" $helperText "pseudoGtStatus"
+Assert-Contains "helper prints pseudo GT action" $helperText "pseudoGtAction"
+Assert-Contains "helper documents goal evidence publish switch" $helperText "PublishPseudoGtToGoalEvidence"
+Assert-Contains "helper requires pseudo GT before completion" $helperText "Pseudo-GT candidate CSV is required before completed manual gates"
 Assert-Contains "helper supports ready verification" $helperText "VerifyReady"
 Assert-Contains "helper supports completed verification" $helperText "VerifyCompleted"
 Assert-Contains "helper completed path allows full GT" $helperText "AllowCompletedFullGt"
@@ -247,6 +330,9 @@ if ($ready.ExitCode -ne 0) {
 }
 Assert-Contains "ready output includes completed readiness command" $ready.Text "completedManualReadinessCommand"
 Assert-Contains "ready output includes pseudo GT closure command" $ready.Text "completedPseudoGtReviewClosureCommand"
+Assert-Contains "ready output includes pseudo GT status" $ready.Text "pseudoGtStatus="
+Assert-Contains "ready output includes pseudo GT action" $ready.Text "pseudoGtAction="
+Assert-Contains "ready output points to goal evidence publish switch" $ready.Text "PublishPseudoGtToGoalEvidence"
 Assert-Contains "ready output includes final yolo state command" $ready.Text "completedYoloStateCommand"
 Assert-Contains "ready output includes completion finalizer command" $ready.Text "completionFinalizerCommand"
 Assert-Contains "ready output includes pending report command" $ready.Text "pendingReportCommand"
@@ -284,6 +370,9 @@ Assert-Contains "summary records completed GUI command" $summaryText "verify-yol
 Assert-Contains "summary records completed readiness command" $summaryText "verify-yolo-manual-readiness-state.ps1"
 Assert-Contains "summary records pseudo GT closure command" $summaryText "close-yolo-pseudo-gt-review.ps1"
 Assert-Contains "summary records final yolo state command" $summaryText "verify-yolo-state.ps1"
+Assert-Contains "summary records pseudo GT status" $summaryText "pseudoGtStatus"
+Assert-Contains "summary records pseudo GT action" $summaryText "pseudoGtAction"
+Assert-Contains "summary records goal evidence publish switch" $summaryText "PublishPseudoGtToGoalEvidence"
 Assert-Contains "summary records completion finalizer command" $summaryText "complete-yolo-goal-after-manual-gates.ps1"
 Assert-Contains "summary records pending report command" $summaryText "write-yolo-manual-pending-report.ps1"
 Assert-Contains "summary records GUI evidence prep command" $summaryText "prepare-yolo-gui-smoke-evidence.ps1"
@@ -343,6 +432,8 @@ Assert-Contains "dashboard records pending wording" $dashboardText "pending of"
 Assert-Contains "dashboard records preview track hold" $dashboardText "preview-track-hold"
 Assert-Contains "dashboard records completion finalizer" $dashboardText "complete-yolo-goal-after-manual-gates.ps1"
 Assert-Contains "dashboard records pseudo GT closure command" $dashboardText "close-yolo-pseudo-gt-review.ps1"
+Assert-Contains "dashboard records pseudo GT evidence section" $dashboardText "Pseudo-GT Completion Evidence"
+Assert-Contains "dashboard records goal evidence publish switch" $dashboardText "PublishPseudoGtToGoalEvidence"
 
 $preparedGuiCsv = ".tmp\yolo-manual-gate-helper\prepared-fixture\manual-smoke-checklist.csv"
 $preparedGuiPath = Resolve-RepoPath $preparedGuiCsv
@@ -405,15 +496,26 @@ Assert-Contains "prepared output runs GUI evidence prep" $preparedEvidence.Text 
 Assert-Contains "prepared output verifies evidence custom GUI checklist" $preparedEvidence.Text "pass manual-readiness-state"
 
 $completed = Invoke-Helper @("-VerifyCompleted")
+$defaultPseudoGtExists = Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv")
 if ($allCompleted) {
-    if ($completed.ExitCode -ne 0) {
-        throw "Manual gate helper -VerifyCompleted failed on completed manual files with exit code $($completed.ExitCode)"
-    }
+    if ($defaultPseudoGtExists) {
+        if ($completed.ExitCode -ne 0) {
+            throw "Manual gate helper -VerifyCompleted failed on completed manual files with exit code $($completed.ExitCode)"
+        }
 
-    Assert-Contains "completed output runs manual readiness" $completed.Text "manual-readiness-completed-state"
-    Assert-Contains "completed output runs full GT reviewed verifier" $completed.Text "full-gt-reviewed-state"
-    Assert-Contains "completed output runs GUI smoke verifier" $completed.Text "gui-smoke-state"
-    Assert-Contains "completed output passes" $completed.Text "[YoloManualGate] all requested checks passed"
+        Assert-Contains "completed output runs manual readiness" $completed.Text "manual-readiness-completed-state"
+        Assert-Contains "completed output runs full GT reviewed verifier" $completed.Text "full-gt-reviewed-state"
+        Assert-Contains "completed output runs GUI smoke verifier" $completed.Text "gui-smoke-state"
+        Assert-Contains "completed output passes" $completed.Text "[YoloManualGate] all requested checks passed"
+    }
+    else {
+        if ($completed.ExitCode -eq 0) {
+            throw "Manual gate helper -VerifyCompleted unexpectedly passed without default pseudo-GT candidates"
+        }
+
+        Assert-Contains "completed output requires pseudo GT candidates" $completed.Text "Pseudo-GT candidate CSV is required before completed manual gates"
+        Assert-Contains "completed output points to goal evidence publish switch" $completed.Text "PublishPseudoGtToGoalEvidence"
+    }
 }
 elseif ($allPending) {
     if ($completed.ExitCode -eq 0) {
@@ -433,10 +535,16 @@ else {
 }
 
 $completedGuiCsv = New-CompletedGuiChecklistFixture -OutputCsv $CompletedFixtureGuiChecklistCsv
+$completedManualReviewCsv = New-ReviewedCsvFixture -InputCsv $completedReviewCsv -OutputCsv $CompletedFixtureManualReviewCsv
+$completedManualFrameCsv = New-ReviewedCsvFixture -InputCsv $completedFrameCsv -OutputCsv $CompletedFixtureManualFullFrameReviewCsv
+$completedPseudoGtCsv = New-CompletedPseudoGtFixture -ReviewCsv $completedManualReviewCsv -OutputCsv $CompletedFixturePseudoGtCsv
 $completedFixture = Invoke-Helper @(
-    "-FullGtReviewCsv", $completedReviewCsv,
-    "-FullFrameReviewCsv", $completedFrameCsv,
+    "-FullGtReviewCsv", $completedManualReviewCsv,
+    "-FullFrameReviewCsv", $completedManualFrameCsv,
     "-GuiChecklistCsv", $completedGuiCsv,
+    "-PseudoGtCsv", $completedPseudoGtCsv,
+    "-PseudoGtReviewClosureCsv", $CompletedFixturePseudoGtReviewClosureCsv,
+    "-PseudoGtReviewClosureSummary", $CompletedFixturePseudoGtReviewClosureSummary,
     "-MaxMisses", "1",
     "-MaxFalsePositives", "13",
     "-MaxLowIou", "1",
@@ -450,6 +558,8 @@ Assert-Contains "completed fixture passes manual readiness" $completedFixture.Te
 Assert-Contains "completed fixture runs full GT reviewed verifier" $completedFixture.Text "full-gt-reviewed-state"
 Assert-Contains "completed fixture runs GUI smoke verifier" $completedFixture.Text "gui-smoke-state"
 Assert-Contains "completed fixture records pseudo GT closure path" $completedFixture.Text "pseudoGtCsv="
+Assert-Contains "completed fixture reports ready pseudo GT" $completedFixture.Text "pseudoGtStatus=ready"
+Assert-Contains "completed fixture runs pseudo GT closure" $completedFixture.Text "pseudo-gt-review-closure"
 Assert-Contains "completed fixture passes helper" $completedFixture.Text "[YoloManualGate] all requested checks passed"
 
 Write-Host "[YoloManualGateHelperVerify] all requested checks passed"

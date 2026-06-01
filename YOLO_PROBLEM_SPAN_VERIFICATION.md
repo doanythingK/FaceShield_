@@ -146,14 +146,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
 closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, 반복 support, IoU/center-distance evidence를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
+`-PublishPseudoGtToGoalEvidence`로 goal evidence에 발행한 경우에는 completion gate 기본 경로인 `.tmp/yolo-pseudo-gt/`의 후보 CSV를 닫아야 한다. problem-span 출력 폴더만 검증하는 임시 실행이면 아래 경로들을 해당 run의 `-OutputDir` 아래 파일로 바꿔서 실행한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pseudo-gt-review.ps1 `
-  -PseudoGtCsv ".tmp/yolo-problem-span-0900-pseudo-gt/pseudo-gt-candidates.csv" `
-  -ReviewCsv ".tmp/yolo-problem-span-0900-pseudo-gt/review-package/full-gt-review.csv" `
-  -FullFrameReviewCsv ".tmp/yolo-problem-span-0900-pseudo-gt/review-package/full-frame-review.csv" `
-  -OutputCsv ".tmp/yolo-problem-span-0900-pseudo-gt/pseudo-gt-review-closure.csv" `
-  -SummaryPath ".tmp/yolo-problem-span-0900-pseudo-gt/pseudo-gt-review-closure-summary.md" `
+  -PseudoGtCsv ".tmp/yolo-pseudo-gt/pseudo-gt-candidates.csv" `
+  -ReviewCsv ".tmp/yolo-full-gt/review-package-smoke/full-gt-review.csv" `
+  -FullFrameReviewCsv ".tmp/yolo-full-gt/review-package-smoke/full-frame-review.csv" `
+  -OutputCsv ".tmp/yolo-pseudo-gt/pseudo-gt-review-closure.csv" `
+  -SummaryPath ".tmp/yolo-pseudo-gt/pseudo-gt-review-closure-summary.md" `
   -RequireAllClosed
 ```
 
