@@ -191,7 +191,13 @@ function Find-BestReviewMatch {
     foreach ($row in @($ReviewRows | Where-Object { (Read-IntValue $_ "frame") -eq $candidateFrame })) {
         $sourcePredictionId = [string](Get-PropertyValue $row "sourcePredictionId" "")
         if (-not $PreferManualMiss -and -not [string]::IsNullOrWhiteSpace($basePredictionId) -and $sourcePredictionId -eq $basePredictionId) {
-            return [pscustomobject]@{ Row = $row; Iou = 1.0; MatchMode = "sourcePredictionId" }
+            $reviewBox = New-Box $row
+            $sourcePredictionIou = Get-Iou $candidateBox $reviewBox
+            if ($sourcePredictionIou -ge $MinReviewIou) {
+                return [pscustomobject]@{ Row = $row; Iou = $sourcePredictionIou; MatchMode = "sourcePredictionId+iou" }
+            }
+
+            continue
         }
 
         if ($PreferManualMiss -and -not [string]::IsNullOrWhiteSpace($sourcePredictionId)) {

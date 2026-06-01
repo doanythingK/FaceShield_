@@ -617,6 +617,7 @@ Assert-Contains "completion finalizer writes complete evidence report" $completi
 Assert-Contains "completion finalizer has selftest" $completionFinalizer "pass selftest completed fixture"
 Assert-Contains "pseudo gt review closure requires completed status" $pseudoGtReviewClosure "Test-ReviewedStatus"
 Assert-Contains "pseudo gt review closure requires evidence notes" $pseudoGtReviewClosure "matching row has no evidenceNotes"
+Assert-Contains "pseudo gt review closure requires source id geometry" $pseudoGtReviewClosure "sourcePredictionId+iou"
 Assert-Contains "pseudo gt review closure requires completed missed scan" $pseudoGtReviewClosure "missedFaceRowsAdded > 0"
 Assert-Contains "pseudo gt review closure keeps pending status open" $pseudoGtReviewClosure "is not a completed review state"
 Assert-Contains "pseudo gt separation verifier scans runtime source" $pseudoGtSeparationVerify "runtime source has no pseudo-GT references"

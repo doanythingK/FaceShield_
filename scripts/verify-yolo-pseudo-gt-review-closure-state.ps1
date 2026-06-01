@@ -17,6 +17,9 @@ $unreviewedSummaryPath = Join-Path $work "pseudo-gt-review-closure-unreviewed-su
 $mismatchReviewCsv = Join-Path $work "full-gt-review-label-mismatch.csv"
 $mismatchOutputCsv = Join-Path $work "pseudo-gt-review-closure-label-mismatch.csv"
 $mismatchSummaryPath = Join-Path $work "pseudo-gt-review-closure-label-mismatch-summary.md"
+$sourceIdWrongGeometryReviewCsv = Join-Path $work "full-gt-review-source-id-wrong-geometry.csv"
+$sourceIdWrongGeometryOutputCsv = Join-Path $work "pseudo-gt-review-closure-source-id-wrong-geometry.csv"
+$sourceIdWrongGeometrySummaryPath = Join-Path $work "pseudo-gt-review-closure-source-id-wrong-geometry-summary.md"
 $pendingStatusReviewCsv = Join-Path $work "full-gt-review-pending-status.csv"
 $pendingStatusOutputCsv = Join-Path $work "pseudo-gt-review-closure-pending-status.csv"
 $pendingStatusSummaryPath = Join-Path $work "pseudo-gt-review-closure-pending-status-summary.md"
@@ -341,6 +344,10 @@ if ($supportedClosure.supportEvidenceIds -ne "tile-face:2:tile-face-2;face-verif
     throw "Expected closure output to preserve concrete pseudo-GT support evidence ids."
 }
 
+if ($supportedClosure.reviewMatchMode -ne "sourcePredictionId+iou") {
+    throw "Expected sourcePredictionId closure to require geometry IoU support, actual=$($supportedClosure.reviewMatchMode)."
+}
+
 if ($supportedClosure.areaChangeRatio -ne "1.02") {
     throw "Expected closure output to preserve support area-ratio evidence."
 }
@@ -423,6 +430,35 @@ Invoke-ExpectedReviewClosureFailure `
     -OutputPath $mismatchOutputCsv `
     -SummaryOutputPath $mismatchSummaryPath `
     -ExpectedPattern "labelMismatch=1"
+
+$sourceIdWrongGeometryReviewRows = @(Import-Csv $reviewCsv)
+$sourceIdWrongGeometryRow = (@($sourceIdWrongGeometryReviewRows | Where-Object { $_.frame -eq "2" }))[0]
+$sourceIdWrongGeometryRow.x = 300
+$sourceIdWrongGeometryRow.y = 300
+$sourceIdWrongGeometryRow.w = 50
+$sourceIdWrongGeometryRow.h = 60
+$sourceIdWrongGeometryReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $sourceIdWrongGeometryReviewCsv
+
+$sourceIdWrongGeometryOutput = Invoke-ReviewClosure `
+    -ReviewPath $sourceIdWrongGeometryReviewCsv `
+    -OutputPath $sourceIdWrongGeometryOutputCsv `
+    -SummaryOutputPath $sourceIdWrongGeometrySummaryPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict source-id wrong-geometry closure run to pass: $($sourceIdWrongGeometryOutput | Out-String)"
+}
+
+$sourceIdWrongGeometryRows = @(Import-Csv $sourceIdWrongGeometryOutputCsv)
+$sourceIdWrongGeometrySummaryText = Get-Content -Raw -Path $sourceIdWrongGeometrySummaryPath
+Assert-Contains "summary records wrong source id geometry row" $sourceIdWrongGeometrySummaryText "unreviewed=1"
+if (@($sourceIdWrongGeometryRows | Where-Object { $_.closureStatus -eq "unreviewed" -and $_.reviewMatchMode -eq "none" }).Count -ne 1) {
+    throw "Expected sourcePredictionId with wrong geometry to leave one closure row unreviewed."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks source id wrong geometry rows" `
+    -ReviewPath $sourceIdWrongGeometryReviewCsv `
+    -OutputPath $sourceIdWrongGeometryOutputCsv `
+    -SummaryOutputPath $sourceIdWrongGeometrySummaryPath `
+    -ExpectedPattern "unreviewed=1"
 
 $pendingStatusReviewRows = @(Import-Csv $reviewCsv)
 (@($pendingStatusReviewRows | Where-Object { $_.frame -eq "2" }))[0].reviewStatus = "pending-human"
@@ -551,6 +587,7 @@ $summaryText = Get-Content -Raw -Path $summaryPath
 $guideText = Get-Content -Raw -Path $guide
 
 Assert-Contains "script matches source prediction ids" $scriptText "sourcePredictionId"
+Assert-Contains "script requires source prediction id geometry" $scriptText "sourcePredictionId\+iou"
 Assert-Contains "script supports manual miss iou matching" $scriptText "PreferManualMiss"
 Assert-Contains "script accepts explicit miss closure label" $scriptText '"missCandidate"\s*\{\s*return @\("face",\s*"miss"\)'
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
