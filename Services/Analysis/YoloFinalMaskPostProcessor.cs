@@ -835,8 +835,17 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
+            if (options.StrongCarryProtectionRequiresAreaChange &&
+                options.StrongCarryProtectionRequiresCenterShift)
+            {
+                return hasIndependentAreaChange && hasIndependentCenterShift;
+            }
+
             if (options.StrongCarryProtectionRequiresAreaChange)
                 return hasIndependentAreaChange;
+
+            if (options.StrongCarryProtectionRequiresCenterShift)
+                return hasIndependentCenterShift;
 
             if (hasIndependentCenterShift || hasIndependentAreaChange)
                 return true;
@@ -1977,6 +1986,7 @@ namespace FaceShield.Services.Analysis
         public double StrongCarryProtectionMinReferenceCenterShiftRatio { get; init; } = 0.22;
         public double StrongCarryProtectionMinReferenceAreaChangeRatio { get; init; } = 1.65;
         public bool StrongCarryProtectionRequiresAreaChange { get; init; } = true;
+        public bool StrongCarryProtectionRequiresCenterShift { get; init; } = true;
         public double CandidateMatchMinIou { get; init; } = 0.55;
         public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
         public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;
