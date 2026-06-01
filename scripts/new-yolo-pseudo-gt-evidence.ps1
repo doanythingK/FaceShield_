@@ -587,6 +587,7 @@ function Get-TemporalFaceSupport {
 
     $frames = [System.Collections.Generic.HashSet[int]]::new()
     $sources = [System.Collections.Generic.HashSet[string]]::new()
+    $evidenceIds = [System.Collections.Generic.HashSet[string]]::new()
     $rowCount = 0
 
     foreach ($candidate in @($TileCandidates | Where-Object { [Math]::Abs($_.Frame - $Target.Frame) -le $TemporalSupportWindowFrames })) {
@@ -599,6 +600,7 @@ function Get-TemporalFaceSupport {
 
         [void]$frames.Add($candidate.Frame)
         [void]$sources.Add("tile")
+        [void]$evidenceIds.Add((Get-DetectionMatchKey $candidate))
         $rowCount++
     }
 
@@ -612,14 +614,17 @@ function Get-TemporalFaceSupport {
 
         [void]$frames.Add($candidate.Frame)
         [void]$sources.Add("verification")
+        [void]$evidenceIds.Add((Get-DetectionMatchKey $candidate))
         $rowCount++
     }
 
     $sourceValues = @($sources | Sort-Object)
+    $evidenceIdValues = @($evidenceIds | Sort-Object)
     return [pscustomobject]@{
         FrameCount = $frames.Count
         RowCount = $rowCount
         Sources = if ($sourceValues.Count -gt 0) { [string]::Join("+", $sourceValues) } else { "" }
+        EvidenceIds = if ($evidenceIdValues.Count -gt 0) { [string]::Join(";", $evidenceIdValues) } else { "" }
     }
 }
 
@@ -804,6 +809,7 @@ foreach ($base in $baseRows) {
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
+            supportEvidenceIds = $temporalSupport.EvidenceIds
             bestIou = Format-Double $bestIou
             centerDistanceRatio = Format-Double $bestCenterDistance
             areaChangeRatio = Format-Double $bestAreaChangeRatio
@@ -869,6 +875,7 @@ foreach ($tile in $tileRows) {
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
+            supportEvidenceIds = $temporalSupport.EvidenceIds
             bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
             areaChangeRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.AreaChangeRatio } else { "99" }
@@ -938,6 +945,7 @@ foreach ($verification in $verificationRows) {
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
+            supportEvidenceIds = $temporalSupport.EvidenceIds
             bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
             areaChangeRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.AreaChangeRatio } else { "99" }
@@ -1041,6 +1049,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             supportFrameCount = $row.supportFrameCount
             supportRowCount = $row.supportRowCount
             supportSources = $row.supportSources
+            supportEvidenceIds = $row.supportEvidenceIds
             bestIou = $row.bestIou
             centerDistanceRatio = $row.centerDistanceRatio
             areaChangeRatio = $row.areaChangeRatio

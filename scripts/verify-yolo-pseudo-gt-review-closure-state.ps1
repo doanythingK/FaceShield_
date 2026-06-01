@@ -143,6 +143,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         supportFrameCount = 2
         supportRowCount = 3
         supportSources = "tile+verification"
+        supportEvidenceIds = "tile-face:2:tile-face-2;face-verification:2:verify-face-2"
         bestIou = 0.9
         centerDistanceRatio = 0.1
         areaChangeRatio = 1.02
@@ -187,7 +188,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         reviewStatus = "pending-human"
         evidenceNotes = ""
     },
-    [pscustomObject]@{
+    [pscustomobject]@{
         candidateId = "miss-7-tile-face-7"
         frame = 7
         candidateType = "missCandidate"
@@ -211,6 +212,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         supportFrameCount = 2
         supportRowCount = 2
         supportSources = "tile"
+        supportEvidenceIds = "tile-face:7:tile-face-7;tile-face:8:tile-face-8"
         bestIou = 0
         centerDistanceRatio = 99
         areaChangeRatio = 99
@@ -269,6 +271,7 @@ foreach ($column in @(
         "supportFrameCount",
         "supportRowCount",
         "supportSources",
+        "supportEvidenceIds",
         "bestIou",
         "centerDistanceRatio",
         "areaChangeRatio",
@@ -281,6 +284,10 @@ foreach ($column in @(
 $supportedClosure = @($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" })[0]
 if ($supportedClosure.supportFrameCount -ne "2" -or $supportedClosure.supportRowCount -ne "3" -or $supportedClosure.supportSources -ne "tile+verification") {
     throw "Expected closure output to preserve repeated pseudo-GT support evidence."
+}
+
+if ($supportedClosure.supportEvidenceIds -ne "tile-face:2:tile-face-2;face-verification:2:verify-face-2") {
+    throw "Expected closure output to preserve concrete pseudo-GT support evidence ids."
 }
 
 if ($supportedClosure.areaChangeRatio -ne "1.02") {
@@ -429,6 +436,7 @@ Assert-Contains "script supports manual miss iou matching" $scriptText "PreferMa
 Assert-Contains "script accepts explicit miss closure label" $scriptText '"missCandidate"\s*\{\s*return @\("face",\s*"miss"\)'
 Assert-Contains "script preserves repeated support evidence" $scriptText "supportFrameCount"
 Assert-Contains "script preserves repeated support row evidence" $scriptText "supportRowCount"
+Assert-Contains "script preserves concrete support evidence ids" $scriptText "supportEvidenceIds"
 Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
 Assert-Contains "script preserves area ratio evidence" $scriptText "areaChangeRatio"
 Assert-Contains "script preserves auxiliary signal role evidence" $scriptText "auxiliarySignalRole"

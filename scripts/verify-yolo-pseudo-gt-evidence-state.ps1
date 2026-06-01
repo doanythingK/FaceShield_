@@ -152,6 +152,7 @@ foreach ($column in @(
         "supportFrameCount",
         "supportRowCount",
         "supportSources",
+        "supportEvidenceIds",
         "bestIou",
         "centerDistanceRatio",
         "areaChangeRatio",
@@ -189,6 +190,7 @@ foreach ($column in @(
         "personObjectClass",
         "auxiliarySignalRole",
         "supportRowCount",
+        "supportEvidenceIds",
         "areaChangeRatio",
         "reviewStatus",
         "evidenceNotes")) {
@@ -415,6 +417,17 @@ if ($supportedRow.supportSources -notmatch "tile" -or $supportedRow.supportSourc
     throw "Expected supported row to record tile and verification support sources."
 }
 
+if ($supportedRow.supportEvidenceIds -notmatch "tile-face:1:tile-face-1" -or
+    $supportedRow.supportEvidenceIds -notmatch "tile-face:2:tile-face-2" -or
+    $supportedRow.supportEvidenceIds -notmatch "face-verification:1:verify-face-1") {
+    throw "Expected supported row to preserve concrete tile/verification support evidence ids."
+}
+
+$supportedQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.basePredictionId -eq "1-0" })[0]
+if ($null -eq $supportedQueueRow -or $supportedQueueRow.supportEvidenceIds -ne $supportedRow.supportEvidenceIds) {
+    throw "Expected review queue to preserve supportEvidenceIds for supported candidates."
+}
+
 if (@($rows | Where-Object { $_.reviewStatus -ne "pending-human" }).Count -ne 0) {
     throw "Pseudo-GT rows must remain pending-human."
 }
@@ -491,6 +504,7 @@ Assert-Contains "script filters weak comparison evidence" $scriptText 'Find-Best
 Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script records repeated support rows" $scriptText "supportRowCount"
+Assert-Contains "script records concrete support evidence ids" $scriptText "supportEvidenceIds"
 Assert-Contains "script scopes matched pseudo gt ids by frame" $scriptText "Get-DetectionMatchKey"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$\(\$baseRows.Count\)'

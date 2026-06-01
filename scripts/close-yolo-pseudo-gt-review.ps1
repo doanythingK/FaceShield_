@@ -335,6 +335,7 @@ foreach ($candidate in $pseudoRows) {
             supportFrameCount = $candidate.supportFrameCount
             supportRowCount = $candidate.supportRowCount
             supportSources = $candidate.supportSources
+            supportEvidenceIds = $candidate.supportEvidenceIds
             bestIou = $candidate.bestIou
             centerDistanceRatio = $candidate.centerDistanceRatio
             areaChangeRatio = $candidate.areaChangeRatio

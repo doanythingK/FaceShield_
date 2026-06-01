@@ -484,6 +484,7 @@ $pseudoGtQueueTopRows = @($pseudoGtReviewQueueRows | Select-Object -First 5 | Fo
     })
 $pseudoGtRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtRows "supportFrameCount"
 $pseudoGtRowsWithSupportRowEvidence = Count-NonZeroNumber $pseudoGtRows "supportRowCount"
+$pseudoGtRowsWithSupportIdEvidence = Count-ColumnPresent $pseudoGtRows "supportEvidenceIds"
 $pseudoGtRowsWithFaceVerificationEvidence = Count-FaceVerificationEvidence $pseudoGtRows
 $pseudoGtRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtRows "personUpperOverlap"
 $pseudoGtRowsWithAuxiliaryRoleEvidence = Count-Matching $pseudoGtRows "auxiliarySignalRole" "priority-only-not-face-evidence"
@@ -495,6 +496,7 @@ $pseudoGtLooseClosedRows = @($pseudoGtClosureRows | Where-Object {
 }).Count
 $pseudoGtClosureRowsWithSupportEvidence = Count-NonZeroNumber $pseudoGtClosureRows "supportFrameCount"
 $pseudoGtClosureRowsWithSupportRowEvidence = Count-NonZeroNumber $pseudoGtClosureRows "supportRowCount"
+$pseudoGtClosureRowsWithSupportIdEvidence = Count-ColumnPresent $pseudoGtClosureRows "supportEvidenceIds"
 $pseudoGtClosureRowsWithFaceVerificationEvidence = Count-FaceVerificationEvidence $pseudoGtClosureRows
 $pseudoGtClosureRowsWithPersonEvidence = Count-NonZeroNumber $pseudoGtClosureRows "personUpperOverlap"
 $pseudoGtClosureRowsWithAuxiliaryRoleEvidence = Count-Matching $pseudoGtClosureRows "auxiliarySignalRole" "priority-only-not-face-evidence"
@@ -581,10 +583,10 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Final YOLO recommendation"; Status = "none"; Evidence = "recommendation=none, no-final-yolo-recommendation" },
     [pscustomobject]@{ Requirement = "Full-GT label review"; Status = $fullGtStatus; Evidence = "rows=$($fullGtRows.Count), labels=$fullGtLabels, reviewed=$fullGtReviewed, fullFrameRows=$($fullFrameRows.Count), fullFrameReviewed=$fullFrameReviewed, missedFaceCountFilled=$fullFrameMissCounts" },
     [pscustomobject]@{ Requirement = "Full-GT quality gate"; Status = $qualityGateStatus; Evidence = $qualityGateEvidence },
-    [pscustomobject]@{ Requirement = "Test-only pseudo-GT candidate evidence"; Status = $pseudoGtStatus; Evidence = "supportedFaceCandidate=$pseudoGtSupportedRows, falsePositiveCandidate=$pseudoGtFalsePositiveRows, missCandidate=$pseudoGtMissRows, supportEvidenceRows=$pseudoGtRowsWithSupportEvidence, supportRowEvidenceRows=$pseudoGtRowsWithSupportRowEvidence, faceVerificationEvidenceRows=$pseudoGtRowsWithFaceVerificationEvidence, personEvidenceRows=$pseudoGtRowsWithPersonEvidence, auxiliaryRoleRows=$pseudoGtRowsWithAuxiliaryRoleEvidence, geometryEvidenceRows=$pseudoGtRowsWithGeometryEvidence, areaRatioEvidenceRows=$pseudoGtRowsWithAreaRatioEvidence; source=$PseudoGtCsv" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT candidate evidence"; Status = $pseudoGtStatus; Evidence = "supportedFaceCandidate=$pseudoGtSupportedRows, falsePositiveCandidate=$pseudoGtFalsePositiveRows, missCandidate=$pseudoGtMissRows, supportEvidenceRows=$pseudoGtRowsWithSupportEvidence, supportRowEvidenceRows=$pseudoGtRowsWithSupportRowEvidence, supportIdEvidenceRows=$pseudoGtRowsWithSupportIdEvidence, faceVerificationEvidenceRows=$pseudoGtRowsWithFaceVerificationEvidence, personEvidenceRows=$pseudoGtRowsWithPersonEvidence, auxiliaryRoleRows=$pseudoGtRowsWithAuxiliaryRoleEvidence, geometryEvidenceRows=$pseudoGtRowsWithGeometryEvidence, areaRatioEvidenceRows=$pseudoGtRowsWithAreaRatioEvidence; source=$PseudoGtCsv" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT review queue"; Status = $pseudoGtReviewQueueStatus; Evidence = "rows=$($pseudoGtReviewQueueRows.Count), falsePositiveCandidate=$pseudoGtQueueFalsePositiveRows, missCandidate=$pseudoGtQueueMissRows, supportedFaceCandidate=$pseudoGtQueueSupportedRows, auxiliaryBoostedRows=$pseudoGtQueueAuxiliaryBoostedRows, auxiliaryRoleRows=$pseudoGtQueueAuxiliaryRoleRows, maxAuxiliaryPriorityBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost), top=$(if ($pseudoGtQueueTopRows.Count -gt 0) { [string]::Join(';', $pseudoGtQueueTopRows) } else { 'none' }); source=$PseudoGtReviewQueueCsv" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, open=$pseudoGtOpenRows; runtimePath=not-used-by-app" },
-    [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closureSupportRowEvidenceRows=$pseudoGtClosureRowsWithSupportRowEvidence, closureFaceVerificationEvidenceRows=$pseudoGtClosureRowsWithFaceVerificationEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureAuxiliaryRoleEvidenceRows=$pseudoGtClosureRowsWithAuxiliaryRoleEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence, closureAreaRatioEvidenceRows=$pseudoGtClosureRowsWithAreaRatioEvidence; source=$PseudoGtReviewClosureCsv" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closureSupportRowEvidenceRows=$pseudoGtClosureRowsWithSupportRowEvidence, closureSupportIdEvidenceRows=$pseudoGtClosureRowsWithSupportIdEvidence, closureFaceVerificationEvidenceRows=$pseudoGtClosureRowsWithFaceVerificationEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureAuxiliaryRoleEvidenceRows=$pseudoGtClosureRowsWithAuxiliaryRoleEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence, closureAreaRatioEvidenceRows=$pseudoGtClosureRowsWithAreaRatioEvidence; source=$PseudoGtReviewClosureCsv" },
     [pscustomobject]@{ Requirement = "Avalonia GUI smoke"; Status = $guiStatus; Evidence = "steps=$($guiRows.Count), pass=$guiPassed, artifactPathFilled=$guiArtifacts, required=preview-track-hold/manual-edit/export/reopen-state" },
     [pscustomobject]@{ Requirement = "Model license/distribution policy"; Status = "pass"; Evidence = "license-source=pass, bundle=blocked" },
     [pscustomobject]@{ Requirement = "10-minute/whole-video decision"; Status = "deferred"; Evidence = "ten-minute-full=not-required-after-extended-fail" },
@@ -650,10 +652,12 @@ $lines = @(
     "- pseudoGtReviewQueueMaxAuxiliaryBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost)",
     "- pseudoGtSupportEvidenceRows=$pseudoGtRowsWithSupportEvidence",
     "- pseudoGtSupportRowEvidenceRows=$pseudoGtRowsWithSupportRowEvidence",
+    "- pseudoGtSupportIdEvidenceRows=$pseudoGtRowsWithSupportIdEvidence",
     "- pseudoGtFaceVerificationEvidenceRows=$pseudoGtRowsWithFaceVerificationEvidence",
     "- pseudoGtAuxiliaryRoleEvidenceRows=$pseudoGtRowsWithAuxiliaryRoleEvidence",
     "- pseudoGtClosureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence",
     "- pseudoGtClosureSupportRowEvidenceRows=$pseudoGtClosureRowsWithSupportRowEvidence",
+    "- pseudoGtClosureSupportIdEvidenceRows=$pseudoGtClosureRowsWithSupportIdEvidence",
     "- pseudoGtClosureFaceVerificationEvidenceRows=$pseudoGtClosureRowsWithFaceVerificationEvidence",
     "- pseudoGtClosureAuxiliaryRoleEvidenceRows=$pseudoGtClosureRowsWithAuxiliaryRoleEvidence",
     "- fullFrameRows=$($fullFrameRows.Count)",
@@ -735,7 +739,9 @@ if ($Verify) {
         Assert-ReportContains "report records pseudo-GT auxiliary boost count" $report "pseudoGtReviewQueueAuxiliaryBoostedRows=$pseudoGtQueueAuxiliaryBoostedRows"
         Assert-ReportContains "report records pseudo-GT max auxiliary boost" $report "pseudoGtReviewQueueMaxAuxiliaryBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost)"
         Assert-ReportContains "report records pseudo-GT support row evidence" $report "supportRowEvidenceRows=$pseudoGtRowsWithSupportRowEvidence"
+        Assert-ReportContains "report records pseudo-GT support id evidence" $report "supportIdEvidenceRows=$pseudoGtRowsWithSupportIdEvidence"
         Assert-ReportContains "report records pseudo-GT closure support row evidence" $report "closureSupportRowEvidenceRows=$pseudoGtClosureRowsWithSupportRowEvidence"
+        Assert-ReportContains "report records pseudo-GT closure support id evidence" $report "closureSupportIdEvidenceRows=$pseudoGtClosureRowsWithSupportIdEvidence"
         Assert-ReportContains "report records pseudo-GT face verification evidence" $report "faceVerificationEvidenceRows=$pseudoGtRowsWithFaceVerificationEvidence"
         Assert-ReportContains "report records pseudo-GT closure face verification evidence" $report "closureFaceVerificationEvidenceRows=$pseudoGtClosureRowsWithFaceVerificationEvidence"
         Assert-ReportContains "report records pseudo-GT area ratio evidence" $report "areaRatioEvidenceRows=$pseudoGtRowsWithAreaRatioEvidence"
