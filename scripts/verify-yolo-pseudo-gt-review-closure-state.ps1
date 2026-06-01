@@ -139,6 +139,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0
         personUpperOverlap = 0
         personObjectClass = ""
+        auxiliarySignalRole = ""
         supportFrameCount = 2
         supportRowCount = 3
         supportSources = "tile+verification"
@@ -172,6 +173,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0.72
         personUpperOverlap = 0.62
         personObjectClass = "person"
+        auxiliarySignalRole = "priority-only-not-face-evidence"
         supportFrameCount = 0
         supportRowCount = 0
         supportSources = ""
@@ -205,6 +207,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0
         personUpperOverlap = 0
         personObjectClass = ""
+        auxiliarySignalRole = ""
         supportFrameCount = 2
         supportRowCount = 2
         supportSources = "tile"
@@ -262,6 +265,7 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
+        "auxiliarySignalRole",
         "supportFrameCount",
         "supportRowCount",
         "supportSources",
@@ -290,6 +294,10 @@ if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
 
 if ($falsePositiveClosure.personObjectClass -ne "person") {
     throw "Expected closure output to preserve auxiliary person/object class evidence."
+}
+
+if ($falsePositiveClosure.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
+    throw "Expected closure output to preserve auxiliary signal role as priority-only."
 }
 
 $unreviewedReviewRows = @(Import-Csv $reviewCsv)
@@ -423,6 +431,7 @@ Assert-Contains "script preserves repeated support evidence" $scriptText "suppor
 Assert-Contains "script preserves repeated support row evidence" $scriptText "supportRowCount"
 Assert-Contains "script preserves geometry evidence" $scriptText "centerDistanceRatio"
 Assert-Contains "script preserves area ratio evidence" $scriptText "areaChangeRatio"
+Assert-Contains "script preserves auxiliary signal role evidence" $scriptText "auxiliarySignalRole"
 Assert-Contains "script requires completed review status" $scriptText "Test-ReviewedStatus"
 Assert-Contains "script requires completed full-frame miss scan" $scriptText "missedFaceRowsAdded > 0"
 Assert-Contains "script enforces require all closed" $scriptText "RequireAllClosed"

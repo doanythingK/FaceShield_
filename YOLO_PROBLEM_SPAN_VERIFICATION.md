@@ -145,7 +145,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 기본 YOLO 검출이 0개인 구간에서도 `-AllowNoDetections -WithPseudoGtTileInput`과 tile 외부 runner를 함께 쓰면 sampled frame tile 결과가 `missCandidate`로 기록된다. 이때 `-WithPseudoGtPersonObjectInput`과 person/object 외부 runner를 함께 쓰면 같은 sampled frame의 person/object 보조 신호도 `personConfidence`, `personUpperOverlap`, `auxiliaryPriorityBoost`, `auxiliarySignalRole=priority-only-not-face-evidence`로 연결된다. 다만 `MinPersonObjectConfidence` 미만 person/object row는 review 우선순위를 올리지 않는다. person/object row는 `missProbability`를 직접 올리지 않고 `auxiliaryPriorityBoost`로만 review 순서를 올린다. 이 경로는 작은 얼굴 미탐 검증용 test-only 증거이며, person/object 결과는 얼굴 정답이 아니라 review 우선순위 보조 신호이고 실제 `miss` 확정은 review CSV 라벨로 닫는다.
 
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
-closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, 반복 support, IoU/center-distance evidence를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
+closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, `auxiliarySignalRole`, 반복 support, IoU/center-distance evidence를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
 `-PublishPseudoGtToGoalEvidence`로 goal evidence에 발행한 경우에는 completion gate 기본 경로인 `.tmp/yolo-pseudo-gt/`의 후보 CSV를 닫아야 한다. problem-span 출력 폴더만 검증하는 임시 실행이면 아래 경로들을 해당 run의 `-OutputDir` 아래 파일로 바꿔서 실행한다.
 
 ```powershell
