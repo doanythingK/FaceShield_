@@ -62,6 +62,7 @@ $yoloPseudoGtEvidenceVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-evi
 $yoloPseudoGtTileInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-tile-input-state.ps1"
 $yoloPseudoGtFaceRunnerVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-face-runner-state.ps1"
 $yoloPseudoGtFaceVerificationInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-face-verification-input-state.ps1"
+$yoloPseudoGtFaceVerificationRunnerVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-face-verification-runner-state.ps1"
 $yoloPseudoGtPersonObjectInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-person-object-input-state.ps1"
 $yoloPseudoGtReviewClosureVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-review-closure-state.ps1"
 $yoloPseudoGtSeparationVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-separation-state.ps1"
@@ -218,7 +219,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloPseudoGtEvidenceVerify, $yoloPseudoGtTileInputVerify, $yoloPseudoGtFaceVerificationInputVerify, $yoloPseudoGtPersonObjectInputVerify, $yoloPseudoGtReviewClosureVerify, $yoloPseudoGtSeparationVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloPseudoGtEvidenceVerify, $yoloPseudoGtTileInputVerify, $yoloPseudoGtFaceRunnerVerify, $yoloPseudoGtFaceVerificationInputVerify, $yoloPseudoGtFaceVerificationRunnerVerify, $yoloPseudoGtPersonObjectInputVerify, $yoloPseudoGtReviewClosureVerify, $yoloPseudoGtSeparationVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -309,6 +310,9 @@ Assert-Contains "yolo-pseudo-gt-face-runner" $pseudoGtFaceRunnerOutput "\[YoloPs
 
 $pseudoGtFaceVerificationInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-input" $yoloPseudoGtFaceVerificationInputVerify @()
 Assert-Contains "yolo-pseudo-gt-face-verification-input" $pseudoGtFaceVerificationInputOutput "\[YoloPseudoGtFaceVerificationInputVerify\] all requested checks passed"
+
+$pseudoGtFaceVerificationRunnerOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-runner" $yoloPseudoGtFaceVerificationRunnerVerify @()
+Assert-Contains "yolo-pseudo-gt-face-verification-runner" $pseudoGtFaceVerificationRunnerOutput "\[YoloPseudoGtFaceVerificationRunnerVerify\] all requested checks passed"
 
 $pseudoGtPersonObjectInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-person-object-input" $yoloPseudoGtPersonObjectInputVerify @()
 Assert-Contains "yolo-pseudo-gt-person-object-input" $pseudoGtPersonObjectInputOutput "\[YoloPseudoGtPersonObjectInputVerify\] all requested checks passed"

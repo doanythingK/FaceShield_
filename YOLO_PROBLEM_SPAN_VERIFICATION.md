@@ -148,6 +148,16 @@ repo 내부 테스트 전용 runner를 쓰려면 모델 파일을 커밋하지 �
   -PseudoGtMinTileSupportCount 2
 ```
 
+YOLO 후보 crop 자체를 고품질 face detection 모델로 재검증하려면 `scripts/invoke-yolo-pseudo-gt-face-verification-runner.ps1`를 `PseudoGtFaceVerificationExternalCommand powershell.exe`에서 호출한다. 이 runner는 `face-verification-manifest.csv`의 `cropImagePath`를 읽고 crop 안의 얼굴 검출을 원본 frame 좌표계로 되돌린 뒤, 후보별 `faceVerificationConfidence`, `faceVerificationDistance`, `evidenceModel`, `evidenceRunner`를 남긴다. 여기서 distance는 기본 YOLO 후보 중심과 고품질 검출 중심 사이의 crop 대각선 정규화 거리이며, 최종 face/nonface 판정이 아니라 review 우선순위용 test-only 근거다. 예:
+
+```powershell
+  -WithPseudoGtFaceVerificationInput `
+  -PseudoGtFaceVerificationExternalCommand "powershell.exe" `
+  -PseudoGtFaceVerificationExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File scripts/invoke-yolo-pseudo-gt-face-verification-runner.ps1 -Detector Scrfd -ModelPath .tmp/models/scrfd_10g_bnkps.onnx -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`" -EvidenceModel scrfd_10g_bnkps-local" `
+  -PseudoGtFaceVerificationExternalOutputCoordinateSpace Frame `
+  -PseudoGtFaceVerificationExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv"
+```
+
 `PseudoGtPersonObjectExternalCommand`를 쓰면 runner가 full-frame person/object manifest 생성 뒤 외부 보조 runner를 실행하고, `PseudoGtPersonObjectExternalOutputCsv`를 곧바로 `PseudoGtPersonObjectCsv`로 연결한다. 외부 runner가 스케일된 frame 이미지 좌표로 출력하면 `PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame`을 지정해야 한다.
 
 `-PublishPseudoGtToGoalEvidence`를 붙이면 problem-span run의 pseudo-GT 후보를 completion gate가 읽는 `.tmp/yolo-pseudo-gt/pseudo-gt-candidates.csv`, `.tmp/yolo-pseudo-gt/pseudo-gt-summary.md`, `.tmp/yolo-pseudo-gt/pseudo-gt-review-queue.csv`로 발행한다. 이 스위치는 tile-face 또는 face-verification CSV/외부 runner가 있을 때만 허용된다. person/object 결과만으로는 얼굴 정답을 만들 수 없으므로 goal evidence 발행 조건이 아니다.
