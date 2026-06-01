@@ -215,6 +215,16 @@ closure CSV는 candidate의 confidence, tile/verification, person/object 보조 
 
 visual package를 만들면 넓은 draft CSV와 별도로 compact decision sheet도 생성된다. 사람이 `review-visual/pseudo-gt-review-visual-index.html`에서 crop/overlay를 본 뒤 `review-visual/pseudo-gt-review-decision-sheet.csv`의 `label`, `reviewStatus`, `evidenceNotes`만 채우고, full-frame missed-face scan은 `review-visual/pseudo-gt-full-frame-review-decision-sheet.csv`의 `missedFaceCount`, `missedFaceRowsAdded`, `reviewStatus`, `evidenceNotes`를 채운다. 이 시트들은 `suggestedLabel`을 자동 확정하지 않으며, apply 단계에서 사람이 채운 최종 필드만 원래 review draft에 병합된다.
 
+decision sheet를 채운 중간에는 progress 리포트로 남은 후보와 closure 기준에 맞지 않는 라벨을 먼저 확인한다. `-RequireComplete`는 모든 후보/프레임 decision row가 채워지고 closure 기준 라벨과 충돌하지 않을 때만 통과한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/write-yolo-pseudo-gt-decision-progress.ps1 `
+  -DecisionCsv ".tmp/yolo-pseudo-gt/review-visual/pseudo-gt-review-decision-sheet.csv" `
+  -FrameDecisionCsv ".tmp/yolo-pseudo-gt/review-visual/pseudo-gt-full-frame-review-decision-sheet.csv" `
+  -OutputSummary ".tmp/yolo-pseudo-gt/review-visual/pseudo-gt-decision-progress.md" `
+  -RequireComplete
+```
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/apply-yolo-pseudo-gt-review-draft.ps1 `
   -DraftReviewCsv ".tmp/yolo-pseudo-gt/review-draft/pseudo-gt-full-gt-review-draft.csv" `
@@ -261,6 +271,7 @@ full-GT review package에서도 detection crop row는 `face`/`nonface`로 닫고
 - `review-visual/pseudo-gt-full-gt-review-visual-draft.csv`: pseudo-GT review draft에 crop/overlay 경로를 붙인 test-only visual draft. 최종 라벨 필드는 비어 있어야 한다.
 - `review-visual/pseudo-gt-review-decision-sheet.csv`: 사람이 crop/overlay 확인 후 `label`, `reviewStatus`, `evidenceNotes`만 채우는 compact decision sheet. `suggestedLabel`은 참고값이고 자동 확정값이 아니다.
 - `review-visual/pseudo-gt-full-frame-review-decision-sheet.csv`: full-frame missed-face scan 결과로 `missedFaceCount`, `missedFaceRowsAdded`, `reviewStatus`, `evidenceNotes`만 채우는 compact decision sheet.
+- `review-visual/pseudo-gt-decision-progress.md`: decision sheet 기준 ready/pending/invalid label row와 다음 apply/close 명령을 정리한 test-only progress report
 - `review-visual/pseudo-gt-review-visual-index.html`: pseudo-GT 후보 crop, overlay, high-precision evidence 요약을 한 화면에서 보는 visual review index
 - `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
 - `pseudo-gt-review-closure.csv`: review CSV 라벨로 pseudo-GT 후보가 닫혔는지 확인한 결과

@@ -24,6 +24,7 @@ param(
     [string]$YoloPseudoGtReviewDraftVerify = "scripts/verify-yolo-pseudo-gt-review-draft-state.ps1",
     [string]$YoloPseudoGtReviewVisualPackage = "scripts/new-yolo-pseudo-gt-review-visual-package.ps1",
     [string]$YoloPseudoGtReviewVisualPackageVerify = "scripts/verify-yolo-pseudo-gt-review-visual-package-state.ps1",
+    [string]$YoloPseudoGtDecisionProgressWriter = "scripts/write-yolo-pseudo-gt-decision-progress.ps1",
     [string]$YoloPseudoGtReviewDraftApply = "scripts/apply-yolo-pseudo-gt-review-draft.ps1",
     [string]$YoloPseudoGtReviewDraftApplyVerify = "scripts/verify-yolo-pseudo-gt-review-draft-apply-state.ps1",
     [string]$YoloCompletionFinalizer = "scripts/complete-yolo-goal-after-manual-gates.ps1",
@@ -109,6 +110,7 @@ $pseudoGtReviewDraftWriter = Read-RepoFile $YoloPseudoGtReviewDraftWriter
 $pseudoGtReviewDraftVerify = Read-RepoFile $YoloPseudoGtReviewDraftVerify
 $pseudoGtReviewVisualPackage = Read-RepoFile $YoloPseudoGtReviewVisualPackage
 $pseudoGtReviewVisualPackageVerify = Read-RepoFile $YoloPseudoGtReviewVisualPackageVerify
+$pseudoGtDecisionProgressWriter = Read-RepoFile $YoloPseudoGtDecisionProgressWriter
 $pseudoGtReviewDraftApply = Read-RepoFile $YoloPseudoGtReviewDraftApply
 $pseudoGtReviewDraftApplyVerify = Read-RepoFile $YoloPseudoGtReviewDraftApplyVerify
 $completionFinalizer = Read-RepoFile $YoloCompletionFinalizer
@@ -149,6 +151,7 @@ foreach ($token in @(
     "full-gt-quality-failure-allowed=pass",
     "pseudo-gt-test-only=pass",
     "pseudo-gt-review-closure=conditional-gated",
+    "pseudo-gt-decision-progress=pass",
     "pseudo-gt-separation=pass",
     "license-source=pass",
     "manual-readiness=pass",
@@ -511,6 +514,7 @@ Assert-Contains "manual gate helper prints human review draft command" $manualGa
 Assert-Contains "manual gate helper runs human review draft writer" $manualGateHelper "new-yolo-human-review-draft.ps1"
 Assert-Contains "manual gate helper prints pseudo GT review draft command" $manualGateHelper "pseudoGtReviewDraftCommand"
 Assert-Contains "manual gate helper prints pseudo GT visual command" $manualGateHelper "pseudoGtReviewVisualCommand"
+Assert-Contains "manual gate helper prints pseudo GT decision progress command" $manualGateHelper "pseudoGtDecisionProgressCommand"
 Assert-Contains "manual gate helper prints pseudo GT review draft apply command" $manualGateHelper "pseudoGtReviewDraftApplyCommand"
 Assert-Contains "manual gate helper applies pseudo GT review draft in place" $manualGateHelper "-InPlace -Verify"
 Assert-Contains "manual gate helper records pseudo GT review queue csv" $manualGateHelper "PseudoGtReviewQueueCsv"
@@ -518,6 +522,7 @@ Assert-Contains "manual gate helper records pseudo GT review draft dir" $manualG
 Assert-Contains "manual gate helper records pseudo GT visual dir" $manualGateHelper "PseudoGtReviewVisualDir"
 Assert-Contains "manual gate helper runs pseudo GT review draft writer" $manualGateHelper "new-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "manual gate helper runs pseudo GT visual package writer" $manualGateHelper "new-yolo-pseudo-gt-review-visual-package.ps1"
+Assert-Contains "manual gate helper runs pseudo GT decision progress writer" $manualGateHelper "write-yolo-pseudo-gt-decision-progress.ps1"
 Assert-Contains "manual gate helper runs pseudo GT review draft apply script" $manualGateHelper "apply-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "manual gate helper prints completion plan action" $manualGateHelper "completionPlanAction"
 Assert-Contains "manual gate helper prints full GT action" $manualGateHelper "fullGtAction"
@@ -557,6 +562,8 @@ Assert-Contains "manual gate helper verifier checks gui evidence prep path" $man
 Assert-Contains "manual gate helper verifier checks pseudo GT visual prep" $manualGateHelperVerify "prepared pseudo GT visual output runs visual package"
 Assert-Contains "manual gate helper verifier checks human review draft summary" $manualGateHelperVerify "summary records human review draft command"
 Assert-Contains "manual gate helper verifier checks pseudo GT review draft command" $manualGateHelperVerify "summary records pseudo GT review draft command"
+Assert-Contains "manual gate helper verifier checks pseudo GT decision progress command" $manualGateHelperVerify "summary records pseudo GT decision progress command"
+Assert-Contains "manual gate helper verifier checks pseudo GT decision progress dashboard" $manualGateHelperVerify "dashboard records pseudo GT decision progress command"
 Assert-Contains "manual gate helper verifier checks pseudo GT review draft dashboard" $manualGateHelperVerify "dashboard records pseudo GT review draft command"
 Assert-Contains "manual gate helper verifier checks completion plan action summary" $manualGateHelperVerify "summary records completion plan action"
 Assert-Contains "manual gate helper verifier checks track hold summary" $manualGateHelperVerify "summary records preview track hold step"
@@ -663,6 +670,14 @@ Assert-Contains "pseudo gt review visual package writes crop artifacts" $pseudoG
 Assert-Contains "pseudo gt review visual package writes overlay artifacts" $pseudoGtReviewVisualPackage "visualOverlayPath"
 Assert-Contains "pseudo gt review visual package verifier selftests visual artifacts" $pseudoGtReviewVisualPackageVerify "YoloPseudoGtReviewVisualVerify"
 Assert-Contains "pseudo gt review visual package verifier checks all candidate types" $pseudoGtReviewVisualPackageVerify "supportedFaceCandidate"
+Assert-Contains "pseudo gt decision progress writer records test-only boundary" $pseudoGtDecisionProgressWriter "test-only human review progress report"
+Assert-Contains "pseudo gt decision progress writer does not infer labels" $pseudoGtDecisionProgressWriter "does not infer final face/nonface/miss labels"
+Assert-Contains "pseudo gt decision progress writer counts pending candidates" $pseudoGtDecisionProgressWriter "pendingCandidateRows"
+Assert-Contains "pseudo gt decision progress writer counts pending full-frame rows" $pseudoGtDecisionProgressWriter "pendingFrameDecisionRows"
+Assert-Contains "pseudo gt decision progress writer checks invalid labels" $pseudoGtDecisionProgressWriter "invalidCandidateLabelRows"
+Assert-Contains "pseudo gt decision progress writer requires evidence notes" $pseudoGtDecisionProgressWriter "evidenceNotes"
+Assert-Contains "pseudo gt decision progress writer guards require complete" $pseudoGtDecisionProgressWriter "RequireComplete"
+Assert-Contains "pseudo gt decision progress writer prints apply command" $pseudoGtDecisionProgressWriter "apply-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "pseudo gt review draft apply keeps final labels human owned" $pseudoGtReviewDraftApply "does not infer labels from suggestedLabel"
 Assert-Contains "pseudo gt review draft apply records review csv ownership" $pseudoGtReviewDraftApply "review CSV-owned"
 Assert-Contains "pseudo gt review draft apply requires final review fields" $pseudoGtReviewDraftApply "label/reviewStatus/evidenceNotes"
