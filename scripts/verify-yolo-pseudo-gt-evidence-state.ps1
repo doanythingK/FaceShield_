@@ -228,8 +228,8 @@ if ([string]::IsNullOrWhiteSpace($falsePositiveQueueRow.evidenceNotes)) {
 }
 
 $missQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "missCandidate" })[0]
-if ($null -eq $missQueueRow -or $missQueueRow.expectedReviewLabel -ne "face") {
-    throw "Expected missCandidate queue row to tell the reviewer to close it as face after visual confirmation."
+if ($null -eq $missQueueRow -or $missQueueRow.expectedReviewLabel -ne "miss") {
+    throw "Expected missCandidate queue row to tell the reviewer to close it as miss after visual confirmation."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {

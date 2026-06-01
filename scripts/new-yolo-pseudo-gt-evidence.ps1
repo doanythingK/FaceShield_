@@ -982,6 +982,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
         $row = $_.Row
         $expectedReviewLabel = switch ($row.candidateType) {
             "falsePositiveCandidate" { "nonface" }
+            "missCandidate" { "miss" }
             default { "face" }
         }
         $queueRow = [pscustomobject]@{
