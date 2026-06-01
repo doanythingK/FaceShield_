@@ -66,6 +66,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=2, index=0, x=400.0, y=300.0, w=40.0, h=45.0, area=1800.0, conf=0.210, cx=0.420, cy=0.340, areaRatio=0.001800, aspectRatio=0.889
 [SmokeDetection] label=synthetic-yolo, frame=5, index=0, x=500.0, y=500.0, w=200.0, h=200.0, area=40000.0, conf=0.550, cx=0.600, cy=0.600, areaRatio=0.040000, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=8, index=0, x=730.0, y=220.0, w=60.0, h=60.0, area=3600.0, conf=0.330, cx=0.760, cy=0.260, areaRatio=0.003600, aspectRatio=1.000
+[SmokeDetection] label=synthetic-yolo, frame=10, index=0, x=300.0, y=200.0, w=60.0, h=60.0, area=3600.0, conf=0.300, cx=0.330, cy=0.240, areaRatio=0.003600, aspectRatio=1.000
 '@ | Set-Content -Encoding UTF8 -Path $baseLog
 
 @'
@@ -86,7 +87,9 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 },
     [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990 },
     [pscustomobject]@{ frame = 8; verificationId = "verify-high-conf-bad-distance-8"; x = 730.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.990; faceVerificationDistance = 0.990 },
-    [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120 }
+    [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120 },
+    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-primary-10"; x = 301.0; y = 201.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
+    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-secondary-10"; x = 302.0; y = 202.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.190 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -119,12 +122,12 @@ $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 $reviewQueueRows = @(Import-Csv $reviewQueueCsv)
 
-if ($rows.Count -ne 8) {
-    throw "Expected 8 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 9) {
+    throw "Expected 9 pseudo-GT rows, actual=$($rows.Count)"
 }
 
-if ($reviewQueueRows.Count -ne 8) {
-    throw "Expected 8 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
+if ($reviewQueueRows.Count -ne 9) {
+    throw "Expected 9 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
 }
 
 $first = $rows[0]
@@ -305,8 +308,8 @@ if ($personSupportedQueue.auxiliarySignalRole -ne "priority-only-not-face-eviden
     throw "Expected review queue to preserve priority-only role on miss candidates."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
-    throw "Expected one supportedFaceCandidate."
+if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 2) {
+    throw "Expected two supportedFaceCandidate rows."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 3) {
@@ -319,6 +322,14 @@ if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 4
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
     throw "Expected one verification-only missCandidate."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-low-base-secondary-10" }).Count -ne 0) {
+    throw "Expected secondary verification evidence near an already-detected low-confidence base YOLO row not to become a missCandidate."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.basePredictionId -eq "10-0" }).Count -ne 1) {
+    throw "Expected low-confidence base YOLO row with high-quality verification support to remain a supportedFaceCandidate."
 }
 
 if (@($rows | Where-Object { $_.verificationId -eq "verify-low-quality-6" }).Count -ne 0) {
@@ -487,7 +498,7 @@ Assert-Contains "script skips weak tile-only misses" $scriptText 'Test-TileFaceM
 Assert-Contains "script treats person object as auxiliary" $scriptText "person/object support is auxiliary only"
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
-Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=1"
+Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=2"
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=3"
 Assert-Contains "summary records miss count" $summaryText "missCandidate=4"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="

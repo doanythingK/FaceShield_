@@ -435,8 +435,7 @@ function Find-BestVerification {
         $centerDistance = Get-CenterDistanceRatio $Target $candidate
         $areaChangeRatio = Get-AreaChangeRatio $Target $candidate
         $passesGeometry = Test-FaceGeometrySupportValues $iou $centerDistance $areaChangeRatio
-        $passesMetric = $candidate.Confidence -ge $MinVerificationConfidence -or $candidate.VerificationDistance -le $MaxVerificationDistance
-        if (-not ($passesGeometry -and $passesMetric)) {
+        if (-not $passesGeometry) {
             continue
         }
 
