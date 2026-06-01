@@ -167,7 +167,7 @@ YOLO 후보 crop 자체를 고품질 face detection 모델로 재검증하려면
 기본 YOLO 검출이 0개인 구간에서도 `-AllowNoDetections -WithPseudoGtTileInput`과 tile 외부 runner를 함께 쓰면 sampled frame tile 결과가 `missCandidate`로 기록된다. 이때 `-WithPseudoGtPersonObjectInput`과 person/object 외부 runner를 함께 쓰면 같은 sampled frame의 person/object 보조 신호도 `personConfidence`, `personUpperOverlap`, `auxiliaryPriorityBoost`, `auxiliarySignalRole=priority-only-not-face-evidence`로 연결된다. 다만 `MinPersonObjectConfidence` 미만 person/object row는 review 우선순위를 올리지 않는다. person/object row는 `missProbability`를 직접 올리지 않고 `auxiliaryPriorityBoost`로만 review 순서를 올린다. 이 경로는 작은 얼굴 미탐 검증용 test-only 증거이며, person/object 결과는 얼굴 정답이 아니라 review 우선순위 보조 신호이고 실제 `miss` 확정은 review CSV 라벨로 닫는다.
 
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
-closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, `auxiliarySignalRole`, 반복 support, IoU/center-distance evidence, normalized geometry evidence와 `geometryTag`를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
+closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, `auxiliarySignalRole`, 반복 support, IoU/center-distance evidence, normalized geometry evidence와 `geometryTag`, review row의 `evidenceNotes`를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
 `-PublishPseudoGtToGoalEvidence`로 goal evidence에 발행한 경우에는 completion gate 기본 경로인 `.tmp/yolo-pseudo-gt/`의 후보 CSV를 닫아야 한다. problem-span 출력 폴더만 검증하는 임시 실행이면 아래 경로들을 해당 run의 `-OutputDir` 아래 파일로 바꿔서 실행한다.
 
 ```powershell
@@ -180,7 +180,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/close-yolo-pse
   -RequireAllClosed
 ```
 
-`supportedFaceCandidate`는 완료된 `reviewStatus`의 `face`, `falsePositiveCandidate`는 완료된 `reviewStatus`의 `nonface`, `missCandidate`는 수동 추가한 `face` 또는 `miss` row로 닫힌다. `missCandidate`는 같은 frame의 manual row와 IoU로 매칭하며, `full-frame-review.csv`가 있으면 해당 frame의 missed-face scan도 완료 상태이고 `missedFaceRowsAdded > 0`이어야 닫힌다.
+`supportedFaceCandidate`는 완료된 `reviewStatus`와 `evidenceNotes`가 있는 `face`, `falsePositiveCandidate`는 완료된 `reviewStatus`와 `evidenceNotes`가 있는 `nonface`, `missCandidate`는 수동 추가한 `face` 또는 `miss` row로 닫힌다. `missCandidate`는 같은 frame의 manual row와 IoU로 매칭하며, `full-frame-review.csv`가 있으면 해당 frame의 missed-face scan도 완료 상태이고 `missedFaceRowsAdded > 0`과 `evidenceNotes`가 있어야 닫힌다.
 full-GT review package에서도 detection crop row는 `face`/`nonface`로 닫고, full-frame scan에서 추가하는 manual missed-face row는 `miss` 라벨을 사용할 수 있다. `miss` 라벨은 `sourcePredictionId`가 없는 manual missed-face row에만 유효하다.
 
 ## 산출물

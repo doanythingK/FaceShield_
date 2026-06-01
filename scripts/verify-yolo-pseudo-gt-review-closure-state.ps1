@@ -20,9 +20,15 @@ $mismatchSummaryPath = Join-Path $work "pseudo-gt-review-closure-label-mismatch-
 $pendingStatusReviewCsv = Join-Path $work "full-gt-review-pending-status.csv"
 $pendingStatusOutputCsv = Join-Path $work "pseudo-gt-review-closure-pending-status.csv"
 $pendingStatusSummaryPath = Join-Path $work "pseudo-gt-review-closure-pending-status-summary.md"
+$blankEvidenceReviewCsv = Join-Path $work "full-gt-review-blank-evidence.csv"
+$blankEvidenceOutputCsv = Join-Path $work "pseudo-gt-review-closure-blank-evidence.csv"
+$blankEvidenceSummaryPath = Join-Path $work "pseudo-gt-review-closure-blank-evidence-summary.md"
 $incompleteFullFrameCsv = Join-Path $work "full-frame-review-incomplete-miss.csv"
 $incompleteFullFrameOutputCsv = Join-Path $work "pseudo-gt-review-closure-incomplete-full-frame.csv"
 $incompleteFullFrameSummaryPath = Join-Path $work "pseudo-gt-review-closure-incomplete-full-frame-summary.md"
+$blankFullFrameEvidenceCsv = Join-Path $work "full-frame-review-blank-evidence.csv"
+$blankFullFrameEvidenceOutputCsv = Join-Path $work "pseudo-gt-review-closure-blank-full-frame-evidence.csv"
+$blankFullFrameEvidenceSummaryPath = Join-Path $work "pseudo-gt-review-closure-blank-full-frame-evidence-summary.md"
 $explicitMissReviewCsv = Join-Path $work "full-gt-review-explicit-miss.csv"
 $explicitMissOutputCsv = Join-Path $work "pseudo-gt-review-closure-explicit-miss.csv"
 $explicitMissSummaryPath = Join-Path $work "pseudo-gt-review-closure-explicit-miss-summary.md"
@@ -297,6 +303,7 @@ foreach ($column in @(
         "reviewLabel",
         "reviewStatus",
         "reviewIou",
+        "fullFrameEvidenceNotes",
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
@@ -442,6 +449,31 @@ Invoke-ExpectedReviewClosureFailure `
     -SummaryOutputPath $pendingStatusSummaryPath `
     -ExpectedPattern "unreviewed=1"
 
+$blankEvidenceReviewRows = @(Import-Csv $reviewCsv)
+(@($blankEvidenceReviewRows | Where-Object { $_.frame -eq "2" }))[0].evidenceNotes = ""
+$blankEvidenceReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $blankEvidenceReviewCsv
+
+$blankEvidenceOutput = Invoke-ReviewClosure `
+    -ReviewPath $blankEvidenceReviewCsv `
+    -OutputPath $blankEvidenceOutputCsv `
+    -SummaryOutputPath $blankEvidenceSummaryPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict blank-evidence closure run to pass: $($blankEvidenceOutput | Out-String)"
+}
+
+$blankEvidenceRows = @(Import-Csv $blankEvidenceOutputCsv)
+$blankEvidenceSummaryText = Get-Content -Raw -Path $blankEvidenceSummaryPath
+Assert-Contains "summary records blank evidence notes row" $blankEvidenceSummaryText "unreviewed=1"
+if (@($blankEvidenceRows | Where-Object { $_.closureStatus -eq "unreviewed" -and $_.closureReason -match "evidenceNotes" }).Count -ne 1) {
+    throw "Expected blank evidenceNotes to keep one closure row unreviewed."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks blank evidence notes rows" `
+    -ReviewPath $blankEvidenceReviewCsv `
+    -OutputPath $blankEvidenceOutputCsv `
+    -SummaryOutputPath $blankEvidenceSummaryPath `
+    -ExpectedPattern "unreviewed=1"
+
 $incompleteFullFrameRows = @(Import-Csv $fullFrameCsv)
 (@($incompleteFullFrameRows | Where-Object { $_.frame -eq "7" }))[0].missedFaceRowsAdded = 0
 $incompleteFullFrameRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $incompleteFullFrameCsv
@@ -467,6 +499,33 @@ Invoke-ExpectedReviewClosureFailure `
     -OutputPath $incompleteFullFrameOutputCsv `
     -SummaryOutputPath $incompleteFullFrameSummaryPath `
     -FullFrameReviewPath $incompleteFullFrameCsv `
+    -ExpectedPattern "unreviewed=1"
+
+$blankFullFrameEvidenceRows = @(Import-Csv $fullFrameCsv)
+(@($blankFullFrameEvidenceRows | Where-Object { $_.frame -eq "7" }))[0].evidenceNotes = ""
+$blankFullFrameEvidenceRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $blankFullFrameEvidenceCsv
+
+$blankFullFrameEvidenceOutput = Invoke-ReviewClosure `
+    -ReviewPath $reviewCsv `
+    -OutputPath $blankFullFrameEvidenceOutputCsv `
+    -SummaryOutputPath $blankFullFrameEvidenceSummaryPath `
+    -FullFrameReviewPath $blankFullFrameEvidenceCsv
+if ($LASTEXITCODE -ne 0) {
+    throw "Expected non-strict blank full-frame evidence closure run to pass: $($blankFullFrameEvidenceOutput | Out-String)"
+}
+
+$blankFullFrameEvidenceRowsOut = @(Import-Csv $blankFullFrameEvidenceOutputCsv)
+$blankFullFrameEvidenceSummaryText = Get-Content -Raw -Path $blankFullFrameEvidenceSummaryPath
+Assert-Contains "summary records blank full-frame evidence notes row" $blankFullFrameEvidenceSummaryText "unreviewed=1"
+if (@($blankFullFrameEvidenceRowsOut | Where-Object { $_.closureReason -match "evidenceNotes" }).Count -ne 1) {
+    throw "Expected blank full-frame evidenceNotes to keep missCandidate unreviewed."
+}
+Invoke-ExpectedReviewClosureFailure `
+    -Name "strict mode blocks blank full-frame evidence notes rows" `
+    -ReviewPath $reviewCsv `
+    -OutputPath $blankFullFrameEvidenceOutputCsv `
+    -SummaryOutputPath $blankFullFrameEvidenceSummaryPath `
+    -FullFrameReviewPath $blankFullFrameEvidenceCsv `
     -ExpectedPattern "unreviewed=1"
 
 $explicitMissReviewRows = @(Import-Csv $reviewCsv)
@@ -501,6 +560,7 @@ Assert-Contains "script preserves geometry evidence" $scriptText "centerDistance
 Assert-Contains "script preserves area ratio evidence" $scriptText "areaChangeRatio"
 Assert-Contains "script preserves auxiliary signal role evidence" $scriptText "auxiliarySignalRole"
 Assert-Contains "script requires completed review status" $scriptText "Test-ReviewedStatus"
+Assert-Contains "script requires review evidence notes" $scriptText "matching row has no evidenceNotes"
 Assert-Contains "script requires completed full-frame miss scan" $scriptText "missedFaceRowsAdded > 0"
 Assert-Contains "script enforces require all closed" $scriptText "RequireAllClosed"
 Assert-Contains "summary records closed count" $summaryText "closed=3"

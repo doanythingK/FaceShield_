@@ -270,6 +270,7 @@ foreach ($candidate in $pseudoRows) {
     $fullFrameReviewStatus = ""
     $fullFrameMissedFaceCount = ""
     $fullFrameMissedRowsAdded = ""
+    $fullFrameEvidenceNotes = ""
     $fullFrameMissScanClosed = $true
     if ($candidateType -eq "missCandidate" -and $fullFrameRows.Count -gt 0) {
         $fullFrameMissScanClosed = $false
@@ -279,10 +280,12 @@ foreach ($candidate in $pseudoRows) {
             $fullFrameReviewStatus = [string](Get-PropertyValue $frameReview[0] "reviewStatus" "")
             $fullFrameMissedFaceCount = [string](Get-PropertyValue $frameReview[0] "missedFaceCount" "")
             $fullFrameMissedRowsAdded = [string](Get-PropertyValue $frameReview[0] "missedFaceRowsAdded" "")
+            $fullFrameEvidenceNotes = [string](Get-PropertyValue $frameReview[0] "evidenceNotes" "")
             $fullFrameMissedRowsAddedValue = 0
             $fullFrameMissScanClosed = (Test-ReviewedStatus $fullFrameReviewStatus) -and
                 [int]::TryParse([string]$fullFrameMissedRowsAdded, [ref]$fullFrameMissedRowsAddedValue) -and
-                $fullFrameMissedRowsAddedValue -gt 0
+                $fullFrameMissedRowsAddedValue -gt 0 -and
+                -not [string]::IsNullOrWhiteSpace($fullFrameEvidenceNotes)
         }
     }
 
@@ -296,13 +299,17 @@ foreach ($candidate in $pseudoRows) {
         $closureStatus = "unreviewed"
         $closureReason = "matching row reviewStatus '$reviewStatus' is not a completed review state"
     }
+    elseif ($null -ne $match -and [string]::IsNullOrWhiteSpace($reviewEvidenceNotes)) {
+        $closureStatus = "unreviewed"
+        $closureReason = "matching row has no evidenceNotes"
+    }
     elseif ($null -ne $match -and $reviewLabel -notin $expectedLabels) {
         $closureStatus = "label-mismatch"
         $closureReason = "review CSV label '$reviewLabel' does not match expected '$expectedLabel'"
     }
     elseif ($null -ne $match -and -not $fullFrameMissScanClosed) {
         $closureStatus = "unreviewed"
-        $closureReason = "missCandidate requires completed full-frame missed-face scan with missedFaceRowsAdded > 0"
+        $closureReason = "missCandidate requires completed full-frame missed-face scan with missedFaceRowsAdded > 0 and evidenceNotes"
     }
     elseif ($null -ne $match) {
         $closureStatus = "closed"
@@ -323,6 +330,7 @@ foreach ($candidate in $pseudoRows) {
             fullFrameReviewStatus = $fullFrameReviewStatus
             fullFrameMissedFaceCount = $fullFrameMissedFaceCount
             fullFrameMissedRowsAdded = $fullFrameMissedRowsAdded
+            fullFrameEvidenceNotes = $fullFrameEvidenceNotes
             baseFaceConfidence = $candidate.baseFaceConfidence
             tileFaceConfidence = $candidate.tileFaceConfidence
             tileSupportCount = $candidate.tileSupportCount
@@ -391,8 +399,8 @@ $summary = @(
     "- missClosed=$missClosed",
     "- minReviewIou=$($MinReviewIou.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))",
     "",
-    "A pseudo-GT candidate is final only when the matching review CSV row has a human label and completed reviewStatus.",
-    "For missCandidate rows, the matching row should be a manual face/miss row in full-gt-review.csv and, when present, full-frame-review.csv must record a completed missed-face scan with missedFaceRowsAdded > 0."
+    "A pseudo-GT candidate is final only when the matching review CSV row has a human label, completed reviewStatus, and evidenceNotes.",
+    "For missCandidate rows, the matching row should be a manual face/miss row in full-gt-review.csv and, when present, full-frame-review.csv must record a completed missed-face scan with missedFaceRowsAdded > 0 and evidenceNotes."
 )
 $summary | Set-Content -Encoding UTF8 -Path $summaryPathResolved
 
