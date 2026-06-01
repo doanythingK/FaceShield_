@@ -87,6 +87,7 @@ Assert-Contains "finalizer runs completion audit" $finalizerText "completion-aud
 Assert-Contains "finalizer writes evidence report" $finalizerText "goal-evidence-report-complete"
 Assert-Contains "finalizer closes pseudo gt review loop" $finalizerText "pseudo-gt-review-closure"
 Assert-Contains "finalizer requires pseudo gt candidates closed" $finalizerText "RequireAllClosed"
+Assert-Contains "finalizer blocks missing pseudo gt candidates" $finalizerText "Pseudo-GT candidate CSV is required before completing the YOLO goal"
 Assert-Contains "finalizer selftest checks pseudo-GT closure" $finalizerText "pseudo-GT closure"
 Assert-Contains "finalizer forwards quality failure allowance" $finalizerText "allowQualityGateFailureArgs"
 Assert-Contains "finalizer has selftest" $finalizerText "SelfTest"
@@ -155,23 +156,30 @@ finally {
     $ErrorActionPreference = $oldErrorAction
 }
 
-if ($hasPendingEvidence) {
-    if ($exitCode -eq 0) {
-        throw "Finalizer unexpectedly passed with pending manual evidence."
+if ($exitCode -ne 0) {
+    if ($hasPendingEvidence) {
+        if ($text -notmatch "unreviewed rows|manual checklist|status|evidence|full-gt-reviewed-state|gui-smoke-state") {
+            throw "Finalizer pending-evidence failure reason was unexpected. output=$text"
+        }
+
+        Write-Host "[YoloCompletionFinalizerStateVerify] pass current pending evidence blocks finalizer"
+        Write-Host "[YoloCompletionFinalizerStateVerify] finalizable=false, reviewedRows=$reviewedRows/$($reviewRows.Count), fullFrameRows=$frameReviewedRows/$($frameRows.Count), guiRows=$guiStatusRows/$($guiRows.Count)"
+        Write-Host "[YoloCompletionFinalizerStateVerify] all requested checks passed"
+        exit 0
     }
 
-    if ($text -notmatch "unreviewed rows|manual checklist|status|evidence|full-gt-reviewed-state|gui-smoke-state") {
-        throw "Finalizer pending-evidence failure reason was unexpected. output=$text"
+    if ($text -match "Pseudo-GT candidate CSV is required before completing the YOLO goal") {
+        Write-Host "[YoloCompletionFinalizerStateVerify] pass current missing pseudo-GT candidates block finalizer"
+        Write-Host "[YoloCompletionFinalizerStateVerify] finalizable=false, reviewedRows=$reviewedRows/$($reviewRows.Count), fullFrameRows=$frameReviewedRows/$($frameRows.Count), guiRows=$guiStatusRows/$($guiRows.Count), pseudoGtCandidates=missing"
+        Write-Host "[YoloCompletionFinalizerStateVerify] all requested checks passed"
+        exit 0
     }
 
-    Write-Host "[YoloCompletionFinalizerStateVerify] pass current pending evidence blocks finalizer"
-    Write-Host "[YoloCompletionFinalizerStateVerify] finalizable=false, reviewedRows=$reviewedRows/$($reviewRows.Count), fullFrameRows=$frameReviewedRows/$($frameRows.Count), guiRows=$guiStatusRows/$($guiRows.Count)"
-    Write-Host "[YoloCompletionFinalizerStateVerify] all requested checks passed"
-    exit 0
+    throw "Manual evidence appears filled, but finalizer still failed with exit code $exitCode. output=$text"
 }
 
-if ($exitCode -ne 0) {
-    throw "Manual evidence appears filled, but finalizer still failed with exit code $exitCode. output=$text"
+if ($hasPendingEvidence) {
+    throw "Finalizer unexpectedly passed with pending manual evidence."
 }
 
 Write-Host "[YoloCompletionFinalizerStateVerify] finalizable=true, reviewedRows=$reviewedRows/$($reviewRows.Count), fullFrameRows=$frameReviewedRows/$($frameRows.Count), guiRows=$guiStatusRows/$($guiRows.Count)"

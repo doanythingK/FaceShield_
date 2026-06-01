@@ -113,11 +113,16 @@ function Get-FilledCount {
 function Assert-PseudoGtReviewClosure {
     param(
         [string]$CandidateCsv,
-        [string]$ClosureCsv
+        [string]$ClosureCsv,
+        [switch]$RequireCandidates
     )
 
     $candidatePath = Resolve-RepoPath $CandidateCsv
     if (-not (Test-Path $candidatePath)) {
+        if ($RequireCandidates) {
+            throw "Pseudo-GT candidate CSV is required for complete audit: $candidatePath"
+        }
+
         Write-Host "[YoloCompletionAuditVerify] pseudoGtReviewClosure=skipped-no-candidates, pseudoGtCsv=$candidatePath"
         return "skipped-no-candidates"
     }
@@ -376,6 +381,52 @@ if ($SelfTest) {
 
     Write-Host "[YoloCompletionAuditVerify] pass selftest marker-only complete state"
 
+    $missingPseudoGtPlanPath = Join-Path $selfTestDir "missing-pseudo-gt-complete-plan.md"
+    @(
+        "# Synthetic YOLO Completion Audit Missing Pseudo-GT Plan",
+        "",
+        "<!-- yolo-goal-audit-state: backend=integrated; default=FaceONNX; recommendation=none; representative=pass; anti-flicker-tracking=pass; track-hold-state=pass; extended=fail; extended-export=fail; sample-gt=pass; full-gt-harness=pass; license-source=pass; manual-readiness=pass; ten-minute-full=not-required-after-extended-fail; pseudo-gt-test-only=pass; pseudo-gt-review-closure=conditional-gated; complete=true; remaining=none; completion-audit=pass-complete -->"
+    ) | Set-Content -Encoding UTF8 -Path $missingPseudoGtPlanPath
+
+    $missingPseudoGtCsv = Join-Path $selfTestDir "missing-pseudo-gt-candidates.csv"
+    if (Test-Path $missingPseudoGtCsv) {
+        Remove-Item -Force -Path $missingPseudoGtCsv
+    }
+
+    $oldErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $missingPseudoGtOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath `
+            -PlanDocument $missingPseudoGtPlanPath `
+            -FullGtReviewCsv $reviewCsv `
+            -FullFrameReviewCsv $frameCsv `
+            -GuiChecklistCsv $guiChecklistCsv `
+            -PredictionCsv $predictionCsv `
+            -PseudoGtCsv $missingPseudoGtCsv `
+            -PseudoGtReviewClosureCsv $pseudoGtClosureCsv `
+            -ManualGateSummary $summaryPath `
+            -MinIou 0.50 `
+            -MaxMisses 0 `
+            -MaxFalsePositives 0 `
+            -MaxLowIou 0 `
+            -RequireComplete 2>&1
+        $missingPseudoGtExitCode = $LASTEXITCODE
+        $missingPseudoGtText = ($missingPseudoGtOutput | Out-String)
+        Write-Host $missingPseudoGtText
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+
+    if ($missingPseudoGtExitCode -eq 0) {
+        throw "Completion audit missing pseudo-GT negative selftest unexpectedly passed."
+    }
+    if ($missingPseudoGtText -notmatch "Pseudo-GT candidate CSV is required for complete audit") {
+        throw "Completion audit missing pseudo-GT negative selftest failed for an unexpected reason. output=$missingPseudoGtText"
+    }
+
+    Write-Host "[YoloCompletionAuditVerify] pass selftest missing pseudo-GT cannot RequireComplete"
+
     $pendingPlanPath = Join-Path $selfTestDir "pending-evidence-complete-plan.md"
     @(
         "# Synthetic YOLO Completion Audit Negative Plan",
@@ -550,7 +601,7 @@ if ($RequireComplete) {
         "-ChecklistCsv", $guiCsv,
         "-RequireManualPass"
     )
-    $pseudoGtClosureState = Assert-PseudoGtReviewClosure -CandidateCsv $PseudoGtCsv -ClosureCsv $PseudoGtReviewClosureCsv
+    $pseudoGtClosureState = Assert-PseudoGtReviewClosure -CandidateCsv $PseudoGtCsv -ClosureCsv $PseudoGtReviewClosureCsv -RequireCandidates
 
     Write-Host "[YoloCompletionAuditVerify] complete=true, fullGtRows=$($reviewRows.Count), guiRows=$($guiRows.Count), pseudoGtReviewClosure=$pseudoGtClosureState"
     Write-Host "[YoloCompletionAuditVerify] all requested checks passed"

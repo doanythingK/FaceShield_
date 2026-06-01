@@ -548,7 +548,7 @@ $fullGtStatus = if ($fullGtFilled) { "filled-pending-strict-gate" } else { "pend
 $guiStatus = if ($guiFilled) { "filled-pending-strict-gate" } else { "pending-human" }
 $previewTrackHoldStatus = if ($previewTrackHoldPassed) { "pass" } else { "pending-human" }
 $qualityGateReady = $qualityGateStatus -eq "pass" -or $qualityGateStatus -eq "fail-documented"
-$pseudoGtReady = $pseudoGtStatus -eq "closed" -or $pseudoGtStatus -eq "skipped-no-candidates"
+$pseudoGtReady = $pseudoGtStatus -eq "closed"
 $sceneCarryReady = $finalMaskCleanupEvidence.Status -eq "pass"
 $goalStatus = if ($planComplete -and $fullGtFilled -and $guiFilled -and $qualityGateReady -and $pseudoGtReady -and $sceneCarryReady) { "ready-for-strict-completion-audit" } else { "incomplete" }
 $planCompletionText = if ($planComplete) { "complete=true" } else { "complete=false" }

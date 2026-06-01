@@ -393,19 +393,18 @@ Invoke-RequiredStep "gui-smoke-state" $guiSmokeVerifier @(
 )
 
 $resolvedPseudoGtCsv = Resolve-RepoPath $PseudoGtCsv
-if (Test-Path $resolvedPseudoGtCsv) {
-    Invoke-RequiredStep "pseudo-gt-review-closure" $pseudoGtReviewClosure @(
-        "-PseudoGtCsv", $resolvedPseudoGtCsv,
-        "-ReviewCsv", $reviewCsv,
-        "-FullFrameReviewCsv", $frameCsv,
-        "-OutputCsv", (Resolve-RepoPath $PseudoGtReviewClosureCsv),
-        "-SummaryPath", (Resolve-RepoPath $PseudoGtReviewClosureSummary),
-        "-RequireAllClosed"
-    )
+if (-not (Test-Path $resolvedPseudoGtCsv)) {
+    throw "Pseudo-GT candidate CSV is required before completing the YOLO goal: $resolvedPseudoGtCsv"
 }
-else {
-    Write-Host "[YoloCompletionFinalizer] pseudoGtReviewClosure=skipped-missing-candidates, pseudoGtCsv=$resolvedPseudoGtCsv"
-}
+
+Invoke-RequiredStep "pseudo-gt-review-closure" $pseudoGtReviewClosure @(
+    "-PseudoGtCsv", $resolvedPseudoGtCsv,
+    "-ReviewCsv", $reviewCsv,
+    "-FullFrameReviewCsv", $frameCsv,
+    "-OutputCsv", (Resolve-RepoPath $PseudoGtReviewClosureCsv),
+    "-SummaryPath", (Resolve-RepoPath $PseudoGtReviewClosureSummary),
+    "-RequireAllClosed"
+)
 
 if (-not $UpdatePlan) {
     Write-Host "[YoloCompletionFinalizer] verified completed manual evidence. Pass -UpdatePlan to update yolo-goal-audit-state and run completion audit."
