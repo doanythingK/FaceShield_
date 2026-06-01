@@ -148,7 +148,11 @@ function Get-ManualGateProgress {
 }
 
 function Get-RemainingManualGates {
-    param([pscustomobject]$Progress)
+    param(
+        [pscustomobject]$Progress,
+        [bool]$PseudoGtReady = $true,
+        [bool]$PseudoGtReviewClosureReady = $true
+    )
 
     $remaining = @()
     if ($Progress.FullGtPendingRows -gt 0 -or $Progress.FullFramePendingRows -gt 0) {
@@ -156,6 +160,12 @@ function Get-RemainingManualGates {
     }
     if ($Progress.GuiPendingRows -gt 0) {
         $remaining += "gui-smoke"
+    }
+    if (-not $PseudoGtReady) {
+        $remaining += "pseudo-gt-evidence"
+    }
+    elseif (-not $PseudoGtReviewClosureReady) {
+        $remaining += "pseudo-gt-review-closure"
     }
     if ($remaining.Count -eq 0) {
         $remaining += "none"
@@ -188,6 +198,8 @@ function Write-ManualGateDashboard {
         [string]$GuiEvidenceGuideResolvedPath,
         [string]$PendingReportResolvedPath,
         [object]$Progress,
+        [bool]$PseudoGtReady,
+        [bool]$PseudoGtReviewClosureReady,
         [string[]]$Commands
     )
 
@@ -236,7 +248,7 @@ function Write-ManualGateDashboard {
     [void]$builder.AppendLine("</style>")
     [void]$builder.AppendLine("</head>")
     [void]$builder.AppendLine("<body>")
-    $remainingGates = @(Get-RemainingManualGates -Progress $Progress)
+    $remainingGates = @(Get-RemainingManualGates -Progress $Progress -PseudoGtReady $PseudoGtReady -PseudoGtReviewClosureReady $PseudoGtReviewClosureReady)
     [void]$builder.AppendLine("<h1>YOLO manual gate dashboard</h1>")
     [void]$builder.AppendLine("<section class=""panel""><h2>Remaining gates</h2><p class=""pending"">$(Convert-ToHtmlText ($remainingGates -join ', '))</p></section>")
     [void]$builder.AppendLine("<section class=""panel""><h2>Progress</h2><div class=""progress"">")
@@ -403,7 +415,9 @@ $manualGateProgress = Get-ManualGateProgress `
     -FullGtReviewCsvPath $resolvedFullGtReviewCsv `
     -FullFrameReviewCsvPath $resolvedFullFrameReviewCsv `
     -GuiChecklistCsvPath $resolvedGuiChecklistCsv
-$remainingGates = @(Get-RemainingManualGates -Progress $manualGateProgress)
+$pseudoGtReady = Test-Path $resolvedPseudoGtCsv
+$pseudoGtReviewClosureReady = (Test-Path $resolvedPseudoGtReviewClosureCsv) -and (Test-Path $resolvedPseudoGtReviewClosureSummary)
+$remainingGates = @(Get-RemainingManualGates -Progress $manualGateProgress -PseudoGtReady $pseudoGtReady -PseudoGtReviewClosureReady $pseudoGtReviewClosureReady)
 $remainingGateText = $remainingGates -join ","
 $pendingGuiSmokeRows = @(Get-PendingGuiSmokeRows -GuiChecklistCsvPath $resolvedGuiChecklistCsv)
 $nextGuiSmokeRow = $pendingGuiSmokeRows | Select-Object -First 1
@@ -416,7 +430,7 @@ $nextGuiEvidenceSetterCommand = if ($null -eq $nextGuiSmokeRow) {
 else {
     "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\set-yolo-gui-smoke-evidence.ps1 -StepId $nextGuiStep -Evidence `"<replace with observed result for $nextGuiStep>`""
 }
-$pseudoGtStatus = if (Test-Path $resolvedPseudoGtCsv) { "ready" } else { "missing" }
+$pseudoGtStatus = if ($pseudoGtReady) { "ready" } else { "missing" }
 $pseudoGtAction = "run scripts\run-yolo-problem-span-verification.ps1 on a <=30s problem span with tile-face or face-verification evidence and -PublishPseudoGtToGoalEvidence so $PseudoGtCsv exists before pseudo-GT closure and completion finalizer"
 $completedManualReadinessCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-manual-readiness-state.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -FullGtPredictionLog `"$PredictionLog`" -FullGtMinIou $MinIou -FullGtMaxMisses $MaxMisses -FullGtMaxFalsePositives $MaxFalsePositives -FullGtMaxLowIou $MaxLowIou -AllowCompletedFullGt -AllowCompletedGuiSmoke -AllowQualityGateFailure"
 $completedFullGtCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-full-gt-reviewed-state.ps1 -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -PredictionLog `"$PredictionLog`" -RequireFullFrameReview -RequireEvidence -RequireArtifacts -MinIou $MinIou -MaxMisses $MaxMisses -MaxFalsePositives $MaxFalsePositives -MaxLowIou $MaxLowIou -AllowQualityGateFailure"
@@ -605,6 +619,8 @@ if ($WriteSummary) {
         -GuiEvidenceGuideResolvedPath $resolvedGuiEvidenceGuidePath `
         -PendingReportResolvedPath $resolvedPendingReportPath `
         -Progress $manualGateProgress `
+        -PseudoGtReady $pseudoGtReady `
+        -PseudoGtReviewClosureReady $pseudoGtReviewClosureReady `
         -Commands $commands
     Write-Host "[YoloManualGate] summaryPath=$resolvedSummaryPath"
     Write-Host "[YoloManualGate] dashboardPath=$writtenDashboardPath"

@@ -310,17 +310,28 @@ $guiRows = @(Import-Csv $guiCsv)
 $reviewState = Get-ColumnFillState $reviewRows "label"
 $frameState = Get-ColumnFillState $frameRows "missedFaceCount"
 $guiState = Get-ColumnFillState $guiRows "status"
+$defaultPseudoGtExists = Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv")
+$defaultPseudoGtClosureExists = (Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure.csv")) -and
+    (Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md"))
 $allPending = $reviewState -eq "pending" -and $frameState -eq "pending" -and $guiState -eq "pending"
 $allCompleted = $reviewState -eq "completed" -and $frameState -eq "completed" -and $guiState -eq "completed"
-$expectedRemaining = if ($allCompleted) {
-    "remaining=none"
+$expectedRemainingParts = @()
+if (-not ($reviewState -eq "completed" -and $frameState -eq "completed")) {
+    $expectedRemainingParts += "full-gt-label"
 }
-elseif ($reviewState -eq "completed" -and $frameState -eq "completed" -and $guiState -in @("pending", "partial")) {
-    "remaining=gui-smoke"
+if ($guiState -ne "completed") {
+    $expectedRemainingParts += "gui-smoke"
 }
-else {
-    "remaining=full-gt-label,gui-smoke"
+if (-not $defaultPseudoGtExists) {
+    $expectedRemainingParts += "pseudo-gt-evidence"
 }
+elseif (-not $defaultPseudoGtClosureExists) {
+    $expectedRemainingParts += "pseudo-gt-review-closure"
+}
+if ($expectedRemainingParts.Count -eq 0) {
+    $expectedRemainingParts += "none"
+}
+$expectedRemaining = "remaining=$($expectedRemainingParts -join ',')"
 
 Write-Host "[YoloManualGateHelperVerify] state review=$reviewState, fullFrame=$frameState, gui=$guiState"
 
@@ -496,7 +507,6 @@ Assert-Contains "prepared output runs GUI evidence prep" $preparedEvidence.Text 
 Assert-Contains "prepared output verifies evidence custom GUI checklist" $preparedEvidence.Text "pass manual-readiness-state"
 
 $completed = Invoke-Helper @("-VerifyCompleted")
-$defaultPseudoGtExists = Test-Path (Resolve-RepoPath ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv")
 if ($allCompleted) {
     if ($defaultPseudoGtExists) {
         if ($completed.ExitCode -ne 0) {

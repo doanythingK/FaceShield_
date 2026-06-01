@@ -26,7 +26,9 @@ param(
     [int]$FullGtMaxMisses = 0,
     [int]$FullGtMaxFalsePositives = 0,
     [int]$FullGtMaxLowIou = 0,
-    [switch]$AllowFullGtQualityGateFailure
+    [switch]$AllowFullGtQualityGateFailure,
+    [switch]$IgnoreCompletedGoalAuditMarker,
+    [switch]$SkipCompletionAuditState
 )
 
 $ErrorActionPreference = "Stop"
@@ -192,7 +194,8 @@ $fullGtReviewAlreadyCompleted = Test-CompletedFullGtReview
 $allowCompletedFullGtForCurrentState = $AllowCompletedFullGt -or $fullGtReviewAlreadyCompleted
 $allowFullGtQualityFailureForCurrentState = $AllowFullGtQualityGateFailure -or
     ($fullGtReviewAlreadyCompleted -and (Test-DocumentedFullGtQualityFailureAllowed))
-$requireCompleteForCurrentState = $RequireComplete -or (Test-YoloGoalAuditAlreadyComplete)
+$requireCompleteForCurrentState = $RequireComplete -or
+    ((-not $IgnoreCompletedGoalAuditMarker) -and (Test-YoloGoalAuditAlreadyComplete))
 
 $completionAuditAlreadyRan = $false
 if ($RequireComplete) {
@@ -250,7 +253,7 @@ if ($allowFullGtQualityFailureForCurrentState) {
     $manualReadinessArgs += "-AllowQualityGateFailure"
 }
 Invoke-YoloVerify "manual-readiness-state" $manualReadinessStateVerify $manualReadinessArgs
-if (-not $completionAuditAlreadyRan) {
+if (-not $completionAuditAlreadyRan -and -not $SkipCompletionAuditState) {
     Invoke-YoloVerify "completion-audit-state" $completionAuditStateVerify (New-CompletionAuditArgs)
 }
 Invoke-YoloVerify "completion-audit-selftest" $completionAuditStateVerify @(
