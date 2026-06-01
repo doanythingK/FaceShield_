@@ -181,6 +181,30 @@ for (int frame = 1; frame < 5; frame++)
         throw new InvalidOperationException($"Expected same-scene materialized face at frame {frame}.");
 }
 
+var farNextProvider = new FrameMaskProvider();
+var farNextGenerator = new AutoMaskGenerator(
+    new DummyDetector(),
+    farNextProvider,
+    new AutoMaskOptions
+    {
+        UseTracking = true,
+        DetectEveryNFrames = 5,
+        FilterProfile = FaceFilterProfile.Yolo
+    });
+object farNextResults = CreateResults(
+    detectionType,
+    CreateDetection(detectionType, 0, face, size, conf, dark),
+    CreateDetection(detectionType, 20, Array.Empty<Rect>(), size, Array.Empty<float>(), similar));
+var farNext = InvokeMaterialize(farNextGenerator, farNextResults);
+if (farNext.interpolated != 4 || farNext.sceneCutStops != 0)
+    throw new InvalidOperationException($"Expected far-next fallback carry to cap at detect interval with interpolated=4 sceneCutStops=0, got interpolated={farNext.interpolated} sceneCutStops={farNext.sceneCutStops}.");
+for (int frame = 1; frame < 5; frame++)
+{
+    if (!farNextProvider.TryGetFaceMaskData(frame, out var data) || data.Faces.Count != 1)
+        throw new InvalidOperationException($"Expected far-next materialized face inside detect interval at frame {frame}.");
+}
+AssertNoMaterializedFaces(farNextProvider, 5, 20);
+
 var faceOnnxProvider = new FrameMaskProvider();
 var faceOnnxGenerator = new AutoMaskGenerator(
     new DummyDetector(),
@@ -201,7 +225,7 @@ if (faceOnnx.interpolated != 4 || faceOnnx.sceneCutStops != 0)
 if (faceOnnx.sceneCutTransitions.Length != 0)
     throw new InvalidOperationException($"Expected FaceONNX sceneCutTransitions to be empty, got {faceOnnx.sceneCutTransitions}.");
 
-Console.WriteLine("[AutoMaskSparseMaterializeSceneCutVerify] yoloHardCutInterpolated=0, yoloSceneCutStops=1, yoloSceneCutTransitions=0->5, cutBeforePositiveInterpolated=0, sameSceneInterpolated=4, faceOnnxInterpolated=4");
+Console.WriteLine("[AutoMaskSparseMaterializeSceneCutVerify] yoloHardCutInterpolated=0, yoloSceneCutStops=1, yoloSceneCutTransitions=0->5, cutBeforePositiveInterpolated=0, sameSceneInterpolated=4, farNextInterpolated=4, faceOnnxInterpolated=4");
 
 internal sealed class DummyDetector : IFaceDetector
 {

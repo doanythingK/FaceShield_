@@ -1463,7 +1463,7 @@ namespace FaceShield.Services.Analysis
                     : canBridge
                         ? nextPositive!.Index
                         : nextKey >= 0
-                            ? nextKey
+                            ? Math.Min(nextKey, key + Math.Max(1, _options.DetectEveryNFrames))
                             : Math.Min(endExclusive, key + Math.Max(1, _options.DetectEveryNFrames));
                 if (segmentEnd <= key + 1)
                     continue;

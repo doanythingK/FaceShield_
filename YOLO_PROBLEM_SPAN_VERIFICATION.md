@@ -478,6 +478,7 @@ Even if `[SmokeFinalMaskSummary]` reports `reviewRequired=False` because there a
 GUI 자동 검토 목록도 YOLO no-detection 전체 구간을 조용히 통과시키지 않고, 샘플 frame을 `얼굴 없음` 검토 대상으로 올린다. 이때 debug log는 `[AutoMaskNoDetectionReview]`로 남는다.
 YOLO가 일부 얼굴만 잡고 face coverage가 낮은 구간도 긴 no-face span을 그대로 통과시키지 않는다. 전체 frame 대비 face frame이 20% 이하이고, 검출 구간 사이에 긴 no-face run이 있으면 최대 12개 frame을 `얼굴 없음` 검토 대상으로 샘플링하며 debug log는 `[AutoMaskSparseNoFaceReview]`로 남는다. 이 경로는 미탐 확정이 아니라 GUI 수동 검토 우선순위 지정이다.
 GUI 자동 검토 목록의 `신뢰도 낮음` 기준은 선택된 detector backend의 threshold를 따른다. YOLO 선택 중에는 FaceONNX threshold가 아니라 `YoloFaceOnnxDetectorOptions.ConfidenceThreshold + LowConfidenceMargin`을 사용한다.
+Sparse tracking materialize는 다음 detection key가 멀리 떨어진 경우에도 이전 얼굴을 그 key 직전까지 길게 끌고 가지 않는다. bridge 가능한 positive detection이 없으면 fallback carry를 `DetectEveryNFrames` 구간으로 제한하며, verifier는 `farNextInterpolated=4`와 frame `5..19` no materialized faces를 확인한다.
 
 No-detection contact-sheet smoke:
 

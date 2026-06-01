@@ -384,6 +384,7 @@ Assert-Match "automask sparse scene cut guard blocks materialization" $autoMaskG
 Assert-Match "automask sparse scene cut summary logs count" $autoMaskGeneratorText "sparseSceneCuts=\{materialized\.SceneCutStops\}"
 Assert-Match "automask sparse scene cut summary logs pairs" $autoMaskGeneratorText "sparseSceneCutPairs=\{FormatSparseSceneCutTransitions\(materialized\.SceneCutTransitions\)\}"
 Assert-Match "automask sparse scene cut decision is isolated" $autoMaskGeneratorText "ShouldStopSparseSceneCarry[\s\S]*guardSceneCuts[\s\S]*ComputeSignatureDifference"
+Assert-Match "automask sparse fallback carry caps at detect interval" $autoMaskGeneratorText "canBridge[\s\S]*nextPositive!\.Index[\s\S]*Math\.Min\(nextKey,\s*key\s*\+\s*Math\.Max\(1,\s*_options\.DetectEveryNFrames\)\)"
 Assert-Match "automask sparse materialize result exposes scene cut count" $autoMaskGeneratorText "SparseMaterializeResult\([\s\S]*int\s+Interpolated,[\s\S]*int\s+SceneCutStops"
 Assert-Match "automask sparse materialize result exposes scene cut transitions" $autoMaskGeneratorText "SparseSceneCutTransition\(int\s+SourceFrameIndex,\s*int\s+NextFrameIndex\)[\s\S]*SceneCutTransitions"
 
