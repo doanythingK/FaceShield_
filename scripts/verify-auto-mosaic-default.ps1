@@ -348,7 +348,7 @@ Assert-Contains "yolo-aspect-ratio-filter" $aspectRatioFilterOutput "\[YoloAspec
 
 $finalMaskCleanupOutput = Invoke-ScriptStep "yolo-final-mask-cleanup" $yoloFinalMaskCleanupVerify @()
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "\[YoloFinalMaskCleanupVerify\]"
-Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=38"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakIsolated=39"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakUnsupported=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedMediumUnsupported=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakShortClusters=5"
@@ -356,6 +356,7 @@ Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedWeakTi
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTinyShortClusters=4"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTinyIsolated=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTopEdgeWeakClusters=3"
+Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedTopEdgeLargeDuplicates=1"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedUpperWeakClusters=8"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedLowerWeakClusters=3"
 Assert-Contains "yolo-final-mask-cleanup" $finalMaskCleanupOutput "removedAspectOutliers=3"

@@ -32,6 +32,7 @@ namespace FaceShield.Services.Analysis
             int removedTinyShortClusters = 0;
             int removedTinyIsolated = 0;
             int removedTopEdgeWeakClusters = 0;
+            int removedTopEdgeLargeDuplicates = 0;
             int removedUpperWeakClusters = 0;
             int removedLowerWeakClusters = 0;
             int removedAspectOutlierClusters = 0;
@@ -51,6 +52,14 @@ namespace FaceShield.Services.Analysis
                     float confidence = faceIndex < data.Confidences.Count
                         ? data.Confidences[faceIndex]
                         : data.MinConfidence ?? 1.0f;
+                    if (IsTopEdgeLargeDuplicateFace(data, faceIndex, face, confidence, options))
+                    {
+                        removed++;
+                        removedTopEdgeLargeDuplicates++;
+                        AddRemovedFace(face, confidence);
+                        continue;
+                    }
+
                     if (confidence <= options.WeakConfidenceMax &&
                         !TouchesFrameEdge(face, data.Size, options.EdgeMarginRatio))
                     {
@@ -230,6 +239,7 @@ namespace FaceShield.Services.Analysis
                     removedTinyShortClusters,
                     removedTinyIsolated,
                     removedTopEdgeWeakClusters,
+                    removedTopEdgeLargeDuplicates,
                     removedUpperWeakClusters,
                     removedLowerWeakClusters,
                     removedAspectOutlierClusters,
@@ -1841,6 +1851,89 @@ namespace FaceShield.Services.Analysis
                 areaRatio <= options.TopEdgeWeakClusterMaxAreaRatio;
         }
 
+        private static bool IsTopEdgeLargeDuplicateFace(
+            FrameMaskProvider.FaceMaskData data,
+            int faceIndex,
+            Rect face,
+            float confidence,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (options.TopEdgeLargeDuplicateMaxConfidence <= 0 ||
+                options.TopEdgeLargeDuplicateMinAreaRatio <= 0 ||
+                options.TopEdgeLargeDuplicateMaxAreaRatio <= 0 ||
+                options.TopEdgeLargeDuplicateMaxCenterYRatio <= 0 ||
+                confidence > options.TopEdgeLargeDuplicateMaxConfidence ||
+                !IsTopEdgeLargeFace(face, data.Size, options))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                if (i == faceIndex)
+                    continue;
+
+                var support = data.Faces[i];
+                float supportConfidence = GetConfidence(data, i);
+                if (supportConfidence < options.TopEdgeLargeDuplicateMinSupportConfidence)
+                    continue;
+
+                if (IsTopEdgeLargeDuplicateSupportFace(support, face, data.Size, options))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsTopEdgeLargeFace(
+            Rect face,
+            PixelSize size,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0 || face.Width <= 0 || face.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            double aspectRatio = face.Width / face.Height;
+            return TouchesFrameTopEdge(face, size, options.EdgeMarginRatio) &&
+                centerYRatio <= options.TopEdgeLargeDuplicateMaxCenterYRatio &&
+                areaRatio >= options.TopEdgeLargeDuplicateMinAreaRatio &&
+                areaRatio <= options.TopEdgeLargeDuplicateMaxAreaRatio &&
+                aspectRatio >= options.TopEdgeLargeDuplicateMinAspectRatio &&
+                aspectRatio <= options.TopEdgeLargeDuplicateMaxAspectRatio;
+        }
+
+        private static bool IsTopEdgeLargeDuplicateSupportFace(
+            Rect support,
+            Rect largeFace,
+            PixelSize size,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0 || support.Width <= 0 || support.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double supportArea = Math.Max(0.0, support.Width * support.Height);
+            double largeArea = Math.Max(0.0, largeFace.Width * largeFace.Height);
+            if (largeArea <= 0)
+                return false;
+
+            double supportAreaRatio = supportArea / frameArea;
+            double supportCenterYRatio = (support.Y + support.Height * 0.5) / size.Height;
+            if (supportCenterYRatio > options.TopEdgeLargeDuplicateSupportMaxCenterYRatio ||
+                supportAreaRatio <= 0 ||
+                supportAreaRatio > options.TopEdgeLargeDuplicateSupportMaxAreaRatio ||
+                supportArea / largeArea > options.TopEdgeLargeDuplicateSupportMaxAreaFraction)
+            {
+                return false;
+            }
+
+            return GetRectIntersectionArea(support, largeFace) / supportArea >=
+                options.TopEdgeLargeDuplicateMinSupportContainment;
+        }
+
         private static bool IsLowerWeakFace(Rect face, PixelSize size, YoloFinalMaskCleanupOptions options)
         {
             if (size.Width <= 0 || size.Height <= 0)
@@ -1872,6 +1965,15 @@ namespace FaceShield.Services.Analysis
             return IsUpperWeakFace(face, size, options) ||
                 IsLowerWeakFace(face, size, options) ||
                 IsAspectOutlierFace(face, options);
+        }
+
+        private static double GetRectIntersectionArea(Rect a, Rect b)
+        {
+            double left = Math.Max(a.X, b.X);
+            double top = Math.Max(a.Y, b.Y);
+            double right = Math.Min(a.Right, b.Right);
+            double bottom = Math.Min(a.Bottom, b.Bottom);
+            return Math.Max(0.0, right - left) * Math.Max(0.0, bottom - top);
         }
 
         private static bool IsTinyGapAnchorFace(Rect face, PixelSize size, YoloFinalMaskGapFillOptions options)
@@ -1970,6 +2072,17 @@ namespace FaceShield.Services.Analysis
         public float TopEdgeWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double TopEdgeWeakClusterMaxCenterYRatio { get; init; } = 0.08;
         public double TopEdgeWeakClusterMaxAreaRatio { get; init; } = 0.0065;
+        public float TopEdgeLargeDuplicateMaxConfidence { get; init; } = 0.88f;
+        public float TopEdgeLargeDuplicateMinSupportConfidence { get; init; } = 0.20f;
+        public double TopEdgeLargeDuplicateMaxCenterYRatio { get; init; } = 0.38;
+        public double TopEdgeLargeDuplicateMinAreaRatio { get; init; } = 0.035;
+        public double TopEdgeLargeDuplicateMaxAreaRatio { get; init; } = 0.12;
+        public double TopEdgeLargeDuplicateMinAspectRatio { get; init; } = 0.70;
+        public double TopEdgeLargeDuplicateMaxAspectRatio { get; init; } = 1.35;
+        public double TopEdgeLargeDuplicateSupportMaxCenterYRatio { get; init; } = 0.12;
+        public double TopEdgeLargeDuplicateSupportMaxAreaRatio { get; init; } = 0.012;
+        public double TopEdgeLargeDuplicateSupportMaxAreaFraction { get; init; } = 0.35;
+        public double TopEdgeLargeDuplicateMinSupportContainment { get; init; } = 0.55;
         public int LowerWeakClusterMaxFrames { get; init; } = 3;
         public float LowerWeakClusterMaxConfidence { get; init; } = 0.50f;
         public double LowerWeakClusterMinCenterYRatio { get; init; } = 0.58;
@@ -2045,13 +2158,14 @@ namespace FaceShield.Services.Analysis
         int RemovedTinyShortClusterFaces,
         int RemovedTinyIsolatedFaces,
         int RemovedTopEdgeWeakClusterFaces,
+        int RemovedTopEdgeLargeDuplicateFaces,
         int RemovedUpperWeakClusterFaces,
         int RemovedLowerWeakClusterFaces,
         int RemovedAspectOutlierClusterFaces,
         IReadOnlyList<int> RemovedFrameIndices,
         IReadOnlyList<FaceTrackFilledFace> RemovedFacesInfo)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
     }
 
     public readonly record struct YoloFinalMaskGapFillResult(

@@ -26,6 +26,7 @@
 - 후보별 `baseFaceConfidence`, `tileFaceConfidence`, `tileSupportCount`, `faceVerificationConfidence`, `faceVerificationDistance`, `personConfidence`, `personUpperOverlap`, `personObjectClass`, `auxiliarySignalRole`, `supportFrameCount`, `supportRowCount`, `supportSources`, `supportEvidenceIds`, `bestIou`, `centerDistanceRatio`, `areaChangeRatio`, `centerXRatio`, `centerYRatio`, `baseAreaRatio`, `aspectRatio`, `geometryTag`, `fpProbability`, `missProbability`, `pseudoGtReason`을 evidence log/CSV에 남긴다.
 - 최종 `face`/`nonface`/`miss` 확정은 review CSV 라벨로 닫는다.
 - 기존 FaceONNX 기본 경로와 앱 기본 YOLO 런타임 성능 경로는 회귀시키지 않는다.
+- 기본 YOLO 런타임 후처리는 pseudo-GT 결과를 직접 읽지 않는다. 다만 현재 evidence에서 반복 확인된 상단 큰 잔상 후보를 줄이기 위해, 같은 frame 안에 더 작은 상단 support 후보가 충분히 겹칠 때만 큰 상단 박스를 제거하고 `removedTopEdgeLargeDuplicates`로 별도 로그를 남긴다.
 
 ## 짧은 구간 생성 및 실행
 
