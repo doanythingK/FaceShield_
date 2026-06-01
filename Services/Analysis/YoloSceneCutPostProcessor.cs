@@ -107,7 +107,8 @@ namespace FaceShield.Services.Analysis
                 minIou: YoloSceneCutCandidateMatchMinIou,
                 maxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                 maxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
-                includeEdgeCandidates: true);
+                includeEdgeCandidates: true,
+                includeIndependentStrongContinuation: true);
 
             if (candidates.Count > 0)
             {

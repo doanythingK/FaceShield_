@@ -624,7 +624,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             minIou: yoloSceneCutCandidateMatchMinIou,
             maxCenterShiftRatio: yoloSceneCutCandidateMatchMaxCenterShiftRatio,
             maxAreaChangeRatio: yoloSceneCutCandidateMatchMaxAreaChangeRatio,
-            includeEdgeCandidates: true);
+            includeEdgeCandidates: true,
+            includeIndependentStrongContinuation: true);
         var strongCarryProbe = sceneCutGuard.Apply(
             maskProvider,
             input,

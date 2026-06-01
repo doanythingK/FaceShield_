@@ -121,7 +121,8 @@ namespace FaceShield.Services.Analysis
             double minIou = 0.15,
             double maxCenterShiftRatio = 0.65,
             double maxAreaChangeRatio = 3.0,
-            bool includeEdgeCandidates = false)
+            bool includeEdgeCandidates = false,
+            bool includeIndependentStrongContinuation = false)
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
@@ -194,7 +195,8 @@ namespace FaceShield.Services.Analysis
                                 continue;
                             }
 
-                            if (HasIndependentStrongContinuation(
+                            if (!includeIndependentStrongContinuation &&
+                                HasIndependentStrongContinuation(
                                     entries,
                                     run[^1].FrameIndex + 1,
                                     run[^1].Bounds,
@@ -259,6 +261,7 @@ namespace FaceShield.Services.Analysis
             var checkedFramePairs = new List<string>();
             var removedFrameIndices = new List<int>();
             var cutFramePairs = new List<string>();
+            var seenCutFramePairs = new HashSet<string>(StringComparer.Ordinal);
             var differenceByPair = new Dictionary<(int Source, int Target), double>();
             int directDifferenceChecks = 0;
             int directDifferenceSkipped = 0;
@@ -318,7 +321,8 @@ namespace FaceShield.Services.Analysis
                 if (!isCut)
                     continue;
 
-                cutFramePairs.Add(cutFramePair);
+                if (seenCutFramePairs.Add(cutFramePair))
+                    cutFramePairs.Add(cutFramePair);
                 if (!removeCandidates)
                     continue;
 
@@ -388,6 +392,7 @@ namespace FaceShield.Services.Analysis
             var checkedFramePairs = new List<string>();
             var removedFrameIndices = new List<int>();
             var cutFramePairs = new List<string>();
+            var seenCutFramePairs = new HashSet<string>(StringComparer.Ordinal);
             var differenceByPair = new Dictionary<(int Source, int Target), double>();
             var frameSamples = new Dictionary<int, FrameDifferenceSample>();
             int directDifferenceChecks = 0;
@@ -495,7 +500,8 @@ namespace FaceShield.Services.Analysis
                         if (!isCut)
                             continue;
 
-                        cutFramePairs.Add(cutFramePair);
+                        if (seenCutFramePairs.Add(cutFramePair))
+                            cutFramePairs.Add(cutFramePair);
                         if (!removeCandidates)
                             continue;
 
