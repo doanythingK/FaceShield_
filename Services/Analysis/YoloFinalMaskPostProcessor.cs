@@ -376,30 +376,48 @@ namespace FaceShield.Services.Analysis
                             break;
                         }
 
-                        foreach (int frameIndex in fillableGapFrameIndices)
+                        var interpolatedGapFaces = new List<(int FrameIndex, Rect Face)>(fillableGapFrameIndices.Length);
+                        bool hasSceneCarryBlockedFace = false;
+                        foreach (int frameIndex in allGapFrameIndices)
                         {
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
                             var interpolated = Interpolate(previousFace, nextFace, t);
                             if (interpolated.Width <= 0 || interpolated.Height <= 0)
                                 continue;
+                            if (HasMatchingBlockedFace(
+                                    blockedSceneCarryFacesByFrame,
+                                    frameIndex,
+                                    interpolated,
+                                    options))
+                            {
+                                hasSceneCarryBlockedFace = true;
+                                break;
+                            }
 
+                            if (!storedFrames.Contains(frameIndex))
+                                interpolatedGapFaces.Add((frameIndex, interpolated));
+                        }
+
+                        if (hasSceneCarryBlockedFace)
+                        {
+                            foreach (int frameIndex in allGapFrameIndices)
+                                blockedSceneCarryGapFrames.Add(frameIndex);
+
+                            break;
+                        }
+
+                        foreach (var interpolatedGapFace in interpolatedGapFaces)
+                        {
+                            int frameIndex = interpolatedGapFace.FrameIndex;
+                            var interpolated = interpolatedGapFace.Face;
                             bool blockedByCleanupFace = HasMatchingBlockedFace(
                                 blockedFacesByFrame,
                                 frameIndex,
                                 interpolated,
                                 options);
-                            bool blockedBySceneCarry = blockedSceneCarryFrames.Contains(frameIndex) ||
-                                HasMatchingBlockedFace(
-                                    blockedSceneCarryFacesByFrame,
-                                    frameIndex,
-                                    interpolated,
-                                    options);
-                            if (blockedByCleanupFace || blockedBySceneCarry)
+                            if (blockedByCleanupFace)
                             {
-                                if (blockedByCleanupFace)
-                                    blockedCleanupFrames.Add(frameIndex);
-                                if (blockedBySceneCarry)
-                                    blockedSceneCarryGapFrames.Add(frameIndex);
+                                blockedCleanupFrames.Add(frameIndex);
                                 continue;
                             }
 
