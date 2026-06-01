@@ -279,7 +279,9 @@ if (-not (Test-Path $reviewIndex)) {
 }
 
 $reviewIndexText = Get-Content -Raw -Path $reviewIndex
-if (-not $reviewIndexText.Contains("Input Rules") -or -not $reviewIndexText.Contains("CSV key:")) {
+$requiredReviewIndexTexts = @("Input Rules", "full-gt-review.csv label", "missedFaceRowsAdded", "CSV key:", "Set: label=face|nonface", "label=miss rows", "Set: missedFaceCount=N", "Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv", "-overlay.png", "pred=")
+$missingReviewIndexTexts = @($requiredReviewIndexTexts | Where-Object { -not $reviewIndexText.Contains($_) })
+if ($missingReviewIndexTexts.Count -gt 0) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
         -OutputDir $resolvedOutputDir `
         -RefreshIndexOnly
@@ -290,7 +292,7 @@ if (-not $reviewIndexText.Contains("Input Rules") -or -not $reviewIndexText.Cont
     $reviewIndexText = Get-Content -Raw -Path $reviewIndex
 }
 
-foreach ($text in @("Input Rules", "full-gt-review.csv label", "missedFaceRowsAdded", "CSV key:", "pending:", "Set: label=face|nonface", "Set: missedFaceCount=N", "Detection crops", "Full-frame missed-face scan", "full-gt-review.csv", "full-frame-review.csv", "-overlay.png", "pred=")) {
+foreach ($text in $requiredReviewIndexTexts) {
     if (-not $reviewIndexText.Contains($text)) {
         throw "Review index missing text: $text"
     }

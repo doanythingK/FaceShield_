@@ -129,7 +129,7 @@ function Read-GtCsv {
             continue
         }
 
-        if ($label.Trim().ToLowerInvariant() -notin @("face", "actualface", "true", "1")) {
+        if ($label.Trim().ToLowerInvariant() -notin @("face", "actualface", "miss", "true", "1")) {
             continue
         }
 
@@ -303,6 +303,16 @@ if ($SelfTest -or ([string]::IsNullOrWhiteSpace($GtCsv) -and [string]::IsNullOrW
     Assert-Equal "selftest true positive" $summary.TruePositive 1
     Assert-Equal "selftest miss" $summary.Miss 1
     Assert-Equal "selftest false positive" $summary.FalsePositive 1
+
+    $missLabelGt = @(
+        [pscustomobject]@{ frame = "40"; gtId = "miss-face"; label = "miss"; x = "600"; y = "220"; w = "50"; h = "50" }
+    )
+    $missLabelCsv = Join-Path $repo ".tmp\yolo-full-gt-label-state\miss-label-gt.csv"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $missLabelCsv) | Out-Null
+    $missLabelGt | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $missLabelCsv
+    $missLabelRows = @(Read-GtCsv $missLabelCsv)
+    Assert-Equal "selftest explicit miss label gt rows" $missLabelRows.Count 1
+
     Write-Host "[YoloFullGtLabelSummary] mode=selftest, gtFaces=$($summary.GtFaces), predictions=$($summary.Predictions), truePositive=$($summary.TruePositive), miss=$($summary.Miss), falsePositive=$($summary.FalsePositive), lowIou=$($summary.LowIou), avgIou=$($summary.AvgIou), minIou=$($summary.MinIou), minIouThreshold=$($summary.MinIouThreshold)"
     Write-Host "[YoloFullGtLabelVerify] all requested checks passed"
     return

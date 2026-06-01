@@ -77,7 +77,7 @@ function Assert-ReviewedCsv {
         throw "Review CSV has no rows: $resolved"
     }
 
-    $validFaceLabels = @("face", "actualface", "true", "1")
+    $validFaceLabels = @("face", "actualface", "miss", "true", "1")
     $validNonFaceLabels = @("nonface", "false", "0")
     $reviewedRows = 0
     $faceRows = 0
@@ -98,6 +98,10 @@ function Assert-ReviewedCsv {
 
         $normalizedLabel = $label.Trim().ToLowerInvariant()
         if ($normalizedLabel -in $validFaceLabels) {
+            if ($normalizedLabel -eq "miss" -and -not [string]::IsNullOrWhiteSpace($sourcePredictionId)) {
+                throw "label 'miss' is only valid for manual missed-face rows without sourcePredictionId at frame=$($row.frame), sourcePredictionId=$($row.sourcePredictionId)"
+            }
+
             $faceRows++
         }
         elseif ($normalizedLabel -in $validNonFaceLabels) {
@@ -369,6 +373,16 @@ if ($SelfTest) {
     $missFrameSummary = Assert-FullFrameReviewCsv -Path $missFrameReviewPath -ManualMissRows 1 -ManualMissRowsByFrame @{ 30 = 1 } -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
     Invoke-LabelVerifier -GtCsvPath $missReviewPath -PredCsvPath $predictionPath -PredLogPath "" -Iou $MinIou -Misses 1 -FalsePositives 1 -LowIou 0
 
+    $explicitMissReviewPath = Join-Path $selfTestDir "reviewed-with-explicit-miss-label.csv"
+    @(
+        [pscustomobject]@{ frame = 10; gtId = "gt-a"; label = "face"; x = "100"; y = "100"; w = "80"; h = "80"; sourcePredictionId = "pred-a"; sourceConfidence = "0.92"; source = "prediction"; cropPath = $cropAPath; reviewStatus = "pass"; evidenceNotes = "synthetic face" },
+        [pscustomobject]@{ frame = 20; gtId = ""; label = "nonface"; x = "300"; y = "200"; w = "40"; h = "40"; sourcePredictionId = "pred-fp"; sourceConfidence = "0.30"; source = "prediction"; cropPath = $cropBPath; reviewStatus = "pass"; evidenceNotes = "synthetic nonface" },
+        [pscustomobject]@{ frame = 30; gtId = "manual-miss-b"; label = "miss"; x = "500"; y = "200"; w = "50"; h = "50"; sourcePredictionId = ""; sourceConfidence = ""; source = "manual-missed"; cropPath = ""; reviewStatus = "pass"; evidenceNotes = "synthetic explicit miss label" }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $explicitMissReviewPath
+    $explicitMissSummary = Assert-ReviewedCsv -Path $explicitMissReviewPath -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
+    $explicitMissFrameSummary = Assert-FullFrameReviewCsv -Path $missFrameReviewPath -ManualMissRows 1 -ManualMissRowsByFrame @{ 30 = 1 } -RequireEvidenceNotes:$true -RequireArtifactFiles:$true -AllowMissingReview:$false
+    Invoke-LabelVerifier -GtCsvPath $explicitMissReviewPath -PredCsvPath $predictionPath -PredLogPath "" -Iou $MinIou -Misses 1 -FalsePositives 1 -LowIou 0
+
     $mismatchedFrameReviewPath = Join-Path $selfTestDir "full-frame-review-mismatched-row-count.csv"
     @(
         [pscustomobject]@{ frame = 30; frameImagePath = $frameCPath; detectedCandidateCount = "0"; missedFaceCount = "1"; missedFaceRowsAdded = "0"; reviewStatus = "pass"; evidenceNotes = "synthetic mismatch" }
@@ -417,6 +431,7 @@ if ($SelfTest) {
     Write-Host "[YoloFullGtReviewedVerify] pass selftest rows=$($summary.Rows), reviewed=$($summary.Reviewed), face=$($summary.Face), nonFace=$($summary.NonFace), unreviewed=$($summary.Unreviewed)"
     Write-Host "[YoloFullGtFrameReviewedVerify] pass selftest rows=$($frameSummary.Rows), reviewed=$($frameSummary.Reviewed), declaredMisses=$($frameSummary.DeclaredMisses), declaredRowsAdded=$($frameSummary.DeclaredRowsAdded), unreviewed=$($frameSummary.Unreviewed)"
     Write-Host "[YoloFullGtFrameReviewedVerify] pass manual-miss selftest rows=$($missSummary.Rows), reviewed=$($missSummary.Reviewed), declaredMisses=$($missFrameSummary.DeclaredMisses), declaredRowsAdded=$($missFrameSummary.DeclaredRowsAdded), unreviewed=$($missFrameSummary.Unreviewed)"
+    Write-Host "[YoloFullGtFrameReviewedVerify] pass explicit-miss-label selftest rows=$($explicitMissSummary.Rows), reviewed=$($explicitMissSummary.Reviewed), declaredMisses=$($explicitMissFrameSummary.DeclaredMisses), declaredRowsAdded=$($explicitMissFrameSummary.DeclaredRowsAdded)"
     Write-Host "[YoloFullGtFrameReviewedVerify] pass negative selftests=5"
     Write-Host "[YoloFullGtReviewedVerify] all requested checks passed"
     return
@@ -438,7 +453,7 @@ if ($RequireFullFrameReview) {
         $sourcePredictionId = if ($null -ne $_.PSObject.Properties["sourcePredictionId"]) { $_.sourcePredictionId } else { "" }
         $source = if ($null -ne $_.PSObject.Properties["source"]) { $_.source } else { "" }
         $normalizedLabel = $label.Trim().ToLowerInvariant()
-        ($normalizedLabel -in @("face", "actualface", "true", "1")) -and
+        ($normalizedLabel -in @("face", "actualface", "miss", "true", "1")) -and
             ([string]::IsNullOrWhiteSpace($sourcePredictionId) -or $source -eq "manual-missed")
     })) {
         $frame = 0

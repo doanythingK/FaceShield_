@@ -306,17 +306,22 @@ function Write-ReviewIndexHtml {
     [void]$builder.AppendLine("<section class=""rules"">")
     [void]$builder.AppendLine("<h2>Input Rules</h2>")
     [void]$builder.AppendLine("<ul>")
-    [void]$builder.AppendLine("<li><strong>full-gt-review.csv label</strong>: use <code>face</code> for a real visible face and <code>nonface</code> for detector false positives.</li>")
+    [void]$builder.AppendLine("<li><strong>full-gt-review.csv label</strong>: use <code>face</code> for a real visible face, <code>nonface</code> for detector false positives, and <code>miss</code> for manual missed-face rows added from the full-frame scan.</li>")
     [void]$builder.AppendLine("<li><strong>reviewStatus</strong>: use <code>pass</code> only after reviewing the crop or frame, and fill <code>evidenceNotes</code>.</li>")
     [void]$builder.AppendLine("<li><strong>full-frame-review.csv missedFaceCount</strong>: count visible faces not covered by detection crop rows.</li>")
     [void]$builder.AppendLine("<li><strong>missedFaceRowsAdded</strong>: add the same number of manual missed-face rows to <code>full-gt-review.csv</code>.</li>")
+    [void]$builder.AppendLine("<li>For missed faces, add <code>label=miss rows</code> with empty <code>sourcePredictionId</code>; do not use <code>miss</code> for detection crop rows.</li>")
     [void]$builder.AppendLine("<li>Each card shows its CSV row key, current pending fields, and suggested entry pattern.</li>")
     [void]$builder.AppendLine("</ul>")
     [void]$builder.AppendLine("</section>")
 
     [void]$builder.AppendLine("<h2>Detection crops</h2>")
     [void]$builder.AppendLine("<div class=""grid"">")
-    foreach ($row in $CropRows) {
+    $displayCropRows = @($CropRows | Where-Object {
+        $null -ne $_.PSObject.Properties["cropPath"] -and
+            -not [string]::IsNullOrWhiteSpace([string]$_.cropPath)
+    })
+    foreach ($row in $displayCropRows) {
         $relativePath = Convert-ToRelativeImagePath -BaseDir $OutputDir -Path $row.cropPath
         $missing = @()
         foreach ($column in @("label", "reviewStatus", "evidenceNotes")) {
@@ -692,10 +697,10 @@ if ($IncludeFullFrameReview) {
 
     $frameReviewRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $frameReviewCsv
     Write-Host "[YoloFullGtFrameReviewPackage] wrote rows=$($frameReviewRows.Count), frameReviewCsv=$frameReviewCsv, frameDir=$frameDir"
-    Write-Host "[YoloFullGtFrameReviewPackage] label instructions: set missedFaceCount, reviewStatus, and evidenceNotes after reviewing frameImagePath; add rows to full-gt-review.csv for each missed face."
+    Write-Host "[YoloFullGtFrameReviewPackage] label instructions: set missedFaceCount, reviewStatus, and evidenceNotes after reviewing frameImagePath; add label=miss rows to full-gt-review.csv for each missed face."
 }
 
 $indexHtml = Write-ReviewIndexHtml -OutputDir $resolvedOutputDir -CropRows $reviewRows.ToArray() -FrameRows $frameReviewRows.ToArray()
 Write-Host "[YoloFullGtReviewIndex] wrote path=$indexHtml"
 Write-Host "[YoloFullGtReviewPackage] wrote rows=$($reviewRows.Count), reviewCsv=$reviewCsv, cropDir=$cropDir"
-Write-Host "[YoloFullGtReviewPackage] label instructions: set label=face/nonface and evidenceNotes after reviewing cropPath images; add rows for visible missed faces."
+Write-Host "[YoloFullGtReviewPackage] label instructions: set label=face/nonface/miss and evidenceNotes after reviewing cropPath images; add label=miss rows for visible missed faces."
