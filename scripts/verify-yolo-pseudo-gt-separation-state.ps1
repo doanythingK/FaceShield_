@@ -107,6 +107,7 @@ $pseudoGtTileInput = Read-RequiredFile "scripts/new-yolo-pseudo-gt-tile-input.ps
 $pseudoGtFaceVerificationInput = Read-RequiredFile "scripts/new-yolo-pseudo-gt-face-verification-input.ps1"
 $pseudoGtPersonObjectInput = Read-RequiredFile "scripts/new-yolo-pseudo-gt-person-object-input.ps1"
 $pseudoGtReviewDraft = Read-RequiredFile "scripts/new-yolo-pseudo-gt-review-draft.ps1"
+$pseudoGtReviewDraftApply = Read-RequiredFile "scripts/apply-yolo-pseudo-gt-review-draft.ps1"
 $pseudoGtClosure = Read-RequiredFile "scripts/close-yolo-pseudo-gt-review.ps1"
 $problemSpanGuide = Read-RequiredFile "YOLO_PROBLEM_SPAN_VERIFICATION.md"
 
@@ -128,6 +129,9 @@ Assert-Contains "pseudo-GT face verification input script records runtime separa
 Assert-Contains "pseudo-GT person/object input script records runtime separation" $pseudoGtPersonObjectInput "not part of the app runtime path"
 Assert-Contains "pseudo-GT review draft records test-only boundary" $pseudoGtReviewDraft "test-only review preparation"
 Assert-Contains "pseudo-GT review draft keeps final labels human-owned" $pseudoGtReviewDraft "does not finalize face/nonface/miss labels"
+Assert-Contains "pseudo-GT review draft apply records test-only boundary" $pseudoGtReviewDraftApply "test-only merge helper"
+Assert-Contains "pseudo-GT review draft apply keeps final labels human-owned" $pseudoGtReviewDraftApply "does not infer labels from suggestedLabel"
+Assert-Contains "pseudo-GT review draft apply keeps review CSV ownership" $pseudoGtReviewDraftApply "review CSV-owned"
 Assert-Contains "pseudo-GT closure script records test-only boundary" $pseudoGtClosure "The app runtime path does not read this file"
 Assert-Contains "problem span guide records runtime separation" $problemSpanGuide "runtime pipeline"
 Assert-Contains "problem span guide keeps pseudo-GT out of detector path" $problemSpanGuide "test-only evidence pipeline"
