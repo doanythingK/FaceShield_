@@ -9,6 +9,7 @@ param(
     [string]$ReviewQueueCsv = "",
     [double]$MinSupportIou = 0.35,
     [double]$MinTileFaceConfidence = 0.55,
+    [int]$MinTileSupportCount = 2,
     [double]$MaxSupportCenterDistanceRatio = 0.80,
     [double]$MaxSupportAreaChangeRatio = 3.0,
     [double]$MaxVerificationDistance = 0.75,
@@ -546,7 +547,8 @@ function Test-VerificationMetricSupport {
 function Test-TileFaceMetricSupport {
     param([object]$Candidate)
 
-    return $Candidate.Confidence -ge $MinTileFaceConfidence
+    return $Candidate.Confidence -ge $MinTileFaceConfidence -and
+        $Candidate.TileSupportCount -ge $MinTileSupportCount
 }
 
 function Test-FaceEvidenceMetricSupport {
@@ -1051,6 +1053,7 @@ $summary = @(
     "- missCandidate=$miss",
     "- minSupportIou=$(Format-Double $MinSupportIou)",
     "- minTileFaceConfidence=$(Format-Double $MinTileFaceConfidence)",
+    "- minTileSupportCount=$MinTileSupportCount",
     "- maxSupportCenterDistanceRatio=$(Format-Double $MaxSupportCenterDistanceRatio)",
     "- maxSupportAreaChangeRatio=$(Format-Double $MaxSupportAreaChangeRatio)",
     "- maxVerificationDistance=$(Format-Double $MaxVerificationDistance)",
