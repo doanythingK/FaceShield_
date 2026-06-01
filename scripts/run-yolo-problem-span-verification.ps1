@@ -34,6 +34,8 @@ param(
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
     [double]$PseudoGtTileScale = 2.0,
+    [double]$PseudoGtMinTileFaceConfidence = 0.55,
+    [int]$PseudoGtMinTileSupportCount = 2,
     [string]$PseudoGtTileExternalCommand = "",
     [string]$PseudoGtTileExternalArgumentsTemplate = "",
     [string]$PseudoGtTileExternalOutputCsv = "",
@@ -186,6 +188,11 @@ if ($WithPseudoGtTileInput.IsPresent) {
     $argsList.Add("-PseudoGtTileScale") | Out-Null
     $argsList.Add($PseudoGtTileScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 }
+
+$argsList.Add("-PseudoGtMinTileFaceConfidence") | Out-Null
+$argsList.Add($PseudoGtMinTileFaceConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
+$argsList.Add("-PseudoGtMinTileSupportCount") | Out-Null
+$argsList.Add($PseudoGtMinTileSupportCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)) | Out-Null
 
 if ($PseudoGtTileSkipImageExtraction.IsPresent) {
     $argsList.Add("-PseudoGtTileSkipImageExtraction") | Out-Null

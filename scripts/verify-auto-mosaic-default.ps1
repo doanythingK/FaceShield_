@@ -60,6 +60,7 @@ $yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-follow
 $yoloProblemSpanRunnerVerify = Join-Path $repo "scripts\verify-yolo-problem-span-runner-state.ps1"
 $yoloPseudoGtEvidenceVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-evidence-state.ps1"
 $yoloPseudoGtTileInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-tile-input-state.ps1"
+$yoloPseudoGtFaceRunnerVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-face-runner-state.ps1"
 $yoloPseudoGtFaceVerificationInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-face-verification-input-state.ps1"
 $yoloPseudoGtPersonObjectInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-person-object-input-state.ps1"
 $yoloPseudoGtReviewClosureVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-review-closure-state.ps1"
@@ -302,6 +303,9 @@ Assert-Contains "yolo-pseudo-gt-evidence" $pseudoGtEvidenceOutput "\[YoloPseudoG
 
 $pseudoGtTileInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-tile-input" $yoloPseudoGtTileInputVerify @()
 Assert-Contains "yolo-pseudo-gt-tile-input" $pseudoGtTileInputOutput "\[YoloPseudoGtTileInputVerify\] all requested checks passed"
+
+$pseudoGtFaceRunnerOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-runner" $yoloPseudoGtFaceRunnerVerify @()
+Assert-Contains "yolo-pseudo-gt-face-runner" $pseudoGtFaceRunnerOutput "\[YoloPseudoGtFaceRunnerVerify\] all requested checks passed"
 
 $pseudoGtFaceVerificationInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-input" $yoloPseudoGtFaceVerificationInputVerify @()
 Assert-Contains "yolo-pseudo-gt-face-verification-input" $pseudoGtFaceVerificationInputOutput "\[YoloPseudoGtFaceVerificationInputVerify\] all requested checks passed"

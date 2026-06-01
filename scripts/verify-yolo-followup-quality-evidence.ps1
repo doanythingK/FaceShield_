@@ -295,6 +295,7 @@ Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTile
 Assert-Contains "script supports pseudo gt frame cap" $scriptText "PseudoGtMaxFrames"
 Assert-Contains "script supports pseudo gt tile external command" $scriptText "PseudoGtTileExternalCommand"
 Assert-Contains "script supports pseudo gt tile scale" $scriptText "PseudoGtTileScale"
+Assert-Contains "script supports pseudo gt tile threshold tuning" $scriptText "PseudoGtMinTileFaceConfidence[\s\S]*-MinTileFaceConfidence[\s\S]*PseudoGtMinTileSupportCount[\s\S]*-MinTileSupportCount"
 Assert-Contains "script supports pseudo gt tile external coordinate space" $scriptText "PseudoGtTileExternalOutputCoordinateSpace"
 Assert-Contains "script can use external tile output as pseudo gt input" $scriptText 'PseudoGtTileExternalOutputCsv[\s\S]*PseudoGtTileFaceCsv\s*=\s*\$PseudoGtTileExternalOutputCsv'
 Assert-Contains "script supports pseudo gt face verification input" $scriptText "PseudoGtFaceVerificationCsv"

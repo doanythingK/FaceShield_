@@ -136,6 +136,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 ```
 
 `PseudoGtTileExternalCommand`를 쓰면 problem-span runner가 tile manifest 생성 뒤 외부 고정밀 tile face runner를 실행하고, `PseudoGtTileExternalOutputCsv`를 곧바로 `PseudoGtTileFaceCsv`로 연결해 `pseudo-gt-candidates.csv` 생성에 사용한다. 이미 외부 모델을 따로 실행해 둔 경우에는 `PseudoGtTileFaceCsv`만 직접 넘겨도 된다.
+repo 내부 테스트 전용 runner를 쓰려면 모델 파일을 커밋하지 말고 로컬 경로로 둔 뒤 `scripts/invoke-yolo-pseudo-gt-face-runner.ps1`를 `PseudoGtTileExternalCommand powershell.exe`에서 호출한다. 이 runner는 tile image를 SCRFD/YuNet 로컬 ONNX 모델로 검출해 frame 좌표계 `tile-face.csv`를 만들고 `evidenceModel/evidenceRunner` provenance를 남긴다. 예:
+
+```powershell
+  -WithPseudoGtTileInput `
+  -PseudoGtTileExternalCommand "powershell.exe" `
+  -PseudoGtTileExternalArgumentsTemplate "-NoProfile -ExecutionPolicy Bypass -File scripts/invoke-yolo-pseudo-gt-face-runner.ps1 -Detector Scrfd -ModelPath .tmp/models/scrfd_10g_bnkps.onnx -ManifestCsv `"{manifest}`" -OutputCsv `"{output}`" -EvidenceModel scrfd_10g_bnkps-local" `
+  -PseudoGtTileExternalOutputCoordinateSpace Frame `
+  -PseudoGtTileExternalOutputCsv ".tmp/local-heavy-model/tile-face.csv" `
+  -PseudoGtMinTileFaceConfidence 0.25 `
+  -PseudoGtMinTileSupportCount 2
+```
+
 `PseudoGtPersonObjectExternalCommand`를 쓰면 runner가 full-frame person/object manifest 생성 뒤 외부 보조 runner를 실행하고, `PseudoGtPersonObjectExternalOutputCsv`를 곧바로 `PseudoGtPersonObjectCsv`로 연결한다. 외부 runner가 스케일된 frame 이미지 좌표로 출력하면 `PseudoGtPersonObjectExternalOutputCoordinateSpace ScaledFrame`을 지정해야 한다.
 
 `-PublishPseudoGtToGoalEvidence`를 붙이면 problem-span run의 pseudo-GT 후보를 completion gate가 읽는 `.tmp/yolo-pseudo-gt/pseudo-gt-candidates.csv`, `.tmp/yolo-pseudo-gt/pseudo-gt-summary.md`, `.tmp/yolo-pseudo-gt/pseudo-gt-review-queue.csv`로 발행한다. 이 스위치는 tile-face 또는 face-verification CSV/외부 runner가 있을 때만 허용된다. person/object 결과만으로는 얼굴 정답을 만들 수 없으므로 goal evidence 발행 조건이 아니다.

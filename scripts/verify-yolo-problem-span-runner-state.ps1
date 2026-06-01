@@ -59,6 +59,8 @@ Assert-Match "runner supports detection overlay video" $runner '\[switch\]\$With
 Assert-Match "runner supports review contact sheet" $runner '\[switch\]\$WithReviewContactSheet[\s\S]*-WithReviewContactSheet'
 Assert-Match "runner forwards pseudo gt frame cap" $runner '\[int\]\$PseudoGtMaxFrames\s*=\s*900[\s\S]*-PseudoGtMaxFrames[\s\S]*\$PseudoGtMaxFrames'
 Assert-Match "runner supports pseudo gt tile input manifest" $runner '\[switch\]\$WithPseudoGtTileInput[\s\S]*-WithPseudoGtTileInput[\s\S]*-PseudoGtTileColumns[\s\S]*-PseudoGtTileRows[\s\S]*-PseudoGtTileOverlapRatio[\s\S]*-PseudoGtTileScale'
+Assert-Match "runner forwards pseudo gt tile confidence threshold" $runner 'PseudoGtMinTileFaceConfidence[\s\S]*-PseudoGtMinTileFaceConfidence'
+Assert-Match "runner forwards pseudo gt tile support threshold" $runner 'PseudoGtMinTileSupportCount[\s\S]*-PseudoGtMinTileSupportCount'
 Assert-Match "runner supports pseudo gt tile manifest without image extraction" $runner '\[switch\]\$PseudoGtTileSkipImageExtraction[\s\S]*-PseudoGtTileSkipImageExtraction'
 Assert-Match "runner supports pseudo gt tile external command" $runner 'PseudoGtTileExternalCommand[\s\S]*-PseudoGtTileExternalCommand[\s\S]*PseudoGtTileExternalOutputCsv[\s\S]*-PseudoGtTileExternalOutputCsv[\s\S]*PseudoGtTileExternalOutputCoordinateSpace'
 Assert-Match "runner supports pseudo gt face verification input manifest" $runner '\[switch\]\$WithPseudoGtFaceVerificationInput[\s\S]*-WithPseudoGtFaceVerificationInput[\s\S]*-PseudoGtFaceVerificationCropPaddingRatio'

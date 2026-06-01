@@ -54,6 +54,8 @@ param(
     [int]$PseudoGtTileRows = 3,
     [double]$PseudoGtTileOverlapRatio = 0.25,
     [double]$PseudoGtTileScale = 2.0,
+    [double]$PseudoGtMinTileFaceConfidence = 0.55,
+    [int]$PseudoGtMinTileSupportCount = 2,
     [string]$PseudoGtTileExternalCommand = "",
     [string]$PseudoGtTileExternalArgumentsTemplate = "",
     [string]$PseudoGtTileExternalOutputCsv = "",
@@ -1093,7 +1095,11 @@ if ($detectionRows.Count -eq 0) {
             "-SummaryPath",
             $resolvedPseudoGtSummaryPath,
             "-ReviewQueueCsv",
-            $resolvedPseudoGtReviewQueueCsv
+            $resolvedPseudoGtReviewQueueCsv,
+            "-MinTileFaceConfidence",
+            $PseudoGtMinTileFaceConfidence.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture),
+            "-MinTileSupportCount",
+            $PseudoGtMinTileSupportCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
 
         if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv)) {
@@ -1339,7 +1345,11 @@ else {
             "-SummaryPath",
             $resolvedPseudoGtSummaryPath,
             "-ReviewQueueCsv",
-            $resolvedPseudoGtReviewQueueCsv
+            $resolvedPseudoGtReviewQueueCsv,
+            "-MinTileFaceConfidence",
+            $PseudoGtMinTileFaceConfidence.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture),
+            "-MinTileSupportCount",
+            $PseudoGtMinTileSupportCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)
         )
 
         if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv)) {
