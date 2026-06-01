@@ -731,6 +731,7 @@ foreach ($base in $baseRows) {
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
+    $auxiliarySignalRole = if ($personUpperOverlap -gt 0) { "priority-only-not-face-evidence" } else { "" }
     $supportMatches = @($tileMatch, $verificationMatch)
     $bestIou = if ($hasFaceSupport) {
         [Math]::Max(
@@ -794,6 +795,7 @@ foreach ($base in $baseRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             personObjectClass = $personObjectClass
+            auxiliarySignalRole = $auxiliarySignalRole
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
@@ -829,6 +831,7 @@ foreach ($tile in $tileRows) {
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
+    $auxiliarySignalRole = if ($personUpperOverlap -gt 0) { "priority-only-not-face-evidence" } else { "" }
     $verificationConfidence = if ($null -ne $verificationMatch) { $verificationMatch.Row.Confidence } else { 0.0 }
     $verificationDistance = if ($null -ne $verificationMatch) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
     if ($null -ne $verificationMatch) {
@@ -856,6 +859,7 @@ foreach ($tile in $tileRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             personObjectClass = $personObjectClass
+            auxiliarySignalRole = $auxiliarySignalRole
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
@@ -895,6 +899,7 @@ foreach ($verification in $verificationRows) {
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
+    $auxiliarySignalRole = if ($personUpperOverlap -gt 0) { "priority-only-not-face-evidence" } else { "" }
     $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
     $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
@@ -919,6 +924,7 @@ foreach ($verification in $verificationRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             personObjectClass = $personObjectClass
+            auxiliarySignalRole = $auxiliarySignalRole
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
@@ -1021,6 +1027,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             personConfidence = $row.personConfidence
             personUpperOverlap = $row.personUpperOverlap
             personObjectClass = $row.personObjectClass
+            auxiliarySignalRole = $row.auxiliarySignalRole
             supportFrameCount = $row.supportFrameCount
             supportRowCount = $row.supportRowCount
             supportSources = $row.supportSources

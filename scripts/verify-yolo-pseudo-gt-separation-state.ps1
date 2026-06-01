@@ -121,6 +121,7 @@ Assert-NotContains "scene-cut guard does not know pseudo-GT" $sceneCutGuard $for
 Assert-Contains "pseudo-GT evidence script records test-only boundary" $pseudoGtEvidence "test-only evidence"
 Assert-Contains "pseudo-GT evidence script keeps review CSV final" $pseudoGtEvidence "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "pseudo-GT evidence script treats person object as auxiliary" $pseudoGtEvidence "person/object support is auxiliary only"
+Assert-Contains "pseudo-GT evidence script marks auxiliary role as priority only" $pseudoGtEvidence "priority-only-not-face-evidence"
 Assert-Contains "pseudo-GT tile script records runtime separation" $pseudoGtTileInput "not part of the app runtime path"
 Assert-Contains "pseudo-GT face verification input script records runtime separation" $pseudoGtFaceVerificationInput "not part of the app runtime path"
 Assert-Contains "pseudo-GT person/object input script records runtime separation" $pseudoGtPersonObjectInput "not part of the app runtime path"

@@ -142,6 +142,7 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
+        "auxiliarySignalRole",
         "supportFrameCount",
         "supportRowCount",
         "supportSources",
@@ -180,6 +181,7 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
+        "auxiliarySignalRole",
         "supportRowCount",
         "areaChangeRatio",
         "reviewStatus",
@@ -221,6 +223,14 @@ if ([double]::Parse($falsePositiveQueueRow.auxiliaryPriorityBoost, [System.Globa
     throw "Expected person/object support to raise falsePositiveCandidate review priority."
 }
 
+if ($falsePositiveCandidateRow.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
+    throw "Expected candidate CSV to record person/object support as priority-only, not face evidence."
+}
+
+if ($falsePositiveQueueRow.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
+    throw "Expected review queue to preserve priority-only person/object role."
+}
+
 if ($falsePositiveQueueRow.reviewPriorityReason -notmatch "auxiliary person/object support raises review priority") {
     throw "Expected review priority reason to explain auxiliary person/object boost."
 }
@@ -260,6 +270,10 @@ if ([double]::Parse($lowConfidencePersonQueue.auxiliaryPriorityBoost, [System.Gl
     throw "Expected low-confidence person/object support not to raise review priority."
 }
 
+if (-not [string]::IsNullOrWhiteSpace($lowConfidencePersonMiss.auxiliarySignalRole)) {
+    throw "Expected low-confidence person/object support not to set an auxiliary signal role."
+}
+
 $personSupportedMiss = @($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.tileDetectionId -eq "tile-face-3" })[0]
 if ($null -eq $personSupportedMiss) {
     throw "Expected tile-only missCandidate for person/object auxiliary priority test."
@@ -281,6 +295,14 @@ if ($null -eq $personSupportedQueue) {
 
 if ([double]::Parse($personSupportedQueue.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
     throw "Expected high-confidence person/object support to raise review priority as auxiliary evidence."
+}
+
+if ($personSupportedMiss.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
+    throw "Expected high-confidence person/object support to record a priority-only role on miss candidates."
+}
+
+if ($personSupportedQueue.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
+    throw "Expected review queue to preserve priority-only role on miss candidates."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
@@ -447,6 +469,8 @@ Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$\(\$baseRows.Count\)'
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
 Assert-Contains "script records auxiliary priority boost" $scriptText "auxiliaryPriorityBoost"
+Assert-Contains "script records auxiliary signal role" $scriptText "auxiliarySignalRole"
+Assert-Contains "script marks person object as priority-only" $scriptText "priority-only-not-face-evidence"
 Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
 if ($scriptText -match 'missProbability = \[Math\]::Min\(0\.98,[^\r\n]*personUpperOverlap') {
     throw "Expected person/object support to stay out of missProbability formulas."
