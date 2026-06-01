@@ -82,7 +82,9 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 },
     [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
     [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 },
-    [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990 }
+    [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990 },
+    [pscustomobject]@{ frame = 8; verificationId = "verify-high-conf-bad-distance-8"; x = 730.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.990; faceVerificationDistance = 0.990 },
+    [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120 }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -252,6 +254,14 @@ if (@($rows | Where-Object { $_.verificationId -eq "verify-low-quality-6" }).Cou
     throw "Expected low-confidence/high-distance verification-only row to be ignored instead of becoming a missCandidate."
 }
 
+if (@($rows | Where-Object { $_.verificationId -eq "verify-high-conf-bad-distance-8" }).Count -ne 0) {
+    throw "Expected high-confidence but high-distance verification-only row to be ignored for high-precision pseudo-GT."
+}
+
+if (@($rows | Where-Object { $_.verificationId -eq "verify-low-conf-good-distance-9" }).Count -ne 0) {
+    throw "Expected low-confidence but low-distance verification-only row to be ignored for high-precision pseudo-GT."
+}
+
 if (@($rows | Where-Object { $_.tileDetectionId -eq "tile-low-quality-7" }).Count -ne 0) {
     throw "Expected low-confidence tile row to be ignored instead of becoming pseudo-GT support or miss evidence."
 }
@@ -356,6 +366,7 @@ Assert-Contains "script accepts person object CSV" $scriptText "PersonObjectCsv"
 Assert-Contains "script filters person object class labels" $scriptText "Test-PersonClassLabel"
 Assert-Contains "script validates required input columns" $scriptText "strict-required-columns"
 Assert-Contains "script requires face verification distance" $scriptText "faceVerificationDistance"
+Assert-Contains "script requires face verification confidence and distance support" $scriptText 'Candidate\.Confidence -ge \$MinVerificationConfidence -and[\s\S]*Candidate\.VerificationDistance -le \$MaxVerificationDistance'
 Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"

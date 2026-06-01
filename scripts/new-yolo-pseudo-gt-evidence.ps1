@@ -539,7 +539,8 @@ function Test-FaceGeometrySupport {
 function Test-VerificationMetricSupport {
     param([object]$Candidate)
 
-    return ($Candidate.Confidence -ge $MinVerificationConfidence -or $Candidate.VerificationDistance -le $MaxVerificationDistance)
+    return $Candidate.Confidence -ge $MinVerificationConfidence -and
+        $Candidate.VerificationDistance -le $MaxVerificationDistance
 }
 
 function Test-TileFaceMetricSupport {
