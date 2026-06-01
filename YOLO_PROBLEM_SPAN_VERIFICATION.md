@@ -75,9 +75,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -ExternalOutputCsv ".tmp/local-heavy-model/tile-face.csv"
 ```
 
-외부 runner는 manifest의 `tileImagePath`, `frame`, `tileIndex`, `tileX`, `tileY`, `tileW`, `tileH`, `tileScale`, `tileImageW`, `tileImageH`를 읽어 `frame,tileIndex,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. `tileImagePath`는 `TileScale`이 적용된 확대 tile 이미지다. 외부 runner가 원본 frame 좌표계로 출력하면 기본값 `Frame`을 쓰고, 확대 tile 이미지 좌표로 출력하면 `-ExternalOutputCoordinateSpace TileImage`, 확대 전 tile-local 좌표로 출력하면 `TileOriginal`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. `tileIndex`는 `sourceTileIndex` 또는 `manifestTileIndex` 이름으로도 받을 수 있다. 외부 tile-face 출력은 같은 frame이라는 이유만으로 통과하지 않고, 정규화 뒤 검출 중심점이 해당 manifest tile 안에 있어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다. `new-yolo-pseudo-gt-evidence.ps1`는 이 필수 evidence 컬럼이 빠진 CSV를 거부하므로, 누락된 confidence/distance/geometry 기본값으로 오탐/미탐 후보가 조용히 분류되지 않는다.
+외부 runner는 manifest의 `tileImagePath`, `frame`, `tileIndex`, `tileX`, `tileY`, `tileW`, `tileH`, `tileScale`, `tileImageW`, `tileImageH`를 읽어 `frame,tileIndex,detectionId,x,y,w,h,confidence,tileSupportCount` CSV를 만들어야 한다. `tileImagePath`는 `TileScale`이 적용된 확대 tile 이미지다. 외부 runner가 원본 frame 좌표계로 출력하면 기본값 `Frame`을 쓰고, 확대 tile 이미지 좌표로 출력하면 `-ExternalOutputCoordinateSpace TileImage`, 확대 전 tile-local 좌표로 출력하면 `TileOriginal`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. `tileIndex`는 `sourceTileIndex` 또는 `manifestTileIndex` 이름으로도 받을 수 있다. 외부 tile-face 출력은 같은 frame이라는 이유만으로 통과하지 않고, 정규화 뒤 검출 중심점이 해당 manifest tile 안에 있어야 한다. face verification 모델을 따로 실행했다면 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만든다. 외부 runner 출력에는 선택적으로 `evidenceModel,evidenceRunner`를 넣을 수 있고, 이 값은 후보/리뷰 큐/closure/report까지 보존된다. 여기에는 커밋하면 안 되는 로컬 모델 파일 경로가 아니라 모델명, 버전, 해시, 로컬 runner ID처럼 재현 가능한 식별자만 남긴다. `new-yolo-pseudo-gt-evidence.ps1`는 이 필수 evidence 컬럼이 빠진 CSV를 거부하므로, 누락된 confidence/distance/geometry 기본값으로 오탐/미탐 후보가 조용히 분류되지 않는다.
 
-기본 YOLO 후보 자체를 고품질 face verification 모델에 넣을 때는 `new-yolo-pseudo-gt-face-verification-input.ps1`가 만든 `face-verification-manifest.csv`를 사용한다. 이 manifest는 `cropImagePath`, `candidateId`, `basePredictionId`, 원본 YOLO box, 확장 crop 좌표를 담고, 외부 runner는 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만들어야 한다.
+기본 YOLO 후보 자체를 고품질 face verification 모델에 넣을 때는 `new-yolo-pseudo-gt-face-verification-input.ps1`가 만든 `face-verification-manifest.csv`를 사용한다. 이 manifest는 `cropImagePath`, `candidateId`, `basePredictionId`, 원본 YOLO box, 확장 crop 좌표를 담고, 외부 runner는 `frame,verificationId,x,y,w,h,faceVerificationConfidence,faceVerificationDistance` CSV를 만들어야 한다. 선택 필드 `evidenceModel,evidenceRunner`는 이 검증 결과가 어떤 테스트용 고품질 모델/러너에서 나온 것인지 남길 때 사용한다.
 같은 frame에 manifest crop이 여러 개 있으면 외부 runner는 `candidateId`, `sourceCandidateId`, `basePredictionId` 중 하나를 출력해야 하며, 그 값은 manifest의 후보와 일치해야 한다. 외부 runner가 원본 frame 좌표계로 출력하면 기본값 `Frame`을 쓰고, crop 이미지 좌표로 출력하면 `-ExternalOutputCoordinateSpace CropImage`, 확대 전 crop-local 좌표로 출력하면 `CropOriginal`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. 또한 외부 face verification 출력은 같은 frame이라는 이유만으로 통과하지 않고, 정규화 뒤 검출 중심점이 해당 frame의 matching manifest crop 안에 있어야 한다. 이 검증은 test-only evidence에 엉뚱한 같은-frame 검출이 섞여 오탐/미탐 후보를 왜곡하지 않게 하기 위한 것이다.
 
 ```powershell
@@ -92,7 +92,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseud
   -ExternalOutputCsv ".tmp/local-heavy-model/face-verification.csv"
 ```
 
-사람/사물 보조 신호는 `new-yolo-pseudo-gt-person-object-input.ps1`가 만든 `person-object-manifest.csv`를 사용한다. 이 manifest는 `frameImagePath`, `frame`, `frameWidth`, `frameHeight`, `scaleWidth`, `scaledFrameWidth`, `scaledFrameHeight`를 담는다. 외부 runner는 기본값으로 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence` CSV를 만들어야 하며, 검출 중심점은 해당 frame의 manifest bounds 안에 있어야 한다. 외부 runner가 `ScaleWidth`로 만든 스케일된 frame 이미지 좌표계로 출력하면 `-ExternalOutputCoordinateSpace ScaledFrame`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. 외부 runner가 `class`/`label`/`name`/`category`를 제공하면 `person`/`human`/`people`/`man`/`woman` 계열만 `personConfidence`, `personUpperOverlap` 계산에 사용하고, `car` 같은 non-person object row는 person 보조 신호에서 제외한다. class가 없는 기존 CSV는 호환을 위해 그대로 보조 후보로 받는다. 단, confidence가 `MinPersonObjectConfidence` 미만인 row는 보조 우선순위에도 쓰지 않는다. 이 값은 얼굴 정답이 아니라 후보 우선순위 보조 신호로만 사용한다.
+사람/사물 보조 신호는 `new-yolo-pseudo-gt-person-object-input.ps1`가 만든 `person-object-manifest.csv`를 사용한다. 이 manifest는 `frameImagePath`, `frame`, `frameWidth`, `frameHeight`, `scaleWidth`, `scaledFrameWidth`, `scaledFrameHeight`를 담는다. 외부 runner는 기본값으로 원본 frame 좌표계 기준 `frame,detectionId,x,y,w,h,confidence` CSV를 만들어야 하며, 검출 중심점은 해당 frame의 manifest bounds 안에 있어야 한다. 외부 runner가 `ScaleWidth`로 만든 스케일된 frame 이미지 좌표계로 출력하면 `-ExternalOutputCoordinateSpace ScaledFrame`을 지정한다. 이 경우 script가 evidence 입력 전에 원본 frame 좌표계로 정규화하고 `inputCoordinateSpace`, `normalizedCoordinateSpace=Frame`을 남긴다. 외부 runner가 `class`/`label`/`name`/`category`를 제공하면 `person`/`human`/`people`/`man`/`woman` 계열만 `personConfidence`, `personUpperOverlap` 계산에 사용하고, `car` 같은 non-person object row는 person 보조 신호에서 제외한다. 선택 필드 `evidenceModel,evidenceRunner`는 보조 신호 provenance로만 남으며 얼굴 정답 근거가 아니다. class가 없는 기존 CSV는 호환을 위해 그대로 보조 후보로 받는다. 단, confidence가 `MinPersonObjectConfidence` 미만인 row는 보조 우선순위에도 쓰지 않는다. 이 값은 얼굴 정답이 아니라 후보 우선순위 보조 신호로만 사용한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-person-object-input.ps1 `
@@ -219,6 +219,12 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `personConfidence`
 - `personUpperOverlap`
 - `personObjectClass`
+- `tileEvidenceModel`
+- `tileEvidenceRunner`
+- `faceVerificationEvidenceModel`
+- `faceVerificationEvidenceRunner`
+- `personObjectEvidenceModel`
+- `personObjectEvidenceRunner`
 - `supportFrameCount`
 - `supportRowCount`
 - `supportSources`

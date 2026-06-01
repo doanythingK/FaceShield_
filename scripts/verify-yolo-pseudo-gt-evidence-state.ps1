@@ -74,32 +74,32 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 '@ | Set-Content -Encoding UTF8 -Path $emptyBaseLog
 
 @(
-    [pscustomobject]@{ frame = 1; detectionId = "tile-face-1"; x = 101.0; y = 102.0; w = 51.0; h = 58.0; confidence = 0.910; tileSupportCount = 3 },
-    [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 103.0; y = 103.0; w = 50.0; h = 58.0; confidence = 0.900; tileSupportCount = 2 },
-    [pscustomobject]@{ frame = 3; detectionId = "tile-face-3"; x = 45.0; y = 60.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2 },
-    [pscustomobject]@{ frame = 7; detectionId = "tile-low-quality-7"; x = 720.0; y = 240.0; w = 44.0; h = 44.0; confidence = 0.120; tileSupportCount = 1 },
-    [pscustomobject]@{ frame = 8; detectionId = "tile-single-support-8"; x = 740.0; y = 240.0; w = 44.0; h = 44.0; confidence = 0.930; tileSupportCount = 1 }
+    [pscustomobject]@{ frame = 1; detectionId = "tile-face-1"; x = 101.0; y = 102.0; w = 51.0; h = 58.0; confidence = 0.910; tileSupportCount = 3; evidenceModel = "heavy-tile-face-v1"; evidenceRunner = "tile-runner-local" },
+    [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 103.0; y = 103.0; w = 50.0; h = 58.0; confidence = 0.900; tileSupportCount = 2; evidenceModel = "heavy-tile-face-v1"; evidenceRunner = "tile-runner-local" },
+    [pscustomobject]@{ frame = 3; detectionId = "tile-face-3"; x = 45.0; y = 60.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2; evidenceModel = "heavy-tile-face-v1"; evidenceRunner = "tile-runner-local" },
+    [pscustomobject]@{ frame = 7; detectionId = "tile-low-quality-7"; x = 720.0; y = 240.0; w = 44.0; h = 44.0; confidence = 0.120; tileSupportCount = 1; evidenceModel = "heavy-tile-face-v1"; evidenceRunner = "tile-runner-local" },
+    [pscustomobject]@{ frame = 8; detectionId = "tile-single-support-8"; x = 740.0; y = 240.0; w = 44.0; h = 44.0; confidence = 0.930; tileSupportCount = 1; evidenceModel = "heavy-tile-face-v1"; evidenceRunner = "tile-runner-local" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileCsv
 
 @(
-    [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 },
-    [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-primary"; x = 46.0; y = 61.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.170 },
-    [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-secondary"; x = 47.0; y = 62.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180 },
-    [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
-    [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 },
-    [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990 },
-    [pscustomobject]@{ frame = 8; verificationId = "verify-high-conf-bad-distance-8"; x = 730.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.990; faceVerificationDistance = 0.990 },
-    [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120 },
-    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-primary-10"; x = 301.0; y = 201.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
-    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-secondary-10"; x = 302.0; y = 202.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.190 },
-    [pscustomobject]@{ frame = 12; verificationId = "verify-low-base-primary-10"; x = 303.0; y = 203.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180 }
+    [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-primary"; x = 46.0; y = 61.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.170; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-secondary"; x = 47.0; y = 62.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 8; verificationId = "verify-high-conf-bad-distance-8"; x = 730.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.990; faceVerificationDistance = 0.990; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-primary-10"; x = 301.0; y = 201.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-secondary-10"; x = 302.0; y = 202.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.190; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 12; verificationId = "verify-low-base-primary-10"; x = 303.0; y = 203.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
-    [pscustomobject]@{ frame = 2; detectionId = "car-2"; x = 398.0; y = 298.0; w = 48.0; h = 58.0; confidence = 0.990; class = "car" },
-    [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760; class = "person" },
-    [pscustomobject]@{ frame = 3; detectionId = "person-3"; x = 40.0; y = 50.0; w = 80.0; h = 180.0; confidence = 0.770; class = "person" },
-    [pscustomobject]@{ frame = 4; detectionId = "person-low-confidence-4"; x = 205.0; y = 110.0; w = 80.0; h = 180.0; confidence = 0.120; class = "person" }
+    [pscustomobject]@{ frame = 2; detectionId = "car-2"; x = 398.0; y = 298.0; w = 48.0; h = 58.0; confidence = 0.990; class = "car"; evidenceModel = "heavy-person-object-v1"; evidenceRunner = "person-object-runner" },
+    [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760; class = "person"; evidenceModel = "heavy-person-object-v1"; evidenceRunner = "person-object-runner" },
+    [pscustomobject]@{ frame = 3; detectionId = "person-3"; x = 40.0; y = 50.0; w = 80.0; h = 180.0; confidence = 0.770; class = "person"; evidenceModel = "heavy-person-object-v1"; evidenceRunner = "person-object-runner" },
+    [pscustomobject]@{ frame = 4; detectionId = "person-low-confidence-4"; x = 205.0; y = 110.0; w = 80.0; h = 180.0; confidence = 0.120; class = "person"; evidenceModel = "heavy-person-object-v1"; evidenceRunner = "person-object-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personCsv
 
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -148,6 +148,12 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
+        "tileEvidenceModel",
+        "tileEvidenceRunner",
+        "faceVerificationEvidenceModel",
+        "faceVerificationEvidenceRunner",
+        "personObjectEvidenceModel",
+        "personObjectEvidenceRunner",
         "auxiliarySignalRole",
         "supportFrameCount",
         "supportRowCount",
@@ -188,6 +194,12 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
+        "tileEvidenceModel",
+        "tileEvidenceRunner",
+        "faceVerificationEvidenceModel",
+        "faceVerificationEvidenceRunner",
+        "personObjectEvidenceModel",
+        "personObjectEvidenceRunner",
         "auxiliarySignalRole",
         "supportRowCount",
         "supportEvidenceIds",
@@ -221,6 +233,10 @@ if ([double]::Parse($falsePositiveCandidateRow.fpProbability, [System.Globalizat
 
 if ($falsePositiveCandidateRow.personObjectClass -ne "person") {
     throw "Expected non-person object class rows to be ignored for person support."
+}
+
+if ($falsePositiveCandidateRow.personObjectEvidenceModel -ne "heavy-person-object-v1" -or $falsePositiveCandidateRow.personObjectEvidenceRunner -ne "person-object-runner") {
+    throw "Expected falsePositiveCandidate to preserve person/object model and runner provenance."
 }
 
 if ([double]::Parse($falsePositiveCandidateRow.personConfidence, [System.Globalization.CultureInfo]::InvariantCulture) -ge 0.99) {
@@ -289,6 +305,10 @@ if ($null -eq $personSupportedMiss) {
 
 if ([double]::Parse($personSupportedMiss.personUpperOverlap, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
     throw "Expected high-confidence person/object support to remain recorded as auxiliary evidence."
+}
+
+if ($personSupportedMiss.tileEvidenceModel -ne "heavy-tile-face-v1" -or $personSupportedMiss.tileEvidenceRunner -ne "tile-runner-local") {
+    throw "Expected missCandidate to preserve tile model and runner provenance."
 }
 
 $personSupportedMissProbability = [double]::Parse($personSupportedMiss.missProbability, [System.Globalization.CultureInfo]::InvariantCulture)
@@ -423,9 +443,21 @@ if ($supportedRow.supportEvidenceIds -notmatch "tile-face:1:tile-face-1" -or
     throw "Expected supported row to preserve concrete tile/verification support evidence ids."
 }
 
+if ($supportedRow.tileEvidenceModel -ne "heavy-tile-face-v1" -or $supportedRow.faceVerificationEvidenceModel -ne "arcface-local-v1") {
+    throw "Expected supported row to preserve tile and face-verification model provenance."
+}
+
+if ($supportedRow.tileEvidenceRunner -ne "tile-runner-local" -or $supportedRow.faceVerificationEvidenceRunner -ne "face-verify-runner") {
+    throw "Expected supported row to preserve tile and face-verification runner provenance."
+}
+
 $supportedQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.basePredictionId -eq "1-0" })[0]
 if ($null -eq $supportedQueueRow -or $supportedQueueRow.supportEvidenceIds -ne $supportedRow.supportEvidenceIds) {
     throw "Expected review queue to preserve supportEvidenceIds for supported candidates."
+}
+
+if ($supportedQueueRow.tileEvidenceModel -ne $supportedRow.tileEvidenceModel -or $supportedQueueRow.faceVerificationEvidenceRunner -ne $supportedRow.faceVerificationEvidenceRunner) {
+    throw "Expected review queue to preserve pseudo-GT model and runner provenance."
 }
 
 if (@($rows | Where-Object { $_.reviewStatus -ne "pending-human" }).Count -ne 0) {
@@ -511,6 +543,10 @@ Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
 Assert-Contains "script records auxiliary priority boost" $scriptText "auxiliaryPriorityBoost"
 Assert-Contains "script records auxiliary signal role" $scriptText "auxiliarySignalRole"
+Assert-Contains "script reads optional evidence model provenance" $scriptText "evidenceModel"
+Assert-Contains "script reads optional evidence runner provenance" $scriptText "evidenceRunner"
+Assert-Contains "script writes tile model provenance" $scriptText "tileEvidenceModel"
+Assert-Contains "script writes face verification runner provenance" $scriptText "faceVerificationEvidenceRunner"
 Assert-Contains "script marks person object as priority-only" $scriptText "priority-only-not-face-evidence"
 Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
 if ($scriptText -match 'missProbability = \[Math\]::Min\(0\.98,[^\r\n]*personUpperOverlap') {
@@ -531,6 +567,9 @@ Assert-Contains "summary records test-only boundary" $summaryText "test-only evi
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=2"
 Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=3"
 Assert-Contains "summary records miss count" $summaryText "missCandidate=5"
+Assert-Contains "summary records model provenance count" $summaryText "modelProvenanceRows="
+Assert-Contains "summary records runner provenance count" $summaryText "runnerProvenanceRows="
+Assert-Contains "summary records provenance field contract" $summaryText "evidenceProvenance=optional-evidenceModel/evidenceRunner"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
 Assert-Contains "summary records strict input validation" $summaryText "inputValidation=strict-required-columns"
 Assert-Contains "summary records top review candidates" $summaryText "topReviewCandidates="
@@ -544,6 +583,7 @@ Assert-Contains "guide documents runtime separation" $guideText "pseudo-GT"
 Assert-Contains "guide documents tile confidence threshold" $guideText "MinTileFaceConfidence"
 Assert-Contains "guide documents tile support threshold" $guideText "MinTileSupportCount"
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"
+Assert-Contains "guide documents optional pseudo gt model provenance" $guideText "evidenceModel[\s\S]*evidenceRunner"
 Assert-Contains "guide documents area ratio evidence" $guideText "areaChangeRatio"
 Assert-Contains "guide documents no-detection pseudo gt miss evidence" $guideText "AllowNoDetections[\s\S]*WithPseudoGtTileInput[\s\S]*missCandidate"
 

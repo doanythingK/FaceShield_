@@ -139,6 +139,12 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0
         personUpperOverlap = 0
         personObjectClass = ""
+        tileEvidenceModel = "heavy-tile-face-v1"
+        tileEvidenceRunner = "tile-runner-local"
+        faceVerificationEvidenceModel = "arcface-local-v1"
+        faceVerificationEvidenceRunner = "face-verify-runner"
+        personObjectEvidenceModel = ""
+        personObjectEvidenceRunner = ""
         auxiliarySignalRole = ""
         supportFrameCount = 2
         supportRowCount = 3
@@ -174,6 +180,12 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0.72
         personUpperOverlap = 0.62
         personObjectClass = "person"
+        tileEvidenceModel = ""
+        tileEvidenceRunner = ""
+        faceVerificationEvidenceModel = ""
+        faceVerificationEvidenceRunner = ""
+        personObjectEvidenceModel = "heavy-person-object-v1"
+        personObjectEvidenceRunner = "person-object-runner"
         auxiliarySignalRole = "priority-only-not-face-evidence"
         supportFrameCount = 0
         supportRowCount = 0
@@ -208,6 +220,12 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         personConfidence = 0
         personUpperOverlap = 0
         personObjectClass = ""
+        tileEvidenceModel = "heavy-tile-face-v1"
+        tileEvidenceRunner = "tile-runner-local"
+        faceVerificationEvidenceModel = ""
+        faceVerificationEvidenceRunner = ""
+        personObjectEvidenceModel = ""
+        personObjectEvidenceRunner = ""
         auxiliarySignalRole = ""
         supportFrameCount = 2
         supportRowCount = 2
@@ -267,6 +285,12 @@ foreach ($column in @(
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
+        "tileEvidenceModel",
+        "tileEvidenceRunner",
+        "faceVerificationEvidenceModel",
+        "faceVerificationEvidenceRunner",
+        "personObjectEvidenceModel",
+        "personObjectEvidenceRunner",
         "auxiliarySignalRole",
         "supportFrameCount",
         "supportRowCount",
@@ -294,6 +318,10 @@ if ($supportedClosure.areaChangeRatio -ne "1.02") {
     throw "Expected closure output to preserve support area-ratio evidence."
 }
 
+if ($supportedClosure.tileEvidenceModel -ne "heavy-tile-face-v1" -or $supportedClosure.faceVerificationEvidenceRunner -ne "face-verify-runner") {
+    throw "Expected closure output to preserve tile/face-verification model and runner provenance."
+}
+
 $falsePositiveClosure = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
 if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
     throw "Expected closure output to preserve auxiliary person/object overlap evidence."
@@ -301,6 +329,10 @@ if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
 
 if ($falsePositiveClosure.personObjectClass -ne "person") {
     throw "Expected closure output to preserve auxiliary person/object class evidence."
+}
+
+if ($falsePositiveClosure.personObjectEvidenceModel -ne "heavy-person-object-v1" -or $falsePositiveClosure.personObjectEvidenceRunner -ne "person-object-runner") {
+    throw "Expected closure output to preserve person/object model and runner provenance."
 }
 
 if ($falsePositiveClosure.auxiliarySignalRole -ne "priority-only-not-face-evidence") {

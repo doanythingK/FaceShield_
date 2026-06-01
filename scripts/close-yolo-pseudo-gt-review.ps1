@@ -331,6 +331,12 @@ foreach ($candidate in $pseudoRows) {
             personConfidence = $candidate.personConfidence
             personUpperOverlap = $candidate.personUpperOverlap
             personObjectClass = $candidate.personObjectClass
+            tileEvidenceModel = $candidate.tileEvidenceModel
+            tileEvidenceRunner = $candidate.tileEvidenceRunner
+            faceVerificationEvidenceModel = $candidate.faceVerificationEvidenceModel
+            faceVerificationEvidenceRunner = $candidate.faceVerificationEvidenceRunner
+            personObjectEvidenceModel = $candidate.personObjectEvidenceModel
+            personObjectEvidenceRunner = $candidate.personObjectEvidenceRunner
             auxiliarySignalRole = $candidate.auxiliarySignalRole
             supportFrameCount = $candidate.supportFrameCount
             supportRowCount = $candidate.supportRowCount

@@ -204,7 +204,9 @@ function New-DetectionRow {
         [string]$Source,
         [int]$TileSupportCount = 0,
         [double]$VerificationDistance = 1.0,
-        [string]$ClassLabel = ""
+        [string]$ClassLabel = "",
+        [string]$EvidenceModel = "",
+        [string]$EvidenceRunner = ""
     )
 
     [pscustomobject]@{
@@ -219,7 +221,20 @@ function New-DetectionRow {
         TileSupportCount = $TileSupportCount
         VerificationDistance = $VerificationDistance
         ClassLabel = $ClassLabel
+        EvidenceModel = $EvidenceModel
+        EvidenceRunner = $EvidenceRunner
     }
+}
+
+function Join-UniqueNonEmpty {
+    param([string[]]$Values)
+
+    $items = @($Values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    if ($items.Count -eq 0) {
+        return ""
+    }
+
+    return [string]::Join("+", $items)
 }
 
 function Get-DetectionMatchKey {
@@ -253,6 +268,8 @@ function Read-DetectionCsvRows {
         $tileSupport = Read-IntValue $row @("tileSupportCount", "supportCount", "TileSupportCount") 1
         $distance = Read-DoubleValue $row @("faceVerificationDistance", "verificationDistance", "distance", "FaceVerificationDistance") 1.0
         $classLabel = [string](Get-PropertyValue $row @("class", "Class", "label", "Label", "name", "Name", "category", "Category") "")
+        $evidenceModel = [string](Get-PropertyValue $row @("evidenceModel", "modelName", "modelId", "model", "runnerModel", "externalModel") "")
+        $evidenceRunner = [string](Get-PropertyValue $row @("evidenceRunner", "runnerName", "runner", "externalRunner", "modelRunner") "")
 
         $rows.Add((New-DetectionRow `
                     -Frame $frame `
@@ -265,7 +282,9 @@ function Read-DetectionCsvRows {
                     -Source $Source `
                     -TileSupportCount $tileSupport `
                     -VerificationDistance $distance `
-                    -ClassLabel $classLabel)) | Out-Null
+                    -ClassLabel $classLabel `
+                    -EvidenceModel $evidenceModel `
+                    -EvidenceRunner $evidenceRunner)) | Out-Null
         $index++
     }
 
@@ -742,6 +761,12 @@ foreach ($base in $baseRows) {
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
     $auxiliarySignalRole = if ($personUpperOverlap -gt 0) { "priority-only-not-face-evidence" } else { "" }
+    $tileEvidenceModel = if ($hasTileSupport) { $tileMatch.Row.EvidenceModel } else { "" }
+    $tileEvidenceRunner = if ($hasTileSupport) { $tileMatch.Row.EvidenceRunner } else { "" }
+    $faceVerificationEvidenceModel = if ($hasVerificationSupport) { $verificationMatch.Row.EvidenceModel } else { "" }
+    $faceVerificationEvidenceRunner = if ($hasVerificationSupport) { $verificationMatch.Row.EvidenceRunner } else { "" }
+    $personObjectEvidenceModel = if ($null -ne $personMatch) { $personMatch.Row.EvidenceModel } else { "" }
+    $personObjectEvidenceRunner = if ($null -ne $personMatch) { $personMatch.Row.EvidenceRunner } else { "" }
     $supportMatches = @($tileMatch, $verificationMatch)
     $bestIou = if ($hasFaceSupport) {
         [Math]::Max(
@@ -805,6 +830,12 @@ foreach ($base in $baseRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             personObjectClass = $personObjectClass
+            tileEvidenceModel = $tileEvidenceModel
+            tileEvidenceRunner = $tileEvidenceRunner
+            faceVerificationEvidenceModel = $faceVerificationEvidenceModel
+            faceVerificationEvidenceRunner = $faceVerificationEvidenceRunner
+            personObjectEvidenceModel = $personObjectEvidenceModel
+            personObjectEvidenceRunner = $personObjectEvidenceRunner
             auxiliarySignalRole = $auxiliarySignalRole
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
@@ -845,6 +876,10 @@ foreach ($tile in $tileRows) {
     $auxiliarySignalRole = if ($personUpperOverlap -gt 0) { "priority-only-not-face-evidence" } else { "" }
     $verificationConfidence = if ($null -ne $verificationMatch) { $verificationMatch.Row.Confidence } else { 0.0 }
     $verificationDistance = if ($null -ne $verificationMatch) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
+    $faceVerificationEvidenceModel = if ($null -ne $verificationMatch) { $verificationMatch.Row.EvidenceModel } else { "" }
+    $faceVerificationEvidenceRunner = if ($null -ne $verificationMatch) { $verificationMatch.Row.EvidenceRunner } else { "" }
+    $personObjectEvidenceModel = if ($null -ne $personMatch) { $personMatch.Row.EvidenceModel } else { "" }
+    $personObjectEvidenceRunner = if ($null -ne $personMatch) { $personMatch.Row.EvidenceRunner } else { "" }
     if ($null -ne $verificationMatch) {
         [void]$matchedVerificationIds.Add((Get-DetectionMatchKey $verificationMatch.Row))
     }
@@ -871,6 +906,12 @@ foreach ($tile in $tileRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             personObjectClass = $personObjectClass
+            tileEvidenceModel = $tile.EvidenceModel
+            tileEvidenceRunner = $tile.EvidenceRunner
+            faceVerificationEvidenceModel = $faceVerificationEvidenceModel
+            faceVerificationEvidenceRunner = $faceVerificationEvidenceRunner
+            personObjectEvidenceModel = $personObjectEvidenceModel
+            personObjectEvidenceRunner = $personObjectEvidenceRunner
             auxiliarySignalRole = $auxiliarySignalRole
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
@@ -915,6 +956,10 @@ foreach ($verification in $verificationRows) {
     $auxiliarySignalRole = if ($personUpperOverlap -gt 0) { "priority-only-not-face-evidence" } else { "" }
     $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
     $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
+    $tileEvidenceModel = if ($null -ne $tileMatch) { $tileMatch.Row.EvidenceModel } else { "" }
+    $tileEvidenceRunner = if ($null -ne $tileMatch) { $tileMatch.Row.EvidenceRunner } else { "" }
+    $personObjectEvidenceModel = if ($null -ne $personMatch) { $personMatch.Row.EvidenceModel } else { "" }
+    $personObjectEvidenceRunner = if ($null -ne $personMatch) { $personMatch.Row.EvidenceRunner } else { "" }
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
     [void]$matchedVerificationIds.Add((Get-DetectionMatchKey $verification))
     if ($null -ne $tileMatch) {
@@ -941,6 +986,12 @@ foreach ($verification in $verificationRows) {
             personConfidence = Format-Double $personConfidence
             personUpperOverlap = Format-Double $personUpperOverlap
             personObjectClass = $personObjectClass
+            tileEvidenceModel = $tileEvidenceModel
+            tileEvidenceRunner = $tileEvidenceRunner
+            faceVerificationEvidenceModel = $verification.EvidenceModel
+            faceVerificationEvidenceRunner = $verification.EvidenceRunner
+            personObjectEvidenceModel = $personObjectEvidenceModel
+            personObjectEvidenceRunner = $personObjectEvidenceRunner
             auxiliarySignalRole = $auxiliarySignalRole
             supportFrameCount = $temporalSupport.FrameCount
             supportRowCount = $temporalSupport.RowCount
@@ -1045,6 +1096,12 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             personConfidence = $row.personConfidence
             personUpperOverlap = $row.personUpperOverlap
             personObjectClass = $row.personObjectClass
+            tileEvidenceModel = $row.tileEvidenceModel
+            tileEvidenceRunner = $row.tileEvidenceRunner
+            faceVerificationEvidenceModel = $row.faceVerificationEvidenceModel
+            faceVerificationEvidenceRunner = $row.faceVerificationEvidenceRunner
+            personObjectEvidenceModel = $row.personObjectEvidenceModel
+            personObjectEvidenceRunner = $row.personObjectEvidenceRunner
             auxiliarySignalRole = $row.auxiliarySignalRole
             supportFrameCount = $row.supportFrameCount
             supportRowCount = $row.supportRowCount
@@ -1069,6 +1126,12 @@ $reviewQueueRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $reviewQue
 $supported = @($orderedRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count
 $falsePositive = @($orderedRows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count
 $miss = @($orderedRows | Where-Object { $_.candidateType -eq "missCandidate" }).Count
+$modelProvenanceRows = @($orderedRows | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string](Join-UniqueNonEmpty @($_.tileEvidenceModel, $_.faceVerificationEvidenceModel, $_.personObjectEvidenceModel)))
+    }).Count
+$runnerProvenanceRows = @($orderedRows | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string](Join-UniqueNonEmpty @($_.tileEvidenceRunner, $_.faceVerificationEvidenceRunner, $_.personObjectEvidenceRunner)))
+    }).Count
 $topReviewFrames = @($reviewQueueRows | Where-Object { $_.candidateType -ne "supportedFaceCandidate" } | Select-Object -First 10 | ForEach-Object { "$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore)" })
 
 $summary = @(
@@ -1085,6 +1148,9 @@ $summary = @(
     "- supportedFaceCandidate=$supported",
     "- falsePositiveCandidate=$falsePositive",
     "- missCandidate=$miss",
+    "- modelProvenanceRows=$modelProvenanceRows",
+    "- runnerProvenanceRows=$runnerProvenanceRows",
+    "- evidenceProvenance=optional-evidenceModel/evidenceRunner",
     "- minSupportIou=$(Format-Double $MinSupportIou)",
     "- minTileFaceConfidence=$(Format-Double $MinTileFaceConfidence)",
     "- minTileSupportCount=$MinTileSupportCount",

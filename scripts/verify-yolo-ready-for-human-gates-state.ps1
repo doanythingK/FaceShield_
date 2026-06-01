@@ -172,6 +172,10 @@ Assert-Contains "report records pseudo-GT closure support row evidence" $report 
 Assert-Contains "report records pseudo-GT closure support id evidence" $report "pseudoGtClosureSupportIdEvidenceRows="
 Assert-Contains "report records pseudo-GT face verification evidence" $report "pseudoGtFaceVerificationEvidenceRows="
 Assert-Contains "report records pseudo-GT closure face verification evidence" $report "pseudoGtClosureFaceVerificationEvidenceRows="
+Assert-Contains "report records pseudo-GT model provenance" $report "pseudoGtModelProvenanceRows="
+Assert-Contains "report records pseudo-GT runner provenance" $report "pseudoGtRunnerProvenanceRows="
+Assert-Contains "report records pseudo-GT closure model provenance" $report "pseudoGtClosureModelProvenanceRows="
+Assert-Contains "report records pseudo-GT closure runner provenance" $report "pseudoGtClosureRunnerProvenanceRows="
 Assert-Contains "report keeps recommendation none" $report "Final YOLO recommendation | none"
 
 $remaining = if ($hasRemainingNone) { "none" } elseif ($hasRemainingPseudoGt) { "pseudo-gt" } else { "gui-smoke" }
