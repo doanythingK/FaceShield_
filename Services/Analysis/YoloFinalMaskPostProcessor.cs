@@ -1287,6 +1287,14 @@ namespace FaceShield.Services.Analysis
                 return false;
             }
 
+            if (confidence <= options.TopEdgeLargeAnchorSupportMaxConfidence &&
+                IsTopEdgeLargeGapAnchorFace(face, entries[entryIndex].Value.Size, options) &&
+                !HasSupportedGapAnchorNeighbor(entries, entryIndex, faceIndex, face, options, excludedEntryIndex))
+            {
+                rejection = GapAnchorRejection.RiskyGeometry;
+                return false;
+            }
+
             if (confidence >= options.MinAnchorConfidence)
                 return true;
             if (options.SupportedAnchorMinConfidence <= 0 ||
@@ -1911,6 +1919,20 @@ namespace FaceShield.Services.Analysis
                 aspectRatio > options.AnchorMaxAspectRatio;
         }
 
+        private static bool IsTopEdgeLargeGapAnchorFace(Rect face, PixelSize size, YoloFinalMaskGapFillOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            return face.Y <= size.Height * options.AnchorEdgeMarginRatio &&
+                centerYRatio <= options.TopEdgeLargeAnchorMaxCenterYRatio &&
+                areaRatio >= options.TopEdgeLargeAnchorMinAreaRatio &&
+                areaRatio <= options.TopEdgeLargeAnchorMaxAreaRatio;
+        }
+
         private enum GapAnchorRejection
         {
             None,
@@ -1972,10 +1994,14 @@ namespace FaceShield.Services.Analysis
         public double DuplicateIou { get; init; } = 0.50;
         public float WeakGeometryAnchorMaxConfidence { get; init; } = 0.62f;
         public float RiskyGeometryAnchorSupportMaxConfidence { get; init; } = 0.72f;
+        public float TopEdgeLargeAnchorSupportMaxConfidence { get; init; } = 0.88f;
         public double AnchorEdgeMarginRatio { get; init; } = 0.02;
         public double TinyAnchorMaxAreaRatio { get; init; } = 0.0009;
         public double UpperWeakAnchorMaxCenterYRatio { get; init; } = 0.10;
         public double UpperWeakAnchorMaxAreaRatio { get; init; } = 0.0065;
+        public double TopEdgeLargeAnchorMaxCenterYRatio { get; init; } = 0.38;
+        public double TopEdgeLargeAnchorMinAreaRatio { get; init; } = 0.035;
+        public double TopEdgeLargeAnchorMaxAreaRatio { get; init; } = 0.12;
         public double LowerWeakAnchorMinCenterYRatio { get; init; } = 0.58;
         public double LowerWeakAnchorMinAreaRatio { get; init; } = 0.015;
         public double LowerWeakAnchorMaxAreaRatio { get; init; } = 0.045;
