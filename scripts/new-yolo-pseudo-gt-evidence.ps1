@@ -206,7 +206,11 @@ function New-DetectionRow {
         [double]$VerificationDistance = 1.0,
         [string]$ClassLabel = "",
         [string]$EvidenceModel = "",
-        [string]$EvidenceRunner = ""
+        [string]$EvidenceRunner = "",
+        [double]$CenterXRatio = -1.0,
+        [double]$CenterYRatio = -1.0,
+        [double]$AreaRatio = -1.0,
+        [double]$AspectRatio = -1.0
     )
 
     [pscustomobject]@{
@@ -223,7 +227,41 @@ function New-DetectionRow {
         ClassLabel = $ClassLabel
         EvidenceModel = $EvidenceModel
         EvidenceRunner = $EvidenceRunner
+        CenterXRatio = $CenterXRatio
+        CenterYRatio = $CenterYRatio
+        AreaRatio = $AreaRatio
+        AspectRatio = $AspectRatio
     }
+}
+
+function Format-OptionalDouble {
+    param([double]$Value)
+
+    if ($Value -lt 0) {
+        return ""
+    }
+
+    return Format-Double $Value
+}
+
+function Get-GeometryTag {
+    param([object]$Row)
+
+    if ($Row.Source -ne "base-yolo-log" -and $Row.Source -ne "base-yolo-csv") {
+        return ""
+    }
+
+    if ($Row.CenterYRatio -ge 0.0 -and $Row.AreaRatio -ge 0.0) {
+        if ($Row.CenterYRatio -le 0.38 -and $Row.AreaRatio -ge 0.035 -and $Row.AreaRatio -le 0.12) {
+            return "top-edge-large-review"
+        }
+
+        if ($Row.CenterYRatio -le 0.10 -and $Row.AreaRatio -le 0.0065) {
+            return "top-edge-weak-review"
+        }
+    }
+
+    return ""
 }
 
 function Join-UniqueNonEmpty {
@@ -270,6 +308,10 @@ function Read-DetectionCsvRows {
         $classLabel = [string](Get-PropertyValue $row @("class", "Class", "label", "Label", "name", "Name", "category", "Category") "")
         $evidenceModel = [string](Get-PropertyValue $row @("evidenceModel", "modelName", "modelId", "model", "runnerModel", "externalModel") "")
         $evidenceRunner = [string](Get-PropertyValue $row @("evidenceRunner", "runnerName", "runner", "externalRunner", "modelRunner") "")
+        $centerXRatio = Read-DoubleValue $row @("centerXRatio", "CenterXRatio", "centerX", "CenterX", "cx", "Cx") -1.0
+        $centerYRatio = Read-DoubleValue $row @("centerYRatio", "CenterYRatio", "centerY", "CenterY", "cy", "Cy") -1.0
+        $areaRatio = Read-DoubleValue $row @("areaRatio", "AreaRatio") -1.0
+        $aspectRatio = Read-DoubleValue $row @("aspectRatio", "AspectRatio") -1.0
 
         $rows.Add((New-DetectionRow `
                     -Frame $frame `
@@ -284,7 +326,11 @@ function Read-DetectionCsvRows {
                     -VerificationDistance $distance `
                     -ClassLabel $classLabel `
                     -EvidenceModel $evidenceModel `
-                    -EvidenceRunner $evidenceRunner)) | Out-Null
+                    -EvidenceRunner $evidenceRunner `
+                    -CenterXRatio $centerXRatio `
+                    -CenterYRatio $centerYRatio `
+                    -AreaRatio $areaRatio `
+                    -AspectRatio $aspectRatio)) | Out-Null
         $index++
     }
 
@@ -300,7 +346,7 @@ function Read-BasePredictionLogRows {
     }
 
     $rows = [System.Collections.Generic.List[object]]::new()
-    $pattern = '\[SmokeDetection\].*frame=(\d+), index=(\d+), x=([0-9.\-]+), y=([0-9.\-]+), w=([0-9.\-]+), h=([0-9.\-]+), area=[0-9.\-]+, conf=([0-9.\-]+)'
+    $pattern = '\[SmokeDetection\].*frame=(\d+), index=(\d+), x=([0-9.\-]+), y=([0-9.\-]+), w=([0-9.\-]+), h=([0-9.\-]+), area=[0-9.\-]+, conf=([0-9.\-]+)(?:, cx=([0-9.\-]+), cy=([0-9.\-]+), areaRatio=([0-9.\-]+), aspectRatio=([0-9.\-]+))?'
     foreach ($line in (Get-Content -Path $resolved)) {
         $match = [regex]::Match($line, $pattern)
         if (-not $match.Success) {
@@ -317,7 +363,11 @@ function Read-BasePredictionLogRows {
                     -W ([double]::Parse($match.Groups[5].Value, [System.Globalization.CultureInfo]::InvariantCulture)) `
                     -H ([double]::Parse($match.Groups[6].Value, [System.Globalization.CultureInfo]::InvariantCulture)) `
                     -Confidence ([double]::Parse($match.Groups[7].Value, [System.Globalization.CultureInfo]::InvariantCulture)) `
-                    -Source "base-yolo-log")) | Out-Null
+                    -Source "base-yolo-log" `
+                    -CenterXRatio $(if ($match.Groups[8].Success) { [double]::Parse($match.Groups[8].Value, [System.Globalization.CultureInfo]::InvariantCulture) } else { -1.0 }) `
+                    -CenterYRatio $(if ($match.Groups[9].Success) { [double]::Parse($match.Groups[9].Value, [System.Globalization.CultureInfo]::InvariantCulture) } else { -1.0 }) `
+                    -AreaRatio $(if ($match.Groups[10].Success) { [double]::Parse($match.Groups[10].Value, [System.Globalization.CultureInfo]::InvariantCulture) } else { -1.0 }) `
+                    -AspectRatio $(if ($match.Groups[11].Success) { [double]::Parse($match.Groups[11].Value, [System.Globalization.CultureInfo]::InvariantCulture) } else { -1.0 }))) | Out-Null
     }
 
     return @($rows)
@@ -768,6 +818,7 @@ foreach ($base in $baseRows) {
     $personObjectEvidenceModel = if ($null -ne $personMatch) { $personMatch.Row.EvidenceModel } else { "" }
     $personObjectEvidenceRunner = if ($null -ne $personMatch) { $personMatch.Row.EvidenceRunner } else { "" }
     $supportMatches = @($tileMatch, $verificationMatch)
+    $geometryTag = Get-GeometryTag $base
     $bestIou = if ($hasFaceSupport) {
         [Math]::Max(
             $(if ($hasTileSupport) { $tileMatch.Iou } else { 0.0 }),
@@ -844,6 +895,11 @@ foreach ($base in $baseRows) {
             bestIou = Format-Double $bestIou
             centerDistanceRatio = Format-Double $bestCenterDistance
             areaChangeRatio = Format-Double $bestAreaChangeRatio
+            centerXRatio = Format-OptionalDouble $base.CenterXRatio
+            centerYRatio = Format-OptionalDouble $base.CenterYRatio
+            baseAreaRatio = Format-OptionalDouble $base.AreaRatio
+            aspectRatio = Format-OptionalDouble $base.AspectRatio
+            geometryTag = $geometryTag
             fpProbability = Format-Double $fpProbability
             missProbability = Format-Double $missProbability
             pseudoGtReason = $reason
@@ -920,6 +976,11 @@ foreach ($tile in $tileRows) {
             bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
             areaChangeRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.AreaChangeRatio } else { "99" }
+            centerXRatio = Format-OptionalDouble $tile.CenterXRatio
+            centerYRatio = Format-OptionalDouble $tile.CenterYRatio
+            baseAreaRatio = ""
+            aspectRatio = Format-OptionalDouble $tile.AspectRatio
+            geometryTag = ""
             fpProbability = "0"
             missProbability = Format-Double $missProbability
             pseudoGtReason = "test-only high-precision tile face was not matched by base YOLO; verification support is recorded when present; person/object support is auxiliary only"
@@ -1000,6 +1061,11 @@ foreach ($verification in $verificationRows) {
             bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
             areaChangeRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.AreaChangeRatio } else { "99" }
+            centerXRatio = Format-OptionalDouble $verification.CenterXRatio
+            centerYRatio = Format-OptionalDouble $verification.CenterYRatio
+            baseAreaRatio = ""
+            aspectRatio = Format-OptionalDouble $verification.AspectRatio
+            geometryTag = ""
             fpProbability = "0"
             missProbability = Format-Double $missProbability
             pseudoGtReason = "test-only high-quality face verification was not matched by base YOLO; tile support is recorded when present; person/object support is auxiliary only"
@@ -1041,7 +1107,9 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
         $missProbability = Read-CandidateDouble $_ "missProbability"
         $personUpperOverlap = [Math]::Min(1.0, [Math]::Max(0.0, (Read-CandidateDouble $_ "personUpperOverlap")))
         $auxiliaryPriorityBoost = [Math]::Min(0.15, $personUpperOverlap * 0.15)
-        $priorityScore = [Math]::Min(1.0, [Math]::Max($fpProbability, $missProbability) + $auxiliaryPriorityBoost)
+        $geometryTag = [string]$_.geometryTag
+        $geometryPriorityBoost = if ($_.candidateType -eq "falsePositiveCandidate" -and -not [string]::IsNullOrWhiteSpace($geometryTag)) { 0.08 } else { 0.0 }
+        $priorityScore = [Math]::Min(1.0, [Math]::Max($fpProbability, $missProbability) + $auxiliaryPriorityBoost + $geometryPriorityBoost)
         $priorityGroup = if ($_.candidateType -eq "supportedFaceCandidate") { 1 } else { 0 }
         $dominantProbability = if ($missProbability -gt $fpProbability) { "missProbability" } else { "fpProbability" }
         $priorityReason = switch ($_.candidateType) {
@@ -1052,12 +1120,16 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
         if ($auxiliaryPriorityBoost -gt 0) {
             $priorityReason = "$priorityReason; auxiliary person/object support raises review priority but does not decide face/nonface"
         }
+        if ($geometryPriorityBoost -gt 0) {
+            $priorityReason = "$priorityReason; geometry tag '$geometryTag' raises review priority but does not decide face/nonface"
+        }
 
         [pscustomobject]@{
             Row = $_
             PriorityGroup = $priorityGroup
             PriorityScore = $priorityScore
             AuxiliaryPriorityBoost = $auxiliaryPriorityBoost
+            GeometryPriorityBoost = $geometryPriorityBoost
             DominantProbability = $dominantProbability
             PriorityReason = $priorityReason
         }
@@ -1087,6 +1159,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             h = $row.h
             reviewPriorityScore = Format-Double $_.PriorityScore
             auxiliaryPriorityBoost = Format-Double $_.AuxiliaryPriorityBoost
+            geometryPriorityBoost = Format-Double $_.GeometryPriorityBoost
             dominantProbability = $_.DominantProbability
             baseFaceConfidence = $row.baseFaceConfidence
             tileFaceConfidence = $row.tileFaceConfidence
@@ -1110,6 +1183,11 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             bestIou = $row.bestIou
             centerDistanceRatio = $row.centerDistanceRatio
             areaChangeRatio = $row.areaChangeRatio
+            centerXRatio = $row.centerXRatio
+            centerYRatio = $row.centerYRatio
+            baseAreaRatio = $row.baseAreaRatio
+            aspectRatio = $row.aspectRatio
+            geometryTag = $row.geometryTag
             fpProbability = $row.fpProbability
             missProbability = $row.missProbability
             reviewPriorityReason = $_.PriorityReason
@@ -1132,6 +1210,8 @@ $modelProvenanceRows = @($orderedRows | Where-Object {
 $runnerProvenanceRows = @($orderedRows | Where-Object {
         -not [string]::IsNullOrWhiteSpace([string](Join-UniqueNonEmpty @($_.tileEvidenceRunner, $_.faceVerificationEvidenceRunner, $_.personObjectEvidenceRunner)))
     }).Count
+$geometryTaggedRows = @($orderedRows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.geometryTag) }).Count
+$geometryTags = @($orderedRows | ForEach-Object { [string]$_.geometryTag } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
 $topReviewFrames = @($reviewQueueRows | Where-Object { $_.candidateType -ne "supportedFaceCandidate" } | Select-Object -First 10 | ForEach-Object { "$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore)" })
 
 $summary = @(
@@ -1150,6 +1230,8 @@ $summary = @(
     "- missCandidate=$miss",
     "- modelProvenanceRows=$modelProvenanceRows",
     "- runnerProvenanceRows=$runnerProvenanceRows",
+    "- geometryTaggedRows=$geometryTaggedRows",
+    "- geometryTags=$(if ($geometryTags.Count -gt 0) { [string]::Join(',', $geometryTags) } else { 'none' })",
     "- evidenceProvenance=optional-evidenceModel/evidenceRunner",
     "- minSupportIou=$(Format-Double $MinSupportIou)",
     "- minTileFaceConfidence=$(Format-Double $MinTileFaceConfidence)",

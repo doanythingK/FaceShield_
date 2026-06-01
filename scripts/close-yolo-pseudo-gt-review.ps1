@@ -345,6 +345,11 @@ foreach ($candidate in $pseudoRows) {
             bestIou = $candidate.bestIou
             centerDistanceRatio = $candidate.centerDistanceRatio
             areaChangeRatio = $candidate.areaChangeRatio
+            centerXRatio = $candidate.centerXRatio
+            centerYRatio = $candidate.centerYRatio
+            baseAreaRatio = $candidate.baseAreaRatio
+            aspectRatio = $candidate.aspectRatio
+            geometryTag = $candidate.geometryTag
             fpProbability = $candidate.fpProbability
             missProbability = $candidate.missProbability
             pseudoGtReason = $candidate.pseudoGtReason

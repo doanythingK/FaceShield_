@@ -67,6 +67,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=5, index=0, x=500.0, y=500.0, w=200.0, h=200.0, area=40000.0, conf=0.550, cx=0.600, cy=0.600, areaRatio=0.040000, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=8, index=0, x=730.0, y=220.0, w=60.0, h=60.0, area=3600.0, conf=0.330, cx=0.760, cy=0.260, areaRatio=0.003600, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=10, index=0, x=300.0, y=200.0, w=60.0, h=60.0, area=3600.0, conf=0.300, cx=0.330, cy=0.240, areaRatio=0.003600, aspectRatio=1.000
+[SmokeDetection] label=synthetic-yolo, frame=11, index=0, x=700.0, y=0.0, w=190.0, h=190.0, area=36100.0, conf=0.420, cx=0.795, cy=0.095, areaRatio=0.055000, aspectRatio=1.000
 '@ | Set-Content -Encoding UTF8 -Path $baseLog
 
 @'
@@ -125,12 +126,12 @@ $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 $reviewQueueRows = @(Import-Csv $reviewQueueCsv)
 
-if ($rows.Count -ne 10) {
-    throw "Expected 10 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 11) {
+    throw "Expected 11 pseudo-GT rows, actual=$($rows.Count)"
 }
 
-if ($reviewQueueRows.Count -ne 10) {
-    throw "Expected 10 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
+if ($reviewQueueRows.Count -ne 11) {
+    throw "Expected 11 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
 }
 
 $first = $rows[0]
@@ -162,6 +163,11 @@ foreach ($column in @(
         "bestIou",
         "centerDistanceRatio",
         "areaChangeRatio",
+        "centerXRatio",
+        "centerYRatio",
+        "baseAreaRatio",
+        "aspectRatio",
+        "geometryTag",
         "fpProbability",
         "missProbability",
         "pseudoGtReason",
@@ -187,6 +193,7 @@ foreach ($column in @(
         "h",
         "reviewPriorityScore",
         "auxiliaryPriorityBoost",
+        "geometryPriorityBoost",
         "dominantProbability",
         "reviewPriorityReason",
         "fpProbability",
@@ -204,6 +211,11 @@ foreach ($column in @(
         "supportRowCount",
         "supportEvidenceIds",
         "areaChangeRatio",
+        "centerXRatio",
+        "centerYRatio",
+        "baseAreaRatio",
+        "aspectRatio",
+        "geometryTag",
         "reviewStatus",
         "evidenceNotes")) {
     Assert-Column $queueFirst $column
@@ -265,6 +277,36 @@ if ($falsePositiveQueueRow.expectedReviewLabel -ne "nonface") {
 
 if ([string]::IsNullOrWhiteSpace($falsePositiveQueueRow.evidenceNotes)) {
     throw "Expected review queue to preserve candidate evidenceNotes for human review."
+}
+
+$topEdgeLargeCandidate = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.basePredictionId -eq "11-0" })[0]
+if ($null -eq $topEdgeLargeCandidate) {
+    throw "Expected top-edge large YOLO geometry to remain a falsePositiveCandidate for review."
+}
+
+if ($topEdgeLargeCandidate.geometryTag -ne "top-edge-large-review") {
+    throw "Expected pseudo-GT candidate CSV to tag top-edge large base YOLO geometry for review."
+}
+
+if ($topEdgeLargeCandidate.centerYRatio -ne "0.095" -or $topEdgeLargeCandidate.baseAreaRatio -ne "0.055" -or $topEdgeLargeCandidate.aspectRatio -ne "1") {
+    throw "Expected pseudo-GT candidate CSV to preserve normalized top-edge geometry evidence."
+}
+
+$topEdgeLargeQueueRow = @($reviewQueueRows | Where-Object { $_.basePredictionId -eq "11-0" })[0]
+if ($null -eq $topEdgeLargeQueueRow) {
+    throw "Expected top-edge large YOLO geometry to appear in the review queue."
+}
+
+if ($topEdgeLargeQueueRow.geometryTag -ne "top-edge-large-review") {
+    throw "Expected review queue to preserve top-edge large geometry tag."
+}
+
+if ([double]::Parse($topEdgeLargeQueueRow.geometryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected top-edge large geometry to raise review priority without deciding face/nonface."
+}
+
+if ($topEdgeLargeQueueRow.reviewPriorityReason -notmatch "geometry tag 'top-edge-large-review' raises review priority but does not decide face/nonface") {
+    throw "Expected review priority reason to explain geometry review boost."
 }
 
 $missQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "missCandidate" })[0]
@@ -337,8 +379,8 @@ if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Co
     throw "Expected two supportedFaceCandidate rows."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 3) {
-    throw "Expected three falsePositiveCandidate rows."
+if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 4) {
+    throw "Expected four falsePositiveCandidate rows."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 5) {
@@ -565,10 +607,12 @@ Assert-Contains "script treats person object as auxiliary" $scriptText "person/o
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=2"
-Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=3"
+Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=4"
 Assert-Contains "summary records miss count" $summaryText "missCandidate=5"
 Assert-Contains "summary records model provenance count" $summaryText "modelProvenanceRows="
 Assert-Contains "summary records runner provenance count" $summaryText "runnerProvenanceRows="
+Assert-Contains "summary records geometry tagged row count" $summaryText "geometryTaggedRows=1"
+Assert-Contains "summary records geometry tags" $summaryText "geometryTags=top-edge-large-review"
 Assert-Contains "summary records provenance field contract" $summaryText "evidenceProvenance=optional-evidenceModel/evidenceRunner"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
 Assert-Contains "summary records strict input validation" $summaryText "inputValidation=strict-required-columns"

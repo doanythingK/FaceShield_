@@ -153,6 +153,11 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         bestIou = 0.9
         centerDistanceRatio = 0.1
         areaChangeRatio = 1.02
+        centerXRatio = 0.125
+        centerYRatio = 0.15
+        baseAreaRatio = 0.003
+        aspectRatio = 0.833
+        geometryTag = ""
         fpProbability = 0.1
         missProbability = 0
         pseudoGtReason = "supported"
@@ -193,6 +198,11 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         bestIou = 0
         centerDistanceRatio = 99
         areaChangeRatio = 99
+        centerXRatio = 0.795
+        centerYRatio = 0.095
+        baseAreaRatio = 0.055
+        aspectRatio = 1
+        geometryTag = "top-edge-large-review"
         fpProbability = 0.85
         missProbability = 0.1
         pseudoGtReason = "unsupported"
@@ -234,6 +244,11 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
         bestIou = 0
         centerDistanceRatio = 99
         areaChangeRatio = 99
+        centerXRatio = ""
+        centerYRatio = ""
+        baseAreaRatio = ""
+        aspectRatio = ""
+        geometryTag = ""
         fpProbability = 0
         missProbability = 0.82
         pseudoGtReason = "miss"
@@ -299,6 +314,11 @@ foreach ($column in @(
         "bestIou",
         "centerDistanceRatio",
         "areaChangeRatio",
+        "centerXRatio",
+        "centerYRatio",
+        "baseAreaRatio",
+        "aspectRatio",
+        "geometryTag",
         "closureReason")) {
     if ($null -eq $rows[0].PSObject.Properties[$column]) {
         throw "Missing closure column: $column"
@@ -337,6 +357,14 @@ if ($falsePositiveClosure.personObjectEvidenceModel -ne "heavy-person-object-v1"
 
 if ($falsePositiveClosure.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
     throw "Expected closure output to preserve auxiliary signal role as priority-only."
+}
+
+if ($falsePositiveClosure.geometryTag -ne "top-edge-large-review") {
+    throw "Expected closure output to preserve top-edge large geometry review tag."
+}
+
+if ($falsePositiveClosure.centerYRatio -ne "0.095" -or $falsePositiveClosure.baseAreaRatio -ne "0.055" -or $falsePositiveClosure.aspectRatio -ne "1") {
+    throw "Expected closure output to preserve normalized top-edge geometry evidence."
 }
 
 $unreviewedReviewRows = @(Import-Csv $reviewCsv)
