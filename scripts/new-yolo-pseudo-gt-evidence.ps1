@@ -842,6 +842,7 @@ foreach ($tile in $tileRows) {
     if ($null -ne $verificationMatch) {
         [void]$matchedVerificationIds.Add((Get-DetectionMatchKey $verificationMatch.Row))
     }
+    [void]$matchedTileIds.Add((Get-DetectionMatchKey $tile))
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
 
     $candidateRows.Add([pscustomobject]@{
@@ -908,6 +909,10 @@ foreach ($verification in $verificationRows) {
     $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
     $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
     $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
+    [void]$matchedVerificationIds.Add((Get-DetectionMatchKey $verification))
+    if ($null -ne $tileMatch) {
+        [void]$matchedTileIds.Add((Get-DetectionMatchKey $tileMatch.Row))
+    }
 
     $candidateRows.Add([pscustomobject]@{
             candidateId = "miss-$($verification.Frame)-$($verification.Id)"

@@ -83,6 +83,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @(
     [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220 },
+    [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-primary"; x = 46.0; y = 61.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.170 },
+    [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-secondary"; x = 47.0; y = 62.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180 },
     [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180 },
     [pscustomobject]@{ frame = 5; verificationId = "verify-small-face-5"; x = 575.0; y = 575.0; w = 50.0; h = 50.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.150 },
     [pscustomobject]@{ frame = 6; verificationId = "verify-low-quality-6"; x = 700.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.990 },
@@ -323,6 +325,14 @@ if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 5
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
     throw "Expected one verification-only missCandidate."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.frame -eq "3" -and $_.tileDetectionId -eq "tile-face-3" }).Count -ne 1) {
+    throw "Expected multiple verification rows near one unmatched tile face to stay collapsed to one tile missCandidate."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-tile-face-3-secondary" }).Count -ne 0) {
+    throw "Expected secondary verification near an already-emitted tile missCandidate not to create a duplicate missCandidate."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-low-base-secondary-10" }).Count -ne 0) {
