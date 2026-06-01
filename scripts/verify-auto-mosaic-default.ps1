@@ -65,6 +65,7 @@ $yoloPseudoGtFaceVerificationInputVerify = Join-Path $repo "scripts\verify-yolo-
 $yoloPseudoGtFaceVerificationRunnerVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-face-verification-runner-state.ps1"
 $yoloPseudoGtPersonObjectInputVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-person-object-input-state.ps1"
 $yoloPseudoGtReviewDraftVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-review-draft-state.ps1"
+$yoloPseudoGtReviewVisualPackageVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-review-visual-package-state.ps1"
 $yoloPseudoGtReviewDraftApplyVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-review-draft-apply-state.ps1"
 $yoloPseudoGtReviewClosureVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-review-closure-state.ps1"
 $yoloPseudoGtSeparationVerify = Join-Path $repo "scripts\verify-yolo-pseudo-gt-separation-state.ps1"
@@ -321,6 +322,9 @@ Assert-Contains "yolo-pseudo-gt-person-object-input" $pseudoGtPersonObjectInputO
 
 $pseudoGtReviewDraftOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-draft" $yoloPseudoGtReviewDraftVerify @()
 Assert-Contains "yolo-pseudo-gt-review-draft" $pseudoGtReviewDraftOutput "\[YoloPseudoGtReviewDraftVerify\] all requested checks passed"
+
+$pseudoGtReviewVisualPackageOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-visual-package" $yoloPseudoGtReviewVisualPackageVerify @()
+Assert-Contains "yolo-pseudo-gt-review-visual-package" $pseudoGtReviewVisualPackageOutput "\[YoloPseudoGtReviewVisualVerify\] all requested checks passed"
 
 $pseudoGtReviewDraftApplyOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-draft-apply" $yoloPseudoGtReviewDraftApplyVerify @()
 Assert-Contains "yolo-pseudo-gt-review-draft-apply" $pseudoGtReviewDraftApplyOutput "\[YoloPseudoGtReviewDraftApplyVerify\] all requested checks passed"

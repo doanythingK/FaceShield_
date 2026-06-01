@@ -22,6 +22,8 @@ param(
     [string]$YoloHumanReviewDraftWriter = "scripts/new-yolo-human-review-draft.ps1",
     [string]$YoloPseudoGtReviewDraftWriter = "scripts/new-yolo-pseudo-gt-review-draft.ps1",
     [string]$YoloPseudoGtReviewDraftVerify = "scripts/verify-yolo-pseudo-gt-review-draft-state.ps1",
+    [string]$YoloPseudoGtReviewVisualPackage = "scripts/new-yolo-pseudo-gt-review-visual-package.ps1",
+    [string]$YoloPseudoGtReviewVisualPackageVerify = "scripts/verify-yolo-pseudo-gt-review-visual-package-state.ps1",
     [string]$YoloPseudoGtReviewDraftApply = "scripts/apply-yolo-pseudo-gt-review-draft.ps1",
     [string]$YoloPseudoGtReviewDraftApplyVerify = "scripts/verify-yolo-pseudo-gt-review-draft-apply-state.ps1",
     [string]$YoloCompletionFinalizer = "scripts/complete-yolo-goal-after-manual-gates.ps1",
@@ -105,6 +107,8 @@ $manualPendingReportWriter = Read-RepoFile $YoloManualPendingReportWriter
 $humanReviewDraftWriter = Read-RepoFile $YoloHumanReviewDraftWriter
 $pseudoGtReviewDraftWriter = Read-RepoFile $YoloPseudoGtReviewDraftWriter
 $pseudoGtReviewDraftVerify = Read-RepoFile $YoloPseudoGtReviewDraftVerify
+$pseudoGtReviewVisualPackage = Read-RepoFile $YoloPseudoGtReviewVisualPackage
+$pseudoGtReviewVisualPackageVerify = Read-RepoFile $YoloPseudoGtReviewVisualPackageVerify
 $pseudoGtReviewDraftApply = Read-RepoFile $YoloPseudoGtReviewDraftApply
 $pseudoGtReviewDraftApplyVerify = Read-RepoFile $YoloPseudoGtReviewDraftApplyVerify
 $completionFinalizer = Read-RepoFile $YoloCompletionFinalizer
@@ -377,6 +381,7 @@ Assert-Contains "auto verifier runs pseudo gt separation state" $autoVerify "ver
 Assert-Contains "auto verifier runs pseudo gt face verification input state" $autoVerify "verify-yolo-pseudo-gt-face-verification-input-state.ps1"
 Assert-Contains "auto verifier runs pseudo gt person object input state" $autoVerify "verify-yolo-pseudo-gt-person-object-input-state.ps1"
 Assert-Contains "auto verifier runs pseudo gt review draft state" $autoVerify "verify-yolo-pseudo-gt-review-draft-state.ps1"
+Assert-Contains "auto verifier runs pseudo gt review visual package state" $autoVerify "verify-yolo-pseudo-gt-review-visual-package-state.ps1"
 Assert-Contains "auto verifier runs pseudo gt review draft apply state" $autoVerify "verify-yolo-pseudo-gt-review-draft-apply-state.ps1"
 Assert-Contains "top-level verifier has completion audit path" $autoVerify "verify-yolo-completion-audit-state.ps1"
 Assert-Contains "top-level verifier has require complete guard" $autoVerify "yolo-require-complete-guard"
@@ -503,11 +508,14 @@ Assert-Contains "manual gate helper runs gui evidence prep" $manualGateHelper "p
 Assert-Contains "manual gate helper prints human review draft command" $manualGateHelper "humanReviewDraftCommand"
 Assert-Contains "manual gate helper runs human review draft writer" $manualGateHelper "new-yolo-human-review-draft.ps1"
 Assert-Contains "manual gate helper prints pseudo GT review draft command" $manualGateHelper "pseudoGtReviewDraftCommand"
+Assert-Contains "manual gate helper prints pseudo GT visual command" $manualGateHelper "pseudoGtReviewVisualCommand"
 Assert-Contains "manual gate helper prints pseudo GT review draft apply command" $manualGateHelper "pseudoGtReviewDraftApplyCommand"
 Assert-Contains "manual gate helper applies pseudo GT review draft in place" $manualGateHelper "-InPlace -Verify"
 Assert-Contains "manual gate helper records pseudo GT review queue csv" $manualGateHelper "PseudoGtReviewQueueCsv"
 Assert-Contains "manual gate helper records pseudo GT review draft dir" $manualGateHelper "PseudoGtReviewDraftDir"
+Assert-Contains "manual gate helper records pseudo GT visual dir" $manualGateHelper "PseudoGtReviewVisualDir"
 Assert-Contains "manual gate helper runs pseudo GT review draft writer" $manualGateHelper "new-yolo-pseudo-gt-review-draft.ps1"
+Assert-Contains "manual gate helper runs pseudo GT visual package writer" $manualGateHelper "new-yolo-pseudo-gt-review-visual-package.ps1"
 Assert-Contains "manual gate helper runs pseudo GT review draft apply script" $manualGateHelper "apply-yolo-pseudo-gt-review-draft.ps1"
 Assert-Contains "manual gate helper prints completion plan action" $manualGateHelper "completionPlanAction"
 Assert-Contains "manual gate helper prints full GT action" $manualGateHelper "fullGtAction"
@@ -646,6 +654,12 @@ Assert-Contains "pseudo gt review draft writer creates full gt draft csv" $pseud
 Assert-Contains "pseudo gt review draft writer creates full frame draft csv" $pseudoGtReviewDraftWriter "pseudo-gt-full-frame-review-draft.csv"
 Assert-Contains "pseudo gt review draft verifier selftests draft output" $pseudoGtReviewDraftVerify "YoloPseudoGtReviewDraftVerify"
 Assert-Contains "pseudo gt review draft verifier checks source id geometry" $pseudoGtReviewDraftVerify "source id plus IoU geometry"
+Assert-Contains "pseudo gt review visual package records test-only boundary" $pseudoGtReviewVisualPackage "test-only visual review evidence"
+Assert-Contains "pseudo gt review visual package keeps final labels human owned" $pseudoGtReviewVisualPackage "does not finalize face/nonface/miss labels"
+Assert-Contains "pseudo gt review visual package writes crop artifacts" $pseudoGtReviewVisualPackage "cropPath"
+Assert-Contains "pseudo gt review visual package writes overlay artifacts" $pseudoGtReviewVisualPackage "visualOverlayPath"
+Assert-Contains "pseudo gt review visual package verifier selftests visual artifacts" $pseudoGtReviewVisualPackageVerify "YoloPseudoGtReviewVisualVerify"
+Assert-Contains "pseudo gt review visual package verifier checks all candidate types" $pseudoGtReviewVisualPackageVerify "supportedFaceCandidate"
 Assert-Contains "pseudo gt review draft apply keeps final labels human owned" $pseudoGtReviewDraftApply "does not infer labels from suggestedLabel"
 Assert-Contains "pseudo gt review draft apply records review csv ownership" $pseudoGtReviewDraftApply "review CSV-owned"
 Assert-Contains "pseudo gt review draft apply requires final review fields" $pseudoGtReviewDraftApply "label/reviewStatus/evidenceNotes"

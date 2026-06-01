@@ -12,6 +12,9 @@ param(
     [string]$PseudoGtReviewClosureSummary = ".tmp\yolo-pseudo-gt\pseudo-gt-review-closure-summary.md",
     [string]$HumanReviewDraftDir = ".tmp\yolo-manual-gates\human-review-draft",
     [string]$PseudoGtReviewDraftDir = ".tmp\yolo-pseudo-gt\review-draft",
+    [string]$PseudoGtReviewVisualDir = ".tmp\yolo-pseudo-gt\review-visual",
+    [string]$PseudoGtReviewVisualFrameSourceDir = ".tmp\yolo-full-gt\review-package-smoke\frames",
+    [string]$PseudoGtReviewVisualVideoPath = "",
     [double]$MinIou = 0.50,
     [int]$MaxMisses = 0,
     [int]$MaxFalsePositives = 0,
@@ -42,6 +45,7 @@ $completionFinalizer = Join-Path $repo "scripts\complete-yolo-goal-after-manual-
 $pendingReportWriter = Join-Path $repo "scripts\write-yolo-manual-pending-report.ps1"
 $humanReviewDraftWriter = Join-Path $repo "scripts\new-yolo-human-review-draft.ps1"
 $pseudoGtReviewDraftWriter = Join-Path $repo "scripts\new-yolo-pseudo-gt-review-draft.ps1"
+$pseudoGtReviewVisualPackageWriter = Join-Path $repo "scripts\new-yolo-pseudo-gt-review-visual-package.ps1"
 $pseudoGtReviewDraftApply = Join-Path $repo "scripts\apply-yolo-pseudo-gt-review-draft.ps1"
 $guiEvidencePrep = Join-Path $repo "scripts\prepare-yolo-gui-smoke-evidence.ps1"
 $pseudoGtReviewClosure = Join-Path $repo "scripts\close-yolo-pseudo-gt-review.ps1"
@@ -245,6 +249,15 @@ function Write-ManualGateDashboard {
     if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtReviewClosureSummary) -and (Test-Path $resolvedPseudoGtReviewClosureSummary)) {
         $links += [pscustomobject]@{ Label = "Pseudo-GT review closure summary"; Path = $resolvedPseudoGtReviewClosureSummary }
     }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtReviewVisualIndex) -and (Test-Path $resolvedPseudoGtReviewVisualIndex)) {
+        $links += [pscustomobject]@{ Label = "Pseudo-GT visual review index"; Path = $resolvedPseudoGtReviewVisualIndex }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtReviewVisualDraftCsv) -and (Test-Path $resolvedPseudoGtReviewVisualDraftCsv)) {
+        $links += [pscustomobject]@{ Label = "Pseudo-GT visual review draft CSV"; Path = $resolvedPseudoGtReviewVisualDraftCsv }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPseudoGtReviewVisualReport) -and (Test-Path $resolvedPseudoGtReviewVisualReport)) {
+        $links += [pscustomobject]@{ Label = "Pseudo-GT visual review report"; Path = $resolvedPseudoGtReviewVisualReport }
+    }
     if (-not [string]::IsNullOrWhiteSpace($AiCandidateReviewCsvPath) -and (Test-Path $AiCandidateReviewCsvPath)) {
         $links += [pscustomobject]@{ Label = "AI candidate full-GT CSV"; Path = $AiCandidateReviewCsvPath }
     }
@@ -335,9 +348,13 @@ function Write-ManualGateDashboard {
     [void]$builder.AppendLine("<ol>")
     [void]$builder.AppendLine("<li>$(Convert-ToHtmlText $pseudoGtAction)</li>")
     [void]$builder.AppendLine("<li>Prepare review draft: <span class=""muted"">$(Convert-ToHtmlText $pseudoGtReviewDraftCommand)</span></li>")
-    [void]$builder.AppendLine("<li>After filling the draft final fields, apply reviewed rows: <span class=""muted"">$(Convert-ToHtmlText $pseudoGtReviewDraftApplyCommand)</span></li>")
+    [void]$builder.AppendLine("<li>Create visual crop/overlay evidence: <span class=""muted"">$(Convert-ToHtmlText $pseudoGtReviewVisualCommand)</span></li>")
+    [void]$builder.AppendLine("<li>After filling visual draft final fields, apply reviewed rows: <span class=""muted"">$(Convert-ToHtmlText $pseudoGtReviewDraftApplyCommand)</span></li>")
     if (Test-Path $resolvedPseudoGtReviewDraftReport) {
         [void]$builder.AppendLine("<li>review draft report: <span class=""muted"">$(Convert-ToHtmlText $resolvedPseudoGtReviewDraftReport)</span></li>")
+    }
+    if (Test-Path $resolvedPseudoGtReviewVisualReport) {
+        [void]$builder.AppendLine("<li>visual review report: <span class=""muted"">$(Convert-ToHtmlText $resolvedPseudoGtReviewVisualReport)</span></li>")
     }
     [void]$builder.AppendLine("<li>Closure rule: require-all-closed-after-goal-evidence-publish.</li>")
     [void]$builder.AppendLine("</ol></section>")
@@ -421,6 +438,11 @@ $resolvedPseudoGtReviewClosureCsv = Resolve-RepoPath $PseudoGtReviewClosureCsv
 $resolvedPseudoGtReviewClosureSummary = Resolve-RepoPath $PseudoGtReviewClosureSummary
 $resolvedPseudoGtReviewDraftDir = Resolve-RepoPath $PseudoGtReviewDraftDir
 $resolvedPseudoGtReviewDraftReport = Join-Path $resolvedPseudoGtReviewDraftDir "pseudo-gt-review-draft-report.md"
+$resolvedPseudoGtReviewVisualDir = Resolve-RepoPath $PseudoGtReviewVisualDir
+$resolvedPseudoGtReviewVisualIndex = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-review-visual-index.html"
+$resolvedPseudoGtReviewVisualReport = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-review-visual-report.md"
+$resolvedPseudoGtReviewVisualDraftCsv = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-full-gt-review-visual-draft.csv"
+$resolvedPseudoGtReviewVisualFrameDraftCsv = Join-Path $resolvedPseudoGtReviewVisualDir "pseudo-gt-full-frame-review-visual-draft.csv"
 
 if ($PrepareGuiEvidence) {
     if (-not (Test-Path $guiEvidencePrep)) {
@@ -465,7 +487,11 @@ else {
 $pseudoGtStatus = if ($pseudoGtReady) { "ready" } else { "missing" }
 $pseudoGtAction = "run scripts\run-yolo-problem-span-verification.ps1 on a <=30s problem span with tile-face or face-verification evidence and -PublishPseudoGtToGoalEvidence so $PseudoGtCsv exists before pseudo-GT closure and completion finalizer"
 $pseudoGtReviewDraftCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\new-yolo-pseudo-gt-review-draft.ps1 -PseudoGtReviewQueueCsv `"$PseudoGtReviewQueueCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -OutputDir `"$PseudoGtReviewDraftDir`" -Force -Verify"
-$pseudoGtReviewDraftApplyCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\apply-yolo-pseudo-gt-review-draft.ps1 -DraftReviewCsv `"$PseudoGtReviewDraftDir\pseudo-gt-full-gt-review-draft.csv`" -DraftFullFrameReviewCsv `"$PseudoGtReviewDraftDir\pseudo-gt-full-frame-review-draft.csv`" -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -InPlace -Verify"
+$pseudoGtReviewVisualCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\new-yolo-pseudo-gt-review-visual-package.ps1 -DraftReviewCsv `"$PseudoGtReviewDraftDir\pseudo-gt-full-gt-review-draft.csv`" -DraftFullFrameReviewCsv `"$PseudoGtReviewDraftDir\pseudo-gt-full-frame-review-draft.csv`" -FrameSourceDir `"$PseudoGtReviewVisualFrameSourceDir`" -OutputDir `"$PseudoGtReviewVisualDir`" -Force -Verify"
+if (-not [string]::IsNullOrWhiteSpace($PseudoGtReviewVisualVideoPath)) {
+    $pseudoGtReviewVisualCommand = "$pseudoGtReviewVisualCommand -VideoPath `"$PseudoGtReviewVisualVideoPath`""
+}
+$pseudoGtReviewDraftApplyCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\apply-yolo-pseudo-gt-review-draft.ps1 -DraftReviewCsv `"$PseudoGtReviewVisualDir\pseudo-gt-full-gt-review-visual-draft.csv`" -DraftFullFrameReviewCsv `"$PseudoGtReviewVisualDir\pseudo-gt-full-frame-review-visual-draft.csv`" -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -InPlace -Verify"
 $completedManualReadinessCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-manual-readiness-state.ps1 -FullGtReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -GuiChecklistCsv `"$GuiChecklistCsv`" -FullGtPredictionLog `"$PredictionLog`" -FullGtMinIou $MinIou -FullGtMaxMisses $MaxMisses -FullGtMaxFalsePositives $MaxFalsePositives -FullGtMaxLowIou $MaxLowIou -AllowCompletedFullGt -AllowCompletedGuiSmoke -AllowQualityGateFailure"
 $completedFullGtCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-yolo-full-gt-reviewed-state.ps1 -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -PredictionLog `"$PredictionLog`" -RequireFullFrameReview -RequireEvidence -RequireArtifacts -MinIou $MinIou -MaxMisses $MaxMisses -MaxFalsePositives $MaxFalsePositives -MaxLowIou $MaxLowIou -AllowQualityGateFailure"
 $completedPseudoGtReviewClosureCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\close-yolo-pseudo-gt-review.ps1 -PseudoGtCsv `"$PseudoGtCsv`" -ReviewCsv `"$FullGtReviewCsv`" -FullFrameReviewCsv `"$FullFrameReviewCsv`" -OutputCsv `"$PseudoGtReviewClosureCsv`" -SummaryPath `"$PseudoGtReviewClosureSummary`" -RequireAllClosed"
@@ -501,7 +527,11 @@ Write-Host "[YoloManualGate] pseudoGtReviewClosureSummary=$resolvedPseudoGtRevie
 Write-Host "[YoloManualGate] pseudoGtReviewQueueCsv=$resolvedPseudoGtReviewQueueCsv"
 Write-Host "[YoloManualGate] pseudoGtReviewDraftDir=$resolvedPseudoGtReviewDraftDir"
 Write-Host "[YoloManualGate] pseudoGtReviewDraftReport=$resolvedPseudoGtReviewDraftReport"
+Write-Host "[YoloManualGate] pseudoGtReviewVisualDir=$resolvedPseudoGtReviewVisualDir"
+Write-Host "[YoloManualGate] pseudoGtReviewVisualIndex=$resolvedPseudoGtReviewVisualIndex"
+Write-Host "[YoloManualGate] pseudoGtReviewVisualReport=$resolvedPseudoGtReviewVisualReport"
 Write-Host "[YoloManualGate] pseudoGtReviewDraftCommand=$pseudoGtReviewDraftCommand"
+Write-Host "[YoloManualGate] pseudoGtReviewVisualCommand=$pseudoGtReviewVisualCommand"
 Write-Host "[YoloManualGate] pseudoGtReviewDraftApplyCommand=$pseudoGtReviewDraftApplyCommand"
 Write-Host "[YoloManualGate] completedManualReadinessCommand=$completedManualReadinessCommand"
 Write-Host "[YoloManualGate] completedFullGtCommand=$completedFullGtCommand"
@@ -562,6 +592,8 @@ if ($WriteSummary) {
     }
     if (Test-Path $resolvedPseudoGtReviewQueueCsv) {
         $commands += $pseudoGtReviewDraftCommand
+        $commands += $pseudoGtReviewVisualCommand
+        $commands += $pseudoGtReviewDraftApplyCommand
     }
 
     $summary = @(
@@ -584,6 +616,9 @@ if ($WriteSummary) {
         "- pseudoGtStatus: $pseudoGtStatus",
         "- pseudoGtReviewDraftDir: $resolvedPseudoGtReviewDraftDir",
         "- pseudoGtReviewDraftReport: $resolvedPseudoGtReviewDraftReport",
+        "- pseudoGtReviewVisualDir: $resolvedPseudoGtReviewVisualDir",
+        "- pseudoGtReviewVisualIndex: $resolvedPseudoGtReviewVisualIndex",
+        "- pseudoGtReviewVisualReport: $resolvedPseudoGtReviewVisualReport",
         "- pseudoGtReviewClosureCsv: $resolvedPseudoGtReviewClosureCsv",
         "- pseudoGtReviewClosureSummary: $resolvedPseudoGtReviewClosureSummary",
         "- pseudoGtReviewClosureRule: require-all-closed-after-goal-evidence-publish",
@@ -593,6 +628,7 @@ if ($WriteSummary) {
         "- openSmokeAutoCommand: $openSmokeAutoCommand",
         "- $humanReviewDraftStatus",
         "- pseudoGtReviewDraftCommand: $pseudoGtReviewDraftCommand",
+        "- pseudoGtReviewVisualCommand: $pseudoGtReviewVisualCommand",
         "- pseudoGtReviewDraftApplyCommand: $pseudoGtReviewDraftApplyCommand",
         "- pendingReportPath: $resolvedPendingReportPath",
         "- dashboardPath: $resolvedDashboardPath",

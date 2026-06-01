@@ -166,6 +166,18 @@ YOLO 후보 crop 자체를 고품질 face detection 모델로 재검증하려면
 `pseudo-gt-review-queue.csv`는 같은 후보를 `fpProbability`/`missProbability` 기준으로 정렬해 먼저 볼 frame/candidate를 알려준다. queue에는 사람이 라벨을 옮길 때 참고할 `expectedReviewLabel`, `geometryPriorityBoost`, `geometryTag`, candidate `evidenceNotes`도 포함하지만, 이 값도 참고 증거이며 최종 판정은 review CSV 라벨로만 닫는다. `expectedReviewLabel`은 `supportedFaceCandidate=face`, `falsePositiveCandidate=nonface`, `missCandidate=miss`로 안내한다.
 기본 YOLO 검출이 0개인 구간에서도 `-AllowNoDetections -WithPseudoGtTileInput`과 tile 외부 runner를 함께 쓰면 sampled frame tile 결과가 `missCandidate`로 기록된다. 이때 `-WithPseudoGtPersonObjectInput`과 person/object 외부 runner를 함께 쓰면 같은 sampled frame의 person/object 보조 신호도 `personConfidence`, `personUpperOverlap`, `auxiliaryPriorityBoost`, `auxiliarySignalRole=priority-only-not-face-evidence`로 연결된다. 다만 `MinPersonObjectConfidence` 미만 person/object row는 review 우선순위를 올리지 않는다. person/object row는 `missProbability`를 직접 올리지 않고 `auxiliaryPriorityBoost`로만 review 순서를 올린다. 이 경로는 작은 얼굴 미탐 검증용 test-only 증거이며, person/object 결과는 얼굴 정답이 아니라 review 우선순위 보조 신호이고 실제 `miss` 확정은 review CSV 라벨로 닫는다.
 
+`scripts/new-yolo-pseudo-gt-review-draft.ps1`로 만든 draft는 최종 라벨을 비워 둔 CSV 초안이다. 후보를 사람이 빠르게 닫으려면 이어서 `scripts/new-yolo-pseudo-gt-review-visual-package.ps1`를 실행해 `pseudo-gt-full-gt-review-visual-draft.csv`, 후보 crop, 후보별 overlay, `pseudo-gt-review-visual-index.html`을 만든다. 이 visual package도 test-only evidence이며 앱 기본 런타임 경로가 읽지 않는다. `suggestedLabel`은 참고값일 뿐이고, 최종 `label/reviewStatus/evidenceNotes`는 visual draft를 사람이 확인한 뒤 채워야 한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/new-yolo-pseudo-gt-review-visual-package.ps1 `
+  -DraftReviewCsv ".tmp/yolo-pseudo-gt/review-draft/pseudo-gt-full-gt-review-draft.csv" `
+  -DraftFullFrameReviewCsv ".tmp/yolo-pseudo-gt/review-draft/pseudo-gt-full-frame-review-draft.csv" `
+  -FrameSourceDir ".tmp/yolo-full-gt/review-package-smoke/frames" `
+  -OutputDir ".tmp/yolo-pseudo-gt/review-visual" `
+  -Force `
+  -Verify
+```
+
 review CSV를 사람이 채운 뒤에는 pseudo-GT 후보가 실제 라벨로 닫혔는지 별도 closure summary로 확인한다.
 closure CSV는 candidate의 confidence, tile/verification, person/object 보조 신호, `auxiliarySignalRole`, 반복 support, IoU/center-distance evidence, normalized geometry evidence와 `geometryTag`, review row의 `evidenceNotes`를 보존하므로 최종 `face`/`nonface`/`miss` 라벨 근거를 나중에 다시 확인할 수 있다.
 `-PublishPseudoGtToGoalEvidence`로 goal evidence에 발행한 경우에는 completion gate 기본 경로인 `.tmp/yolo-pseudo-gt/`의 후보 CSV를 닫아야 한다. problem-span 출력 폴더만 검증하는 임시 실행이면 아래 경로들을 해당 run의 `-OutputDir` 아래 파일로 바꿔서 실행한다.
@@ -201,6 +213,8 @@ full-GT review package에서도 detection crop row는 `face`/`nonface`로 닫고
 - `pseudo-gt-person-object-input/person-object-input-summary.md`: frame/해상도/외부 person/object runner 연결 요약
 - `pseudo-gt-candidates.csv`: test-only high-precision tile/verification 결과를 기본 YOLO 후보와 비교한 후보 CSV
 - `pseudo-gt-review-queue.csv`: `falsePositiveCandidate`/`missCandidate` 우선 확인용 review queue CSV. 사람이 후보를 바로 추적할 수 있도록 `expectedReviewLabel`, `basePredictionId`, `tileDetectionId`, `verificationId`, `x/y/w/h`, IoU/center-distance/support/probability 근거, `centerXRatio/centerYRatio/baseAreaRatio/aspectRatio`, `geometryTag`, `geometryPriorityBoost`, `evidenceNotes`를 함께 보존한다. person/object overlap은 class가 person 계열인 경우에만 `auxiliaryPriorityBoost`로 review 우선순위만 올리며, `auxiliarySignalRole=priority-only-not-face-evidence`로 face/nonface/miss 결론이 아님을 명시한다.
+- `review-visual/pseudo-gt-full-gt-review-visual-draft.csv`: pseudo-GT review draft에 crop/overlay 경로를 붙인 test-only visual draft. 최종 라벨 필드는 비어 있어야 한다.
+- `review-visual/pseudo-gt-review-visual-index.html`: pseudo-GT 후보 crop, overlay, high-precision evidence 요약을 한 화면에서 보는 visual review index
 - `pseudo-gt-summary.md`: pseudo-GT 후보 수와 입력 row count 요약
 - `pseudo-gt-review-closure.csv`: review CSV 라벨로 pseudo-GT 후보가 닫혔는지 확인한 결과
 - `pseudo-gt-review-closure-summary.md`: 닫힌 후보, 미검토 후보, 라벨 불일치 후보 수 요약
