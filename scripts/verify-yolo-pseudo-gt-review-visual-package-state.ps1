@@ -106,12 +106,15 @@ Assert-Contains "script records test-only visual boundary" $scriptText "test-onl
 Assert-Contains "script keeps final labels human owned" $scriptText "does not finalize face/nonface/miss labels"
 Assert-Contains "script rejects suggestedLabel inference" $scriptText "does not infer labels from suggestedLabel"
 Assert-Contains "script writes visual draft csv" $scriptText "pseudo-gt-full-gt-review-visual-draft.csv"
+Assert-Contains "script writes compact decision sheet" $scriptText "pseudo-gt-review-decision-sheet.csv"
+Assert-Contains "script writes compact full-frame decision sheet" $scriptText "pseudo-gt-full-frame-review-decision-sheet.csv"
 Assert-Contains "script writes crop path" $scriptText "cropPath"
 Assert-Contains "script writes overlay path" $scriptText "visualOverlayPath"
 Assert-Contains "script records missing visual frames" $scriptText "missingVisualFrames"
 Assert-Contains "script records missing visual recovery command" $scriptText "suggestedVideoRerunCommand"
 Assert-Contains "script uses per-source frame visual size" $scriptText "Get-VisualSourceSize"
 Assert-Contains "script clamps overlay box to source frame" $scriptText "Get-ClampedBoxRect"
+Assert-Contains "script documents decision sheet apply path" $scriptText "-DecisionCsv and -FrameDecisionCsv"
 
 if (Test-Path $work) {
     Remove-Item -Recurse -Force -Path $work
@@ -292,16 +295,28 @@ Assert-Contains "script selftest completed" $text "[YoloPseudoGtReviewVisual] al
 
 $visualDraftCsv = Join-Path $outputDir "pseudo-gt-full-gt-review-visual-draft.csv"
 $visualFrameCsv = Join-Path $outputDir "pseudo-gt-full-frame-review-visual-draft.csv"
+$decisionCsv = Join-Path $outputDir "pseudo-gt-review-decision-sheet.csv"
+$frameDecisionCsv = Join-Path $outputDir "pseudo-gt-full-frame-review-decision-sheet.csv"
 $indexHtml = Join-Path $outputDir "pseudo-gt-review-visual-index.html"
 $reportPath = Join-Path $outputDir "pseudo-gt-review-visual-report.md"
 Assert-FileNonEmpty "visual draft CSV" $visualDraftCsv
 Assert-FileNonEmpty "visual frame draft CSV" $visualFrameCsv
+Assert-FileNonEmpty "decision sheet CSV" $decisionCsv
+Assert-FileNonEmpty "full-frame decision sheet CSV" $frameDecisionCsv
 Assert-FileNonEmpty "visual index HTML" $indexHtml
 Assert-FileNonEmpty "visual report" $reportPath
 
 $rows = @(Import-Csv $visualDraftCsv)
+$decisionRows = @(Import-Csv $decisionCsv)
+$frameDecisionRows = @(Import-Csv $frameDecisionCsv)
 if ($rows.Count -ne 3) {
     throw "Expected 3 visual draft rows, got $($rows.Count)"
+}
+if ($decisionRows.Count -ne 3) {
+    throw "Expected 3 decision sheet rows, got $($decisionRows.Count)"
+}
+if ($frameDecisionRows.Count -ne 1) {
+    throw "Expected 1 full-frame decision sheet row, got $($frameDecisionRows.Count)"
 }
 
 $finalFilled = @($rows | Where-Object {
@@ -313,6 +328,25 @@ if ($finalFilled.Count -ne 0) {
     throw "Visual package filled final review fields unexpectedly: $($finalFilled.Count)"
 }
 Write-Host "[YoloPseudoGtReviewVisualVerify] pass final review fields stay blank"
+
+$filledDecisionRows = @($decisionRows | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_.label) -or
+    -not [string]::IsNullOrWhiteSpace($_.reviewStatus) -or
+    -not [string]::IsNullOrWhiteSpace($_.evidenceNotes)
+})
+if ($filledDecisionRows.Count -ne 0) {
+    throw "Decision sheet filled final review fields unexpectedly: $($filledDecisionRows.Count)"
+}
+$filledFrameDecisionRows = @($frameDecisionRows | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_.missedFaceCount) -or
+    -not [string]::IsNullOrWhiteSpace($_.missedFaceRowsAdded) -or
+    -not [string]::IsNullOrWhiteSpace($_.reviewStatus) -or
+    -not [string]::IsNullOrWhiteSpace($_.evidenceNotes)
+})
+if ($filledFrameDecisionRows.Count -ne 0) {
+    throw "Full-frame decision sheet filled final review fields unexpectedly: $($filledFrameDecisionRows.Count)"
+}
+Write-Host "[YoloPseudoGtReviewVisualVerify] pass decision sheets keep final fields blank"
 
 foreach ($row in $rows) {
     Assert-FileNonEmpty "crop for frame $($row.frame)" $row.cropPath
@@ -327,10 +361,12 @@ Assert-Contains "index shows false positives" $indexText "falsePositiveCandidate
 Assert-Contains "index shows supported faces" $indexText "supportedFaceCandidate"
 Assert-Contains "index shows miss candidates" $indexText "missCandidate"
 Assert-Contains "index warns suggested label is not final" $indexText "Do not copy"
+Assert-Contains "index links decision sheet" $indexText "Decision sheet"
 
 $reportText = Get-Content -Raw -Path $reportPath
 Assert-Contains "report records zero missing visuals" $reportText "missingVisualRows: 0"
 Assert-Contains "report records final fields blank" $reportText "finalFilledRows: 0"
+Assert-Contains "report records decision sheet" $reportText "decisionCsv"
 
 $missingFrameDir = Join-Path $work "missing-frames"
 New-Item -ItemType Directory -Force -Path $missingFrameDir | Out-Null

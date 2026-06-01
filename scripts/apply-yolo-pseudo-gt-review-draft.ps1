@@ -3,6 +3,8 @@ param(
     [string]$DraftFullFrameReviewCsv = ".tmp\yolo-pseudo-gt\review-draft\pseudo-gt-full-frame-review-draft.csv",
     [string]$ReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-gt-review.csv",
     [string]$FullFrameReviewCsv = ".tmp\yolo-full-gt\review-package-smoke\full-frame-review.csv",
+    [string]$DecisionCsv = "",
+    [string]$FrameDecisionCsv = "",
     [string]$OutputReviewCsv = ".tmp\yolo-pseudo-gt\review-draft\applied-full-gt-review.csv",
     [string]$OutputFullFrameReviewCsv = ".tmp\yolo-pseudo-gt\review-draft\applied-full-frame-review.csv",
     [string]$ReportPath = ".tmp\yolo-pseudo-gt\review-draft\pseudo-gt-review-draft-apply-report.md",
@@ -86,6 +88,132 @@ function Get-ReviewKey {
     return "source|$frame|$sourcePredictionId"
 }
 
+function Get-DecisionKey {
+    param([object]$Row)
+
+    $frame = Get-CsvValue $Row "frame"
+    $candidateId = Get-CsvValue $Row "pseudoGt_candidateId"
+    if ([string]::IsNullOrWhiteSpace($candidateId)) {
+        $candidateId = Get-CsvValue $Row "candidateId"
+    }
+    if ([string]::IsNullOrWhiteSpace($candidateId)) {
+        $candidateId = Get-CsvValue $Row "gtId"
+    }
+    if ([string]::IsNullOrWhiteSpace($candidateId)) {
+        $candidateId = Get-CsvValue $Row "sourcePredictionId"
+    }
+
+    return "$frame|$candidateId"
+}
+
+function Merge-DecisionRows {
+    param(
+        [object[]]$DraftRows,
+        [string]$DecisionPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DecisionPath)) {
+        return 0
+    }
+
+    $resolvedDecisionPath = Resolve-RepoPath $DecisionPath
+    if (-not (Test-Path $resolvedDecisionPath)) {
+        throw "Pseudo-GT decision CSV not found: $resolvedDecisionPath"
+    }
+
+    $draftByKey = @{}
+    foreach ($draftRow in $DraftRows) {
+        $key = Get-DecisionKey $draftRow
+        if (-not [string]::IsNullOrWhiteSpace($key)) {
+            $draftByKey[$key] = $draftRow
+        }
+    }
+
+    $seenDecisionKeys = @{}
+    $merged = 0
+    foreach ($decisionRow in @(Import-Csv $resolvedDecisionPath)) {
+        $hasFinalFields = -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "label")) -or
+            -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "reviewStatus")) -or
+            -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "evidenceNotes"))
+        if (-not $hasFinalFields) {
+            continue
+        }
+
+        $key = Get-DecisionKey $decisionRow
+        if ($seenDecisionKeys.ContainsKey($key)) {
+            throw "Duplicate pseudo-GT decision row for key=$key"
+        }
+        $seenDecisionKeys[$key] = $true
+
+        if (-not $draftByKey.ContainsKey($key)) {
+            throw "Pseudo-GT decision row does not match a draft row: key=$key"
+        }
+
+        foreach ($column in @("label", "reviewStatus", "evidenceNotes")) {
+            $value = Get-CsvValue $decisionRow $column
+            if (-not [string]::IsNullOrWhiteSpace($value) -and $null -ne $draftByKey[$key].PSObject.Properties[$column]) {
+                $draftByKey[$key].$column = $value
+            }
+        }
+        $merged++
+    }
+
+    return $merged
+}
+
+function Merge-FrameDecisionRows {
+    param(
+        [object[]]$DraftRows,
+        [string]$DecisionPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DecisionPath)) {
+        return 0
+    }
+
+    $resolvedDecisionPath = Resolve-RepoPath $DecisionPath
+    if (-not (Test-Path $resolvedDecisionPath)) {
+        throw "Pseudo-GT full-frame decision CSV not found: $resolvedDecisionPath"
+    }
+
+    $draftByFrame = @{}
+    foreach ($draftRow in $DraftRows) {
+        $draftByFrame[(Get-CsvValue $draftRow "frame")] = $draftRow
+    }
+
+    $seenFrames = @{}
+    $merged = 0
+    foreach ($decisionRow in @(Import-Csv $resolvedDecisionPath)) {
+        $hasFinalFields = -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "missedFaceCount")) -or
+            -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "missedFaceRowsAdded")) -or
+            -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "reviewStatus")) -or
+            -not [string]::IsNullOrWhiteSpace((Get-CsvValue $decisionRow "evidenceNotes"))
+        if (-not $hasFinalFields) {
+            continue
+        }
+
+        $frame = Get-CsvValue $decisionRow "frame"
+        if ($seenFrames.ContainsKey($frame)) {
+            throw "Duplicate pseudo-GT full-frame decision row for frame=$frame"
+        }
+        $seenFrames[$frame] = $true
+
+        if (-not $draftByFrame.ContainsKey($frame)) {
+            throw "Pseudo-GT full-frame decision row does not match a draft frame row: frame=$frame"
+        }
+
+        foreach ($column in @("missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
+            $value = Get-CsvValue $decisionRow $column
+            if (-not [string]::IsNullOrWhiteSpace($value) -and $null -ne $draftByFrame[$frame].PSObject.Properties[$column]) {
+                $draftByFrame[$frame].$column = $value
+            }
+        }
+        $merged++
+    }
+
+    return $merged
+}
+
 function Copy-Columns {
     param(
         [string[]]$Columns,
@@ -163,6 +291,8 @@ if ($reviewRows.Count -eq 0) {
     throw "Full-GT review CSV has no rows: $reviewPath"
 }
 
+$decisionRowsMerged = Merge-DecisionRows -DraftRows $draftRows -DecisionPath $DecisionCsv
+
 $pendingDraftRows = @($draftRows | Where-Object { -not (Test-ReviewRowReady $_) })
 if ($pendingDraftRows.Count -gt 0 -and -not $AllowPartial) {
     throw "Pseudo-GT draft has $($pendingDraftRows.Count) rows without final label/reviewStatus/evidenceNotes. Fill them or pass -AllowPartial."
@@ -202,6 +332,7 @@ foreach ($draftRow in $readyDraftRows) {
 $frameAdded = 0
 $frameUpdated = 0
 $framePending = 0
+$frameDecisionRowsMerged = 0
 $readyFrameRows = @()
 $frameRows = @()
 $mergedFrameRows = @()
@@ -212,6 +343,7 @@ if (-not [string]::IsNullOrWhiteSpace($DraftFullFrameReviewCsv) -and (Test-Path 
     }
 
     $draftFrameRows = @(Import-Csv $draftFramePath)
+    $frameDecisionRowsMerged = Merge-FrameDecisionRows -DraftRows $draftFrameRows -DecisionPath $FrameDecisionCsv
     $frameRows = @(Import-Csv $fullFramePath)
     $framePending = @($draftFrameRows | Where-Object { -not (Test-FrameReviewRowReady $_) }).Count
     if ($framePending -gt 0 -and -not $AllowPartial) {
@@ -268,6 +400,8 @@ $reportLines = @(
     "## Inputs",
     "- draftReviewCsv=$draftReviewPath",
     "- draftFullFrameReviewCsv=$draftFramePath",
+    "- decisionCsv=$(Resolve-RepoPath $DecisionCsv)",
+    "- frameDecisionCsv=$(Resolve-RepoPath $FrameDecisionCsv)",
     "- reviewCsv=$reviewPath",
     "- fullFrameReviewCsv=$fullFramePath",
     "",
@@ -277,11 +411,13 @@ $reportLines = @(
     "",
     "## Summary",
     "- draftRows=$($draftRows.Count)",
+    "- decisionRowsMerged=$decisionRowsMerged",
     "- readyDraftRows=$($readyDraftRows.Count)",
     "- pendingDraftRows=$($pendingDraftRows.Count)",
     "- reviewRowsAdded=$reviewAdded",
     "- reviewRowsUpdated=$reviewUpdated",
     "- readyFullFrameRows=$(@($readyFrameRows).Count)",
+    "- frameDecisionRowsMerged=$frameDecisionRowsMerged",
     "- pendingFullFrameRows=$framePending",
     "- fullFrameRowsAdded=$frameAdded",
     "- fullFrameRowsUpdated=$frameUpdated",

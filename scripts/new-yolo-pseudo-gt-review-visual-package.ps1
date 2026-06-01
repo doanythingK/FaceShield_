@@ -384,6 +384,8 @@ function Write-ReviewIndexHtml {
         [object[]]$Rows,
         [string]$VisualDraftCsv,
         [string]$VisualFrameCsv,
+        [string]$DecisionCsv,
+        [string]$FrameDecisionCsv,
         [int]$MissingVisualRows,
         [string[]]$MissingVisualFrames,
         [string[]]$MissingVisualCandidateIds,
@@ -409,6 +411,8 @@ function Write-ReviewIndexHtml {
     [void]$builder.AppendLine("<p>Fill <code>label</code>, <code>reviewStatus</code>, and <code>evidenceNotes</code> only after human visual confirmation. Do not copy <code>suggestedLabel</code> blindly.</p>")
     [void]$builder.AppendLine("<p>Visual draft: <code>$(Convert-ToHtmlText (Convert-ToRelativeLink -BaseDir $baseDir -TargetPath $VisualDraftCsv))</code></p>")
     [void]$builder.AppendLine("<p>Full-frame draft: <code>$(Convert-ToHtmlText (Convert-ToRelativeLink -BaseDir $baseDir -TargetPath $VisualFrameCsv))</code></p>")
+    [void]$builder.AppendLine("<p>Decision sheet: <code>$(Convert-ToHtmlText (Convert-ToRelativeLink -BaseDir $baseDir -TargetPath $DecisionCsv))</code></p>")
+    [void]$builder.AppendLine("<p>Full-frame decision sheet: <code>$(Convert-ToHtmlText (Convert-ToRelativeLink -BaseDir $baseDir -TargetPath $FrameDecisionCsv))</code></p>")
     [void]$builder.AppendLine("<p class=""warn"">missingVisualRows=$MissingVisualRows</p>")
     if ($MissingVisualRows -gt 0) {
         [void]$builder.AppendLine("<p class=""warn"">missingVisualFrames=$(Convert-ToHtmlText (($MissingVisualFrames | Select-Object -First 80) -join ","))</p>")
@@ -446,6 +450,60 @@ function Write-ReviewIndexHtml {
     [void]$builder.AppendLine("</html>")
 
     $builder.ToString() | Set-Content -Encoding UTF8 -Path $Path
+}
+
+function New-ReviewDecisionRows {
+    param([object[]]$Rows)
+
+    foreach ($row in $Rows) {
+        [pscustomobject][ordered]@{
+            reviewRank = Get-CsvValue $row "pseudoGt_reviewRank"
+            frame = Get-CsvValue $row "frame"
+            pseudoGt_candidateId = Get-CsvValue $row "pseudoGt_candidateId"
+            pseudoGt_candidateType = Get-CsvValue $row "pseudoGt_candidateType"
+            suggestedLabel = Get-CsvValue $row "suggestedLabel"
+            label = ""
+            reviewStatus = ""
+            evidenceNotes = ""
+            visualReviewStatus = Get-CsvValue $row "visualReviewStatus"
+            cropPath = Get-CsvValue $row "cropPath"
+            visualOverlayPath = Get-CsvValue $row "visualOverlayPath"
+            visualFramePath = Get-CsvValue $row "visualFramePath"
+            baseFaceConfidence = Get-CsvValue $row "pseudoGt_baseFaceConfidence"
+            tileFaceConfidence = Get-CsvValue $row "pseudoGt_tileFaceConfidence"
+            tileSupportCount = Get-CsvValue $row "pseudoGt_tileSupportCount"
+            faceVerificationConfidence = Get-CsvValue $row "pseudoGt_faceVerificationConfidence"
+            faceVerificationDistance = Get-CsvValue $row "pseudoGt_faceVerificationDistance"
+            personConfidence = Get-CsvValue $row "pseudoGt_personConfidence"
+            personUpperOverlap = Get-CsvValue $row "pseudoGt_personUpperOverlap"
+            fpProbability = Get-CsvValue $row "pseudoGt_fpProbability"
+            missProbability = Get-CsvValue $row "pseudoGt_missProbability"
+            pseudoGtReason = Get-CsvValue $row "pseudoGt_pseudoGtReason"
+            humanReviewInstruction = "Fill label/reviewStatus/evidenceNotes only after checking cropPath and visualOverlayPath. Do not copy suggestedLabel blindly."
+        }
+    }
+}
+
+function New-FrameDecisionRows {
+    param([object[]]$Rows)
+
+    foreach ($row in $Rows) {
+        [pscustomobject][ordered]@{
+            frame = Get-CsvValue $row "frame"
+            missedFaceCount = ""
+            missedFaceRowsAdded = ""
+            reviewStatus = ""
+            evidenceNotes = ""
+            pseudoGtMissCandidateCount = Get-CsvValue $row "pseudoGtMissCandidateCount"
+            pseudoGtMissCandidateIds = Get-CsvValue $row "pseudoGtMissCandidateIds"
+            detectedCandidateCount = Get-CsvValue $row "detectedCandidateCount"
+            candidateSummary = Get-CsvValue $row "candidateSummary"
+            frameImagePath = Get-CsvValue $row "frameImagePath"
+            overlayFrameImagePath = Get-CsvValue $row "overlayFrameImagePath"
+            candidateRule = "test-only-reference-not-final-gt"
+            humanReviewInstruction = "Fill missedFaceCount/missedFaceRowsAdded/reviewStatus/evidenceNotes only after full-frame missed-face scan."
+        }
+    }
 }
 
 $draftPath = Assert-FileNonEmpty "pseudo-GT draft review CSV" $DraftReviewCsv
@@ -590,6 +648,8 @@ if ($RequireAllVisuals -and $missingVisualRows -gt 0) {
 
 $visualDraftCsv = Join-Path $resolvedOutputDir "pseudo-gt-full-gt-review-visual-draft.csv"
 $visualFrameCsv = Join-Path $resolvedOutputDir "pseudo-gt-full-frame-review-visual-draft.csv"
+$decisionCsv = Join-Path $resolvedOutputDir "pseudo-gt-review-decision-sheet.csv"
+$frameDecisionCsv = Join-Path $resolvedOutputDir "pseudo-gt-full-frame-review-decision-sheet.csv"
 $indexHtml = Join-Path $resolvedOutputDir "pseudo-gt-review-visual-index.html"
 $reportPath = Join-Path $resolvedOutputDir "pseudo-gt-review-visual-report.md"
 $suggestedVideoPath = if ([string]::IsNullOrWhiteSpace($VideoPath)) { "<short problem clip path>" } else { $VideoPath }
@@ -598,11 +658,15 @@ $suggestedVideoRerunCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass
 $visualRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $visualDraftCsv
 $frameDraftRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $visualFrameCsv
 $visualRowsArray = @($visualRows | ForEach-Object { $_ })
+@(New-ReviewDecisionRows -Rows $visualRowsArray) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $decisionCsv
+@(New-FrameDecisionRows -Rows $frameDraftRows) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $frameDecisionCsv
 Write-ReviewIndexHtml `
     -Path $indexHtml `
     -Rows $visualRowsArray `
     -VisualDraftCsv $visualDraftCsv `
     -VisualFrameCsv $visualFrameCsv `
+    -DecisionCsv $decisionCsv `
+    -FrameDecisionCsv $frameDecisionCsv `
     -MissingVisualRows $missingVisualRows `
     -MissingVisualFrames @($missingVisualFrames) `
     -MissingVisualCandidateIds @($missingVisualCandidateIds) `
@@ -623,6 +687,8 @@ $report = @(
     "## Outputs",
     "- visualDraftCsv: $visualDraftCsv",
     "- visualFrameCsv: $visualFrameCsv",
+    "- decisionCsv: $decisionCsv",
+    "- frameDecisionCsv: $frameDecisionCsv",
     "- reviewIndex: $indexHtml",
     "- cropDir: $cropDir",
     "- overlayDir: $overlayDir",
@@ -639,6 +705,7 @@ $report = @(
     "- test-only-reference-not-final-gt",
     "- visualReviewStatus=visual-ready-test-only only means evidence was generated.",
     "- Human review must fill label/reviewStatus/evidenceNotes before apply-yolo-pseudo-gt-review-draft.ps1.",
+    "- The compact decision sheets can be passed to apply-yolo-pseudo-gt-review-draft.ps1 with -DecisionCsv and -FrameDecisionCsv after human review.",
     "- The script does not infer labels from suggestedLabel.",
     "",
     "## Missing Visual Recovery",
@@ -655,6 +722,12 @@ if ($Verify) {
     if (-not (Test-Path $visualDraftCsv)) {
         throw "Visual draft CSV not created: $visualDraftCsv"
     }
+    if (-not (Test-Path $decisionCsv)) {
+        throw "Decision sheet CSV not created: $decisionCsv"
+    }
+    if (-not (Test-Path $frameDecisionCsv)) {
+        throw "Full-frame decision sheet CSV not created: $frameDecisionCsv"
+    }
     if (-not (Test-Path $indexHtml)) {
         throw "Visual review index not created: $indexHtml"
     }
@@ -668,6 +741,8 @@ if ($Verify) {
 
 Write-Host "[YoloPseudoGtReviewVisual] visualDraftCsv=$visualDraftCsv"
 Write-Host "[YoloPseudoGtReviewVisual] visualFrameCsv=$visualFrameCsv"
+Write-Host "[YoloPseudoGtReviewVisual] decisionCsv=$decisionCsv"
+Write-Host "[YoloPseudoGtReviewVisual] frameDecisionCsv=$frameDecisionCsv"
 Write-Host "[YoloPseudoGtReviewVisual] reviewIndex=$indexHtml"
 Write-Host "[YoloPseudoGtReviewVisual] reportPath=$reportPath"
 Write-Host "[YoloPseudoGtReviewVisual] rows=$($draftRows.Count),visualReady=$visualReadyCount,missingVisualRows=$missingVisualRows"

@@ -44,6 +44,9 @@ Assert-Contains "apply script keeps review csv ownership" $applyText "review CSV
 Assert-Contains "apply script records candidate rule" $applyText "candidateRule=test-only-reference-not-final-gt"
 Assert-Contains "apply script supports strict pending check" $applyText "Fill them or pass -AllowPartial"
 Assert-Contains "apply script verifies final fields" $applyText "label/reviewStatus/evidenceNotes"
+Assert-Contains "apply script accepts compact decision csv" $applyText "DecisionCsv"
+Assert-Contains "apply script accepts compact full-frame decision csv" $applyText "FrameDecisionCsv"
+Assert-Contains "apply script rejects duplicate decisions" $applyText "Duplicate pseudo-GT decision row"
 
 $work = Join-Path $repo ".tmp\yolo-pseudo-gt-review-draft-apply-state"
 New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -371,6 +374,183 @@ if (@($closureRows | Where-Object { $_.closureStatus -ne "closed" }).Count -ne 0
     throw "Expected all pseudo-GT closure rows to be closed after applying reviewed draft."
 }
 Assert-Contains "closure summary records closed rows" (Get-Content -Raw -Path $closureSummary) "closed=3"
+
+$decisionDraftCsv = Join-Path $work "decision-pseudo-gt-full-gt-review-draft.csv"
+@(
+    [pscustomobject]@{
+        frame = "10"
+        gtId = ""
+        label = ""
+        x = "100"
+        y = "120"
+        w = "80"
+        h = "90"
+        sourcePredictionId = "10-0"
+        sourceConfidence = "0.70"
+        source = "pseudo-gt-review-queue"
+        cropPath = ""
+        cropX = ""
+        cropY = ""
+        cropW = ""
+        cropH = ""
+        reviewStatus = ""
+        evidenceNotes = ""
+        notes = "decision sheet target"
+        suggestedLabel = "nonface"
+        candidateRule = "test-only-reference-not-final-gt"
+        pseudoGt_candidateId = "base-10-10-0"
+    },
+    [pscustomobject]@{
+        frame = "11"
+        gtId = ""
+        label = ""
+        x = "200"
+        y = "20"
+        w = "100"
+        h = "120"
+        sourcePredictionId = "11-1"
+        sourceConfidence = "0.52"
+        source = "pseudo-gt-review-queue"
+        cropPath = ""
+        cropX = ""
+        cropY = ""
+        cropW = ""
+        cropH = ""
+        reviewStatus = ""
+        evidenceNotes = ""
+        notes = "decision sheet target"
+        suggestedLabel = "face"
+        candidateRule = "test-only-reference-not-final-gt"
+        pseudoGt_candidateId = "base-11-11-1"
+    },
+    [pscustomobject]@{
+        frame = "12"
+        gtId = "miss-12-face-0"
+        label = ""
+        x = "300"
+        y = "140"
+        w = "50"
+        h = "60"
+        sourcePredictionId = ""
+        sourceConfidence = "0"
+        source = "pseudo-gt-review-queue"
+        cropPath = ""
+        cropX = ""
+        cropY = ""
+        cropW = ""
+        cropH = ""
+        reviewStatus = ""
+        evidenceNotes = ""
+        notes = "decision sheet target"
+        suggestedLabel = "nonface"
+        candidateRule = "test-only-reference-not-final-gt"
+        pseudoGt_candidateId = "miss-12-face-0"
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $decisionDraftCsv
+
+$decisionFrameDraftCsv = Join-Path $work "decision-pseudo-gt-full-frame-review-draft.csv"
+@(
+    [pscustomobject]@{
+        frame = "12"
+        frameImagePath = "frame-12.png"
+        overlayFrameImagePath = "overlay-12.png"
+        detectedCandidateCount = "2"
+        candidateSummary = "synthetic"
+        missedFaceCount = ""
+        missedFaceRowsAdded = ""
+        reviewStatus = ""
+        evidenceNotes = ""
+        pseudoGtMissCandidateCount = "1"
+        pseudoGtMissCandidateIds = "miss-12-face-0"
+        suggestedMissedFaceRowsAdded = "0"
+        candidateRule = "test-only-reference-not-final-gt"
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $decisionFrameDraftCsv
+
+$decisionCsv = Join-Path $work "pseudo-gt-review-decision-sheet.csv"
+@(
+    [pscustomobject]@{
+        frame = "10"
+        pseudoGt_candidateId = "base-10-10-0"
+        suggestedLabel = "nonface"
+        label = "face"
+        reviewStatus = "pass"
+        evidenceNotes = "Human checked compact decision sheet and confirmed visible face."
+    },
+    [pscustomobject]@{
+        frame = "11"
+        pseudoGt_candidateId = "base-11-11-1"
+        suggestedLabel = "face"
+        label = "nonface"
+        reviewStatus = "pass"
+        evidenceNotes = "Human checked compact decision sheet and confirmed non-face."
+    },
+    [pscustomobject]@{
+        frame = "12"
+        pseudoGt_candidateId = "miss-12-face-0"
+        suggestedLabel = "nonface"
+        label = "miss"
+        reviewStatus = "pass"
+        evidenceNotes = "Human checked compact decision sheet and confirmed missed face."
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $decisionCsv
+
+$frameDecisionCsv = Join-Path $work "pseudo-gt-full-frame-review-decision-sheet.csv"
+@(
+    [pscustomobject]@{
+        frame = "12"
+        missedFaceCount = "1"
+        missedFaceRowsAdded = "1"
+        reviewStatus = "pass"
+        evidenceNotes = "Human checked full-frame decision sheet and added one missed-face row."
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $frameDecisionCsv
+
+$decisionOutReviewCsv = Join-Path $work "decision-applied-full-gt-review.csv"
+$decisionOutFrameCsv = Join-Path $work "decision-applied-full-frame-review.csv"
+$decisionReport = Join-Path $work "decision-apply-report.md"
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $applyScript `
+    -DraftReviewCsv $decisionDraftCsv `
+    -DraftFullFrameReviewCsv $decisionFrameDraftCsv `
+    -DecisionCsv $decisionCsv `
+    -FrameDecisionCsv $frameDecisionCsv `
+    -ReviewCsv $reviewCsv `
+    -FullFrameReviewCsv $frameReviewCsv `
+    -OutputReviewCsv $decisionOutReviewCsv `
+    -OutputFullFrameReviewCsv $decisionOutFrameCsv `
+    -ReportPath $decisionReport `
+    -Verify
+if ($LASTEXITCODE -ne 0) {
+    throw "Pseudo-GT compact decision sheet apply selftest failed with exit code $LASTEXITCODE"
+}
+
+$decisionAppliedRows = @(Import-Csv $decisionOutReviewCsv)
+if (@($decisionAppliedRows | Where-Object { $_.sourcePredictionId -eq "10-0" -and $_.label -eq "face" }).Count -ne 1) {
+    throw "Compact decision sheet apply did not merge human face label."
+}
+if (@($decisionAppliedRows | Where-Object { $_.sourcePredictionId -eq "11-1" -and $_.label -eq "nonface" }).Count -ne 1) {
+    throw "Compact decision sheet apply did not merge human nonface label."
+}
+if (@($decisionAppliedRows | Where-Object { $_.gtId -eq "miss-12-face-0" -and $_.label -eq "miss" }).Count -ne 1) {
+    throw "Compact decision sheet apply did not merge human miss label."
+}
+Assert-Contains "decision report records merged rows" (Get-Content -Raw -Path $decisionReport) "decisionRowsMerged=3"
+Assert-Contains "decision report records merged frame rows" (Get-Content -Raw -Path $decisionReport) "frameDecisionRowsMerged=1"
+
+$decisionClosureCsv = Join-Path $work "decision-closure.csv"
+$decisionClosureSummary = Join-Path $work "decision-closure-summary.md"
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $closureScript `
+    -PseudoGtCsv $pseudoGtCsv `
+    -ReviewCsv $decisionOutReviewCsv `
+    -FullFrameReviewCsv $decisionOutFrameCsv `
+    -OutputCsv $decisionClosureCsv `
+    -SummaryPath $decisionClosureSummary `
+    -RequireAllClosed
+if ($LASTEXITCODE -ne 0) {
+    throw "Pseudo-GT closure failed after applying compact decision sheet with exit code $LASTEXITCODE"
+}
+Assert-Contains "decision closure summary records closed rows" (Get-Content -Raw -Path $decisionClosureSummary) "closed=3"
+Write-Host "[YoloPseudoGtReviewDraftApplyVerify] pass compact decision sheet apply and closure"
 
 $incompleteDraftCsv = Join-Path $work "incomplete-pseudo-gt-full-gt-review-draft.csv"
 @(
