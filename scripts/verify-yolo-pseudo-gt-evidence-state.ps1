@@ -92,6 +92,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 @(
     [pscustomobject]@{ frame = 2; detectionId = "car-2"; x = 398.0; y = 298.0; w = 48.0; h = 58.0; confidence = 0.990; class = "car" },
     [pscustomobject]@{ frame = 2; detectionId = "person-2"; x = 390.0; y = 280.0; w = 90.0; h = 190.0; confidence = 0.760; class = "person" },
+    [pscustomobject]@{ frame = 3; detectionId = "person-3"; x = 40.0; y = 50.0; w = 80.0; h = 180.0; confidence = 0.770; class = "person" },
     [pscustomobject]@{ frame = 4; detectionId = "person-low-confidence-4"; x = 205.0; y = 110.0; w = 80.0; h = 180.0; confidence = 0.120; class = "person" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personCsv
 
@@ -259,6 +260,29 @@ if ([double]::Parse($lowConfidencePersonQueue.auxiliaryPriorityBoost, [System.Gl
     throw "Expected low-confidence person/object support not to raise review priority."
 }
 
+$personSupportedMiss = @($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.tileDetectionId -eq "tile-face-3" })[0]
+if ($null -eq $personSupportedMiss) {
+    throw "Expected tile-only missCandidate for person/object auxiliary priority test."
+}
+
+if ([double]::Parse($personSupportedMiss.personUpperOverlap, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected high-confidence person/object support to remain recorded as auxiliary evidence."
+}
+
+$personSupportedMissProbability = [double]::Parse($personSupportedMiss.missProbability, [System.Globalization.CultureInfo]::InvariantCulture)
+if ([Math]::Abs($personSupportedMissProbability - 0.841) -gt 0.0001) {
+    throw "Expected person/object support not to inflate missProbability; actual=$personSupportedMissProbability."
+}
+
+$personSupportedQueue = @($reviewQueueRows | Where-Object { $_.tileDetectionId -eq "tile-face-3" })[0]
+if ($null -eq $personSupportedQueue) {
+    throw "Expected review queue row for person/object auxiliary priority test."
+}
+
+if ([double]::Parse($personSupportedQueue.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected high-confidence person/object support to raise review priority as auxiliary evidence."
+}
+
 if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Count -ne 1) {
     throw "Expected one supportedFaceCandidate."
 }
@@ -424,6 +448,10 @@ Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$
 Assert-Contains "script records review priority score" $scriptText "reviewPriorityScore"
 Assert-Contains "script records auxiliary priority boost" $scriptText "auxiliaryPriorityBoost"
 Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
+if ($scriptText -match 'missProbability = \[Math\]::Min\(0\.98,[^\r\n]*personUpperOverlap') {
+    throw "Expected person/object support to stay out of missProbability formulas."
+}
+Write-Host "[YoloPseudoGtEvidenceVerify] pass script keeps person object out of miss probability"
 Assert-Contains "script records expected review label in queue" $scriptText "expectedReviewLabel"
 Assert-Contains "script preserves queue evidence notes" $scriptText 'evidenceNotes = \$row\.evidenceNotes'
 Assert-Contains "script preserves review queue geometry" $scriptText "basePredictionId[\s\S]*tileDetectionId[\s\S]*verificationId[\s\S]*x ="

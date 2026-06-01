@@ -834,7 +834,7 @@ foreach ($tile in $tileRows) {
     if ($null -ne $verificationMatch) {
         [void]$matchedVerificationIds.Add($verificationMatch.Row.Id)
     }
-    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
+    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $tile.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
 
     $candidateRows.Add([pscustomobject]@{
             candidateId = "miss-$($tile.Frame)-$($tile.Id)"
@@ -897,7 +897,7 @@ foreach ($verification in $verificationRows) {
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
     $tileConfidence = if ($null -ne $tileMatch) { $tileMatch.Row.Confidence } else { 0.0 }
     $tileSupportCount = if ($null -ne $tileMatch) { [Math]::Max(1, $tileMatch.Row.TileSupportCount) } else { 0 }
-    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(1.0, $personUpperOverlap) * 0.10) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
+    $missProbability = [Math]::Min(0.98, 0.55 + ([Math]::Min(1.0, $verification.Confidence) * 0.30) + ([Math]::Min(3, $temporalSupport.FrameCount) * 0.03))
 
     $candidateRows.Add([pscustomobject]@{
             candidateId = "miss-$($verification.Frame)-$($verification.Id)"
