@@ -119,6 +119,28 @@ function Add-SwitchArg {
     }
 }
 
+function Read-LogIntValue {
+    param(
+        [string]$Line,
+        [string]$Name,
+        [int]$DefaultValue = 0
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return $DefaultValue
+    }
+
+    $match = [regex]::Match(
+        $Line,
+        "(?:^|[\s,])$([regex]::Escape($Name))=(?<value>-?\d+)",
+        [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if (-not $match.Success) {
+        return $DefaultValue
+    }
+
+    return [int]::Parse($match.Groups["value"].Value, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Add-ValueArg {
     param(
         [System.Collections.Generic.List[string]]$Arguments,
@@ -1534,6 +1556,8 @@ if ($strongCarryProbe.Count -gt 0) {
 }
 if ($finalMaskCleanup.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask cleanup: ``$($finalMaskCleanup[0].Line)``")
+    $topEdgeLargeDuplicateRemovals = Read-LogIntValue $finalMaskCleanup[0].Line "removedTopEdgeLargeDuplicates"
+    [void]$summary.AppendLine("- Top-edge large duplicate removals: $topEdgeLargeDuplicateRemovals")
 }
 foreach ($carryCleanup in $sceneCutCarryCleanup) {
     [void]$summary.AppendLine("- Scene-cut carry cleanup: ``$($carryCleanup.Line)``")
