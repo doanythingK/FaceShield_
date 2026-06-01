@@ -76,16 +76,16 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 '@ | Set-Content -Encoding UTF8 -Path $log
 
 @(
-    [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 10.0; y = 20.0; w = 50.0; h = 60.0; confidence = 0.920; tileSupportCount = 3 },
-    [pscustomobject]@{ frame = 7; detectionId = "tile-face-7"; x = 60.0; y = 80.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2 }
+    [pscustomobject]@{ frame = 2; detectionId = "tile-face-2"; x = 10.0; y = 20.0; w = 50.0; h = 60.0; confidence = 0.920; tileSupportCount = 3; evidenceModel = "followup-tile-face-v1"; evidenceRunner = "followup-tile-runner" },
+    [pscustomobject]@{ frame = 7; detectionId = "tile-face-7"; x = 60.0; y = 80.0; w = 24.0; h = 28.0; confidence = 0.870; tileSupportCount = 2; evidenceModel = "followup-tile-face-v1"; evidenceRunner = "followup-tile-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileFaceCsv
 
 @(
-    [pscustomobject]@{ frame = 2; verificationId = "verify-face-2"; x = 12.0; y = 21.0; w = 48.0; h = 58.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.210 }
+    [pscustomobject]@{ frame = 2; verificationId = "verify-face-2"; x = 12.0; y = 21.0; w = 48.0; h = 58.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.210; evidenceModel = "followup-face-verify-v1"; evidenceRunner = "followup-face-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $faceVerificationCsv
 
 @(
-    [pscustomobject]@{ frame = 6; detectionId = "person-6"; x = 490.0; y = 400.0; w = 220.0; h = 300.0; confidence = 0.720 }
+    [pscustomobject]@{ frame = 6; detectionId = "person-6"; x = 490.0; y = 400.0; w = 220.0; h = 300.0; confidence = 0.720; evidenceModel = "followup-person-object-v1"; evidenceRunner = "followup-person-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personObjectCsv
 
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
@@ -105,12 +105,30 @@ $template = Join-Path $outDir "yolo-quality-full-gt-template.csv"
 $summary = Join-Path $outDir "yolo-followup-quality-evidence.md"
 $pseudoGt = Join-Path $outDir "pseudo-gt-candidates.csv"
 $pseudoGtSummary = Join-Path $outDir "pseudo-gt-summary.md"
+$pseudoGtQueue = Join-Path $outDir "pseudo-gt-review-queue.csv"
 
-foreach ($required in @($checklist, $continuity, $template, $summary, $pseudoGt, $pseudoGtSummary)) {
+foreach ($required in @($checklist, $continuity, $template, $summary, $pseudoGt, $pseudoGtSummary, $pseudoGtQueue)) {
     if (-not (Test-Path $required)) {
         throw "Expected output was not created: $required"
     }
 }
+
+$pseudoGtRows = @(Import-Csv $pseudoGt)
+$pseudoGtQueueRows = @(Import-Csv $pseudoGtQueue)
+$pseudoGtSummaryText = Get-Content -Raw -Path $pseudoGtSummary
+$supportedPseudoGt = @($pseudoGtRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" })[0]
+if ($null -eq $supportedPseudoGt -or $supportedPseudoGt.tileEvidenceModel -ne "followup-tile-face-v1" -or $supportedPseudoGt.faceVerificationEvidenceRunner -ne "followup-face-runner") {
+    throw "Expected follow-up pseudo-GT supported candidate to preserve tile and face-verification provenance."
+}
+$falsePositivePseudoGt = @($pseudoGtRows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
+if ($null -eq $falsePositivePseudoGt -or $falsePositivePseudoGt.personObjectEvidenceModel -ne "followup-person-object-v1") {
+    throw "Expected follow-up pseudo-GT false-positive candidate to preserve person/object provenance."
+}
+$supportedQueuePseudoGt = @($pseudoGtQueueRows | Where-Object { $_.candidateId -eq $supportedPseudoGt.candidateId })[0]
+if ($null -eq $supportedQueuePseudoGt -or $supportedQueuePseudoGt.tileEvidenceRunner -ne "followup-tile-runner") {
+    throw "Expected follow-up pseudo-GT review queue to preserve model runner provenance."
+}
+Assert-Contains "follow-up pseudo-GT summary records provenance" $pseudoGtSummaryText "evidenceProvenance=optional-evidenceModel/evidenceRunner"
 
 Assert-File "no-detection verification video" $noDetectionVideo
 
@@ -144,6 +162,8 @@ $row = $rows[0]
         h = "40"
         confidence = "0.91"
         tileSupportCount = "2"
+        evidenceModel = "external-no-detect-tile-v1"
+        evidenceRunner = "external-no-detect-tile-runner"
     }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $noDetectionTileRunner
@@ -171,6 +191,8 @@ $row = $rows[0]
         w = "120"
         h = "220"
         confidence = "0.77"
+        evidenceModel = "external-no-detect-person-v1"
+        evidenceRunner = "external-no-detect-person-runner"
     }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $OutputCsv
 '@ | Set-Content -Encoding UTF8 -Path $noDetectionPersonObjectRunner
@@ -220,6 +242,9 @@ if ([string]::IsNullOrWhiteSpace($noDetectionMiss.personUpperOverlap) -or [doubl
 }
 if (@($noDetectionQueueRows | Where-Object { [double]::Parse($_.auxiliaryPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -gt 0 }).Count -eq 0) {
     throw "Expected no-detection review queue to carry auxiliary person/object priority boost."
+}
+if ($noDetectionMiss.tileEvidenceModel -ne "external-no-detect-tile-v1" -or $noDetectionMiss.personObjectEvidenceRunner -ne "external-no-detect-person-runner") {
+    throw "Expected no-detection external runner evidence to preserve model and runner provenance."
 }
 Assert-Contains "no-detection summary links person object input" $noDetectionSummaryText "Pseudo-GT person/object input manifest"
 Assert-Contains "no-detection summary records sampled frames" $noDetectionSummaryText "Sampled no-detection review frames"
@@ -279,6 +304,7 @@ Assert-Contains "script can use external face verification output as pseudo gt i
 Assert-Contains "script can prepare pseudo gt person object manifest" $scriptText "WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*PseudoGtPersonObjectInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script can use external person object output as pseudo gt input" $scriptText 'PseudoGtPersonObjectExternalOutputCsv[\s\S]*PseudoGtPersonObjectCsv\s*=\s*\$PseudoGtPersonObjectExternalOutputCsv'
 Assert-Contains "script supports pseudo gt person object external coordinate space" $scriptText "PseudoGtPersonObjectExternalOutputCoordinateSpace"
+Assert-Contains "script preserves pseudo gt model provenance in generated evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script can prepare no-detection pseudo gt person object manifest" $scriptText 'noDetectionReviewFrameNumbers[\s\S]*WithPseudoGtPersonObjectInput[\s\S]*pseudoGtPersonObjectInputScript[\s\S]*PseudoGtPersonObjectInputDir'
 Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script forwards pseudo gt review queue" $scriptText "PseudoGtReviewQueueCsv[\s\S]*-ReviewQueueCsv"
