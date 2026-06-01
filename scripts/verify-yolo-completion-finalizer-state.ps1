@@ -175,6 +175,13 @@ if ($exitCode -ne 0) {
         exit 0
     }
 
+    if ($text -match "Pseudo-GT review closure is incomplete") {
+        Write-Host "[YoloCompletionFinalizerStateVerify] pass current unclosed pseudo-GT review closure blocks finalizer"
+        Write-Host "[YoloCompletionFinalizerStateVerify] finalizable=false, reviewedRows=$reviewedRows/$($reviewRows.Count), fullFrameRows=$frameReviewedRows/$($frameRows.Count), guiRows=$guiStatusRows/$($guiRows.Count), pseudoGtClosure=unclosed"
+        Write-Host "[YoloCompletionFinalizerStateVerify] all requested checks passed"
+        exit 0
+    }
+
     throw "Manual evidence appears filled, but finalizer still failed with exit code $exitCode. output=$text"
 }
 

@@ -176,11 +176,48 @@ function Test-PseudoGtClosureStrictlyClosed {
         return $false
     }
 
+    if ($null -eq $Row.PSObject.Properties["reviewEvidenceNotes"] -or
+        [string]::IsNullOrWhiteSpace([string]$Row.reviewEvidenceNotes)) {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewMatchMode"] -or
+        [string]::IsNullOrWhiteSpace([string]$Row.reviewMatchMode)) {
+        return $false
+    }
+
+    $reviewMatchMode = $Row.reviewMatchMode.Trim()
+    if ($reviewMatchMode -ne "sourcePredictionId+iou" -and
+        $reviewMatchMode.StartsWith("sourcePredictionId", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewIou"]) {
+        return $false
+    }
+
+    $reviewIou = 0.0
+    if (-not [double]::TryParse(
+            [string]$Row.reviewIou,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$reviewIou) -or
+        $reviewIou -lt $MinIou) {
+        return $false
+    }
+
     if ($null -ne $Row.PSObject.Properties["expectedReviewLabel"] -and
         $null -ne $Row.PSObject.Properties["reviewLabel"] -and
-        -not [string]::IsNullOrWhiteSpace([string]$Row.expectedReviewLabel) -and
-        $Row.expectedReviewLabel.Trim().ToLowerInvariant() -ne $Row.reviewLabel.Trim().ToLowerInvariant()) {
-        return $false
+        -not [string]::IsNullOrWhiteSpace([string]$Row.expectedReviewLabel)) {
+        $reviewLabel = $Row.reviewLabel.Trim().ToLowerInvariant()
+        $expectedLabels = @(([string]$Row.expectedReviewLabel -split "\|") | ForEach-Object {
+                $_.Trim().ToLowerInvariant()
+            } | Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_)
+            })
+        if ($expectedLabels.Count -gt 0 -and $reviewLabel -notin $expectedLabels) {
+            return $false
+        }
     }
 
     $candidateType = if ($null -ne $Row.PSObject.Properties["candidateType"]) {
@@ -193,6 +230,11 @@ function Test-PseudoGtClosureStrictlyClosed {
     if ($candidateType -eq "misscandidate") {
         if ($null -eq $Row.PSObject.Properties["fullFrameReviewStatus"] -or
             -not (Test-ReviewedStatus ([string]$Row.fullFrameReviewStatus))) {
+            return $false
+        }
+
+        if ($null -eq $Row.PSObject.Properties["fullFrameEvidenceNotes"] -or
+            [string]::IsNullOrWhiteSpace([string]$Row.fullFrameEvidenceNotes)) {
             return $false
         }
 
@@ -506,6 +548,9 @@ $pseudoGtClosureRowsWithGeometryEvidence = Count-AnyColumnPresent $pseudoGtClosu
 $pseudoGtClosureRowsWithAreaRatioEvidence = Count-ColumnPresent $pseudoGtClosureRows "areaChangeRatio"
 $pseudoGtClosureRowsWithModelProvenance = Count-AnyColumnPresent $pseudoGtClosureRows @("tileEvidenceModel", "faceVerificationEvidenceModel", "personObjectEvidenceModel")
 $pseudoGtClosureRowsWithRunnerProvenance = Count-AnyColumnPresent $pseudoGtClosureRows @("tileEvidenceRunner", "faceVerificationEvidenceRunner", "personObjectEvidenceRunner")
+$pseudoGtClosureRowsWithReviewEvidenceNotes = Count-ColumnPresent $pseudoGtClosureRows "reviewEvidenceNotes"
+$pseudoGtClosureRowsWithFullFrameEvidenceNotes = Count-ColumnPresent $pseudoGtClosureRows "fullFrameEvidenceNotes"
+$pseudoGtClosureRowsWithGeometryMatchMode = Count-ColumnPresent $pseudoGtClosureRows "reviewMatchMode"
 $finalMaskCleanupEvidence = Get-FinalMaskCleanupEvidence $FinalMaskCleanupLog
 $pseudoGtOpenRows = if ($pseudoGtRows.Count -eq 0) {
     0
@@ -589,8 +634,8 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Full-GT quality gate"; Status = $qualityGateStatus; Evidence = $qualityGateEvidence },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT candidate evidence"; Status = $pseudoGtStatus; Evidence = "supportedFaceCandidate=$pseudoGtSupportedRows, falsePositiveCandidate=$pseudoGtFalsePositiveRows, missCandidate=$pseudoGtMissRows, supportEvidenceRows=$pseudoGtRowsWithSupportEvidence, supportRowEvidenceRows=$pseudoGtRowsWithSupportRowEvidence, supportIdEvidenceRows=$pseudoGtRowsWithSupportIdEvidence, faceVerificationEvidenceRows=$pseudoGtRowsWithFaceVerificationEvidence, personEvidenceRows=$pseudoGtRowsWithPersonEvidence, auxiliaryRoleRows=$pseudoGtRowsWithAuxiliaryRoleEvidence, geometryEvidenceRows=$pseudoGtRowsWithGeometryEvidence, areaRatioEvidenceRows=$pseudoGtRowsWithAreaRatioEvidence, modelProvenanceRows=$pseudoGtRowsWithModelProvenance, runnerProvenanceRows=$pseudoGtRowsWithRunnerProvenance; source=$PseudoGtCsv" },
     [pscustomobject]@{ Requirement = "Test-only pseudo-GT review queue"; Status = $pseudoGtReviewQueueStatus; Evidence = "rows=$($pseudoGtReviewQueueRows.Count), falsePositiveCandidate=$pseudoGtQueueFalsePositiveRows, missCandidate=$pseudoGtQueueMissRows, supportedFaceCandidate=$pseudoGtQueueSupportedRows, auxiliaryBoostedRows=$pseudoGtQueueAuxiliaryBoostedRows, auxiliaryRoleRows=$pseudoGtQueueAuxiliaryRoleRows, maxAuxiliaryPriorityBoost=$(Format-Double $pseudoGtQueueMaxAuxiliaryBoost), top=$(if ($pseudoGtQueueTopRows.Count -gt 0) { [string]::Join(';', $pseudoGtQueueTopRows) } else { 'none' }); source=$PseudoGtReviewQueueCsv" },
-    [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, open=$pseudoGtOpenRows; runtimePath=not-used-by-app" },
-    [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closureSupportRowEvidenceRows=$pseudoGtClosureRowsWithSupportRowEvidence, closureSupportIdEvidenceRows=$pseudoGtClosureRowsWithSupportIdEvidence, closureFaceVerificationEvidenceRows=$pseudoGtClosureRowsWithFaceVerificationEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureAuxiliaryRoleEvidenceRows=$pseudoGtClosureRowsWithAuxiliaryRoleEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence, closureAreaRatioEvidenceRows=$pseudoGtClosureRowsWithAreaRatioEvidence, closureModelProvenanceRows=$pseudoGtClosureRowsWithModelProvenance, closureRunnerProvenanceRows=$pseudoGtClosureRowsWithRunnerProvenance; source=$PseudoGtReviewClosureCsv" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT review closure"; Status = $pseudoGtStatus; Evidence = "candidates=$($pseudoGtRows.Count), closureRows=$($pseudoGtClosureRows.Count), closed=$pseudoGtClosedRows, looseClosed=$pseudoGtLooseClosedRows, open=$pseudoGtOpenRows, reviewEvidenceNotesRows=$pseudoGtClosureRowsWithReviewEvidenceNotes, reviewMatchModeRows=$pseudoGtClosureRowsWithGeometryMatchMode; runtimePath=not-used-by-app" },
+    [pscustomobject]@{ Requirement = "Test-only pseudo-GT closure evidence preservation"; Status = $pseudoGtStatus; Evidence = "closureSupportEvidenceRows=$pseudoGtClosureRowsWithSupportEvidence, closureSupportRowEvidenceRows=$pseudoGtClosureRowsWithSupportRowEvidence, closureSupportIdEvidenceRows=$pseudoGtClosureRowsWithSupportIdEvidence, closureFaceVerificationEvidenceRows=$pseudoGtClosureRowsWithFaceVerificationEvidence, closurePersonEvidenceRows=$pseudoGtClosureRowsWithPersonEvidence, closureAuxiliaryRoleEvidenceRows=$pseudoGtClosureRowsWithAuxiliaryRoleEvidence, closureGeometryEvidenceRows=$pseudoGtClosureRowsWithGeometryEvidence, closureAreaRatioEvidenceRows=$pseudoGtClosureRowsWithAreaRatioEvidence, closureModelProvenanceRows=$pseudoGtClosureRowsWithModelProvenance, closureRunnerProvenanceRows=$pseudoGtClosureRowsWithRunnerProvenance, closureReviewEvidenceNotesRows=$pseudoGtClosureRowsWithReviewEvidenceNotes, closureFullFrameEvidenceNotesRows=$pseudoGtClosureRowsWithFullFrameEvidenceNotes, closureReviewMatchModeRows=$pseudoGtClosureRowsWithGeometryMatchMode; source=$PseudoGtReviewClosureCsv" },
     [pscustomobject]@{ Requirement = "Avalonia GUI smoke"; Status = $guiStatus; Evidence = "steps=$($guiRows.Count), pass=$guiPassed, artifactPathFilled=$guiArtifacts, required=preview-track-hold/manual-edit/export/reopen-state" },
     [pscustomobject]@{ Requirement = "Model license/distribution policy"; Status = "pass"; Evidence = "license-source=pass, bundle=blocked" },
     [pscustomobject]@{ Requirement = "10-minute/whole-video decision"; Status = "deferred"; Evidence = "ten-minute-full=not-required-after-extended-fail" },
@@ -646,6 +691,9 @@ $lines = @(
     "- pseudoGtRows=$($pseudoGtRows.Count)",
     "- pseudoGtClosedRows=$pseudoGtClosedRows",
     "- pseudoGtLooseClosedRows=$pseudoGtLooseClosedRows",
+    "- pseudoGtClosureReviewEvidenceNotesRows=$pseudoGtClosureRowsWithReviewEvidenceNotes",
+    "- pseudoGtClosureFullFrameEvidenceNotesRows=$pseudoGtClosureRowsWithFullFrameEvidenceNotes",
+    "- pseudoGtClosureReviewMatchModeRows=$pseudoGtClosureRowsWithGeometryMatchMode",
     "- pseudoGtSupportedRows=$pseudoGtSupportedRows",
     "- pseudoGtFalsePositiveRows=$pseudoGtFalsePositiveRows",
     "- pseudoGtMissRows=$pseudoGtMissRows",
@@ -738,6 +786,9 @@ if ($Verify) {
         Assert-ReportContains "report records pseudo-GT closure state" $report "pseudoGtStatus=$pseudoGtStatus"
         Assert-ReportContains "report records strict pseudo-GT closure count" $report "pseudoGtClosedRows=$pseudoGtClosedRows"
         Assert-ReportContains "report records loose pseudo-GT closure count" $report "pseudoGtLooseClosedRows=$pseudoGtLooseClosedRows"
+        Assert-ReportContains "report records pseudo-GT closure review evidence notes" $report "pseudoGtClosureReviewEvidenceNotesRows=$pseudoGtClosureRowsWithReviewEvidenceNotes"
+        Assert-ReportContains "report records pseudo-GT closure full-frame evidence notes" $report "pseudoGtClosureFullFrameEvidenceNotesRows=$pseudoGtClosureRowsWithFullFrameEvidenceNotes"
+        Assert-ReportContains "report records pseudo-GT closure review match mode" $report "pseudoGtClosureReviewMatchModeRows=$pseudoGtClosureRowsWithGeometryMatchMode"
         Assert-ReportContains "report records final-mask cleanup state" $report "finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status)"
         Assert-ReportContains "report records same-size carry removal count" $report "finalMaskCleanupDriftingStrongCarryRemoved=$($finalMaskCleanupEvidence.DriftingStrongCarryRemoved)"
         Assert-ReportContains "report records area-changed carry protection count" $report "finalMaskCleanupAreaChangedStrongCarryProtected=$($finalMaskCleanupEvidence.AreaChangedStrongCarryProtected)"

@@ -110,6 +110,105 @@ function Get-FilledCount {
     }).Count
 }
 
+function Test-ReviewedStatus {
+    param([string]$Status)
+
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        return $false
+    }
+
+    return $Status.Trim().ToLowerInvariant() -in @("pass", "reviewed", "complete", "completed", "closed", "done")
+}
+
+function Test-PseudoGtClosureStrictlyClosed {
+    param([object]$Row)
+
+    if ($null -eq $Row.PSObject.Properties["closureStatus"] -or
+        $Row.closureStatus.Trim().ToLowerInvariant() -ne "closed") {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewStatus"] -or
+        -not (Test-ReviewedStatus ([string]$Row.reviewStatus))) {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewEvidenceNotes"] -or
+        [string]::IsNullOrWhiteSpace([string]$Row.reviewEvidenceNotes)) {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewMatchMode"] -or
+        [string]::IsNullOrWhiteSpace([string]$Row.reviewMatchMode)) {
+        return $false
+    }
+
+    $reviewMatchMode = $Row.reviewMatchMode.Trim()
+    if ($reviewMatchMode -ne "sourcePredictionId+iou" -and
+        $reviewMatchMode.StartsWith("sourcePredictionId", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    if ($null -eq $Row.PSObject.Properties["reviewIou"]) {
+        return $false
+    }
+
+    $reviewIou = 0.0
+    if (-not [double]::TryParse(
+            [string]$Row.reviewIou,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$reviewIou) -or
+        $reviewIou -lt $MinIou) {
+        return $false
+    }
+
+    if ($null -ne $Row.PSObject.Properties["expectedReviewLabel"] -and
+        $null -ne $Row.PSObject.Properties["reviewLabel"] -and
+        -not [string]::IsNullOrWhiteSpace([string]$Row.expectedReviewLabel)) {
+        $reviewLabel = $Row.reviewLabel.Trim().ToLowerInvariant()
+        $expectedLabels = @(([string]$Row.expectedReviewLabel -split "\|") | ForEach-Object {
+                $_.Trim().ToLowerInvariant()
+            } | Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_)
+            })
+        if ($expectedLabels.Count -gt 0 -and $reviewLabel -notin $expectedLabels) {
+            return $false
+        }
+    }
+
+    $candidateType = if ($null -ne $Row.PSObject.Properties["candidateType"]) {
+        $Row.candidateType.Trim().ToLowerInvariant()
+    }
+    else {
+        ""
+    }
+
+    if ($candidateType -eq "misscandidate") {
+        if ($null -eq $Row.PSObject.Properties["fullFrameReviewStatus"] -or
+            -not (Test-ReviewedStatus ([string]$Row.fullFrameReviewStatus))) {
+            return $false
+        }
+
+        if ($null -eq $Row.PSObject.Properties["fullFrameEvidenceNotes"] -or
+            [string]::IsNullOrWhiteSpace([string]$Row.fullFrameEvidenceNotes)) {
+            return $false
+        }
+
+        if ($null -eq $Row.PSObject.Properties["fullFrameMissedRowsAdded"]) {
+            return $false
+        }
+
+        $missedRowsAdded = 0
+        if (-not [int]::TryParse([string]$Row.fullFrameMissedRowsAdded, [ref]$missedRowsAdded) -or
+            $missedRowsAdded -le 0) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Assert-PseudoGtReviewClosure {
     param(
         [string]$CandidateCsv,
@@ -139,7 +238,7 @@ function Assert-PseudoGtReviewClosure {
     }
 
     $openRows = @($closureRows | Where-Object {
-        $null -eq $_.PSObject.Properties["closureStatus"] -or $_.closureStatus.Trim().ToLowerInvariant() -ne "closed"
+        -not (Test-PseudoGtClosureStrictlyClosed $_)
     })
     if ($openRows.Count -gt 0) {
         throw "Pseudo-GT review closure is incomplete: openRows=$($openRows.Count), closureCsv=$closurePath"
@@ -261,7 +360,11 @@ if ($SelfTest) {
             closureStatus = "closed"
             reviewLabel = "face"
             reviewStatus = "pass"
+            reviewSourcePredictionId = "pred-face-1"
+            reviewMatchMode = "sourcePredictionId+iou"
             reviewIou = "1"
+            reviewEvidenceNotes = "synthetic reviewed face"
+            fullFrameEvidenceNotes = ""
             closureReason = "synthetic closure"
         }
     ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $pseudoGtClosureCsv
@@ -338,6 +441,59 @@ if ($SelfTest) {
     }
 
     Write-Host "[YoloCompletionAuditVerify] pass selftest complete PredictionCsv path"
+
+    $loosePseudoGtClosureCsv = Join-Path $selfTestDir "loose-pseudo-gt-review-closure.csv"
+    @(
+        [pscustomobject]@{
+            candidateId = "base-1-0"
+            frame = "1"
+            candidateType = "supportedFaceCandidate"
+            expectedReviewLabel = "face"
+            closureStatus = "closed"
+            reviewLabel = "face"
+            reviewStatus = "pass"
+            reviewSourcePredictionId = "pred-face-1"
+            reviewMatchMode = "sourcePredictionId"
+            reviewIou = "1"
+            reviewEvidenceNotes = ""
+            fullFrameEvidenceNotes = ""
+            closureReason = "synthetic loose closure"
+        }
+    ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $loosePseudoGtClosureCsv
+
+    $oldErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $looseClosureOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath `
+            -PlanDocument $planPath `
+            -FullGtReviewCsv $reviewCsv `
+            -FullFrameReviewCsv $frameCsv `
+            -GuiChecklistCsv $guiChecklistCsv `
+            -PredictionCsv $predictionCsv `
+            -PseudoGtCsv $pseudoGtCsv `
+            -PseudoGtReviewClosureCsv $loosePseudoGtClosureCsv `
+            -ManualGateSummary $summaryPath `
+            -MinIou 0.50 `
+            -MaxMisses 0 `
+            -MaxFalsePositives 0 `
+            -MaxLowIou 0 `
+            -RequireComplete 2>&1
+        $looseClosureExitCode = $LASTEXITCODE
+        $looseClosureText = ($looseClosureOutput | Out-String)
+        Write-Host $looseClosureText
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorAction
+    }
+
+    if ($looseClosureExitCode -eq 0) {
+        throw "Completion audit loose pseudo-GT closure negative selftest unexpectedly passed."
+    }
+    if ($looseClosureText -notmatch "Pseudo-GT review closure is incomplete") {
+        throw "Completion audit loose pseudo-GT closure negative selftest failed for an unexpected reason. output=$looseClosureText"
+    }
+
+    Write-Host "[YoloCompletionAuditVerify] pass selftest loose pseudo-GT closure cannot RequireComplete"
 
     $misleadingBodyPlanPath = Join-Path $selfTestDir "misleading-body-complete-plan.md"
     @(
