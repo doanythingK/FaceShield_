@@ -337,6 +337,7 @@ namespace FaceShield.Services.Analysis
                                 entryIndex,
                                 next,
                                 previousFace,
+                                gap,
                                 options,
                                 ref suppressedWeakGeometryAnchorChecks,
                                 ref suppressedRiskyGeometryAnchorChecks,
@@ -1323,6 +1324,7 @@ namespace FaceShield.Services.Analysis
             int excludedEntryIndex,
             FrameMaskProvider.FaceMaskData data,
             Rect reference,
+            int gap,
             YoloFinalMaskGapFillOptions options,
             ref int suppressedWeakGeometryAnchorChecks,
             ref int suppressedRiskyGeometryAnchorChecks,
@@ -1355,7 +1357,7 @@ namespace FaceShield.Services.Analysis
                     continue;
                 }
 
-                if (!IsStableGapMatch(reference, candidate, options))
+                if (!IsStableGapMatch(reference, candidate, gap, options))
                     continue;
 
                 double score = FaceTrackBuilder.IoU(reference, candidate) * 2.0 + candidateConfidence;
@@ -1483,7 +1485,7 @@ namespace FaceShield.Services.Analysis
                     continue;
                 if (IsSuppressedWeakGeometryGapAnchor(data.Faces[i], data.Size, confidence, options))
                     continue;
-                if (IsStableGapMatch(face, data.Faces[i], options))
+                if (IsStableGapMatch(face, data.Faces[i], 1, options))
                     return true;
             }
 
@@ -1493,6 +1495,7 @@ namespace FaceShield.Services.Analysis
         private static bool IsStableGapMatch(
             Rect previous,
             Rect next,
+            int gap,
             YoloFinalMaskGapFillOptions options)
         {
             double areaRatio = FaceTrackBuilder.GetAreaRatio(previous, next);
@@ -1502,10 +1505,18 @@ namespace FaceShield.Services.Analysis
                 return false;
             }
 
+            double centerShift = FaceTrackBuilder.GetNormalizedCenterShift(previous, next);
+            if (gap >= options.LongGapMinFrames &&
+                options.LongGapMaxCenterShiftRatio > 0.0 &&
+                centerShift > options.LongGapMaxCenterShiftRatio)
+            {
+                return false;
+            }
+
             if (FaceTrackBuilder.IoU(previous, next) >= options.MinIou)
                 return true;
 
-            return FaceTrackBuilder.GetNormalizedCenterShift(previous, next) <= options.MaxCenterShiftRatio;
+            return centerShift <= options.MaxCenterShiftRatio;
         }
 
         private static bool IsSuppressedWeakGeometryGapAnchor(
@@ -2303,6 +2314,8 @@ namespace FaceShield.Services.Analysis
         public float FillConfidenceFloor { get; init; } = 0.48f;
         public double MinIou { get; init; } = 0.15;
         public double MaxCenterShiftRatio { get; init; } = 0.65;
+        public int LongGapMinFrames { get; init; } = 4;
+        public double LongGapMaxCenterShiftRatio { get; init; } = 0.45;
         public double MaxAreaChangeRatio { get; init; } = 2.5;
         public double DuplicateIou { get; init; } = 0.50;
         public float WeakGeometryAnchorMaxConfidence { get; init; } = 0.62f;

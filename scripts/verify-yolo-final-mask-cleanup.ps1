@@ -556,6 +556,15 @@ var extendedGapFrames = string.Join(",", appExtendedGapFill.FilledFrameIndices);
 if (appExtendedGapFill.FilledFaces != 5 || extendedGapFrames != "301,302,303,304,305")
     throw new InvalidOperationException($"Expected app five-frame stable gap fill at frames 301-305, got filled={appExtendedGapFill.FilledFaces}, frames={extendedGapFrames}.");
 
+var longShiftGapProvider = new FrameMaskProvider();
+longShiftGapProvider.SetFaceRects(340, new[] { new Rect(440, 220, 100, 100) }, size, 0.82f, new[] { 0.82f });
+longShiftGapProvider.SetFaceRects(346, new[] { new Rect(495, 220, 100, 100) }, size, 0.80f, new[] { 0.80f });
+var longShiftGapFill = new YoloFinalMaskPostProcessor().FillShortStableGaps(
+    longShiftGapProvider,
+    new YoloFinalMaskGapFillOptions { MaxGapFrames = 5 });
+if (longShiftGapFill.FilledFaces != 0)
+    throw new InvalidOperationException($"Expected long final-mask gap with excessive center shift not to be filled, got filled={longShiftGapFill.FilledFaces}, frames={string.Join(",", longShiftGapFill.FilledFrameIndices)}.");
+
 var mixedFrameGapProvider = new FrameMaskProvider();
 mixedFrameGapProvider.SetFaceRects(10, new[] { new Rect(500, 260, 90, 90) }, size, 0.82f, new[] { 0.82f });
 mixedFrameGapProvider.SetFaceRects(11, new[] { new Rect(1200, 500, 100, 100) }, size, 0.91f, new[] { 0.91f });
