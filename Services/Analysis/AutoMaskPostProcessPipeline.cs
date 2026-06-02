@@ -12,7 +12,7 @@ namespace FaceShield.Services.Analysis
     public sealed class AutoMaskPostProcessPipeline
     {
         private const float YoloFinalMaskLowConfidenceThreshold = 0.38f;
-        private const int FinalMaskShortGapMaxFrames = 3;
+        private const int FinalMaskShortGapMaxFrames = 8;
         private const double FinalMaskLargeJumpAreaChangeRatio = 4.0;
         private const double FinalMaskLargeJumpCenterShift = 0.20;
         private const float YoloFinalMaskWeakIsolatedConfidenceMax = 0.50f;
@@ -26,7 +26,7 @@ namespace FaceShield.Services.Analysis
         private const int YoloSceneCutCarryBlockFrames = 15;
         private const float YoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
         private const float YoloSceneCutCarryPurgeMaxConfidence = 0.98f;
-        private const int YoloFinalMaskStableGapMaxFrames = 5;
+        private const int YoloFinalMaskStableGapMaxFrames = 8;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
         private const float YoloFinalMaskTinyShortConfidenceMax = 0.62f;
