@@ -461,8 +461,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.20;
     const int yoloSceneCutDirectDifferenceMaxCandidates = 160;
-    const int yoloSceneCutCarryPurgeFrames = 12;
-    const int yoloSceneCutCarryBlockFrames = 12;
+    const int yoloSceneCutCarryPurgeFrames = 15;
+    const int yoloSceneCutCarryBlockFrames = 15;
     const int yoloSceneCutCarryProbeFrames = 8;
     const int yoloSceneCutMatchingTailMaxFrames = 8;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.98f;
