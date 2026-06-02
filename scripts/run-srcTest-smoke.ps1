@@ -461,7 +461,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const double yoloSceneCutDifferenceThreshold = 0.15;
     const double yoloSceneCutDirectDifferenceThreshold = 0.20;
     const int yoloSceneCutDirectDifferenceMaxCandidates = 160;
-    const int yoloSceneCutCarryBlockFrames = 8;
+    const int yoloSceneCutCarryPurgeFrames = 8;
+    const int yoloSceneCutCarryBlockFrames = 12;
     const int yoloSceneCutCarryProbeFrames = yoloSceneCutCarryBlockFrames;
     const int yoloSceneCutMatchingTailMaxFrames = yoloSceneCutCarryBlockFrames;
     const float yoloSceneCutMatchingTailMaxConfidence = 0.98f;
@@ -647,7 +648,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             sceneCutPairs,
             new YoloSceneCutCarryCleanupOptions
             {
-                MaxCarryFrames = 5,
+                MaxCarryFrames = yoloSceneCutCarryPurgeFrames,
                 ExtendedWeakCarryFrames = yoloSceneCutCarryBlockFrames,
                 SourceLookbackFrames = yoloSceneCutPostCutLookbackFrames,
                 MaxConfidence = yoloSceneCutMatchingTailMaxConfidence,
@@ -660,7 +661,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         var sceneCutBlockedFrameIndices = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
             sceneCutPairs,
             yoloSceneCutCarryBlockFrames);
-        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
+        Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] label={label}, removed={sceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(sceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(sceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={sceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(sceneCutBlockedFrameIndices)}, purgeFrames={yoloSceneCutCarryPurgeFrames}, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
         protectedSceneCarryFrameIndices = sceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices;
         var postSceneBlockedFrameIndices = cleanupBlockedFrameIndices;
         var postSceneBlockedFaces = cleanupBlockedFaces
@@ -705,7 +706,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 postGapFillSceneCutPairs,
                 new YoloSceneCutCarryCleanupOptions
                 {
-                    MaxCarryFrames = 5,
+                    MaxCarryFrames = yoloSceneCutCarryPurgeFrames,
                     ExtendedWeakCarryFrames = yoloSceneCutCarryBlockFrames,
                     SourceLookbackFrames = yoloSceneCutPostCutLookbackFrames,
                     MaxConfidence = yoloSceneCutMatchingTailMaxConfidence,
@@ -722,7 +723,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 .Distinct()
                 .OrderBy(static frame => frame)
                 .ToArray();
-            Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] stage=post-gap-fill label={label}, removed={postGapFillSceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(postGapFillSceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={postGapFillSceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(postGapFillSceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={postGapFillSceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(postGapFillSceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(postGapFillSceneCutBlockedFrameIndices)}, purgeFrames=5, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
+            Console.WriteLine($"[SmokeYoloSceneCutCarryCleanup] stage=post-gap-fill label={label}, removed={postGapFillSceneCutCarryCleanup.RemovedFaces}, removedFrames={FormatFrames(postGapFillSceneCutCarryCleanup.RemovedFrameIndices)}, removedUnsupportedStrong={postGapFillSceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces}, removedUnsupportedStrongFrames={FormatFrames(postGapFillSceneCutCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)}, protectedStrong={postGapFillSceneCutCarryCleanup.ProtectedStrongCarryLikeFaces}, protectedStrongFrames={FormatFrames(postGapFillSceneCutCarryCleanup.ProtectedStrongCarryLikeFrameIndices)}, blockedFrames={FormatFrames(postGapFillSceneCutBlockedFrameIndices)}, purgeFrames={yoloSceneCutCarryPurgeFrames}, blockFrames={yoloSceneCutCarryBlockFrames}, extendedWeakMaxConfidence={yoloSceneCutExtendedWeakCarryMaxConfidence:F2}");
             var postGapFillCleanup = postProcessor.RemoveWeakIsolatedMasks(maskProvider);
             Console.WriteLine($"[SmokeYoloFinalMaskPostGapFillCleanup] label={label}, removedWeakIsolated={postGapFillCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postGapFillCleanup.RemovedWeakUnsupportedFaces}, removedMediumUnsupported={postGapFillCleanup.RemovedMediumUnsupportedFaces}, removedWeakShortClusters={postGapFillCleanup.RemovedWeakShortClusterFaces}, removedWeakTextureClusters={postGapFillCleanup.RemovedWeakTextureClusterFaces}, removedWeakTinyClusters={postGapFillCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postGapFillCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postGapFillCleanup.RemovedTinyIsolatedFaces}, removedTopEdgeWeakClusters={postGapFillCleanup.RemovedTopEdgeWeakClusterFaces}, removedTopEdgeLargeDuplicates={postGapFillCleanup.RemovedTopEdgeLargeDuplicateFaces}, removedUpperWeakClusters={postGapFillCleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={postGapFillCleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={postGapFillCleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(postGapFillCleanup.RemovedFrameIndices)}");
         }
