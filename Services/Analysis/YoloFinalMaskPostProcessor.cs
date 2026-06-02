@@ -2338,7 +2338,7 @@ namespace FaceShield.Services.Analysis
         public float MaxConfidence { get; init; } = 0.90f;
         public float ExtendedWeakMaxConfidence { get; init; } = 0.78f;
         public int StrongCarrySupportLookaheadFrames { get; init; } = 5;
-        public int StrongCarrySupportMinFrames { get; init; } = 2;
+        public int StrongCarrySupportMinFrames { get; init; } = 3;
         public float StrongCarrySupportMinConfidence { get; init; } = 0.80f;
         public double StrongCarryProtectionMinReferenceCenterShiftRatio { get; init; } = 0.22;
         public double StrongCarryProtectionMinReferenceAreaChangeRatio { get; init; } = 1.65;

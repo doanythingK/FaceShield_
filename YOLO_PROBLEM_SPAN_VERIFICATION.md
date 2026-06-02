@@ -545,7 +545,7 @@ Synthetic scene-cut carry cleanup now distinguishes a real post-cut strong face 
 - Code path: `YoloFinalMaskPostProcessor.RemoveSceneCutCarryRemnants`
 - Rule: a high-confidence carry-like candidate is protected only when later strong matching support also shows independent scale change away from the pre-cut reference. Motion-only same-size support is treated as possible scene-transition residue and is removed.
 - Verifier: `scripts/verify-yolo-final-mask-cleanup.ps1`
-- Evidence: `stickyStrongCarryRemoved=5`, `stickyStrongCarryRemovedUnsupportedStrong=5`, `driftingStrongCarryRemoved=5`, `areaChangedStrongCarryProtected=3`
+- Evidence: `stickyStrongCarryRemoved=5`, `stickyStrongCarryRemovedUnsupportedStrong=5`, `driftingStrongCarryRemoved=5`, `areaChangedStrongCarryProtected=2`
 - Meaning: same-position and same-size drifting high-confidence blur residue after a confirmed cut is no longer protected only because it repeats for several frames. A post-cut strong candidate with scale change can still remain for visual review.
 
 ## 2026-05-27 Strong Carry Scene-Cut Probe
