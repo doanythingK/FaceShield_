@@ -834,8 +834,8 @@ static void LogFinalMaskSummary(
         .ToArray();
     if (entries.Length == 0)
     {
-        var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
-        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, topEdgeLarge=0, topEdgeLargeFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, protectedSceneCarry={protectedSceneCarryFrames.Length}, protectedSceneCarryFrames={FormatFrames(protectedSceneCarryFrames)}, reviewRequired={emptyReviewReasons.Count > 0}, reviewReasons={FormatTextValues(emptyReviewReasons)}");
+        var emptyReviewReasons = BuildFinalMaskReviewReasons(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, protectedSceneCarryFrames.Length);
+        Console.WriteLine($"[SmokeFinalMaskSummary] label={label}, frames=0, rows=0, frameRange=none, shortGaps=0, shortGapRanges=none, perFaceShortGaps=0, perFaceShortGapRanges=none, largeJumpGaps=0, largeJumpRanges=none, isolated=0, isolatedFrames=none, lowConf=0, lowConfFrames=none, weakNonEdge=0, weakNonEdgeFrames=none, edgeWeak=0, edgeWeakFrames=none, topEdgeWeak=0, topEdgeWeakFrames=none, topEdgeLarge=0, topEdgeLargeFrames=none, upperWeak=0, upperWeakFrames=none, lowerWeak=0, lowerWeakFrames=none, aspectBad=0, aspectBadFrames=none, tinyWeak=0, tinyWeakFrames=none, tinyShort=0, tinyShortFrames=none, protectedSceneCarry={protectedSceneCarryFrames.Length}, protectedSceneCarryFrames={FormatFrames(protectedSceneCarryFrames)}, reviewRequired={emptyReviewReasons.Count > 0}, reviewReasons={FormatTextValues(emptyReviewReasons)}");
         return;
     }
 
@@ -868,6 +868,10 @@ static void LogFinalMaskSummary(
             }
         }
     }
+    var perFaceShortGapRanges = FindPerFaceShortGapRanges(
+        entries,
+        shortGapMaxFrames,
+        largeJumpAreaChangeRatio);
 
     var isolatedFrames = new List<int>();
     for (int i = 0; i < frames.Length; i++)
@@ -981,6 +985,7 @@ static void LogFinalMaskSummary(
 
     var reviewReasons = BuildFinalMaskReviewReasons(
         shortGapCount,
+        perFaceShortGapRanges.Count,
         largeJumpGapRanges.Count,
         isolatedFrames.Count,
         lowConfidenceRows,
@@ -996,11 +1001,12 @@ static void LogFinalMaskSummary(
         protectedSceneCarryFrames.Length);
 
     Console.WriteLine(
-        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, topEdgeLarge={topEdgeLargeRows}, topEdgeLargeFrames={FormatFrames(topEdgeLargeFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}, protectedSceneCarry={protectedSceneCarryFrames.Length}, protectedSceneCarryFrames={FormatFrames(protectedSceneCarryFrames)}, reviewRequired={reviewReasons.Count > 0}, reviewReasons={FormatTextValues(reviewReasons)}");
+        $"[SmokeFinalMaskSummary] label={label}, frames={frames.Length}, rows={rows}, frameRange={frames[0]}-{frames[^1]}, shortGaps={shortGapCount}, shortGapRanges={FormatTextValues(shortGapRanges)}, perFaceShortGaps={perFaceShortGapRanges.Count}, perFaceShortGapRanges={FormatTextValues(perFaceShortGapRanges)}, largeJumpGaps={largeJumpGapRanges.Count}, largeJumpRanges={FormatTextValues(largeJumpGapRanges)}, isolated={isolatedFrames.Count}, isolatedFrames={FormatFrames(isolatedFrames)}, lowConf={lowConfidenceRows}, lowConfFrames={FormatFrames(lowConfidenceFrames.ToArray())}, weakNonEdge={weakNonEdgeRows}, weakNonEdgeFrames={FormatFrames(weakNonEdgeFrames.ToArray())}, edgeWeak={edgeWeakRows}, edgeWeakFrames={FormatFrames(edgeWeakFrames.ToArray())}, topEdgeWeak={topEdgeWeakRows}, topEdgeWeakFrames={FormatFrames(topEdgeWeakFrames.ToArray())}, topEdgeLarge={topEdgeLargeRows}, topEdgeLargeFrames={FormatFrames(topEdgeLargeFrames.ToArray())}, upperWeak={upperWeakRows}, upperWeakFrames={FormatFrames(upperWeakFrames.ToArray())}, lowerWeak={lowerWeakRows}, lowerWeakFrames={FormatFrames(lowerWeakFrames.ToArray())}, aspectBad={aspectBadRows}, aspectBadFrames={FormatFrames(aspectBadFrames.ToArray())}, tinyWeak={tinyWeakRows}, tinyWeakFrames={FormatFrames(tinyWeakFrames.ToArray())}, tinyShort={tinyShortRows}, tinyShortFrames={FormatFrames(tinyShortFrames.ToArray())}, protectedSceneCarry={protectedSceneCarryFrames.Length}, protectedSceneCarryFrames={FormatFrames(protectedSceneCarryFrames)}, reviewRequired={reviewReasons.Count > 0}, reviewReasons={FormatTextValues(reviewReasons)}");
 }
 
 static IReadOnlyList<string> BuildFinalMaskReviewReasons(
     int shortGapCount,
+    int perFaceShortGapCount,
     int largeJumpGapCount,
     int isolatedCount,
     int lowConfidenceRows,
@@ -1018,6 +1024,8 @@ static IReadOnlyList<string> BuildFinalMaskReviewReasons(
     var reasons = new List<string>();
     if (shortGapCount > 0)
         reasons.Add("short-gap");
+    if (perFaceShortGapCount > 0)
+        reasons.Add("per-face-short-gap");
     if (largeJumpGapCount > 0)
         reasons.Add("large-jump-gap");
     if (isolatedCount > 0)
@@ -1046,6 +1054,98 @@ static IReadOnlyList<string> BuildFinalMaskReviewReasons(
         reasons.Add("scene-carry-protected");
 
     return reasons;
+}
+
+static IReadOnlyList<string> FindPerFaceShortGapRanges(
+    IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+    int shortGapMaxFrames,
+    double maxAreaChangeRatio)
+{
+    if (entries.Count < 2)
+        return Array.Empty<string>();
+
+    var byFrame = entries.ToDictionary(x => x.Key, x => x.Value);
+    var ranges = new SortedSet<string>(StringComparer.Ordinal);
+    for (int i = 0; i < entries.Count - 1; i++)
+    {
+        int startFrame = entries[i].Key;
+        var startData = entries[i].Value;
+        if (startData.Faces.Count == 0)
+            continue;
+
+        for (int faceIndex = 0; faceIndex < startData.Faces.Count; faceIndex++)
+        {
+            var startFace = startData.Faces[faceIndex];
+            for (int j = i + 1; j < entries.Count; j++)
+            {
+                int endFrame = entries[j].Key;
+                int missingFrames = endFrame - startFrame - 1;
+                if (missingFrames <= 0)
+                    continue;
+                if (missingFrames > shortGapMaxFrames)
+                    break;
+
+                var endData = entries[j].Value;
+                if (!endData.Faces.Any(endFace => IsSameFinalMaskFace(startFace, endFace, maxAreaChangeRatio)))
+                    continue;
+
+                bool hasIntermediateSameFace = false;
+                for (int frameIndex = startFrame + 1; frameIndex < endFrame; frameIndex++)
+                {
+                    if (!byFrame.TryGetValue(frameIndex, out var intermediateData))
+                        continue;
+
+                    if (intermediateData.Faces.Any(face => IsSameFinalMaskFace(startFace, face, maxAreaChangeRatio)))
+                    {
+                        hasIntermediateSameFace = true;
+                        break;
+                    }
+                }
+
+                if (!hasIntermediateSameFace)
+                    ranges.Add(FormatFrameRange(startFrame + 1, endFrame - 1));
+                break;
+            }
+        }
+    }
+
+    return ranges.Count == 0 ? Array.Empty<string>() : ranges.ToArray();
+}
+
+static bool IsSameFinalMaskFace(
+    Rect first,
+    Rect second,
+    double maxAreaChangeRatio)
+{
+    double areaRatio = GetRectAreaChange(first, second);
+    if (areaRatio > maxAreaChangeRatio ||
+        areaRatio < 1.0 / maxAreaChangeRatio)
+    {
+        return false;
+    }
+
+    return IoU(first, second) >= 0.55 ||
+        GetNormalizedRectCenterShift(first, second) <= 0.65;
+}
+
+static double GetRectAreaChange(Rect first, Rect second)
+{
+    double firstArea = Math.Max(1.0, first.Width * first.Height);
+    double secondArea = Math.Max(1.0, second.Width * second.Height);
+    return Math.Max(firstArea, secondArea) / Math.Min(firstArea, secondArea);
+}
+
+static double GetNormalizedRectCenterShift(Rect first, Rect second)
+{
+    double firstCenterX = first.X + first.Width * 0.5;
+    double firstCenterY = first.Y + first.Height * 0.5;
+    double secondCenterX = second.X + second.Width * 0.5;
+    double secondCenterY = second.Y + second.Height * 0.5;
+    double dx = firstCenterX - secondCenterX;
+    double dy = firstCenterY - secondCenterY;
+    double shift = Math.Sqrt(dx * dx + dy * dy);
+    double maxDim = Math.Max(Math.Max(first.Width, first.Height), Math.Max(second.Width, second.Height));
+    return maxDim <= 0.0 ? double.MaxValue : shift / maxDim;
 }
 
 static bool TouchesFinalMaskFrameEdge(Rect face, PixelSize size, double edgeMarginRatio)
