@@ -351,7 +351,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 통과 근거:
 
 - `Final mask summary` 또는 `SmokeFinalMaskSummary`에서 `shortGaps=0`
-- 여러 얼굴이 동시에 있는 구간은 `perFaceShortGaps=0`도 같이 확인한다. 이 값은 다른 얼굴 마스크가 같은 프레임에 남아 있어도 특정 얼굴만 1-3프레임 빠지는 깜박임 후보를 잡기 위한 것이다.
+- 여러 얼굴이 동시에 있는 구간은 `perFaceShortGaps=0`도 같이 확인한다. 이 값은 다른 얼굴 마스크가 같은 프레임에 남아 있어도 특정 얼굴만 최대 8프레임 빠지는 깜박임 후보를 잡기 위한 것이다.
 - `isolated=0`
 - `reviewRequired=True`이면 `reviewReasons`에서 `short-gap`, `per-face-short-gap`, `large-jump-gap`, `isolated-mask`가 있는지 먼저 확인한다. 이 값은 통과/실패 단정이 아니라 어느 frame group을 먼저 봐야 하는지 알려주는 triage 근거다.
 - cleanup이 제거한 얼굴이 다시 채워지지 않았다는 근거가 필요하면 `Final mask gap fill`에서 `blockedByCleanup=...`, `cleanupBlockedFrames=...`를 확인한다. 현재 YOLO 경로는 제거된 얼굴 위치를 per-face block으로 넘기므로, 같은 프레임의 unrelated face gap은 채워질 수 있다. 따라서 `frames=none`은 전체 gap 미보정 근거이고, `blockedByCleanup`은 같은 제거 얼굴을 재생성하지 않았다는 근거다.
