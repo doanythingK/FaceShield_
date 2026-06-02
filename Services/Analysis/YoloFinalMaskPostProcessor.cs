@@ -28,6 +28,7 @@ namespace FaceShield.Services.Analysis
             int removedUnsupported = 0;
             int removedMediumUnsupported = 0;
             int removedShortClusters = 0;
+            int removedWeakTextureClusters = 0;
             int removedTinyClusters = 0;
             int removedTinyShortClusters = 0;
             int removedTinyIsolated = 0;
@@ -70,29 +71,38 @@ namespace FaceShield.Services.Analysis
                         bool removeShortCluster = hasMatchingNeighbor &&
                             !removeTinyCluster &&
                             IsWeakShortTemporalCluster(entries, i, faceIndex, face, confidence, options);
+                        bool removeWeakTextureCluster = hasMatchingNeighbor &&
+                            !removeShortCluster &&
+                            !removeTinyCluster &&
+                            IsWeakTextureTemporalCluster(entries, i, faceIndex, face, confidence, options);
                         bool removeUpperWeakCluster = hasMatchingNeighbor &&
                             !removeShortCluster &&
                             !removeTinyCluster &&
+                            !removeWeakTextureCluster &&
                             IsUpperWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
                         bool removeLowerWeakCluster = hasMatchingNeighbor &&
                             !removeShortCluster &&
                             !removeTinyCluster &&
+                            !removeWeakTextureCluster &&
                             !removeUpperWeakCluster &&
                             IsLowerWeakTemporalCluster(entries, i, faceIndex, face, confidence, options);
                         bool removeAspectOutlierCluster = hasMatchingNeighbor &&
                             !removeShortCluster &&
                             !removeTinyCluster &&
+                            !removeWeakTextureCluster &&
                             !removeUpperWeakCluster &&
                             !removeLowerWeakCluster &&
                             IsAspectOutlierTemporalCluster(entries, i, faceIndex, face, confidence, options);
 
-                        if (removeUnsupported || removeShortCluster || removeTinyCluster || removeUpperWeakCluster || removeLowerWeakCluster || removeAspectOutlierCluster)
+                        if (removeUnsupported || removeShortCluster || removeWeakTextureCluster || removeTinyCluster || removeUpperWeakCluster || removeLowerWeakCluster || removeAspectOutlierCluster)
                         {
                             removed++;
                             if (removeUnsupported)
                                 removedUnsupported++;
                             if (removeShortCluster)
                                 removedShortClusters++;
+                            if (removeWeakTextureCluster)
+                                removedWeakTextureClusters++;
                             if (removeTinyCluster)
                                 removedTinyClusters++;
                             if (removeUpperWeakCluster)
@@ -235,6 +245,7 @@ namespace FaceShield.Services.Analysis
                     removedUnsupported,
                     removedMediumUnsupported,
                     removedShortClusters,
+                    removedWeakTextureClusters,
                     removedTinyClusters,
                     removedTinyShortClusters,
                     removedTinyIsolated,
@@ -1540,6 +1551,59 @@ namespace FaceShield.Services.Analysis
             return visited.Count > 0 && visited.Count <= options.WeakClusterMaxFrames;
         }
 
+        private static bool IsWeakTextureTemporalCluster(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            int entryIndex,
+            int faceIndex,
+            Rect face,
+            float confidence,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (options.WeakTextureClusterMaxFrames <= 0 ||
+                options.WeakTextureClusterMinFrames <= 0 ||
+                options.WeakTextureClusterMaxConfidence <= 0 ||
+                confidence > options.WeakTextureClusterMaxConfidence)
+            {
+                return false;
+            }
+
+            var visited = new HashSet<(int EntryIndex, int FaceIndex)>();
+            var pending = new Stack<(int EntryIndex, int FaceIndex, Rect Face)>();
+            pending.Push((entryIndex, faceIndex, face));
+
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                if (!visited.Add((current.EntryIndex, current.FaceIndex)))
+                    continue;
+                if (visited.Count > options.WeakTextureClusterMaxFrames)
+                    return false;
+
+                var currentData = entries[current.EntryIndex].Value;
+                float currentConfidence = GetConfidence(currentData, current.FaceIndex);
+                if (currentConfidence > options.WeakTextureClusterMaxConfidence ||
+                    !IsWeakTextureFace(current.Face, currentData.Size, options) ||
+                    TouchesFrameEdge(current.Face, currentData.Size, options.EdgeMarginRatio))
+                {
+                    return false;
+                }
+                if (HasStrongAdjacentContinuation(
+                        entries,
+                        current.EntryIndex,
+                        current.Face,
+                        options,
+                        options.WeakTextureStrongContinuationMinConfidence))
+                {
+                    return false;
+                }
+
+                AddMatchingWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
+            }
+
+            return visited.Count >= options.WeakTextureClusterMinFrames &&
+                visited.Count <= options.WeakTextureClusterMaxFrames;
+        }
+
         private static bool HasStrongAdjacentContinuation(
             IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
             int entryIndex,
@@ -1851,6 +1915,23 @@ namespace FaceShield.Services.Analysis
                 areaRatio <= options.TopEdgeWeakClusterMaxAreaRatio;
         }
 
+        private static bool IsWeakTextureFace(Rect face, PixelSize size, YoloFinalMaskCleanupOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0 || face.Width <= 0 || face.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            double aspectRatio = face.Width / face.Height;
+            return centerYRatio >= options.WeakTextureClusterMinCenterYRatio &&
+                centerYRatio <= options.WeakTextureClusterMaxCenterYRatio &&
+                areaRatio >= options.WeakTextureClusterMinAreaRatio &&
+                areaRatio <= options.WeakTextureClusterMaxAreaRatio &&
+                aspectRatio >= options.WeakTextureClusterMinAspectRatio &&
+                aspectRatio <= options.WeakTextureClusterMaxAspectRatio;
+        }
+
         private static bool IsTopEdgeLargeDuplicateFace(
             FrameMaskProvider.FaceMaskData data,
             int faceIndex,
@@ -2054,6 +2135,16 @@ namespace FaceShield.Services.Analysis
         public double NeighborMaxAreaChangeRatio { get; init; } = 3.0;
         public int WeakClusterMaxFrames { get; init; } = 3;
         public float WeakClusterMaxConfidence { get; init; } = 0.48f;
+        public int WeakTextureClusterMinFrames { get; init; } = 4;
+        public int WeakTextureClusterMaxFrames { get; init; } = 5;
+        public float WeakTextureClusterMaxConfidence { get; init; } = 0.40f;
+        public float WeakTextureStrongContinuationMinConfidence { get; init; } = 0.70f;
+        public double WeakTextureClusterMinCenterYRatio { get; init; } = 0.22;
+        public double WeakTextureClusterMaxCenterYRatio { get; init; } = 0.40;
+        public double WeakTextureClusterMinAreaRatio { get; init; } = 0.003;
+        public double WeakTextureClusterMaxAreaRatio { get; init; } = 0.009;
+        public double WeakTextureClusterMinAspectRatio { get; init; } = 0.70;
+        public double WeakTextureClusterMaxAspectRatio { get; init; } = 1.35;
         public int TinyClusterMaxFrames { get; init; } = 3;
         public float TinyClusterMaxConfidence { get; init; } = 0.45f;
         public double TinyClusterMaxAreaRatio { get; init; } = 0.0012;
@@ -2154,6 +2245,7 @@ namespace FaceShield.Services.Analysis
         int RemovedWeakUnsupportedFaces,
         int RemovedMediumUnsupportedFaces,
         int RemovedWeakShortClusterFaces,
+        int RemovedWeakTextureClusterFaces,
         int RemovedWeakTinyClusterFaces,
         int RemovedTinyShortClusterFaces,
         int RemovedTinyIsolatedFaces,
@@ -2165,7 +2257,7 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<int> RemovedFrameIndices,
         IReadOnlyList<FaceTrackFilledFace> RemovedFacesInfo)
     {
-        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
+        public static YoloFinalMaskCleanupResult Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>());
     }
 
     public readonly record struct YoloFinalMaskGapFillResult(
