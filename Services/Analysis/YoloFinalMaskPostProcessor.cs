@@ -1197,7 +1197,16 @@ namespace FaceShield.Services.Analysis
                 AddMatchingTopEdgeWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
             }
 
-            return visited.Count > 1 && visited.Count <= options.TopEdgeWeakClusterMaxFrames;
+            if (visited.Count == 1)
+            {
+                var data = entries[entryIndex].Value;
+                if (data.Faces.Count != 1)
+                    return false;
+
+                return confidence <= options.TopEdgeWeakIsolatedMaxConfidence;
+            }
+
+            return visited.Count <= options.TopEdgeWeakClusterMaxFrames;
         }
 
         private static bool IsLowerWeakTemporalCluster(
@@ -2243,6 +2252,7 @@ namespace FaceShield.Services.Analysis
         public int TopEdgeWeakClusterMaxFrames { get; init; } = 3;
         public int TopEdgeWeakClusterNeighborWindowFrames { get; init; } = 3;
         public float TopEdgeWeakClusterMaxConfidence { get; init; } = 0.60f;
+        public float TopEdgeWeakIsolatedMaxConfidence { get; init; } = 0.38f;
         public float TopEdgeWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double TopEdgeWeakClusterMaxCenterYRatio { get; init; } = 0.08;
         public double TopEdgeWeakClusterMaxAreaRatio { get; init; } = 0.0065;
