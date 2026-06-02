@@ -369,6 +369,7 @@ if ($expectedRemainingParts.Count -eq 0) {
     $expectedRemainingParts += "none"
 }
 $expectedRemaining = "remaining=$($expectedRemainingParts -join ',')"
+$expectedRemainingSummaryText = $expectedRemainingParts -join ", "
 
 Write-Host "[YoloManualGateHelperVerify] state review=$reviewState, fullFrame=$frameState, gui=$guiState"
 
@@ -419,7 +420,9 @@ $summaryFile = Assert-FileNonEmpty "manual gate summary" $SummaryPath
 $summaryText = Get-Content -Raw -Path $summaryFile
 Assert-Contains "summary output includes path" $summary.Text "summaryPath="
 Assert-Contains "summary output includes dashboard path" $summary.Text "dashboardPath="
-Assert-Contains "summary records remaining gates" $summaryText $expectedRemaining.Replace("remaining=", "")
+foreach ($expectedRemainingPart in $expectedRemainingParts) {
+    Assert-Contains "summary records remaining gate $expectedRemainingPart" $summaryText $expectedRemainingPart
+}
 Assert-Contains "summary records gui smoke gate" $summaryText "gui-smoke"
 Assert-Contains "summary records completed full GT command" $summaryText "verify-yolo-full-gt-reviewed-state.ps1"
 Assert-Contains "summary records completed GUI command" $summaryText "verify-yolo-gui-smoke-state.ps1"
@@ -480,7 +483,7 @@ Assert-Contains "summary records preview track hold step" $summaryText "preview-
 $dashboardPath = Resolve-RepoPath ".tmp\yolo-manual-gates\manual-gate-dashboard.html"
 Assert-FileNonEmpty "manual gate dashboard" $dashboardPath | Out-Null
 $dashboardText = Get-Content -Raw -Path $dashboardPath
-Assert-Contains "dashboard records remaining gates" $dashboardText $expectedRemaining.Replace("remaining=", "")
+Assert-Contains "dashboard records remaining gates" $dashboardText $expectedRemainingSummaryText
 Assert-Contains "dashboard links review index" $dashboardText "Review index"
 Assert-Contains "dashboard links pending report" $dashboardText "Manual pending report"
 Assert-Contains "dashboard links GUI checklist" $dashboardText "GUI smoke checklist CSV"

@@ -83,32 +83,53 @@ $completionAuditArgs = @(
     "-ManualGateSummary", $ManualGateSummary,
     "-AllowQualityGateFailure"
 )
+$remainingNoneToken = "remaining=none"
 $hasRemainingNone = $summary -match "(?m)^- none\s*$"
+$hasRemainingFullGt = $summary -match "(?m)^- full-gt-label\s*$"
+$hasRemainingGui = $summary -match "(?m)^- gui-smoke\s*$"
 $hasRemainingPseudoGt = $summary -match "(?m)^- pseudo-gt-(evidence|review-closure)\s*$"
 if ($hasRemainingNone) {
     $completionAuditArgs += "-RequireComplete"
 }
 
-if (-not $hasRemainingPseudoGt) {
+if ($hasRemainingNone) {
     Invoke-RequiredStep "completion-audit" $completionAuditVerify $completionAuditArgs
 }
 else {
-    Write-Host "[YoloReadyForHumanGatesVerify] pass completion-audit skipped until pseudo-GT evidence is published and closed"
+    Write-Host "[YoloReadyForHumanGatesVerify] pass completion-audit skipped until remaining manual gates are closed"
 }
-Assert-Contains "summary keeps completed full GT progress" $summary "fullGtPendingRows=0"
-Assert-Contains "summary keeps completed full-frame progress" $summary "fullFramePendingRows=0"
+if ($hasRemainingFullGt) {
+    Assert-Contains "summary keeps pending full GT progress" $summary "fullGtPendingRows=20"
+    Assert-Contains "summary keeps pending full-frame progress" $summary "fullFramePendingRows=19"
+}
+else {
+    Assert-Contains "summary keeps completed full GT progress" $summary "fullGtPendingRows=0"
+    Assert-Contains "summary keeps completed full-frame progress" $summary "fullFramePendingRows=0"
+}
 if ($hasRemainingNone) {
-    Assert-Contains "summary records no remaining gates" $summary "remaining=none"
-    Assert-Contains "summary keeps completed GUI progress" $summary "guiPendingRows=0"
-}
-elseif ($hasRemainingPseudoGt) {
-    Assert-Contains "summary records pseudo-GT remaining gate" $summary "pseudo-gt"
-    Assert-Contains "summary records pseudo-GT publish action" $summary "PublishPseudoGtToGoalEvidence"
+    Assert-Contains "summary records no remaining gates" $summary "- none"
+    Write-Host "[YoloReadyForHumanGatesVerify] pass summary records $remainingNoneToken"
     Assert-Contains "summary keeps completed GUI progress" $summary "guiPendingRows=0"
 }
 else {
-    Assert-Contains "summary records GUI-only remaining gates" $summary "- gui-smoke"
-    Assert-Contains "summary keeps pending GUI progress" $summary "guiPendingRows=9"
+    if ($hasRemainingFullGt) {
+        Assert-Contains "summary records full GT remaining gate" $summary "- full-gt-label"
+    }
+    if ($hasRemainingPseudoGt) {
+        Assert-Contains "summary records pseudo-GT remaining gate" $summary "pseudo-gt"
+        Assert-Contains "summary records pseudo-GT publish action" $summary "PublishPseudoGtToGoalEvidence"
+    }
+    if ($hasRemainingGui) {
+        Assert-Contains "summary records GUI remaining gate" $summary "- gui-smoke"
+        Assert-Contains "summary keeps pending GUI progress" $summary "guiPendingRows=9"
+    }
+    else {
+        Assert-Contains "summary keeps completed GUI progress" $summary "guiPendingRows=0"
+    }
+}
+if ($hasRemainingPseudoGt) {
+    Assert-Contains "summary records pseudo-GT remaining gate" $summary "pseudo-gt"
+    Assert-Contains "summary records pseudo-GT publish action" $summary "PublishPseudoGtToGoalEvidence"
 }
 Assert-Contains "summary records app open command" $summary "open-yolo-manual-gates.ps1 -OpenApp"
 Assert-Contains "summary records smoke manual startup command" $summary "--yolo-smoke --open-manual"
@@ -139,18 +160,25 @@ if (-not (Test-Path $evidenceReportPath)) {
 }
 
 $report = Get-Content -Raw -Path $evidenceReportPath
-Assert-Contains "report records filled full GT" $report "Full-GT label review | filled-pending-strict-gate"
-Assert-Contains "report records documented full GT quality failure" $report "Full-GT quality gate | fail-documented"
-Assert-Contains "report records documented full GT quality state" $report "fullGtQualityGate=fail-documented"
+if ($hasRemainingFullGt) {
+    Assert-Contains "report keeps full GT pending" $report "Full-GT label review | pending-human"
+    Assert-Contains "report keeps full GT quality pending" $report "Full-GT quality gate | pending-human"
+    Assert-Contains "report records pending full GT quality state" $report "fullGtQualityGate=pending-human"
+}
+else {
+    Assert-Contains "report records filled full GT" $report "Full-GT label review | filled-pending-strict-gate"
+    Assert-Contains "report records documented full GT quality failure" $report "Full-GT quality gate | fail-documented"
+    Assert-Contains "report records documented full GT quality state" $report "fullGtQualityGate=fail-documented"
+}
 if ($hasRemainingNone) {
     Assert-Contains "report records filled GUI smoke" $report "Avalonia GUI smoke | filled-pending-strict-gate"
     Assert-Contains "report records preview track hold pass" $report "Preview track-hold GUI evidence | pass"
     Assert-Contains "report records completion ready" $report "Goal completion | ready-for-strict-completion-audit"
 }
-elseif ($hasRemainingPseudoGt) {
+elseif (-not $hasRemainingGui) {
     Assert-Contains "report records filled GUI smoke" $report "Avalonia GUI smoke | filled-pending-strict-gate"
     Assert-Contains "report records preview track hold pass" $report "Preview track-hold GUI evidence | pass"
-    Assert-Contains "report keeps goal incomplete until pseudo-GT closure" $report "Goal completion | incomplete"
+    Assert-Contains "report keeps goal incomplete until remaining gates close" $report "Goal completion | incomplete"
 }
 else {
     Assert-Contains "report keeps GUI pending" $report "Avalonia GUI smoke | pending-human"
@@ -172,12 +200,24 @@ Assert-Contains "report records pseudo-GT closure support row evidence" $report 
 Assert-Contains "report records pseudo-GT closure support id evidence" $report "pseudoGtClosureSupportIdEvidenceRows="
 Assert-Contains "report records pseudo-GT face verification evidence" $report "pseudoGtFaceVerificationEvidenceRows="
 Assert-Contains "report records pseudo-GT closure face verification evidence" $report "pseudoGtClosureFaceVerificationEvidenceRows="
+Assert-Contains "report records pseudo-GT closure full-frame continuity evidence" $report "pseudoGtClosureFullFrameContinuityRows="
+Assert-Contains "report records pseudo-GT closure full-frame continuity reasons" $report "pseudoGtClosureFullFrameContinuityReasonRows="
+Assert-Contains "report records pseudo-GT closure full-frame continuity hints" $report "pseudoGtClosureFullFrameContinuityHintRows="
 Assert-Contains "report records pseudo-GT model provenance" $report "pseudoGtModelProvenanceRows="
 Assert-Contains "report records pseudo-GT runner provenance" $report "pseudoGtRunnerProvenanceRows="
 Assert-Contains "report records pseudo-GT closure model provenance" $report "pseudoGtClosureModelProvenanceRows="
 Assert-Contains "report records pseudo-GT closure runner provenance" $report "pseudoGtClosureRunnerProvenanceRows="
 Assert-Contains "report keeps recommendation none" $report "Final YOLO recommendation | none"
 
-$remaining = if ($hasRemainingNone) { "none" } elseif ($hasRemainingPseudoGt) { "pseudo-gt" } else { "gui-smoke" }
+$remainingParts = @()
+if ($hasRemainingNone) {
+    $remainingParts += "none"
+}
+else {
+    if ($hasRemainingFullGt) { $remainingParts += "full-gt-label" }
+    if ($hasRemainingGui) { $remainingParts += "gui-smoke" }
+    if ($hasRemainingPseudoGt) { $remainingParts += "pseudo-gt" }
+}
+$remaining = $remainingParts -join ","
 Write-Host "[YoloReadyForHumanGatesVerify] ready=true, remaining=$remaining"
 Write-Host "[YoloReadyForHumanGatesVerify] all requested checks passed"
