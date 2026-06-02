@@ -1395,7 +1395,7 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 var face = data.Faces[i];
-                if (!IsMatchingFace(reference, face, minIou: 0.15, maxCenterShiftRatio: 0.65, maxAreaChangeRatio: 3.0))
+                if (!IsMatchingFace(reference, face, minIou: 0.15, maxCenterShiftRatio: 0.80, maxAreaChangeRatio: 3.5))
                     continue;
 
                 double score = IoU(reference, face);

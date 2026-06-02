@@ -21,8 +21,8 @@ namespace FaceShield.Services.Analysis
         private const int YoloSceneCutMatchingTailMaxFrames = SuspiciousNoFaceMaxGap;
         private const float YoloSceneCutMatchingTailMaxConfidence = 0.98f;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
-        private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
-        private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
+        private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.80;
+        private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.5;
         private const int YoloSceneCutPostCutLookbackFrames = 5;
 
         public FaceTrackSceneCutGuardResult RemoveTrackFillAcrossSceneCuts(

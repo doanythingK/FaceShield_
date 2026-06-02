@@ -468,8 +468,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     const float yoloSceneCutMatchingTailMaxConfidence = 0.98f;
     const float yoloSceneCutExtendedWeakCarryMaxConfidence = 0.78f;
     const double yoloSceneCutCandidateMatchMinIou = 0.55;
-    const double yoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
-    const double yoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
+    const double yoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.80;
+    const double yoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.5;
     const int yoloSceneCutPostCutLookbackFrames = 5;
     const int yoloFinalMaskStableGapMaxFrames = 5;
     var trackOptions = useYolo

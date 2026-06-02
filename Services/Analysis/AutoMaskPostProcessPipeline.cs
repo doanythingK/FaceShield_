@@ -19,8 +19,8 @@ namespace FaceShield.Services.Analysis
         private const double YoloSceneCutDifferenceThreshold = 0.15;
         private const double YoloSceneCutDirectDifferenceThreshold = 0.20;
         private const double YoloSceneCutCandidateMatchMinIou = 0.55;
-        private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.65;
-        private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.0;
+        private const double YoloSceneCutCandidateMatchMaxCenterShiftRatio = 0.80;
+        private const double YoloSceneCutCandidateMatchMaxAreaChangeRatio = 3.5;
         private const int YoloSceneCutPostCutLookbackFrames = 5;
         private const int YoloSceneCutCarryPurgeFrames = 12;
         private const int YoloSceneCutCarryBlockFrames = 12;

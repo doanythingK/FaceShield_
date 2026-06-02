@@ -2358,8 +2358,8 @@ namespace FaceShield.Services.Analysis
         public bool StrongCarryProtectionRequiresAreaChange { get; init; } = true;
         public bool StrongCarryProtectionRequiresCenterShift { get; init; } = true;
         public double CandidateMatchMinIou { get; init; } = 0.55;
-        public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.65;
-        public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.0;
+        public double CandidateMatchMaxCenterShiftRatio { get; init; } = 0.80;
+        public double CandidateMatchMaxAreaChangeRatio { get; init; } = 3.5;
     }
 
     public readonly record struct YoloFinalMaskCleanupResult(
