@@ -41,7 +41,7 @@ param(
     [string]$PseudoGtTileExternalOutputCsv = "",
     [ValidateSet("Frame", "TileImage", "TileOriginal")]
     [string]$PseudoGtTileExternalOutputCoordinateSpace = "Frame",
-    [int]$PseudoGtTileExternalTimeoutSeconds = 0,
+    [int]$PseudoGtTileExternalTimeoutSeconds = 180,
     [switch]$WithPseudoGtFaceVerificationInput,
     [switch]$PseudoGtFaceVerificationSkipImageExtraction,
     [double]$PseudoGtFaceVerificationCropPaddingRatio = 0.35,
@@ -50,7 +50,7 @@ param(
     [string]$PseudoGtFaceVerificationExternalOutputCsv = "",
     [ValidateSet("Frame", "CropImage", "CropOriginal")]
     [string]$PseudoGtFaceVerificationExternalOutputCoordinateSpace = "Frame",
-    [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 0,
+    [int]$PseudoGtFaceVerificationExternalTimeoutSeconds = 180,
     [switch]$WithPseudoGtPersonObjectInput,
     [switch]$PseudoGtPersonObjectSkipImageExtraction,
     [int]$PseudoGtPersonObjectScaleWidth = 0,
@@ -59,7 +59,7 @@ param(
     [string]$PseudoGtPersonObjectExternalOutputCsv = "",
     [ValidateSet("Frame", "ScaledFrame")]
     [string]$PseudoGtPersonObjectExternalOutputCoordinateSpace = "Frame",
-    [int]$PseudoGtPersonObjectExternalTimeoutSeconds = 0,
+    [int]$PseudoGtPersonObjectExternalTimeoutSeconds = 180,
     [switch]$Force
 )
 

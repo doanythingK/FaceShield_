@@ -17,7 +17,7 @@ param(
     [string]$ExternalOutputCsv = "",
     [ValidateSet("Frame", "TileImage", "TileOriginal")]
     [string]$ExternalOutputCoordinateSpace = "Frame",
-    [int]$ExternalTimeoutSeconds = 0
+    [int]$ExternalTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"

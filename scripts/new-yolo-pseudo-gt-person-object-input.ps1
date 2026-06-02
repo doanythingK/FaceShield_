@@ -14,7 +14,7 @@ param(
     [string]$ExternalOutputCsv = "",
     [ValidateSet("Frame", "ScaledFrame")]
     [string]$ExternalOutputCoordinateSpace = "Frame",
-    [int]$ExternalTimeoutSeconds = 0
+    [int]$ExternalTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"

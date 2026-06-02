@@ -355,6 +355,7 @@ Assert-Contains "script writes face verification manifest" $scriptText "face-ver
 Assert-Contains "script extracts candidate crops" $scriptText "Invoke-FfmpegCropExtraction"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
+Assert-Contains "script defaults external timeout" $scriptText '\[int\]\$ExternalTimeoutSeconds\s*=\s*180'
 Assert-Contains "script supports external output coordinate space" $scriptText "ExternalOutputCoordinateSpace"
 Assert-Contains "script normalizes crop image coordinates" $scriptText "Convert-ExternalFaceVerificationCsvCoordinateSpace"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"

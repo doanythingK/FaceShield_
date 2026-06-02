@@ -294,6 +294,7 @@ Assert-Contains "script writes final mask continuity report" $scriptText "write-
 Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTileFaceCsv"
 Assert-Contains "script supports pseudo gt frame cap" $scriptText "PseudoGtMaxFrames"
 Assert-Contains "script supports pseudo gt tile external command" $scriptText "PseudoGtTileExternalCommand"
+Assert-Contains "script defaults pseudo gt tile external timeout" $scriptText '\[int\]\$PseudoGtTileExternalTimeoutSeconds\s*=\s*180'
 Assert-Contains "script supports pseudo gt tile scale" $scriptText "PseudoGtTileScale"
 Assert-Contains "script supports pseudo gt tile threshold tuning" $scriptText "PseudoGtMinTileFaceConfidence[\s\S]*-MinTileFaceConfidence[\s\S]*PseudoGtMinTileSupportCount[\s\S]*-MinTileSupportCount"
 Assert-Contains "script supports pseudo gt tile external coordinate space" $scriptText "PseudoGtTileExternalOutputCoordinateSpace"
@@ -301,10 +302,12 @@ Assert-Contains "script can use external tile output as pseudo gt input" $script
 Assert-Contains "script supports pseudo gt face verification input" $scriptText "PseudoGtFaceVerificationCsv"
 Assert-Contains "script can prepare pseudo gt face verification manifest" $scriptText "WithPseudoGtFaceVerificationInput[\s\S]*new-yolo-pseudo-gt-face-verification-input\.ps1[\s\S]*PseudoGtFaceVerificationInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script supports pseudo gt face verification external coordinate space" $scriptText "PseudoGtFaceVerificationExternalOutputCoordinateSpace"
+Assert-Contains "script defaults pseudo gt face verification external timeout" $scriptText '\[int\]\$PseudoGtFaceVerificationExternalTimeoutSeconds\s*=\s*180'
 Assert-Contains "script can use external face verification output as pseudo gt input" $scriptText 'PseudoGtFaceVerificationExternalOutputCsv[\s\S]*PseudoGtFaceVerificationCsv\s*=\s*\$PseudoGtFaceVerificationExternalOutputCsv'
 Assert-Contains "script can prepare pseudo gt person object manifest" $scriptText "WithPseudoGtPersonObjectInput[\s\S]*new-yolo-pseudo-gt-person-object-input\.ps1[\s\S]*PseudoGtPersonObjectInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script can use external person object output as pseudo gt input" $scriptText 'PseudoGtPersonObjectExternalOutputCsv[\s\S]*PseudoGtPersonObjectCsv\s*=\s*\$PseudoGtPersonObjectExternalOutputCsv'
 Assert-Contains "script supports pseudo gt person object external coordinate space" $scriptText "PseudoGtPersonObjectExternalOutputCoordinateSpace"
+Assert-Contains "script defaults pseudo gt person object external timeout" $scriptText '\[int\]\$PseudoGtPersonObjectExternalTimeoutSeconds\s*=\s*180'
 Assert-Contains "script preserves pseudo gt model provenance in generated evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script can prepare no-detection pseudo gt person object manifest" $scriptText 'noDetectionReviewFrameNumbers[\s\S]*WithPseudoGtPersonObjectInput[\s\S]*pseudoGtPersonObjectInputScript[\s\S]*PseudoGtPersonObjectInputDir'
 Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
