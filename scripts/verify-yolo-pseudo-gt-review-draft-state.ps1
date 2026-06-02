@@ -62,6 +62,14 @@ $queueCsv = Join-Path $selfTestDir "pseudo-gt-review-queue.csv"
         faceVerificationDistance = "0.05"
         personConfidence = "0"
         personUpperOverlap = "0"
+        auxiliarySignalRole = ""
+        supportFrameCount = "2"
+        supportRowCount = "3"
+        supportSources = "tile+verification"
+        supportEvidenceIds = "tile-face:10:tile-10-0;face-verification:10:verify-10-0"
+        bestIou = "0.91"
+        centerDistanceRatio = "0.02"
+        areaChangeRatio = "1.05"
         fpProbability = "0.02"
         missProbability = "0"
         reviewPriorityReason = "supported face"
@@ -91,6 +99,14 @@ $queueCsv = Join-Path $selfTestDir "pseudo-gt-review-queue.csv"
         faceVerificationDistance = "1"
         personConfidence = "0"
         personUpperOverlap = "0"
+        auxiliarySignalRole = ""
+        supportFrameCount = "0"
+        supportRowCount = "0"
+        supportSources = ""
+        supportEvidenceIds = ""
+        bestIou = "0"
+        centerDistanceRatio = "99"
+        areaChangeRatio = "99"
         fpProbability = "0.80"
         missProbability = "0"
         reviewPriorityReason = "unsupported base candidate"
@@ -120,6 +136,14 @@ $queueCsv = Join-Path $selfTestDir "pseudo-gt-review-queue.csv"
         faceVerificationDistance = "1"
         personConfidence = "0"
         personUpperOverlap = "0"
+        auxiliarySignalRole = ""
+        supportFrameCount = "1"
+        supportRowCount = "1"
+        supportSources = "tile"
+        supportEvidenceIds = "tile-face:12:tile-12-0"
+        bestIou = "0"
+        centerDistanceRatio = "99"
+        areaChangeRatio = "99"
         fpProbability = "0"
         missProbability = "0.70"
         reviewPriorityReason = "tile miss"
@@ -137,6 +161,11 @@ $frameCsv = Join-Path $selfTestDir "full-frame-review.csv"
         overlayFrameImagePath = "overlay-12.png"
         detectedCandidateCount = "2"
         candidateSummary = "synthetic"
+        continuityCandidateTypes = "perFaceShortGap"
+        continuityCandidateReasons = "per-face-short-gap"
+        continuityReviewPriority = "high"
+        continuityCandidateRanges = "12"
+        continuityReviewHints = "specific face missing while another mask may exist"
         missedFaceCount = ""
         missedFaceRowsAdded = ""
         reviewStatus = ""
@@ -193,10 +222,41 @@ if (@($draftRows | Where-Object {
     throw "Pseudo-GT review draft filled final review fields."
 }
 
+$supportedDraft = @($draftRows | Where-Object { $_.pseudoGt_candidateType -eq "supportedFaceCandidate" })[0]
+foreach ($requiredColumn in @(
+        "pseudoGt_baseFaceConfidence",
+        "pseudoGt_tileFaceConfidence",
+        "pseudoGt_tileSupportCount",
+        "pseudoGt_faceVerificationConfidence",
+        "pseudoGt_faceVerificationDistance",
+        "pseudoGt_bestIou",
+        "pseudoGt_centerDistanceRatio",
+        "pseudoGt_areaChangeRatio",
+        "pseudoGt_supportEvidenceIds",
+        "pseudoGt_fpProbability",
+        "pseudoGt_missProbability")) {
+    if ($null -eq $supportedDraft.PSObject.Properties[$requiredColumn]) {
+        throw "Pseudo-GT review draft missing evidence column: $requiredColumn"
+    }
+}
+if ($supportedDraft.pseudoGt_bestIou -ne "0.91" -or $supportedDraft.pseudoGt_supportEvidenceIds -notmatch "tile-face:10:tile-10-0") {
+    throw "Pseudo-GT review draft did not preserve support metrics and evidence ids."
+}
+
+$missFrameDraft = $draftFrameRows[0]
+if ($missFrameDraft.continuityCandidateTypes -ne "perFaceShortGap" -or
+    $missFrameDraft.continuityReviewPriority -ne "high" -or
+    $missFrameDraft.continuityReviewHints -notmatch "specific face missing") {
+    throw "Pseudo-GT full-frame draft did not preserve continuity review metadata."
+}
+
 $reportText = Get-Content -Raw -Path $reportPath
 Assert-Contains "report records review draft" $reportText "YOLO Pseudo-GT Review Draft"
 Assert-Contains "report records test only rule" $reportText "test-only-reference-not-final-gt"
 Assert-Contains "report records source id geometry rule" $reportText "source id plus IoU geometry"
 Assert-Contains "report records miss frame draft" $reportText "Miss Frame Draft Rows"
+Assert-Contains "report records evidence metrics" $reportText "evidence metrics"
+Assert-Contains "report records support evidence ids" $reportText "tile-face:10:tile-10-0"
+Assert-Contains "report records continuity metadata" $reportText "types=perFaceShortGap"
 
 Write-Host "[YoloPseudoGtReviewDraftVerify] all requested checks passed"

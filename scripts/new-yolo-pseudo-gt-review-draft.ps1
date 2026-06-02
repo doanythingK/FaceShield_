@@ -131,6 +131,11 @@ function Convert-ToPseudoGtFrameDraftRow {
         overlayFrameImagePath = Get-CsvValue $FrameRow "overlayFrameImagePath"
         detectedCandidateCount = Get-CsvValue $FrameRow "detectedCandidateCount"
         candidateSummary = Get-CsvValue $FrameRow "candidateSummary"
+        continuityCandidateTypes = Get-CsvValue $FrameRow "continuityCandidateTypes"
+        continuityCandidateReasons = Get-CsvValue $FrameRow "continuityCandidateReasons"
+        continuityReviewPriority = Get-CsvValue $FrameRow "continuityReviewPriority"
+        continuityCandidateRanges = Get-CsvValue $FrameRow "continuityCandidateRanges"
+        continuityReviewHints = Get-CsvValue $FrameRow "continuityReviewHints"
         missedFaceCount = ""
         missedFaceRowsAdded = ""
         reviewStatus = ""
@@ -252,25 +257,27 @@ $reportLines = @(
     "",
     "## Top Review Draft Rows",
     "",
-    "| rank | frame | candidateId | candidateType | suggestedLabel | sourcePredictionId | box | reason |",
-    "| ---: | ---: | --- | --- | --- | --- | --- | --- |"
+    "| rank | frame | candidateId | candidateType | suggestedLabel | sourcePredictionId | box | evidence metrics | reason |",
+    "| ---: | ---: | --- | --- | --- | --- | --- | --- | --- |"
 )
 
 foreach ($row in ($draftReviewRows | Select-Object -First $maxRows)) {
     $box = "x=$(Get-CsvValue $row "x"), y=$(Get-CsvValue $row "y"), w=$(Get-CsvValue $row "w"), h=$(Get-CsvValue $row "h")"
-    $reportLines += "| $(Get-CsvValue $row "pseudoGt_reviewRank") | $(Get-CsvValue $row "frame") | $(Get-CsvValue $row "pseudoGt_candidateId") | $(Get-CsvValue $row "pseudoGt_candidateType") | $(Get-CsvValue $row "suggestedLabel") | $(Get-CsvValue $row "sourcePredictionId") | $box | $(Get-CsvValue $row "pseudoGt_reviewPriorityReason") |"
+    $metrics = "base=$(Get-CsvValue $row "pseudoGt_baseFaceConfidence"), tile=$(Get-CsvValue $row "pseudoGt_tileFaceConfidence")/support=$(Get-CsvValue $row "pseudoGt_tileSupportCount"), verify=$(Get-CsvValue $row "pseudoGt_faceVerificationConfidence")/dist=$(Get-CsvValue $row "pseudoGt_faceVerificationDistance"), iou=$(Get-CsvValue $row "pseudoGt_bestIou"), center=$(Get-CsvValue $row "pseudoGt_centerDistanceRatio"), area=$(Get-CsvValue $row "pseudoGt_areaChangeRatio"), fp=$(Get-CsvValue $row "pseudoGt_fpProbability"), miss=$(Get-CsvValue $row "pseudoGt_missProbability"), support=$(Get-CsvValue $row "pseudoGt_supportEvidenceIds")"
+    $reportLines += "| $(Get-CsvValue $row "pseudoGt_reviewRank") | $(Get-CsvValue $row "frame") | $(Get-CsvValue $row "pseudoGt_candidateId") | $(Get-CsvValue $row "pseudoGt_candidateType") | $(Get-CsvValue $row "suggestedLabel") | $(Get-CsvValue $row "sourcePredictionId") | $box | $metrics | $(Get-CsvValue $row "pseudoGt_reviewPriorityReason") |"
 }
 
 $reportLines += @(
     "",
     "## Miss Frame Draft Rows",
     "",
-    "| frame | pseudoGtMissCandidateCount | pseudoGtMissCandidateIds | suggestedMissedFaceRowsAdded |",
-    "| ---: | ---: | --- | ---: |"
+    "| frame | pseudoGtMissCandidateCount | pseudoGtMissCandidateIds | continuity | suggestedMissedFaceRowsAdded |",
+    "| ---: | ---: | --- | --- | ---: |"
 )
 
 foreach ($row in ($draftFrameRows | Select-Object -First $maxRows)) {
-    $reportLines += "| $(Get-CsvValue $row "frame") | $(Get-CsvValue $row "pseudoGtMissCandidateCount") | $(Get-CsvValue $row "pseudoGtMissCandidateIds") | $(Get-CsvValue $row "suggestedMissedFaceRowsAdded") |"
+    $continuity = "types=$(Get-CsvValue $row "continuityCandidateTypes"), ranges=$(Get-CsvValue $row "continuityCandidateRanges"), hints=$(Get-CsvValue $row "continuityReviewHints")"
+    $reportLines += "| $(Get-CsvValue $row "frame") | $(Get-CsvValue $row "pseudoGtMissCandidateCount") | $(Get-CsvValue $row "pseudoGtMissCandidateIds") | $continuity | $(Get-CsvValue $row "suggestedMissedFaceRowsAdded") |"
 }
 
 $reportLines | Set-Content -Encoding UTF8 -Path $reportPath
