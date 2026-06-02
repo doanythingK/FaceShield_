@@ -15,7 +15,7 @@ namespace FaceShield.Services.Analysis
         private const float YoloSceneCutStrongCarryProbeMinConfidence = 0.78f;
         private const float YoloSceneCutStrongCarryProbeMinSourceConfidence = 0.80f;
         private const double YoloSceneCutDifferenceThreshold = 0.15;
-        private const double YoloSceneCutDirectDifferenceThreshold = 0.32;
+        private const double YoloSceneCutDirectDifferenceThreshold = 0.20;
         private const int YoloSceneCutDirectDifferenceMaxCandidates = 96;
         private const int YoloSceneCutCarryProbeFrames = SuspiciousNoFaceMaxGap;
         private const int YoloSceneCutMatchingTailMaxFrames = SuspiciousNoFaceMaxGap;
