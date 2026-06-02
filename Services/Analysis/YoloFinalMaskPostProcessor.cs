@@ -791,6 +791,9 @@ namespace FaceShield.Services.Analysis
 
             foreach (var reference in references)
             {
+                if (!IsIndependentStrongCarrySupport(reference, face, options))
+                    continue;
+
                 if (HasIndependentStrongCarrySupport(
                         maskProvider,
                         frameIndex,
