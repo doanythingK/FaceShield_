@@ -166,6 +166,8 @@ YOLO 후보 crop 자체를 고품질 face detection 모델로 재검증하려면
 `-PublishPseudoGtToGoalEvidence`를 붙이면 problem-span run의 pseudo-GT 후보를 completion gate가 읽는 `.tmp/yolo-pseudo-gt/pseudo-gt-candidates.csv`, `.tmp/yolo-pseudo-gt/pseudo-gt-summary.md`, `.tmp/yolo-pseudo-gt/pseudo-gt-review-queue.csv`로 발행한다. 이 스위치는 tile-face 또는 face-verification CSV/외부 runner가 있을 때만 허용된다. person/object 결과만으로는 얼굴 정답을 만들 수 없으므로 goal evidence 발행 조건이 아니다.
 
 `PseudoGtTileFaceCsv`와 `PseudoGtFaceVerificationCsv` 중 하나 이상이 있으면 `pseudo-gt-candidates.csv`와 `pseudo-gt-summary.md`가 생성된다. tile 없이 face verification만 잡은 얼굴도 기본 YOLO와 매칭되지 않으면 `missCandidate`로 남긴다. 단, tile face row는 `MinTileFaceConfidence` 이상이고 `MinTileSupportCount` 이상의 반복 tile support가 있을 때만 support/miss/temporal/comparison evidence로 쓰고, face verification row는 `MinVerificationConfidence` 이상이면서 `MaxVerificationDistance` 이하일 때만 support/miss/comparison 후보가 된다. 기본 YOLO 박스와 고품질 face evidence는 IoU 또는 중심 거리로 매칭하되, 중심만 맞고 크기 차이가 큰 후보는 geometry support로 보지 않는다. 이렇게 큰 YOLO 박스 안의 작은 얼굴처럼 과대 박스/미탐이 섞인 경우가 `supportedFaceCandidate`로 묻히지 않고 review queue에 남는다. 약한 tile/verification row는 같은 frame에 있어도 nearest comparison 근거로 기록하지 않는다. 기본 YOLO 로그/CSV에 `cx/cy/areaRatio/aspectRatio`가 있으면 `centerXRatio`, `centerYRatio`, `baseAreaRatio`, `aspectRatio`를 보존하고, 상단 큰 박스나 상단 약한 박스는 `geometryTag=top-edge-large-review` 또는 `top-edge-weak-review`로 표시한다. 이 태그는 화면전환 잔상/부분 얼굴/상단 오탐을 빨리 찾기 위한 test-only review priority 증거이며, 자동 nonface 판정이 아니다. `PseudoGtPersonObjectCsv`는 선택 입력이며 얼굴 정답으로 쓰지 않고 우선순위 보조 신호로만 쓴다.
+
+`write-yolo-mask-continuity-report.ps1`가 만든 `yolo-mask-continuity-candidates.csv`를 `new-yolo-pseudo-gt-evidence.ps1 -ContinuityCandidateCsv`로 넘기면 `perFaceShortGap`, `shortEmptyGap`, `sceneCutCarryReview` 같은 깜박임/화면전환 잔상 후보가 pseudo-GT 후보와 review queue에 함께 기록된다. 이 값은 `continuityCandidateTypes`, `continuityReviewPriority`, `continuityReviewHints`, `continuityCandidateRanges`, `continuityPriorityBoost`로 남고 review 우선순위만 올린다. continuity evidence도 최종 `face/nonface/miss` 판정이 아니며, 기본 AutoMask 후처리/temporal/ROI/scene-cut 런타임 단계가 pseudo-GT CSV를 읽지 않는 분리 구조를 유지한다.
 `pseudo-gt-review-queue.csv`는 같은 후보를 `fpProbability`/`missProbability` 기준으로 정렬해 먼저 볼 frame/candidate를 알려준다. queue에는 사람이 라벨을 옮길 때 참고할 `expectedReviewLabel`, `geometryPriorityBoost`, `geometryTag`, candidate `evidenceNotes`도 포함하지만, 이 값도 참고 증거이며 최종 판정은 review CSV 라벨로만 닫는다. `expectedReviewLabel`은 `supportedFaceCandidate=face`, `falsePositiveCandidate=nonface`, `missCandidate=miss`로 안내한다.
 기본 YOLO 검출이 0개인 구간에서도 `-AllowNoDetections -WithPseudoGtTileInput`과 tile 외부 runner를 함께 쓰면 sampled frame tile 결과가 `missCandidate`로 기록된다. 이때 `-WithPseudoGtPersonObjectInput`과 person/object 외부 runner를 함께 쓰면 같은 sampled frame의 person/object 보조 신호도 `personConfidence`, `personUpperOverlap`, `auxiliaryPriorityBoost`, `auxiliarySignalRole=priority-only-not-face-evidence`로 연결된다. 다만 `MinPersonObjectConfidence` 미만 person/object row는 review 우선순위를 올리지 않는다. person/object row는 `missProbability`를 직접 올리지 않고 `auxiliaryPriorityBoost`로만 review 순서를 올린다. 이 경로는 작은 얼굴 미탐 검증용 test-only 증거이며, person/object 결과는 얼굴 정답이 아니라 review 우선순위 보조 신호이고 실제 `miss` 확정은 review CSV 라벨로 닫는다.
 
@@ -328,6 +330,11 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 - `supportRowCount`
 - `supportSources`
 - `supportEvidenceIds`
+- `continuityCandidateTypes`
+- `continuityReviewPriority`
+- `continuityReviewHints`
+- `continuityCandidateRanges`
+- `continuityPriorityBoost`
 - `bestIou`
 - `centerDistanceRatio`
 - `areaChangeRatio`

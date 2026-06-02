@@ -1481,6 +1481,11 @@ else {
             $pseudoGtArgs += $resolvedPseudoGtPersonObjectCsv
         }
 
+        if (Test-Path $resolvedMaskContinuityCsvPath) {
+            $pseudoGtArgs += "-ContinuityCandidateCsv"
+            $pseudoGtArgs += $resolvedMaskContinuityCsvPath
+        }
+
         & powershell.exe @pseudoGtArgs
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to write YOLO pseudo-GT evidence."

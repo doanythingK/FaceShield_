@@ -10,6 +10,7 @@ $baseLog = Join-Path $work "base-yolo.log"
 $tileCsv = Join-Path $work "tile-face.csv"
 $verificationCsv = Join-Path $work "face-verification.csv"
 $personCsv = Join-Path $work "person-object.csv"
+$continuityCsv = Join-Path $work "continuity-candidates.csv"
 $badVerificationCsv = Join-Path $work "bad-face-verification.csv"
 $emptyBaseLog = Join-Path $work "empty-base-yolo.log"
 $outputCsv = Join-Path $work "pseudo-gt-candidates.csv"
@@ -105,11 +106,17 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     [pscustomobject]@{ frame = 4; detectionId = "person-low-confidence-4"; x = 205.0; y = 110.0; w = 80.0; h = 180.0; confidence = 0.120; class = "person"; evidenceModel = "heavy-person-object-v1"; evidenceRunner = "person-object-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $personCsv
 
+@(
+    [pscustomobject]@{ candidateType = "perFaceShortGap"; evidenceReason = "per-face-short-gap"; reviewPriority = "high"; frame = 3; range = ""; previousFrame = ""; nextFrame = ""; reviewHint = "specific face missing while another mask may exist; review flicker" },
+    [pscustomobject]@{ candidateType = "sceneCutCarryReview"; evidenceReason = "scene-carry-protected"; reviewPriority = "high"; frame = 11; range = ""; previousFrame = ""; nextFrame = ""; reviewHint = "scene cut carry candidate; review possible post-cut residue" }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $continuityCsv
+
 $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
     -BasePredictionLog $baseLog `
     -TileFaceCsv $tileCsv `
     -FaceVerificationCsv $verificationCsv `
     -PersonObjectCsv $personCsv `
+    -ContinuityCandidateCsv $continuityCsv `
     -OutputCsv $outputCsv `
     -SummaryPath $summaryPath `
     -ReviewQueueCsv $reviewQueueCsv 2>&1
@@ -164,6 +171,11 @@ foreach ($column in @(
         "supportRowCount",
         "supportSources",
         "supportEvidenceIds",
+        "continuityCandidateTypes",
+        "continuityReviewPriority",
+        "continuityReviewHints",
+        "continuityCandidateRanges",
+        "continuityPriorityBoost",
         "bestIou",
         "centerDistanceRatio",
         "areaChangeRatio",
@@ -216,6 +228,11 @@ foreach ($column in @(
         "auxiliarySignalRole",
         "supportRowCount",
         "supportEvidenceIds",
+        "continuityCandidateTypes",
+        "continuityReviewPriority",
+        "continuityReviewHints",
+        "continuityCandidateRanges",
+        "continuityPriorityBoost",
         "areaChangeRatio",
         "centerXRatio",
         "centerYRatio",
@@ -315,6 +332,20 @@ if ($topEdgeLargeQueueRow.reviewPriorityReason -notmatch "geometry tag 'top-edge
     throw "Expected review priority reason to explain geometry review boost."
 }
 
+if ($topEdgeLargeCandidate.continuityCandidateTypes -ne "sceneCutCarryReview" -or
+    $topEdgeLargeCandidate.continuityReviewPriority -ne "high" -or
+    $topEdgeLargeCandidate.continuityReviewHints -notmatch "post-cut residue") {
+    throw "Expected pseudo-GT candidate CSV to preserve scene-carry continuity review evidence."
+}
+
+if ([double]::Parse($topEdgeLargeQueueRow.continuityPriorityBoost, [System.Globalization.CultureInfo]::InvariantCulture) -le 0) {
+    throw "Expected scene-carry continuity evidence to raise review priority."
+}
+
+if ($topEdgeLargeQueueRow.reviewPriorityReason -notmatch "continuity evidence raises review priority") {
+    throw "Expected review priority reason to explain continuity review boost."
+}
+
 $missQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "missCandidate" })[0]
 if ($null -eq $missQueueRow -or $missQueueRow.expectedReviewLabel -ne "miss") {
     throw "Expected missCandidate queue row to tell the reviewer to close it as miss after visual confirmation."
@@ -375,6 +406,11 @@ if ([double]::Parse($personSupportedQueue.auxiliaryPriorityBoost, [System.Global
 
 if ($personSupportedMiss.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
     throw "Expected high-confidence person/object support to record a priority-only role on miss candidates."
+}
+
+if ($personSupportedMiss.continuityCandidateTypes -ne "perFaceShortGap" -or
+    $personSupportedMiss.continuityReviewHints -notmatch "review flicker") {
+    throw "Expected missCandidate to preserve per-face flicker continuity review evidence."
 }
 
 if ($personSupportedQueue.auxiliarySignalRole -ne "priority-only-not-face-evidence") {
@@ -609,6 +645,9 @@ Assert-Contains "script records best geometry support" $scriptText "Get-MinMatch
 Assert-Contains "script records temporal support" $scriptText "supportFrameCount"
 Assert-Contains "script records repeated support rows" $scriptText "supportRowCount"
 Assert-Contains "script records concrete support evidence ids" $scriptText "supportEvidenceIds"
+Assert-Contains "script accepts continuity candidates" $scriptText "ContinuityCandidateCsv"
+Assert-Contains "script writes continuity review evidence" $scriptText "continuityCandidateTypes"
+Assert-Contains "script records continuity priority boost" $scriptText "continuityPriorityBoost"
 Assert-Contains "script scopes matched pseudo gt ids by frame" $scriptText "Get-DetectionMatchKey"
 Assert-Contains "script writes review queue csv" $scriptText "ReviewQueueCsv"
 Assert-Contains "script supports no-base miss evidence" $scriptText 'baseRows=\$\(\$baseRows.Count\)'
@@ -645,6 +684,9 @@ Assert-Contains "summary records runner provenance count" $summaryText "runnerPr
 Assert-Contains "summary records source-bound face verification count" $summaryText "sourceBoundFaceVerificationRows="
 Assert-Contains "summary records geometry tagged row count" $summaryText "geometryTaggedRows=1"
 Assert-Contains "summary records geometry tags" $summaryText "geometryTags=top-edge-large-review"
+Assert-Contains "summary records continuity row count" $summaryText "continuityRows=2"
+Assert-Contains "summary records continuity tagged row count" $summaryText "continuityTaggedRows=2"
+Assert-Contains "summary records continuity types" $summaryText "continuityTypes=perFaceShortGap,sceneCutCarryReview"
 Assert-Contains "summary records provenance field contract" $summaryText "evidenceProvenance=optional-evidenceModel/evidenceRunner"
 Assert-Contains "summary records review queue path" $summaryText "reviewQueue="
 Assert-Contains "summary records strict input validation" $summaryText "inputValidation=strict-required-columns"
@@ -661,6 +703,7 @@ Assert-Contains "guide documents tile support threshold" $guideText "MinTileSupp
 Assert-Contains "guide documents pseudo gt output fields" $guideText "faceVerificationConfidence[\s\S]*faceVerificationDistance"
 Assert-Contains "guide documents optional pseudo gt model provenance" $guideText "evidenceModel[\s\S]*evidenceRunner"
 Assert-Contains "guide documents area ratio evidence" $guideText "areaChangeRatio"
+Assert-Contains "guide documents continuity evidence" $guideText "continuityCandidateTypes"
 Assert-Contains "guide documents no-detection pseudo gt miss evidence" $guideText "AllowNoDetections[\s\S]*WithPseudoGtTileInput[\s\S]*missCandidate"
 
 Write-Host "[YoloPseudoGtEvidenceVerify] all requested checks passed"

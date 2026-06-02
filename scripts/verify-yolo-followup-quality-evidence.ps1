@@ -319,6 +319,7 @@ Assert-Contains "script preserves pseudo gt model provenance in generated eviden
 Assert-Contains "script can prepare no-detection pseudo gt person object manifest" $scriptText 'noDetectionReviewFrameNumbers[\s\S]*WithPseudoGtPersonObjectInput[\s\S]*pseudoGtPersonObjectInputScript[\s\S]*PseudoGtPersonObjectInputDir'
 Assert-Contains "script writes pseudo gt evidence" $scriptText "new-yolo-pseudo-gt-evidence\.ps1"
 Assert-Contains "script forwards pseudo gt review queue" $scriptText "PseudoGtReviewQueueCsv[\s\S]*-ReviewQueueCsv"
+Assert-Contains "script forwards continuity candidates to pseudo gt evidence" $scriptText 'pseudoGtArgs[\s\S]*"-ContinuityCandidateCsv"[\s\S]*resolvedMaskContinuityCsvPath'
 Assert-Contains "script can prepare pseudo gt tile manifest" $scriptText "WithPseudoGtTileInput[\s\S]*new-yolo-pseudo-gt-tile-input\.ps1[\s\S]*PseudoGtTileInputDir[\s\S]*-MaxFrames[\s\S]*PseudoGtMaxFrames"
 Assert-Contains "script links pseudo gt summary" $scriptText "Pseudo-GT candidates"
 Assert-Contains "script links pseudo gt review queue" $scriptText "Pseudo-GT review queue"

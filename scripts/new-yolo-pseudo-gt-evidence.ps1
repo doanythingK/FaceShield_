@@ -4,6 +4,7 @@ param(
     [string]$TileFaceCsv = "",
     [string]$FaceVerificationCsv = "",
     [string]$PersonObjectCsv = "",
+    [string]$ContinuityCandidateCsv = "",
     [string]$OutputCsv = ".tmp\yolo-pseudo-gt\pseudo-gt-candidates.csv",
     [string]$SummaryPath = ".tmp\yolo-pseudo-gt\pseudo-gt-summary.md",
     [string]$ReviewQueueCsv = "",
@@ -279,6 +280,35 @@ function Join-UniqueNonEmpty {
     return [string]::Join("+", $items)
 }
 
+function Expand-FrameRangeValues {
+    param([string]$Value)
+
+    $frames = [System.Collections.Generic.SortedSet[int]]::new()
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -eq "none") {
+        return @()
+    }
+
+    foreach ($part in @($Value -split ",")) {
+        $token = $part.Trim()
+        if ($token -match '^(\d+)-(\d+)$') {
+            $start = [int]$Matches[1]
+            $end = [int]$Matches[2]
+            if ($end -lt $start) {
+                continue
+            }
+
+            for ($frame = $start; $frame -le $end; $frame++) {
+                [void]$frames.Add($frame)
+            }
+        }
+        elseif ($token -match '^\d+$') {
+            [void]$frames.Add([int]$token)
+        }
+    }
+
+    return @($frames | ForEach-Object { $_ })
+}
+
 function Get-DetectionMatchKey {
     param([object]$Row)
 
@@ -379,6 +409,61 @@ function Read-BasePredictionLogRows {
     }
 
     return @($rows)
+}
+
+function Read-ContinuityCandidateRows {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return @()
+    }
+
+    $resolved = Resolve-RepoPath $Path
+    if (-not (Test-Path $resolved)) {
+        throw "Continuity candidate CSV not found: $resolved"
+    }
+
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $index = 0
+    foreach ($row in @(Import-Csv $resolved)) {
+        $frameSet = [System.Collections.Generic.SortedSet[int]]::new()
+        $frame = Read-IntValue $row @("frame", "Frame") -1
+        if ($frame -ge 0) {
+            [void]$frameSet.Add($frame)
+        }
+
+        foreach ($rangeFrame in @(Expand-FrameRangeValues ([string](Get-PropertyValue $row @("range", "candidateRange", "continuityCandidateRanges") "")))) {
+            [void]$frameSet.Add([int]$rangeFrame)
+        }
+
+        $previousFrame = Read-IntValue $row @("previousFrame", "PreviousFrame") -1
+        if ($previousFrame -ge 0) {
+            [void]$frameSet.Add($previousFrame)
+        }
+
+        $nextFrame = Read-IntValue $row @("nextFrame", "NextFrame") -1
+        if ($nextFrame -ge 0) {
+            [void]$frameSet.Add($nextFrame)
+        }
+
+        if ($frameSet.Count -eq 0) {
+            $index++
+            continue
+        }
+
+        $rows.Add([pscustomobject]@{
+                Id = if (-not [string]::IsNullOrWhiteSpace([string](Get-PropertyValue $row @("candidateId", "id", "Id") ""))) { [string](Get-PropertyValue $row @("candidateId", "id", "Id") "") } else { "continuity-$index" }
+                Frames = @($frameSet | ForEach-Object { $_ })
+                CandidateType = [string](Get-PropertyValue $row @("candidateType", "continuityCandidateTypes", "type") "")
+                EvidenceReason = [string](Get-PropertyValue $row @("evidenceReason", "continuityCandidateReasons", "reason") "")
+                ReviewPriority = [string](Get-PropertyValue $row @("reviewPriority", "continuityReviewPriority", "priority") "normal")
+                Range = [string](Get-PropertyValue $row @("range", "candidateRange", "continuityCandidateRanges") "")
+                ReviewHint = [string](Get-PropertyValue $row @("reviewHint", "continuityReviewHints", "hint") "")
+            }) | Out-Null
+        $index++
+    }
+
+    return $rows.ToArray()
 }
 
 function Get-Iou {
@@ -810,6 +895,40 @@ function Get-MinMatchProperty {
     return $best
 }
 
+function Get-ContinuitySupport {
+    param(
+        [int]$Frame,
+        [object[]]$ContinuityRows
+    )
+
+    $matches = @($ContinuityRows | Where-Object { @($_.Frames) -contains $Frame })
+    if ($matches.Count -eq 0) {
+        return [pscustomobject]@{
+            Count = 0
+            CandidateTypes = ""
+            ReviewPriority = ""
+            ReviewHints = ""
+            CandidateRanges = ""
+            PriorityBoost = 0.0
+        }
+    }
+
+    $types = @($matches | ForEach-Object { $_.CandidateType } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $priorities = @($matches | ForEach-Object { $_.ReviewPriority } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $hints = @($matches | ForEach-Object { $_.ReviewHint } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $ranges = @($matches | ForEach-Object { $_.Range } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $hasHigh = @($matches | Where-Object { ([string]$_.ReviewPriority).ToLowerInvariant() -eq "high" }).Count -gt 0
+
+    return [pscustomobject]@{
+        Count = $matches.Count
+        CandidateTypes = if ($types.Count -gt 0) { [string]::Join("+", $types) } else { "" }
+        ReviewPriority = if ($priorities.Count -gt 0) { [string]::Join("+", $priorities) } else { "" }
+        ReviewHints = if ($hints.Count -gt 0) { [string]::Join("; ", $hints) } else { "" }
+        CandidateRanges = if ($ranges.Count -gt 0) { [string]::Join(";", $ranges) } else { "" }
+        PriorityBoost = if ($hasHigh) { 0.12 } else { 0.06 }
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($BasePredictionCsv) -and [string]::IsNullOrWhiteSpace($BasePredictionLog)) {
     throw "BasePredictionCsv or BasePredictionLog is required."
 }
@@ -837,6 +956,8 @@ $personRows = @(if (-not [string]::IsNullOrWhiteSpace($PersonObjectCsv)) {
         Read-DetectionCsvRows $PersonObjectCsv "person-object"
     })
 
+$continuityRows = @(Read-ContinuityCandidateRows $ContinuityCandidateCsv)
+
 if (($tileRows.Count + $verificationRows.Count) -eq 0) {
     throw "No pseudo-GT face support rows were found."
 }
@@ -851,6 +972,7 @@ foreach ($base in $baseRows) {
     $personMatch = Find-BestPersonSupport $base $personRows
     $temporalSupport = Get-TemporalFaceSupport $base $tileRows $verificationRows
     $comparisonMatch = Find-BestComparison $base @($tileRows + $verificationRows)
+    $continuitySupport = Get-ContinuitySupport $base.Frame $continuityRows
 
     $hasTileSupport = $null -ne $tileMatch
     $hasVerificationSupport = $null -ne $verificationMatch
@@ -956,6 +1078,11 @@ foreach ($base in $baseRows) {
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
             supportEvidenceIds = $temporalSupport.EvidenceIds
+            continuityCandidateTypes = $continuitySupport.CandidateTypes
+            continuityReviewPriority = $continuitySupport.ReviewPriority
+            continuityReviewHints = $continuitySupport.ReviewHints
+            continuityCandidateRanges = $continuitySupport.CandidateRanges
+            continuityPriorityBoost = Format-Double $continuitySupport.PriorityBoost
             bestIou = Format-Double $bestIou
             centerDistanceRatio = Format-Double $bestCenterDistance
             areaChangeRatio = Format-Double $bestAreaChangeRatio
@@ -990,6 +1117,7 @@ foreach ($tile in $tileRows) {
     $personMatch = Find-BestPersonSupport $tile $personRows
     $verificationMatch = Find-BestVerification $tile $verificationRows
     $temporalSupport = Get-TemporalFaceSupport $tile $tileRows $verificationRows
+    $continuitySupport = Get-ContinuitySupport $tile.Frame $continuityRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
@@ -1041,6 +1169,11 @@ foreach ($tile in $tileRows) {
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
             supportEvidenceIds = $temporalSupport.EvidenceIds
+            continuityCandidateTypes = $continuitySupport.CandidateTypes
+            continuityReviewPriority = $continuitySupport.ReviewPriority
+            continuityReviewHints = $continuitySupport.ReviewHints
+            continuityCandidateRanges = $continuitySupport.CandidateRanges
+            continuityPriorityBoost = Format-Double $continuitySupport.PriorityBoost
             bestIou = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.CenterDistanceRatio } else { "99" }
             areaChangeRatio = if ($null -ne $verificationMatch) { Format-Double $verificationMatch.AreaChangeRatio } else { "99" }
@@ -1079,6 +1212,7 @@ foreach ($verification in $verificationRows) {
 
     $personMatch = Find-BestPersonSupport $verification $personRows
     $temporalSupport = Get-TemporalFaceSupport $verification $tileRows $verificationRows
+    $continuitySupport = Get-ContinuitySupport $verification.Frame $continuityRows
     $personConfidence = if ($null -ne $personMatch) { $personMatch.Row.Confidence } else { 0.0 }
     $personUpperOverlap = if ($null -ne $personMatch) { $personMatch.UpperOverlap } else { 0.0 }
     $personObjectClass = if ($null -ne $personMatch) { $personMatch.Row.ClassLabel } else { "" }
@@ -1128,6 +1262,11 @@ foreach ($verification in $verificationRows) {
             supportRowCount = $temporalSupport.RowCount
             supportSources = $temporalSupport.Sources
             supportEvidenceIds = $temporalSupport.EvidenceIds
+            continuityCandidateTypes = $continuitySupport.CandidateTypes
+            continuityReviewPriority = $continuitySupport.ReviewPriority
+            continuityReviewHints = $continuitySupport.ReviewHints
+            continuityCandidateRanges = $continuitySupport.CandidateRanges
+            continuityPriorityBoost = Format-Double $continuitySupport.PriorityBoost
             bestIou = if ($null -ne $tileMatch) { Format-Double $tileMatch.Iou } else { "0" }
             centerDistanceRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.CenterDistanceRatio } else { "99" }
             areaChangeRatio = if ($null -ne $tileMatch) { Format-Double $tileMatch.AreaChangeRatio } else { "99" }
@@ -1181,10 +1320,11 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
         $missProbability = Read-CandidateDouble $_ "missProbability"
         $personUpperOverlap = [Math]::Min(1.0, [Math]::Max(0.0, (Read-CandidateDouble $_ "personUpperOverlap")))
         $auxiliaryPriorityBoost = [Math]::Min(0.15, $personUpperOverlap * 0.15)
+        $continuityPriorityBoost = [Math]::Min(0.12, [Math]::Max(0.0, (Read-CandidateDouble $_ "continuityPriorityBoost")))
         $geometryTag = [string]$_.geometryTag
         $geometryPriorityBoost = if ($_.candidateType -eq "falsePositiveCandidate" -and -not [string]::IsNullOrWhiteSpace($geometryTag)) { 0.08 } else { 0.0 }
-        $priorityScore = [Math]::Min(1.0, [Math]::Max($fpProbability, $missProbability) + $auxiliaryPriorityBoost + $geometryPriorityBoost)
-        $priorityGroup = if ($_.candidateType -eq "supportedFaceCandidate") { 1 } else { 0 }
+        $priorityScore = [Math]::Min(1.0, [Math]::Max($fpProbability, $missProbability) + $auxiliaryPriorityBoost + $geometryPriorityBoost + $continuityPriorityBoost)
+        $priorityGroup = if ($_.candidateType -eq "supportedFaceCandidate" -and $continuityPriorityBoost -le 0) { 1 } else { 0 }
         $dominantProbability = if ($missProbability -gt $fpProbability) { "missProbability" } else { "fpProbability" }
         $priorityReason = switch ($_.candidateType) {
             "falsePositiveCandidate" { "review likely false-positive first; base YOLO lacks test-only face support" }
@@ -1197,6 +1337,9 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
         if ($geometryPriorityBoost -gt 0) {
             $priorityReason = "$priorityReason; geometry tag '$geometryTag' raises review priority but does not decide face/nonface"
         }
+        if ($continuityPriorityBoost -gt 0) {
+            $priorityReason = "$priorityReason; continuity evidence raises review priority for flicker/scene-carry review but does not decide face/nonface/miss"
+        }
 
         [pscustomobject]@{
             Row = $_
@@ -1204,6 +1347,7 @@ $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
             PriorityScore = $priorityScore
             AuxiliaryPriorityBoost = $auxiliaryPriorityBoost
             GeometryPriorityBoost = $geometryPriorityBoost
+            ContinuityPriorityBoost = $continuityPriorityBoost
             DominantProbability = $dominantProbability
             PriorityReason = $priorityReason
         }
@@ -1234,6 +1378,7 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             reviewPriorityScore = Format-Double $_.PriorityScore
             auxiliaryPriorityBoost = Format-Double $_.AuxiliaryPriorityBoost
             geometryPriorityBoost = Format-Double $_.GeometryPriorityBoost
+            continuityPriorityBoost = Format-Double $_.ContinuityPriorityBoost
             dominantProbability = $_.DominantProbability
             baseFaceConfidence = $row.baseFaceConfidence
             tileFaceConfidence = $row.tileFaceConfidence
@@ -1256,6 +1401,10 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             supportRowCount = $row.supportRowCount
             supportSources = $row.supportSources
             supportEvidenceIds = $row.supportEvidenceIds
+            continuityCandidateTypes = $row.continuityCandidateTypes
+            continuityReviewPriority = $row.continuityReviewPriority
+            continuityReviewHints = $row.continuityReviewHints
+            continuityCandidateRanges = $row.continuityCandidateRanges
             bestIou = $row.bestIou
             centerDistanceRatio = $row.centerDistanceRatio
             areaChangeRatio = $row.areaChangeRatio
@@ -1288,6 +1437,8 @@ $runnerProvenanceRows = @($orderedRows | Where-Object {
     }).Count
 $geometryTaggedRows = @($orderedRows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.geometryTag) }).Count
 $geometryTags = @($orderedRows | ForEach-Object { [string]$_.geometryTag } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+$continuityTaggedRows = @($orderedRows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.continuityCandidateTypes) }).Count
+$continuityTypes = @($orderedRows | ForEach-Object { [string]$_.continuityCandidateTypes } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_ -split "\+" } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
 $topReviewFrames = @($reviewQueueRows | Where-Object { $_.candidateType -ne "supportedFaceCandidate" } | Select-Object -First 10 | ForEach-Object { "$($_.frame):$($_.candidateType):$($_.candidateId):$($_.reviewPriorityScore)" })
 
 $summary = @(
@@ -1299,6 +1450,7 @@ $summary = @(
     "- tileFaceRows=$($tileRows.Count)",
     "- faceVerificationRows=$($verificationRows.Count)",
     "- personObjectRows=$($personRows.Count)",
+    "- continuityRows=$($continuityRows.Count)",
     "- outputRows=$($orderedRows.Count)",
     "- reviewQueue=$ReviewQueueCsv",
     "- supportedFaceCandidate=$supported",
@@ -1309,6 +1461,8 @@ $summary = @(
     "- sourceBoundFaceVerificationRows=$sourceBoundFaceVerificationRows",
     "- geometryTaggedRows=$geometryTaggedRows",
     "- geometryTags=$(if ($geometryTags.Count -gt 0) { [string]::Join(',', $geometryTags) } else { 'none' })",
+    "- continuityTaggedRows=$continuityTaggedRows",
+    "- continuityTypes=$(if ($continuityTypes.Count -gt 0) { [string]::Join(',', $continuityTypes) } else { 'none' })",
     "- evidenceProvenance=optional-evidenceModel/evidenceRunner",
     "- minSupportIou=$(Format-Double $MinSupportIou)",
     "- minTileFaceConfidence=$(Format-Double $MinTileFaceConfidence)",
