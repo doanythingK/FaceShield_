@@ -2241,7 +2241,7 @@ namespace FaceShield.Services.Analysis
         public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.10;
         public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0065;
         public int TopEdgeWeakClusterMaxFrames { get; init; } = 3;
-        public int TopEdgeWeakClusterNeighborWindowFrames { get; init; } = 2;
+        public int TopEdgeWeakClusterNeighborWindowFrames { get; init; } = 3;
         public float TopEdgeWeakClusterMaxConfidence { get; init; } = 0.60f;
         public float TopEdgeWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double TopEdgeWeakClusterMaxCenterYRatio { get; init; } = 0.08;
