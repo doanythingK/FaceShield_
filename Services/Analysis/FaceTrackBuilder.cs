@@ -160,6 +160,7 @@ namespace FaceShield.Services.Analysis
         public double MinTrackMatchScore { get; init; } = 0.20;
         public double MinCenterContinuity { get; init; } = 0.25;
         public double MaxCenterShiftRatio { get; init; } = 0.62;
+        public double MaxConfirmedTrackBridgeCenterShiftRatio { get; init; } = 0.0;
         public double MaxAreaChangeRatio { get; init; } = 3.2;
         public double DuplicateIou { get; init; } = 0.35;
         public float UnstableTailMaxConfidence { get; init; } = 0.0f;

@@ -445,6 +445,7 @@ Assert-Contains "track hold verifier checks weak candidate removal" $yoloTrackHo
 Assert-Contains "track hold verifier checks high confidence source" $yoloTrackHoldVerify "0.96f"
 Assert-Contains "track hold verifier checks synthetic confidence cap" $yoloTrackHoldVerify "SyntheticFillConfidenceMax = 0.78f"
 Assert-Contains "track hold verifier checks scene cut lost tail removal" $yoloTrackHoldVerify "sceneCutLostRemoved"
+Assert-Contains "track hold verifier blocks long shifted gap hold" $yoloTrackHoldVerify "long high-shift gap"
 Assert-Contains "manual readiness invokes reviewed full gt verifier" $manualReadinessVerify "verify-yolo-full-gt-reviewed-state.ps1"
 Assert-Contains "manual readiness requires full frame review" $manualReadinessVerify "RequireFullFrameReview"
 Assert-Contains "manual readiness requires full gt artifacts" $manualReadinessVerify "RequireArtifacts"

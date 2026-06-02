@@ -171,6 +171,7 @@ namespace FaceShield.Services.Analysis
                     SmallTrackMaxAreaRatio = 0.00070,
                     MinTrackIou = 0.08,
                     MaxCenterShiftRatio = 0.72,
+                    MaxConfirmedTrackBridgeCenterShiftRatio = 1.20,
                     MaxAreaChangeRatio = 4.0,
                     DuplicateIou = TemporalDuplicateIouMin,
                     UnstableTailMaxConfidence = 0.40f,

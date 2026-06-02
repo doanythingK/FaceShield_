@@ -730,6 +730,13 @@ namespace FaceShield.Services.Analysis
             double iou = FaceTrackBuilder.IoU(previous, next);
             double centerShift = FaceTrackBuilder.GetNormalizedCenterShift(previous, next);
             double allowedShift = options.MaxCenterShiftRatio * Math.Max(1, gap + 1);
+            if (gap > options.MaxFillGap &&
+                options.MaxConfirmedTrackBridgeCenterShiftRatio > 0.0 &&
+                centerShift > options.MaxConfirmedTrackBridgeCenterShiftRatio)
+            {
+                return false;
+            }
+
             return iou >= options.MinTrackIou || centerShift <= allowedShift;
         }
 
