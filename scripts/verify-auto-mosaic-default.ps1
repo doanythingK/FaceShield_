@@ -19,6 +19,7 @@ param(
     [switch]$RunYoloManualReadinessState,
     [switch]$RunYoloManualGateSummary,
     [switch]$RunYoloReadyForHumanGatesState,
+    [switch]$RunYoloPseudoGtState,
     [string]$YoloManualGateSummaryPath = ".tmp\yolo-manual-gates\manual-gate-summary.md",
     [string]$YoloEvidenceReportPath = ".tmp\yolo-manual-gates\goal-evidence-report.md",
     [switch]$AllowCompletedYoloFullGt,
@@ -222,9 +223,17 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloPseudoGtEvidenceVerify, $yoloPseudoGtTileInputVerify, $yoloPseudoGtFaceRunnerVerify, $yoloPseudoGtFaceVerificationInputVerify, $yoloPseudoGtFaceVerificationRunnerVerify, $yoloPseudoGtPersonObjectInputVerify, $yoloPseudoGtReviewClosureVerify, $yoloPseudoGtSeparationVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
+    }
+}
+
+if ($RunYoloPseudoGtState) {
+    foreach ($requiredVerifier in @($yoloQualityReviewChecklistVerify, $yoloFollowupQualityEvidenceVerify, $yoloProblemSpanRunnerVerify, $yoloPseudoGtEvidenceVerify, $yoloPseudoGtTileInputVerify, $yoloPseudoGtFaceRunnerVerify, $yoloPseudoGtFaceVerificationInputVerify, $yoloPseudoGtFaceVerificationRunnerVerify, $yoloPseudoGtPersonObjectInputVerify, $yoloPseudoGtReviewDraftVerify, $yoloPseudoGtReviewVisualPackageVerify, $yoloPseudoGtReviewDraftApplyVerify, $yoloPseudoGtReviewClosureVerify, $yoloPseudoGtSeparationVerify)) {
+        if (-not (Test-Path $requiredVerifier)) {
+            throw "Required YOLO pseudo-GT verifier not found: $requiredVerifier"
+        }
     }
 }
 
@@ -293,48 +302,50 @@ Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput
 Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "cutBeforePositiveInterpolated=0"
 Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "faceOnnxInterpolated=4"
 
-$reviewChecklistOutput = Invoke-ScriptStep "yolo-quality-review-checklist" $yoloQualityReviewChecklistVerify @()
-Assert-Contains "yolo-quality-review-checklist" $reviewChecklistOutput "\[YoloQualityReviewChecklistVerify\] all requested checks passed"
+if ($RunYoloPseudoGtState) {
+    $reviewChecklistOutput = Invoke-ScriptStep "yolo-quality-review-checklist" $yoloQualityReviewChecklistVerify @()
+    Assert-Contains "yolo-quality-review-checklist" $reviewChecklistOutput "\[YoloQualityReviewChecklistVerify\] all requested checks passed"
 
-$followupEvidenceOutput = Invoke-ScriptStep "yolo-followup-quality-evidence" $yoloFollowupQualityEvidenceVerify @()
-Assert-Contains "yolo-followup-quality-evidence" $followupEvidenceOutput "\[YoloFollowupQualityEvidenceVerify\] all requested checks passed"
+    $followupEvidenceOutput = Invoke-ScriptStep "yolo-followup-quality-evidence" $yoloFollowupQualityEvidenceVerify @()
+    Assert-Contains "yolo-followup-quality-evidence" $followupEvidenceOutput "\[YoloFollowupQualityEvidenceVerify\] all requested checks passed"
 
-$problemSpanRunnerOutput = Invoke-ScriptStep "yolo-problem-span-runner" $yoloProblemSpanRunnerVerify @()
-Assert-Contains "yolo-problem-span-runner" $problemSpanRunnerOutput "\[YoloProblemSpanRunnerVerify\] all requested checks passed"
+    $problemSpanRunnerOutput = Invoke-ScriptStep "yolo-problem-span-runner" $yoloProblemSpanRunnerVerify @()
+    Assert-Contains "yolo-problem-span-runner" $problemSpanRunnerOutput "\[YoloProblemSpanRunnerVerify\] all requested checks passed"
 
-$pseudoGtEvidenceOutput = Invoke-ScriptStep "yolo-pseudo-gt-evidence" $yoloPseudoGtEvidenceVerify @()
-Assert-Contains "yolo-pseudo-gt-evidence" $pseudoGtEvidenceOutput "\[YoloPseudoGtEvidenceVerify\] all requested checks passed"
+    $pseudoGtEvidenceOutput = Invoke-ScriptStep "yolo-pseudo-gt-evidence" $yoloPseudoGtEvidenceVerify @()
+    Assert-Contains "yolo-pseudo-gt-evidence" $pseudoGtEvidenceOutput "\[YoloPseudoGtEvidenceVerify\] all requested checks passed"
 
-$pseudoGtTileInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-tile-input" $yoloPseudoGtTileInputVerify @()
-Assert-Contains "yolo-pseudo-gt-tile-input" $pseudoGtTileInputOutput "\[YoloPseudoGtTileInputVerify\] all requested checks passed"
+    $pseudoGtTileInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-tile-input" $yoloPseudoGtTileInputVerify @()
+    Assert-Contains "yolo-pseudo-gt-tile-input" $pseudoGtTileInputOutput "\[YoloPseudoGtTileInputVerify\] all requested checks passed"
 
-$pseudoGtFaceRunnerOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-runner" $yoloPseudoGtFaceRunnerVerify @()
-Assert-Contains "yolo-pseudo-gt-face-runner" $pseudoGtFaceRunnerOutput "\[YoloPseudoGtFaceRunnerVerify\] all requested checks passed"
+    $pseudoGtFaceRunnerOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-runner" $yoloPseudoGtFaceRunnerVerify @()
+    Assert-Contains "yolo-pseudo-gt-face-runner" $pseudoGtFaceRunnerOutput "\[YoloPseudoGtFaceRunnerVerify\] all requested checks passed"
 
-$pseudoGtFaceVerificationInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-input" $yoloPseudoGtFaceVerificationInputVerify @()
-Assert-Contains "yolo-pseudo-gt-face-verification-input" $pseudoGtFaceVerificationInputOutput "\[YoloPseudoGtFaceVerificationInputVerify\] all requested checks passed"
+    $pseudoGtFaceVerificationInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-input" $yoloPseudoGtFaceVerificationInputVerify @()
+    Assert-Contains "yolo-pseudo-gt-face-verification-input" $pseudoGtFaceVerificationInputOutput "\[YoloPseudoGtFaceVerificationInputVerify\] all requested checks passed"
 
-$pseudoGtFaceVerificationRunnerOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-runner" $yoloPseudoGtFaceVerificationRunnerVerify @()
-Assert-Contains "yolo-pseudo-gt-face-verification-runner" $pseudoGtFaceVerificationRunnerOutput "\[YoloPseudoGtFaceVerificationRunnerVerify\] all requested checks passed"
+    $pseudoGtFaceVerificationRunnerOutput = Invoke-ScriptStep "yolo-pseudo-gt-face-verification-runner" $yoloPseudoGtFaceVerificationRunnerVerify @()
+    Assert-Contains "yolo-pseudo-gt-face-verification-runner" $pseudoGtFaceVerificationRunnerOutput "\[YoloPseudoGtFaceVerificationRunnerVerify\] all requested checks passed"
 
-$pseudoGtPersonObjectInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-person-object-input" $yoloPseudoGtPersonObjectInputVerify @()
-Assert-Contains "yolo-pseudo-gt-person-object-input" $pseudoGtPersonObjectInputOutput "\[YoloPseudoGtPersonObjectInputVerify\] all requested checks passed"
+    $pseudoGtPersonObjectInputOutput = Invoke-ScriptStep "yolo-pseudo-gt-person-object-input" $yoloPseudoGtPersonObjectInputVerify @()
+    Assert-Contains "yolo-pseudo-gt-person-object-input" $pseudoGtPersonObjectInputOutput "\[YoloPseudoGtPersonObjectInputVerify\] all requested checks passed"
 
-$pseudoGtReviewDraftOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-draft" $yoloPseudoGtReviewDraftVerify @()
-Assert-Contains "yolo-pseudo-gt-review-draft" $pseudoGtReviewDraftOutput "\[YoloPseudoGtReviewDraftVerify\] all requested checks passed"
+    $pseudoGtReviewDraftOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-draft" $yoloPseudoGtReviewDraftVerify @()
+    Assert-Contains "yolo-pseudo-gt-review-draft" $pseudoGtReviewDraftOutput "\[YoloPseudoGtReviewDraftVerify\] all requested checks passed"
 
-$pseudoGtReviewVisualPackageOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-visual-package" $yoloPseudoGtReviewVisualPackageVerify @()
-Assert-Contains "yolo-pseudo-gt-review-visual-package" $pseudoGtReviewVisualPackageOutput "\[YoloPseudoGtReviewVisualVerify\] all requested checks passed"
+    $pseudoGtReviewVisualPackageOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-visual-package" $yoloPseudoGtReviewVisualPackageVerify @()
+    Assert-Contains "yolo-pseudo-gt-review-visual-package" $pseudoGtReviewVisualPackageOutput "\[YoloPseudoGtReviewVisualVerify\] all requested checks passed"
 
-$pseudoGtReviewDraftApplyOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-draft-apply" $yoloPseudoGtReviewDraftApplyVerify @()
-Assert-Contains "yolo-pseudo-gt-review-draft-apply" $pseudoGtReviewDraftApplyOutput "\[YoloPseudoGtReviewDraftApplyVerify\] all requested checks passed"
+    $pseudoGtReviewDraftApplyOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-draft-apply" $yoloPseudoGtReviewDraftApplyVerify @()
+    Assert-Contains "yolo-pseudo-gt-review-draft-apply" $pseudoGtReviewDraftApplyOutput "\[YoloPseudoGtReviewDraftApplyVerify\] all requested checks passed"
 
-$pseudoGtReviewClosureOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-closure" $yoloPseudoGtReviewClosureVerify @()
-Assert-Contains "yolo-pseudo-gt-review-closure" $pseudoGtReviewClosureOutput "\[YoloPseudoGtReviewClosureVerify\] all requested checks passed"
+    $pseudoGtReviewClosureOutput = Invoke-ScriptStep "yolo-pseudo-gt-review-closure" $yoloPseudoGtReviewClosureVerify @()
+    Assert-Contains "yolo-pseudo-gt-review-closure" $pseudoGtReviewClosureOutput "\[YoloPseudoGtReviewClosureVerify\] all requested checks passed"
 
-$pseudoGtSeparationOutput = Invoke-ScriptStep "yolo-pseudo-gt-separation" $yoloPseudoGtSeparationVerify @()
-Assert-Contains "yolo-pseudo-gt-separation" $pseudoGtSeparationOutput "\[YoloPseudoGtSeparationVerify\] all requested checks passed"
-Assert-Contains "yolo-pseudo-gt-separation" $pseudoGtSeparationOutput "runtime source has no pseudo-GT references"
+    $pseudoGtSeparationOutput = Invoke-ScriptStep "yolo-pseudo-gt-separation" $yoloPseudoGtSeparationVerify @()
+    Assert-Contains "yolo-pseudo-gt-separation" $pseudoGtSeparationOutput "\[YoloPseudoGtSeparationVerify\] all requested checks passed"
+    Assert-Contains "yolo-pseudo-gt-separation" $pseudoGtSeparationOutput "runtime source has no pseudo-GT references"
+}
 
 $autoNoDetectionReviewOutput = Invoke-ScriptStep "auto-no-detection-review" $autoNoDetectionReviewVerify @()
 Assert-Contains "auto-no-detection-review" $autoNoDetectionReviewOutput "\[AutoNoDetectionReviewVerify\] all requested checks passed"
