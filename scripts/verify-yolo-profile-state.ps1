@@ -248,6 +248,7 @@ Assert-Match "faceonnx thresholds stay separate" $homeText "DetectionThreshold\s
 Assert-Match "yolo objectness comes from yolo property" $homeText "ObjectnessThreshold\s*=\s*\(float\)Math\.Clamp\(AutoYoloObjectnessThreshold"
 Assert-Match "yolo confidence comes from yolo property" $homeText "ConfidenceThreshold\s*=\s*\(float\)Math\.Clamp\(AutoYoloConfidenceThreshold"
 Assert-Match "yolo nms comes from yolo property" $homeText "NmsThreshold\s*=\s*\(float\)Math\.Clamp\(AutoYoloNmsThreshold"
+Assert-Match "home enables conservative top small low-confidence yolo filter" $homeText "UseTopSmallLowConfidenceFilter\s*=\s*true[\s\S]*TopSmallLowConfidenceMaxCenterYRatio\s*=\s*0\.07[\s\S]*TopSmallLowConfidenceMaxAreaRatio\s*=\s*0\.0045[\s\S]*TopSmallLowConfidenceMaxConfidence\s*=\s*0\.55f"
 Assert-Match "yolo tiling comes from yolo property" $homeText "UseTiling\s*=\s*AutoYoloUseTiling"
 Assert-Match "yolo tile-only maps to full-frame switch" $homeText "IncludeFullFrameWhenTiling\s*=\s*!AutoYoloTileOnly"
 
@@ -544,7 +545,7 @@ foreach ($assignment in @(
 }
 
 Assert-Match "home enables yolo aspect ratio filter" $homeText "UseAspectRatioFilter\s*=\s*true[\s\S]*MinAspectRatio\s*=\s*0\.35[\s\S]*MaxAspectRatio\s*=\s*1\.65"
-Assert-Match "home leaves risky top small low-confidence filter opt-in" $options "public\s+bool\s+UseTopSmallLowConfidenceFilter\s*\{\s*get;\s*init;\s*\}\s*=\s*false;"
+Assert-Match "yolo options leave top small low-confidence filter opt-in by default" $options "public\s+bool\s+UseTopSmallLowConfidenceFilter\s*\{\s*get;\s*init;\s*\}\s*=\s*false;"
 
 Assert-Match "smoke harness supports yolo roi refine switch" $smokeHarnessText "if\s*\(useYolo\s*&&\s*yoloUseFaceOnnxRoiRefine\)"
 Assert-Match "smoke harness logs scene cut guard" $smokeHarnessText "new\s+FaceTrackSceneCutGuard\(\)[\s\S]*BuildWeakTrackTransitionCandidates[\s\S]*BuildWeakPostCutCarryCandidates[\s\S]*var\s+sceneCutCandidates\s*=\s*directCandidates[\s\S]*\.Concat\(postCutCandidates\)[\s\S]*\.Concat\(trackPost\.FilledGapFacesInfo\)[\s\S]*trackPost\.FilledLostFacesInfo[\s\S]*trackPost\.FilledInitialFacesInfo[\s\S]*SmokeFaceTrackSceneCutGuard[\s\S]*postCutCandidates"
