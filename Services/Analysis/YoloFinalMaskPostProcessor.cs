@@ -1068,7 +1068,81 @@ namespace FaceShield.Services.Analysis
                 AddMatchingUpperWeakClusterNeighbors(entries, current.EntryIndex, current.Face, options, visited, pending);
             }
 
+            if (HasUpperWeakBridgeContinuation(entries, visited, options))
+                return false;
+
             return visited.Count > 0 && visited.Count <= options.UpperWeakClusterMaxFrames;
+        }
+
+        private static bool HasUpperWeakBridgeContinuation(
+            IReadOnlyList<KeyValuePair<int, FrameMaskProvider.FaceMaskData>> entries,
+            IReadOnlyCollection<(int EntryIndex, int FaceIndex)> cluster,
+            YoloFinalMaskCleanupOptions options)
+        {
+            if (cluster.Count == 0 ||
+                options.UpperWeakBridgeMaxFrameGap <= 0 ||
+                options.UpperWeakBridgeMinConfidence <= 0)
+            {
+                return false;
+            }
+
+            int minEntryIndex = cluster.Min(static x => x.EntryIndex);
+            int maxEntryIndex = cluster.Max(static x => x.EntryIndex);
+            int minFrame = entries[minEntryIndex].Key;
+            int maxFrame = entries[maxEntryIndex].Key;
+            var clusterFaces = cluster
+                .Select(x => entries[x.EntryIndex].Value.Faces[x.FaceIndex])
+                .ToArray();
+
+            bool hasPrevious = false;
+            for (int i = minEntryIndex - 1; i >= 0; i--)
+            {
+                if (minFrame - entries[i].Key > options.UpperWeakBridgeMaxFrameGap)
+                    break;
+                if (HasMatchingUpperWeakBridgeFace(entries[i].Value, clusterFaces, options))
+                {
+                    hasPrevious = true;
+                    break;
+                }
+            }
+
+            if (!hasPrevious)
+                return false;
+
+            for (int i = maxEntryIndex + 1; i < entries.Count; i++)
+            {
+                if (entries[i].Key - maxFrame > options.UpperWeakBridgeMaxFrameGap)
+                    break;
+                if (HasMatchingUpperWeakBridgeFace(entries[i].Value, clusterFaces, options))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasMatchingUpperWeakBridgeFace(
+            FrameMaskProvider.FaceMaskData data,
+            IReadOnlyList<Rect> clusterFaces,
+            YoloFinalMaskCleanupOptions options)
+        {
+            for (int i = 0; i < data.Faces.Count; i++)
+            {
+                var candidate = data.Faces[i];
+                if (GetConfidence(data, i) < options.UpperWeakBridgeMinConfidence ||
+                    !IsUpperWeakFace(candidate, data.Size, options) ||
+                    TouchesFrameEdge(candidate, data.Size, options.EdgeMarginRatio))
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < clusterFaces.Count; j++)
+                {
+                    if (IsMatchingFace(candidate, clusterFaces[j], options))
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool IsTopEdgeWeakTemporalCluster(
@@ -2156,6 +2230,8 @@ namespace FaceShield.Services.Analysis
         public int UpperWeakClusterMaxFrames { get; init; } = 6;
         public float UpperWeakClusterMaxConfidence { get; init; } = 0.60f;
         public float UpperWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
+        public int UpperWeakBridgeMaxFrameGap { get; init; } = 2;
+        public float UpperWeakBridgeMinConfidence { get; init; } = 0.30f;
         public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.10;
         public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0065;
         public int TopEdgeWeakClusterMaxFrames { get; init; } = 3;

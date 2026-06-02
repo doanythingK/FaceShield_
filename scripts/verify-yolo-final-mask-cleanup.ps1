@@ -126,6 +126,10 @@ for (int frame = 270; frame <= 274; frame++)
 for (int frame = 280; frame <= 284; frame++)
     provider.SetFaceRects(frame, new[] { new Rect(980 + frame - 280, 300, 98, 106) }, size, 0.38f, new[] { 0.38f });
 provider.SetFaceRects(285, new[] { new Rect(985, 300, 98, 106) }, size, 0.72f, new[] { 0.72f });
+provider.SetFaceRects(289, new[] { new Rect(879, 44, 90, 90) }, size, 0.62f, new[] { 0.62f });
+for (int frame = 290; frame <= 293; frame++)
+    provider.SetFaceRects(frame, new[] { new Rect(880 + frame - 290, 44, 90, 90) }, size, 0.58f, new[] { 0.58f });
+provider.SetFaceRects(294, new[] { new Rect(884, 44, 90, 90) }, size, 0.62f, new[] { 0.62f });
 
 var result = new YoloFinalMaskPostProcessor().RemoveWeakIsolatedMasks(provider);
 
@@ -209,6 +213,15 @@ for (int frame = 280; frame <= 285; frame++)
         weakTextureStrongContinuation.Faces.Count != 1)
     {
         throw new InvalidOperationException($"Expected weak mid-frame texture cluster with strong continuation to remain at frame {frame}.");
+    }
+}
+
+for (int frame = 289; frame <= 294; frame++)
+{
+    if (!provider.TryGetFaceMaskData(frame, out var upperWeakBridge) ||
+        upperWeakBridge.Faces.Count != 1)
+    {
+        throw new InvalidOperationException($"Expected upper weak bridge continuation frame {frame} to remain.");
     }
 }
 
