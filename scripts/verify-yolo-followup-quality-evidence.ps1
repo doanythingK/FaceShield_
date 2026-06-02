@@ -293,6 +293,9 @@ Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-rev
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
 Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTileFaceCsv"
 Assert-Contains "script supports pseudo gt frame cap" $scriptText "PseudoGtMaxFrames"
+Assert-Contains "script samples pseudo gt review frames within cap" $scriptText "Select-PseudoGtReviewFrameNumbers[\s\S]*PseudoGtMaxFrames[\s\S]*Pseudo-GT sampled review frames"
+Assert-Contains "script forwards capped frames to tile pseudo gt input" $scriptText 'WithPseudoGtTileInput\.IsPresent[\s\S]*pseudoGtReviewFrameNumbers\.Count[\s\S]*pseudoGtTileInputScript[\s\S]*"-Frames"[\s\S]*\(\$pseudoGtReviewFrameNumbers -join ","\)'
+Assert-Contains "script forwards capped frames to face verification input" $scriptText 'pseudoGtFaceVerificationInputScript[\s\S]*"-Frames"[\s\S]*\(\$pseudoGtReviewFrameNumbers -join ","\)'
 Assert-Contains "script supports pseudo gt tile external command" $scriptText "PseudoGtTileExternalCommand"
 Assert-Contains "script defaults pseudo gt tile external timeout" $scriptText '\[int\]\$PseudoGtTileExternalTimeoutSeconds\s*=\s*180'
 Assert-Contains "script supports pseudo gt tile scale" $scriptText "PseudoGtTileScale"

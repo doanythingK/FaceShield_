@@ -350,6 +350,46 @@ function Get-SampledReviewFrameNumbers {
     return @($frames | ForEach-Object { $_ })
 }
 
+function Select-PseudoGtReviewFrameNumbers {
+    param(
+        [int[]]$Frames,
+        [int]$MaxFrames
+    )
+
+    $unique = [System.Collections.Generic.SortedSet[int]]::new()
+    foreach ($frame in @($Frames)) {
+        if ($frame -ge 0) {
+            [void]$unique.Add([int]$frame)
+        }
+    }
+
+    $ordered = @($unique | ForEach-Object { $_ })
+    if ($ordered.Count -le $MaxFrames) {
+        return $ordered
+    }
+
+    if ($MaxFrames -le 1) {
+        return @($ordered[0])
+    }
+
+    $selected = [System.Collections.Generic.SortedSet[int]]::new()
+    for ($index = 0; $index -lt $MaxFrames; $index++) {
+        $sourceIndex = [int][Math]::Round($index * ($ordered.Count - 1) / [double]($MaxFrames - 1))
+        [void]$selected.Add([int]$ordered[$sourceIndex])
+    }
+
+    if ($selected.Count -lt $MaxFrames) {
+        foreach ($frame in $ordered) {
+            [void]$selected.Add([int]$frame)
+            if ($selected.Count -ge $MaxFrames) {
+                break
+            }
+        }
+    }
+
+    return @($selected | ForEach-Object { $_ })
+}
+
 function Add-PseudoGtReviewQueueFrames {
     param(
         [System.Collections.Generic.SortedSet[int]]$Frames,
@@ -910,6 +950,7 @@ $finalMaskGapFillSceneGuard = @(Select-String -Path $resolvedPredictionLog -Patt
 $finalMaskSummary = @(Select-String -Path $resolvedPredictionLog -Pattern '^\[(SmokeFinalMaskSummary|FinalMaskSummary)\]' -ErrorAction SilentlyContinue | Select-Object -Last 1)
 $reviewFrameNumbers = Get-ReviewFrameNumbers -TrackPostLines $trackPost -SceneGuardLines $sceneGuard -StrongCarryProbeLines $strongCarryProbe -SceneCutCarryCleanupLines $sceneCutCarryCleanup -FinalMaskSummaryLines $finalMaskSummary -DetectionRows $detectionRows
 $noDetectionReviewFrameNumbers = @()
+$pseudoGtReviewFrameNumbers = Select-PseudoGtReviewFrameNumbers -Frames $reviewFrameNumbers -MaxFrames $PseudoGtMaxFrames
 
 if ($detectionRows.Count -eq 0) {
     if (-not $AllowNoDetections.IsPresent) {
@@ -918,6 +959,7 @@ if ($detectionRows.Count -eq 0) {
 
     if ($WithReviewContactSheet.IsPresent -or $WithPseudoGtTileInput.IsPresent -or $WithPseudoGtPersonObjectInput.IsPresent) {
         $noDetectionReviewFrameNumbers = Get-SampledReviewFrameNumbers -FrameCount $VideoFrameCount
+        $pseudoGtReviewFrameNumbers = Select-PseudoGtReviewFrameNumbers -Frames $noDetectionReviewFrameNumbers -MaxFrames $PseudoGtMaxFrames
     }
 
     if ($WithReviewContactSheet.IsPresent) {
@@ -1173,7 +1215,7 @@ else {
         throw "Failed to write YOLO full-GT template."
     }
 
-    if ($WithPseudoGtTileInput.IsPresent -and $reviewFrameNumbers.Count -gt 0) {
+    if ($WithPseudoGtTileInput.IsPresent -and $pseudoGtReviewFrameNumbers.Count -gt 0) {
         Require-File "pseudo-GT tile input video" $resolvedVideoPath
 
         $tileInputArgs = @(
@@ -1185,7 +1227,7 @@ else {
             "-VideoPath",
             $resolvedVideoPath,
             "-Frames",
-            ($reviewFrameNumbers -join ","),
+            ($pseudoGtReviewFrameNumbers -join ","),
             "-OutputDir",
             $resolvedPseudoGtTileInputDir,
             "-MaxFrames",
@@ -1246,6 +1288,8 @@ else {
             $resolvedVideoPath,
             "-BasePredictionLog",
             $resolvedPredictionLog,
+            "-Frames",
+            ($pseudoGtReviewFrameNumbers -join ","),
             "-OutputDir",
             $resolvedPseudoGtFaceVerificationInputDir,
             "-MaxFrames",
@@ -1291,7 +1335,7 @@ else {
         Require-File "pseudo-GT person/object input video" $resolvedVideoPath
 
         $personObjectFrameSet = [System.Collections.Generic.SortedSet[int]]::new()
-        foreach ($frameNumber in $reviewFrameNumbers) {
+        foreach ($frameNumber in $pseudoGtReviewFrameNumbers) {
             [void]$personObjectFrameSet.Add([int]$frameNumber)
         }
 
@@ -1531,6 +1575,11 @@ if ($WithPseudoGtPersonObjectInput.IsPresent -and $detectionRows.Count -eq 0 -an
 if ($detectionRows.Count -gt 0 -and $reviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Required full-frame review frames: ``$($reviewFrameNumbers -join ",")``")
 }
+if (($WithPseudoGtTileInput.IsPresent -or $WithPseudoGtFaceVerificationInput.IsPresent -or $WithPseudoGtPersonObjectInput.IsPresent) -and
+    $pseudoGtReviewFrameNumbers.Count -gt 0 -and
+    ($pseudoGtReviewFrameNumbers.Count -ne $reviewFrameNumbers.Count -or (($pseudoGtReviewFrameNumbers -join ",") -ne ($reviewFrameNumbers -join ",")))) {
+    [void]$summary.AppendLine("- Pseudo-GT sampled review frames: ``$($pseudoGtReviewFrameNumbers -join ",")`` (from $($reviewFrameNumbers.Count) review frames, max=$PseudoGtMaxFrames)")
+}
 [void]$summary.AppendLine("- Detection rows: $($detectionRows.Count)")
 if ($detectionRows.Count -eq 0) {
     [void]$summary.AppendLine("- No detection rows were found; crop/full-frame package generation was skipped.")
@@ -1541,6 +1590,12 @@ if ($WithReviewContactSheet.IsPresent -and $detectionRows.Count -eq 0 -and $noDe
 }
 if ($detectionRows.Count -eq 0 -and $noDetectionReviewFrameNumbers.Count -gt 0) {
     [void]$summary.AppendLine("- Sampled no-detection review frames: ``$($noDetectionReviewFrameNumbers -join ",")``")
+}
+if ($detectionRows.Count -eq 0 -and
+    ($WithPseudoGtTileInput.IsPresent -or $WithPseudoGtPersonObjectInput.IsPresent) -and
+    $pseudoGtReviewFrameNumbers.Count -gt 0 -and
+    ($pseudoGtReviewFrameNumbers.Count -ne $noDetectionReviewFrameNumbers.Count -or (($pseudoGtReviewFrameNumbers -join ",") -ne ($noDetectionReviewFrameNumbers -join ",")))) {
+    [void]$summary.AppendLine("- Pseudo-GT sampled no-detection frames: ``$($pseudoGtReviewFrameNumbers -join ",")`` (from $($noDetectionReviewFrameNumbers.Count) sampled frames, max=$PseudoGtMaxFrames)")
 }
 if ($autoSummary.Count -gt 0) {
     [void]$summary.AppendLine("- Auto summary: ``$($autoSummary[0].Line)``")

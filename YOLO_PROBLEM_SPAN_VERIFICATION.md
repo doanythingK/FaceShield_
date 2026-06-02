@@ -294,7 +294,7 @@ review package가 필요하면 `scripts/run-yolo-problem-span-verification.ps1`�
 현재 자동 모자이크 후처리는 runtime pipeline과 temporal/ROI/scene-cut 단계가 분리되어 있으므로, pseudo-GT도 기본 detector 실행에 직접 섞지 않는다. 별도 test-only evidence pipeline으로 기본 YOLO 결과를 읽고, 고정밀 tile/person/object 보조 결과와 비교해 review CSV 초안을 보강한다.
 
 - 기본 YOLO 결과와 별도로, 테스트 전용 고정밀 검출을 같은 짧은 clip/frame에 실행한다.
-- tile/face verification/person-object manifest 생성은 기본 `MaxFrames=900` 상한으로 full-video frame sweep을 막고, 문제 구간 frame set만 받는다.
+- tile/face verification/person-object manifest 생성은 기본 `MaxFrames=900` 상한으로 full-video frame sweep을 막고, `PseudoGtMaxFrames`보다 review frame이 많으면 pseudo-GT 입력용 frame만 균등 샘플링한다. review package의 전체 frame 목록은 유지한다.
 - 작은 얼굴 미탐을 줄이기 위해 frame을 tile/overlap으로 나누고, tile을 모델 입력 크기로 확대해서 검출한다.
 - 기본 YOLO 후보는 고품질 face verification/face detection 모델로 재검증한다.
 - 이 고품질 검증 모델은 앱 기본 런타임에는 포함하지 않고, 짧은 문제 구간의 evidence 생성과 오탐/미탐 후보 분류에만 사용한다.
