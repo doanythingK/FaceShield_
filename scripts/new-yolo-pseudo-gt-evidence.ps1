@@ -207,6 +207,8 @@ function New-DetectionRow {
         [string]$ClassLabel = "",
         [string]$EvidenceModel = "",
         [string]$EvidenceRunner = "",
+        [string]$SourceCandidateId = "",
+        [string]$SourceBasePredictionId = "",
         [double]$CenterXRatio = -1.0,
         [double]$CenterYRatio = -1.0,
         [double]$AreaRatio = -1.0,
@@ -227,6 +229,8 @@ function New-DetectionRow {
         ClassLabel = $ClassLabel
         EvidenceModel = $EvidenceModel
         EvidenceRunner = $EvidenceRunner
+        SourceCandidateId = $SourceCandidateId
+        SourceBasePredictionId = $SourceBasePredictionId
         CenterXRatio = $CenterXRatio
         CenterYRatio = $CenterYRatio
         AreaRatio = $AreaRatio
@@ -308,6 +312,8 @@ function Read-DetectionCsvRows {
         $classLabel = [string](Get-PropertyValue $row @("class", "Class", "label", "Label", "name", "Name", "category", "Category") "")
         $evidenceModel = [string](Get-PropertyValue $row @("evidenceModel", "modelName", "modelId", "model", "runnerModel", "externalModel") "")
         $evidenceRunner = [string](Get-PropertyValue $row @("evidenceRunner", "runnerName", "runner", "externalRunner", "modelRunner") "")
+        $sourceCandidateId = [string](Get-PropertyValue $row @("candidateId", "sourceCandidateId") "")
+        $sourceBasePredictionId = [string](Get-PropertyValue $row @("basePredictionId", "sourceBasePredictionId") "")
         $centerXRatio = Read-DoubleValue $row @("centerXRatio", "CenterXRatio", "centerX", "CenterX", "cx", "Cx") -1.0
         $centerYRatio = Read-DoubleValue $row @("centerYRatio", "CenterYRatio", "centerY", "CenterY", "cy", "Cy") -1.0
         $areaRatio = Read-DoubleValue $row @("areaRatio", "AreaRatio") -1.0
@@ -327,6 +333,8 @@ function Read-DetectionCsvRows {
                     -ClassLabel $classLabel `
                     -EvidenceModel $evidenceModel `
                     -EvidenceRunner $evidenceRunner `
+                    -SourceCandidateId $sourceCandidateId `
+                    -SourceBasePredictionId $sourceBasePredictionId `
                     -CenterXRatio $centerXRatio `
                     -CenterYRatio $centerYRatio `
                     -AreaRatio $areaRatio `
@@ -439,6 +447,46 @@ function Test-FaceGeometrySupportValues {
         $AreaChangeRatio -le $MaxSupportAreaChangeRatio
 }
 
+function Test-SourceBindingAllowsMatch {
+    param(
+        [object]$Target,
+        [object]$Candidate
+    )
+
+    $verification = $null
+    $base = $null
+    if ($Target.Source -eq "face-verification" -and ($Candidate.Source -eq "base-yolo-log" -or $Candidate.Source -eq "base-yolo-csv")) {
+        $verification = $Target
+        $base = $Candidate
+    }
+    elseif ($Candidate.Source -eq "face-verification" -and ($Target.Source -eq "base-yolo-log" -or $Target.Source -eq "base-yolo-csv")) {
+        $verification = $Candidate
+        $base = $Target
+    }
+    else {
+        return $true
+    }
+
+    if ($verification.Frame -ne $base.Frame) {
+        return $true
+    }
+
+    $sourceCandidateId = [string]$verification.SourceCandidateId
+    $sourceBasePredictionId = [string]$verification.SourceBasePredictionId
+    if ([string]::IsNullOrWhiteSpace($sourceCandidateId) -and [string]::IsNullOrWhiteSpace($sourceBasePredictionId)) {
+        return $true
+    }
+
+    $basePredictionId = [string]$base.Id
+    $baseCandidateId = "base-$($base.Frame)-$basePredictionId"
+    if (-not [string]::IsNullOrWhiteSpace($sourceBasePredictionId) -and $sourceBasePredictionId -eq $basePredictionId) {
+        return $true
+    }
+
+    return -not [string]::IsNullOrWhiteSpace($sourceCandidateId) -and
+        ($sourceCandidateId -eq $baseCandidateId -or $sourceCandidateId -eq $basePredictionId)
+}
+
 function Get-FaceAreaOverlap {
     param(
         [object]$Face,
@@ -466,6 +514,9 @@ function Find-BestMatch {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-SourceBindingAllowsMatch $Target $candidate)) {
+            continue
+        }
         if (-not (Test-FaceEvidenceMetricSupport $candidate)) {
             continue
         }
@@ -502,6 +553,9 @@ function Find-BestVerification {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-SourceBindingAllowsMatch $Target $candidate)) {
+            continue
+        }
         if (-not (Test-FaceEvidenceMetricSupport $candidate)) {
             continue
         }
@@ -537,6 +591,9 @@ function Find-BestComparison {
 
     $best = $null
     foreach ($candidate in @($Candidates | Where-Object { $_.Frame -eq $Target.Frame })) {
+        if (-not (Test-SourceBindingAllowsMatch $Target $candidate)) {
+            continue
+        }
         if (-not (Test-FaceEvidenceMetricSupport $candidate)) {
             continue
         }
@@ -674,6 +731,9 @@ function Get-TemporalFaceSupport {
     }
 
     foreach ($candidate in @($VerificationCandidates | Where-Object { [Math]::Abs($_.Frame - $Target.Frame) -le $TemporalSupportWindowFrames })) {
+        if (-not (Test-SourceBindingAllowsMatch $Target $candidate)) {
+            continue
+        }
         if (-not (Test-FaceGeometrySupport $Target $candidate)) {
             continue
         }
@@ -815,6 +875,8 @@ foreach ($base in $baseRows) {
     $tileEvidenceRunner = if ($hasTileSupport) { $tileMatch.Row.EvidenceRunner } else { "" }
     $faceVerificationEvidenceModel = if ($hasVerificationSupport) { $verificationMatch.Row.EvidenceModel } else { "" }
     $faceVerificationEvidenceRunner = if ($hasVerificationSupport) { $verificationMatch.Row.EvidenceRunner } else { "" }
+    $faceVerificationSourceCandidateId = if ($hasVerificationSupport) { $verificationMatch.Row.SourceCandidateId } else { "" }
+    $faceVerificationSourceBasePredictionId = if ($hasVerificationSupport) { $verificationMatch.Row.SourceBasePredictionId } else { "" }
     $personObjectEvidenceModel = if ($null -ne $personMatch) { $personMatch.Row.EvidenceModel } else { "" }
     $personObjectEvidenceRunner = if ($null -ne $personMatch) { $personMatch.Row.EvidenceRunner } else { "" }
     $supportMatches = @($tileMatch, $verificationMatch)
@@ -885,6 +947,8 @@ foreach ($base in $baseRows) {
             tileEvidenceRunner = $tileEvidenceRunner
             faceVerificationEvidenceModel = $faceVerificationEvidenceModel
             faceVerificationEvidenceRunner = $faceVerificationEvidenceRunner
+            faceVerificationSourceCandidateId = $faceVerificationSourceCandidateId
+            faceVerificationSourceBasePredictionId = $faceVerificationSourceBasePredictionId
             personObjectEvidenceModel = $personObjectEvidenceModel
             personObjectEvidenceRunner = $personObjectEvidenceRunner
             auxiliarySignalRole = $auxiliarySignalRole
@@ -934,6 +998,8 @@ foreach ($tile in $tileRows) {
     $verificationDistance = if ($null -ne $verificationMatch) { $verificationMatch.Row.VerificationDistance } else { 1.0 }
     $faceVerificationEvidenceModel = if ($null -ne $verificationMatch) { $verificationMatch.Row.EvidenceModel } else { "" }
     $faceVerificationEvidenceRunner = if ($null -ne $verificationMatch) { $verificationMatch.Row.EvidenceRunner } else { "" }
+    $faceVerificationSourceCandidateId = if ($null -ne $verificationMatch) { $verificationMatch.Row.SourceCandidateId } else { "" }
+    $faceVerificationSourceBasePredictionId = if ($null -ne $verificationMatch) { $verificationMatch.Row.SourceBasePredictionId } else { "" }
     $personObjectEvidenceModel = if ($null -ne $personMatch) { $personMatch.Row.EvidenceModel } else { "" }
     $personObjectEvidenceRunner = if ($null -ne $personMatch) { $personMatch.Row.EvidenceRunner } else { "" }
     if ($null -ne $verificationMatch) {
@@ -966,6 +1032,8 @@ foreach ($tile in $tileRows) {
             tileEvidenceRunner = $tile.EvidenceRunner
             faceVerificationEvidenceModel = $faceVerificationEvidenceModel
             faceVerificationEvidenceRunner = $faceVerificationEvidenceRunner
+            faceVerificationSourceCandidateId = $faceVerificationSourceCandidateId
+            faceVerificationSourceBasePredictionId = $faceVerificationSourceBasePredictionId
             personObjectEvidenceModel = $personObjectEvidenceModel
             personObjectEvidenceRunner = $personObjectEvidenceRunner
             auxiliarySignalRole = $auxiliarySignalRole
@@ -1051,6 +1119,8 @@ foreach ($verification in $verificationRows) {
             tileEvidenceRunner = $tileEvidenceRunner
             faceVerificationEvidenceModel = $verification.EvidenceModel
             faceVerificationEvidenceRunner = $verification.EvidenceRunner
+            faceVerificationSourceCandidateId = $verification.SourceCandidateId
+            faceVerificationSourceBasePredictionId = $verification.SourceBasePredictionId
             personObjectEvidenceModel = $personObjectEvidenceModel
             personObjectEvidenceRunner = $personObjectEvidenceRunner
             auxiliarySignalRole = $auxiliarySignalRole
@@ -1101,6 +1171,10 @@ foreach ($path in @($outputPath, $summaryPathResolved, $reviewQueuePath)) {
 
 $orderedRows = @($candidateRows | Sort-Object frame, candidateType, candidateId)
 $orderedRows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $outputPath
+$sourceBoundFaceVerificationRows = @($orderedRows | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string]$_.faceVerificationSourceCandidateId) -or
+        -not [string]::IsNullOrWhiteSpace([string]$_.faceVerificationSourceBasePredictionId)
+    }).Count
 
 $reviewQueueSourceRows = @($orderedRows | ForEach-Object {
         $fpProbability = Read-CandidateDouble $_ "fpProbability"
@@ -1173,6 +1247,8 @@ $reviewQueueRows = @($reviewQueueSourceRows | ForEach-Object {
             tileEvidenceRunner = $row.tileEvidenceRunner
             faceVerificationEvidenceModel = $row.faceVerificationEvidenceModel
             faceVerificationEvidenceRunner = $row.faceVerificationEvidenceRunner
+            faceVerificationSourceCandidateId = $row.faceVerificationSourceCandidateId
+            faceVerificationSourceBasePredictionId = $row.faceVerificationSourceBasePredictionId
             personObjectEvidenceModel = $row.personObjectEvidenceModel
             personObjectEvidenceRunner = $row.personObjectEvidenceRunner
             auxiliarySignalRole = $row.auxiliarySignalRole
@@ -1230,6 +1306,7 @@ $summary = @(
     "- missCandidate=$miss",
     "- modelProvenanceRows=$modelProvenanceRows",
     "- runnerProvenanceRows=$runnerProvenanceRows",
+    "- sourceBoundFaceVerificationRows=$sourceBoundFaceVerificationRows",
     "- geometryTaggedRows=$geometryTaggedRows",
     "- geometryTags=$(if ($geometryTags.Count -gt 0) { [string]::Join(',', $geometryTags) } else { 'none' })",
     "- evidenceProvenance=optional-evidenceModel/evidenceRunner",

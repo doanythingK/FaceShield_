@@ -613,6 +613,8 @@ Assert-Contains "evidence report writer records pseudo gt closure support row ev
 Assert-Contains "evidence report writer records pseudo gt closure support id evidence" $goalEvidenceReportWriter "pseudoGtClosureSupportIdEvidenceRows="
 Assert-Contains "evidence report writer records pseudo gt face verification evidence" $goalEvidenceReportWriter "pseudoGtFaceVerificationEvidenceRows="
 Assert-Contains "evidence report writer records pseudo gt closure face verification evidence" $goalEvidenceReportWriter "pseudoGtClosureFaceVerificationEvidenceRows="
+Assert-Contains "evidence report writer records pseudo gt source-bound face verification evidence" $goalEvidenceReportWriter "pseudoGtSourceBoundFaceVerificationRows="
+Assert-Contains "evidence report writer records pseudo gt closure source-bound face verification evidence" $goalEvidenceReportWriter "pseudoGtClosureSourceBoundFaceVerificationRows="
 Assert-Contains "evidence report writer records pseudo gt model provenance" $goalEvidenceReportWriter "pseudoGtModelProvenanceRows="
 Assert-Contains "evidence report writer records pseudo gt runner provenance" $goalEvidenceReportWriter "pseudoGtRunnerProvenanceRows="
 Assert-Contains "evidence report writer records pseudo gt closure model provenance" $goalEvidenceReportWriter "pseudoGtClosureModelProvenanceRows="

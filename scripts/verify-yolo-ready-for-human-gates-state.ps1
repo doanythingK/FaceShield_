@@ -200,6 +200,8 @@ Assert-Contains "report records pseudo-GT closure support row evidence" $report 
 Assert-Contains "report records pseudo-GT closure support id evidence" $report "pseudoGtClosureSupportIdEvidenceRows="
 Assert-Contains "report records pseudo-GT face verification evidence" $report "pseudoGtFaceVerificationEvidenceRows="
 Assert-Contains "report records pseudo-GT closure face verification evidence" $report "pseudoGtClosureFaceVerificationEvidenceRows="
+Assert-Contains "report records pseudo-GT source-bound face verification evidence" $report "pseudoGtSourceBoundFaceVerificationRows="
+Assert-Contains "report records pseudo-GT closure source-bound face verification evidence" $report "pseudoGtClosureSourceBoundFaceVerificationRows="
 Assert-Contains "report records pseudo-GT closure full-frame continuity evidence" $report "pseudoGtClosureFullFrameContinuityRows="
 Assert-Contains "report records pseudo-GT closure full-frame continuity reasons" $report "pseudoGtClosureFullFrameContinuityReasonRows="
 Assert-Contains "report records pseudo-GT closure full-frame continuity hints" $report "pseudoGtClosureFullFrameContinuityHintRows="

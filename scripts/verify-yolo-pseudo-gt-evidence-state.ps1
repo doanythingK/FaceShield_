@@ -68,6 +68,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 [SmokeDetection] label=synthetic-yolo, frame=8, index=0, x=730.0, y=220.0, w=60.0, h=60.0, area=3600.0, conf=0.330, cx=0.760, cy=0.260, areaRatio=0.003600, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=10, index=0, x=300.0, y=200.0, w=60.0, h=60.0, area=3600.0, conf=0.300, cx=0.330, cy=0.240, areaRatio=0.003600, aspectRatio=1.000
 [SmokeDetection] label=synthetic-yolo, frame=11, index=0, x=700.0, y=0.0, w=190.0, h=190.0, area=36100.0, conf=0.420, cx=0.795, cy=0.095, areaRatio=0.055000, aspectRatio=1.000
+[SmokeDetection] label=synthetic-yolo, frame=13, index=0, x=40.0, y=160.0, w=44.0, h=46.0, area=2024.0, conf=0.370, cx=0.070, cy=0.300, areaRatio=0.002024, aspectRatio=0.957
 '@ | Set-Content -Encoding UTF8 -Path $baseLog
 
 @'
@@ -83,7 +84,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $tileCsv
 
 @(
-    [pscustomobject]@{ frame = 1; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 1; candidateId = "base-1-1-0"; basePredictionId = "1-0"; verificationId = "verify-face-1"; x = 102.0; y = 101.0; w = 49.0; h = 59.0; faceVerificationConfidence = 0.880; faceVerificationDistance = 0.220; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
     [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-primary"; x = 46.0; y = 61.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.170; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
     [pscustomobject]@{ frame = 3; verificationId = "verify-tile-face-3-secondary"; x = 47.0; y = 62.0; w = 24.0; h = 28.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
     [pscustomobject]@{ frame = 4; verificationId = "verify-face-4"; x = 210.0; y = 120.0; w = 32.0; h = 36.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
@@ -93,7 +94,8 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
     [pscustomobject]@{ frame = 9; verificationId = "verify-low-conf-good-distance-9"; x = 760.0; y = 220.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.120; faceVerificationDistance = 0.120; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
     [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-primary-10"; x = 301.0; y = 201.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.910; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
     [pscustomobject]@{ frame = 10; verificationId = "verify-low-base-secondary-10"; x = 302.0; y = 202.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.890; faceVerificationDistance = 0.190; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
-    [pscustomobject]@{ frame = 12; verificationId = "verify-low-base-primary-10"; x = 303.0; y = 203.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" }
+    [pscustomobject]@{ frame = 12; verificationId = "verify-low-base-primary-10"; x = 303.0; y = 203.0; w = 60.0; h = 60.0; faceVerificationConfidence = 0.900; faceVerificationDistance = 0.180; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" },
+    [pscustomobject]@{ frame = 13; candidateId = "base-13-99-0"; basePredictionId = "13-99"; verificationId = "verify-wrong-bound-base-13"; x = 41.0; y = 161.0; w = 44.0; h = 46.0; faceVerificationConfidence = 0.930; faceVerificationDistance = 0.120; evidenceModel = "arcface-local-v1"; evidenceRunner = "face-verify-runner" }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $verificationCsv
 
 @(
@@ -126,12 +128,12 @@ $summaryText = Get-Content -Raw -Path $summaryPath
 $rows = @(Import-Csv $outputCsv)
 $reviewQueueRows = @(Import-Csv $reviewQueueCsv)
 
-if ($rows.Count -ne 11) {
-    throw "Expected 11 pseudo-GT rows, actual=$($rows.Count)"
+if ($rows.Count -ne 13) {
+    throw "Expected 13 pseudo-GT rows, actual=$($rows.Count)"
 }
 
-if ($reviewQueueRows.Count -ne 11) {
-    throw "Expected 11 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
+if ($reviewQueueRows.Count -ne 13) {
+    throw "Expected 13 pseudo-GT review queue rows, actual=$($reviewQueueRows.Count)"
 }
 
 $first = $rows[0]
@@ -153,6 +155,8 @@ foreach ($column in @(
         "tileEvidenceRunner",
         "faceVerificationEvidenceModel",
         "faceVerificationEvidenceRunner",
+        "faceVerificationSourceCandidateId",
+        "faceVerificationSourceBasePredictionId",
         "personObjectEvidenceModel",
         "personObjectEvidenceRunner",
         "auxiliarySignalRole",
@@ -205,6 +209,8 @@ foreach ($column in @(
         "tileEvidenceRunner",
         "faceVerificationEvidenceModel",
         "faceVerificationEvidenceRunner",
+        "faceVerificationSourceCandidateId",
+        "faceVerificationSourceBasePredictionId",
         "personObjectEvidenceModel",
         "personObjectEvidenceRunner",
         "auxiliarySignalRole",
@@ -379,12 +385,12 @@ if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" }).Co
     throw "Expected two supportedFaceCandidate rows."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 4) {
-    throw "Expected four falsePositiveCandidate rows."
+if (@($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" }).Count -ne 5) {
+    throw "Expected five falsePositiveCandidate rows."
 }
 
-if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 5) {
-    throw "Expected five missCandidate rows."
+if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" }).Count -ne 6) {
+    throw "Expected six missCandidate rows."
 }
 
 if (@($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.source -eq "face-verification" -and $_.verificationId -eq "verify-face-4" }).Count -ne 1) {
@@ -421,6 +427,24 @@ if (@($rows | Where-Object { $_.verificationId -eq "verify-high-conf-bad-distanc
 
 if (@($rows | Where-Object { $_.verificationId -eq "verify-low-conf-good-distance-9" }).Count -ne 0) {
     throw "Expected low-confidence but low-distance verification-only row to be ignored for high-precision pseudo-GT."
+}
+
+if (@($rows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.verificationId -eq "verify-wrong-bound-base-13" }).Count -ne 0) {
+    throw "Expected source-bound face verification row not to support a different same-frame base candidate."
+}
+
+$wrongBoundBase = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" -and $_.basePredictionId -eq "13-0" })[0]
+if ($null -eq $wrongBoundBase) {
+    throw "Expected wrong-bound same-frame base candidate to remain a falsePositiveCandidate."
+}
+
+$wrongBoundMiss = @($rows | Where-Object { $_.candidateType -eq "missCandidate" -and $_.verificationId -eq "verify-wrong-bound-base-13" })[0]
+if ($null -eq $wrongBoundMiss) {
+    throw "Expected wrong-bound face verification row to remain a separate missCandidate for review."
+}
+
+if ($wrongBoundMiss.faceVerificationSourceCandidateId -ne "base-13-99-0" -or $wrongBoundMiss.faceVerificationSourceBasePredictionId -ne "13-99") {
+    throw "Expected missCandidate to preserve source-bound face verification ids."
 }
 
 if (@($rows | Where-Object { $_.tileDetectionId -eq "tile-low-quality-7" }).Count -ne 0) {
@@ -491,6 +515,10 @@ if ($supportedRow.tileEvidenceModel -ne "heavy-tile-face-v1" -or $supportedRow.f
 
 if ($supportedRow.tileEvidenceRunner -ne "tile-runner-local" -or $supportedRow.faceVerificationEvidenceRunner -ne "face-verify-runner") {
     throw "Expected supported row to preserve tile and face-verification runner provenance."
+}
+
+if ($supportedRow.faceVerificationSourceCandidateId -ne "base-1-1-0" -or $supportedRow.faceVerificationSourceBasePredictionId -ne "1-0") {
+    throw "Expected supported row to preserve source-bound face verification ids."
 }
 
 $supportedQueueRow = @($reviewQueueRows | Where-Object { $_.candidateType -eq "supportedFaceCandidate" -and $_.basePredictionId -eq "1-0" })[0]
@@ -573,6 +601,8 @@ Assert-Contains "script calculates IoU" $scriptText "function Get-Iou"
 Assert-Contains "script calculates center distance" $scriptText "Get-CenterDistanceRatio"
 Assert-Contains "script checks support area ratio" $scriptText "MaxSupportAreaChangeRatio"
 Assert-Contains "script records support area ratio" $scriptText "areaChangeRatio"
+Assert-Contains "script guards source-bound face verification matches" $scriptText "Test-SourceBindingAllowsMatch"
+Assert-Contains "script writes source-bound face verification ids" $scriptText "faceVerificationSourceCandidateId"
 Assert-Contains "script records unsupported nearest high-quality comparison" $scriptText "Find-BestComparison"
 Assert-Contains "script filters weak comparison evidence" $scriptText 'Find-BestComparison[\s\S]*Test-FaceEvidenceMetricSupport \$candidate'
 Assert-Contains "script records best geometry support" $scriptText "Get-MinMatchProperty"
@@ -589,6 +619,7 @@ Assert-Contains "script reads optional evidence model provenance" $scriptText "e
 Assert-Contains "script reads optional evidence runner provenance" $scriptText "evidenceRunner"
 Assert-Contains "script writes tile model provenance" $scriptText "tileEvidenceModel"
 Assert-Contains "script writes face verification runner provenance" $scriptText "faceVerificationEvidenceRunner"
+Assert-Contains "script summarizes source-bound face verification rows" $scriptText "sourceBoundFaceVerificationRows"
 Assert-Contains "script marks person object as priority-only" $scriptText "priority-only-not-face-evidence"
 Assert-Contains "script treats auxiliary boost as non-final" $scriptText "auxiliary person/object support raises review priority but does not decide face/nonface"
 if ($scriptText -match 'missProbability = \[Math\]::Min\(0\.98,[^\r\n]*personUpperOverlap') {
@@ -607,10 +638,11 @@ Assert-Contains "script treats person object as auxiliary" $scriptText "person/o
 Assert-Contains "script does not finalize labels" $scriptText "final face/nonface/miss must be copied into the review CSV"
 Assert-Contains "summary records test-only boundary" $summaryText "test-only evidence"
 Assert-Contains "summary records supported count" $summaryText "supportedFaceCandidate=2"
-Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=4"
-Assert-Contains "summary records miss count" $summaryText "missCandidate=5"
+Assert-Contains "summary records false positive count" $summaryText "falsePositiveCandidate=5"
+Assert-Contains "summary records miss count" $summaryText "missCandidate=6"
 Assert-Contains "summary records model provenance count" $summaryText "modelProvenanceRows="
 Assert-Contains "summary records runner provenance count" $summaryText "runnerProvenanceRows="
+Assert-Contains "summary records source-bound face verification count" $summaryText "sourceBoundFaceVerificationRows="
 Assert-Contains "summary records geometry tagged row count" $summaryText "geometryTaggedRows=1"
 Assert-Contains "summary records geometry tags" $summaryText "geometryTags=top-edge-large-review"
 Assert-Contains "summary records provenance field contract" $summaryText "evidenceProvenance=optional-evidenceModel/evidenceRunner"
