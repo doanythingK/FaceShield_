@@ -413,10 +413,41 @@ function Add-PseudoGtReviewQueueFrames {
     }
 }
 
+function Add-ContinuityCandidateFrames {
+    param(
+        [System.Collections.Generic.SortedSet[int]]$Frames,
+        [string]$ContinuityCandidateCsvPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ContinuityCandidateCsvPath) -or -not (Test-Path $ContinuityCandidateCsvPath)) {
+        return
+    }
+
+    foreach ($row in @(Import-Csv $ContinuityCandidateCsvPath)) {
+        $frame = 0
+        if ([int]::TryParse([string]$row.frame, [ref]$frame) -and $frame -ge 0) {
+            [void]$Frames.Add($frame)
+        }
+
+        Add-FrameRangeValues $Frames ([string]$row.range)
+
+        $previousFrame = 0
+        if ([int]::TryParse([string]$row.previousFrame, [ref]$previousFrame) -and $previousFrame -ge 0) {
+            [void]$Frames.Add($previousFrame)
+        }
+
+        $nextFrame = 0
+        if ([int]::TryParse([string]$row.nextFrame, [ref]$nextFrame) -and $nextFrame -ge 0) {
+            [void]$Frames.Add($nextFrame)
+        }
+    }
+}
+
 function Merge-ReviewFrameNumbers {
     param(
         [int[]]$BaseFrames,
-        [string]$PseudoGtReviewQueuePath = ""
+        [string]$PseudoGtReviewQueuePath = "",
+        [string]$ContinuityCandidateCsvPath = ""
     )
 
     $frames = New-Object System.Collections.Generic.SortedSet[int]
@@ -426,6 +457,7 @@ function Merge-ReviewFrameNumbers {
         }
     }
 
+    Add-ContinuityCandidateFrames $frames $ContinuityCandidateCsvPath
     Add-PseudoGtReviewQueueFrames $frames $PseudoGtReviewQueuePath
     return @($frames | ForEach-Object { $_ })
 }
@@ -1214,6 +1246,10 @@ else {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to write YOLO mask continuity report."
     }
+    $reviewFrameNumbers = Merge-ReviewFrameNumbers `
+        -BaseFrames $reviewFrameNumbers `
+        -ContinuityCandidateCsvPath $resolvedMaskContinuityCsvPath
+    $pseudoGtReviewFrameNumbers = Select-PseudoGtReviewFrameNumbers -Frames $reviewFrameNumbers -MaxFrames $PseudoGtMaxFrames
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $templateScript `
         -PredictionLog $resolvedPredictionLog `
@@ -1452,7 +1488,8 @@ else {
 
         $reviewFrameNumbers = Merge-ReviewFrameNumbers `
             -BaseFrames $reviewFrameNumbers `
-            -PseudoGtReviewQueuePath $resolvedPseudoGtReviewQueueCsv
+            -PseudoGtReviewQueuePath $resolvedPseudoGtReviewQueueCsv `
+            -ContinuityCandidateCsvPath $resolvedMaskContinuityCsvPath
     }
 
     $reviewIndex = Join-Path $resolvedReviewPackageDir "review-index.html"
