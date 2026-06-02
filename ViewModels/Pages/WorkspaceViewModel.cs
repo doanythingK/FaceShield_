@@ -37,6 +37,7 @@ namespace FaceShield.ViewModels.Pages
         private const int NoDetectionReviewSampleCount = 12;
         private const int SparseNoFaceReviewSampleCount = 12;
         private const double SparseNoFaceReviewMaxCoverageRatio = 0.20;
+        private const int AutoDetectionCompletionTailToleranceFrames = 2;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private string? _autoRunSignature;
@@ -467,6 +468,17 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
+                if (!IsAutoDetectionRunComplete(generator.LastRunSummary, lastProcessed, FrameList.TotalFrames))
+                {
+                    _autoCompleted = false;
+                    _autoResumeIndex = Math.Clamp(lastProcessed, 0, Math.Max(0, FrameList.TotalFrames - 1));
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[AutoMaskPostProcessSkipped] reason=incomplete totalFrames={FrameList.TotalFrames} startFrame={generator.LastRunSummary?.StartFrameIndex ?? lastProcessed} processed={generator.LastRunSummary?.ProcessedFrames ?? 0} lastProcessed={lastProcessed} resumeIndex={_autoResumeIndex}");
+                    PersistWorkspaceState(includePreviewMask: !exportAfter);
+                    persisted = true;
+                    return false;
+                }
+
                 var postProcess = new AutoMaskPostProcessPipeline(
                     _maskProvider,
                     _autoOptions,
@@ -526,6 +538,30 @@ namespace FaceShield.ViewModels.Pages
                 if (!persisted)
                     PersistWorkspaceState(includePreviewMask: !exportAfter);
             }
+        }
+
+        private static bool IsAutoDetectionRunComplete(
+            AutoMaskRunSummary? summary,
+            int lastProcessedFrame,
+            int workspaceTotalFrames)
+        {
+            int totalFrames = summary?.TotalFrames > 0
+                ? summary.TotalFrames
+                : workspaceTotalFrames;
+            if (totalFrames <= 0)
+                return false;
+
+            int completionFrame = Math.Max(
+                0,
+                totalFrames - 1 - AutoDetectionCompletionTailToleranceFrames);
+            if (lastProcessedFrame >= completionFrame)
+                return true;
+
+            if (summary == null || summary.ProcessedFrames <= 0)
+                return false;
+
+            int summaryLastFrame = summary.StartFrameIndex + summary.ProcessedFrames - 1;
+            return summaryLastFrame >= completionFrame;
         }
 
         private void ResetAutoFaceMasksForRun(int startFrameIndex)
