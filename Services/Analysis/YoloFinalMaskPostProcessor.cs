@@ -2251,7 +2251,7 @@ namespace FaceShield.Services.Analysis
         public float WeakClusterMaxConfidence { get; init; } = 0.48f;
         public int WeakTextureClusterMinFrames { get; init; } = 4;
         public int WeakTextureClusterMaxFrames { get; init; } = 5;
-        public float WeakTextureClusterMaxConfidence { get; init; } = 0.40f;
+        public float WeakTextureClusterMaxConfidence { get; init; } = 0.45f;
         public float WeakTextureStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double WeakTextureClusterMinCenterYRatio { get; init; } = 0.22;
         public double WeakTextureClusterMaxCenterYRatio { get; init; } = 0.40;
