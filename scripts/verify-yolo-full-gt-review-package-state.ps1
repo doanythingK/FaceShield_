@@ -68,6 +68,8 @@ Assert-Contains "package generator review index pending fields" $packageScriptTe
 Assert-Contains "package generator writes crop placeholder" $packageScriptText "Write-PlaceholderImage"
 Assert-Contains "package generator documents unavailable crop" $packageScriptText "Crop extraction unavailable"
 Assert-Contains "package generator documents unavailable full frame" $packageScriptText "Full-frame extraction unavailable"
+Assert-Contains "package generator accepts continuity candidate CSV" $packageScriptText "[string]`$ContinuityCandidateCsv"
+Assert-Contains "package generator exports continuity metadata columns" $packageScriptText "continuityCandidateTypes"
 
 $resolvedVideo = Resolve-RepoPath $VideoPath
 $resolvedTemplate = Resolve-RepoPath $TemplateCsv
@@ -108,6 +110,7 @@ Assert-Contains "package generator no-clobber selftest" $noClobberText "Pass -Fo
 
 $requiredFrameDir = Join-Path $repo ".tmp\yolo-full-gt\review-package-required-frame-selftest"
 $requiredFrameTemplate = Join-Path $repo ".tmp\yolo-full-gt\required-frame-template.csv"
+$requiredFrameContinuityCsv = Join-Path $repo ".tmp\yolo-full-gt\required-frame-continuity.csv"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $requiredFrameTemplate) | Out-Null
 @(
     [pscustomobject]@{
@@ -124,6 +127,33 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $requiredFrameTemp
         notes = "selftest candidate frame should lose priority to required full-frame review frames."
     }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $requiredFrameTemplate
+@(
+    [pscustomobject]@{
+        candidateType = "perFaceShortGap"
+        evidenceReason = "per-face-short-gap"
+        reviewPriority = "high"
+        frame = ""
+        range = "9"
+        previousFrame = "8"
+        nextFrame = "10"
+        detectionIndex = ""
+        confidence = ""
+        previousConfidence = "0.900000"
+        nextConfidence = "0.910000"
+        centerX = ""
+        centerY = ""
+        areaRatio = ""
+        aspectRatio = ""
+        x = ""
+        y = ""
+        w = ""
+        h = ""
+        areaChange = "0.100000"
+        centerShift = "0.050000"
+        reviewHint = "specific face missing while another mask may exist"
+        requiresHumanLabel = "true"
+    }
+) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $requiredFrameContinuityCsv
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
     -VideoPath $resolvedVideo `
@@ -134,6 +164,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $requiredFrameTemp
     -MaxFullFrameRows 1 `
     -VideoFrameCount 12 `
     -RequiredFullFrameNumbers "9" `
+    -ContinuityCandidateCsv $requiredFrameContinuityCsv `
     -FullFrameScaleWidth 320 `
     -Force
 if ($LASTEXITCODE -ne 0) {
@@ -154,12 +185,30 @@ if (-not (Test-Path $requiredFrameRows[0].frameImagePath) -or -not (Test-Path $r
     throw "Required full-frame selftest did not create frame and overlay files."
 }
 
+if ($requiredFrameRows[0].continuityCandidateTypes -ne "perFaceShortGap" -or
+    $requiredFrameRows[0].continuityReviewPriority -ne "high" -or
+    $requiredFrameRows[0].continuityCandidateRanges -ne "9" -or
+    -not ([string]$requiredFrameRows[0].continuityReviewHints).Contains("specific face missing")) {
+    throw "Required full-frame selftest did not preserve continuity candidate metadata for frame 9."
+}
+
+$requiredFrameIndex = Join-Path $requiredFrameDir "review-index.html"
+$requiredFrameIndexText = Get-Content -Raw -Path $requiredFrameIndex
+Assert-Contains "required full-frame selftest review index continuity label" $requiredFrameIndexText "continuity=perFaceShortGap"
+Assert-Contains "required full-frame selftest review index continuity hint" $requiredFrameIndexText "specific face missing while another mask may exist"
+
 Write-Host "[YoloFullGtReviewPackageVerify] pass required full-frame priority selftest"
 
 $reviewCsv = Join-Path $resolvedOutputDir "full-gt-review.csv"
 $frameReviewCsv = Join-Path $resolvedOutputDir "full-frame-review.csv"
 $reviewIndex = Join-Path $resolvedOutputDir "review-index.html"
 $packageExists = (Test-Path $reviewCsv) -and (Test-Path $frameReviewCsv) -and (Test-Path $reviewIndex)
+if ($packageExists) {
+    $frameReviewHeader = Get-Content -Path $frameReviewCsv -TotalCount 1
+    if (-not ([string]$frameReviewHeader).Contains("continuityCandidateTypes")) {
+        $packageExists = $false
+    }
+}
 $generatedPackage = $false
 if ($ForceRegenerate -or -not $packageExists) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $packageScript `
@@ -237,7 +286,7 @@ foreach ($candidateFrame in $candidateFrames) {
 }
 
 $firstFrameRow = $frameRows[0]
-foreach ($column in @("frame", "frameImagePath", "overlayFrameImagePath", "detectedCandidateCount", "candidateSummary", "missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
+foreach ($column in @("frame", "frameImagePath", "overlayFrameImagePath", "detectedCandidateCount", "candidateSummary", "continuityCandidateTypes", "continuityCandidateReasons", "continuityReviewPriority", "continuityCandidateRanges", "continuityReviewHints", "missedFaceCount", "missedFaceRowsAdded", "reviewStatus", "evidenceNotes")) {
     Assert-Column $firstFrameRow $column
 }
 

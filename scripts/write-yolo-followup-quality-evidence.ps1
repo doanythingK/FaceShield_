@@ -1525,7 +1525,9 @@ else {
                 "-MaxFullFrameRows",
                 $MaxFullFrameRows,
                 "-FullFrameScaleWidth",
-                $FullFrameScaleWidth
+                $FullFrameScaleWidth,
+                "-ContinuityCandidateCsv",
+                $resolvedMaskContinuityCsvPath
             )
 
             if ($reviewFrameNumbers.Count -gt 0) {

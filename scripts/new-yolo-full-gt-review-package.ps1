@@ -13,6 +13,7 @@ param(
     [int]$FullFrameScaleWidth = 0,
     [bool]$IncludeCandidateFramesInFullFrameReview = $true,
     [string]$RequiredFullFrameNumbers = "",
+    [string]$ContinuityCandidateCsv = "",
     [string]$FfmpegPath = "",
     [string]$FfprobePath = "",
     [switch]$Force,
@@ -63,6 +64,67 @@ function Read-IntValue {
     }
 
     return [int]::Parse($value, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Add-FrameMapValue {
+    param(
+        [hashtable]$Map,
+        [int]$Frame,
+        [string]$Value
+    )
+
+    if ($Frame -lt 0 -or [string]::IsNullOrWhiteSpace($Value)) {
+        return
+    }
+
+    if (-not $Map.ContainsKey($Frame)) {
+        $Map[$Frame] = New-Object System.Collections.Generic.List[string]
+    }
+
+    if (-not $Map[$Frame].Contains($Value)) {
+        $Map[$Frame].Add($Value) | Out-Null
+    }
+}
+
+function Expand-FrameRangeValue {
+    param([string]$Value)
+
+    $frames = New-Object System.Collections.Generic.List[int]
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -eq "none") {
+        return @()
+    }
+
+    foreach ($part in $Value.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        $token = $part.Trim()
+        if ($token -match '^(\d+)-(\d+)$') {
+            $start = [int]$Matches[1]
+            $end = [int]$Matches[2]
+            if ($end -lt $start) {
+                continue
+            }
+
+            for ($frame = $start; $frame -le $end; $frame++) {
+                $frames.Add($frame) | Out-Null
+            }
+        } elseif ($token -match '^\d+$') {
+            $frames.Add([int]$token) | Out-Null
+        }
+    }
+
+    return @($frames | Sort-Object -Unique)
+}
+
+function Join-FrameMapValues {
+    param(
+        [hashtable]$Map,
+        [int]$Frame
+    )
+
+    if (-not $Map.ContainsKey($Frame)) {
+        return ""
+    }
+
+    return (@($Map[$Frame].ToArray()) | Sort-Object -Unique) -join "; "
 }
 
 function Get-VideoSize {
@@ -372,6 +434,12 @@ function Write-ReviewIndexHtml {
             if ($null -ne $row.PSObject.Properties["candidateSummary"] -and -not [string]::IsNullOrWhiteSpace($row.candidateSummary)) {
                 [void]$builder.AppendLine("<div class=""meta muted"">$(Convert-ToHtmlText $row.candidateSummary)</div>")
             }
+            if ($null -ne $row.PSObject.Properties["continuityCandidateTypes"] -and -not [string]::IsNullOrWhiteSpace($row.continuityCandidateTypes)) {
+                [void]$builder.AppendLine("<div class=""meta muted"">continuity=$(Convert-ToHtmlText $row.continuityCandidateTypes)</div>")
+            }
+            if ($null -ne $row.PSObject.Properties["continuityReviewHints"] -and -not [string]::IsNullOrWhiteSpace($row.continuityReviewHints)) {
+                [void]$builder.AppendLine("<div class=""meta muted"">$(Convert-ToHtmlText $row.continuityReviewHints)</div>")
+            }
             [void]$builder.AppendLine("<div class=""meta template"">CSV key: full-frame-review.csv frame=$(Convert-ToHtmlText $row.frame)</div>")
             [void]$builder.AppendLine("<div class=""meta template"">Set: missedFaceCount=N; missedFaceRowsAdded=N; reviewStatus=pass; evidenceNotes=frame scan reason</div>")
             [void]$builder.AppendLine("</div>")
@@ -538,6 +606,43 @@ if ($IncludeFullFrameReview) {
     $candidateCountByFrame = @{}
     $candidateRectsByFrame = @{}
     $candidateSummaryByFrame = @{}
+    $continuityTypesByFrame = @{}
+    $continuityReasonsByFrame = @{}
+    $continuityPrioritiesByFrame = @{}
+    $continuityRangesByFrame = @{}
+    $continuityHintsByFrame = @{}
+
+    $resolvedContinuityCandidateCsv = Resolve-RepoPath $ContinuityCandidateCsv
+    if (-not [string]::IsNullOrWhiteSpace($resolvedContinuityCandidateCsv) -and (Test-Path $resolvedContinuityCandidateCsv)) {
+        foreach ($row in @(Import-Csv $resolvedContinuityCandidateCsv)) {
+            $targetFrames = New-Object System.Collections.Generic.List[int]
+            if ($null -ne $row.PSObject.Properties["frame"] -and [string]$row.frame -match '^\d+$') {
+                $targetFrames.Add([int]$row.frame) | Out-Null
+            }
+
+            if ($null -ne $row.PSObject.Properties["range"]) {
+                foreach ($rangeFrame in @(Expand-FrameRangeValue ([string]$row.range))) {
+                    $targetFrames.Add([int]$rangeFrame) | Out-Null
+                }
+            }
+
+            foreach ($frame in @($targetFrames | Sort-Object -Unique)) {
+                Add-FrameMapValue $continuityTypesByFrame $frame ([string]$row.candidateType)
+                Add-FrameMapValue $continuityReasonsByFrame $frame ([string]$row.evidenceReason)
+                Add-FrameMapValue $continuityPrioritiesByFrame $frame ([string]$row.reviewPriority)
+                Add-FrameMapValue $continuityHintsByFrame $frame ([string]$row.reviewHint)
+
+                if ($null -ne $row.PSObject.Properties["range"] -and -not [string]::IsNullOrWhiteSpace([string]$row.range)) {
+                    Add-FrameMapValue $continuityRangesByFrame $frame ([string]$row.range)
+                } else {
+                    Add-FrameMapValue $continuityRangesByFrame $frame ([string]$frame)
+                }
+            }
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($resolvedContinuityCandidateCsv)) {
+        throw "Continuity candidate CSV not found: $resolvedContinuityCandidateCsv"
+    }
+
     foreach ($row in $rows) {
         $frame = Read-IntValue $row "frame"
         if (-not $candidateCountByFrame.ContainsKey($frame)) {
@@ -675,6 +780,11 @@ if ($IncludeFullFrameReview) {
         if ($candidateSummaryByFrame.ContainsKey($frame)) {
             $candidateSummary = ($candidateSummaryByFrame[$frame].ToArray() -join "; ")
         }
+        $continuityCandidateTypes = Join-FrameMapValues $continuityTypesByFrame $frame
+        $continuityCandidateReasons = Join-FrameMapValues $continuityReasonsByFrame $frame
+        $continuityReviewPriority = Join-FrameMapValues $continuityPrioritiesByFrame $frame
+        $continuityCandidateRanges = Join-FrameMapValues $continuityRangesByFrame $frame
+        $continuityReviewHints = Join-FrameMapValues $continuityHintsByFrame $frame
 
         $notes = "Review this full frame for visible faces that are not covered by detection crop rows. Add missed face rows to full-gt-review.csv."
         if (-not $frameAvailable) {
@@ -687,6 +797,11 @@ if ($IncludeFullFrameReview) {
             overlayFrameImagePath = $overlayFramePath
             detectedCandidateCount = $candidateCount
             candidateSummary = $candidateSummary
+            continuityCandidateTypes = $continuityCandidateTypes
+            continuityCandidateReasons = $continuityCandidateReasons
+            continuityReviewPriority = $continuityReviewPriority
+            continuityCandidateRanges = $continuityCandidateRanges
+            continuityReviewHints = $continuityReviewHints
             missedFaceCount = ""
             missedFaceRowsAdded = ""
             reviewStatus = ""
