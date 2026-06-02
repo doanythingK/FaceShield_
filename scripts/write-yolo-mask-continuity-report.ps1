@@ -3,7 +3,7 @@ param(
     [string]$LogPath,
     [string]$OutputPath = ".tmp\yolo-quality\yolo-mask-continuity-report.md",
     [string]$OutputCsv = ".tmp\yolo-quality\yolo-mask-continuity-candidates.csv",
-    [int]$ShortGapMaxFrames = 3,
+    [int]$ShortGapMaxFrames = 8,
     [int]$IsolatedNeighborWindow = 1,
     [double]$LowConfidenceThreshold = 0.38,
     [double]$WeakNonEdgeThreshold = 0.50,
