@@ -47,6 +47,27 @@ function Convert-ToWslPath {
     return $Path -replace '\\', '/'
 }
 
+function Stop-ProcessTree {
+    param([int]$ProcessId)
+
+    try {
+        $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction Stop)
+        foreach ($child in $children) {
+            Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+        }
+    }
+    catch {
+        Write-Warning "Failed to enumerate child processes for ${ProcessId}: $($_.Exception.Message)"
+    }
+
+    try {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-Warning "Failed to stop process ${ProcessId}: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-NativeCapture {
     param(
         [string]$FilePath,
@@ -68,12 +89,7 @@ function Invoke-NativeCapture {
 
         if ($TimeoutSeconds -gt 0) {
             if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                try {
-                    $process.Kill()
-                }
-                catch {
-                    Write-Warning "Failed to kill timed out process: $($_.Exception.Message)"
-                }
+                Stop-ProcessTree -ProcessId $process.Id
 
                 $stdout = if (Test-Path $stdoutPath) { Get-Content -Path $stdoutPath } else { @() }
                 $stderr = if (Test-Path $stderrPath) { Get-Content -Path $stderrPath } else { @() }

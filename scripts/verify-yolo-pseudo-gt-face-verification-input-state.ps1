@@ -356,6 +356,7 @@ Assert-Contains "script extracts candidate crops" $scriptText "Invoke-FfmpegCrop
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script defaults external timeout" $scriptText '\[int\]\$ExternalTimeoutSeconds\s*=\s*180'
+Assert-Contains "script kills external process tree on timeout" $scriptText "Stop-ProcessTree[\s\S]*Get-CimInstance Win32_Process[\s\S]*ParentProcessId[\s\S]*Stop-ProcessTree -ProcessId"
 Assert-Contains "script supports external output coordinate space" $scriptText "ExternalOutputCoordinateSpace"
 Assert-Contains "script normalizes crop image coordinates" $scriptText "Convert-ExternalFaceVerificationCsvCoordinateSpace"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"

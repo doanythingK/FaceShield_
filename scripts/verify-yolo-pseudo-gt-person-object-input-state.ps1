@@ -243,6 +243,7 @@ Assert-Contains "script extracts full frames" $scriptText "Invoke-FfmpegFrameExt
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script supports external output coordinate space" $scriptText "ExternalOutputCoordinateSpace"
 Assert-Contains "script defaults external timeout" $scriptText '\[int\]\$ExternalTimeoutSeconds\s*=\s*180'
+Assert-Contains "script kills external process tree on timeout" $scriptText "Stop-ProcessTree[\s\S]*Get-CimInstance Win32_Process[\s\S]*ParentProcessId[\s\S]*Stop-ProcessTree -ProcessId"
 Assert-Contains "script normalizes external person object coordinates" $scriptText "Convert-ExternalPersonObjectCsvCoordinateSpace"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"

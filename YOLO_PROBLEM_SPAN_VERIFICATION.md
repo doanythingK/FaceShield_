@@ -139,7 +139,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-yolo-probl
 `PseudoGtTileExternalCommand`를 쓰면 problem-span runner가 tile manifest 생성 뒤 외부 고정밀 tile face runner를 실행하고, `PseudoGtTileExternalOutputCsv`를 곧바로 `PseudoGtTileFaceCsv`로 연결해 `pseudo-gt-candidates.csv` 생성에 사용한다. 이미 외부 모델을 따로 실행해 둔 경우에는 `PseudoGtTileFaceCsv`만 직접 넘겨도 된다.
 repo 내부 테스트 전용 runner를 쓰려면 모델 파일을 커밋하지 말고 로컬 경로로 둔 뒤 `scripts/invoke-yolo-pseudo-gt-face-runner.ps1`를 `PseudoGtTileExternalCommand powershell.exe`에서 호출한다. 이 runner는 tile image를 SCRFD/YuNet 로컬 ONNX 모델로 검출해 frame 좌표계 `tile-face.csv`를 만들고 `evidenceModel/evidenceRunner` provenance를 남긴다. 예:
 
-외부 고정밀 runner는 기본 180초 timeout으로 제한한다. 무거운 로컬 모델이나 디버깅 때문에 더 오래 돌려야 하면 `PseudoGtTileExternalTimeoutSeconds`, `PseudoGtFaceVerificationExternalTimeoutSeconds`, `PseudoGtPersonObjectExternalTimeoutSeconds`를 명시적으로 늘린다. 이 timeout은 test-only evidence 생성에만 적용되며 앱 기본 자동 모자이크 런타임에는 영향을 주지 않는다.
+외부 고정밀 runner는 기본 180초 timeout으로 제한하고, timeout 시 runner의 자식 프로세스까지 종료한다. 무거운 로컬 모델이나 디버깅 때문에 더 오래 돌려야 하면 `PseudoGtTileExternalTimeoutSeconds`, `PseudoGtFaceVerificationExternalTimeoutSeconds`, `PseudoGtPersonObjectExternalTimeoutSeconds`를 명시적으로 늘린다. 이 timeout은 test-only evidence 생성에만 적용되며 앱 기본 자동 모자이크 런타임에는 영향을 주지 않는다.
 
 ```powershell
   -WithPseudoGtTileInput `

@@ -276,6 +276,7 @@ Assert-Contains "script supports wsl ffmpeg fallback" $scriptText "wsl\.exe"
 Assert-Contains "script supports external command hook" $scriptText "ExternalCommand"
 Assert-Contains "script requires external output csv" $scriptText "ExternalOutputCsv is required"
 Assert-Contains "script defaults external timeout" $scriptText '\[int\]\$ExternalTimeoutSeconds\s*=\s*180'
+Assert-Contains "script kills external process tree on timeout" $scriptText "Stop-ProcessTree[\s\S]*Get-CimInstance Win32_Process[\s\S]*ParentProcessId[\s\S]*Stop-ProcessTree -ProcessId"
 Assert-Contains "script validates external output against manifest" $scriptText "outside the manifest"
 Assert-Contains "script requires external tile index" $scriptText "tileIndex/sourceTileIndex/manifestTileIndex"
 Assert-Contains "script validates external output against manifest tile" $scriptText "outside the manifest tile"
