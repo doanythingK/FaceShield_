@@ -333,6 +333,11 @@ foreach ($candidate in $pseudoRows) {
     $fullFrameMissedFaceCount = ""
     $fullFrameMissedRowsAdded = ""
     $fullFrameEvidenceNotes = ""
+    $fullFrameContinuityCandidateTypes = ""
+    $fullFrameContinuityCandidateReasons = ""
+    $fullFrameContinuityReviewPriority = ""
+    $fullFrameContinuityCandidateRanges = ""
+    $fullFrameContinuityReviewHints = ""
     $fullFrameMissScanClosed = $true
     if ($candidateType -eq "missCandidate" -and $fullFrameRows.Count -gt 0) {
         $fullFrameMissScanClosed = $false
@@ -343,6 +348,11 @@ foreach ($candidate in $pseudoRows) {
             $fullFrameMissedFaceCount = [string](Get-PropertyValue $frameReview[0] "missedFaceCount" "")
             $fullFrameMissedRowsAdded = [string](Get-PropertyValue $frameReview[0] "missedFaceRowsAdded" "")
             $fullFrameEvidenceNotes = [string](Get-PropertyValue $frameReview[0] "evidenceNotes" "")
+            $fullFrameContinuityCandidateTypes = [string](Get-PropertyValue $frameReview[0] "continuityCandidateTypes" "")
+            $fullFrameContinuityCandidateReasons = [string](Get-PropertyValue $frameReview[0] "continuityCandidateReasons" "")
+            $fullFrameContinuityReviewPriority = [string](Get-PropertyValue $frameReview[0] "continuityReviewPriority" "")
+            $fullFrameContinuityCandidateRanges = [string](Get-PropertyValue $frameReview[0] "continuityCandidateRanges" "")
+            $fullFrameContinuityReviewHints = [string](Get-PropertyValue $frameReview[0] "continuityReviewHints" "")
             $fullFrameMissedRowsAddedValue = 0
             $fullFrameMissScanClosed = (Test-ReviewedStatus $fullFrameReviewStatus) -and
                 [int]::TryParse([string]$fullFrameMissedRowsAdded, [ref]$fullFrameMissedRowsAddedValue) -and
@@ -401,6 +411,11 @@ foreach ($candidate in $pseudoRows) {
             fullFrameMissedFaceCount = $fullFrameMissedFaceCount
             fullFrameMissedRowsAdded = $fullFrameMissedRowsAdded
             fullFrameEvidenceNotes = $fullFrameEvidenceNotes
+            fullFrameContinuityCandidateTypes = $fullFrameContinuityCandidateTypes
+            fullFrameContinuityCandidateReasons = $fullFrameContinuityCandidateReasons
+            fullFrameContinuityReviewPriority = $fullFrameContinuityReviewPriority
+            fullFrameContinuityCandidateRanges = $fullFrameContinuityCandidateRanges
+            fullFrameContinuityReviewHints = $fullFrameContinuityReviewHints
             baseFaceConfidence = $candidate.baseFaceConfidence
             tileFaceConfidence = $candidate.tileFaceConfidence
             tileSupportCount = $candidate.tileSupportCount
@@ -464,6 +479,10 @@ $unreviewedPreview = @($closureRows |
         Where-Object { $_.closureStatus -eq "unreviewed" } |
         Sort-Object { [int]$_.frame }, candidateId |
         Select-Object -First 12)
+$closedEvidencePreview = @($closureRows |
+        Where-Object { $_.closureStatus -eq "closed" } |
+        Sort-Object { [int]$_.frame }, candidateId |
+        Select-Object -First 12)
 
 $summary = @(
     "# YOLO Pseudo-GT Review Closure",
@@ -503,6 +522,17 @@ $summary = @(
     else {
         $unreviewedPreview | ForEach-Object {
             "- candidateId=$($_.candidateId), frame=$($_.frame), candidateType=$($_.candidateType), expected=$($_.expectedReviewLabel), reason=$($_.closureReason), fpProbability=$($_.fpProbability), missProbability=$($_.missProbability)"
+        }
+    }),
+    "",
+    "## Closed Evidence Snapshot",
+    "",
+    $(if ($closedEvidencePreview.Count -eq 0) {
+        "- none"
+    }
+    else {
+        $closedEvidencePreview | ForEach-Object {
+            "- candidateId=$($_.candidateId), frame=$($_.frame), candidateType=$($_.candidateType), label=$($_.reviewLabel), base=$($_.baseFaceConfidence), tile=$($_.tileFaceConfidence)/support=$($_.tileSupportCount), verify=$($_.faceVerificationConfidence)/dist=$($_.faceVerificationDistance), iou=$($_.bestIou), center=$($_.centerDistanceRatio), area=$($_.areaChangeRatio), fpProbability=$($_.fpProbability), missProbability=$($_.missProbability), supportEvidenceIds=$($_.supportEvidenceIds), continuity=$($_.fullFrameContinuityCandidateTypes)"
         }
     }),
     "",

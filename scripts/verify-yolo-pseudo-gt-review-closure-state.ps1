@@ -274,7 +274,23 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $reviewCsv
 
 @(
-    [pscustomobject]@{ frame = 7; frameImagePath = ""; overlayFrameImagePath = ""; detectedCandidateCount = 0; candidateSummary = ""; missedFaceCount = 1; missedFaceRowsAdded = 1; reviewStatus = "pass"; evidenceNotes = "manual miss added"; notes = "" }
+    [pscustomobject]@{
+        frame = 7
+        frameImagePath = ""
+        overlayFrameImagePath = ""
+        detectedCandidateCount = 0
+        candidateSummary = ""
+        continuityCandidateTypes = "perFaceShortGap"
+        continuityCandidateReasons = "per-face-short-gap"
+        continuityReviewPriority = "high"
+        continuityCandidateRanges = "7"
+        continuityReviewHints = "specific face missing while another mask may exist"
+        missedFaceCount = 1
+        missedFaceRowsAdded = 1
+        reviewStatus = "pass"
+        evidenceNotes = "manual miss added"
+        notes = ""
+    }
 ) | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $fullFrameCsv
 
 $output = Invoke-ReviewClosure `
@@ -309,6 +325,16 @@ foreach ($column in @(
         "eligibleReviewRowsOnFrame",
         "bestFrameReviewIou",
         "fullFrameEvidenceNotes",
+        "fullFrameContinuityCandidateTypes",
+        "fullFrameContinuityCandidateReasons",
+        "fullFrameContinuityReviewPriority",
+        "fullFrameContinuityCandidateRanges",
+        "fullFrameContinuityReviewHints",
+        "baseFaceConfidence",
+        "tileFaceConfidence",
+        "tileSupportCount",
+        "faceVerificationConfidence",
+        "faceVerificationDistance",
         "personConfidence",
         "personUpperOverlap",
         "personObjectClass",
@@ -358,6 +384,14 @@ if ($supportedClosure.tileEvidenceModel -ne "heavy-tile-face-v1" -or $supportedC
     throw "Expected closure output to preserve tile/face-verification model and runner provenance."
 }
 
+if ($supportedClosure.baseFaceConfidence -ne "0.41" -or
+    $supportedClosure.tileFaceConfidence -ne "0.92" -or
+    $supportedClosure.tileSupportCount -ne "3" -or
+    $supportedClosure.faceVerificationConfidence -ne "0.89" -or
+    $supportedClosure.faceVerificationDistance -ne "0.21") {
+    throw "Expected closure output to preserve base/tile/face-verification evidence metrics."
+}
+
 $falsePositiveClosure = @($rows | Where-Object { $_.candidateType -eq "falsePositiveCandidate" })[0]
 if ($falsePositiveClosure.personUpperOverlap -ne "0.62") {
     throw "Expected closure output to preserve auxiliary person/object overlap evidence."
@@ -381,6 +415,13 @@ if ($falsePositiveClosure.geometryTag -ne "top-edge-large-review") {
 
 if ($falsePositiveClosure.centerYRatio -ne "0.095" -or $falsePositiveClosure.baseAreaRatio -ne "0.055" -or $falsePositiveClosure.aspectRatio -ne "1") {
     throw "Expected closure output to preserve normalized top-edge geometry evidence."
+}
+
+$missClosure = @($rows | Where-Object { $_.candidateType -eq "missCandidate" })[0]
+if ($missClosure.fullFrameContinuityCandidateTypes -ne "perFaceShortGap" -or
+    $missClosure.fullFrameContinuityReviewPriority -ne "high" -or
+    $missClosure.fullFrameContinuityReviewHints -notmatch "specific face missing") {
+    throw "Expected closure output to preserve full-frame continuity review metadata for miss candidates."
 }
 
 $unreviewedReviewRows = @(Import-Csv $reviewCsv)
@@ -608,6 +649,7 @@ Assert-Contains "script preserves auxiliary signal role evidence" $scriptText "a
 Assert-Contains "script writes candidate type breakdown" $scriptText "Candidate Type Breakdown"
 Assert-Contains "script writes unreviewed reason breakdown" $scriptText "Unreviewed Reason Breakdown"
 Assert-Contains "script writes first unreviewed candidates" $scriptText "First Unreviewed Candidates"
+Assert-Contains "script writes closed evidence snapshot" $scriptText "Closed Evidence Snapshot"
 Assert-Contains "script requires completed review status" $scriptText "Test-ReviewedStatus"
 Assert-Contains "script requires review evidence notes" $scriptText "matching row has no evidenceNotes"
 Assert-Contains "script requires completed full-frame miss scan" $scriptText "missedFaceRowsAdded > 0"
@@ -619,6 +661,8 @@ Assert-Contains "summary records supported candidate breakdown" $summaryText "su
 Assert-Contains "summary records false positive candidate breakdown" $summaryText "falsePositiveCandidate: total=1, closed=1, unreviewed=0, labelMismatch=0"
 Assert-Contains "summary records miss candidate breakdown" $summaryText "missCandidate: total=1, closed=1, unreviewed=0, labelMismatch=0"
 Assert-Contains "summary records no unreviewed reasons" $summaryText "Unreviewed Reason Breakdown[\s\S]*- none"
+Assert-Contains "summary records closed evidence metrics" $summaryText "Closed Evidence Snapshot[\s\S]*base=0\.41[\s\S]*tile=0\.92/support=3[\s\S]*verify=0\.89/dist=0\.21[\s\S]*iou=0\.9"
+Assert-Contains "summary records closed continuity metadata" $summaryText "Closed Evidence Snapshot[\s\S]*continuity=perFaceShortGap"
 Assert-Contains "unreviewed summary records reason breakdown" $unreviewedSummaryText "Unreviewed Reason Breakdown[\s\S]*matching row has no label: 1"
 Assert-Contains "unreviewed summary records first candidate" $unreviewedSummaryText "First Unreviewed Candidates[\s\S]*candidateId=base-6-0[\s\S]*candidateType=falsePositiveCandidate"
 Assert-Contains "guide documents review closure" $guideText "close-yolo-pseudo-gt-review\.ps1"
