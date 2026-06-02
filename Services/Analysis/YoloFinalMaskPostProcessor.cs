@@ -1806,16 +1806,19 @@ namespace FaceShield.Services.Analysis
             Stack<(int EntryIndex, int FaceIndex, Rect Face)> pending)
         {
             int frameIndex = entries[entryIndex].Key;
+            int neighborWindowFrames = Math.Max(
+                options.NeighborWindowFrames,
+                options.TopEdgeWeakClusterNeighborWindowFrames);
             for (int i = entryIndex - 1; i >= 0; i--)
             {
-                if (frameIndex - entries[i].Key > options.NeighborWindowFrames)
+                if (frameIndex - entries[i].Key > neighborWindowFrames)
                     break;
                 AddMatchingTopEdgeWeakFaces(entries[i].Value, i, face, options, visited, pending);
             }
 
             for (int i = entryIndex + 1; i < entries.Count; i++)
             {
-                if (entries[i].Key - frameIndex > options.NeighborWindowFrames)
+                if (entries[i].Key - frameIndex > neighborWindowFrames)
                     break;
                 AddMatchingTopEdgeWeakFaces(entries[i].Value, i, face, options, visited, pending);
             }
@@ -2238,6 +2241,7 @@ namespace FaceShield.Services.Analysis
         public double UpperWeakClusterMaxCenterYRatio { get; init; } = 0.10;
         public double UpperWeakClusterMaxAreaRatio { get; init; } = 0.0065;
         public int TopEdgeWeakClusterMaxFrames { get; init; } = 3;
+        public int TopEdgeWeakClusterNeighborWindowFrames { get; init; } = 2;
         public float TopEdgeWeakClusterMaxConfidence { get; init; } = 0.60f;
         public float TopEdgeWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double TopEdgeWeakClusterMaxCenterYRatio { get; init; } = 0.08;
