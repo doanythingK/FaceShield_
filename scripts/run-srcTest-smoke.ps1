@@ -501,7 +501,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 MaxConfirmedTrackBridgeCenterShiftRatio = 1.20,
                 MaxAreaChangeRatio = 4.0,
                 DuplicateIou = 0.35,
-                UnstableTailMaxConfidence = 0.40f,
+                UnstableTailMaxConfidence = 0.45f,
                 UnstableTailMinStableDetections = 3,
                 UnstableTailMinIou = 0.45,
                 UnstableTailMaxAreaChangeRatio = 1.8,
