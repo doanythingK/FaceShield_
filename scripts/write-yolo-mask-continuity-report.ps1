@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$LogPath,
     [string]$OutputPath = ".tmp\yolo-quality\yolo-mask-continuity-report.md",
+    [string]$OutputCsv = ".tmp\yolo-quality\yolo-mask-continuity-candidates.csv",
     [int]$ShortGapMaxFrames = 3,
     [int]$IsolatedNeighborWindow = 1,
     [double]$LowConfidenceThreshold = 0.38,
@@ -143,6 +144,12 @@ if (-not [string]::IsNullOrWhiteSpace($outputDir)) {
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 }
 
+$resolvedOutputCsv = Resolve-RepoPath $OutputCsv
+$outputCsvDir = Split-Path -Parent $resolvedOutputCsv
+if (-not [string]::IsNullOrWhiteSpace($outputCsvDir)) {
+    New-Item -ItemType Directory -Force -Path $outputCsvDir | Out-Null
+}
+
 $pattern = '\[SmokeDetection\].*label=([^,]+), frame=(\d+), index=(\d+), x=([0-9.\-]+), y=([0-9.\-]+), w=([0-9.\-]+), h=([0-9.\-]+), area=([0-9.\-]+), conf=([0-9.\-]+), cx=([0-9.\-]+), cy=([0-9.\-]+), areaRatio=([0-9.\-]+)(?:, aspectRatio=([0-9.\-]+))?'
 $rows = New-Object System.Collections.Generic.List[object]
 foreach ($line in (Get-Content -Path $resolvedLog)) {
@@ -233,6 +240,51 @@ function Get-GapReviewHint {
     }
 
     return "short gap; review flicker"
+}
+
+function Add-ContinuityCandidate {
+    param(
+        [System.Collections.Generic.List[object]]$Candidates,
+        [string]$CandidateType,
+        [string]$EvidenceReason,
+        [string]$ReviewHint,
+        [int]$Frame = -1,
+        [string]$Range = "",
+        [int]$PreviousFrame = -1,
+        [int]$NextFrame = -1,
+        [object]$Row = $null,
+        [double]$PreviousConfidence = 0.0,
+        [double]$NextConfidence = 0.0,
+        [double]$AreaChange = 0.0,
+        [double]$CenterShift = 0.0,
+        [string]$ReviewPriority = "normal"
+    )
+
+    $Candidates.Add([pscustomobject]@{
+        candidateType = $CandidateType
+        evidenceReason = $EvidenceReason
+        reviewPriority = $ReviewPriority
+        frame = if ($Frame -ge 0) { $Frame } elseif ($null -ne $Row) { [int]$Row.Frame } else { "" }
+        range = $Range
+        previousFrame = if ($PreviousFrame -ge 0) { $PreviousFrame } else { "" }
+        nextFrame = if ($NextFrame -ge 0) { $NextFrame } else { "" }
+        detectionIndex = if ($null -ne $Row) { [int]$Row.Index } else { "" }
+        confidence = if ($null -ne $Row) { "{0:F6}" -f [double]$Row.Confidence } else { "" }
+        previousConfidence = if ($PreviousConfidence -gt 0) { "{0:F6}" -f $PreviousConfidence } else { "" }
+        nextConfidence = if ($NextConfidence -gt 0) { "{0:F6}" -f $NextConfidence } else { "" }
+        centerX = if ($null -ne $Row) { "{0:F6}" -f [double]$Row.CenterX } else { "" }
+        centerY = if ($null -ne $Row) { "{0:F6}" -f [double]$Row.CenterY } else { "" }
+        areaRatio = if ($null -ne $Row) { "{0:F8}" -f [double]$Row.AreaRatio } else { "" }
+        aspectRatio = if ($null -ne $Row) { "{0:F6}" -f [double]$Row.AspectRatio } else { "" }
+        x = if ($null -ne $Row) { "{0:F3}" -f [double]$Row.X } else { "" }
+        y = if ($null -ne $Row) { "{0:F3}" -f [double]$Row.Y } else { "" }
+        w = if ($null -ne $Row) { "{0:F3}" -f [double]$Row.W } else { "" }
+        h = if ($null -ne $Row) { "{0:F3}" -f [double]$Row.H } else { "" }
+        areaChange = if ($AreaChange -gt 0) { "{0:F6}" -f $AreaChange } else { "" }
+        centerShift = if ($CenterShift -gt 0) { "{0:F6}" -f $CenterShift } else { "" }
+        reviewHint = $ReviewHint
+        requiresHumanLabel = "true"
+    }) | Out-Null
 }
 
 function Test-StableFaceMatch {
@@ -546,6 +598,74 @@ $summaryReviewReasons = Read-MatchValue $finalMaskSummaryLine 'reviewReasons=(.*
 $frameRange = if ($frames.Count -eq 0) { "none" } else { "{0}-{1}" -f $frames[0], $frames[$frames.Count - 1] }
 $generatedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
+$continuityCandidates = New-Object System.Collections.Generic.List[object]
+foreach ($gap in $shortGaps) {
+    Add-ContinuityCandidate `
+        -Candidates $continuityCandidates `
+        -CandidateType "shortEmptyGap" `
+        -EvidenceReason "short-gap" `
+        -ReviewHint $gap.Hint `
+        -Range $gap.Range `
+        -PreviousFrame $gap.PreviousFrame `
+        -NextFrame $gap.NextFrame `
+        -PreviousConfidence $gap.PreviousConfidence `
+        -NextConfidence $gap.NextConfidence `
+        -AreaChange $gap.AreaChange `
+        -CenterShift $gap.CenterShift `
+        -ReviewPriority "high"
+}
+foreach ($gap in $perFaceShortGaps) {
+    Add-ContinuityCandidate `
+        -Candidates $continuityCandidates `
+        -CandidateType "perFaceShortGap" `
+        -EvidenceReason "per-face-short-gap" `
+        -ReviewHint $gap.Hint `
+        -Range $gap.Range `
+        -PreviousFrame $gap.PreviousFrame `
+        -NextFrame $gap.NextFrame `
+        -PreviousConfidence $gap.PreviousConfidence `
+        -NextConfidence $gap.NextConfidence `
+        -AreaChange $gap.AreaChange `
+        -CenterShift $gap.CenterShift `
+        -ReviewPriority "high"
+}
+foreach ($frame in $isolatedFrames) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "isolatedFinalMask" -EvidenceReason "isolated-mask" -ReviewHint "isolated final mask frame; review false positive vs brief face" -Frame $frame -ReviewPriority "high"
+}
+foreach ($row in $lowConfidenceRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "lowConfidenceFinalMask" -EvidenceReason "low-confidence-review" -ReviewHint "low-confidence final mask; review face vs false positive" -Row $row -ReviewPriority "normal"
+}
+foreach ($row in $weakNonEdgeRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "weakNonEdgeFinalMask" -EvidenceReason "weak-non-edge" -ReviewHint "weak non-edge; review false positive" -Row $row -ReviewPriority "high"
+}
+foreach ($row in $edgeWeakRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "weakEdgeFinalMask" -EvidenceReason "edge-weak-review" -ReviewHint "edge weak candidate; review partial face before removal" -Row $row -ReviewPriority "normal"
+}
+foreach ($row in $topEdgeWeakRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "topEdgeWeakFinalMask" -EvidenceReason "top-edge-weak-review" -ReviewHint "top-edge weak candidate; review partial face vs edge false positive" -Row $row -ReviewPriority "normal"
+}
+foreach ($row in $topEdgeLargeRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "topEdgeLargeFinalMask" -EvidenceReason "top-edge-large" -ReviewHint "large top-edge candidate; review cropped face vs transition residue/false positive" -Row $row -ReviewPriority "high"
+}
+foreach ($row in $upperWeakNonEdgeRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "upperWeakFinalMask" -EvidenceReason "upper-weak" -ReviewHint "upper-frame weak non-edge; review false positive vs small face" -Row $row -ReviewPriority "high"
+}
+foreach ($row in $lowerWeakNonEdgeRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "lowerWeakFinalMask" -EvidenceReason "lower-weak" -ReviewHint "lower-frame weak non-edge; review false positive" -Row $row -ReviewPriority "high"
+}
+foreach ($row in $aspectOutlierRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "aspectOutlierFinalMask" -EvidenceReason "aspect-outlier" -ReviewHint "aspect-ratio outlier; review false positive vs profile mismatch" -Row $row -ReviewPriority "normal"
+}
+foreach ($row in $tinyWeakRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "tinyWeakFinalMask" -EvidenceReason "tiny-weak" -ReviewHint "tiny weak non-edge; review small face vs false positive" -Row $row -ReviewPriority "normal"
+}
+foreach ($row in $tinyShortRows) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "tinyShortFinalMask" -EvidenceReason "tiny-short" -ReviewHint "tiny short candidate; review isolated small face vs false positive" -Row $row -ReviewPriority "normal"
+}
+foreach ($frame in $protectedSceneCarryFrames) {
+    Add-ContinuityCandidate -Candidates $continuityCandidates -CandidateType "protectedSceneCarry" -EvidenceReason "scene-carry-protected" -ReviewHint "protected scene-carry survived cleanup; review new-scene face vs transition residue" -Frame $frame -ReviewPriority "highest"
+}
+
 $builder = New-Object System.Text.StringBuilder
 [void]$builder.AppendLine("# YOLO Final Mask Continuity Report")
 [void]$builder.AppendLine()
@@ -752,4 +872,5 @@ if ($tinyShortRows.Count -eq 0) {
 [void]$builder.AppendLine("- Review hint: protected scene-carry candidates survived automatic cleanup because later support exists; review them as possible new-scene faces or transition residue.")
 
 Set-Content -Encoding UTF8 -Path $resolvedOutput -Value $builder.ToString()
-Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), topEdgeLarge=$($topEdgeLargeRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count), tinyWeak=$($tinyWeakRows.Count), tinyShort=$($tinyShortRows.Count), protectedSceneCarryFrames=$(Join-Values @($protectedSceneCarryFrames))"
+$continuityCandidates | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $resolvedOutputCsv
+Write-Host "[YoloMaskContinuityReport] wrote path=$resolvedOutput, candidateCsv=$resolvedOutputCsv, candidates=$($continuityCandidates.Count), rows=$($rows.Count), frames=$($frames.Count), shortGaps=$($shortGaps.Count), perFaceShortGaps=$($perFaceShortGaps.Count), isolated=$($isolatedFrames.Count), lowConfidence=$($lowConfidenceRows.Count), weakNonEdge=$($weakNonEdgeRows.Count), edgeWeak=$($edgeWeakRows.Count), topEdgeWeak=$($topEdgeWeakRows.Count), topEdgeLarge=$($topEdgeLargeRows.Count), upperWeakNonEdge=$($upperWeakNonEdgeRows.Count), lowerWeakNonEdge=$($lowerWeakNonEdgeRows.Count), aspectOutliers=$($aspectOutlierRows.Count), tinyWeak=$($tinyWeakRows.Count), tinyShort=$($tinyShortRows.Count), protectedSceneCarryFrames=$(Join-Values @($protectedSceneCarryFrames))"

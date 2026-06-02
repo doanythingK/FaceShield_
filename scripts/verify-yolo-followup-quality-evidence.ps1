@@ -101,18 +101,20 @@ if ($LASTEXITCODE -ne 0) {
 
 $checklist = Join-Path $outDir "yolo-quality-review-checklist.md"
 $continuity = Join-Path $outDir "yolo-mask-continuity-report.md"
+$continuityCsv = Join-Path $outDir "yolo-mask-continuity-candidates.csv"
 $template = Join-Path $outDir "yolo-quality-full-gt-template.csv"
 $summary = Join-Path $outDir "yolo-followup-quality-evidence.md"
 $pseudoGt = Join-Path $outDir "pseudo-gt-candidates.csv"
 $pseudoGtSummary = Join-Path $outDir "pseudo-gt-summary.md"
 $pseudoGtQueue = Join-Path $outDir "pseudo-gt-review-queue.csv"
 
-foreach ($required in @($checklist, $continuity, $template, $summary, $pseudoGt, $pseudoGtSummary, $pseudoGtQueue)) {
+foreach ($required in @($checklist, $continuity, $continuityCsv, $template, $summary, $pseudoGt, $pseudoGtSummary, $pseudoGtQueue)) {
     if (-not (Test-Path $required)) {
         throw "Expected output was not created: $required"
     }
 }
 
+$continuityRows = @(Import-Csv $continuityCsv)
 $pseudoGtRows = @(Import-Csv $pseudoGt)
 $pseudoGtQueueRows = @(Import-Csv $pseudoGtQueue)
 $pseudoGtSummaryText = Get-Content -Raw -Path $pseudoGtSummary
@@ -253,6 +255,7 @@ Write-Host "[YoloFollowupQualityEvidenceVerify] pass no-detection tile plus pers
 $scriptText = Get-Content -Raw -Path $script
 $checklistText = Get-Content -Raw -Path $checklist
 $continuityText = Get-Content -Raw -Path $continuity
+$continuityCsvText = Get-Content -Raw -Path $continuityCsv
 $summaryText = Get-Content -Raw -Path $summary
 $planText = Get-Content -Raw -Path $plan
 $smokeText = Get-Content -Raw -Path $smokeResult
@@ -291,6 +294,7 @@ Assert-Contains "script parses final mask gap-fill scene guard" $scriptText "Smo
 Assert-Contains "script parses final mask summary" $scriptText "SmokeFinalMaskSummary|FinalMaskSummary"
 Assert-Contains "script writes review package" $scriptText "new-yolo-full-gt-review-package\.ps1"
 Assert-Contains "script writes final mask continuity report" $scriptText "write-yolo-mask-continuity-report\.ps1"
+Assert-Contains "script writes final mask continuity candidate CSV" $scriptText 'MaskContinuityCsvPath[\s\S]*yolo-mask-continuity-candidates\.csv[\s\S]*-OutputCsv\s+\$resolvedMaskContinuityCsvPath'
 Assert-Contains "script supports pseudo gt tile input" $scriptText "PseudoGtTileFaceCsv"
 Assert-Contains "script supports pseudo gt frame cap" $scriptText "PseudoGtMaxFrames"
 Assert-Contains "script samples pseudo gt review frames within cap" $scriptText "Select-PseudoGtReviewFrameNumbers[\s\S]*PseudoGtMaxFrames[\s\S]*Pseudo-GT sampled review frames"
@@ -368,11 +372,25 @@ Assert-Contains "continuity includes aspect outlier table" $continuityText "Aspe
 Assert-Contains "continuity includes tiny weak table" $continuityText "Tiny Weak Final Masks[\s\S]*tiny weak non-edge; review small face vs false positive"
 Assert-Contains "continuity includes tiny short table" $continuityText "Tiny Short Final Masks[\s\S]*tiny short candidate; review isolated small face vs false positive"
 Assert-Contains "continuity includes protected scene carry section" $continuityText "Protected Scene-Carry Frames[\s\S]*14,15[\s\S]*possible new-scene faces or transition residue"
+Assert-Contains "continuity CSV records candidate schema" $continuityCsvText '"candidateType","evidenceReason","reviewPriority","frame","range"'
+foreach ($candidateType in @("shortEmptyGap", "perFaceShortGap", "isolatedFinalMask", "lowConfidenceFinalMask", "weakNonEdgeFinalMask", "weakEdgeFinalMask", "topEdgeWeakFinalMask", "lowerWeakFinalMask", "aspectOutlierFinalMask", "tinyWeakFinalMask", "tinyShortFinalMask", "protectedSceneCarry")) {
+    if (-not @($continuityRows | Where-Object { $_.candidateType -eq $candidateType })) {
+        throw "Expected continuity candidate CSV to include candidateType=$candidateType."
+    }
+}
+$protectedContinuityRows = @($continuityRows | Where-Object { $_.candidateType -eq "protectedSceneCarry" -and ($_.frame -eq "14" -or $_.frame -eq "15") })
+if ($protectedContinuityRows.Count -ne 2) {
+    throw "Expected continuity candidate CSV to include protected scene-carry frames 14 and 15."
+}
+if (-not @($continuityRows | Where-Object { $_.candidateType -eq "perFaceShortGap" -and $_.range -eq "31" -and $_.previousFrame -eq "30" -and $_.nextFrame -eq "32" -and $_.requiresHumanLabel -eq "true" })) {
+    throw "Expected continuity candidate CSV to include the per-face flicker gap range 31 as human-label-required evidence."
+}
 Assert-Contains "summary records detection rows" $summaryText "Detection rows: 7"
 Assert-Contains "summary records pseudo gt candidates" $summaryText "Pseudo-GT candidates"
 Assert-Contains "summary records pseudo gt summary" $summaryText "Pseudo-GT summary"
 Assert-Contains "summary records auto start frame" $summaryText "startFrame=0"
 Assert-Contains "summary links final mask continuity report" $summaryText "Final mask continuity"
+Assert-Contains "summary links final mask continuity candidate CSV" $summaryText "Final mask continuity candidates"
 Assert-Contains "summary records final mask summary" $summaryText "Final mask summary"
 Assert-Contains "summary records final mask cleanup" $summaryText "Final mask cleanup"
 Assert-Contains "summary records top-edge large duplicate cleanup" $summaryText "Top-edge large duplicate removals: 0"

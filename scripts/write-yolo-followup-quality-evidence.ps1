@@ -10,6 +10,7 @@ param(
     [string]$ReviewContactSheetPath = "",
     [string]$SummaryPath = "",
     [string]$MaskContinuityPath = "",
+    [string]$MaskContinuityCsvPath = "",
     [string]$PseudoGtTileFaceCsv = "",
     [string]$PseudoGtFaceVerificationCsv = "",
     [string]$PseudoGtPersonObjectCsv = "",
@@ -750,6 +751,10 @@ if ([string]::IsNullOrWhiteSpace($MaskContinuityPath)) {
     $MaskContinuityPath = Join-Path $OutputDir "yolo-mask-continuity-report.md"
 }
 
+if ([string]::IsNullOrWhiteSpace($MaskContinuityCsvPath)) {
+    $MaskContinuityCsvPath = Join-Path $OutputDir "yolo-mask-continuity-candidates.csv"
+}
+
 if ([string]::IsNullOrWhiteSpace($PseudoGtOutputCsv)) {
     $PseudoGtOutputCsv = Join-Path $OutputDir "pseudo-gt-candidates.csv"
 }
@@ -801,6 +806,7 @@ $resolvedDetectionOverlayPath = Resolve-RepoPath $DetectionOverlayPath
 $resolvedReviewContactSheetPath = Resolve-RepoPath $ReviewContactSheetPath
 $resolvedSummaryPath = Resolve-RepoPath $SummaryPath
 $resolvedMaskContinuityPath = Resolve-RepoPath $MaskContinuityPath
+$resolvedMaskContinuityCsvPath = Resolve-RepoPath $MaskContinuityCsvPath
 $resolvedPseudoGtTileFaceCsv = Resolve-RepoPath $PseudoGtTileFaceCsv
 $resolvedPseudoGtFaceVerificationCsv = Resolve-RepoPath $PseudoGtFaceVerificationCsv
 $resolvedPseudoGtPersonObjectCsv = Resolve-RepoPath $PseudoGtPersonObjectCsv
@@ -1203,7 +1209,8 @@ else {
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $maskContinuityScript `
         -LogPath $resolvedPredictionLog `
-        -OutputPath $resolvedMaskContinuityPath
+        -OutputPath $resolvedMaskContinuityPath `
+        -OutputCsv $resolvedMaskContinuityCsvPath
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to write YOLO mask continuity report."
     }
@@ -1534,6 +1541,7 @@ $summary = New-Object System.Text.StringBuilder
 [void]$summary.AppendLine("- Checklist: ``$ChecklistPath``")
 if ($detectionRows.Count -gt 0) {
     [void]$summary.AppendLine("- Final mask continuity: ``$MaskContinuityPath``")
+    [void]$summary.AppendLine("- Final mask continuity candidates: ``$MaskContinuityCsvPath``")
     [void]$summary.AppendLine("- Full-GT template: ``$TemplateCsv``")
 }
 if (-not [string]::IsNullOrWhiteSpace($PseudoGtTileFaceCsv) -or -not [string]::IsNullOrWhiteSpace($PseudoGtFaceVerificationCsv)) {
