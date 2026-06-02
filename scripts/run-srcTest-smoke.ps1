@@ -480,7 +480,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                 MaxLostFillFrames = yoloMaxLostFillFrames,
                 MaxInitialFillFrames = yoloMaxInitialFillFrames,
                 InitialFillRequiresInwardMotion = true,
-                MaxConfirmedTrackHoldFrames = 8,
+                MaxConfirmedTrackHoldFrames = 5,
                 AllowSmallTrackLostFill = true,
                 WeakConfidence = 0.38f,
                 StrongConfidence = 0.58f,

@@ -20,6 +20,7 @@ namespace FaceShield.Services.Analysis
         private const int TemporalSmoothPasses = 2;
         private const int TemporalSmoothSearchWindowFrames = 2;
         private const int SuspiciousNoFaceMaxGap = 8;
+        private const int YoloConfirmedTrackHoldFrames = 5;
         public const float YoloSyntheticFillConfidenceMax = 0.78f;
 
         public FaceTrackPostProcessResult ApplyTemporalFixes(
@@ -153,7 +154,7 @@ namespace FaceShield.Services.Analysis
                     MaxLostFillFrames = 0,
                     MaxInitialFillFrames = 3,
                     InitialFillRequiresInwardMotion = true,
-                    MaxConfirmedTrackHoldFrames = SuspiciousNoFaceMaxGap,
+                    MaxConfirmedTrackHoldFrames = YoloConfirmedTrackHoldFrames,
                     AllowSmallTrackLostFill = true,
                     WeakConfidence = 0.38f,
                     StrongConfidence = 0.58f,
