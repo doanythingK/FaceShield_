@@ -1203,7 +1203,8 @@ namespace FaceShield.Services.Analysis
                 if (data.Faces.Count != 1)
                     return false;
 
-                return confidence <= options.TopEdgeWeakIsolatedMaxConfidence;
+                return confidence <= options.TopEdgeWeakIsolatedMaxConfidence &&
+                    IsTopEdgeWeakIsolatedFace(face, data.Size, options);
             }
 
             return visited.Count <= options.TopEdgeWeakClusterMaxFrames;
@@ -2004,6 +2005,19 @@ namespace FaceShield.Services.Analysis
                 areaRatio <= options.TopEdgeWeakClusterMaxAreaRatio;
         }
 
+        private static bool IsTopEdgeWeakIsolatedFace(Rect face, PixelSize size, YoloFinalMaskCleanupOptions options)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return false;
+
+            double frameArea = Math.Max(1.0, size.Width * (double)size.Height);
+            double areaRatio = Math.Max(0.0, face.Width * face.Height) / frameArea;
+            double centerYRatio = (face.Y + face.Height * 0.5) / size.Height;
+            return TouchesFrameTopEdge(face, size, options.EdgeMarginRatio) &&
+                centerYRatio <= options.TopEdgeWeakIsolatedMaxCenterYRatio &&
+                areaRatio <= options.TopEdgeWeakIsolatedMaxAreaRatio;
+        }
+
         private static bool IsWeakTextureFace(Rect face, PixelSize size, YoloFinalMaskCleanupOptions options)
         {
             if (size.Width <= 0 || size.Height <= 0 || face.Width <= 0 || face.Height <= 0)
@@ -2253,6 +2267,8 @@ namespace FaceShield.Services.Analysis
         public int TopEdgeWeakClusterNeighborWindowFrames { get; init; } = 3;
         public float TopEdgeWeakClusterMaxConfidence { get; init; } = 0.60f;
         public float TopEdgeWeakIsolatedMaxConfidence { get; init; } = 0.38f;
+        public double TopEdgeWeakIsolatedMaxCenterYRatio { get; init; } = 0.065;
+        public double TopEdgeWeakIsolatedMaxAreaRatio { get; init; } = 0.0060;
         public float TopEdgeWeakStrongContinuationMinConfidence { get; init; } = 0.70f;
         public double TopEdgeWeakClusterMaxCenterYRatio { get; init; } = 0.08;
         public double TopEdgeWeakClusterMaxAreaRatio { get; init; } = 0.0065;
