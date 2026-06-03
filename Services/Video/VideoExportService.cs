@@ -1453,10 +1453,6 @@ public unsafe sealed class VideoExportService
         {
             normalizedPts = lastPts + 1;
         }
-        else if (normalizedPts > lastPts + 1)
-        {
-            normalizedPts = lastPts + 1;
-        }
 
         lastPts = normalizedPts;
         return normalizedPts;
