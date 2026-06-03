@@ -66,13 +66,29 @@ namespace FaceShield.Services.Analysis
             FaceOnnxDetectorOptions? detectorOptions = null,
             bool useFaceOnnxRoiDetector = false)
         {
+            bool enablePostProcessing = _options.EnablePostProcessing;
+            bool enableRoiPostProcess = enablePostProcessing && _options.EnableRoiPostProcess;
+            bool enableTemporalSmoothing = enablePostProcessing && _options.EnableYoloTemporalSmoothing;
+            bool enableWeakIsolationCleanup = enablePostProcessing && _options.EnableYoloWeakIsolatedCleanup;
+            bool enableGapFill = enablePostProcessing && _options.EnableYoloGapFill;
+            bool enableSceneCutCleanup = _options.UseTracking
+                && enablePostProcessing
+                && _options.EnableYoloSceneCutCarryCleanup;
+            bool enableYoloMissRecovery = _options.FilterProfile == FaceFilterProfile.Yolo && _options.UseTracking;
+
             var temporalPostProcessor = new AutoMaskTemporalPostProcessor();
+            bool yoloMissRecoveryOnly = _options.FilterProfile == FaceFilterProfile.Yolo &&
+                _options.UseTracking &&
+                !_options.EnablePostProcessing;
             var trackPost = temporalPostProcessor.ApplyTemporalFixes(
                 _maskProvider,
                 _totalFrames,
                 _options.FilterProfile,
-                _options.UseTracking);
-            if (roiSourceDetector != null && detectorOptions != null)
+                _options.FilterProfile == FaceFilterProfile.Yolo
+                    ? enableYoloMissRecovery
+                    : _options.UseTracking && enablePostProcessing,
+                missRecoveryOnly: yoloMissRecoveryOnly);
+            if (enableRoiPostProcess && roiSourceDetector != null && detectorOptions != null)
             {
                 new AutoMaskRoiRefineStep().Apply(
                     _maskProvider,
@@ -85,11 +101,16 @@ namespace FaceShield.Services.Analysis
             }
 
             YoloFinalMaskCleanupPassResult yoloCleanupPass = YoloFinalMaskCleanupPassResult.Empty;
-            if (_options.FilterProfile == FaceFilterProfile.Yolo)
+            if (_options.FilterProfile == FaceFilterProfile.Yolo && enableWeakIsolationCleanup)
                 yoloCleanupPass = RemoveYoloWeakIsolatedFinalMasks(
                     videoPath,
                     cancellationToken,
-                    fillStableGaps: false);
+                    fillStableGaps: enableGapFill,
+                    skipSceneCutGuard: !enableSceneCutCleanup,
+                    logLabel: "YoloFinalMaskCleanup",
+                    logWhenNoRemovals: true,
+                    gapFillLogLabel: "YoloFinalMaskGapFill",
+                    gapFillSceneCutGuardLogLabel: "YoloFinalMaskGapFillSceneCutGuard");
 
             IReadOnlyList<string> yoloPreSmoothCutPairs = Array.Empty<string>();
             IReadOnlyList<string> yoloPreSmoothStrongCarryProbeCutPairs = Array.Empty<string>();
@@ -97,7 +118,7 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<string> yoloStrongCarryProbeCutPairs = Array.Empty<string>();
             var yoloSceneCutPostProcessor = new YoloSceneCutPostProcessor();
 
-            if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo)
+            if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo && enableSceneCutCleanup)
             {
                 var preSmoothGuard = yoloSceneCutPostProcessor.RemoveTrackFillAcrossSceneCuts(
                     _maskProvider,
@@ -114,7 +135,7 @@ namespace FaceShield.Services.Analysis
                 yoloPreSmoothStrongCarryProbeCutPairs = preSmoothStrongCarryProbe.CutFramePairs;
             }
 
-            if (_options.UseTracking)
+            if (_options.UseTracking && enableTemporalSmoothing)
             {
                 temporalPostProcessor.ApplyTemporalSmoothing(
                     _maskProvider,
@@ -124,7 +145,7 @@ namespace FaceShield.Services.Analysis
                         : Array.Empty<string>());
             }
 
-            if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo)
+            if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo && enableTemporalSmoothing && enableSceneCutCleanup)
             {
                 var postSmoothGuard = yoloSceneCutPostProcessor.RemoveTrackFillAcrossSceneCuts(
                     _maskProvider,
@@ -142,7 +163,7 @@ namespace FaceShield.Services.Analysis
             }
 
             IReadOnlyList<int> yoloProtectedSceneCarryFrames = Array.Empty<int>();
-            if (_options.FilterProfile == FaceFilterProfile.Yolo)
+            if (_options.FilterProfile == FaceFilterProfile.Yolo && enableSceneCutCleanup)
             {
                 var yoloCutPairs = CombineCutFramePairs(
                     yoloPreSmoothCutPairs,
@@ -174,19 +195,22 @@ namespace FaceShield.Services.Analysis
                         $"[YoloSceneCutCarryCleanup] cutPairs={FormatTextList(yoloCutPairs)} removed={yoloCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(yoloCarryCleanup.RemovedFrameIndices)} removedUnsupportedStrong={yoloCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces} removedUnsupportedStrongFrames={FormatFrameList(yoloCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)} protectedStrong={yoloCarryCleanup.ProtectedStrongCarryLikeFaces} protectedStrongFrames={FormatFrameList(yoloCarryCleanup.ProtectedStrongCarryLikeFrameIndices)} blockedFrames={FormatFrameList(yoloSceneCutBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                 }
 
-                var postSceneCleanupPass = RemoveYoloWeakIsolatedFinalMasks(
-                    videoPath,
-                    cancellationToken,
-                    blockedCutFramePairs: yoloCutPairs,
-                    additionalBlockedFaces: CombineFaceInfos(
-                        yoloCleanupPass.RemovedFacesInfo,
-                        yoloCarryCleanup.RemovedFacesInfo),
-                    sceneCarryBlockedFaces: yoloCarryCleanup.RemovedFacesInfo,
-                    sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames,
-                    logLabel: "YoloFinalMaskPostSceneCleanup",
-                    logWhenNoRemovals: true,
-                    gapFillLogLabel: "YoloFinalMaskPostSceneGapFill",
-                    gapFillSceneCutGuardLogLabel: "YoloFinalMaskPostSceneGapFillSceneCutGuard");
+                var postSceneCleanupPass = enableWeakIsolationCleanup
+                    ? RemoveYoloWeakIsolatedFinalMasks(
+                        videoPath,
+                        cancellationToken,
+                        fillStableGaps: enableGapFill,
+                        blockedCutFramePairs: yoloCutPairs,
+                        additionalBlockedFaces: CombineFaceInfos(
+                            yoloCleanupPass.RemovedFacesInfo,
+                            yoloCarryCleanup.RemovedFacesInfo),
+                        sceneCarryBlockedFaces: yoloCarryCleanup.RemovedFacesInfo,
+                        sceneCarryBlockedFrameIndices: yoloSceneCutBlockedFrames,
+                        logLabel: "YoloFinalMaskPostSceneCleanup",
+                        logWhenNoRemovals: true,
+                        gapFillLogLabel: "YoloFinalMaskPostSceneGapFill",
+                        gapFillSceneCutGuardLogLabel: "YoloFinalMaskPostSceneGapFillSceneCutGuard")
+                    : YoloFinalMaskCleanupPassResult.Empty;
                 if (postSceneCleanupPass.CutFramePairs.Count > 0)
                 {
                     var postGapFillCutPairs = CombineCutFramePairs(yoloCutPairs, postSceneCleanupPass.CutFramePairs);
@@ -212,15 +236,26 @@ namespace FaceShield.Services.Analysis
                         postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices);
                     Debug.WriteLine(
                         $"[YoloSceneCutCarryCleanup] stage=post-gap-fill cutPairs={FormatTextList(postGapFillCutPairs)} removed={postGapFillCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(postGapFillCarryCleanup.RemovedFrameIndices)} removedUnsupportedStrong={postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces} removedUnsupportedStrongFrames={FormatFrameList(postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)} protectedStrong={postGapFillCarryCleanup.ProtectedStrongCarryLikeFaces} protectedStrongFrames={FormatFrameList(postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices)} blockedFrames={FormatFrameList(postGapFillBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
-                    RemoveYoloWeakIsolatedFinalMasks(
-                        videoPath,
-                        cancellationToken,
-                        fillStableGaps: false,
-                        logLabel: "YoloFinalMaskPostGapFillCleanup",
-                        logWhenNoRemovals: true);
+
+                    if (enableWeakIsolationCleanup && enableGapFill)
+                    {
+                        RemoveYoloWeakIsolatedFinalMasks(
+                            videoPath,
+                            cancellationToken,
+                            fillStableGaps: false,
+                            logLabel: "YoloFinalMaskPostGapFillCleanup",
+                            logWhenNoRemovals: true);
+                    }
                 }
             }
 
+            if (!enablePostProcessing)
+            {
+                Debug.WriteLine(
+                    _options.FilterProfile == FaceFilterProfile.Yolo && enableYoloMissRecovery
+                        ? "[AutoMaskPostProcess] post-processing disabled · YOLO baseline 보완 모드(추적 기반 보간 유지)"
+                        : "[AutoMaskPostProcess] post-processing disabled");
+            }
             LogFinalMaskSummary(yoloProtectedSceneCarryFrames);
             return new AutoMaskPostProcessResult(trackPost, yoloProtectedSceneCarryFrames);
         }
@@ -229,6 +264,7 @@ namespace FaceShield.Services.Analysis
             string videoPath,
             CancellationToken cancellationToken,
             bool fillStableGaps = true,
+            bool skipSceneCutGuard = false,
             IReadOnlyCollection<string>? blockedCutFramePairs = null,
             IReadOnlyCollection<int>? additionalBlockedFrameIndices = null,
             IReadOnlyCollection<FaceTrackFilledFace>? additionalBlockedFaces = null,
@@ -265,6 +301,7 @@ namespace FaceShield.Services.Analysis
                         blockedCutFramePairs,
                         additionalBlockedFrameIndices,
                         additionalBlockedFaces,
+                        skipSceneCutGuard: skipSceneCutGuard,
                         sceneCarryBlockedFaces,
                         sceneCarryBlockedFrameIndices,
                         gapFillLogLabel,
@@ -281,6 +318,7 @@ namespace FaceShield.Services.Analysis
                     blockedCutFramePairs,
                     additionalBlockedFrameIndices,
                     CombineFaceInfos(additionalBlockedFaces, cleanup.RemovedFacesInfo),
+                    skipSceneCutGuard: skipSceneCutGuard,
                     sceneCarryBlockedFaces,
                     sceneCarryBlockedFrameIndices,
                     gapFillLogLabel,
@@ -296,6 +334,7 @@ namespace FaceShield.Services.Analysis
             IReadOnlyCollection<string>? blockedCutFramePairs,
             IReadOnlyCollection<int>? blockedFrameIndices,
             IReadOnlyCollection<FaceTrackFilledFace>? blockedFaces,
+            bool skipSceneCutGuard,
             IReadOnlyCollection<FaceTrackFilledFace>? sceneCarryBlockedFaces,
             IReadOnlyCollection<int>? sceneCarryBlockedFrameIndices,
             string gapFillLogLabel,
@@ -328,6 +367,9 @@ namespace FaceShield.Services.Analysis
 
             if (gapFill.CutGuardFacesInfo.Count == 0)
                 return Array.Empty<string>();
+
+            if (skipSceneCutGuard)
+                return gapFill.CutGuardFacesInfo.Select(x => $"{x.SourceFrameIndex}:{x.FrameIndex}").ToArray();
 
             var guard = new FaceTrackSceneCutGuard().Apply(
                 _maskProvider,

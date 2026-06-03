@@ -128,7 +128,7 @@ Assert-Match "backend enum exposes yolo" $backend "YoloFaceOnnx\s*=\s*3"
 Assert-Match "yolo model enum exposes v8" $modelEnum "YoloV8Face\s*=\s*0"
 Assert-Match "yolo model enum exposes yolo5" $modelEnum "Yolo5Face\s*=\s*1"
 
-Assert-Match "settings version is v6" $homeText "CurrentAutoSettingsVersion\s*=\s*6"
+Assert-Match "settings version is v8" $homeText "CurrentAutoSettingsVersion\s*=\s*8"
 Assert-Match "home detector selector keeps faceonnx" $homeText "new AutoDetectorBackendOption\(""FaceONNX"",\s*FaceDetectorBackend\.FaceOnnx\)"
 Assert-Match "home detector selector exposes yolo" $homeText "new AutoDetectorBackendOption\(""YOLO Face ONNX"",\s*FaceDetectorBackend\.YoloFaceOnnx\)"
 Assert-Match "home yolo selector exposes v8" $homeText "new YoloModelTypeOption\(""YOLOv8-Face"",\s*YoloFaceModelType\.YoloV8Face\)"

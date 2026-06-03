@@ -36,8 +36,10 @@ namespace FaceShield.Services.Analysis
         private const double SparseTrackMaxCenterShiftRatio = 1.2;
         private const double SparseTrackMaxAreaChangeRatio = 4.0;
         private const double SparseSceneCutDifferenceThreshold = 0.32;
+        private const double OffModeSparseSceneCutDifferenceThreshold = 0.18;
         private const int SparseSceneCutSignatureColumns = 24;
         private const int SparseSceneCutSignatureRows = 14;
+        private const double OffModeSceneCutSignatureDiffThreshold = 0.24;
 
         private readonly record struct FaceFilterSettings(
             double MinFaceAreaRatio,
@@ -249,11 +251,17 @@ namespace FaceShield.Services.Analysis
             var roiStats = new RoiDetectStats();
             var filterStats = new FaceFilterStats();
             var progressState = new ProgressState();
+            double[]? previousSceneSignature = null;
             while (!ct.IsCancellationRequested)
             {
                 bool shouldDetect = _options.DetectEveryNFrames <= 1
                     || nextIndex % _options.DetectEveryNFrames == 0
                     || lastFaces == null;
+
+                bool forceSceneCutDetection = _options.FilterProfile == FaceFilterProfile.Yolo &&
+                    !_options.EnablePostProcessing &&
+                    _options.UseTracking &&
+                    lastFaces != null;
 
                 int idx;
                 WriteableBitmap? frame = null;
@@ -288,11 +296,61 @@ namespace FaceShield.Services.Analysis
 
                 onFrameProcessed?.Invoke(idx);
 
-                if (_maskProvider.HasEntry(idx))
+                if (forceSceneCutDetection)
+                {
+                    double[]? currentSceneSignature = null;
+                    if (useRaw)
+                    {
+                        if (bgra.Data != IntPtr.Zero)
+                        {
+                            unsafe
+                            {
+                                currentSceneSignature = ComputeFrameSignature(
+                                    (byte*)bgra.Data,
+                                    bgra.Stride,
+                                    bgra.Width,
+                                    bgra.Height);
+                            }
+                        }
+                    }
+                    else if (frame != null)
+                    {
+                        using var fb = frame.Lock();
+                        unsafe
+                        {
+                            currentSceneSignature = ComputeFrameSignature(
+                                (byte*)fb.Address,
+                                fb.RowBytes,
+                                frame.PixelSize.Width,
+                                frame.PixelSize.Height);
+                        }
+                    }
+
+                    if (previousSceneSignature != null &&
+                        currentSceneSignature != null &&
+                        currentSceneSignature.Length > 0 &&
+                        previousSceneSignature.Length > 0 &&
+                        ComputeSignatureDifference(currentSceneSignature, previousSceneSignature) >= OffModeSceneCutSignatureDiffThreshold)
+                    {
+                        shouldDetect = true;
+                        lastFaces = null;
+                        _maskProvider.RemoveFaceMasksFrom(idx);
+                        Debug.WriteLine(
+                            $"[AutoMask] scene-cut reset idx={idx} clearFrom={idx} diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###}");
+                    }
+
+                    previousSceneSignature = currentSceneSignature;
+                }
+
+                bool hadExisting = _maskProvider.HasEntry(idx);
+                if (hadExisting && !shouldDetect)
                 {
                     ReportProgress(progress, idx, totalFrames, progressState);
                     continue;
                 }
+
+                if (hadExisting)
+                    _maskProvider.RemoveFaceMask(idx);
 
                 IReadOnlyList<FaceDetectionResult> faces;
 
@@ -358,7 +416,7 @@ namespace FaceShield.Services.Analysis
                                     bgra.Height,
                                     scaleX,
                                     scaleY,
-                                    GetFaceFilterSettings(_options.FilterProfile),
+                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
                                     filterStats);
                             }
                         }
@@ -377,13 +435,13 @@ namespace FaceShield.Services.Analysis
                                     frame.PixelSize.Height,
                                     1.0,
                                     1.0,
-                                    GetFaceFilterSettings(_options.FilterProfile),
+                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
                                     filterStats);
                             }
                         }
                         else
                         {
-                            faces = FilterFacesByArea(faces, fullSize, GetFaceFilterSettings(_options.FilterProfile), filterStats);
+                            faces = FilterFacesByArea(faces, fullSize, GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing), filterStats);
                         }
 
                         WriteDetectionDiagnostics(idx, rawFaceCount, faces, fullSize);
@@ -681,7 +739,7 @@ namespace FaceShield.Services.Analysis
                                             item.Height,
                                             useProxy ? scaleX : 1.0,
                                             useProxy ? scaleY : 1.0,
-                                            GetFaceFilterSettings(_options.FilterProfile),
+                                            GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
                                             filterStats);
                                         WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
                                         var payload = BuildMaskPayload(faces);
@@ -792,7 +850,7 @@ namespace FaceShield.Services.Analysis
                                 frame.PixelSize.Height,
                                 1.0,
                                 1.0,
-                                GetFaceFilterSettings(_options.FilterProfile));
+                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing));
                         }
                         WriteDetectionDiagnostics(frameIndex, rawFaceCount, faces, frame.PixelSize);
                     }
@@ -998,7 +1056,7 @@ namespace FaceShield.Services.Analysis
                                                 item.Height,
                                                 useProxy ? scaleX : 1.0,
                                                 useProxy ? scaleY : 1.0,
-                                                GetFaceFilterSettings(_options.FilterProfile),
+                                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
                                                 filterStats);
                                             WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
                                             var payload = BuildMaskPayload(faces);
@@ -1292,7 +1350,7 @@ namespace FaceShield.Services.Analysis
                                             item.Height,
                                             useProxy ? scaleX : 1.0,
                                             useProxy ? scaleY : 1.0,
-                                            GetFaceFilterSettings(_options.FilterProfile),
+                                            GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
                                             filterStats);
                                         WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
                                         var payload = BuildMaskPayload(faces);
@@ -1428,6 +1486,9 @@ namespace FaceShield.Services.Analysis
             var sceneCutTransitions = new List<SparseSceneCutTransition>();
             int maxBridgeFrames = Math.Max(1, _options.DetectEveryNFrames * 2);
             bool guardSceneCuts = _options.FilterProfile == FaceFilterProfile.Yolo;
+            double sceneCutThreshold = (_options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnablePostProcessing)
+                ? OffModeSparseSceneCutDifferenceThreshold
+                : SparseSceneCutDifferenceThreshold;
 
             for (int i = 0; i < keys.Length; i++)
             {
@@ -1438,25 +1499,31 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 DetectionResult? nextPositive = FindNextPositiveResult(results, keys, i + 1, endExclusive, key, maxBridgeFrames);
-                bool canBridge = nextPositive != null &&
-                    CanBridgeSparseResults(current, nextPositive, maxBridgeFrames, guardSceneCuts);
-
-                int nextKey = FindNextDetectionKey(keys, i + 1, endExclusive);
-                bool stopAtSceneCut = false;
-                if (nextKey >= 0 &&
-                    results.TryGetValue(nextKey, out var nextDetection) &&
-                    ShouldStopSparseSceneCarry(
-                        key,
-                        nextKey,
+                    bool canBridge = nextPositive != null &&
+                    CanBridgeSparseResults(
+                        current,
+                        nextPositive,
                         maxBridgeFrames,
                         guardSceneCuts,
-                        current.FrameSignature,
-                        nextDetection.FrameSignature))
-                {
-                    stopAtSceneCut = true;
-                    sceneCutStops++;
-                    sceneCutTransitions.Add(new SparseSceneCutTransition(key, nextKey));
-                }
+                        sceneCutThreshold);
+
+                int nextKey = FindNextDetectionKey(keys, i + 1, endExclusive);
+                    bool stopAtSceneCut = false;
+                    if (nextKey >= 0 &&
+                        results.TryGetValue(nextKey, out var nextDetection) &&
+                        ShouldStopSparseSceneCarry(
+                            key,
+                            nextKey,
+                            maxBridgeFrames,
+                            guardSceneCuts,
+                            current.FrameSignature,
+                            nextDetection.FrameSignature,
+                            sceneCutThreshold))
+                    {
+                        stopAtSceneCut = true;
+                        sceneCutStops++;
+                        sceneCutTransitions.Add(new SparseSceneCutTransition(key, nextKey));
+                    }
 
                 int segmentEnd = stopAtSceneCut
                     ? key + 1
@@ -1533,13 +1600,14 @@ namespace FaceShield.Services.Analysis
             DetectionResult current,
             DetectionResult next,
             int maxBridgeFrames,
-            bool guardSceneCuts)
+            bool guardSceneCuts,
+            double sceneCutThreshold)
         {
             if (next.Index <= current.Index || next.Index - current.Index > maxBridgeFrames)
                 return false;
             if (current.Bounds.Length == 0 || next.Bounds.Length == 0)
                 return false;
-            if (guardSceneCuts && IsSparseSceneCut(current, next))
+            if (guardSceneCuts && IsSparseSceneCut(current, next, sceneCutThreshold))
                 return false;
 
             int matches = 0;
@@ -1641,8 +1709,11 @@ namespace FaceShield.Services.Analysis
             return GetCenterDistanceRatio(current, next) <= SparseTrackMaxCenterShiftRatio;
         }
 
-        private static bool IsSparseSceneCut(DetectionResult current, DetectionResult next)
-            => ComputeSignatureDifference(current.FrameSignature, next.FrameSignature) >= SparseSceneCutDifferenceThreshold;
+        private static bool IsSparseSceneCut(
+            DetectionResult current,
+            DetectionResult next,
+            double sceneCutThreshold)
+            => ComputeSignatureDifference(current.FrameSignature, next.FrameSignature) >= sceneCutThreshold;
 
         private static string FormatSparseSceneCutTransitions(IReadOnlyList<SparseSceneCutTransition> transitions)
         {
@@ -1669,12 +1740,13 @@ namespace FaceShield.Services.Analysis
             int maxBridgeFrames,
             bool guardSceneCuts,
             IReadOnlyList<double> currentSignature,
-            IReadOnlyList<double> nextSignature)
+            IReadOnlyList<double> nextSignature,
+            double sceneCutThreshold)
             => guardSceneCuts &&
                 nextKey >= 0 &&
                 nextKey > currentKey &&
                 nextKey - currentKey <= maxBridgeFrames &&
-                ComputeSignatureDifference(currentSignature, nextSignature) >= SparseSceneCutDifferenceThreshold;
+                ComputeSignatureDifference(currentSignature, nextSignature) >= sceneCutThreshold;
 
         private static unsafe double[] ComputeFrameSignature(
             byte* basePtr,
@@ -2267,7 +2339,9 @@ namespace FaceShield.Services.Analysis
             return FaceCandidateKind.Rejected;
         }
 
-        private static FaceFilterSettings GetFaceFilterSettings(FaceFilterProfile profile)
+        private static FaceFilterSettings GetFaceFilterSettings(
+            FaceFilterProfile profile,
+            bool usePrecisionMode)
         {
             if (profile == FaceFilterProfile.Scrfd)
             {
@@ -2282,13 +2356,21 @@ namespace FaceShield.Services.Analysis
 
             if (profile == FaceFilterProfile.Yolo)
             {
+                double minSmallFaceAreaRatio = usePrecisionMode
+                    ? MinSmallFaceAreaRatio
+                    : MinSmallFaceAreaRatio * 0.70;
+                float smallFaceConfidenceMin = usePrecisionMode
+                    ? 0.55f
+                    : 0.30f;
+                bool useStatsFilter = usePrecisionMode;
+
                 return new FaceFilterSettings(
                     MinFaceAreaRatio,
-                    MinSmallFaceAreaRatio * 0.70,
+                    minSmallFaceAreaRatio,
                     MinFaceAspectRatio,
                     2.7,
-                    0.30f,
-                    UseStatsFilter: false);
+                    smallFaceConfidenceMin,
+                    UseStatsFilter: useStatsFilter);
             }
 
             return new FaceFilterSettings(

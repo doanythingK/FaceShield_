@@ -25,6 +25,8 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         float? minConfidence = null,
         IReadOnlyList<float>? confidences = null)
     {
+        _masks.TryRemove(frameIndex, out _);
+
         if (faces == null || faces.Count == 0 || size.Width <= 0 || size.Height <= 0)
         {
             _faceMasks.TryRemove(frameIndex, out _);
@@ -43,6 +45,8 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         float? minConfidence = null,
         IReadOnlyList<float>? confidences = null)
     {
+        _masks.TryRemove(frameIndex, out _);
+
         if (faces == null || faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
         {
             _faceMasks.TryRemove(frameIndex, out _);

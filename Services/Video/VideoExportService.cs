@@ -10,7 +10,7 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    private const bool EnableHybridCopyWindow = false;
+    private const bool EnableHybridCopyWindow = true;
 
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();

@@ -31,7 +31,7 @@ namespace FaceShield.ViewModels.Pages
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
         private const int DefaultAutoDetectEveryNFrames = 1;
-        private const int CurrentAutoSettingsVersion = 6;
+        private const int CurrentAutoSettingsVersion = 8;
         private const double DefaultYolo5FaceObjectnessThreshold = 0.12;
         private const double DefaultYolo5FaceConfidenceThreshold = 0.18;
         private const double DefaultYoloNmsThreshold = 0.45;
@@ -330,6 +330,24 @@ namespace FaceShield.ViewModels.Pages
         private bool autoTrackingEnabled = true;
 
         [ObservableProperty]
+        private bool enablePostProcessing = false;
+
+        [ObservableProperty]
+        private bool enableRoiPostProcess = false;
+
+        [ObservableProperty]
+        private bool enableYoloWeakIsolatedCleanup = false;
+
+        [ObservableProperty]
+        private bool enableYoloGapFill = false;
+
+        [ObservableProperty]
+        private bool enableYoloSceneCutCarryCleanup = false;
+
+        [ObservableProperty]
+        private bool enableYoloTemporalSmoothing = false;
+
+        [ObservableProperty]
         private bool autoUseOrtOptimization = true;
 
         [ObservableProperty]
@@ -592,6 +610,65 @@ namespace FaceShield.ViewModels.Pages
             PersistAutoSettings();
             OnPropertyChanged(nameof(IsTrackingOptionsEnabled));
             RequestAutoRestartForOptions("자동 옵션 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnEnablePostProcessingChanged(bool value)
+        {
+            if (_isApplyingYoloProfile)
+                return;
+
+            PersistAutoSettings();
+            RequestAutoRestartForOptions("후처리 기본 토글 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnEnableRoiPostProcessChanged(bool value)
+        {
+            if (_isApplyingYoloProfile)
+                return;
+
+            PersistAutoSettings();
+            if (IsYoloDetectorSelected)
+                RequestAutoRestartForOptions("후처리 ROI 토글 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnEnableYoloWeakIsolatedCleanupChanged(bool value)
+        {
+            if (_isApplyingYoloProfile)
+                return;
+
+            PersistAutoSettings();
+            if (IsYoloDetectorSelected)
+                RequestAutoRestartForOptions("후처리 오탐 제거 토글 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnEnableYoloGapFillChanged(bool value)
+        {
+            if (_isApplyingYoloProfile)
+                return;
+
+            PersistAutoSettings();
+            if (IsYoloDetectorSelected)
+                RequestAutoRestartForOptions("후처리 간극 보완 토글 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnEnableYoloSceneCutCarryCleanupChanged(bool value)
+        {
+            if (_isApplyingYoloProfile)
+                return;
+
+            PersistAutoSettings();
+            if (IsYoloDetectorSelected)
+                RequestAutoRestartForOptions("후처리 장면 전환 토글 변경 감지 · 재시작 준비 중...");
+        }
+
+        partial void OnEnableYoloTemporalSmoothingChanged(bool value)
+        {
+            if (_isApplyingYoloProfile)
+                return;
+
+            PersistAutoSettings();
+            if (IsYoloDetectorSelected)
+                RequestAutoRestartForOptions("후처리 시계열 스무딩 토글 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoDetectEveryNFramesChanged(int value)
@@ -1024,6 +1101,13 @@ namespace FaceShield.ViewModels.Pages
                 if (backend != null)
                     SelectedAutoDetectorBackendOption = backend;
 
+                EnablePostProcessing = requiresSettingsUpgrade ? false : saved.EnablePostProcessing;
+                EnableRoiPostProcess = requiresSettingsUpgrade ? false : saved.EnableRoiPostProcess;
+                EnableYoloWeakIsolatedCleanup = requiresSettingsUpgrade ? false : saved.EnableYoloWeakIsolatedCleanup;
+                EnableYoloGapFill = requiresSettingsUpgrade ? false : saved.EnableYoloGapFill;
+                EnableYoloSceneCutCarryCleanup = requiresSettingsUpgrade ? false : saved.EnableYoloSceneCutCarryCleanup;
+                EnableYoloTemporalSmoothing = requiresSettingsUpgrade ? false : saved.EnableYoloTemporalSmoothing;
+
                 _yoloV8Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType);
                 _yolo5Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType);
                 if (yoloType != null)
@@ -1113,7 +1197,13 @@ namespace FaceShield.ViewModels.Pages
                 Yolo5DownscaleQuality = (int)yolo5Profile.DownscaleQuality,
                 Yolo5AutoTrackingEnabled = yolo5Profile.AutoTrackingEnabled,
                 Yolo5AutoDetectEveryNFrames = yolo5Profile.AutoDetectEveryNFrames,
-                Yolo5ParallelSessionCount = yolo5Profile.ParallelSessionCount
+                Yolo5ParallelSessionCount = yolo5Profile.ParallelSessionCount,
+                EnablePostProcessing = EnablePostProcessing,
+                EnableRoiPostProcess = EnableRoiPostProcess,
+                EnableYoloWeakIsolatedCleanup = EnableYoloWeakIsolatedCleanup,
+                EnableYoloGapFill = EnableYoloGapFill,
+                EnableYoloSceneCutCarryCleanup = EnableYoloSceneCutCarryCleanup,
+                EnableYoloTemporalSmoothing = EnableYoloTemporalSmoothing
             });
         }
 
@@ -1797,6 +1887,12 @@ namespace FaceShield.ViewModels.Pages
             {
                 DownscaleRatio = ratio,
                 DownscaleQuality = quality,
+                EnablePostProcessing = EnablePostProcessing,
+                EnableRoiPostProcess = EnableRoiPostProcess,
+                EnableYoloWeakIsolatedCleanup = EnableYoloWeakIsolatedCleanup,
+                EnableYoloGapFill = EnableYoloGapFill,
+                EnableYoloSceneCutCarryCleanup = EnableYoloSceneCutCarryCleanup,
+                EnableYoloTemporalSmoothing = EnableYoloTemporalSmoothing,
                 UseTracking = useTracking,
                 DetectEveryNFrames = detectEvery,
                 ParallelDetectorCount = Math.Max(1, SelectedParallelSessionCount),

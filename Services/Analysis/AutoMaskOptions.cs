@@ -31,6 +31,37 @@ namespace FaceShield.Services.Analysis
         public bool UseTracking { get; init; } = false;
 
         /// <summary>
+        /// 후처리 전체 활성화 토글 (temporal/smoothing/scene-cut/최종 보정 계열 단계).
+        /// false일 때는 미탐 보완 최소 단계만 남기고, 고급 정제 단계는 사용하지 않는다.
+        /// </summary>
+        public bool EnablePostProcessing { get; init; } = false;
+
+        /// <summary>
+        /// ROI 보강 후처리 단계(객체 내부 재검증/정제 단계) 사용 여부.
+        /// </summary>
+        public bool EnableRoiPostProcess { get; init; } = false;
+
+        /// <summary>
+        /// YOLO 전용: 약한 단일/열림 오탐 후보 제거 단계.
+        /// </summary>
+        public bool EnableYoloWeakIsolatedCleanup { get; init; } = false;
+
+        /// <summary>
+        /// YOLO 전용: 추적/마스킹 간극 짧은 구간 보강 단계.
+        /// </summary>
+        public bool EnableYoloGapFill { get; init; } = false;
+
+        /// <summary>
+        /// YOLO 전용: 장면 전환 경계 기반 carry 제거 단계.
+        /// </summary>
+        public bool EnableYoloSceneCutCarryCleanup { get; init; } = false;
+
+        /// <summary>
+        /// YOLO 전용: temporal smoothing 단계.
+        /// </summary>
+        public bool EnableYoloTemporalSmoothing { get; init; } = false;
+
+        /// <summary>
         /// 검출 간격 (1이면 모든 프레임 검출)
         /// </summary>
         public int DetectEveryNFrames { get; init; } = 1;

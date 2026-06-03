@@ -404,6 +404,12 @@ namespace FaceShield.Services.Workspace
         public bool? Yolo5AutoTrackingEnabled { get; set; }
         public int? Yolo5AutoDetectEveryNFrames { get; set; }
         public int? Yolo5ParallelSessionCount { get; set; }
+        public bool EnablePostProcessing { get; set; } = false;
+        public bool EnableRoiPostProcess { get; set; } = false;
+        public bool EnableYoloWeakIsolatedCleanup { get; set; } = false;
+        public bool EnableYoloGapFill { get; set; } = false;
+        public bool EnableYoloSceneCutCarryCleanup { get; set; } = false;
+        public bool EnableYoloTemporalSmoothing { get; set; } = false;
     }
 
     public sealed class WorkspaceSnapshot

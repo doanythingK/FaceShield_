@@ -419,6 +419,12 @@ namespace FaceShield.ViewModels.Pages
                 {
                     DownscaleRatio = _autoOptions.DownscaleRatio,
                     DownscaleQuality = _autoOptions.DownscaleQuality,
+                    EnablePostProcessing = _autoOptions.EnablePostProcessing,
+                    EnableRoiPostProcess = _autoOptions.EnableRoiPostProcess,
+                    EnableYoloWeakIsolatedCleanup = _autoOptions.EnableYoloWeakIsolatedCleanup,
+                    EnableYoloGapFill = _autoOptions.EnableYoloGapFill,
+                    EnableYoloSceneCutCarryCleanup = _autoOptions.EnableYoloSceneCutCarryCleanup,
+                    EnableYoloTemporalSmoothing = _autoOptions.EnableYoloTemporalSmoothing,
                     UseTracking = _autoOptions.UseTracking,
                     DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
                     ParallelDetectorCount = tunedSessions,
@@ -1360,11 +1366,17 @@ namespace FaceShield.ViewModels.Pages
 
             var parts = new List<string>
             {
-                "v2",
+                "v3",
                 $"backend={detectorFactoryOptions.Backend}",
                 $"profile={autoOptions.FilterProfile}",
                 $"downscale={autoOptions.DownscaleRatio:0.###}",
                 $"quality={autoOptions.DownscaleQuality}",
+                $"post={autoOptions.EnablePostProcessing}",
+                $"roi={autoOptions.EnableRoiPostProcess}",
+                $"iso={autoOptions.EnableYoloWeakIsolatedCleanup}",
+                $"gap={autoOptions.EnableYoloGapFill}",
+                $"scene={autoOptions.EnableYoloSceneCutCarryCleanup}",
+                $"smooth={autoOptions.EnableYoloTemporalSmoothing}",
                 $"tracking={autoOptions.UseTracking}",
                 $"everyN={autoOptions.DetectEveryNFrames}",
                 $"parallel={autoOptions.ParallelDetectorCount}",

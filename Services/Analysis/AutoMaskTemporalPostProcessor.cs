@@ -27,7 +27,8 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider maskProvider,
             int totalFrames,
             FaceFilterProfile profile,
-            bool useTracking)
+            bool useTracking,
+            bool missRecoveryOnly = false)
         {
             if (!useTracking)
                 return FaceTrackPostProcessResult.Empty;
@@ -35,7 +36,7 @@ namespace FaceShield.Services.Analysis
             var result = new FaceTrackInterpolator().Apply(
                 maskProvider,
                 totalFrames,
-                BuildTrackPostProcessOptions(profile));
+                BuildTrackPostProcessOptions(profile, missRecoveryOnly));
 
             if (result.FilledGapFaces > 0 ||
                 result.FilledLostFaces > 0 ||
@@ -145,8 +146,60 @@ namespace FaceShield.Services.Analysis
 
         public static FaceTrackPostProcessOptions BuildTrackPostProcessOptions(FaceFilterProfile profile)
         {
+            return BuildTrackPostProcessOptions(profile, missRecoveryOnly: false);
+        }
+
+        public static FaceTrackPostProcessOptions BuildTrackPostProcessOptions(
+            FaceFilterProfile profile,
+            bool missRecoveryOnly = false)
+        {
             if (profile == FaceFilterProfile.Yolo)
             {
+                if (missRecoveryOnly)
+                {
+                    return new FaceTrackPostProcessOptions
+                    {
+                        MaxTrackGap = 1,
+                        MaxFillGap = 1,
+                        MaxLostFillFrames = 1,
+                        MaxInitialFillFrames = 0,
+                        InitialFillRequiresInwardMotion = false,
+                        MaxConfirmedTrackHoldFrames = 1,
+                        AllowSmallTrackLostFill = false,
+                        WeakConfidence = 0.38f,
+                        StrongConfidence = 0.58f,
+                        SyntheticFillConfidenceMax = YoloSyntheticFillConfidenceMax,
+                        DropShortTrackMaxDetections = 99,
+                        DropShortSmallTrackMaxDetections = 99,
+                        ShortTrackMaxConfidence = 0f,
+                        DropSparseTrackMaxDetections = 99,
+                        DropSparseTrackMinSpanFrames = 99,
+                        DropSparseTrackMaxDensity = 1.0,
+                        SparseTrackMaxConfidence = 0f,
+                        EdgeTailMaxConfidence = 0f,
+                        EdgeTailMinStableDetections = 3,
+                        EdgeLostFillMaxConfidence = 0f,
+                        SmallTrackMaxAreaRatio = 0.00075,
+                        MinTrackIou = 0.12,
+                        MaxCenterShiftRatio = 0.45,
+                        MaxConfirmedTrackBridgeCenterShiftRatio = 0.9,
+                        MaxAreaChangeRatio = 2.4,
+                        DuplicateIou = TemporalDuplicateIouMin,
+                        UnstableTailMaxConfidence = 0f,
+                        UnstableTailMinStableDetections = 3,
+                        UnstableTailMinIou = 0.45,
+                        UnstableTailMaxAreaChangeRatio = 1.8,
+                        LowerFrameTrackMaxConfidence = 0f,
+                        LowerFrameTrackMinCenterYRatio = 0.58,
+                        LowerFrameTrackMinAreaRatio = 0.015,
+                        LowerFrameTrackMaxAreaRatio = 0.045,
+                        MinTrackMatchScore = 0.35,
+                        MinCenterContinuity = 0.30,
+                        EdgePartialFaceMarginRatio = 0.06,
+                        ConfirmedTrackMinDetections = 3
+                    };
+                }
+
                 return new FaceTrackPostProcessOptions
                 {
                     MaxTrackGap = SuspiciousNoFaceMaxGap,

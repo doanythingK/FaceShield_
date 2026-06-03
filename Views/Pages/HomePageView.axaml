@@ -184,8 +184,29 @@
                     ItemsSource="{Binding DetectEveryOptions}"
                     SelectedItem="{Binding AutoDetectEveryNFrames}"
                     IsEnabled="{Binding IsTrackingOptionsEnabled}"/>
-          <TextBlock Text="프레임" VerticalAlignment="Center"/>
+            <TextBlock Text="프레임" VerticalAlignment="Center"/>
         </StackPanel>
+
+        <Border Background="#222222" CornerRadius="8" Padding="10" IsVisible="{Binding IsYoloDetectorSelected}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="후처리 토글 (YOLO 전용)"
+                       FontWeight="SemiBold"/>
+            <CheckBox Content="후처리 단계 사용"
+                      IsChecked="{Binding EnablePostProcessing}"/>
+            <StackPanel Margin="10,0,0,0" Spacing="4" IsEnabled="{Binding EnablePostProcessing}">
+              <CheckBox Content="ROI 재검증 단계 사용"
+                        IsChecked="{Binding EnableRoiPostProcess}"/>
+              <CheckBox Content="약한 단일오탐 제거"
+                        IsChecked="{Binding EnableYoloWeakIsolatedCleanup}"/>
+              <CheckBox Content="짧은 간격 보강"
+                        IsChecked="{Binding EnableYoloGapFill}"/>
+              <CheckBox Content="장면전환 carry 정리"
+                        IsChecked="{Binding EnableYoloSceneCutCarryCleanup}"/>
+              <CheckBox Content="temporal smoothing"
+                        IsChecked="{Binding EnableYoloTemporalSmoothing}"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
 
         <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
           <TextBlock Text="Detection Threshold (얼굴 후보 기준)"/>

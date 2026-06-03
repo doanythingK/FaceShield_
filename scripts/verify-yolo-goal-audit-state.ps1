@@ -433,7 +433,7 @@ Assert-Contains "profile verifier checks yolo home provider status" $yoloProfile
 Assert-Contains "profile verifier checks yolo automask provider summary" $yoloProfileState "automask yolo detector summary includes provider"
 Assert-Contains "profile verifier checks yolo lost fill" $yoloProfileState "MaxLostFillFrames"
 Assert-Contains "profile verifier checks top small yolo filter" $yoloProfileState "home enables conservative top small low-confidence yolo filter"
-Assert-Contains "profile verifier checks settings version 6" $yoloProfileState "settings version is v6"
+Assert-Contains "profile verifier checks settings version 8" $yoloProfileState "settings version is v8"
 Assert-Contains "profile verifier checks yolo pipeline capture" $yoloProfileState "home captures yolo auto pipeline profile"
 Assert-Contains "profile verifier checks yolo pipeline apply" $yoloProfileState "home applies yolo auto pipeline profile"
 Assert-Contains "profile verifier checks yolo5 pipeline restore" $yoloProfileState "home reads saved yolo5 auto pipeline profile"
