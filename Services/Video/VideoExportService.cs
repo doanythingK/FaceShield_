@@ -32,6 +32,71 @@ public unsafe sealed class VideoExportService
         System.Threading.CancellationToken cancellationToken = default,
         string? runId = null)
     {
+        try
+        {
+            ExportInternal(
+                inputPath,
+                outputPath,
+                blurRadius,
+                progress,
+                cancellationToken,
+                runId,
+                forceSoftwareEncoder: false,
+                allowHybridCopy: EnableHybridCopyWindow,
+                forceSafeEncoding: false,
+                forceAudioTranscode: false,
+                forceH264Fallback: false);
+        }
+        catch (InvalidOperationException ex) when (IsInvalidArgumentError(ex))
+        {
+            Debug.WriteLine($"[Export] Invalid argument 발생으로 소프트웨어 재시도합니다. {ex.Message}");
+            try
+            {
+                ExportInternal(
+                    inputPath,
+                    outputPath,
+                    blurRadius,
+                    progress,
+                    cancellationToken,
+                    runId,
+                    forceSoftwareEncoder: true,
+                    allowHybridCopy: false,
+                    forceSafeEncoding: true,
+                    forceAudioTranscode: true,
+                    forceH264Fallback: false);
+            }
+            catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
+            {
+                Debug.WriteLine($"[Export] 안전 모드에서도 실패해 H.264 소프트웨어 경로로 재시도합니다. {nestedEx.Message}");
+                ExportInternal(
+                    inputPath,
+                    outputPath,
+                    blurRadius,
+                    progress,
+                    cancellationToken,
+                    runId,
+                    forceSoftwareEncoder: true,
+                    allowHybridCopy: false,
+                    forceSafeEncoding: true,
+                    forceAudioTranscode: true,
+                    forceH264Fallback: true);
+            }
+        }
+    }
+
+    private unsafe void ExportInternal(
+        string inputPath,
+        string outputPath,
+        int blurRadius,
+        IProgress<ExportProgress>? progress,
+        System.Threading.CancellationToken cancellationToken,
+        string? runId,
+        bool forceSoftwareEncoder,
+        bool allowHybridCopy,
+        bool forceSafeEncoding,
+        bool forceAudioTranscode,
+        bool forceH264Fallback)
+    {
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
         _directFaceBlurFrames = 0;
         _bitmapMaskBlurFrames = 0;
@@ -65,10 +130,29 @@ public unsafe sealed class VideoExportService
         int totalFrames = 0;
         double sourceFps = 0.0;
         WriteableBitmap? reusableFaceMask = null;
+        long lastEncodedPts = -1;
+        bool hasLastEncodedPts = false;
+        long lastEncodedPacketPts = -1;
+        bool hasLastEncodedPacketPts = false;
+        long lastEncodedPacketDts = -1;
+        bool hasLastEncodedPacketDts = false;
         long swsToBgraMs = 0;
         long maskMs = 0;
         long swsToEncMs = 0;
         long encodeMs = 0;
+        long lastAudioEncPacketPts = -1;
+        bool hasLastAudioEncPacketPts = false;
+        long lastAudioEncPacketDts = -1;
+        bool hasLastAudioEncPacketDts = false;
+        long lastVideoCopyPacketPts = -1;
+        bool hasLastVideoCopyPacketPts = false;
+        long lastVideoCopyPacketDts = -1;
+        bool hasLastVideoCopyPacketDts = false;
+        long lastAudioCopyPacketPts = -1;
+        bool hasLastAudioCopyPacketPts = false;
+        long lastAudioCopyPacketDts = -1;
+        bool hasLastAudioCopyPacketDts = false;
+        bool wasLastPacketEncoded = false;
         var swTotal = Stopwatch.StartNew();
 
         try
@@ -150,7 +234,7 @@ public unsafe sealed class VideoExportService
 
                 blurRanges = BuildBlurFrameRanges(blurFrameSet);
                 bool canCopyOutsideBlurWindow =
-                    EnableHybridCopyWindow &&
+                    allowHybridCopy &&
                     blurRanges.Count > 0 &&
                     sourceFps > 0.0 &&
                     totalFrames > 0 &&
@@ -158,8 +242,9 @@ public unsafe sealed class VideoExportService
                 if (canCopyOutsideBlurWindow)
                 {
                     var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames);
-                    if (keyframes.Count > 0)
-                        blurRanges = AlignRangesToKeyframes(blurRanges, keyframes, totalFrames);
+                    blurRanges = AlignRangesToKeyframes(blurRanges, keyframes, totalFrames);
+                    if (blurRanges.Count == 0)
+                        canCopyOutsideBlurWindow = false;
 
                     int encodeStart = blurRanges[0].Start;
                     int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
@@ -181,12 +266,23 @@ public unsafe sealed class VideoExportService
 
             AVCodec* encoder;
             AVCodecID inputCodecId = inStream->codecpar->codec_id;
-            enc = TryCreateEncoderContext(inputCodecId, inStream, dec, outFmt, out encoder, out var encoderError);
+            AVCodecID encoderInputCodecId = forceH264Fallback && inputCodecId != AVCodecID.AV_CODEC_ID_H264
+                ? AVCodecID.AV_CODEC_ID_H264
+                : inputCodecId;
+            enc = TryCreateEncoderContext(
+                encoderInputCodecId,
+                inStream,
+                dec,
+                outFmt,
+                out encoder,
+                out var encoderError,
+                forceSoftwareEncoder,
+                forceSafeEncoding);
 
             string? exportNotice = null;
             if (enc == null)
             {
-                string inputName = GetCodecName(inputCodecId);
+                string inputName = GetCodecName(encoderInputCodecId);
                 var fallbackCodecId = AVCodecID.AV_CODEC_ID_H264;
                 string fallbackName = GetCodecName(fallbackCodecId);
                 string reason = string.IsNullOrWhiteSpace(encoderError)
@@ -194,7 +290,7 @@ public unsafe sealed class VideoExportService
                     : encoderError;
                 exportNotice = $"원본 코덱({inputName}) 인코더를 사용할 수 없어 {fallbackName}로 내보냅니다. 사유: {reason}";
 
-                enc = TryCreateEncoderContext(fallbackCodecId, inStream, dec, outFmt, out encoder, out var fallbackError);
+                enc = TryCreateEncoderContext(fallbackCodecId, inStream, dec, outFmt, out encoder, out var fallbackError, forceSoftwareEncoder, forceSafeEncoding);
                 if (enc == null)
                     throw new InvalidOperationException($"대체 인코더 초기화 실패: {fallbackError}");
             }
@@ -209,7 +305,8 @@ public unsafe sealed class VideoExportService
                 int supported = outFmt->oformat != null
                     ? ffmpeg.avformat_query_codec(outFmt->oformat, inAudioStream->codecpar->codec_id, 0)
                     : 0;
-                if (supported > 0)
+                bool allowAudioCopy = supported > 0 && !forceAudioTranscode;
+                if (allowAudioCopy)
                 {
                     outAudioStream = ffmpeg.avformat_new_stream(outFmt, null);
                     if (outAudioStream == null)
@@ -228,7 +325,9 @@ public unsafe sealed class VideoExportService
                     {
                         audioReencode = true;
                         string audioCodec = GetCodecName(inAudioStream->codecpar->codec_id);
-                        audioNotice = $"오디오 코덱({audioCodec})을 출력 컨테이너가 지원하지 않아 AAC로 변환합니다.";
+                        audioNotice = forceAudioTranscode
+                            ? $"오디오 코덱({audioCodec})이 출력 복사 경로를 사용하지 않도록 강제 재인코딩하여 AAC로 변환합니다."
+                            : $"오디오 코덱({audioCodec})을 출력 컨테이너가 지원하지 않아 AAC로 변환합니다.";
                     }
                     else
                     {
@@ -252,16 +351,21 @@ public unsafe sealed class VideoExportService
             }
 
             bool useHybridCopyWindow =
+                allowHybridCopy &&
                 hybridEncodeWindow.HasValue &&
                 enc != null &&
-                enc->codec_id == inStream->codecpar->codec_id;
+                encoder != null &&
+                enc->codec_id == inStream->codecpar->codec_id &&
+                !IsHardwareEncoder(encoder) &&
+                hybridEncodeWindow.Value.Start > 0 &&
+                hybridEncodeWindow.Value.EndExclusive < totalFrames;
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
             if (useHybridCopyWindow)
             {
                 Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));
                 outStream->codecpar->codec_tag = 0;
-                outStream->time_base = inStream->time_base;
+                outStream->time_base = enc->time_base;
                 if (progress != null && hybridEncodeWindow.HasValue)
                 {
                     var window = hybridEncodeWindow.Value;
@@ -326,6 +430,12 @@ public unsafe sealed class VideoExportService
                     if (audioCopy && outAudioStream != null && inAudioStream != null)
                     {
                         ffmpeg.av_packet_rescale_ts(pkt, inAudioStream->time_base, outAudioStream->time_base);
+                        NormalizeCopiedPacketTimestamps(
+                            pkt,
+                            ref lastAudioCopyPacketPts,
+                            ref hasLastAudioCopyPacketPts,
+                            ref lastAudioCopyPacketDts,
+                            ref hasLastAudioCopyPacketDts);
                         pkt->stream_index = outAudioStream->index;
                         Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
                         ffmpeg.av_packet_unref(pkt);
@@ -342,7 +452,19 @@ public unsafe sealed class VideoExportService
                         while (ffmpeg.avcodec_receive_frame(audioDec, audioFrame) == 0)
                         {
                             ConvertAndQueueAudioFrame(audioFrame, audioDec, audioEnc, swr, audioFifo, audioConvFrame);
-                            DrainAudioFifo(audioFifo, audioEnc, outAudioStream, outFmt, audioPkt, audioEncFrame, ref audioPts, flush: false);
+                            DrainAudioFifo(
+                                audioFifo,
+                                audioEnc,
+                                outAudioStream,
+                                outFmt,
+                                audioPkt,
+                                audioEncFrame,
+                                ref audioPts,
+                                ref lastAudioEncPacketPts,
+                                ref hasLastAudioEncPacketPts,
+                                ref lastAudioEncPacketDts,
+                                ref hasLastAudioEncPacketDts,
+                                flush: false);
                             ffmpeg.av_frame_unref(audioFrame);
                         }
                         continue;
@@ -367,6 +489,29 @@ public unsafe sealed class VideoExportService
                     !useHybridCopyWindow ||
                     (packetFrameIndex >= encodeWindowStart && packetFrameIndex < encodeWindowEnd);
 
+                if (useHybridCopyWindow && !wasLastPacketEncoded && packetInEncodeWindow)
+                {
+                    if (hasLastVideoCopyPacketPts)
+                    {
+                        lastEncodedPacketPts = lastVideoCopyPacketPts;
+                        hasLastEncodedPacketPts = true;
+                    }
+                    else
+                    {
+                        hasLastEncodedPacketPts = false;
+                    }
+
+                    if (hasLastVideoCopyPacketDts)
+                    {
+                        lastEncodedPacketDts = lastVideoCopyPacketDts;
+                        hasLastEncodedPacketDts = true;
+                    }
+                    else
+                    {
+                        hasLastEncodedPacketDts = false;
+                    }
+                }
+
                 if (!packetInEncodeWindow)
                 {
                     if (useHybridCopyWindow && packetFrameIndex >= encodeWindowEnd)
@@ -386,38 +531,77 @@ public unsafe sealed class VideoExportService
                             outStream,
                             outFmt,
                             blurRadius,
-                            blurRanges,
-                            ref blurRangeCursor,
-                            sourceFps,
-                            totalFrames,
+                blurRanges,
+                ref blurRangeCursor,
+                sourceFps,
+                forceSafeEncoding,
+                totalFrames,
                             ref frameIndex,
                             ref lastResolvedFrameIndex,
                             ref swsToBgraMs,
                             ref maskMs,
-                            ref swsToEncMs,
-                            ref encodeMs,
+                        ref swsToEncMs,
+                        ref encodeMs,
+                        ref lastEncodedPts,
+                        ref hasLastEncodedPts,
+                        ref lastEncodedPacketPts,
+                            ref hasLastEncodedPacketPts,
+                            ref lastEncodedPacketDts,
+                            ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
                             cancellationToken);
+
+                        if (hasLastEncodedPacketPts)
+                        {
+                            lastVideoCopyPacketPts = lastEncodedPacketPts;
+                            hasLastVideoCopyPacketPts = true;
+                        }
+                        else
+                        {
+                            hasLastVideoCopyPacketPts = false;
+                        }
+
+                        if (hasLastEncodedPacketDts)
+                        {
+                            lastVideoCopyPacketDts = lastEncodedPacketDts;
+                            hasLastVideoCopyPacketDts = true;
+                        }
+                        else
+                        {
+                            hasLastVideoCopyPacketDts = false;
+                        }
                     }
 
                     ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
+                    NormalizeCopiedPacketTimestamps(
+                        pkt,
+                        ref lastVideoCopyPacketPts,
+                        ref hasLastVideoCopyPacketPts,
+                        ref lastVideoCopyPacketDts,
+                        ref hasLastVideoCopyPacketDts);
                     pkt->stream_index = outStream->index;
                     pkt->pos = -1;
                     Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
+                    hasLastVideoCopyPacketPts = true;
+                    hasLastVideoCopyPacketDts = true;
+                    lastVideoCopyPacketPts = pkt->pts;
+                    lastVideoCopyPacketDts = pkt->dts;
                     ReportVideoProgress(progress, totalFrames, ref lastReportedFrame, packetFrameIndex);
                     ffmpeg.av_packet_unref(pkt);
+                    wasLastPacketEncoded = false;
                     continue;
                 }
 
+                wasLastPacketEncoded = true;
                 Throw(ffmpeg.avcodec_send_packet(dec, pkt));
                 ffmpeg.av_packet_unref(pkt);
-                while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
-                {
-                    ProcessDecodedVideoFrame(
-                        frame,
+            while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
+            {
+                ProcessDecodedVideoFrame(
+                    frame,
                         bgra,
                         encFrame,
                         dec,
@@ -432,19 +616,26 @@ public unsafe sealed class VideoExportService
                         blurRadius,
                         blurRanges,
                         ref blurRangeCursor,
-                        sourceFps,
-                        totalFrames,
-                        ref frameIndex,
+                    sourceFps,
+                    forceSafeEncoding,
+                    totalFrames,
+                    ref frameIndex,
                         ref lastResolvedFrameIndex,
                         ref swsToBgraMs,
                         ref maskMs,
-                        ref swsToEncMs,
-                        ref encodeMs,
+                            ref swsToEncMs,
+                            ref encodeMs,
+                            ref lastEncodedPts,
+                            ref hasLastEncodedPts,
+                        ref lastEncodedPacketPts,
+                        ref hasLastEncodedPacketPts,
+                        ref lastEncodedPacketDts,
+                        ref hasLastEncodedPacketDts,
                         ref reusableFaceMask,
                         progress,
-                        ref lastReportedFrame,
-                        swTotal,
-                        cancellationToken);
+                            ref lastReportedFrame,
+                            swTotal,
+                            cancellationToken);
                     ffmpeg.av_frame_unref(frame);
                 }
             }
@@ -467,16 +658,23 @@ public unsafe sealed class VideoExportService
                 blurRanges,
                 ref blurRangeCursor,
                 sourceFps,
+                forceSafeEncoding,
                 totalFrames,
                 ref frameIndex,
                 ref lastResolvedFrameIndex,
                 ref swsToBgraMs,
                 ref maskMs,
-                ref swsToEncMs,
-                ref encodeMs,
+                            ref swsToEncMs,
+                            ref encodeMs,
+                            ref lastEncodedPts,
+                            ref hasLastEncodedPts,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
                 ref reusableFaceMask,
-                progress,
-                ref lastReportedFrame,
+                            progress,
+                            ref lastReportedFrame,
                 swTotal,
                 cancellationToken);
 
@@ -489,22 +687,52 @@ public unsafe sealed class VideoExportService
                 while (ffmpeg.avcodec_receive_frame(audioDec, audioFrame) == 0)
                 {
                     ConvertAndQueueAudioFrame(audioFrame, audioDec, audioEnc, swr, audioFifo, audioConvFrame);
-                    DrainAudioFifo(audioFifo, audioEnc, outAudioStream, outFmt, audioPkt, audioEncFrame, ref audioPts, flush: false);
+                    DrainAudioFifo(
+                        audioFifo,
+                        audioEnc,
+                        outAudioStream,
+                        outFmt,
+                        audioPkt,
+                        audioEncFrame,
+                        ref audioPts,
+                        ref lastAudioEncPacketPts,
+                        ref hasLastAudioEncPacketPts,
+                        ref lastAudioEncPacketDts,
+                        ref hasLastAudioEncPacketDts,
+                        flush: false);
                     ffmpeg.av_frame_unref(audioFrame);
                 }
 
-                DrainAudioFifo(audioFifo, audioEnc, outAudioStream, outFmt, audioPkt, audioEncFrame, ref audioPts, flush: true);
+                DrainAudioFifo(
+                    audioFifo,
+                    audioEnc,
+                    outAudioStream,
+                    outFmt,
+                    audioPkt,
+                    audioEncFrame,
+                    ref audioPts,
+                    ref lastAudioEncPacketPts,
+                    ref hasLastAudioEncPacketPts,
+                    ref lastAudioEncPacketDts,
+                    ref hasLastAudioEncPacketDts,
+                    flush: true);
 
                 int sendFinalErr = ffmpeg.avcodec_send_frame(audioEnc, null);
                 if (sendFinalErr < 0)
                     Throw(sendFinalErr);
-                while (ffmpeg.avcodec_receive_packet(audioEnc, audioPkt) == 0)
-                {
-                    audioPkt->stream_index = outAudioStream->index;
-                    ffmpeg.av_packet_rescale_ts(audioPkt, audioEnc->time_base, outAudioStream->time_base);
-                    Throw(ffmpeg.av_interleaved_write_frame(outFmt, audioPkt));
-                    ffmpeg.av_packet_unref(audioPkt);
-                }
+                    while (ffmpeg.avcodec_receive_packet(audioEnc, audioPkt) == 0)
+                    {
+                        audioPkt->stream_index = outAudioStream->index;
+                        ffmpeg.av_packet_rescale_ts(audioPkt, audioEnc->time_base, outAudioStream->time_base);
+                        NormalizeEncodedPacketTimestamps(
+                            audioPkt,
+                            ref lastAudioEncPacketPts,
+                            ref hasLastAudioEncPacketPts,
+                            ref lastAudioEncPacketDts,
+                            ref hasLastAudioEncPacketDts);
+                        Throw(ffmpeg.av_interleaved_write_frame(outFmt, audioPkt));
+                        ffmpeg.av_packet_unref(audioPkt);
+                    }
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
@@ -580,11 +808,21 @@ public unsafe sealed class VideoExportService
         AVCodecContext* enc,
         AVPacket* outPkt,
         AVStream* outStream,
-        AVFormatContext* outFmt)
+        AVFormatContext* outFmt,
+        ref long lastPacketPts,
+        ref bool hasLastPacketPts,
+        ref long lastPacketDts,
+        ref bool hasLastPacketDts)
     {
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
+            NormalizeEncodedPacketTimestamps(
+                outPkt,
+                ref lastPacketPts,
+                ref hasLastPacketPts,
+                ref lastPacketDts,
+                ref hasLastPacketDts);
             outPkt->stream_index = outStream->index;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
             ffmpeg.av_packet_unref(outPkt);
@@ -608,6 +846,7 @@ public unsafe sealed class VideoExportService
         List<(int Start, int EndExclusive)>? blurRanges,
         ref int blurRangeCursor,
         double sourceFps,
+        bool forceSafeEncoding,
         int totalFrames,
         ref int frameIndex,
         ref int lastResolvedFrameIndex,
@@ -615,6 +854,12 @@ public unsafe sealed class VideoExportService
         ref long maskMs,
         ref long swsToEncMs,
         ref long encodeMs,
+        ref long lastEncodedPts,
+        ref bool hasLastEncodedPts,
+        ref long lastEncodedPacketPts,
+        ref bool hasLastEncodedPacketPts,
+        ref long lastEncodedPacketDts,
+        ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
@@ -630,6 +875,15 @@ public unsafe sealed class VideoExportService
             resolvedFrameIndex = fallbackIndex;
         lastResolvedFrameIndex = resolvedFrameIndex;
         frameIndex = resolvedFrameIndex + 1;
+
+        long encodedPts = ResolveEncodePts(
+            frame,
+            inStream->time_base,
+            enc->time_base,
+            sourceFps,
+            resolvedFrameIndex,
+            ref lastEncodedPts,
+            ref hasLastEncodedPts);
 
         WriteableBitmap? mask = null;
         IReadOnlyList<Rect>? faceRects = null;
@@ -691,17 +945,26 @@ public unsafe sealed class VideoExportService
             tEncSws.Stop();
             swsToEncMs += tEncSws.ElapsedMilliseconds;
 
-            encFrame->pts = frame->pts;
+            ApplyEncodingPts(encFrame, encodedPts);
 
             var tEncode = Stopwatch.StartNew();
             Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
-            DrainEncoderPackets(enc, outPkt, outStream, outFmt);
+            DrainEncoderPackets(
+                enc,
+                outPkt,
+                outStream,
+                outFmt,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts);
             tEncode.Stop();
             encodeMs += tEncode.ElapsedMilliseconds;
         }
         else
         {
-            bool direct = frame->format == (int)enc->pix_fmt
+            bool direct = !forceSafeEncoding
+                && frame->format == (int)enc->pix_fmt
                 && frame->width == enc->width
                 && frame->height == enc->height;
 
@@ -728,19 +991,36 @@ public unsafe sealed class VideoExportService
                 tEncSws.Stop();
                 swsToEncMs += tEncSws.ElapsedMilliseconds;
 
-                encFrame->pts = frame->pts;
+                ApplyEncodingPts(encFrame, encodedPts);
 
                 var tEncode = Stopwatch.StartNew();
                 Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
-                DrainEncoderPackets(enc, outPkt, outStream, outFmt);
+                DrainEncoderPackets(
+                    enc,
+                    outPkt,
+                    outStream,
+                    outFmt,
+                    ref lastEncodedPacketPts,
+                    ref hasLastEncodedPacketPts,
+                    ref lastEncodedPacketDts,
+                    ref hasLastEncodedPacketDts);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
             else
             {
                 var tEncode = Stopwatch.StartNew();
+                ApplyEncodingPts(frame, encodedPts);
                 Throw(ffmpeg.avcodec_send_frame(enc, frame));
-                DrainEncoderPackets(enc, outPkt, outStream, outFmt);
+                DrainEncoderPackets(
+                    enc,
+                    outPkt,
+                    outStream,
+                    outFmt,
+                    ref lastEncodedPacketPts,
+                    ref hasLastEncodedPacketPts,
+                    ref lastEncodedPacketDts,
+                    ref hasLastEncodedPacketDts);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
@@ -772,6 +1052,7 @@ public unsafe sealed class VideoExportService
         List<(int Start, int EndExclusive)>? blurRanges,
         ref int blurRangeCursor,
         double sourceFps,
+        bool forceSafeEncoding,
         int totalFrames,
         ref int frameIndex,
         ref int lastResolvedFrameIndex,
@@ -779,6 +1060,12 @@ public unsafe sealed class VideoExportService
         ref long maskMs,
         ref long swsToEncMs,
         ref long encodeMs,
+        ref long lastEncodedPts,
+        ref bool hasLastEncodedPts,
+        ref long lastEncodedPacketPts,
+        ref bool hasLastEncodedPacketPts,
+        ref long lastEncodedPacketDts,
+        ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
@@ -811,6 +1098,7 @@ public unsafe sealed class VideoExportService
                 blurRanges,
                 ref blurRangeCursor,
                 sourceFps,
+                forceSafeEncoding,
                 totalFrames,
                 ref frameIndex,
                 ref lastResolvedFrameIndex,
@@ -818,8 +1106,14 @@ public unsafe sealed class VideoExportService
                 ref maskMs,
                 ref swsToEncMs,
                 ref encodeMs,
-                ref reusableFaceMask,
-                progress,
+                ref lastEncodedPts,
+                ref hasLastEncodedPts,
+                        ref lastEncodedPacketPts,
+                        ref hasLastEncodedPacketPts,
+                        ref lastEncodedPacketDts,
+                        ref hasLastEncodedPacketDts,
+                        ref reusableFaceMask,
+                        progress,
                 ref lastReportedFrame,
                 swTotal,
                 cancellationToken);
@@ -829,7 +1123,15 @@ public unsafe sealed class VideoExportService
         int encErr = ffmpeg.avcodec_send_frame(enc, null);
         if (encErr < 0 && encErr != ffmpeg.AVERROR_EOF)
             Throw(encErr);
-        DrainEncoderPackets(enc, outPkt, outStream, outFmt);
+        DrainEncoderPackets(
+            enc,
+            outPkt,
+            outStream,
+            outFmt,
+            ref lastEncodedPacketPts,
+            ref hasLastEncodedPacketPts,
+            ref lastEncodedPacketDts,
+            ref hasLastEncodedPacketDts);
         videoFlushed = true;
     }
 
@@ -1031,7 +1333,7 @@ public unsafe sealed class VideoExportService
                 return keyframes;
 
             AVStream* stream = inFmt->streams[videoStreamIndex];
-            int fallback = 0;
+            int frameIndex = 0;
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
                 if (pkt->stream_index != videoStreamIndex)
@@ -1040,13 +1342,16 @@ public unsafe sealed class VideoExportService
                     continue;
                 }
 
-                int frameIndex = ResolveFrameIndexFromPacket(pkt, stream->time_base, sourceFps, fallback, totalFrames);
-                if (frameIndex < fallback)
-                    frameIndex = fallback;
-                fallback = frameIndex + 1;
+                if (frameIndex >= totalFrames && totalFrames > 0)
+                {
+                    ffmpeg.av_packet_unref(pkt);
+                    break;
+                }
 
                 if ((pkt->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0)
                     keyframes.Add(frameIndex);
+
+                frameIndex++;
 
                 ffmpeg.av_packet_unref(pkt);
             }
@@ -1079,6 +1384,117 @@ public unsafe sealed class VideoExportService
         return distinct;
     }
 
+    private static unsafe long ResolveEncodePts(
+        AVFrame* frame,
+        AVRational sourceTimeBase,
+        AVRational targetTimeBase,
+        double sourceFps,
+        int fallbackFrameIndex,
+        ref long lastPts,
+        ref bool hasLastPts)
+    {
+        long rawPts = frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
+            ? frame->best_effort_timestamp
+            : frame->pts;
+
+        if (rawPts == ffmpeg.AV_NOPTS_VALUE)
+        {
+            if (sourceFps > 0.0 && sourceTimeBase.num > 0 && sourceTimeBase.den > 0)
+            {
+                double seconds = fallbackFrameIndex / sourceFps;
+                double sourceTicks = ffmpeg.av_q2d(sourceTimeBase);
+                if (sourceTicks > 0.0)
+                    rawPts = (long)Math.Round(seconds / sourceTicks);
+                else
+                    rawPts = fallbackFrameIndex;
+            }
+            else
+            {
+                rawPts = fallbackFrameIndex;
+            }
+        }
+
+        if (rawPts < 0)
+            rawPts = 0;
+
+        long normalizedPts = rawPts;
+        if (sourceTimeBase.num > 0 && sourceTimeBase.den > 0 && targetTimeBase.num > 0 && targetTimeBase.den > 0)
+            normalizedPts = ffmpeg.av_rescale_q(rawPts, sourceTimeBase, targetTimeBase);
+
+        if (normalizedPts < 0)
+            normalizedPts = 0;
+
+        if (!hasLastPts)
+        {
+            hasLastPts = true;
+        }
+        else if (normalizedPts <= lastPts)
+        {
+            normalizedPts = lastPts + 1;
+        }
+
+        lastPts = normalizedPts;
+        return normalizedPts;
+    }
+
+    private static unsafe void NormalizeEncodedPacketTimestamps(
+        AVPacket* packet,
+        ref long lastPacketPts,
+        ref bool hasLastPacketPts,
+        ref long lastPacketDts,
+        ref bool hasLastPacketDts)
+    {
+        if (packet == null)
+            return;
+
+        long noValue = ffmpeg.AV_NOPTS_VALUE;
+
+        long normalizedPts = packet->pts;
+        if (normalizedPts == noValue || normalizedPts < 0)
+            normalizedPts = hasLastPacketPts ? Math.Max(0, lastPacketPts + 1) : 0;
+        if (hasLastPacketPts && normalizedPts <= lastPacketPts)
+            normalizedPts = lastPacketPts + 1;
+
+        long normalizedDts = packet->dts;
+        if (normalizedDts == noValue || normalizedDts < 0)
+            normalizedDts = normalizedPts;
+        if (hasLastPacketDts && normalizedDts <= lastPacketDts)
+            normalizedDts = lastPacketDts + 1;
+
+        if (normalizedDts > normalizedPts)
+            normalizedDts = normalizedPts;
+
+        if (packet->duration <= 0)
+            packet->duration = 1;
+
+        packet->pts = normalizedPts;
+        packet->dts = normalizedDts;
+
+        lastPacketPts = normalizedPts;
+        hasLastPacketPts = true;
+        lastPacketDts = normalizedDts;
+        hasLastPacketDts = true;
+    }
+
+    private static unsafe void NormalizeCopiedPacketTimestamps(
+        AVPacket* packet,
+        ref long lastPacketPts,
+        ref bool hasLastPacketPts,
+        ref long lastPacketDts,
+        ref bool hasLastPacketDts)
+    {
+        NormalizeEncodedPacketTimestamps(packet, ref lastPacketPts, ref hasLastPacketPts, ref lastPacketDts, ref hasLastPacketDts);
+    }
+
+    private static unsafe void ApplyEncodingPts(AVFrame* frame, long pts)
+    {
+        if (frame == null)
+            return;
+
+        frame->pts = pts;
+        frame->pkt_dts = pts;
+    }
+
     private static int ResolveFrameIndexFromPacket(
         AVPacket* packet,
         AVRational timeBase,
@@ -1097,7 +1513,7 @@ public unsafe sealed class VideoExportService
         if (double.IsNaN(seconds) || double.IsInfinity(seconds))
             return fallback;
 
-        int index = (int)Math.Round(seconds * sourceFps);
+        int index = (int)Math.Floor(seconds * sourceFps);
         if (index < 0)
             index = 0;
         if (totalFrames > 0 && index > totalFrames)
@@ -1125,7 +1541,7 @@ public unsafe sealed class VideoExportService
         if (double.IsNaN(seconds) || double.IsInfinity(seconds))
             return fallback;
 
-        int index = (int)Math.Round(seconds * sourceFps);
+        int index = (int)Math.Floor(seconds * sourceFps);
         if (index < 0)
             index = 0;
         if (totalFrames > 0 && index > totalFrames)
@@ -1145,10 +1561,14 @@ public unsafe sealed class VideoExportService
         if (inFmt == null)
             throw new ArgumentNullException(nameof(inFmt));
 
-        AVFormatContext* outFmt = null;
-        AVPacket* pkt = ffmpeg.av_packet_alloc();
-        if (pkt == null)
-            throw new InvalidOperationException("패킷 버퍼를 할당하지 못했습니다.");
+            AVFormatContext* outFmt = null;
+            AVPacket* pkt = ffmpeg.av_packet_alloc();
+            if (pkt == null)
+                throw new InvalidOperationException("패킷 버퍼를 할당하지 못했습니다.");
+            long[] lastRemuxPacketPts = Array.Empty<long>();
+            bool[] hasLastRemuxPacketPts = Array.Empty<bool>();
+            long[] lastRemuxPacketDts = Array.Empty<long>();
+            bool[] hasLastRemuxPacketDts = Array.Empty<bool>();
 
         try
         {
@@ -1170,6 +1590,12 @@ public unsafe sealed class VideoExportService
                 streamMap[i] = outStream->index;
             }
 
+            int streamTotal = Math.Max(0, streamCount);
+            lastRemuxPacketPts = new long[streamTotal];
+            hasLastRemuxPacketPts = new bool[streamTotal];
+            lastRemuxPacketDts = new long[streamTotal];
+            hasLastRemuxPacketDts = new bool[streamTotal];
+
             if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
                 Throw(ffmpeg.avio_open(&outFmt->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE));
 
@@ -1189,8 +1615,15 @@ public unsafe sealed class VideoExportService
                 }
 
                 AVStream* inStream = inFmt->streams[inIndex];
-                AVStream* outStream = outFmt->streams[streamMap[inIndex]];
+                int outIndex = streamMap[inIndex];
+                AVStream* outStream = outFmt->streams[outIndex];
                 ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
+                NormalizeCopiedPacketTimestamps(
+                    pkt,
+                    ref lastRemuxPacketPts[outIndex],
+                    ref hasLastRemuxPacketPts[outIndex],
+                    ref lastRemuxPacketDts[outIndex],
+                    ref hasLastRemuxPacketDts[outIndex]);
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
                 Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
@@ -1254,7 +1687,9 @@ public unsafe sealed class VideoExportService
         AVCodecContext* dec,
         AVFormatContext* outFmt,
         out AVCodec* encoder,
-        out string? error)
+        out string? error,
+        bool forceSoftwareEncoder,
+        bool forceSafeEncoding)
     {
         encoder = null;
         error = null;
@@ -1271,7 +1706,7 @@ public unsafe sealed class VideoExportService
         }
 
         var attemptedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var candidateName in GetPreferredEncoderNames(codecId))
+        foreach (var candidateName in GetPreferredEncoderNames(codecId, forceSoftwareEncoder))
         {
             if (string.IsNullOrWhiteSpace(candidateName) || !attemptedNames.Add(candidateName))
                 continue;
@@ -1280,7 +1715,7 @@ public unsafe sealed class VideoExportService
             if (candidate == null || candidate->id != codecId)
                 continue;
 
-            var ctx = TryOpenEncoderContext(candidate, inStream, dec, outFmt, out var openError);
+            var ctx = TryOpenEncoderContext(candidate, inStream, dec, outFmt, out var openError, forceSafeEncoding);
             if (ctx != null)
             {
                 encoder = candidate;
@@ -1290,7 +1725,7 @@ public unsafe sealed class VideoExportService
             error = AppendEncoderError(error, candidateName, openError);
         }
 
-        AVCodec* fallback = ffmpeg.avcodec_find_encoder(codecId);
+        AVCodec* fallback = SelectFallbackEncoder(codecId, forceSoftwareEncoder);
         if (fallback == null)
         {
             error = AppendEncoderError(
@@ -1305,7 +1740,7 @@ public unsafe sealed class VideoExportService
             : GetCodecName(codecId);
         if (attemptedNames.Add(fallbackName))
         {
-            var ctx = TryOpenEncoderContext(fallback, inStream, dec, outFmt, out var fallbackError);
+            var ctx = TryOpenEncoderContext(fallback, inStream, dec, outFmt, out var fallbackError, forceSafeEncoding);
             if (ctx != null)
             {
                 encoder = fallback;
@@ -1323,7 +1758,8 @@ public unsafe sealed class VideoExportService
         AVStream* inStream,
         AVCodecContext* dec,
         AVFormatContext* outFmt,
-        out string? error)
+        out string? error,
+        bool forceSafeEncoding)
     {
         error = null;
         AVCodecContext* ctx = ffmpeg.avcodec_alloc_context3(encoder);
@@ -1372,13 +1808,25 @@ public unsafe sealed class VideoExportService
         if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
             ctx->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
 
+        if (forceSafeEncoding)
+            ctx->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
         if (!IsPixFmtSupported(encoder, ctx->pix_fmt))
             ctx->pix_fmt = PickPreferredPixelFormat(encoder, ctx->pix_fmt);
 
-        ctx->thread_count = IsHardwareEncoder(encoder)
-            ? 0
-            : Math.Max(1, Environment.ProcessorCount - 2);
-        ApplyHighQualityEncoderOptions(ctx, encoder);
+        if (forceSafeEncoding)
+        {
+            ctx->max_b_frames = 0;
+            ctx->gop_size = 60;
+            ctx->thread_count = 1;
+        }
+        else
+        {
+            ctx->thread_count = IsHardwareEncoder(encoder)
+                ? 0
+                : Math.Max(1, Environment.ProcessorCount - 2);
+        }
+
+        ApplyHighQualityEncoderOptions(ctx, encoder, forceSafeEncoding);
 
         int openErr = ffmpeg.avcodec_open2(ctx, encoder, null);
         if (openErr < 0)
@@ -1408,8 +1856,17 @@ public unsafe sealed class VideoExportService
                name.Contains("v4l2m2m", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static IReadOnlyList<string> GetPreferredEncoderNames(AVCodecID codecId)
+    private static IReadOnlyList<string> GetPreferredEncoderNames(AVCodecID codecId, bool forceSoftwareOnly)
     {
+        if (forceSoftwareOnly)
+        {
+            if (codecId == AVCodecID.AV_CODEC_ID_H264)
+                return new[] { "libx264" };
+            if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
+                return new[] { "libx265" };
+            return new[] { "libx264", "libx265" };
+        }
+
         bool isMac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
         bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
@@ -1432,6 +1889,19 @@ public unsafe sealed class VideoExportService
         }
 
         return Array.Empty<string>();
+    }
+
+    private static unsafe AVCodec* SelectFallbackEncoder(AVCodecID codecId, bool forceSoftwareOnly)
+    {
+        if (forceSoftwareOnly)
+        {
+            if (codecId == AVCodecID.AV_CODEC_ID_H264)
+                return ffmpeg.avcodec_find_encoder_by_name("libx264");
+            if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
+                return ffmpeg.avcodec_find_encoder_by_name("libx265");
+        }
+
+        return ffmpeg.avcodec_find_encoder(codecId);
     }
 
     private static string AppendEncoderError(string? existing, string encoderName, string? detail)
@@ -1509,7 +1979,7 @@ public unsafe sealed class VideoExportService
 #pragma warning restore CS0618
     }
 
-    private static unsafe void ApplyHighQualityEncoderOptions(AVCodecContext* ctx, AVCodec* encoder)
+    private static unsafe void ApplyHighQualityEncoderOptions(AVCodecContext* ctx, AVCodec* encoder, bool forceSafeEncoding)
     {
         if (ctx == null || encoder == null || encoder->name == null)
             return;
@@ -1523,6 +1993,25 @@ public unsafe sealed class VideoExportService
         bool isH264Family = name.Contains("h264", StringComparison.OrdinalIgnoreCase);
         bool isHevcFamily = name.Contains("hevc", StringComparison.OrdinalIgnoreCase) ||
                             name.Contains("h265", StringComparison.OrdinalIgnoreCase);
+
+        if (forceSafeEncoding)
+        {
+            if (isX264)
+            {
+                TrySetEncoderOption(ctx, "preset", "fast");
+                TrySetEncoderOption(ctx, "crf", "18");
+            }
+            else if (isX265)
+            {
+                TrySetEncoderOption(ctx, "preset", "fast");
+                TrySetEncoderOption(ctx, "crf", "20");
+            }
+            else if (isH264Family || isHevcFamily)
+            {
+                TrySetEncoderOption(ctx, "profile", "main");
+            }
+            return;
+        }
 
         if (isX264)
         {
@@ -1835,6 +2324,10 @@ public unsafe sealed class VideoExportService
         AVPacket* outPkt,
         AVFrame* outFrame,
         ref long audioPts,
+        ref long lastPacketPts,
+        ref bool hasLastPacketPts,
+        ref long lastPacketDts,
+        ref bool hasLastPacketDts,
         bool flush)
     {
         if (fifo == null || audioEnc == null || outAudioStream == null || outFmt == null)
@@ -1894,13 +2387,14 @@ public unsafe sealed class VideoExportService
             Throw(ffmpeg.avcodec_send_frame(audioEnc, outFrame));
             ffmpeg.av_frame_unref(outFrame);
 
-            while (ffmpeg.avcodec_receive_packet(audioEnc, outPkt) == 0)
-            {
-                outPkt->stream_index = outAudioStream->index;
-                ffmpeg.av_packet_rescale_ts(outPkt, audioEnc->time_base, outAudioStream->time_base);
-                Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
-                ffmpeg.av_packet_unref(outPkt);
-            }
+                while (ffmpeg.avcodec_receive_packet(audioEnc, outPkt) == 0)
+                {
+                    outPkt->stream_index = outAudioStream->index;
+                    ffmpeg.av_packet_rescale_ts(outPkt, audioEnc->time_base, outAudioStream->time_base);
+                    NormalizeEncodedPacketTimestamps(outPkt, ref lastPacketPts, ref hasLastPacketPts, ref lastPacketDts, ref hasLastPacketDts);
+                    Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+                    ffmpeg.av_packet_unref(outPkt);
+                }
 
             if (!flush && !variable && ffmpeg.av_audio_fifo_size(fifo) < frameSize)
                 break;
@@ -1938,6 +2432,14 @@ public unsafe sealed class VideoExportService
         byte* buf = stackalloc byte[1024];
         ffmpeg.av_strerror(err, buf, 1024);
         return System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buf, 1024)).TrimEnd('\0');
+    }
+
+    private static bool IsInvalidArgumentError(Exception ex)
+    {
+        if (ex is not InvalidOperationException)
+            return false;
+
+        return ex.Message.Contains("Invalid argument", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void Throw(int err)
