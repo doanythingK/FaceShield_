@@ -76,11 +76,15 @@ param(
     [int] $AllowedWeakFaceIncrease = 0,
     [int] $MinDetectGain = 0,
     [int] $MaxExportMsDelta = 0,
+    [int] $AllowedShortGapIncrease = 0,
+    [int] $AllowedLargeJumpIncrease = 0,
     [double] $FalsePositiveScorePenaltyPerFrame = 6.0,
     [double] $MissedDetectScorePenaltyPerFace = 1.5,
     [double] $MissDetectGainScoreRewardPerFace = 0.6,
     [double] $SceneCutCarryPenaltyPerFrame = 4.0,
     [double] $ExportMsPenaltyPerMs = 0.02,
+    [double] $ShortGapPenaltyPerFrame = 7.5,
+    [double] $LargeJumpPenaltyPerFrame = 7.5,
     [double] $ReviewRequiredPenalty = 999
 )
 
@@ -295,13 +299,19 @@ function Build-ScenarioDecision {
         [double] $TargetSceneCutRemoved,
         [double] $BaselineExportMs,
         [double] $TargetExportMs,
-    [bool] $BaselineReviewRequired,
+        [double] $BaselineShortGaps,
+        [double] $TargetShortGaps,
+        [double] $BaselineLargeJumpGaps,
+        [double] $TargetLargeJumpGaps,
+        [bool] $BaselineReviewRequired,
         [bool] $TargetReviewRequired,
         [double] $FalsePositivePenaltyPerFrame,
         [double] $MissedDetectPenaltyPerFace,
         [double] $MissDetectGainRewardPerFace,
         [double] $SceneCutPenaltyPerFrame,
         [double] $ExportPenaltyPerMs,
+        [double] $ShortGapPenaltyPerFrame,
+        [double] $LargeJumpPenaltyPerFrame,
         [double] $ReviewPenalty
     )
 
@@ -309,21 +319,27 @@ function Build-ScenarioDecision {
     $detectDelta = $TargetDetect - $BaselineDetect
     $sceneCutDelta = $TargetSceneCutRemoved - $BaselineSceneCutRemoved
     $exportDelta = $TargetExportMs - $BaselineExportMs
+    $shortGapDelta = $TargetShortGaps - $BaselineShortGaps
+    $largeJumpDelta = $TargetLargeJumpGaps - $BaselineLargeJumpGaps
 
     $passesFalsePositive = $weakFaceDelta -le $AllowedWeakFaceIncrease
     $passesMissFill = $detectDelta -ge $MinDetectGain
     $passesTransition = -not $TargetReviewRequired
     $passesSceneCutCarry = $sceneCutDelta -le 0
     $passesExport = $exportDelta -le $MaxExportMsDelta
+    $passesShortGap = $shortGapDelta -le $AllowedShortGapIncrease
+    $passesLargeJump = $largeJumpDelta -le $AllowedLargeJumpIncrease
 
-    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesExport
+    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesExport -and $passesShortGap -and $passesLargeJump
     $weakPenalty = [Math]::Max(0, $weakFaceDelta) * $FalsePositivePenaltyPerFrame
     $detectLossPenalty = [Math]::Max(0, -$detectDelta) * $MissedDetectPenaltyPerFace
     $detectGainReward = [Math]::Max(0, $detectDelta) * $MissDetectGainRewardPerFace
     $scenePenalty = [Math]::Max(0, $sceneCutDelta) * $SceneCutPenaltyPerFrame
     $exportPenalty = [Math]::Max(0, $exportDelta) * $ExportPenaltyPerMs
+    $shortGapPenalty = [Math]::Max(0, $shortGapDelta) * $ShortGapPenaltyPerFrame
+    $largeJumpPenalty = [Math]::Max(0, $largeJumpDelta) * $LargeJumpPenaltyPerFrame
     $reviewPenalty = if ($TargetReviewRequired) { $ReviewPenalty } else { 0 }
-    $score = [Math]::Round($weakPenalty + $detectLossPenalty + $scenePenalty + $exportPenalty + $reviewPenalty - $detectGainReward, 4)
+    $score = [Math]::Round($weakPenalty + $detectLossPenalty + $scenePenalty + $exportPenalty + $shortGapPenalty + $largeJumpPenalty + $reviewPenalty - $detectGainReward, 4)
     $normalized = [Math]::Round($score, 4)
     $reason = @(
         if (-not $passesFalsePositive) { "weakFaceDelta=+$weakFaceDelta" } else { $null }
@@ -331,6 +347,8 @@ function Build-ScenarioDecision {
         if (-not $passesTransition) { "reviewRequired=$TargetReviewRequired" } else { $null }
         if (-not $passesSceneCutCarry) { "sceneCutRemovedDelta=+$sceneCutDelta" } else { $null }
         if (-not $passesExport) { "exportMsDelta=+$exportDelta" } else { $null }
+        if (-not $passesShortGap) { "shortGapsDelta=+$shortGapDelta" } else { $null }
+        if (-not $passesLargeJump) { "largeJumpGapsDelta=+$largeJumpDelta" } else { $null }
     ) | Where-Object { $null -ne $_ }
 
     return [pscustomobject]@{
@@ -338,6 +356,8 @@ function Build-ScenarioDecision {
         DetectDelta = $detectDelta
         SceneCutRemovedDelta = $sceneCutDelta
         ExportMsDelta = $exportDelta
+        ShortGapsDelta = $shortGapDelta
+        LargeJumpGapsDelta = $largeJumpDelta
         BaselineReviewRequired = $BaselineReviewRequired
         TargetReviewRequired = $TargetReviewRequired
         PassFalsePositive = $passesFalsePositive
@@ -345,11 +365,15 @@ function Build-ScenarioDecision {
         PassTransition = $passesTransition
         PassSceneCarry = $passesSceneCutCarry
         PassExport = $passesExport
+        PassShortGaps = $passesShortGap
+        PassLargeJumpGaps = $passesLargeJump
         WeakPenalty = $weakPenalty
         DetectLossPenalty = $detectLossPenalty
         DetectGainReward = $detectGainReward
         SceneCutPenalty = $scenePenalty
         ExportPenalty = $exportPenalty
+        ShortGapPenalty = $shortGapPenalty
+        LargeJumpPenalty = $largeJumpPenalty
         ReviewPenalty = $reviewPenalty
         CompositeScore = $score
         NormalizedScore = $normalized
@@ -496,6 +520,10 @@ foreach ($name in $presetsToCompare) {
     $targetSceneCutRemoved = Read-NumericValue -Container $targetSceneReset -Key 'removed'
     $baselineExportMs = Read-NumericValue -Container $baselineExport -Key 'totalMs'
     $targetExportMs = Read-NumericValue -Container $targetExport -Key 'totalMs'
+    $baselineShortGaps = Read-NumericValue -Container $baselineFinal -Key 'shortGaps'
+    $targetShortGaps = Read-NumericValue -Container $targetFinal -Key 'shortGaps'
+    $baselineLargeJumpGaps = Read-NumericValue -Container $baselineFinal -Key 'largeJumpGaps'
+    $targetLargeJumpGaps = Read-NumericValue -Container $targetFinal -Key 'largeJumpGaps'
     $baselineReview = Read-BoolValue -Container $baselineFinal -Key 'reviewRequired'
     $targetReview = Read-BoolValue -Container $targetFinal -Key 'reviewRequired'
     $decision = Build-ScenarioDecision `
@@ -507,6 +535,10 @@ foreach ($name in $presetsToCompare) {
         -TargetSceneCutRemoved $targetSceneCutRemoved `
         -BaselineExportMs $baselineExportMs `
         -TargetExportMs $targetExportMs `
+        -BaselineShortGaps $baselineShortGaps `
+        -TargetShortGaps $targetShortGaps `
+        -BaselineLargeJumpGaps $baselineLargeJumpGaps `
+        -TargetLargeJumpGaps $targetLargeJumpGaps `
         -BaselineReviewRequired $baselineReview `
         -TargetReviewRequired $targetReview `
         -FalsePositivePenaltyPerFrame $FalsePositiveScorePenaltyPerFrame `
@@ -514,6 +546,8 @@ foreach ($name in $presetsToCompare) {
         -MissDetectGainRewardPerFace $MissDetectGainScoreRewardPerFace `
         -SceneCutPenaltyPerFrame $SceneCutCarryPenaltyPerFrame `
         -ExportPenaltyPerMs $ExportMsPenaltyPerMs `
+        -ShortGapPenaltyPerFrame $ShortGapPenaltyPerFrame `
+        -LargeJumpPenaltyPerFrame $LargeJumpPenaltyPerFrame `
         -ReviewPenalty $ReviewRequiredPenalty
 
     $summary.Add([pscustomobject]@{
@@ -524,6 +558,12 @@ foreach ($name in $presetsToCompare) {
         WeakFaceCountTarget = $targetWeakFace
         WeakFaceCountDelta = $decision.WeakFaceDelta
         DetectDelta = $decision.DetectDelta
+        ShortGapDelta = $decision.ShortGapsDelta
+        LargeJumpGapsDelta = $decision.LargeJumpGapsDelta
+        ShortGapsCountBaseline = $baselineShortGaps
+        ShortGapsCountTarget = $targetShortGaps
+        LargeJumpGapsCountBaseline = $baselineLargeJumpGaps
+        LargeJumpGapsCountTarget = $targetLargeJumpGaps
         RunMsDelta = if ($null -ne $baselineSummary -and $null -ne $targetSummary -and $baselineSummary.ContainsKey('totalMs') -and $targetSummary.ContainsKey('totalMs')) { $targetSummary.totalMs - $baselineSummary.totalMs } else { $null }
         ExportMsDelta = $decision.ExportMsDelta
         ReviewRequired = $targetReview
@@ -534,12 +574,16 @@ foreach ($name in $presetsToCompare) {
         DetectGainReward = $decision.DetectGainReward
         SceneCutPenalty = $decision.SceneCutPenalty
         ExportPenalty = $decision.ExportPenalty
+        ShortGapPenalty = $decision.ShortGapPenalty
+        LargeJumpPenalty = $decision.LargeJumpPenalty
         ReviewPenalty = $decision.ReviewPenalty
         PassFalsePositive = $decision.PassFalsePositive
         PassMissFill = $decision.PassMissFill
         PassTransition = $decision.PassTransition
         PassSceneCarry = $decision.PassSceneCarry
         PassExport = $decision.PassExport
+        PassShortGaps = $decision.PassShortGaps
+        PassLargeJumpGaps = $decision.PassLargeJumpGaps
         Passed = $decision.Passed
         DecisionReasons = $decision.Reasons
         ResultPath = $resultPath
@@ -549,23 +593,23 @@ foreach ($name in $presetsToCompare) {
 
 if ($summary.Count -gt 0) {
     $summaryPath = if ([string]::IsNullOrWhiteSpace($SummaryFile)) { Join-Path $LogRoot "compare-summary.json" } else { $SummaryFile }
-    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
+    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.ShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.LargeJumpGapsDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
     $summarySorted | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host "[PostprocessPresetCompare] summary=$summaryPath"
     Write-Host "[PostprocessPresetCompare] score top3="
     foreach ($entry in ($summarySorted | Select-Object -First 3)) {
-        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
+        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
     }
 
     $passed = @($summarySorted | Where-Object { $_.Passed })
     if ($passed.Count -gt 0) {
         Write-Host "[PostprocessPresetCompare] passed preset count=$($passed.Count)"
         foreach ($entry in $passed) {
-            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) reasons=$($entry.DecisionReasons)"
+            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) reasons=$($entry.DecisionReasons)"
         }
     }
     else {
-        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta)"
+        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta)"
     }
 }
 

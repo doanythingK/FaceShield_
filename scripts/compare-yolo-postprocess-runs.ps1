@@ -316,6 +316,21 @@ function Read-RunInfo {
             continue
         }
 
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* shortGaps=(\d+)') {
+            $finalSummary.shortGaps = [int]$matches[1]
+            continue
+        }
+
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* largeJumpGaps=(\d+)') {
+            $finalSummary.largeJumpGaps = [int]$matches[1]
+            continue
+        }
+
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* perFaceShortGaps=(\d+)') {
+            $finalSummary.perFaceShortGaps = [int]$matches[1]
+            continue
+        }
+
         if ($line -match '^\[ExportRunSummary\] runId=([^,]+), mode=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+), hybridCopyAttempted=(True|False|true|false), hybridCopyUsed=(True|False|true|false), forceSoftwareEncoder=(True|False|true|false), forceSafeEncoding=(True|False|true|false), forceAudioTranscode=(True|False|true|false), forceH264Fallback=(True|False|true|false)') {
             if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
             $exportSummary = [ordered]@{
@@ -520,7 +535,7 @@ Write-Host ("A reviewRequired={0} reasons={1}" -f $aReview, $(if ($runA.FinalSum
 Write-Host ("B reviewRequired={0} reasons={1}" -f $bReview, $(if ($runB.FinalSummary.ContainsKey('reviewReasons')) { $runB.FinalSummary.reviewReasons } else { "n/a" }))
 
 Write-Host "-- weak-mask categories --"
-foreach ($k in 'isolated','lowConf','weakNonEdge','edgeWeak','topEdgeWeak','topEdgeLarge','upperWeak','lowerWeak','aspectBad','tinyWeak','tinyShort') {
+foreach ($k in 'isolated','lowConf','weakNonEdge','edgeWeak','topEdgeWeak','topEdgeLarge','upperWeak','lowerWeak','aspectBad','tinyWeak','tinyShort','shortGaps','largeJumpGaps','perFaceShortGaps') {
     $a = if ($runA.FinalSummary.ContainsKey($k)) { $runA.FinalSummary[$k] } else { 0 }
     $b = if ($runB.FinalSummary.ContainsKey($k)) { $runB.FinalSummary[$k] } else { 0 }
     $delta = $b - $a
@@ -588,9 +603,13 @@ $trackDelta = $bTrackFilled - $aTrackFilled
 $interpDelta = $bInterpolated - $aInterpolated
 $exportDeltaForHint = $bExport - $aExport
 $sceneCutDelta = $runB.SceneCutReset.removed - $runA.SceneCutReset.removed
+$shortGapDelta = (if ($runB.FinalSummary.ContainsKey('shortGaps')) { [int]$runB.FinalSummary.shortGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('shortGaps')) { [int]$runA.FinalSummary.shortGaps } else { 0 })
+$largeJumpGapDelta = (if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runB.FinalSummary.largeJumpGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runA.FinalSummary.largeJumpGaps } else { 0 })
 
 Write-Host ("오탐 후보 proxy: A={0} B={1} Δ={2}" -f $aWeakScore, $bWeakScore, $weakDelta)
 Write-Host ("미탐 보완 proxy (track lost-filled): A={0} B={1} Δ={2}" -f $aTrackFilled, $bTrackFilled, $trackDelta)
 Write-Host ("미탐 보완 proxy (interpolated): A={0} B={1} Δ={2}" -f $aInterpolated, $bInterpolated, $interpDelta)
 Write-Host ("장면전환 carry reset 제거량: A={0} B={1} Δ={2}" -f $runA.SceneCutReset.removed, $runB.SceneCutReset.removed, $sceneCutDelta)
+Write-Host ("단기 미탐 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('shortGaps')) { $runA.FinalSummary.shortGaps } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('shortGaps')) { $runB.FinalSummary.shortGaps } else { 0 }), $shortGapDelta)
+Write-Host ("큰 점프 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { $runA.FinalSummary.largeJumpGaps } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { $runB.FinalSummary.largeJumpGaps } else { 0 }), $largeJumpGapDelta)
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
