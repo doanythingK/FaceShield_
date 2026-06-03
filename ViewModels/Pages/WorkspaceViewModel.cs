@@ -160,8 +160,18 @@ namespace FaceShield.ViewModels.Pages
             {
                 FramePreview.PersistCurrentMask();
 
-                await SaveVideoAsync();
-                PersistWorkspaceState();
+                try
+                {
+                    await SaveVideoAsync();
+                }
+                catch (Exception ex)
+                {
+                    await ShowExportErrorAsync(ex);
+                }
+                finally
+                {
+                    PersistWorkspaceState();
+                }
             };
 
             // 🔹 자동 모드 버튼 → 자동 마스크 생성 연결
@@ -425,6 +435,8 @@ namespace FaceShield.ViewModels.Pages
                     EnableYoloGapFill = _autoOptions.EnableYoloGapFill,
                     EnableYoloSceneCutCarryCleanup = _autoOptions.EnableYoloSceneCutCarryCleanup,
                     EnableYoloTemporalSmoothing = _autoOptions.EnableYoloTemporalSmoothing,
+                    RoiRefinerDetectorOptions = _autoOptions.EnableRoiPostProcess ? detectorOptions : null,
+                    UseFaceOnnxRoiRefiner = detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx,
                     UseTracking = _autoOptions.UseTracking,
                     DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
                     ParallelDetectorCount = tunedSessions,
@@ -485,16 +497,6 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
-                var postProcess = new AutoMaskPostProcessPipeline(
-                    _maskProvider,
-                    _autoOptions,
-                    FrameList.TotalFrames);
-                postProcess.Apply(
-                    FrameList.VideoPath,
-                    token,
-                    detector as IBgraFaceDetector,
-                    detectorOptions,
-                    _detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx);
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
                 if (!exportAfter)
@@ -658,6 +660,13 @@ namespace FaceShield.ViewModels.Pages
         private Task ShowAutoErrorAsync(Exception ex, bool isDuringRun)
         {
             string title = isDuringRun ? "자동 모드 실행 중 오류" : "자동 모드 준비 실패";
+            string message = BuildAutoErrorMessage(ex);
+            return ShowErrorDialogAsync(title, message);
+        }
+
+        private Task ShowExportErrorAsync(Exception ex)
+        {
+            string title = "내보내기 실패";
             string message = BuildAutoErrorMessage(ex);
             return ShowErrorDialogAsync(title, message);
         }

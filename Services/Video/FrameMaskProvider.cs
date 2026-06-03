@@ -7,7 +7,7 @@ using System.Linq;
 
 namespace FaceShield.Services.Video
 {
-public sealed class FrameMaskProvider : IFrameMaskProvider
+    public sealed class FrameMaskProvider : IFrameMaskProvider
 {
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
@@ -95,6 +95,33 @@ public sealed class FrameMaskProvider : IFrameMaskProvider
         }
 
         return removed;
+    }
+
+    public int RemoveFaceMasksRange(int startFrameIndex, int endExclusive)
+    {
+        int start = Math.Max(0, startFrameIndex);
+        int end = Math.Max(start, endExclusive);
+        int removedFaceMasks = 0;
+        int removedStoredMasks = 0;
+        foreach (int frameIndex in _faceMasks.Keys)
+        {
+            if (frameIndex < start || frameIndex >= end)
+                continue;
+
+            if (_faceMasks.TryRemove(frameIndex, out _))
+                removedFaceMasks++;
+        }
+
+        foreach (int frameIndex in _masks.Keys)
+        {
+            if (frameIndex < start || frameIndex >= end)
+                continue;
+
+            if (_masks.TryRemove(frameIndex, out _))
+                removedStoredMasks++;
+        }
+
+        return removedFaceMasks + removedStoredMasks;
     }
 
     public void ClearFaceMasks()

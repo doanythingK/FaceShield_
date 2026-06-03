@@ -1,3 +1,5 @@
+using FaceShield.Services.FaceDetection;
+
 namespace FaceShield.Services.Analysis
 {
     public enum DownscaleQuality
@@ -32,7 +34,7 @@ namespace FaceShield.Services.Analysis
 
         /// <summary>
         /// 후처리 전체 활성화 토글 (temporal/smoothing/scene-cut/최종 보정 계열 단계).
-        /// false일 때는 미탐 보완 최소 단계만 남기고, 고급 정제 단계는 사용하지 않는다.
+        /// false일 때는 고급 후처리 단계는 비활성화되며, 미세한 탐지 누락 구간의 최소 보완은 동작합니다.
         /// </summary>
         public bool EnablePostProcessing { get; init; } = false;
 
@@ -65,6 +67,17 @@ namespace FaceShield.Services.Analysis
         /// 검출 간격 (1이면 모든 프레임 검출)
         /// </summary>
         public int DetectEveryNFrames { get; init; } = 1;
+
+        /// <summary>
+        /// ROI 후처리에서 사용할 face-onx 후보 검출기 옵션.
+        /// null이면 ROI 단계는 스킵됩니다.
+        /// </summary>
+        public FaceOnnxDetectorOptions? RoiRefinerDetectorOptions { get; init; }
+
+        /// <summary>
+        /// ROI refine 단계에서 bgra 기반 탐지기 대신 FaceOnnx 전용 후보 탐지기를 사용할지 여부.
+        /// </summary>
+        public bool UseFaceOnnxRoiRefiner { get; init; } = false;
 
         /// <summary>
         /// 병렬 ONNX 세션 수 (파이프라인 모드에서만 적용).
