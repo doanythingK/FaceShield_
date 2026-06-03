@@ -1453,6 +1453,10 @@ public unsafe sealed class VideoExportService
         {
             normalizedPts = lastPts + 1;
         }
+        else if (normalizedPts > lastPts + 1)
+        {
+            normalizedPts = lastPts + 1;
+        }
 
         lastPts = normalizedPts;
         return normalizedPts;
@@ -1799,6 +1803,14 @@ public unsafe sealed class VideoExportService
         ctx->framerate = inStream->r_frame_rate.num != 0 ? inStream->r_frame_rate : inStream->avg_frame_rate;
         if (ctx->framerate.num == 0 || ctx->framerate.den == 0)
             ctx->framerate = new AVRational { num = 30, den = 1 };
+        if (ctx->framerate.num > 0 && ctx->framerate.den > 0)
+        {
+            AVRational stableTimeBase = ffmpeg.av_inv_q(ctx->framerate);
+            if (stableTimeBase.num > 0 && stableTimeBase.den > 0)
+                ctx->time_base = stableTimeBase;
+        }
+        if (ctx->time_base.num <= 0 || ctx->time_base.den <= 0)
+            ctx->time_base = inStream->time_base;
 
         int sourceBitrate = 0;
         if (inStream->codecpar->bit_rate > 0)
