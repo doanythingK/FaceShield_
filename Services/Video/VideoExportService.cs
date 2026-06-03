@@ -1449,8 +1449,10 @@ public unsafe sealed class VideoExportService
         {
             hasLastPts = true;
         }
-        else if (normalizedPts <= lastPts)
+        else if (normalizedPts <= lastPts || normalizedPts > lastPts + 1)
         {
+            // 디코딩 타임스탬프의 경계 편차가 있을 때도
+            // 매 프레임이 연속된 재생 속도를 유지하도록 보정한다.
             normalizedPts = lastPts + 1;
         }
 
