@@ -29,6 +29,14 @@
 .PARAMETER EndFrameExclusive
     scene-cut reset 증거 필터의 종료 프레임(미포함, 0 기반).
 
+.PARAMETER WindowSeconds
+    frameId 기반 범위를 지정하지 않을 때 자동 구간 분석용 초 단위 길이.
+    -StartFrame 또는 -EndFrameExclusive가 모두 지정되지 않은 경우에만 사용됩니다.
+
+.PARAMETER WindowFrameRate
+    WindowSeconds를 프레임 범위로 계산할 때 사용하는 fps.
+    기본값은 30입니다.
+
     이 스크립트는 30초 이하 구간의 segment 분석에도 활용할 수 있습니다.
     예) 프레임레이트 30fps, 30초 구간: -StartFrame 0 -EndFrameExclusive 900
 
@@ -66,6 +74,10 @@ param(
     [Parameter(Mandatory = $false)]
     [int] $EndFrameExclusive = -1,
     [Parameter(Mandatory = $false)]
+    [double] $WindowSeconds = 0,
+    [Parameter(Mandatory = $false)]
+    [double] $WindowFrameRate = 30.0,
+    [Parameter(Mandatory = $false)]
     [switch] $JsonOutput
 )
 
@@ -79,6 +91,20 @@ foreach ($path in @($RunALog, $RunBLog)) {
 
 if ($RequireFrameFilter.IsPresent -and ($StartFrame -lt 0 -or $EndFrameExclusive -lt 0)) {
     throw "RequireFrameFilter is set but StartFrame and EndFrameExclusive must both be specified"
+}
+
+if ($WindowSeconds -gt 0) {
+    if ($WindowFrameRate -le 0) {
+        throw "WindowSeconds is set, but WindowFrameRate must be greater than 0."
+    }
+
+    if ($StartFrame -lt 0 -and $EndFrameExclusive -lt 0) {
+        $StartFrame = 0
+        $EndFrameExclusive = [int][math]::Ceiling($WindowSeconds * $WindowFrameRate)
+    }
+    elseif ($StartFrame -ge 0 -and $EndFrameExclusive -lt 0) {
+        $EndFrameExclusive = $StartFrame + [int][math]::Ceiling($WindowSeconds * $WindowFrameRate)
+    }
 }
 
 function Read-RunInfo {
@@ -237,6 +263,22 @@ function Read-RunInfo {
             continue
         }
 
+        if ($line -match '^\[SmokeFaceTrackPost\] label=([^,]+), tracks=(\d+), filled=(\d+), lostFilled=(\d+), initialFilled=(\d+), blockedInitialFill=(\d+), lostFrames=([^,]+), removedShort=(\d+), removedSparse=(\d+), removedUnstableTail=(\d+), removedEdgeTail=(\d+), removedLower=(\d+), rewritten=(\d+)') {
+            $faceTrackSummary = [ordered]@{
+                tracks = [int]$matches[2];
+                filled = [int]$matches[3];
+                lostFilled = [int]$matches[4];
+                initialFilled = [int]$matches[5];
+                removedShort = [int]$matches[7];
+                removedSparse = [int]$matches[8];
+                removedUnstableTail = [int]$matches[9];
+                removedEdgeTail = [int]$matches[10];
+                removedLower = [int]$matches[11];
+                rewritten = [int]$matches[12];
+            }
+            continue
+        }
+
         if ($line -match '^\[YoloSceneCutCarryCleanup\] .* removed=(\d+), removedFrames=([^,]+), removedUnsupportedStrong=(\d+), removedUnsupportedStrongFrames=([^,]+), protectedStrong=(\d+), protectedStrongFrames=([^,]+), blockedFrames=([^,]+), purgeFrames=(\d+), blockFrames=(\d+), extendedWeakMaxConfidence=([0-9.]+)') {
             $sceneCarrySummary = [ordered]@{
                 removed = [int]$matches[1];
@@ -253,13 +295,13 @@ function Read-RunInfo {
             continue
         }
 
-        if ($line -match '^\[FinalMaskSummary\] .* reviewRequired=(True|False|true|false) reviewReasons=([^\]]+)') {
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* reviewRequired=(True|False|true|false) reviewReasons=([^\]]+)') {
             $finalSummary.reviewRequired = [bool]::Parse($matches[1])
             $finalSummary.reviewReasons = $matches[2]
             continue
         }
 
-        if ($line -match '^\[FinalMaskSummary\] .* isolated=(\d+), isolatedFrames=([^,]+), lowConf=(\d+), lowConfFrames=([^,]+), weakNonEdge=(\d+), weakNonEdgeFrames=([^,]+), edgeWeak=(\d+), edgeWeakFrames=([^,]+), topEdgeWeak=(\d+), topEdgeWeakFrames=([^,]+), topEdgeLarge=(\d+), topEdgeLargeFrames=([^,]+), upperWeak=(\d+), upperWeakFrames=([^,]+), lowerWeak=(\d+), lowerWeakFrames=([^,]+), aspectBad=(\d+), aspectBadFrames=([^,]+), tinyWeak=(\d+), tinyWeakFrames=([^,]+), tinyShort=(\d+), tinyShortFrames=([^,]+)') {
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* isolated=(\d+), isolatedFrames=([^,]+), lowConf=(\d+), lowConfFrames=([^,]+), weakNonEdge=(\d+), weakNonEdgeFrames=([^,]+), edgeWeak=(\d+), edgeWeakFrames=([^,]+), topEdgeWeak=(\d+), topEdgeWeakFrames=([^,]+), topEdgeLarge=(\d+), topEdgeLargeFrames=([^,]+), upperWeak=(\d+), upperWeakFrames=([^,]+), lowerWeak=(\d+), lowerWeakFrames=([^,]+), aspectBad=(\d+), aspectBadFrames=([^,]+), tinyWeak=(\d+), tinyWeakFrames=([^,]+), tinyShort=(\d+), tinyShortFrames=([^,]+)') {
             $finalSummary.isolated = [int]$matches[1]
             $finalSummary.lowConf = [int]$matches[3]
             $finalSummary.weakNonEdge = [int]$matches[5]
@@ -274,29 +316,35 @@ function Read-RunInfo {
             continue
         }
 
-        if ($line -match '^\[ExportRunSummary\] runId=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+)') {
+        if ($line -match '^\[ExportRunSummary\] runId=([^,]+), mode=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+), hybridCopyAttempted=(True|False|true|false), hybridCopyUsed=(True|False|true|false), forceSoftwareEncoder=(True|False|true|false), forceSafeEncoding=(True|False|true|false), forceAudioTranscode=(True|False|true|false), forceH264Fallback=(True|False|true|false)') {
             if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
             $exportSummary = [ordered]@{
                 runId = $matches[1].Trim();
-                frames = [int]$matches[2];
-                bitmapMaskFrames = [int]$matches[3];
-                directFaceFrames = [int]$matches[4];
-                swsToBgraMs = [long]$matches[5];
-                maskMs = [long]$matches[6];
-                swsToEncMs = [long]$matches[7];
-                encodeMs = [long]$matches[8];
-                totalMs = [long]$matches[9];
+                exportMode = $matches[2];
+                frames = [int]$matches[3];
+                bitmapMaskFrames = [int]$matches[4];
+                directFaceFrames = [int]$matches[5];
+                swsToBgraMs = [long]$matches[6];
+                maskMs = [long]$matches[7];
+                swsToEncMs = [long]$matches[8];
+                encodeMs = [long]$matches[9];
+                totalMs = [long]$matches[10];
+                hybridCopyAttempted = [bool]::Parse($matches[11]);
+                hybridCopyUsed = [bool]::Parse($matches[12]);
+                forceSoftwareEncoder = [bool]::Parse($matches[13]);
+                forceSafeEncoding = [bool]::Parse($matches[14]);
+                forceAudioTranscode = [bool]::Parse($matches[15]);
+                forceH264Fallback = [bool]::Parse($matches[16]);
             }
             continue
         }
 
-            if ($collectingTargetRun -and ($line -match '^\[AutoMask\] scene-cut reset idx=(\d+) clearFrom=(\d+) clearTo=(\d+) removed=(\d+)')) {
-                $idx = [int]$matches[1]
-                if ($StartFrame -ge 0 -and $EndFrameExclusive -ge 0 -and ($idx -lt $StartFrame -or $idx -ge $EndFrameExclusive)) { continue }
-                $sceneCutReset.resetCount++
-                $sceneCutReset.removed += [int]$matches[4]
-                $sceneCutReset.clearRanges += "$($matches[2])-$($matches[3])"
-            }
+        if ($collectingTargetRun -and ($line -match '^\[AutoMask\] scene-cut reset idx=(\d+) clearFrom=(\d+) clearTo=(\d+) removed=(\d+)')) {
+            $idx = [int]$matches[1]
+            if ($StartFrame -ge 0 -and $EndFrameExclusive -ge 0 -and ($idx -lt $StartFrame -or $idx -ge $EndFrameExclusive)) { continue }
+            $sceneCutReset.resetCount++
+            $sceneCutReset.removed += [int]$matches[4]
+            $sceneCutReset.clearRanges += "$($matches[2])-$($matches[3])"
         }
     }
 
@@ -383,6 +431,27 @@ function Get-WeakFaceScore {
         }
     }
     return $score
+}
+
+function Format-ExportMeta {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Export
+    )
+
+    if (-not $Export.ContainsKey('hybridCopyAttempted')) {
+        return "mode=n/a"
+    }
+
+    return "mode={0}, hybridAttempted={1}, hybridUsed={2}, forceSafe={3}, softEncoder={4}, h264Fallback={5}, audioTranscode={6}" -f @(
+        $Export.exportMode,
+        $Export.hybridCopyAttempted,
+        $Export.hybridCopyUsed,
+        $Export.forceSafeEncoding,
+        $Export.forceSoftwareEncoder,
+        $Export.forceH264Fallback,
+        $Export.forceAudioTranscode
+    )
 }
 
 $runA = Read-RunInfo -Path $RunALog -TargetRunId $RunAId
@@ -492,10 +561,10 @@ if ($runA.SceneCutReset.removed -gt 0 -or $runB.SceneCutReset.removed -gt 0) {
 Write-Host ""
 Write-Host "== export summary =="
 if ($runA.Export.Count -gt 0) {
-    Write-Host ("A exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}" -f $runA.Export.totalMs, $runA.Export.frames, $runA.Export.bitmapMaskFrames, $runA.Export.directFaceFrames)
+    Write-Host ("A exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}, {4}" -f $runA.Export.totalMs, $runA.Export.frames, $runA.Export.bitmapMaskFrames, $runA.Export.directFaceFrames, (Format-ExportMeta -Export $runA.Export))
 }
 if ($runB.Export.Count -gt 0) {
-    Write-Host ("B exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}" -f $runB.Export.totalMs, $runB.Export.frames, $runB.Export.bitmapMaskFrames, $runB.Export.directFaceFrames)
+    Write-Host ("B exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}, {4}" -f $runB.Export.totalMs, $runB.Export.frames, $runB.Export.bitmapMaskFrames, $runB.Export.directFaceFrames, (Format-ExportMeta -Export $runB.Export))
 }
 
 $exportDelta = if (($runA.Export.ContainsKey('totalMs')) -and ($runB.Export.ContainsKey('totalMs'))) { $runB.Export.totalMs - $runA.Export.totalMs } else { $null }

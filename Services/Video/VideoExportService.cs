@@ -376,7 +376,9 @@ public unsafe sealed class VideoExportService
             {
                 Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));
                 outStream->codecpar->codec_tag = 0;
-                outStream->time_base = enc->time_base;
+                outStream->time_base = inStream->time_base.num > 0 && inStream->time_base.den > 0
+                    ? inStream->time_base
+                    : enc->time_base;
                 if (progress != null && hybridEncodeWindow.HasValue)
                 {
                     var window = hybridEncodeWindow.Value;
