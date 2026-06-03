@@ -10,7 +10,8 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    private const bool EnableHybridCopyWindow = true;
+    // 품질 우선: 기본 동작에서는 하이브리드 구간 복사를 사용하지 않음
+    private const bool EnableHybridCopyWindow = false;
 
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
