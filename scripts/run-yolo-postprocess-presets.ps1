@@ -46,6 +46,7 @@ param(
     [int] $EndFrameExclusive = -1,
     [switch] $RequireFrameFilter,
     [string[]] $Presets = @("off", "weak", "gap", "scene", "smooth", "roi", "full"),
+    [switch] $IncludeInteractionPresets,
     [string] $LogRoot = ".tmp/yolo-postprocess-presets",
     [switch] $SkipExport,
     [string] $SummaryFile = "",
@@ -78,10 +79,14 @@ param(
     [int] $MaxExportMsDelta = 0,
     [int] $AllowedShortGapIncrease = 0,
     [int] $AllowedLargeJumpIncrease = 0,
+    [int] $AllowedSceneCarryIncrease = 0,
+    [int] $AllowedPerFaceShortGapIncrease = 0,
     [double] $FalsePositiveScorePenaltyPerFrame = 6.0,
     [double] $MissedDetectScorePenaltyPerFace = 1.5,
     [double] $MissDetectGainScoreRewardPerFace = 0.6,
     [double] $SceneCutCarryPenaltyPerFrame = 4.0,
+    [double] $SceneCarryPenaltyPerFace = 2.0,
+    [double] $PerFaceShortGapPenaltyPerFrame = 2.5,
     [double] $ExportMsPenaltyPerMs = 0.02,
     [double] $ShortGapPenaltyPerFrame = 7.5,
     [double] $LargeJumpPenaltyPerFrame = 7.5,
@@ -297,6 +302,10 @@ function Build-ScenarioDecision {
         [double] $TargetDetect,
         [double] $BaselineSceneCutRemoved,
         [double] $TargetSceneCutRemoved,
+        [double] $BaselineSceneCarryRemoved,
+        [double] $TargetSceneCarryRemoved,
+        [double] $BaselinePerFaceShortGaps,
+        [double] $TargetPerFaceShortGaps,
         [double] $BaselineExportMs,
         [double] $TargetExportMs,
         [double] $BaselineShortGaps,
@@ -309,6 +318,8 @@ function Build-ScenarioDecision {
         [double] $MissedDetectPenaltyPerFace,
         [double] $MissDetectGainRewardPerFace,
         [double] $SceneCutPenaltyPerFrame,
+        [double] $SceneCarryPenaltyPerFace,
+        [double] $PerFaceShortGapPenaltyPerFrame,
         [double] $ExportPenaltyPerMs,
         [double] $ShortGapPenaltyPerFrame,
         [double] $LargeJumpPenaltyPerFrame,
@@ -318,6 +329,8 @@ function Build-ScenarioDecision {
     $weakFaceDelta = $TargetWeakFace - $BaselineWeakFace
     $detectDelta = $TargetDetect - $BaselineDetect
     $sceneCutDelta = $TargetSceneCutRemoved - $BaselineSceneCutRemoved
+    $sceneCarryDelta = $TargetSceneCarryRemoved - $BaselineSceneCarryRemoved
+    $perFaceShortGapDelta = $TargetPerFaceShortGaps - $BaselinePerFaceShortGaps
     $exportDelta = $TargetExportMs - $BaselineExportMs
     $shortGapDelta = $TargetShortGaps - $BaselineShortGaps
     $largeJumpDelta = $TargetLargeJumpGaps - $BaselineLargeJumpGaps
@@ -326,26 +339,32 @@ function Build-ScenarioDecision {
     $passesMissFill = $detectDelta -ge $MinDetectGain
     $passesTransition = -not $TargetReviewRequired
     $passesSceneCutCarry = $sceneCutDelta -le 0
+    $passesSceneCarryRemoved = $sceneCarryDelta -le $AllowedSceneCarryIncrease
+    $passesPerFaceShortGaps = $perFaceShortGapDelta -le $AllowedPerFaceShortGapIncrease
     $passesExport = $exportDelta -le $MaxExportMsDelta
     $passesShortGap = $shortGapDelta -le $AllowedShortGapIncrease
     $passesLargeJump = $largeJumpDelta -le $AllowedLargeJumpIncrease
 
-    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesExport -and $passesShortGap -and $passesLargeJump
+    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesSceneCarryRemoved -and $passesPerFaceShortGaps -and $passesExport -and $passesShortGap -and $passesLargeJump
     $weakPenalty = [Math]::Max(0, $weakFaceDelta) * $FalsePositivePenaltyPerFrame
     $detectLossPenalty = [Math]::Max(0, -$detectDelta) * $MissedDetectPenaltyPerFace
     $detectGainReward = [Math]::Max(0, $detectDelta) * $MissDetectGainRewardPerFace
     $scenePenalty = [Math]::Max(0, $sceneCutDelta) * $SceneCutPenaltyPerFrame
+    $sceneCarryPenalty = [Math]::Max(0, $sceneCarryDelta) * $SceneCarryPenaltyPerFace
+    $perFaceShortGapPenalty = [Math]::Max(0, $perFaceShortGapDelta) * $PerFaceShortGapPenaltyPerFrame
     $exportPenalty = [Math]::Max(0, $exportDelta) * $ExportPenaltyPerMs
     $shortGapPenalty = [Math]::Max(0, $shortGapDelta) * $ShortGapPenaltyPerFrame
     $largeJumpPenalty = [Math]::Max(0, $largeJumpDelta) * $LargeJumpPenaltyPerFrame
     $reviewPenalty = if ($TargetReviewRequired) { $ReviewPenalty } else { 0 }
-    $score = [Math]::Round($weakPenalty + $detectLossPenalty + $scenePenalty + $exportPenalty + $shortGapPenalty + $largeJumpPenalty + $reviewPenalty - $detectGainReward, 4)
+    $score = [Math]::Round($weakPenalty + $detectLossPenalty + $scenePenalty + $sceneCarryPenalty + $perFaceShortGapPenalty + $exportPenalty + $shortGapPenalty + $largeJumpPenalty + $reviewPenalty - $detectGainReward, 4)
     $normalized = [Math]::Round($score, 4)
     $reason = @(
         if (-not $passesFalsePositive) { "weakFaceDelta=+$weakFaceDelta" } else { $null }
         if (-not $passesMissFill) { "detectDelta=$detectDelta" } else { $null }
         if (-not $passesTransition) { "reviewRequired=$TargetReviewRequired" } else { $null }
         if (-not $passesSceneCutCarry) { "sceneCutRemovedDelta=+$sceneCutDelta" } else { $null }
+        if (-not $passesSceneCarryRemoved) { "sceneCarryRemovedDelta=+$sceneCarryDelta" } else { $null }
+        if (-not $passesPerFaceShortGaps) { "perFaceShortGapDelta=+$perFaceShortGapDelta" } else { $null }
         if (-not $passesExport) { "exportMsDelta=+$exportDelta" } else { $null }
         if (-not $passesShortGap) { "shortGapsDelta=+$shortGapDelta" } else { $null }
         if (-not $passesLargeJump) { "largeJumpGapsDelta=+$largeJumpDelta" } else { $null }
@@ -364,6 +383,8 @@ function Build-ScenarioDecision {
         PassMissFill = $passesMissFill
         PassTransition = $passesTransition
         PassSceneCarry = $passesSceneCutCarry
+        PassSceneCarryRemoved = $passesSceneCarryRemoved
+        PassPerFaceShortGaps = $passesPerFaceShortGaps
         PassExport = $passesExport
         PassShortGaps = $passesShortGap
         PassLargeJumpGaps = $passesLargeJump
@@ -371,6 +392,10 @@ function Build-ScenarioDecision {
         DetectLossPenalty = $detectLossPenalty
         DetectGainReward = $detectGainReward
         SceneCutPenalty = $scenePenalty
+        SceneCarryPenalty = $sceneCarryPenalty
+        PerFaceShortGapPenalty = $perFaceShortGapPenalty
+        SceneCarryDelta = $sceneCarryDelta
+        PerFaceShortGapDelta = $perFaceShortGapDelta
         ExportPenalty = $exportPenalty
         ShortGapPenalty = $shortGapPenalty
         LargeJumpPenalty = $largeJumpPenalty
@@ -447,6 +472,46 @@ $presetsByName = @{
         YoloEnableGapFill = $false
         YoloEnableSceneCutCarryCleanup = $false
     }
+    weak-gap = @{
+        YoloEnablePostProcessing = $true
+        YoloEnableWeakIsolatedCleanup = $true
+        YoloEnableGapFill = $true
+        YoloEnableRoiPostProcess = $false
+        YoloEnableSceneCutCarryCleanup = $false
+        YoloEnableTemporalSmoothing = $false
+    }
+    weak-scene = @{
+        YoloEnablePostProcessing = $true
+        YoloEnableWeakIsolatedCleanup = $true
+        YoloEnableSceneCutCarryCleanup = $true
+        YoloEnableRoiPostProcess = $false
+        YoloEnableGapFill = $false
+        YoloEnableTemporalSmoothing = $false
+    }
+    gap-scene = @{
+        YoloEnablePostProcessing = $true
+        YoloEnableGapFill = $true
+        YoloEnableSceneCutCarryCleanup = $true
+        YoloEnableRoiPostProcess = $false
+        YoloEnableWeakIsolatedCleanup = $false
+        YoloEnableTemporalSmoothing = $false
+    }
+    weak-gap-scene = @{
+        YoloEnablePostProcessing = $true
+        YoloEnableWeakIsolatedCleanup = $true
+        YoloEnableGapFill = $true
+        YoloEnableSceneCutCarryCleanup = $true
+        YoloEnableRoiPostProcess = $false
+        YoloEnableTemporalSmoothing = $false
+    }
+    scene-smooth = @{
+        YoloEnablePostProcessing = $true
+        YoloEnableSceneCutCarryCleanup = $true
+        YoloEnableTemporalSmoothing = $true
+        YoloEnableRoiPostProcess = $false
+        YoloEnableWeakIsolatedCleanup = $false
+        YoloEnableGapFill = $false
+    }
     roi = @{
         YoloEnablePostProcessing = $true
         YoloEnableRoiPostProcess = $true
@@ -468,6 +533,16 @@ $presetsByName = @{
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
 
 $normalizedPresets = @($Presets | ForEach-Object { $_.ToLowerInvariant().Trim() })
+if ($IncludeInteractionPresets.IsPresent) {
+    $interactionPresets = @(
+        "weak-gap",
+        "weak-scene",
+        "gap-scene",
+        "weak-gap-scene",
+        "scene-smooth"
+    )
+    $normalizedPresets = @($normalizedPresets + $interactionPresets)
+}
 
 $required = @('off') + $normalizedPresets
 $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
@@ -518,12 +593,18 @@ foreach ($name in $presetsToCompare) {
     $targetDetects = Read-NumericValue -Container $targetSummary -Key 'detects'
     $baselineSceneCutRemoved = Read-NumericValue -Container $baselineSceneReset -Key 'removed'
     $targetSceneCutRemoved = Read-NumericValue -Container $targetSceneReset -Key 'removed'
+    $baselineSceneCarry = Read-JsonValue -Container $baselineRun -Key 'SceneCarry'
+    $targetSceneCarry = Read-JsonValue -Container $targetRun -Key 'SceneCarry'
+    $baselineSceneCarryRemoved = Read-NumericValue -Container $baselineSceneCarry -Key 'removed'
+    $targetSceneCarryRemoved = Read-NumericValue -Container $targetSceneCarry -Key 'removed'
     $baselineExportMs = Read-NumericValue -Container $baselineExport -Key 'totalMs'
     $targetExportMs = Read-NumericValue -Container $targetExport -Key 'totalMs'
     $baselineShortGaps = Read-NumericValue -Container $baselineFinal -Key 'shortGaps'
     $targetShortGaps = Read-NumericValue -Container $targetFinal -Key 'shortGaps'
     $baselineLargeJumpGaps = Read-NumericValue -Container $baselineFinal -Key 'largeJumpGaps'
     $targetLargeJumpGaps = Read-NumericValue -Container $targetFinal -Key 'largeJumpGaps'
+    $baselinePerFaceShortGaps = Read-NumericValue -Container $baselineFinal -Key 'perFaceShortGaps'
+    $targetPerFaceShortGaps = Read-NumericValue -Container $targetFinal -Key 'perFaceShortGaps'
     $baselineReview = Read-BoolValue -Container $baselineFinal -Key 'reviewRequired'
     $targetReview = Read-BoolValue -Container $targetFinal -Key 'reviewRequired'
     $decision = Build-ScenarioDecision `
@@ -533,6 +614,10 @@ foreach ($name in $presetsToCompare) {
         -TargetDetect $targetDetects `
         -BaselineSceneCutRemoved $baselineSceneCutRemoved `
         -TargetSceneCutRemoved $targetSceneCutRemoved `
+        -BaselineSceneCarryRemoved $baselineSceneCarryRemoved `
+        -TargetSceneCarryRemoved $targetSceneCarryRemoved `
+        -BaselinePerFaceShortGaps $baselinePerFaceShortGaps `
+        -TargetPerFaceShortGaps $targetPerFaceShortGaps `
         -BaselineExportMs $baselineExportMs `
         -TargetExportMs $targetExportMs `
         -BaselineShortGaps $baselineShortGaps `
@@ -545,6 +630,8 @@ foreach ($name in $presetsToCompare) {
         -MissedDetectPenaltyPerFace $MissedDetectScorePenaltyPerFace `
         -MissDetectGainRewardPerFace $MissDetectGainScoreRewardPerFace `
         -SceneCutPenaltyPerFrame $SceneCutCarryPenaltyPerFrame `
+        -SceneCarryPenaltyPerFace $SceneCarryPenaltyPerFace `
+        -PerFaceShortGapPenaltyPerFrame $PerFaceShortGapPenaltyPerFrame `
         -ExportPenaltyPerMs $ExportMsPenaltyPerMs `
         -ShortGapPenaltyPerFrame $ShortGapPenaltyPerFrame `
         -LargeJumpPenaltyPerFrame $LargeJumpPenaltyPerFrame `
@@ -559,20 +646,26 @@ foreach ($name in $presetsToCompare) {
         WeakFaceCountDelta = $decision.WeakFaceDelta
         DetectDelta = $decision.DetectDelta
         ShortGapDelta = $decision.ShortGapsDelta
+        PerFaceShortGapDelta = $decision.PerFaceShortGapDelta
         LargeJumpGapsDelta = $decision.LargeJumpGapsDelta
         ShortGapsCountBaseline = $baselineShortGaps
         ShortGapsCountTarget = $targetShortGaps
+        PerFaceShortGapsCountBaseline = $baselinePerFaceShortGaps
+        PerFaceShortGapsCountTarget = $targetPerFaceShortGaps
         LargeJumpGapsCountBaseline = $baselineLargeJumpGaps
         LargeJumpGapsCountTarget = $targetLargeJumpGaps
         RunMsDelta = if ($null -ne $baselineSummary -and $null -ne $targetSummary -and $baselineSummary.ContainsKey('totalMs') -and $targetSummary.ContainsKey('totalMs')) { $targetSummary.totalMs - $baselineSummary.totalMs } else { $null }
         ExportMsDelta = $decision.ExportMsDelta
         ReviewRequired = $targetReview
         SceneCutRemovedDelta = $decision.SceneCutRemovedDelta
+        SceneCarryRemovedDelta = $decision.SceneCarryDelta
         CompositeScore = $decision.CompositeScore
         WeakPenalty = $decision.WeakPenalty
         DetectLossPenalty = $decision.DetectLossPenalty
         DetectGainReward = $decision.DetectGainReward
         SceneCutPenalty = $decision.SceneCutPenalty
+        SceneCarryPenalty = $decision.SceneCarryPenalty
+        PerFaceShortGapPenalty = $decision.PerFaceShortGapPenalty
         ExportPenalty = $decision.ExportPenalty
         ShortGapPenalty = $decision.ShortGapPenalty
         LargeJumpPenalty = $decision.LargeJumpPenalty
@@ -581,6 +674,8 @@ foreach ($name in $presetsToCompare) {
         PassMissFill = $decision.PassMissFill
         PassTransition = $decision.PassTransition
         PassSceneCarry = $decision.PassSceneCarry
+        PassSceneCarryRemoved = $decision.PassSceneCarryRemoved
+        PassPerFaceShortGaps = $decision.PassPerFaceShortGaps
         PassExport = $decision.PassExport
         PassShortGaps = $decision.PassShortGaps
         PassLargeJumpGaps = $decision.PassLargeJumpGaps
@@ -593,23 +688,23 @@ foreach ($name in $presetsToCompare) {
 
 if ($summary.Count -gt 0) {
     $summaryPath = if ([string]::IsNullOrWhiteSpace($SummaryFile)) { Join-Path $LogRoot "compare-summary.json" } else { $SummaryFile }
-    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.ShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.LargeJumpGapsDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
+    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.PerFaceShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.ShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.SceneCarryRemovedDelta }; Descending = $false }, @{ Expression = { [double]$_.LargeJumpGapsDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
     $summarySorted | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host "[PostprocessPresetCompare] summary=$summaryPath"
     Write-Host "[PostprocessPresetCompare] score top3="
     foreach ($entry in ($summarySorted | Select-Object -First 3)) {
-        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
+        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
     }
 
     $passed = @($summarySorted | Where-Object { $_.Passed })
     if ($passed.Count -gt 0) {
         Write-Host "[PostprocessPresetCompare] passed preset count=$($passed.Count)"
         foreach ($entry in $passed) {
-            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) reasons=$($entry.DecisionReasons)"
+            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) reasons=$($entry.DecisionReasons)"
         }
     }
     else {
-        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta)"
+        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, perFaceShortGaps<=+$AllowedPerFaceShortGapIncrease, sceneCarryRemoved<=+$AllowedSceneCarryIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta)"
     }
 }
 
