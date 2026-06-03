@@ -72,7 +72,16 @@ param(
     [int] $YoloMaxInitialFillFrames = 3,
     [int] $YoloDropShortTrackMaxDetections = 1,
     [double] $YoloShortTrackMaxConfidence = 0.18,
-    [double] $YoloLowerFrameTrackMaxConfidence = 0.50
+    [double] $YoloLowerFrameTrackMaxConfidence = 0.50,
+    [int] $AllowedWeakFaceIncrease = 0,
+    [int] $MinDetectGain = 0,
+    [int] $MaxExportMsDelta = 0,
+    [double] $FalsePositiveScorePenaltyPerFrame = 6.0,
+    [double] $MissedDetectScorePenaltyPerFace = 1.5,
+    [double] $MissDetectGainScoreRewardPerFace = 0.6,
+    [double] $SceneCutCarryPenaltyPerFrame = 4.0,
+    [double] $ExportMsPenaltyPerMs = 0.02,
+    [double] $ReviewRequiredPenalty = 999
 )
 
 $ErrorActionPreference = 'Stop'
@@ -212,6 +221,143 @@ function Get-WeakFaceScore {
     return $score
 }
 
+function Read-NumericValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Container,
+        [Parameter(Mandatory = $true)]
+        [string] $Key,
+        [double] $Default = 0
+    )
+
+    $value = Read-JsonValue -Container $Container -Key $Key
+    if ($null -eq $value) {
+        return $Default
+    }
+
+    if ($value -is [int] -or $value -is [long] -or $value -is [float] -or $value -is [double]) {
+        return [double]$value
+    }
+
+    if ($value -is [bool]) {
+        return [double]($value ? 1 : 0)
+    }
+
+    try {
+        return [double]$value
+    }
+    catch {
+        return $Default
+    }
+}
+
+function Read-BoolValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Container,
+        [Parameter(Mandatory = $true)]
+        [string] $Key,
+        [bool] $Default = $false
+    )
+
+    $value = Read-JsonValue -Container $Container -Key $Key
+    if ($null -eq $value) {
+        return $Default
+    }
+
+    if ($value -is [bool]) {
+        return $value
+    }
+
+    $text = "$value"
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $Default
+    }
+
+    if ($text -match '^(true|1)$') {
+        return $true
+    }
+
+    if ($text -match '^(false|0)$') {
+        return $false
+    }
+
+    return $Default
+}
+
+function Build-ScenarioDecision {
+    param(
+        [double] $BaselineWeakFace,
+        [double] $TargetWeakFace,
+        [double] $BaselineDetect,
+        [double] $TargetDetect,
+        [double] $BaselineSceneCutRemoved,
+        [double] $TargetSceneCutRemoved,
+        [double] $BaselineExportMs,
+        [double] $TargetExportMs,
+    [bool] $BaselineReviewRequired,
+        [bool] $TargetReviewRequired,
+        [double] $FalsePositivePenaltyPerFrame,
+        [double] $MissedDetectPenaltyPerFace,
+        [double] $MissDetectGainRewardPerFace,
+        [double] $SceneCutPenaltyPerFrame,
+        [double] $ExportPenaltyPerMs,
+        [double] $ReviewPenalty
+    )
+
+    $weakFaceDelta = $TargetWeakFace - $BaselineWeakFace
+    $detectDelta = $TargetDetect - $BaselineDetect
+    $sceneCutDelta = $TargetSceneCutRemoved - $BaselineSceneCutRemoved
+    $exportDelta = $TargetExportMs - $BaselineExportMs
+
+    $passesFalsePositive = $weakFaceDelta -le $AllowedWeakFaceIncrease
+    $passesMissFill = $detectDelta -ge $MinDetectGain
+    $passesTransition = -not $TargetReviewRequired
+    $passesSceneCutCarry = $sceneCutDelta -le 0
+    $passesExport = $exportDelta -le $MaxExportMsDelta
+
+    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesExport
+    $weakPenalty = [Math]::Max(0, $weakFaceDelta) * $FalsePositivePenaltyPerFrame
+    $detectLossPenalty = [Math]::Max(0, -$detectDelta) * $MissedDetectPenaltyPerFace
+    $detectGainReward = [Math]::Max(0, $detectDelta) * $MissDetectGainRewardPerFace
+    $scenePenalty = [Math]::Max(0, $sceneCutDelta) * $SceneCutPenaltyPerFrame
+    $exportPenalty = [Math]::Max(0, $exportDelta) * $ExportPenaltyPerMs
+    $reviewPenalty = if ($TargetReviewRequired) { $ReviewPenalty } else { 0 }
+    $score = [Math]::Round($weakPenalty + $detectLossPenalty + $scenePenalty + $exportPenalty + $reviewPenalty - $detectGainReward, 4)
+    $normalized = [Math]::Round($score, 4)
+    $reason = @(
+        if (-not $passesFalsePositive) { "weakFaceDelta=+$weakFaceDelta" } else { $null }
+        if (-not $passesMissFill) { "detectDelta=$detectDelta" } else { $null }
+        if (-not $passesTransition) { "reviewRequired=$TargetReviewRequired" } else { $null }
+        if (-not $passesSceneCutCarry) { "sceneCutRemovedDelta=+$sceneCutDelta" } else { $null }
+        if (-not $passesExport) { "exportMsDelta=+$exportDelta" } else { $null }
+    ) | Where-Object { $null -ne $_ }
+
+    return [pscustomobject]@{
+        WeakFaceDelta = $weakFaceDelta
+        DetectDelta = $detectDelta
+        SceneCutRemovedDelta = $sceneCutDelta
+        ExportMsDelta = $exportDelta
+        BaselineReviewRequired = $BaselineReviewRequired
+        TargetReviewRequired = $TargetReviewRequired
+        PassFalsePositive = $passesFalsePositive
+        PassMissFill = $passesMissFill
+        PassTransition = $passesTransition
+        PassSceneCarry = $passesSceneCutCarry
+        PassExport = $passesExport
+        WeakPenalty = $weakPenalty
+        DetectLossPenalty = $detectLossPenalty
+        DetectGainReward = $detectGainReward
+        SceneCutPenalty = $scenePenalty
+        ExportPenalty = $exportPenalty
+        ReviewPenalty = $reviewPenalty
+        CompositeScore = $score
+        NormalizedScore = $normalized
+        Passed = $passed
+        Reasons = if ($reason.Count -eq 0) { "pass" } else { $reason -join ";" }
+    }
+}
+
 function Read-JsonValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -331,17 +477,71 @@ foreach ($name in $presetsToCompare) {
 
     $resultPath = Join-Path $LogRoot ("compare-off-vs-${normalized}.json")
     $compare = Invoke-Compare -BaselineLog $baselineLog -TargetLog $targetLog -PresetName $name -ResultPath $resultPath
+    $baselineRun = Read-JsonValue -Container $compare -Key 'RunA'
+    $targetRun = Read-JsonValue -Container $compare -Key 'RunB'
+    $baselineSummary = Read-JsonValue -Container $baselineRun -Key 'RunSummary'
+    $targetSummary = Read-JsonValue -Container $targetRun -Key 'RunSummary'
+    $baselineExport = Read-JsonValue -Container $baselineRun -Key 'Export'
+    $targetExport = Read-JsonValue -Container $targetRun -Key 'Export'
+    $baselineSceneReset = Read-JsonValue -Container $baselineRun -Key 'SceneCutReset'
+    $targetSceneReset = Read-JsonValue -Container $targetRun -Key 'SceneCutReset'
+    $baselineFinal = Read-JsonValue -Container $baselineRun -Key 'FinalSummary'
+    $targetFinal = Read-JsonValue -Container $targetRun -Key 'FinalSummary'
+
+    $baselineWeakFace = Get-WeakFaceScore -FinalSummary $baselineFinal
+    $targetWeakFace = Get-WeakFaceScore -FinalSummary $targetFinal
+    $baselineDetects = Read-NumericValue -Container $baselineSummary -Key 'detects'
+    $targetDetects = Read-NumericValue -Container $targetSummary -Key 'detects'
+    $baselineSceneCutRemoved = Read-NumericValue -Container $baselineSceneReset -Key 'removed'
+    $targetSceneCutRemoved = Read-NumericValue -Container $targetSceneReset -Key 'removed'
+    $baselineExportMs = Read-NumericValue -Container $baselineExport -Key 'totalMs'
+    $targetExportMs = Read-NumericValue -Container $targetExport -Key 'totalMs'
+    $baselineReview = Read-BoolValue -Container $baselineFinal -Key 'reviewRequired'
+    $targetReview = Read-BoolValue -Container $targetFinal -Key 'reviewRequired'
+    $decision = Build-ScenarioDecision `
+        -BaselineWeakFace $baselineWeakFace `
+        -TargetWeakFace $targetWeakFace `
+        -BaselineDetect $baselineDetects `
+        -TargetDetect $targetDetects `
+        -BaselineSceneCutRemoved $baselineSceneCutRemoved `
+        -TargetSceneCutRemoved $targetSceneCutRemoved `
+        -BaselineExportMs $baselineExportMs `
+        -TargetExportMs $targetExportMs `
+        -BaselineReviewRequired $baselineReview `
+        -TargetReviewRequired $targetReview `
+        -FalsePositivePenaltyPerFrame $FalsePositiveScorePenaltyPerFrame `
+        -MissedDetectPenaltyPerFace $MissedDetectScorePenaltyPerFace `
+        -MissDetectGainRewardPerFace $MissDetectGainScoreRewardPerFace `
+        -SceneCutPenaltyPerFrame $SceneCutCarryPenaltyPerFrame `
+        -ExportPenaltyPerMs $ExportMsPenaltyPerMs `
+        -ReviewPenalty $ReviewRequiredPenalty
+
     $summary.Add([pscustomobject]@{
         Preset = $normalized
         BaselineRunId = Read-JsonValue -Container $compare.RunA -Key 'RunId'
         TargetRunId = Read-JsonValue -Container $compare.RunB -Key 'RunId'
-        WeakFaceCountBaseline = Get-WeakFaceScore -FinalSummary (Read-JsonValue -Container $compare.RunA -Key 'FinalSummary')
-        WeakFaceCountTarget = Get-WeakFaceScore -FinalSummary (Read-JsonValue -Container $compare.RunB -Key 'FinalSummary')
-        WeakFaceCountDelta = (Get-WeakFaceScore -FinalSummary (Read-JsonValue -Container $compare.RunB -Key 'FinalSummary')) - (Get-WeakFaceScore -FinalSummary (Read-JsonValue -Container $compare.RunA -Key 'FinalSummary'))
-        DetectDelta = if ($null -ne (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunA -Key 'RunSummary') -Key 'detects') -and $null -ne (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'RunSummary') -Key 'detects')) { (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'RunSummary') -Key 'detects') - (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunA -Key 'RunSummary') -Key 'detects') } else { $null }
-        RunMsDelta = if ($null -ne (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunA -Key 'RunSummary') -Key 'totalMs') -and $null -ne (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'RunSummary') -Key 'totalMs')) { (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'RunSummary') -Key 'totalMs') - (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunA -Key 'RunSummary') -Key 'totalMs') } else { $null }
-        ExportMsDelta = if ($null -ne (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunA -Key 'Export') -Key 'totalMs') -and $null -ne (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'Export') -Key 'totalMs')) { (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'Export') -Key 'totalMs') - (Read-JsonValue -Container (Read-JsonValue -Container $compare.RunA -Key 'Export') -Key 'totalMs') } else { $null }
-        ReviewRequired = Read-JsonValue -Container (Read-JsonValue -Container $compare.RunB -Key 'FinalSummary') -Key 'reviewRequired'
+        WeakFaceCountBaseline = $baselineWeakFace
+        WeakFaceCountTarget = $targetWeakFace
+        WeakFaceCountDelta = $decision.WeakFaceDelta
+        DetectDelta = $decision.DetectDelta
+        RunMsDelta = if ($null -ne $baselineSummary -and $null -ne $targetSummary -and $baselineSummary.ContainsKey('totalMs') -and $targetSummary.ContainsKey('totalMs')) { $targetSummary.totalMs - $baselineSummary.totalMs } else { $null }
+        ExportMsDelta = $decision.ExportMsDelta
+        ReviewRequired = $targetReview
+        SceneCutRemovedDelta = $decision.SceneCutRemovedDelta
+        CompositeScore = $decision.CompositeScore
+        WeakPenalty = $decision.WeakPenalty
+        DetectLossPenalty = $decision.DetectLossPenalty
+        DetectGainReward = $decision.DetectGainReward
+        SceneCutPenalty = $decision.SceneCutPenalty
+        ExportPenalty = $decision.ExportPenalty
+        ReviewPenalty = $decision.ReviewPenalty
+        PassFalsePositive = $decision.PassFalsePositive
+        PassMissFill = $decision.PassMissFill
+        PassTransition = $decision.PassTransition
+        PassSceneCarry = $decision.PassSceneCarry
+        PassExport = $decision.PassExport
+        Passed = $decision.Passed
+        DecisionReasons = $decision.Reasons
         ResultPath = $resultPath
     })
     Write-Host "[PostprocessPresetCompare] result=$resultPath"
@@ -349,8 +549,24 @@ foreach ($name in $presetsToCompare) {
 
 if ($summary.Count -gt 0) {
     $summaryPath = if ([string]::IsNullOrWhiteSpace($SummaryFile)) { Join-Path $LogRoot "compare-summary.json" } else { $SummaryFile }
-    $summary | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
+    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
+    $summarySorted | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host "[PostprocessPresetCompare] summary=$summaryPath"
+    Write-Host "[PostprocessPresetCompare] score top3="
+    foreach ($entry in ($summarySorted | Select-Object -First 3)) {
+        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
+    }
+
+    $passed = @($summarySorted | Where-Object { $_.Passed })
+    if ($passed.Count -gt 0) {
+        Write-Host "[PostprocessPresetCompare] passed preset count=$($passed.Count)"
+        foreach ($entry in $passed) {
+            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) reasons=$($entry.DecisionReasons)"
+        }
+    }
+    else {
+        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta)"
+    }
 }
 
 Write-Host "[PostprocessPresetCompare] done"
