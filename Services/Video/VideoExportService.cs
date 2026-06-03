@@ -41,6 +41,7 @@ public unsafe sealed class VideoExportService
                 progress,
                 cancellationToken,
                 runId,
+                exportMode: "primary",
                 forceSoftwareEncoder: false,
                 allowHybridCopy: EnableHybridCopyWindow,
                 forceSafeEncoding: false,
@@ -49,7 +50,7 @@ public unsafe sealed class VideoExportService
         }
         catch (InvalidOperationException ex) when (IsInvalidArgumentError(ex))
         {
-            Debug.WriteLine($"[Export] Invalid argument 발생으로 소프트웨어 재시도합니다. {ex.Message}");
+            Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: Invalid argument 발생. {ex.Message}");
             try
             {
                 ExportInternal(
@@ -59,6 +60,7 @@ public unsafe sealed class VideoExportService
                     progress,
                     cancellationToken,
                     runId,
+                    exportMode: "fallback-safe",
                     forceSoftwareEncoder: true,
                     allowHybridCopy: false,
                     forceSafeEncoding: true,
@@ -67,7 +69,7 @@ public unsafe sealed class VideoExportService
             }
             catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
             {
-                Debug.WriteLine($"[Export] 안전 모드에서도 실패해 H.264 소프트웨어 경로로 재시도합니다. {nestedEx.Message}");
+                Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
                 ExportInternal(
                     inputPath,
                     outputPath,
@@ -75,6 +77,7 @@ public unsafe sealed class VideoExportService
                     progress,
                     cancellationToken,
                     runId,
+                    exportMode: "fallback-h264",
                     forceSoftwareEncoder: true,
                     allowHybridCopy: false,
                     forceSafeEncoding: true,
@@ -91,6 +94,7 @@ public unsafe sealed class VideoExportService
         IProgress<ExportProgress>? progress,
         System.Threading.CancellationToken cancellationToken,
         string? runId,
+        string exportMode,
         bool forceSoftwareEncoder,
         bool allowHybridCopy,
         bool forceSafeEncoding,
@@ -227,7 +231,14 @@ public unsafe sealed class VideoExportService
                         0,
                         0,
                         swTotal.ElapsedMilliseconds,
-                        runId);
+                        runId,
+                        exportMode,
+                        HybridCopyAttempted: false,
+                        HybridCopyUsed: false,
+                        ForceSoftwareEncoder: forceSoftwareEncoder,
+                        ForceSafeEncoding: forceSafeEncoding,
+                        ForceAudioTranscode: forceAudioTranscode,
+                        ForceH264Fallback: forceH264Fallback);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     return;
                 }
@@ -745,7 +756,14 @@ public unsafe sealed class VideoExportService
                 swsToEncMs,
                 encodeMs,
                 swTotal.ElapsedMilliseconds,
-                runId);
+                runId,
+                exportMode,
+                hybridCopyAttempted,
+                useHybridCopyWindow,
+                forceSoftwareEncoder,
+                forceSafeEncoding,
+                forceAudioTranscode,
+                forceH264Fallback);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
