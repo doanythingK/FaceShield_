@@ -597,30 +597,14 @@ public unsafe sealed class VideoExportService
                 }
                 inputVideoPacketCount++;
 
-                int packetFrameIndex;
-                if (useHybridCopyWindow)
-                {
-                    // 하이브리드 구간도 프레임 경계 정합을 위해 타임스탬프 기반 인덱스를 우선 사용한다.
-                    packetFrameIndex = ResolveFrameIndexFromPacket(
-                        pkt,
-                        inStream->time_base,
-                        sourceFps,
-                        packetFrameFallback,
-                        totalFrames);
-                    if (packetFrameIndex < packetFrameFallback)
-                        packetFrameIndex = packetFrameFallback;
-                }
-                else
-                {
-                    packetFrameIndex = ResolveFrameIndexFromPacket(
-                        pkt,
-                        inStream->time_base,
-                        sourceFps,
-                        packetFrameFallback,
-                        totalFrames);
-                    if (packetFrameIndex < packetFrameFallback)
-                        packetFrameIndex = packetFrameFallback;
-                }
+                int packetFrameIndex = ResolveFrameIndexFromPacket(
+                    pkt,
+                    inStream->time_base,
+                    sourceFps,
+                    packetFrameFallback,
+                    totalFrames);
+                if (packetFrameIndex < packetFrameFallback)
+                    packetFrameIndex = packetFrameFallback;
                 packetFrameFallback = packetFrameIndex + 1;
                 if (packetFrameIndex < ExportSampleWindowFrames)
                     sampleSourceVideoPacketCount++;
