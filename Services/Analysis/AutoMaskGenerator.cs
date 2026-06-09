@@ -1626,7 +1626,19 @@ namespace FaceShield.Services.Analysis
                 FinalMaskReviewRequired = finalSummary.FinalReviewRequired,
                 FinalMaskReviewReasons = string.IsNullOrWhiteSpace(finalSummary.FinalReviewReasons)
                     ? "none"
-                    : finalSummary.FinalReviewReasons
+                    : finalSummary.FinalReviewReasons,
+                SampleWindowFrames = finalSummary.SampleWindowFrames,
+                SampleFrameCount = finalSummary.SampleFrameCount,
+                SampleRowCount = finalSummary.SampleRowCount,
+                SampleShortGapCount = finalSummary.SampleShortGapCount,
+                SamplePerFaceShortGapCount = finalSummary.SamplePerFaceShortGapCount,
+                SampleIsolatedFrameCount = finalSummary.SampleIsolatedFrameCount,
+                SampleLargeJumpGapCount = finalSummary.SampleLargeJumpGapCount,
+                SampleReviewRequired = finalSummary.SampleReviewRequired,
+                SampleReviewReasons = string.IsNullOrWhiteSpace(finalSummary.SampleReviewReasons)
+                    ? "none"
+                    : finalSummary.SampleReviewReasons,
+                SampleProtectedSceneCarryFrameCount = finalSummary.SampleProtectedSceneCarryFrameCount
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
             LogAutoMaskQualityGate(LastRunSummary);
@@ -1645,12 +1657,28 @@ namespace FaceShield.Services.Analysis
             if (summary.FinalProtectedSceneCarryFrameCount > 0)
                 riskScore++;
 
-            int sampleWindowFrames = summary.SourceFps > 0
-                ? Math.Min(summary.TotalFrames, (int)Math.Round(summary.SourceFps * 30.0))
-                : Math.Min(summary.TotalFrames, 900);
+            int sampleWindowFrames = Math.Max(
+                0,
+                summary.SampleWindowFrames > 0
+                    ? summary.SampleWindowFrames
+                    : (summary.SourceFps > 0
+                        ? Math.Min(summary.TotalFrames, (int)Math.Round(summary.SourceFps * 30.0))
+                        : Math.Min(summary.TotalFrames, 900)));
             string riskLabel = riskScore >= 3
                 ? "high"
                 : riskScore >= 1
+                    ? "medium"
+                    : "low";
+            int sampleRiskScore = 0;
+            if (summary.SampleReviewRequired)
+                sampleRiskScore++;
+            if (summary.SampleShortGapCount > 0 || summary.SamplePerFaceShortGapCount > 0 || summary.SampleLargeJumpGapCount > 0)
+                sampleRiskScore++;
+            if (summary.SampleProtectedSceneCarryFrameCount > 0)
+                sampleRiskScore++;
+            string sampleRiskLabel = sampleRiskScore >= 3
+                ? "high"
+                : sampleRiskScore >= 1
                     ? "medium"
                     : "low";
             double detectionFps = summary.ProcessedFrames > 0 && summary.TotalMs > 0
@@ -1659,6 +1687,8 @@ namespace FaceShield.Services.Analysis
 
             System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskQualityGate] runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, sampleWindowFrames={sampleWindowFrames}");
+            System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskQualityGate] sample runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={sampleRiskLabel}, sampleWindow={summary.SampleWindowFrames}, sampleFrames={summary.SampleFrameCount}, sampleRows={summary.SampleRowCount}, shortGaps={summary.SampleShortGapCount}, perFaceShortGaps={summary.SamplePerFaceShortGapCount}, isolated={summary.SampleIsolatedFrameCount}, largeJumps={summary.SampleLargeJumpGapCount}, protectedCarry={summary.SampleProtectedSceneCarryFrameCount}, reviewRequired={summary.SampleReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.SampleReviewReasons}");
         }
 
         private void SetLastRunSummary(AutoMaskRunSummary summary)

@@ -555,7 +555,16 @@ namespace FaceShield.Services.Analysis
                     sceneCutCarryRemovedCount,
                     sceneCutProtectedFrameCount > 0
                         ? sceneCutProtectedFrameCount
-                        : protectedSceneCarryFrames.Length);
+                        : protectedSceneCarryFrames.Length,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false,
+                    noneReviewReasons,
+                    0);
             }
 
             var frames = entries.Select(static x => x.Key).ToArray();
@@ -896,7 +905,17 @@ namespace FaceShield.Services.Analysis
                 sceneCutCarryRemovedCount,
                 sceneCutProtectedFrameCount > 0
                     ? sceneCutProtectedFrameCount
-                    : protectedSceneCarryFrames.Length);
+                    : protectedSceneCarryFrames.Length,
+                sampleWindowFrames,
+                sampleFrameCount,
+                sampleRows,
+                sampleShortGapCount,
+                samplePerFaceShortGapRanges.Count,
+                sampleIsolatedFrames,
+                sampleLargeJumpGapCount,
+                sampleReviewReasons.Count > 0,
+                sampleReviewReason,
+                sampleProtectedCarryFrames);
         }
 
         private static IReadOnlyList<string> BuildFinalMaskReviewReasons(
@@ -1258,7 +1277,17 @@ namespace FaceShield.Services.Analysis
         int FinalSceneCutPostStrongProbePairCount,
         int FinalSceneCutCarryPairCount,
         int FinalSceneCutCarryRemovedCount,
-        int FinalSceneCutProtectedFrameCount)
+        int FinalSceneCutProtectedFrameCount,
+        int SampleWindowFrames,
+        int SampleFrameCount,
+        int SampleRowCount,
+        int SampleShortGapCount,
+        int SamplePerFaceShortGapCount,
+        int SampleIsolatedFrameCount,
+        int SampleLargeJumpGapCount,
+        bool SampleReviewRequired,
+        string SampleReviewReasons,
+        int SampleProtectedSceneCarryFrameCount)
     {
         public static AutoMaskPostProcessFinalSummary Empty { get; } = new(
             0,
@@ -1275,6 +1304,14 @@ namespace FaceShield.Services.Analysis
             0,
             0,
             0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            false,
+            "none",
             0);
     }
 }
