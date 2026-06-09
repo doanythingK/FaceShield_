@@ -17,9 +17,6 @@ public unsafe sealed class VideoExportService
     private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
     private const int MaxHybridCopyModeTransitionsBeforeFallback = 1;
     private const int ExportSampleWindowFrames = 900;
-    private const int MaxAcceptableSampleWindowFrameShortfall = 1;
-    private const int MaxAcceptableHybridEncodeWindowFrameShortfall = 1;
-
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
@@ -1022,7 +1019,7 @@ public unsafe sealed class VideoExportService
             int outputPacketDropCount = useHybridCopyWindow
                 ? Math.Max(0, inputVideoPacketCount - outputVideoPacketCount)
                 : 0;
-            if (allowPacketDropRetry && useHybridCopyWindow && sampleWindowFrameShortfall > MaxAcceptableSampleWindowFrameShortfall)
+            if (allowPacketDropRetry && useHybridCopyWindow && sampleWindowFrameShortfall > 0)
             {
                 shouldRetryWithFullEncode = true;
                 packetDropFallbackReason =
@@ -1034,7 +1031,7 @@ public unsafe sealed class VideoExportService
                 && useHybridCopyWindow
                 && expectedHybridWindowEncodedFrames > 0)
             {
-                if (encodedWindowFrameShortfall > MaxAcceptableHybridEncodeWindowFrameShortfall)
+                if (encodedWindowFrameShortfall > 0)
                 {
                     shouldRetryWithFullEncode = true;
                     packetDropFallbackReason =
@@ -1045,15 +1042,11 @@ public unsafe sealed class VideoExportService
             }
             if (allowPacketDropRetry && useHybridCopyWindow && inputVideoPacketCount > 0 && outputPacketDropCount > 0)
             {
-                int maxAcceptableOutputPacketLoss = Math.Max(1, (int)Math.Ceiling(inputVideoPacketCount * 0.5));
-                if (outputPacketDropCount >= maxAcceptableOutputPacketLoss)
-                {
-                    shouldRetryWithFullEncode = true;
-                    packetDropFallbackReason =
-                        string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                            ? $"hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}"
-                            : $"{packetDropFallbackReason}; hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}";
-                }
+                shouldRetryWithFullEncode = true;
+                packetDropFallbackReason =
+                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                        ? $"hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}"
+                        : $"{packetDropFallbackReason}; hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}";
             }
                 if (droppedVideoPackets > 0)
                 {
@@ -1960,7 +1953,9 @@ public unsafe sealed class VideoExportService
         if (packet == null || sourceFps <= 0.0)
             return fallback;
 
-        long ts = packet->pts != ffmpeg.AV_NOPTS_VALUE ? packet->pts : packet->dts;
+        long ts = packet->dts != ffmpeg.AV_NOPTS_VALUE
+            ? packet->dts
+            : packet->pts;
         if (ts == ffmpeg.AV_NOPTS_VALUE)
             return fallback;
 
