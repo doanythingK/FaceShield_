@@ -331,7 +331,7 @@ function Read-RunInfo {
             continue
         }
 
-        if ($line -match '^\[ExportRunSummary\] runId=([^,]+), mode=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+), hybridCopyAttempted=(True|False|true|false), hybridCopyUsed=(True|False|true|false), forceSoftwareEncoder=(True|False|true|false), forceSafeEncoding=(True|False|true|false), forceAudioTranscode=(True|False|true|false), forceH264Fallback=(True|False|true|false)') {
+        if ($line -match '^\[ExportRunSummary\] runId=([^,]+), mode=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+), hybridCopyAttempted=(True|False|true|false), hybridCopyUsed=(True|False|true|false), forceSoftwareEncoder=(True|False|true|false), forceSafeEncoding=(True|False|true|false), forceAudioTranscode=(True|False|true|false), forceH264Fallback=(True|False|true|false)(?:, hybridWindowExpectedEncodedFrames=(\d+), hybridWindowEncodedFrames=(\d+), hybridWindowFrameShortfall=(\d+), sampleWindowSourceFrames=(\d+), sampleWindowProducedFrames=(\d+), sampleWindowFrameShortfall=(\d+))?') {
             if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
             $exportSummary = [ordered]@{
                 runId = $matches[1].Trim();
@@ -350,6 +350,12 @@ function Read-RunInfo {
                 forceSafeEncoding = [bool]::Parse($matches[14]);
                 forceAudioTranscode = [bool]::Parse($matches[15]);
                 forceH264Fallback = [bool]::Parse($matches[16]);
+                hybridWindowExpectedEncodedFrames = if ($null -ne $matches[17]) { [int]$matches[17] } else { 0 };
+                hybridWindowEncodedFrames = if ($null -ne $matches[18]) { [int]$matches[18] } else { 0 };
+                hybridWindowFrameShortfall = if ($null -ne $matches[19]) { [int]$matches[19] } else { 0 };
+                sampleWindowSourceFrames = if ($null -ne $matches[20]) { [int]$matches[20] } else { 0 };
+                sampleWindowProducedFrames = if ($null -ne $matches[21]) { [int]$matches[21] } else { 0 };
+                sampleWindowFrameShortfall = if ($null -ne $matches[22]) { [int]$matches[22] } else { 0 };
             }
             continue
         }
@@ -469,6 +475,26 @@ function Format-ExportMeta {
     )
 }
 
+function Format-ExportIntegrity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Export
+    )
+
+    if (-not $Export.ContainsKey('hybridWindowExpectedEncodedFrames')) {
+        return "integrity=n/a"
+    }
+
+    return "hybridWindow={0}-{1} shortfall={2}, sampleWindow={3}-{4} shortfall={5}" -f @(
+        $Export.hybridWindowExpectedEncodedFrames,
+        $Export.hybridWindowEncodedFrames,
+        $Export.hybridWindowFrameShortfall,
+        $Export.sampleWindowSourceFrames,
+        $Export.sampleWindowProducedFrames,
+        $Export.sampleWindowFrameShortfall
+    )
+}
+
 $runA = Read-RunInfo -Path $RunALog -TargetRunId $RunAId
 $runB = Read-RunInfo -Path $RunBLog -TargetRunId $RunBId
 
@@ -576,10 +602,10 @@ if ($runA.SceneCutReset.removed -gt 0 -or $runB.SceneCutReset.removed -gt 0) {
 Write-Host ""
 Write-Host "== export summary =="
 if ($runA.Export.Count -gt 0) {
-    Write-Host ("A exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}, {4}" -f $runA.Export.totalMs, $runA.Export.frames, $runA.Export.bitmapMaskFrames, $runA.Export.directFaceFrames, (Format-ExportMeta -Export $runA.Export))
+    Write-Host ("A exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}, {4}, {5}" -f $runA.Export.totalMs, $runA.Export.frames, $runA.Export.bitmapMaskFrames, $runA.Export.directFaceFrames, (Format-ExportMeta -Export $runA.Export), (Format-ExportIntegrity -Export $runA.Export))
 }
 if ($runB.Export.Count -gt 0) {
-    Write-Host ("B exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}, {4}" -f $runB.Export.totalMs, $runB.Export.frames, $runB.Export.bitmapMaskFrames, $runB.Export.directFaceFrames, (Format-ExportMeta -Export $runB.Export))
+    Write-Host ("B exportMs={0}, maskFrames={1}, bitmapMasks={2}, directFaces={3}, {4}, {5}" -f $runB.Export.totalMs, $runB.Export.frames, $runB.Export.bitmapMaskFrames, $runB.Export.directFaceFrames, (Format-ExportMeta -Export $runB.Export), (Format-ExportIntegrity -Export $runB.Export))
 }
 
 $exportDelta = if (($runA.Export.ContainsKey('totalMs')) -and ($runB.Export.ContainsKey('totalMs'))) { $runB.Export.totalMs - $runA.Export.totalMs } else { $null }
@@ -605,6 +631,10 @@ $exportDeltaForHint = $bExport - $aExport
 $sceneCutDelta = $runB.SceneCutReset.removed - $runA.SceneCutReset.removed
 $shortGapDelta = (if ($runB.FinalSummary.ContainsKey('shortGaps')) { [int]$runB.FinalSummary.shortGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('shortGaps')) { [int]$runA.FinalSummary.shortGaps } else { 0 })
 $largeJumpGapDelta = (if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runB.FinalSummary.largeJumpGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runA.FinalSummary.largeJumpGaps } else { 0 })
+$runAHybridWindowShortfall = if ($runA.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runA.Export.hybridWindowFrameShortfall } else { 0 }
+$runBHybridWindowShortfall = if ($runB.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runB.Export.hybridWindowFrameShortfall } else { 0 }
+$runASampleWindowShortfall = if ($runA.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runA.Export.sampleWindowFrameShortfall } else { 0 }
+$runBSampleWindowShortfall = if ($runB.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runB.Export.sampleWindowFrameShortfall } else { 0 }
 
 Write-Host ("오탐 후보 proxy: A={0} B={1} Δ={2}" -f $aWeakScore, $bWeakScore, $weakDelta)
 Write-Host ("미탐 보완 proxy (track lost-filled): A={0} B={1} Δ={2}" -f $aTrackFilled, $bTrackFilled, $trackDelta)
@@ -612,4 +642,6 @@ Write-Host ("미탐 보완 proxy (interpolated): A={0} B={1} Δ={2}" -f $aInterp
 Write-Host ("장면전환 carry reset 제거량: A={0} B={1} Δ={2}" -f $runA.SceneCutReset.removed, $runB.SceneCutReset.removed, $sceneCutDelta)
 Write-Host ("단기 미탐 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('shortGaps')) { $runA.FinalSummary.shortGaps } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('shortGaps')) { $runB.FinalSummary.shortGaps } else { 0 }), $shortGapDelta)
 Write-Host ("큰 점프 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { $runA.FinalSummary.largeJumpGaps } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { $runB.FinalSummary.largeJumpGaps } else { 0 }), $largeJumpGapDelta)
+Write-Host ("하이브리드 윈도우 누락: A={0} B={1} Δ={2}" -f $runAHybridWindowShortfall, $runBHybridWindowShortfall, ($runBHybridWindowShortfall - $runAHybridWindowShortfall))
+Write-Host ("샘플 구간 누락: A={0} B={1} Δ={2}" -f $runASampleWindowShortfall, $runBSampleWindowShortfall, ($runBSampleWindowShortfall - $runASampleWindowShortfall))
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
