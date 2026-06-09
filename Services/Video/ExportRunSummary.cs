@@ -13,6 +13,7 @@ public sealed record ExportRunSummary(
     string ExportMode,
     bool HybridCopyAttempted,
     bool HybridCopyUsed,
+    string? HybridCopyFallbackReason,
     bool ForceSoftwareEncoder,
     bool ForceSafeEncoding,
     bool ForceAudioTranscode,
@@ -21,7 +22,7 @@ public sealed record ExportRunSummary(
     public string ToLogLine()
     {
         string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
-        return
-            $"[ExportRunSummary] runId={run}, mode={ExportMode}, frames={Frames}, bitmapMaskFrames={BitmapMaskFrames}, directFaceFrames={DirectFaceFrames}, swsToBgraMs={SwsToBgraMs}, maskMs={MaskMs}, swsToEncMs={SwsToEncMs}, encodeMs={EncodeMs}, totalMs={TotalMs}, hybridCopyAttempted={HybridCopyAttempted.ToString().ToLowerInvariant()}, hybridCopyUsed={HybridCopyUsed.ToString().ToLowerInvariant()}, forceSoftwareEncoder={ForceSoftwareEncoder.ToString().ToLowerInvariant()}, forceSafeEncoding={ForceSafeEncoding.ToString().ToLowerInvariant()}, forceAudioTranscode={ForceAudioTranscode.ToString().ToLowerInvariant()}, forceH264Fallback={ForceH264Fallback.ToString().ToLowerInvariant()}";
+            return
+            $"[ExportRunSummary] runId={run}, mode={ExportMode}, frames={Frames}, bitmapMaskFrames={BitmapMaskFrames}, directFaceFrames={DirectFaceFrames}, swsToBgraMs={SwsToBgraMs}, maskMs={MaskMs}, swsToEncMs={SwsToEncMs}, encodeMs={EncodeMs}, totalMs={TotalMs}, hybridCopyAttempted={HybridCopyAttempted.ToString().ToLowerInvariant()}, hybridCopyUsed={HybridCopyUsed.ToString().ToLowerInvariant()}, hybridCopyFallbackReason={HybridCopyFallbackReason ?? \"\"}, forceSoftwareEncoder={ForceSoftwareEncoder.ToString().ToLowerInvariant()}, forceSafeEncoding={ForceSafeEncoding.ToString().ToLowerInvariant()}, forceAudioTranscode={ForceAudioTranscode.ToString().ToLowerInvariant()}, forceH264Fallback={ForceH264Fallback.ToString().ToLowerInvariant()}";
     }
 }

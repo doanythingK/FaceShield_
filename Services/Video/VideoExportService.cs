@@ -209,6 +209,7 @@ public unsafe sealed class VideoExportService
             int blurRangeCursor = 0;
             (int Start, int EndExclusive)? hybridEncodeWindow = null;
             bool hybridCopyAttempted = false;
+            string? hybridCopyFallbackReason = null;
             if (_maskProvider is FrameMaskProvider frameMaskProvider)
             {
                 blurFrameSet = BuildBlurFrameSet(frameMaskProvider, totalFrames);
@@ -236,6 +237,7 @@ public unsafe sealed class VideoExportService
                         exportMode,
                         HybridCopyAttempted: false,
                         HybridCopyUsed: false,
+                        HybridCopyFallbackReason: null,
                         ForceSoftwareEncoder: forceSoftwareEncoder,
                         ForceSafeEncoding: forceSafeEncoding,
                         ForceAudioTranscode: forceAudioTranscode,
@@ -256,23 +258,34 @@ public unsafe sealed class VideoExportService
                     var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames);
                     blurRanges = AlignRangesToKeyframes(blurRanges, keyframes, totalFrames);
                     if (blurRanges.Count == 0)
-                        canCopyOutsideBlurWindow = false;
-
-                    int encodeStart = blurRanges[0].Start;
-                    int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
-                    bool hasLeadingCopy = encodeStart > 0;
-                    bool hasTrailingCopy = encodeEnd < totalFrames;
-                    if (hasLeadingCopy && hasTrailingCopy)
                     {
                         canCopyOutsideBlurWindow = false;
-                        Debug.WriteLine(
-                            $"[VideoExport] 하이브리드 구간 복사가 양끝에 존재합니다. "
-                            + $"양끝 복사 구간 안정성(품질 저하 우려)으로 인해 전체 인코딩으로 폴백: start={encodeStart}, end={encodeEnd}, total={totalFrames}.");
+                        hybridCopyFallbackReason = "키프레임 정렬 후 블러 구간이 비어 하이브리드 후보가 사라짐";
                     }
-                    else if (encodeStart > 0 || encodeEnd < totalFrames)
+                    else
                     {
-                        hybridEncodeWindow = (encodeStart, encodeEnd);
-                        hybridCopyAttempted = true;
+                        int encodeStart = blurRanges[0].Start;
+                        int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
+                        bool hasLeadingCopy = encodeStart > 0;
+                        bool hasTrailingCopy = encodeEnd < totalFrames;
+                        if (hasLeadingCopy && hasTrailingCopy)
+                        {
+                            canCopyOutsideBlurWindow = false;
+                            hybridCopyFallbackReason =
+                                $"양끝 복사 구간 존재(start={encodeStart}, end={encodeEnd}, total={totalFrames})";
+                            Debug.WriteLine(
+                                $"[VideoExport] 하이브리드 구간 복사가 양끝에 존재합니다. "
+                                + $"안정성(품질 저하 우려)으로 인해 전체 인코딩으로 폴백: start={encodeStart}, end={encodeEnd}, total={totalFrames}.");
+                        }
+                        else if (encodeStart > 0 || encodeEnd < totalFrames)
+                        {
+                            hybridEncodeWindow = (encodeStart, encodeEnd);
+                            hybridCopyAttempted = true;
+                        }
+                        else
+                        {
+                            hybridCopyFallbackReason = null;
+                        }
                     }
                 }
             }
@@ -437,9 +450,23 @@ public unsafe sealed class VideoExportService
             int encodeWindowStart = hybridEncodeWindow?.Start ?? 0;
             int encodeWindowEnd = hybridEncodeWindow?.EndExclusive ?? int.MaxValue;
             if (encodeWindowEnd <= encodeWindowStart)
+            {
                 useHybridCopyWindow = false;
+                hybridCopyFallbackReason = "하이브리드 윈도우 유효 범위가 비정상적입니다";
+            }
             if (hybridCopyAttempted && !useHybridCopyWindow && progress != null)
-                progress.Report(new ExportProgress(0, totalFrames, "구간 복사 조건을 만족하지 않아 일반 내보내기로 진행합니다..."));
+            {
+                progress.Report(new ExportProgress(
+                    0,
+                    totalFrames,
+                    string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                        ? "구간 복사 조건을 만족하지 않아 일반 내보내기로 진행합니다..."
+                        : $"구간 복사 조건 미충족으로 일반 내보내기로 진행({hybridCopyFallbackReason})"));
+            }
+            if (hybridCopyAttempted && !useHybridCopyWindow && !string.IsNullOrWhiteSpace(hybridCopyFallbackReason))
+            {
+                Debug.WriteLine($"[VideoExport] 하이브리드 폴백 사유: {hybridCopyFallbackReason}");
+            }
 
             int packetFrameFallback = 0;
             int lastResolvedFrameIndex = -1;
@@ -772,6 +799,11 @@ public unsafe sealed class VideoExportService
                 exportMode,
                 hybridCopyAttempted,
                 useHybridCopyWindow,
+                useHybridCopyWindow
+                    ? null
+                    : hybridCopyAttempted
+                        ? hybridCopyFallbackReason
+                        : null,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
                 forceAudioTranscode,
