@@ -874,7 +874,7 @@ public unsafe sealed class VideoExportService
             if (droppedVideoPackets > 0)
             {
                 Debug.WriteLine($"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
-                if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 2)
+                if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 0)
                 {
                     shouldRetryWithFullEncode = true;
                     packetDropFallbackReason = $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
@@ -1744,8 +1744,8 @@ public unsafe sealed class VideoExportService
         int index = (int)Math.Floor(seconds * sourceFps);
         if (index < 0)
             index = 0;
-        if (totalFrames > 0 && index > totalFrames)
-            index = totalFrames;
+        if (totalFrames > 0 && index >= totalFrames)
+            index = Math.Max(0, totalFrames - 1);
         return index;
     }
 
@@ -1772,8 +1772,8 @@ public unsafe sealed class VideoExportService
         int index = (int)Math.Floor(seconds * sourceFps);
         if (index < 0)
             index = 0;
-        if (totalFrames > 0 && index > totalFrames)
-            index = totalFrames;
+        if (totalFrames > 0 && index >= totalFrames)
+            index = Math.Max(0, totalFrames - 1);
         return index;
     }
 

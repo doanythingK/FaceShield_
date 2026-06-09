@@ -1615,6 +1615,34 @@ namespace FaceShield.Services.Analysis
                     : finalSummary.FinalReviewReasons
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
+            LogAutoMaskQualityGate(LastRunSummary);
+        }
+
+        private static void LogAutoMaskQualityGate(AutoMaskRunSummary summary)
+        {
+            if (summary == null)
+                return;
+
+            int riskScore = 0;
+            if (summary.FinalMaskReviewRequired)
+                riskScore++;
+            if (summary.FinalMaskShortGapCount > 0 || summary.FinalMaskPerFaceShortGapCount > 0 || summary.FinalMaskLargeJumpGapCount > 0)
+                riskScore++;
+            if (summary.FinalProtectedSceneCarryFrameCount > 0)
+                riskScore++;
+
+            int sampleWindowFrames = Math.Min(summary.TotalFrames, 900);
+            string riskLabel = riskScore >= 3
+                ? "high"
+                : riskScore >= 1
+                    ? "medium"
+                    : "low";
+            double detectionFps = summary.ProcessedFrames > 0 && summary.TotalMs > 0
+                ? summary.ProcessedFrames * 1000.0 / summary.TotalMs
+                : 0.0;
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskQualityGate] runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sampleWindowFrames={sampleWindowFrames}");
         }
 
         private void SetLastRunSummary(AutoMaskRunSummary summary)
