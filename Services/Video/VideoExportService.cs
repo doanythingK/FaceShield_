@@ -462,8 +462,11 @@ public unsafe sealed class VideoExportService
             bool allowHybridWithAudio = inAudioStream == null || audioCopy;
             if (hybridCopyAttempted && !allowHybridWithAudio)
             {
-                hybridCopyFallbackReason =
+                string audioReason =
                     $"오디오 재인코딩 경로에서 하이브리드 비사용 (audioStreamPresent={inAudioStream != null}, audioCopy={audioCopy}, audioReencode={audioReencode})";
+                hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                    ? audioReason
+                    : $"{hybridCopyFallbackReason}; {audioReason}";
             }
 
             if (dec != null && dec->has_b_frames > 0)
