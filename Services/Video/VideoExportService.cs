@@ -11,6 +11,8 @@ namespace FaceShield.Services.Video;
 public unsafe sealed class VideoExportService
 {
     private const bool EnableHybridCopyWindow = true;
+    private const int MinHybridCopyFrames = 240;
+    private const double MinHybridCopyRatio = 0.05;
     private const int MaxHybridCopyTimestampFixBeforeFallback = 4;
 
     private readonly IFrameMaskProvider _maskProvider;
@@ -289,7 +291,17 @@ public unsafe sealed class VideoExportService
                         int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
                         bool hasLeadingCopy = encodeStart > 0;
                         bool hasTrailingCopy = encodeEnd < totalFrames;
-                        if (hasLeadingCopy && hasTrailingCopy)
+                        int copiedFrames = totalFrames - (encodeEnd - encodeStart);
+                        int minExpectedCopyFrames = Math.Max(
+                            MinHybridCopyFrames,
+                            (int)Math.Ceiling(totalFrames * MinHybridCopyRatio));
+                        if (copiedFrames < minExpectedCopyFrames)
+                        {
+                            canCopyOutsideBlurWindow = false;
+                            hybridCopyFallbackReason =
+                                $"하이브리드 복사 구간 이득이 미미함(복사구간={copiedFrames}, 총={totalFrames}, 임계치={minExpectedCopyFrames})";
+                        }
+                        else if (hasLeadingCopy && hasTrailingCopy)
                         {
                             canCopyOutsideBlurWindow = false;
                             hybridCopyFallbackReason =

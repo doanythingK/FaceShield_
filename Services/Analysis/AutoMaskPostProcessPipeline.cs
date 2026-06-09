@@ -723,6 +723,161 @@ namespace FaceShield.Services.Analysis
             Debug.WriteLine(
                 $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeLarge={topEdgeLargeRows} topEdgeLargeFrames={FormatFrameList(topEdgeLargeFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} sceneCutControl=preGuard={sceneCutPreGuardPairCount},preStrong={sceneCutPreStrongProbePairCount},postGuard={sceneCutPostGuardPairCount},postStrong={sceneCutPostStrongProbePairCount},carryPairs={sceneCutCarryPairCount},carryRemoved={sceneCutCarryRemovedCount},carryProtected={sceneCutProtectedFrameCount} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
             string reviewReasonText = FormatTextList(reviewReasons);
+            var sampleEntries = entries;
+            var sampleFrameRangeEnd = Math.Min(_totalFrames - 1, frames[0] + 899);
+            int sampleWindowFrames = Math.Max(0, sampleFrameRangeEnd - frames[0] + 1);
+            if (sampleWindowFrames <= 0)
+            {
+                sampleEntries = Array.Empty<KeyValuePair<int, FrameMaskProvider.FaceMaskData>>();
+                sampleWindowFrames = 0;
+            }
+            else
+            {
+                int sampleWindowEnd = sampleFrameRangeEnd;
+                sampleEntries = entries.Where(static x => x.Key <= sampleWindowEnd).ToArray();
+                if (sampleEntries.Count == 0)
+                    sampleEntries = Array.Empty<KeyValuePair<int, FrameMaskProvider.FaceMaskData>>();
+            }
+
+            int sampleFrameCount = sampleEntries.Length;
+            int sampleRows = sampleEntries.Sum(static x => x.Value.Faces.Count);
+            var sampleShortGapRanges = new List<string>();
+            var sampleShortGapFrames = sampleEntries.Select(static x => x.Key).ToArray();
+            int sampleShortGapCount = 0;
+            for (int i = 1; i < sampleShortGapFrames.Length; i++)
+            {
+                int missing = sampleShortGapFrames[i] - sampleShortGapFrames[i - 1] - 1;
+                if (missing <= 0 || missing > FinalMaskShortGapMaxFrames)
+                    continue;
+                sampleShortGapCount++;
+                string range = FormatFrameRange(sampleShortGapFrames[i - 1] + 1, sampleShortGapFrames[i] - 1);
+                sampleShortGapRanges.Add(range);
+            }
+            var samplePerFaceShortGapRanges = FindPerFaceShortGapRanges(sampleEntries);
+            int sampleIsolatedFrames = 0;
+            for (int i = 0; i < sampleShortGapFrames.Length; i++)
+            {
+                bool hasPreviousNeighbor = i > 0 && sampleShortGapFrames[i] - sampleShortGapFrames[i - 1] <= 1;
+                bool hasNextNeighbor = i < sampleShortGapFrames.Length - 1 && sampleShortGapFrames[i + 1] - sampleShortGapFrames[i] <= 1;
+                if (!hasPreviousNeighbor && !hasNextNeighbor)
+                    sampleIsolatedFrames++;
+            }
+
+            int sampleLargeJumpGapCount = 0;
+            var sampleLargeJumpGapRanges = new List<string>();
+            for (int i = 1; i < sampleShortGapFrames.Length; i++)
+            {
+                int sampleMissing = sampleShortGapFrames[i] - sampleShortGapFrames[i - 1] - 1;
+                if (sampleMissing <= 0 || sampleMissing > FinalMaskShortGapMaxFrames)
+                    continue;
+
+                if (!TryGetBestFinalMaskFace(sampleEntries[i - 1].Value, out var samplePreviousFace) ||
+                    !TryGetBestFinalMaskFace(sampleEntries[i].Value, out var sampleNextFace))
+                {
+                    continue;
+                }
+
+                double sampleAreaChange = GetFinalMaskAreaChange(samplePreviousFace, sampleNextFace);
+                double sampleCenterShift = GetFinalMaskCenterShift(samplePreviousFace, sampleNextFace);
+                if (sampleAreaChange >= FinalMaskLargeJumpAreaChangeRatio ||
+                    sampleCenterShift >= FinalMaskLargeJumpCenterShift)
+                {
+                    sampleLargeJumpGapCount++;
+                    string range = FormatFrameRange(sampleShortGapFrames[i - 1] + 1, sampleShortGapFrames[i] - 1);
+                    sampleLargeJumpGapRanges.Add(range);
+                }
+            }
+
+            int sampleLowConfidenceRows = 0;
+            int sampleWeakNonEdgeRows = 0;
+            int sampleEdgeWeakRows = 0;
+            int sampleTopEdgeWeakRows = 0;
+            int sampleTopEdgeLargeRows = 0;
+            int sampleUpperWeakRows = 0;
+            int sampleLowerWeakRows = 0;
+            int sampleAspectBadRows = 0;
+            int sampleTinyWeakRows = 0;
+            int sampleTinyShortRows = 0;
+            var sampleProtectedCarryFrames = protectedSceneCarryFrames.Count(x => x <= sampleFrameRangeEnd);
+            foreach (var entry in sampleEntries)
+            {
+                int frameIndex = entry.Key;
+                var data = entry.Value;
+                for (int i = 0; i < data.Faces.Count; i++)
+                {
+                    var face = data.Faces[i];
+                    float confidence = i < data.Confidences.Count
+                        ? data.Confidences[i]
+                        : data.MinConfidence ?? 1.0f;
+                    if (confidence <= YoloFinalMaskLowConfidenceThreshold)
+                        sampleLowConfidenceRows++;
+
+                    bool touchesEdge = TouchesFinalMaskFrameEdge(face, data.Size);
+                    if (confidence <= YoloFinalMaskWeakIsolatedConfidenceMax)
+                    {
+                        if (touchesEdge)
+                        {
+                            sampleEdgeWeakRows++;
+                            if (IsUpperWeakFinalMaskFace(face, data.Size))
+                                sampleTopEdgeWeakRows++;
+                        }
+                        else
+                        {
+                            sampleWeakNonEdgeRows++;
+                            if (IsTinyFinalMaskFace(face, data.Size, YoloFinalMaskTinyWeakAreaRatio))
+                                sampleTinyWeakRows++;
+                        }
+                    }
+
+                    if (confidence <= YoloFinalMaskTopEdgeLargeConfidenceMax &&
+                        IsTopEdgeLargeFinalMaskFace(face, data.Size))
+                        sampleTopEdgeLargeRows++;
+
+                    if (confidence <= YoloFinalMaskUpperWeakConfidenceMax &&
+                        !touchesEdge &&
+                        IsUpperWeakFinalMaskFace(face, data.Size))
+                        sampleUpperWeakRows++;
+
+                    if (confidence <= YoloFinalMaskLowerWeakConfidenceMax &&
+                        !touchesEdge &&
+                        IsLowerWeakFinalMaskFace(face, data.Size))
+                        sampleLowerWeakRows++;
+
+                    if (IsAbnormalFinalMaskAspect(face, data.Size))
+                        sampleAspectBadRows++;
+
+                    if (confidence <= YoloFinalMaskTinyShortConfidenceMax &&
+                        !touchesEdge &&
+                        IsTinyFinalMaskFace(face, data.Size, YoloFinalMaskTinyShortAreaRatio))
+                        sampleTinyShortRows++;
+                }
+            }
+
+            var sampleReviewReasons = BuildFinalMaskReviewReasons(
+                sampleShortGapCount,
+                samplePerFaceShortGapRanges.Count,
+                sampleLargeJumpGapCount,
+                sampleIsolatedFrames,
+                sampleLowConfidenceRows,
+                sampleWeakNonEdgeRows,
+                sampleEdgeWeakRows,
+                sampleTopEdgeWeakRows,
+                sampleTopEdgeLargeRows,
+                sampleUpperWeakRows,
+                sampleLowerWeakRows,
+                sampleAspectBadRows,
+                sampleTinyWeakRows,
+                sampleTinyShortRows,
+                protectedSceneCarryFrames.Length,
+                sceneCutCarryPairCount,
+                sceneCutCarryRemovedCount,
+                sceneCutProtectedFrameCount > 0
+                    ? sceneCutProtectedFrameCount
+                    : protectedSceneCarryFrames.Length);
+            string sampleReviewReason = FormatTextList(sampleReviewReasons);
+
+            Debug.WriteLine(
+                $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeLarge={topEdgeLargeRows} topEdgeLargeFrames={FormatFrameList(topEdgeLargeFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} sceneCutControl=preGuard={sceneCutPreGuardPairCount},preStrong={sceneCutPreStrongProbePairCount},postGuard={sceneCutPostGuardPairCount},postStrong={sceneCutPostStrongProbePairCount},carryPairs={sceneCutCarryPairCount},carryRemoved={sceneCutCarryRemovedCount},carryProtected={sceneCutProtectedFrameCount} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)} sampleWindowFrames={sampleWindowFrames} sampleWindowStart={frames[0]} sampleWindowEnd={sampleFrameRangeEnd} sampleFrames={sampleFrameCount} sampleRows={sampleRows} sampleShortGaps={sampleShortGapCount} sampleShortGapRanges={FormatTextList(sampleShortGapRanges)} samplePerFaceShortGaps={samplePerFaceShortGapRanges.Count} samplePerFaceShortGapRanges={FormatTextList(samplePerFaceShortGapRanges)} sampleIsolated={sampleIsolatedFrames} sampleLargeJumps={sampleLargeJumpGapCount} sampleLargeJumpRanges={FormatTextList(sampleLargeJumpGapRanges)} sampleReviewReasons={sampleReviewReason}");
 
             return new AutoMaskPostProcessFinalSummary(
                 frames.Length,
