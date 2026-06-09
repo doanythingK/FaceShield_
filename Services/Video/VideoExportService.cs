@@ -294,7 +294,7 @@ public unsafe sealed class VideoExportService
                     (blurRanges[0].Start > 0 || blurRanges[^1].EndExclusive < totalFrames);
                 if (canCopyOutsideBlurWindow)
                 {
-                    var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, out var estimatedTotalFrames);
+                    var keyframes = CollectKeyframeFrameIndices(inputPath, out var estimatedTotalFrames);
                     if (estimatedTotalFrames > totalFrames && estimatedTotalFrames > 0)
                     {
                         Debug.WriteLine(
@@ -323,11 +323,11 @@ public unsafe sealed class VideoExportService
                             hybridCopyFallbackReason =
                                 $"하이브리드 복사 구간 이득이 미미함(복사구간={copiedFrames}, 총={totalFrames}, 임계치={minExpectedCopyFrames})";
                         }
-                        else if (encodeStart > 0 && encodeEnd < totalFrames)
+                        else if (encodeStart == 0 || encodeEnd == totalFrames)
                         {
                             canCopyOutsideBlurWindow = false;
                             hybridCopyFallbackReason =
-                                $"하이브리드 구간 복사가 양끝에 존재(start={encodeStart}, end={encodeEnd}, total={totalFrames})";
+                                $"하이브리드 구간이 영상 끝단에 붙어 있어 한쪽 재인코드 경계로만 동작합니다(start={encodeStart}, end={encodeEnd}, total={totalFrames})";
                         }
                         else if ((encodeStart > 0 && leadingCopyFrames < MinHybridCopySideFrames) ||
                                  (encodeEnd < totalFrames && trailingCopyFrames < MinHybridCopySideFrames))
@@ -460,8 +460,8 @@ public unsafe sealed class VideoExportService
                 encoder != null &&
                 enc->codec_id == inStream->codecpar->codec_id &&
                 !IsHardwareEncoder(encoder) &&
-                hybridEncodeWindow.Value.Start > 0 &&
-                hybridEncodeWindow.Value.EndExclusive < totalFrames;
+                (hybridEncodeWindow.Value.Start > 0 ||
+                 hybridEncodeWindow.Value.EndExclusive < totalFrames);
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
             if (useHybridCopyWindow)
@@ -600,9 +600,23 @@ public unsafe sealed class VideoExportService
                 }
                 inputVideoPacketCount++;
 
-                int packetFrameIndex = ResolveFrameIndexFromPacket(pkt, inStream->time_base, sourceFps, packetFrameFallback, totalFrames);
-                if (packetFrameIndex < packetFrameFallback)
+                int packetFrameIndex;
+                if (useHybridCopyWindow)
+                {
+                    // 하이브리드 구간은 패킷 순번 기반 경계를 사용해 PTS 해상도 오차 영향에서 분리한다.
                     packetFrameIndex = packetFrameFallback;
+                }
+                else
+                {
+                    packetFrameIndex = ResolveFrameIndexFromPacket(
+                        pkt,
+                        inStream->time_base,
+                        sourceFps,
+                        packetFrameFallback,
+                        totalFrames);
+                    if (packetFrameIndex < packetFrameFallback)
+                        packetFrameIndex = packetFrameFallback;
+                }
                 packetFrameFallback = packetFrameIndex + 1;
                 if (packetFrameIndex < ExportSampleWindowFrames)
                     sampleSourceVideoPacketCount++;
@@ -1272,7 +1286,6 @@ public unsafe sealed class VideoExportService
             frame,
             inStream->time_base,
             enc->time_base,
-            sourceFps,
             resolvedFrameIndex,
             ref lastEncodedPts,
             ref hasLastEncodedPts);
@@ -1719,11 +1732,11 @@ public unsafe sealed class VideoExportService
         return found ? result : Math.Max(value + 1, keyframes[keyframes.Count - 1] + 1);
     }
 
-    private static unsafe List<int> CollectKeyframeFrameIndices(string inputPath, double sourceFps, out int estimatedTotalFrames)
+    private static unsafe List<int> CollectKeyframeFrameIndices(string inputPath, out int estimatedTotalFrames)
     {
         var keyframes = new List<int>();
         estimatedTotalFrames = 0;
-        if (string.IsNullOrWhiteSpace(inputPath) || sourceFps <= 0.0)
+        if (string.IsNullOrWhiteSpace(inputPath))
             return keyframes;
 
         AVFormatContext* inFmt = null;
@@ -1760,33 +1773,14 @@ public unsafe sealed class VideoExportService
                     continue;
                 }
 
-                int frameIndex = packetFrameIndex;
-                if (sourceFps > 0.0)
-                {
-                    long ts = pkt->pts != ffmpeg.AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
-                    if (ts != ffmpeg.AV_NOPTS_VALUE)
-                    {
-                        double seconds = ts * ffmpeg.av_q2d(stream->time_base);
-                        if (!double.IsNaN(seconds) && !double.IsInfinity(seconds))
-                        {
-                            int resolvedIndex = (int)Math.Floor(seconds * sourceFps);
-                            if (resolvedIndex >= 0)
-                                frameIndex = resolvedIndex;
-                        }
-                    }
-                }
-
-                if (frameIndex < 0)
-                    frameIndex = 0;
-                if (frameIndex < packetFrameIndex)
-                    frameIndex = packetFrameIndex;
-
-                if (frameIndex + 1 > estimatedTotalFrames)
-                    estimatedTotalFrames = frameIndex + 1;
+                if (packetFrameIndex < 0)
+                    packetFrameIndex = 0;
 
                 if ((pkt->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0)
-                    keyframes.Add(frameIndex);
+                    keyframes.Add(packetFrameIndex);
 
+                if (packetFrameIndex + 1 > estimatedTotalFrames)
+                    estimatedTotalFrames = packetFrameIndex + 1;
                 packetFrameIndex++;
 
                 ffmpeg.av_packet_unref(pkt);
@@ -1824,30 +1818,19 @@ public unsafe sealed class VideoExportService
         AVFrame* frame,
         AVRational sourceTimeBase,
         AVRational targetTimeBase,
-        double sourceFps,
         int fallbackFrameIndex,
         ref long lastPts,
         ref bool hasLastPts)
     {
-        long rawPts = frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
-            ? frame->best_effort_timestamp
-            : frame->pts;
+        long rawPts = frame != null
+            ? (frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
+                ? frame->best_effort_timestamp
+                : frame->pts)
+            : ffmpeg.AV_NOPTS_VALUE;
 
         if (rawPts == ffmpeg.AV_NOPTS_VALUE)
         {
-            if (sourceFps > 0.0 && sourceTimeBase.num > 0 && sourceTimeBase.den > 0)
-            {
-                double seconds = fallbackFrameIndex / sourceFps;
-                double sourceTicks = ffmpeg.av_q2d(sourceTimeBase);
-                if (sourceTicks > 0.0)
-                    rawPts = (long)Math.Round(seconds / sourceTicks);
-                else
-                    rawPts = fallbackFrameIndex;
-            }
-            else
-            {
-                rawPts = fallbackFrameIndex;
-            }
+            rawPts = hasLastPts ? (lastPts + 1) : Math.Max(0, fallbackFrameIndex);
         }
 
         if (rawPts < 0)
