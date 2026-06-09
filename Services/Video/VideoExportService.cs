@@ -18,7 +18,8 @@ public unsafe sealed class VideoExportService
     private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
     private const int MaxHybridFrameGapBeforeFallback = 32;
     private const long MaxHybridFrameStepTolerance = 1;
-    private const int ExportSampleWindowFrames = 900;
+    private const long MaxHybridCopyGapMultiplierForFallback = 2;
+    private const int ExportSampleWindowSeconds = 30;
     private const int MaxAllowedOutputPacketLoss = 0;
     private const long MaxOutputPacketGapMultiplier = 4;
     private readonly IFrameMaskProvider _maskProvider;
@@ -182,6 +183,8 @@ public unsafe sealed class VideoExportService
         int copyTimestampFixCount = 0;
         int outputPacketPtsGapOutlierCount = 0;
         long maxOutputPacketPtsGap = 0;
+        int copyGapOutlierCount = 0;
+        long maxCopyGap = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
         long encodedPacketFrameStep = 1;
@@ -372,6 +375,8 @@ public unsafe sealed class VideoExportService
                     }
                 }
             }
+
+            int exportSampleWindowFrames = ResolveExportSampleWindowFrames(sourceFps, totalFrames);
 
             AVCodec* decoder = ffmpeg.avcodec_find_decoder(inStream->codecpar->codec_id);
             dec = ffmpeg.avcodec_alloc_context3(decoder);
@@ -720,7 +725,7 @@ public unsafe sealed class VideoExportService
                 if (packetFrameIndex < packetFrameFallback)
                     packetFrameIndex = packetFrameFallback;
                 packetFrameFallback = packetFrameIndex + 1;
-                if (packetFrameIndex < ExportSampleWindowFrames)
+                if (packetFrameIndex < exportSampleWindowFrames)
                     sampleSourceVideoPacketCount++;
 
                 bool packetInEncodeWindow =
@@ -844,7 +849,7 @@ public unsafe sealed class VideoExportService
                 if (!packetInEncodeWindow)
                 {
                     copiedSourceVideoPacketCount++;
-                    if (packetFrameIndex < ExportSampleWindowFrames)
+                    if (packetFrameIndex < exportSampleWindowFrames)
                         sampleCopiedVideoPacketCount++;
 
                     if (useHybridCopyWindow && packetFrameIndex >= encodeWindowEnd)
@@ -864,8 +869,8 @@ public unsafe sealed class VideoExportService
                             outStream,
                             outFmt,
                             blurRadius,
-                blurRanges,
-                ref blurRangeCursor,
+                            blurRanges,
+                            ref blurRangeCursor,
                             sourceFps,
                             forceSafeEncoding,
                             totalFrames,
@@ -875,11 +880,11 @@ public unsafe sealed class VideoExportService
                             ref lastResolvedFrameIndex,
                             ref swsToBgraMs,
                             ref maskMs,
-                        ref swsToEncMs,
-                        ref encodeMs,
-                        ref lastEncodedPts,
-                        ref hasLastEncodedPts,
-                        ref lastEncodedPacketPts,
+                            ref swsToEncMs,
+                            ref encodeMs,
+                            ref lastEncodedPts,
+                            ref hasLastEncodedPts,
+                            ref lastEncodedPacketPts,
                             ref hasLastEncodedPacketPts,
                             ref lastEncodedPacketDts,
                             ref hasLastEncodedPacketDts,
@@ -891,7 +896,7 @@ public unsafe sealed class VideoExportService
                             ref lastReportedFrame,
                             swTotal,
                             cancellationToken,
-                            sampleWindowFrames: ExportSampleWindowFrames,
+                            sampleWindowFrames: exportSampleWindowFrames,
                             sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                             sampleBlurredFrameCount: ref sampleBlurredFrameCount,
                             encodedWindowFrameCount: ref encodedWindowFrameCount,
@@ -932,9 +937,12 @@ public unsafe sealed class VideoExportService
                     if (hasPreviousPacketPts)
                     {
                         long copyGap = Math.Abs(pkt->pts - previousPacketPts);
-                        long copyGapThreshold = Math.Max(1, hybridCopyVideoFrameStep * 3);
+                        long copyGapThreshold = Math.Max(1, hybridCopyVideoFrameStep * MaxHybridCopyGapMultiplierForFallback);
                         if (copyGap > 0 && copyGap > copyGapThreshold)
                         {
+                            copyGapOutlierCount++;
+                            if (copyGap > maxCopyGap)
+                                maxCopyGap = copyGap;
                             shouldRetryWithFullEncode = true;
                             packetDropFallbackReason =
                                 string.IsNullOrWhiteSpace(packetDropFallbackReason)
@@ -1023,7 +1031,7 @@ public unsafe sealed class VideoExportService
                             ref lastReportedFrame,
                             swTotal,
                             cancellationToken,
-                            sampleWindowFrames: ExportSampleWindowFrames,
+                            sampleWindowFrames: exportSampleWindowFrames,
                             sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                             sampleBlurredFrameCount: ref sampleBlurredFrameCount,
                             encodedWindowFrameCount: ref encodedWindowFrameCount,
@@ -1058,23 +1066,23 @@ public unsafe sealed class VideoExportService
                 ref lastResolvedFrameIndex,
                 ref swsToBgraMs,
                 ref maskMs,
-                            ref swsToEncMs,
-                            ref encodeMs,
-                            ref lastEncodedPts,
-                            ref hasLastEncodedPts,
+                ref swsToEncMs,
+                ref encodeMs,
+                ref lastEncodedPts,
+                ref hasLastEncodedPts,
                 ref lastEncodedPacketPts,
-                            ref hasLastEncodedPacketPts,
-                            ref lastEncodedPacketDts,
-                            ref hasLastEncodedPacketDts,
-                            ref reusableFaceMask,
-                            ref outputVideoPacketCount,
-                            ref outputPacketPtsGapOutlierCount,
-                            ref maxOutputPacketPtsGap,
-                            progress,
-                            ref lastReportedFrame,
-                            swTotal,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
+                ref reusableFaceMask,
+                ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
+                progress,
+                ref lastReportedFrame,
+                swTotal,
                 cancellationToken,
-                sampleWindowFrames: ExportSampleWindowFrames,
+                sampleWindowFrames: exportSampleWindowFrames,
                 sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                 sampleBlurredFrameCount: ref sampleBlurredFrameCount,
                 encodedWindowFrameCount: ref encodedWindowFrameCount,
@@ -1139,7 +1147,7 @@ public unsafe sealed class VideoExportService
 
             Throw(ffmpeg.av_write_trailer(outFmt));
             int sampleWindowLimit = totalFrames > 0
-                ? Math.Min(ExportSampleWindowFrames, totalFrames)
+                ? Math.Min(exportSampleWindowFrames, totalFrames)
                 : 0;
             int sampleWindowSourceFrames = Math.Max(0, Math.Min(sampleWindowLimit, sampleSourceVideoPacketCount));
             int sampleWindowProducedFrames = sampleCopiedVideoPacketCount + sampleEncodedFrameCount;
@@ -1248,6 +1256,22 @@ public unsafe sealed class VideoExportService
                                     ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
                                     : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}")}";
                 }
+            }
+            if (allowPacketDropRetry && useHybridCopyWindow && outputPacketPtsGapOutlierCount > 0)
+            {
+                shouldRetryWithFullEncode = true;
+                packetDropFallbackReason =
+                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                        ? $"output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}"
+                        : $"{packetDropFallbackReason}; output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}";
+            }
+            if (allowPacketDropRetry && useHybridCopyWindow && copyGapOutlierCount > 0)
+            {
+                shouldRetryWithFullEncode = true;
+                packetDropFallbackReason =
+                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                        ? $"copy-pts-gap-outlier-count={copyGapOutlierCount}, maxGap={maxCopyGap}"
+                        : $"{packetDropFallbackReason}; copy-pts-gap-outlier-count={copyGapOutlierCount}, maxGap={maxCopyGap}";
             }
             int droppedVideoPacketsForSummary = Math.Max(0, droppedVideoPackets);
             string? packetLossFallbackReason = shouldRetryWithFullEncode ? $"fallback-full-encode={packetDropFallbackReason}" : null;
@@ -2128,6 +2152,24 @@ public unsafe sealed class VideoExportService
 
         lastPts = normalizedPts;
         return normalizedPts;
+    }
+
+    private static int ResolveExportSampleWindowFrames(double sourceFps, int totalFrames)
+    {
+        double windowFrames = sourceFps > 0.0
+            ? sourceFps * ExportSampleWindowSeconds
+            : 30d * ExportSampleWindowSeconds;
+        if (double.IsNaN(windowFrames) || double.IsInfinity(windowFrames))
+            windowFrames = 30d * ExportSampleWindowSeconds;
+
+        int resolved = (int)Math.Round(windowFrames);
+        if (resolved <= 0)
+            resolved = 30 * ExportSampleWindowSeconds;
+
+        if (totalFrames > 0)
+            resolved = Math.Min(resolved, totalFrames);
+
+        return Math.Max(1, resolved);
     }
 
     private static long GetVideoFrameStep(double sourceFps, AVRational targetTimeBase)
