@@ -14,7 +14,8 @@ public unsafe sealed class VideoExportService
     private const int MinHybridCopyFrames = 240;
     private const double MinHybridCopyRatio = 0.05;
     private const int MinHybridCopySideFrames = 24;
-    private const int MaxHybridCopyTimestampFixBeforeFallback = 4;
+    private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
+    private const int MaxHybridCopyModeTransitionsBeforeFallback = 1;
 
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
@@ -167,7 +168,11 @@ public unsafe sealed class VideoExportService
         int inputVideoPacketCount = 0;
         int outputVideoPacketCount = 0;
         int copiedVideoPacketCount = 0;
+        int copiedSourceVideoPacketCount = 0;
+        int encodedSourceVideoPacketCount = 0;
         int copyTimestampFixCount = 0;
+        int lastPacketFrameIndexForHybrid = -1;
+        bool hasLastPacketFrameForHybrid = false;
         var swTotal = Stopwatch.StartNew();
 
         try
@@ -259,6 +264,8 @@ public unsafe sealed class VideoExportService
                         InputVideoPackets: 0,
                         OutputVideoPackets: 0,
                         CopiedVideoPackets: 0,
+                        CopiedSourceVideoPackets: 0,
+                        EncodedSourceVideoPackets: 0,
                         DroppedVideoPackets: 0,
                         HybridCopyTimestampFixCount: 0,
                         PacketLossFallbackReason: null,
@@ -588,9 +595,31 @@ public unsafe sealed class VideoExportService
                     !useHybridCopyWindow ||
                     (packetFrameIndex >= encodeWindowStart && packetFrameIndex < encodeWindowEnd);
 
+                if (useHybridCopyWindow)
+                {
+                    if (hasLastPacketFrameForHybrid && packetFrameIndex < lastPacketFrameIndexForHybrid)
+                    {
+                        shouldRetryWithFullEncode = true;
+                        packetDropFallbackReason = $"hybrid-frame-backstep prev={lastPacketFrameIndexForHybrid}, curr={packetFrameIndex}";
+                        throw new InvalidOperationException(
+                            "Invalid argument: 하이브리드 경로에서 패킷 프레임 인덱스가 역행해 fallback 합니다.");
+                    }
+
+                    lastPacketFrameIndexForHybrid = packetFrameIndex;
+                    hasLastPacketFrameForHybrid = true;
+                }
+
                 if (useHybridCopyWindow && packetInEncodeWindow != wasLastPacketEncoded)
                 {
                     hybridModeTransitionCount++;
+                    if (hybridModeTransitionCount > MaxHybridCopyModeTransitionsBeforeFallback)
+                    {
+                        shouldRetryWithFullEncode = true;
+                        packetDropFallbackReason = $"hybrid-transition-unstable={hybridModeTransitionCount}, frame={packetFrameIndex}";
+                        throw new InvalidOperationException(
+                            "Invalid argument: 하이브리드 경로 전환이 비정상적으로 반복되어 fallback 합니다.");
+                    }
+
                     if (hasLastEncodedPacketPts || hasLastEncodedPacketDts || hasLastVideoCopyPacketPts || hasLastVideoCopyPacketDts)
                         hybridModeTimestampSyncCount++;
 
@@ -642,6 +671,8 @@ public unsafe sealed class VideoExportService
 
                 if (!packetInEncodeWindow)
                 {
+                    copiedSourceVideoPacketCount++;
+
                     if (useHybridCopyWindow && packetFrameIndex >= encodeWindowEnd)
                     {
                         FlushVideoPipeline(
@@ -712,9 +743,11 @@ public unsafe sealed class VideoExportService
                         ref hasLastVideoCopyPacketPts,
                         ref lastVideoCopyPacketDts,
                         ref hasLastVideoCopyPacketDts);
-                    if (timestampAdjusted && hasMissingTimestamps && string.IsNullOrWhiteSpace(packetDropFallbackReason))
+                    if (timestampAdjusted && string.IsNullOrWhiteSpace(packetDropFallbackReason))
                     {
-                        packetDropFallbackReason = $"missing-ts-frame={packetFrameIndex}";
+                        packetDropFallbackReason = hasMissingTimestamps
+                            ? $"missing-ts-frame={packetFrameIndex}"
+                            : $"copy-ts-adjust-frame={packetFrameIndex}";
                     }
                     if (timestampAdjusted)
                     {
@@ -743,6 +776,7 @@ public unsafe sealed class VideoExportService
                 }
 
                 wasLastPacketEncoded = true;
+                encodedSourceVideoPacketCount++;
                 Throw(ffmpeg.avcodec_send_packet(dec, pkt));
                 ffmpeg.av_packet_unref(pkt);
             while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
@@ -885,14 +919,28 @@ public unsafe sealed class VideoExportService
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
-            int droppedVideoPackets = inputVideoPacketCount - outputVideoPacketCount;
+            int droppedVideoPackets = useHybridCopyWindow
+                ? Math.Max(0, copiedSourceVideoPacketCount - copiedVideoPacketCount)
+                : Math.Max(0, inputVideoPacketCount - outputVideoPacketCount);
             if (droppedVideoPackets > 0)
             {
-                Debug.WriteLine($"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
+                if (useHybridCopyWindow)
+                {
+                    Debug.WriteLine(
+                        $"[Export] packetDropHint copySource={copiedSourceVideoPacketCount}, copiedOutput={copiedVideoPacketCount}, dropped={droppedVideoPackets}");
+                }
+                else
+                {
+                    Debug.WriteLine(
+                        $"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
+                }
+
                 if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 0)
                 {
                     shouldRetryWithFullEncode = true;
-                    packetDropFallbackReason = $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
+                    packetDropFallbackReason = useHybridCopyWindow
+                        ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
+                        : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
                 }
             }
             int droppedVideoPacketsForSummary = Math.Max(0, droppedVideoPackets);
@@ -922,6 +970,8 @@ public unsafe sealed class VideoExportService
                 InputVideoPackets: inputVideoPacketCount,
                 OutputVideoPackets: outputVideoPacketCount,
                 CopiedVideoPackets: copiedVideoPacketCount,
+                CopiedSourceVideoPackets: copiedSourceVideoPacketCount,
+                EncodedSourceVideoPackets: encodedSourceVideoPacketCount,
                 DroppedVideoPackets: droppedVideoPacketsForSummary,
                 HybridCopyTimestampFixCount: copyTimestampFixCount,
                 PacketLossFallbackReason: packetLossFallbackReason,
@@ -1642,7 +1692,7 @@ public unsafe sealed class VideoExportService
         {
             hasLastPts = true;
         }
-        else if (normalizedPts <= lastPts || normalizedPts > lastPts + 1)
+        else if (normalizedPts <= lastPts)
         {
             // 디코딩 타임스탬프의 경계 편차가 있을 때도
             // 매 프레임이 연속된 재생 속도를 유지하도록 보정한다.

@@ -21,6 +21,8 @@ public sealed record ExportRunSummary(
     int InputVideoPackets,
     int OutputVideoPackets,
     int CopiedVideoPackets,
+    int CopiedSourceVideoPackets,
+    int EncodedSourceVideoPackets,
     int DroppedVideoPackets,
     int HybridCopyTimestampFixCount,
     string? PacketLossFallbackReason,
@@ -33,6 +35,6 @@ public sealed record ExportRunSummary(
     {
             string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
             return
-            $"[ExportRunSummary] runId={run}, mode={ExportMode}, frames={Frames}, bitmapMaskFrames={BitmapMaskFrames}, directFaceFrames={DirectFaceFrames}, swsToBgraMs={SwsToBgraMs}, maskMs={MaskMs}, swsToEncMs={SwsToEncMs}, encodeMs={EncodeMs}, totalMs={TotalMs}, hybridCopyAttempted={HybridCopyAttempted.ToString().ToLowerInvariant()}, hybridCopyUsed={HybridCopyUsed.ToString().ToLowerInvariant()}, hybridCopyFallbackReason={HybridCopyFallbackReason ?? \"\"}, hybridWindowStart={HybridWindowStartFrame}, hybridWindowEnd={HybridWindowEndFrame}, hybridModeTransitions={HybridModeTransitionCount}, hybridModeTimestampSyncs={HybridModeTimestampSyncCount}, inputVideoPackets={InputVideoPackets}, outputVideoPackets={OutputVideoPackets}, copiedVideoPackets={CopiedVideoPackets}, droppedVideoPackets={DroppedVideoPackets}, hybridCopyTimestampFixCount={HybridCopyTimestampFixCount}, packetLossFallbackReason={PacketLossFallbackReason ?? \"\"}, forceSoftwareEncoder={ForceSoftwareEncoder.ToString().ToLowerInvariant()}, forceSafeEncoding={ForceSafeEncoding.ToString().ToLowerInvariant()}, forceAudioTranscode={ForceAudioTranscode.ToString().ToLowerInvariant()}, forceH264Fallback={ForceH264Fallback.ToString().ToLowerInvariant()}";
+            $"[ExportRunSummary] runId={run}, mode={ExportMode}, frames={Frames}, bitmapMaskFrames={BitmapMaskFrames}, directFaceFrames={DirectFaceFrames}, swsToBgraMs={SwsToBgraMs}, maskMs={MaskMs}, swsToEncMs={SwsToEncMs}, encodeMs={EncodeMs}, totalMs={TotalMs}, hybridCopyAttempted={HybridCopyAttempted.ToString().ToLowerInvariant()}, hybridCopyUsed={HybridCopyUsed.ToString().ToLowerInvariant()}, hybridCopyFallbackReason={HybridCopyFallbackReason ?? \"\"}, hybridWindowStart={HybridWindowStartFrame}, hybridWindowEnd={HybridWindowEndFrame}, hybridModeTransitions={HybridModeTransitionCount}, hybridModeTimestampSyncs={HybridModeTimestampSyncCount}, inputVideoPackets={InputVideoPackets}, outputVideoPackets={OutputVideoPackets}, copiedVideoPackets={CopiedVideoPackets}, copiedSourceVideoPackets={CopiedSourceVideoPackets}, encodedSourceVideoPackets={EncodedSourceVideoPackets}, droppedVideoPackets={DroppedVideoPackets}, hybridCopyTimestampFixCount={HybridCopyTimestampFixCount}, packetLossFallbackReason={PacketLossFallbackReason ?? \"\"}, forceSoftwareEncoder={ForceSoftwareEncoder.ToString().ToLowerInvariant()}, forceSafeEncoding={ForceSafeEncoding.ToString().ToLowerInvariant()}, forceAudioTranscode={ForceAudioTranscode.ToString().ToLowerInvariant()}, forceH264Fallback={ForceH264Fallback.ToString().ToLowerInvariant()}";
     }
 }
