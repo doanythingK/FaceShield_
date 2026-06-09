@@ -1615,6 +1615,13 @@ namespace FaceShield.Services.Analysis
                 FinalMaskShortGapCount = finalSummary.FinalShortGapCount,
                 FinalMaskPerFaceShortGapCount = finalSummary.FinalPerFaceShortGapCount,
                 FinalMaskLargeJumpGapCount = finalSummary.FinalLargeJumpGapCount,
+                FinalSceneCutPreGuardPairCount = finalSummary.FinalSceneCutPreGuardPairCount,
+                FinalSceneCutPreStrongProbePairCount = finalSummary.FinalSceneCutPreStrongProbePairCount,
+                FinalSceneCutPostGuardPairCount = finalSummary.FinalSceneCutPostGuardPairCount,
+                FinalSceneCutPostStrongProbePairCount = finalSummary.FinalSceneCutPostStrongProbePairCount,
+                FinalSceneCutCarryPairCount = finalSummary.FinalSceneCutCarryPairCount,
+                FinalSceneCutCarryRemovedCount = finalSummary.FinalSceneCutCarryRemovedCount,
+                FinalSceneCutProtectedFrameCount = finalSummary.FinalSceneCutProtectedFrameCount,
                 FinalProtectedSceneCarryFrameCount = finalSummary.ProtectedSceneCarryFrameCount,
                 FinalMaskReviewRequired = finalSummary.FinalReviewRequired,
                 FinalMaskReviewReasons = string.IsNullOrWhiteSpace(finalSummary.FinalReviewReasons)
@@ -1651,7 +1658,7 @@ namespace FaceShield.Services.Analysis
                 : 0.0;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[AutoMaskQualityGate] runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sampleWindowFrames={sampleWindowFrames}");
+                $"[AutoMaskQualityGate] runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, sampleWindowFrames={sampleWindowFrames}");
         }
 
         private void SetLastRunSummary(AutoMaskRunSummary summary)

@@ -36,6 +36,13 @@ namespace FaceShield.Services.Analysis
         public int FinalMaskShortGapCount { get; init; } = 0;
         public int FinalMaskPerFaceShortGapCount { get; init; } = 0;
         public int FinalMaskLargeJumpGapCount { get; init; } = 0;
+        public int FinalSceneCutPreGuardPairCount { get; init; } = 0;
+        public int FinalSceneCutPreStrongProbePairCount { get; init; } = 0;
+        public int FinalSceneCutPostGuardPairCount { get; init; } = 0;
+        public int FinalSceneCutPostStrongProbePairCount { get; init; } = 0;
+        public int FinalSceneCutCarryPairCount { get; init; } = 0;
+        public int FinalSceneCutCarryRemovedCount { get; init; } = 0;
+        public int FinalSceneCutProtectedFrameCount { get; init; } = 0;
         public int FinalProtectedSceneCarryFrameCount { get; init; } = 0;
         public bool FinalMaskReviewRequired { get; init; } = false;
         public string FinalMaskReviewReasons { get; init; } = "none";
@@ -45,7 +52,7 @@ namespace FaceShield.Services.Analysis
             string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
             string detector = string.IsNullOrWhiteSpace(DetectorName) ? "n/a" : DetectorName;
             return
-                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, totalMs={TotalMs}, srcFps={SourceFps:0.###}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}, post={EnablePostProcessing}, roiPost={EnableRoiPostProcess}, weakIso={EnableYoloWeakIsolatedCleanup}, gapFill={EnableYoloGapFill}, sceneCut={EnableYoloSceneCutCarryCleanup}, smooth={EnableYoloTemporalSmoothing}, finalFrames={FinalMaskFrames}, finalRows={FinalMaskRows}, finalShortGaps={FinalMaskShortGapCount}, finalPerFaceShortGaps={FinalMaskPerFaceShortGapCount}, finalLargeJumps={FinalMaskLargeJumpGapCount}, finalProtectedSceneCarry={FinalProtectedSceneCarryFrameCount}, finalReview={FinalMaskReviewRequired}, finalReviewReasons={FinalMaskReviewReasons}";
+                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, totalMs={TotalMs}, srcFps={SourceFps:0.###}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}, post={EnablePostProcessing}, roiPost={EnableRoiPostProcess}, weakIso={EnableYoloWeakIsolatedCleanup}, gapFill={EnableYoloGapFill}, sceneCut={EnableYoloSceneCutCarryCleanup}, smooth={EnableYoloTemporalSmoothing}, finalFrames={FinalMaskFrames}, finalRows={FinalMaskRows}, finalShortGaps={FinalMaskShortGapCount}, finalPerFaceShortGaps={FinalMaskPerFaceShortGapCount}, finalLargeJumps={FinalMaskLargeJumpGapCount}, sceneCutStats=preGuard:{FinalSceneCutPreGuardPairCount},preStrong:{FinalSceneCutPreStrongProbePairCount},postGuard:{FinalSceneCutPostGuardPairCount},postStrong:{FinalSceneCutPostStrongProbePairCount},carryPairs:{FinalSceneCutCarryPairCount},carryRemoved:{FinalSceneCutCarryRemovedCount},carryProtected:{FinalSceneCutProtectedFrameCount}, finalProtectedSceneCarry={FinalProtectedSceneCarryFrameCount}, finalReview={FinalMaskReviewRequired}, finalReviewReasons={FinalMaskReviewReasons}";
         }
     }
 }
