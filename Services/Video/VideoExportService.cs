@@ -551,26 +551,51 @@ public unsafe sealed class VideoExportService
                     !useHybridCopyWindow ||
                     (packetFrameIndex >= encodeWindowStart && packetFrameIndex < encodeWindowEnd);
 
-                if (useHybridCopyWindow && !wasLastPacketEncoded && packetInEncodeWindow)
+                if (useHybridCopyWindow && packetInEncodeWindow != wasLastPacketEncoded)
                 {
-                    if (hasLastVideoCopyPacketPts)
+                    if (packetInEncodeWindow)
                     {
-                        lastEncodedPacketPts = lastVideoCopyPacketPts;
-                        hasLastEncodedPacketPts = true;
-                    }
-                    else
-                    {
-                        hasLastEncodedPacketPts = false;
-                    }
+                        if (hasLastVideoCopyPacketPts)
+                        {
+                            lastEncodedPacketPts = lastVideoCopyPacketPts;
+                            hasLastEncodedPacketPts = true;
+                        }
+                        else
+                        {
+                            hasLastEncodedPacketPts = false;
+                        }
 
-                    if (hasLastVideoCopyPacketDts)
-                    {
-                        lastEncodedPacketDts = lastVideoCopyPacketDts;
-                        hasLastEncodedPacketDts = true;
+                        if (hasLastVideoCopyPacketDts)
+                        {
+                            lastEncodedPacketDts = lastVideoCopyPacketDts;
+                            hasLastEncodedPacketDts = true;
+                        }
+                        else
+                        {
+                            hasLastEncodedPacketDts = false;
+                        }
                     }
                     else
                     {
-                        hasLastEncodedPacketDts = false;
+                        if (hasLastEncodedPacketPts)
+                        {
+                            lastVideoCopyPacketPts = lastEncodedPacketPts;
+                            hasLastVideoCopyPacketPts = true;
+                        }
+                        else
+                        {
+                            hasLastVideoCopyPacketPts = false;
+                        }
+
+                        if (hasLastEncodedPacketDts)
+                        {
+                            lastVideoCopyPacketDts = lastEncodedPacketDts;
+                            hasLastVideoCopyPacketDts = true;
+                        }
+                        else
+                        {
+                            hasLastVideoCopyPacketDts = false;
+                        }
                     }
                 }
 
