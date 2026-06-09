@@ -19,6 +19,7 @@ public unsafe sealed class VideoExportService
     private const int MaxHybridFrameGapBeforeFallback = 32;
     private const long MaxHybridFrameStepTolerance = 1;
     private const int ExportSampleWindowFrames = 900;
+    private const int MaxAllowedOutputPacketLoss = 0;
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
@@ -460,8 +461,11 @@ public unsafe sealed class VideoExportService
             }
 
             bool allowHybridWithAudio = inAudioStream == null || audioCopy;
-            if (hybridCopyAttempted && !allowHybridWithAudio)
+            if (!allowHybridWithAudio && allowHybridCopyCurrent)
             {
+                if (!hybridCopyAttempted)
+                    hybridCopyAttempted = true;
+
                 string audioReason =
                     $"오디오 재인코딩 경로에서 하이브리드 비사용 (audioStreamPresent={inAudioStream != null}, audioCopy={audioCopy}, audioReencode={audioReencode})";
                 hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
@@ -1121,13 +1125,22 @@ public unsafe sealed class VideoExportService
             int outputPacketDropCount = useHybridCopyWindow
                 ? Math.Max(0, inputVideoPacketCount - outputVideoPacketCount)
                 : 0;
-            if (allowPacketDropRetry && useHybridCopyWindow && sampleWindowFrameShortfall > 0)
+            if (sampleWindowFrameShortfall > 0)
             {
-                shouldRetryWithFullEncode = true;
                 packetDropFallbackReason =
                     string.IsNullOrWhiteSpace(packetDropFallbackReason)
                         ? $"sample-window-frame-loss={sampleWindowFrameShortfall} (source={sampleWindowSourceFrames}, copied={sampleCopiedVideoPacketCount}, encoded={sampleEncodedFrameCount})"
                         : $"{packetDropFallbackReason}; sample-window-frame-loss={sampleWindowFrameShortfall} (source={sampleWindowSourceFrames}, copied={sampleCopiedVideoPacketCount}, encoded={sampleEncodedFrameCount})";
+
+                if (allowPacketDropRetry)
+                {
+                    shouldRetryWithFullEncode = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        "Invalid argument: 최종 샘플 구간 출력 프레임 손실이 감지되어 품질 보전을 위해 중단합니다.");
+                }
             }
             if (allowPacketDropRetry
                 && useHybridCopyWindow
@@ -1142,7 +1155,10 @@ public unsafe sealed class VideoExportService
                             : $"{packetDropFallbackReason}; encode-window-frame-loss={encodedWindowFrameShortfall} (expected={expectedHybridWindowEncodedFrames}, produced={encodedWindowFrameCount})";
                 }
             }
-            if (allowPacketDropRetry && useHybridCopyWindow && inputVideoPacketCount > 0 && outputPacketDropCount > 0)
+            if (allowPacketDropRetry
+                && useHybridCopyWindow
+                && inputVideoPacketCount > 0
+                && outputPacketDropCount > 0)
             {
                 shouldRetryWithFullEncode = true;
                 packetDropFallbackReason =
@@ -1150,10 +1166,29 @@ public unsafe sealed class VideoExportService
                         ? $"hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}"
                         : $"{packetDropFallbackReason}; hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}";
             }
-                if (droppedVideoPackets > 0)
+            if (outputPacketDropCount > MaxAllowedOutputPacketLoss)
+            {
+                string outputLossReason =
+                    $"final-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}";
+                packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                    ? outputLossReason
+                    : $"{packetDropFallbackReason}; {outputLossReason}";
+
+                if (allowPacketDropRetry)
                 {
-                    if (useHybridCopyWindow)
-                    {
+                    shouldRetryWithFullEncode = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        "Invalid argument: 최종 출력 패킷 손실 감지로 품질 보전을 위해 중단합니다.");
+                }
+            }
+
+            if (droppedVideoPackets > 0)
+            {
+                if (useHybridCopyWindow)
+                {
                     Debug.WriteLine(
                         $"[Export] packetDropHint copySource={copiedSourceVideoPacketCount}, copyOutput={copiedVideoPacketCount}, copyLoss={hybridCopySourcePacketLoss}, encodeWindow={encodeWindowStart}-{encodeWindowEnd}, encodedWindowFrames={encodedWindowFrameCount}, encodedShortfall={hybridEncodedWindowFrameLoss}, dropped={droppedVideoPackets}");
                 }
