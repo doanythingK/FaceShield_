@@ -20,6 +20,7 @@ public unsafe sealed class VideoExportService
     private const long MaxHybridFrameStepTolerance = 1;
     private const int ExportSampleWindowFrames = 900;
     private const int MaxAllowedOutputPacketLoss = 0;
+    private const long MaxOutputPacketGapMultiplier = 4;
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
@@ -179,6 +180,8 @@ public unsafe sealed class VideoExportService
         int sampleBlurredFrameCount = 0;
         int encodedWindowFrameCount = 0;
         int copyTimestampFixCount = 0;
+        int outputPacketPtsGapOutlierCount = 0;
+        long maxOutputPacketPtsGap = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
         long encodedPacketFrameStep = 1;
@@ -290,6 +293,8 @@ public unsafe sealed class VideoExportService
                         CopiedSourceVideoPackets: 0,
                         EncodedSourceVideoPackets: 0,
                         DroppedVideoPackets: 0,
+                        OutputPacketPtsGapOutlierCount: 0,
+                        MaxOutputPacketPtsGap: 0,
                         HybridCopyTimestampFixCount: 0,
                         PacketLossFallbackReason: null,
                         ForceSoftwareEncoder: forceSoftwareEncoder,
@@ -854,6 +859,8 @@ public unsafe sealed class VideoExportService
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
                             ref outputVideoPacketCount,
+                            ref outputPacketPtsGapOutlierCount,
+                            ref maxOutputPacketPtsGap,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
@@ -984,6 +991,8 @@ public unsafe sealed class VideoExportService
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
                             ref outputVideoPacketCount,
+                            ref outputPacketPtsGapOutlierCount,
+                            ref maxOutputPacketPtsGap,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
@@ -1033,6 +1042,8 @@ public unsafe sealed class VideoExportService
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
                             ref outputVideoPacketCount,
+                            ref outputPacketPtsGapOutlierCount,
+                            ref maxOutputPacketPtsGap,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
@@ -1242,6 +1253,8 @@ public unsafe sealed class VideoExportService
                 CopiedSourceVideoPackets: copiedSourceVideoPacketCount,
                 EncodedSourceVideoPackets: encodedSourceVideoPacketCount,
                 DroppedVideoPackets: droppedVideoPacketsForSummary,
+                OutputPacketPtsGapOutlierCount: outputPacketPtsGapOutlierCount,
+                MaxOutputPacketPtsGap: maxOutputPacketPtsGap,
                 HybridCopyTimestampFixCount: copyTimestampFixCount,
                 HybridEncodedPacketFrameStep: encodedPacketFrameStep,
                 HybridCopyPacketFrameStep: hybridCopyVideoFrameStep,
@@ -1348,10 +1361,21 @@ public unsafe sealed class VideoExportService
         ref long lastPacketDts,
         ref bool hasLastPacketDts,
         ref int outputVideoPacketCount,
+        ref int outputPacketPtsGapOutlierCount,
+        ref long maxOutputPacketPtsGap,
         long encodedPacketFrameStep)
     {
+        long normalizedEncodedFrameStep = Math.Max(1, encodedPacketFrameStep);
+        long gapOutlierThreshold = normalizedEncodedFrameStep * 2;
+        long gapFatalThreshold = normalizedEncodedFrameStep * MaxOutputPacketGapMultiplier;
+        if (gapFatalThreshold <= 0)
+            gapFatalThreshold = long.MaxValue;
+
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
+            long previousPacketPts = lastPacketPts;
+            bool hadPreviousPacketPts = hasLastPacketPts;
+
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
             _ = NormalizeEncodedPacketTimestamps(
                 outPkt,
@@ -1360,6 +1384,23 @@ public unsafe sealed class VideoExportService
                 ref lastPacketDts,
                 ref hasLastPacketDts,
                 encodedPacketFrameStep);
+
+            if (hadPreviousPacketPts)
+            {
+                long gap = Math.Abs(outPkt->pts - previousPacketPts);
+                if (gap > 0 && gap > maxOutputPacketPtsGap)
+                    maxOutputPacketPtsGap = gap;
+
+                if (gap > 0 && gap > gapOutlierThreshold)
+                    outputPacketPtsGapOutlierCount++;
+
+                if (gapFatalThreshold < long.MaxValue && gap > gapFatalThreshold)
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid argument: 인코더 출력 패킷 간격 점프가 과도해 하이브리드/재인코딩 품질 보장을 위해 rollback 합니다. gap={gap}, step={normalizedEncodedFrameStep}");
+                }
+            }
+
             outPkt->stream_index = outStream->index;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
             outputVideoPacketCount++;
@@ -1402,6 +1443,8 @@ public unsafe sealed class VideoExportService
         ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
         ref int outputVideoPacketCount,
+        ref int outputPacketPtsGapOutlierCount,
+        ref long maxOutputPacketPtsGap,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
@@ -1510,6 +1553,8 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
                 encodedPacketFrameStep);
             tEncode.Stop();
             encodeMs += tEncode.ElapsedMilliseconds;
@@ -1558,6 +1603,8 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
                 encodedPacketFrameStep);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
@@ -1577,6 +1624,8 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
                 encodedPacketFrameStep);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
@@ -1631,6 +1680,8 @@ public unsafe sealed class VideoExportService
         ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
         ref int outputVideoPacketCount,
+        ref int outputPacketPtsGapOutlierCount,
+        ref long maxOutputPacketPtsGap,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
@@ -1685,6 +1736,8 @@ public unsafe sealed class VideoExportService
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
                 ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
                 progress,
                 ref lastReportedFrame,
                 swTotal,
@@ -1710,6 +1763,8 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
                 encodedPacketFrameStep);
         videoFlushed = true;
     }
