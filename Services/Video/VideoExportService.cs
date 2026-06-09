@@ -260,7 +260,16 @@ public unsafe sealed class VideoExportService
 
                     int encodeStart = blurRanges[0].Start;
                     int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
-                    if (encodeStart > 0 || encodeEnd < totalFrames)
+                    bool hasLeadingCopy = encodeStart > 0;
+                    bool hasTrailingCopy = encodeEnd < totalFrames;
+                    if (hasLeadingCopy && hasTrailingCopy)
+                    {
+                        canCopyOutsideBlurWindow = false;
+                        Debug.WriteLine(
+                            $"[VideoExport] 하이브리드 구간 복사가 양끝에 존재합니다. "
+                            + $"양끝 복사 구간 안정성(품질 저하 우려)으로 인해 전체 인코딩으로 폴백: start={encodeStart}, end={encodeEnd}, total={totalFrames}.");
+                    }
+                    else if (encodeStart > 0 || encodeEnd < totalFrames)
                     {
                         hybridEncodeWindow = (encodeStart, encodeEnd);
                         hybridCopyAttempted = true;
