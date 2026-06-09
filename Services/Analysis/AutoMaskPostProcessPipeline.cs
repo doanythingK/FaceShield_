@@ -83,19 +83,20 @@ namespace FaceShield.Services.Analysis
             bool runYoloPostProcess = _options.FilterProfile == FaceFilterProfile.Yolo &&
                 _options.UseTracking &&
                 _options.EnablePostProcessing;
-            bool hasAnyYoloPostModule = _options.EnableRoiPostProcess ||
-                _options.EnableYoloWeakIsolatedCleanup ||
-                _options.EnableYoloGapFill ||
-                _options.EnableYoloSceneCutCarryCleanup ||
-                _options.EnableYoloTemporalSmoothing;
+            bool hasAnyYoloPostModule = enableRoiPostProcess ||
+                enableWeakIsolationCleanup ||
+                enableGapFill ||
+                enableSceneCutCleanup ||
+                enableTemporalSmoothing;
             bool runYoloTrackPost = runYoloMissRecovery ||
                 (runYoloPostProcess &&
-                 (_options.EnableYoloSceneCutCarryCleanup ||
-                  _options.EnableYoloTemporalSmoothing ||
-                  _options.EnableRoiPostProcess ||
-                  _options.EnableYoloWeakIsolatedCleanup));
+                 (enableSceneCutCleanup ||
+                  enableTemporalSmoothing ||
+                  enableRoiPostProcess ||
+                  enableWeakIsolationCleanup ||
+                  enableGapFill));
             Debug.WriteLine(
-                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={_options.EnableRoiPostProcess} weakIso={_options.EnableYoloWeakIsolatedCleanup} gapFill={_options.EnableYoloGapFill} scene={_options.EnableYoloSceneCutCarryCleanup} smooth={_options.EnableYoloTemporalSmoothing} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
+                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
             if (_options.FilterProfile == FaceFilterProfile.Yolo && enablePostProcessing && !hasAnyYoloPostModule)
             {
                 Debug.WriteLine(

@@ -1693,14 +1693,21 @@ namespace FaceShield.Services.Analysis
 
         private void SetLastRunSummary(AutoMaskRunSummary summary)
         {
+            bool postEnabled = _options.EnablePostProcessing;
+            bool postRoiEnabled = postEnabled && _options.EnableRoiPostProcess;
+            bool postWeakIsoEnabled = postEnabled && _options.EnableYoloWeakIsolatedCleanup;
+            bool postGapFillEnabled = postEnabled && _options.EnableYoloGapFill;
+            bool postSceneCutEnabled = postEnabled && _options.UseTracking && _options.EnableYoloSceneCutCarryCleanup;
+            bool postTemporalEnabled = postEnabled && _options.EnableYoloTemporalSmoothing;
+
             LastRunSummary = summary with
             {
-                EnablePostProcessing = _options.EnablePostProcessing,
-                EnableRoiPostProcess = _options.EnableRoiPostProcess,
-                EnableYoloWeakIsolatedCleanup = _options.EnableYoloWeakIsolatedCleanup,
-                EnableYoloGapFill = _options.EnableYoloGapFill,
-                EnableYoloSceneCutCarryCleanup = _options.EnableYoloSceneCutCarryCleanup,
-                EnableYoloTemporalSmoothing = _options.EnableYoloTemporalSmoothing,
+                EnablePostProcessing = postEnabled,
+                EnableRoiPostProcess = postRoiEnabled,
+                EnableYoloWeakIsolatedCleanup = postWeakIsoEnabled,
+                EnableYoloGapFill = postGapFillEnabled,
+                EnableYoloSceneCutCarryCleanup = postSceneCutEnabled,
+                EnableYoloTemporalSmoothing = postTemporalEnabled,
                 SourceFps = _sourceFpsForSummary
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
