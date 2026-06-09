@@ -300,7 +300,11 @@ namespace FaceShield.ViewModels.Pages
                 ? (autoRunSummary?.RunId ?? "n/a")
                 : exportSummary.RunId;
             int totalFrames = Math.Max(1, Math.Max(autoRunSummary?.TotalFrames ?? 0, exportSummary.Frames));
-            int inputVideoPackets = Math.Max(0, exportSummary.InputVideoPackets);
+            int inputVideoPackets = Math.Max(
+                0,
+                exportSummary.HybridCopyUsed
+                    ? Math.Max(exportSummary.CopiedSourceVideoPackets, exportSummary.EncodedSourceVideoPackets)
+                    : exportSummary.InputVideoPackets);
             int droppedPackets = Math.Max(0, exportSummary.DroppedVideoPackets);
             double packetDropRate = inputVideoPackets > 0 ? (double)droppedPackets / inputVideoPackets : 0.0;
 
