@@ -1099,6 +1099,8 @@ public unsafe sealed class VideoExportService
                 EncodedSourceVideoPackets: encodedSourceVideoPacketCount,
                 DroppedVideoPackets: droppedVideoPacketsForSummary,
                 HybridCopyTimestampFixCount: copyTimestampFixCount,
+                HybridEncodedPacketFrameStep: encodedFrameStep,
+                HybridCopyPacketFrameStep: hybridCopyVideoFrameStep,
                 PacketLossFallbackReason: packetLossFallbackReason,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
