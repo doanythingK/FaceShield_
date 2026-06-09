@@ -15,7 +15,8 @@ public unsafe sealed class VideoExportService
     private const double MinHybridCopyRatio = 0.05;
     private const int MinHybridCopySideFrames = 24;
     private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
-    private const int MaxHybridCopyModeTransitionsBeforeFallback = 1;
+    private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
+    private const long MaxHybridFrameStepTolerance = 1;
     private const int ExportSampleWindowFrames = 900;
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
@@ -465,6 +466,22 @@ public unsafe sealed class VideoExportService
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
             encodedFrameStep = enc != null ? GetVideoFrameStep(sourceFps, enc->time_base) : 1;
+            long predictedHybridCopyFrameStep = useHybridCopyWindow
+                ? (inStream->time_base.num > 0 && inStream->time_base.den > 0
+                    ? GetVideoFrameStep(sourceFps, inStream->time_base)
+                    : GetVideoFrameStep(sourceFps, enc->time_base))
+                : 1;
+            if (useHybridCopyWindow && predictedHybridCopyFrameStep > 0 && encodedFrameStep > 0
+                && Math.Abs(encodedFrameStep - predictedHybridCopyFrameStep) > MaxHybridFrameStepTolerance)
+            {
+                useHybridCopyWindow = false;
+                hybridCopyAttempted = true;
+                string stepMismatchReason =
+                    $"하이브리드 패킷 간격 불일치(encode={encodedFrameStep}, copy={predictedHybridCopyFrameStep}, sourceFps={sourceFps:0.###})";
+                hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                    ? stepMismatchReason
+                    : $"{hybridCopyFallbackReason}; {stepMismatchReason}";
+            }
             if (useHybridCopyWindow)
             {
                 Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));

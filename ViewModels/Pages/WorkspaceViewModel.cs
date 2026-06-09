@@ -325,6 +325,19 @@ namespace FaceShield.ViewModels.Pages
                 reviewRiskScore++;
                 riskReasons.Add("hybrid-timestamp-fixes");
             }
+            if (exportSummary.HybridCopyUsed &&
+                exportSummary.HybridEncodedPacketFrameStep > 0 &&
+                exportSummary.HybridCopyPacketFrameStep > 0 &&
+                exportSummary.HybridEncodedPacketFrameStep != exportSummary.HybridCopyPacketFrameStep)
+            {
+                reviewRiskScore++;
+                riskReasons.Add("hybrid-step-mismatch");
+            }
+            if (packetDropRate > 0.001)
+            {
+                reviewRiskScore++;
+                riskReasons.Add("packet-drop-rate");
+            }
             if (autoRunSummary != null &&
                 (autoRunSummary.FinalMaskShortGapCount > 0 ||
                     autoRunSummary.FinalMaskPerFaceShortGapCount > 0 ||
@@ -416,6 +429,8 @@ namespace FaceShield.ViewModels.Pages
 
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGate] runId={run}, totalFrames={totalFrames}, sampleWindowFrames={sampleWindowFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, riskReasons={FormatTextListForLog(riskReasons)}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, copiedSourcePackets={exportSummary.CopiedSourceVideoPackets}, encodedSourcePackets={exportSummary.EncodedSourceVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}, sceneCut=preGuard:{autoRunSummary?.FinalSceneCutPreGuardPairCount ?? -1},preStrong:{autoRunSummary?.FinalSceneCutPreStrongProbePairCount ?? -1},postGuard:{autoRunSummary?.FinalSceneCutPostGuardPairCount ?? -1},postStrong:{autoRunSummary?.FinalSceneCutPostStrongProbePairCount ?? -1},carryPairs:{autoRunSummary?.FinalSceneCutCarryPairCount ?? -1},carryRemoved:{autoRunSummary?.FinalSceneCutCarryRemovedCount ?? -1},carryProtected:{autoRunSummary?.FinalSceneCutProtectedFrameCount ?? -1}");
+            System.Diagnostics.Debug.WriteLine(
+                $"[QualityGateHybridTiming] runId={run}, encStep={exportSummary.HybridEncodedPacketFrameStep}, copyStep={exportSummary.HybridCopyPacketFrameStep}, frameGap={Math.Abs(exportSummary.HybridEncodedPacketFrameStep - exportSummary.HybridCopyPacketFrameStep)}, fallback={exportSummary.HybridCopyFallbackReason ?? \"n/a\"}, copyFixes={exportSummary.HybridCopyTimestampFixCount}, mode={exportSummary.ExportMode}, transitions={exportSummary.HybridModeTransitionCount}");
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGateSample] runId={run}, mode={autoRunSummary?.Mode ?? \"n/a\"}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}, sampleFrames={sampleFrameCount}, sampleRows={sampleRowCount}, sampleRisk={sampleRiskLabel}, sampleRiskReasons={FormatTextListForLog(sampleReasons)}, sampleShortGaps={sampleShortGapCount}, samplePerFaceShortGaps={samplePerFaceShortGapCount}, sampleIsolated={sampleIsolatedFrameCount}, sampleLargeJumps={sampleLargeJumpGapCount}, sampleProtectedCarry={sampleProtectedCarryCount}, sampleReviewRequired={sampleReviewRequired.ToString().ToLowerInvariant()}, sampleReviewReasons={sampleReviewReasons}, packetLossFallbackReason={exportSummary.PacketLossFallbackReason ?? \"n/a\"}, hybridFallbackReason={exportSummary.HybridCopyFallbackReason ?? \"n/a\"}");
         }
