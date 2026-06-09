@@ -83,6 +83,11 @@ namespace FaceShield.Services.Analysis
             bool runYoloPostProcess = _options.FilterProfile == FaceFilterProfile.Yolo &&
                 _options.UseTracking &&
                 _options.EnablePostProcessing;
+            bool hasAnyYoloPostModule = _options.EnableRoiPostProcess ||
+                _options.EnableYoloWeakIsolatedCleanup ||
+                _options.EnableYoloGapFill ||
+                _options.EnableYoloSceneCutCarryCleanup ||
+                _options.EnableYoloTemporalSmoothing;
             bool runYoloTrackPost = runYoloMissRecovery ||
                 (runYoloPostProcess &&
                  (_options.EnableYoloSceneCutCarryCleanup ||
@@ -91,6 +96,11 @@ namespace FaceShield.Services.Analysis
                   _options.EnableYoloWeakIsolatedCleanup));
             Debug.WriteLine(
                 $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={_options.EnableRoiPostProcess} weakIso={_options.EnableYoloWeakIsolatedCleanup} gapFill={_options.EnableYoloGapFill} scene={_options.EnableYoloSceneCutCarryCleanup} smooth={_options.EnableYoloTemporalSmoothing} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
+            if (_options.FilterProfile == FaceFilterProfile.Yolo && enablePostProcessing && !hasAnyYoloPostModule)
+            {
+                Debug.WriteLine(
+                    $"[AutoMaskPostProcess] 경고: post=true이지만 YOLO 모듈이 비활성 상태로 OFF baseline와 동일 동작 예정 (runTrackPost={runYoloTrackPost})");
+            }
 
             var temporalPostProcessor = new AutoMaskTemporalPostProcessor();
             bool runTrackPost = _options.FilterProfile == FaceFilterProfile.Yolo
