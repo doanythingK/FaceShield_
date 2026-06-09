@@ -179,7 +179,7 @@ public unsafe sealed class VideoExportService
         int copyTimestampFixCount = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
-        long encodedFrameStep = 1;
+        long encodedPacketFrameStep = 1;
         long hybridCopyVideoFrameStep = 1;
         var swTotal = Stopwatch.StartNew();
 
@@ -465,19 +465,19 @@ public unsafe sealed class VideoExportService
                  hybridEncodeWindow.Value.EndExclusive < totalFrames);
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
-            encodedFrameStep = enc != null ? GetVideoFrameStep(sourceFps, enc->time_base) : 1;
+            long sourceEncodedFrameStep = enc != null ? GetVideoFrameStep(sourceFps, enc->time_base) : 1;
             long predictedHybridCopyFrameStep = useHybridCopyWindow
                 ? (inStream->time_base.num > 0 && inStream->time_base.den > 0
                     ? GetVideoFrameStep(sourceFps, inStream->time_base)
                     : GetVideoFrameStep(sourceFps, enc->time_base))
                 : 1;
-            if (useHybridCopyWindow && predictedHybridCopyFrameStep > 0 && encodedFrameStep > 0
-                && Math.Abs(encodedFrameStep - predictedHybridCopyFrameStep) > MaxHybridFrameStepTolerance)
+            if (useHybridCopyWindow && predictedHybridCopyFrameStep > 0 && sourceEncodedFrameStep > 0
+                && Math.Abs(sourceEncodedFrameStep - predictedHybridCopyFrameStep) > MaxHybridFrameStepTolerance)
             {
                 useHybridCopyWindow = false;
                 hybridCopyAttempted = true;
                 string stepMismatchReason =
-                    $"하이브리드 패킷 간격 불일치(encode={encodedFrameStep}, copy={predictedHybridCopyFrameStep}, sourceFps={sourceFps:0.###})";
+                    $"하이브리드 패킷 간격 불일치(encode={sourceEncodedFrameStep}, copy={predictedHybridCopyFrameStep}, sourceFps={sourceFps:0.###})";
                 hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
                     ? stepMismatchReason
                     : $"{hybridCopyFallbackReason}; {stepMismatchReason}";
@@ -504,6 +504,25 @@ public unsafe sealed class VideoExportService
                 Throw(ffmpeg.avcodec_parameters_from_context(outStream->codecpar, enc));
                 outStream->time_base = enc->time_base;
             }
+            encodedPacketFrameStep = GetVideoFrameStep(sourceFps, outStream->time_base);
+            if (useHybridCopyWindow
+                && Math.Abs(encodedPacketFrameStep - hybridCopyVideoFrameStep) > MaxHybridFrameStepTolerance)
+            {
+                useHybridCopyWindow = false;
+                hybridCopyAttempted = true;
+                string outStepMismatchReason =
+                    $"하이브리드 출력 시점 간격 불일치(encodeOutput={encodedPacketFrameStep}, copy={hybridCopyVideoFrameStep}, sourceFps={sourceFps:0.###})";
+                hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                    ? outStepMismatchReason
+                    : $"{hybridCopyFallbackReason}; {outStepMismatchReason}";
+                Throw(ffmpeg.avcodec_parameters_from_context(outStream->codecpar, enc));
+                outStream->time_base = enc->time_base;
+                encodedPacketFrameStep = GetVideoFrameStep(sourceFps, outStream->time_base);
+            }
+            if (encodedPacketFrameStep <= 0)
+                encodedPacketFrameStep = 1;
+            if (hybridCopyVideoFrameStep <= 0)
+                hybridCopyVideoFrameStep = encodedPacketFrameStep;
 
             if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
                 Throw(ffmpeg.avio_open(&outFmt->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE));
@@ -789,7 +808,7 @@ public unsafe sealed class VideoExportService
                             sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                             sampleBlurredFrameCount: ref sampleBlurredFrameCount,
                             encodedWindowFrameCount: ref encodedWindowFrameCount,
-                            encodedPacketFrameStep: encodedFrameStep);
+                            encodedPacketFrameStep: encodedPacketFrameStep);
 
                         if (hasLastEncodedPacketPts)
                         {
@@ -814,6 +833,8 @@ public unsafe sealed class VideoExportService
 
                     ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
                     bool hasMissingTimestamps = pkt->pts == ffmpeg.AV_NOPTS_VALUE && pkt->dts == ffmpeg.AV_NOPTS_VALUE;
+                    long previousPacketPts = lastVideoCopyPacketPts;
+                    bool hasPreviousPacketPts = hasLastVideoCopyPacketPts;
                     bool timestampAdjusted = NormalizeCopiedPacketTimestamps(
                         pkt,
                         ref lastVideoCopyPacketPts,
@@ -821,6 +842,21 @@ public unsafe sealed class VideoExportService
                         ref lastVideoCopyPacketDts,
                         ref hasLastVideoCopyPacketDts,
                         hybridCopyVideoFrameStep);
+                    if (hasPreviousPacketPts)
+                    {
+                        long copyGap = Math.Abs(pkt->pts - previousPacketPts);
+                        long copyGapThreshold = Math.Max(1, hybridCopyVideoFrameStep * 3);
+                        if (copyGap > 0 && copyGap > copyGapThreshold)
+                        {
+                            shouldRetryWithFullEncode = true;
+                            packetDropFallbackReason =
+                                string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                                    ? $"hybrid-copy-pts-gap={copyGap}, frame={packetFrameIndex}"
+                                    : $"{packetDropFallbackReason}; hybrid-copy-pts-gap={copyGap}, frame={packetFrameIndex}";
+                            throw new InvalidOperationException(
+                                "Invalid argument: 하이브리드 복사 구간의 PTS 점프가 과도하여 rollback 합니다.");
+                        }
+                    }
                     if (timestampAdjusted && string.IsNullOrWhiteSpace(packetDropFallbackReason))
                     {
                         packetDropFallbackReason = hasMissingTimestamps
@@ -902,7 +938,7 @@ public unsafe sealed class VideoExportService
                             sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                             sampleBlurredFrameCount: ref sampleBlurredFrameCount,
                             encodedWindowFrameCount: ref encodedWindowFrameCount,
-                            encodedPacketFrameStep: encodedFrameStep);
+                            encodedPacketFrameStep: encodedPacketFrameStep);
                     ffmpeg.av_frame_unref(frame);
                 }
             }
@@ -951,7 +987,7 @@ public unsafe sealed class VideoExportService
                 sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                 sampleBlurredFrameCount: ref sampleBlurredFrameCount,
                 encodedWindowFrameCount: ref encodedWindowFrameCount,
-                encodedPacketFrameStep: encodedFrameStep);
+                encodedPacketFrameStep: encodedPacketFrameStep);
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -1011,9 +1047,6 @@ public unsafe sealed class VideoExportService
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
-            int droppedVideoPackets = useHybridCopyWindow
-                ? Math.Max(0, copiedSourceVideoPacketCount - copiedVideoPacketCount)
-                : Math.Max(0, inputVideoPacketCount - outputVideoPacketCount);
             int sampleWindowLimit = totalFrames > 0
                 ? Math.Min(ExportSampleWindowFrames, totalFrames)
                 : 0;
@@ -1026,6 +1059,15 @@ public unsafe sealed class VideoExportService
                 ? encodeWindowEnd - encodeWindowStart
                 : 0;
             int encodedWindowFrameShortfall = Math.Max(0, expectedHybridWindowEncodedFrames - encodedWindowFrameCount);
+            int hybridCopySourcePacketLoss = useHybridCopyWindow
+                ? Math.Max(0, copiedSourceVideoPacketCount - copiedVideoPacketCount)
+                : 0;
+            int hybridEncodedWindowFrameLoss = useHybridCopyWindow
+                ? encodedWindowFrameShortfall
+                : 0;
+            int droppedVideoPackets = useHybridCopyWindow
+                ? hybridCopySourcePacketLoss + hybridEncodedWindowFrameLoss
+                : Math.Max(0, inputVideoPacketCount - outputVideoPacketCount);
             int outputPacketDropCount = useHybridCopyWindow
                 ? Math.Max(0, inputVideoPacketCount - outputVideoPacketCount)
                 : 0;
@@ -1063,7 +1105,7 @@ public unsafe sealed class VideoExportService
                     if (useHybridCopyWindow)
                     {
                     Debug.WriteLine(
-                        $"[Export] packetDropHint copySource={copiedSourceVideoPacketCount}, copiedOutput={copiedVideoPacketCount}, dropped={droppedVideoPackets}, encodeWindow={encodeWindowStart}-{encodeWindowEnd}, encodedWindowFrames={encodedWindowFrameCount}");
+                        $"[Export] packetDropHint copySource={copiedSourceVideoPacketCount}, copyOutput={copiedVideoPacketCount}, copyLoss={hybridCopySourcePacketLoss}, encodeWindow={encodeWindowStart}-{encodeWindowEnd}, encodedWindowFrames={encodedWindowFrameCount}, encodedShortfall={hybridEncodedWindowFrameLoss}, dropped={droppedVideoPackets}");
                 }
                 else
                 {
@@ -1116,7 +1158,7 @@ public unsafe sealed class VideoExportService
                 EncodedSourceVideoPackets: encodedSourceVideoPacketCount,
                 DroppedVideoPackets: droppedVideoPacketsForSummary,
                 HybridCopyTimestampFixCount: copyTimestampFixCount,
-                HybridEncodedPacketFrameStep: encodedFrameStep,
+                HybridEncodedPacketFrameStep: encodedPacketFrameStep,
                 HybridCopyPacketFrameStep: hybridCopyVideoFrameStep,
                 PacketLossFallbackReason: packetLossFallbackReason,
                 forceSoftwareEncoder,
