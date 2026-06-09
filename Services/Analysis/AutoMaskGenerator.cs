@@ -524,7 +524,8 @@ namespace FaceShield.Services.Analysis
                 BuildDetectionSummary(roiStats, filterStats),
                 _options.RunId,
                 GetDetectorName()));
-            RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct);
+            ApplyPostProcessResultToRunSummary(
+                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
         }
 
         private sealed class BgraBuffer
@@ -872,7 +873,8 @@ namespace FaceShield.Services.Analysis
                 BuildDetectionSummary(roiStats, filterStats),
                 _options.RunId,
                 GetDetectorName()));
-            RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct);
+            ApplyPostProcessResultToRunSummary(
+                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
         }
 
         public async Task<bool> GenerateFrameAsync(
@@ -1291,7 +1293,8 @@ namespace FaceShield.Services.Analysis
                 filterStats.BuildSummary(),
                 _options.RunId,
                 GetDetectorName()));
-            RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct);
+            ApplyPostProcessResultToRunSummary(
+                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
         }
 
         private void GenerateSparsePipelinedTrackingParallel(
@@ -1570,20 +1573,21 @@ namespace FaceShield.Services.Analysis
                 filterStats.BuildSummary(),
                 _options.RunId,
                 GetDetectorName()));
-            RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct);
+            ApplyPostProcessResultToRunSummary(
+                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
         }
 
-        private void RunAutoPostProcessIfNeeded(string videoPath, int totalFrames, CancellationToken ct)
+        private AutoMaskPostProcessResult RunAutoPostProcessIfNeeded(string videoPath, int totalFrames, CancellationToken ct)
         {
             if (ct.IsCancellationRequested || totalFrames <= 0)
-                return;
+                return AutoMaskPostProcessResult.Empty;
 
             var postProcess = new AutoMaskPostProcessPipeline(
                 _maskProvider,
                 _options,
                 totalFrames);
 
-            postProcess.Apply(
+            return postProcess.Apply(
                 videoPath,
                 ct,
                 _detector as IBgraFaceDetector,
@@ -1591,10 +1595,40 @@ namespace FaceShield.Services.Analysis
                 _options.UseFaceOnnxRoiRefiner);
         }
 
+        private void ApplyPostProcessResultToRunSummary(AutoMaskPostProcessResult postProcessResult)
+        {
+            if (LastRunSummary == null)
+                return;
+
+            var finalSummary = postProcessResult.FinalSummary;
+            LastRunSummary = LastRunSummary with
+            {
+                FinalMaskFrames = finalSummary.FinalFrameCount,
+                FinalMaskRows = finalSummary.FinalRowCount,
+                FinalMaskShortGapCount = finalSummary.FinalShortGapCount,
+                FinalMaskPerFaceShortGapCount = finalSummary.FinalPerFaceShortGapCount,
+                FinalMaskLargeJumpGapCount = finalSummary.FinalLargeJumpGapCount,
+                FinalProtectedSceneCarryFrameCount = finalSummary.ProtectedSceneCarryFrameCount,
+                FinalMaskReviewRequired = finalSummary.FinalReviewRequired,
+                FinalMaskReviewReasons = string.IsNullOrWhiteSpace(finalSummary.FinalReviewReasons)
+                    ? "none"
+                    : finalSummary.FinalReviewReasons
+            };
+            Debug.WriteLine(LastRunSummary.ToLogLine());
+        }
+
         private void SetLastRunSummary(AutoMaskRunSummary summary)
         {
-            LastRunSummary = summary;
-            Debug.WriteLine(summary.ToLogLine());
+            LastRunSummary = summary with
+            {
+                EnablePostProcessing = _options.EnablePostProcessing,
+                EnableRoiPostProcess = _options.EnableRoiPostProcess,
+                EnableYoloWeakIsolatedCleanup = _options.EnableYoloWeakIsolatedCleanup,
+                EnableYoloGapFill = _options.EnableYoloGapFill,
+                EnableYoloSceneCutCarryCleanup = _options.EnableYoloSceneCutCarryCleanup,
+                EnableYoloTemporalSmoothing = _options.EnableYoloTemporalSmoothing
+            };
+            Debug.WriteLine(LastRunSummary.ToLogLine());
         }
 
         private string GetDetectorName()
