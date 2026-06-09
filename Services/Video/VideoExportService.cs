@@ -407,8 +407,16 @@ public unsafe sealed class VideoExportService
                 progress.Report(new ExportProgress(0, totalFrames, status));
             }
 
+            bool allowHybridWithAudio = inAudioStream == null || audioCopy;
+            if (hybridCopyAttempted && !allowHybridWithAudio)
+            {
+                hybridCopyFallbackReason =
+                    $"오디오 재인코딩 경로에서 하이브리드 비사용 (audioStreamPresent={inAudioStream != null}, audioCopy={audioCopy}, audioReencode={audioReencode})";
+            }
+
             bool useHybridCopyWindow =
                 allowHybridCopy &&
+                allowHybridWithAudio &&
                 hybridEncodeWindow.HasValue &&
                 enc != null &&
                 encoder != null &&
