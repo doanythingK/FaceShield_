@@ -713,7 +713,12 @@ namespace FaceShield.Services.Analysis
                 aspectBadRows,
                 tinyWeakRows,
                 tinyShortRows,
-                protectedSceneCarryFrames.Length);
+                protectedSceneCarryFrames.Length,
+                sceneCutCarryPairCount,
+                sceneCutCarryRemovedCount,
+                sceneCutProtectedFrameCount > 0
+                    ? sceneCutProtectedFrameCount
+                    : protectedSceneCarryFrames.Length);
 
             Debug.WriteLine(
                 $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeLarge={topEdgeLargeRows} topEdgeLargeFrames={FormatFrameList(topEdgeLargeFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} sceneCutControl=preGuard={sceneCutPreGuardPairCount},preStrong={sceneCutPreStrongProbePairCount},postGuard={sceneCutPostGuardPairCount},postStrong={sceneCutPostStrongProbePairCount},carryPairs={sceneCutCarryPairCount},carryRemoved={sceneCutCarryRemovedCount},carryProtected={sceneCutProtectedFrameCount} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
@@ -754,7 +759,10 @@ namespace FaceShield.Services.Analysis
             int aspectBadRows,
             int tinyWeakRows,
             int tinyShortRows,
-            int protectedSceneCarryRows = 0)
+            int protectedSceneCarryRows = 0,
+            int sceneCutCarryPairCount = 0,
+            int sceneCutCarryRemovedCount = 0,
+            int sceneCutProtectedFrameCount = 0)
         {
             var reasons = new List<string>();
             if (shortGapCount > 0)
@@ -787,6 +795,12 @@ namespace FaceShield.Services.Analysis
                 reasons.Add("tiny-short");
             if (protectedSceneCarryRows > 0)
                 reasons.Add("scene-carry-protected");
+            if (sceneCutCarryPairCount > 0)
+                reasons.Add("scene-carry-pairs");
+            if (sceneCutCarryRemovedCount > 0)
+                reasons.Add("scene-carry-removed");
+            if (sceneCutProtectedFrameCount > 0)
+                reasons.Add("scene-carry-keep");
 
             return reasons;
         }
