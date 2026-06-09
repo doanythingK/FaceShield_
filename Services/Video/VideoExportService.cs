@@ -453,6 +453,23 @@ public unsafe sealed class VideoExportService
                     $"오디오 재인코딩 경로에서 하이브리드 비사용 (audioStreamPresent={inAudioStream != null}, audioCopy={audioCopy}, audioReencode={audioReencode})";
             }
 
+            if (dec != null && dec->has_b_frames > 0)
+            {
+                if (hybridCopyAttempted)
+                {
+                    hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                        ? $"디코더 B-프레임이 존재해 하이브리드 구간 복사를 비활성화했습니다 (has_b_frames={dec->has_b_frames})"
+                        : $"{hybridCopyFallbackReason}; 디코더 B-프레임이 존재해 하이브리드 구간 복사를 비활성화했습니다 (has_b_frames={dec->has_b_frames})";
+                }
+                else
+                {
+                    hybridCopyFallbackReason =
+                        $"디코더 B-프레임이 존재해 하이브리드 구간 복사를 비활성화했습니다 (has_b_frames={dec->has_b_frames})";
+                }
+
+                hybridCopyAttempted = true;
+            }
+
             bool useHybridCopyWindow =
                 allowHybridCopy &&
                 allowHybridWithAudio &&
@@ -463,6 +480,11 @@ public unsafe sealed class VideoExportService
                 !IsHardwareEncoder(encoder) &&
                 (hybridEncodeWindow.Value.Start > 0 ||
                  hybridEncodeWindow.Value.EndExclusive < totalFrames);
+
+            if (dec != null && dec->has_b_frames > 0)
+            {
+                useHybridCopyWindow = false;
+            }
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
             long sourceEncodedFrameStep = enc != null ? GetVideoFrameStep(sourceFps, enc->time_base) : 1;
