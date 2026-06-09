@@ -178,6 +178,8 @@ public unsafe sealed class VideoExportService
         int copyTimestampFixCount = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
+        long encodedFrameStep = 1;
+        long hybridCopyVideoFrameStep = 1;
         var swTotal = Stopwatch.StartNew();
 
         try
@@ -212,6 +214,7 @@ public unsafe sealed class VideoExportService
                     : inStream->r_frame_rate.num != 0
                         ? ffmpeg.av_q2d(inStream->r_frame_rate)
                         : 0.0;
+            hybridCopyVideoFrameStep = GetVideoFrameStep(sourceFps, inStream->time_base);
             if (totalFrames <= 0)
             {
                 double durationSeconds = inStream->duration != 0
@@ -461,6 +464,7 @@ public unsafe sealed class VideoExportService
                  hybridEncodeWindow.Value.EndExclusive < totalFrames);
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
+            encodedFrameStep = enc != null ? GetVideoFrameStep(sourceFps, enc->time_base) : 1;
             if (useHybridCopyWindow)
             {
                 Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));
@@ -468,6 +472,7 @@ public unsafe sealed class VideoExportService
                 outStream->time_base = inStream->time_base.num > 0 && inStream->time_base.den > 0
                     ? inStream->time_base
                     : enc->time_base;
+                hybridCopyVideoFrameStep = GetVideoFrameStep(sourceFps, outStream->time_base);
                 if (progress != null && hybridEncodeWindow.HasValue)
                 {
                     var window = hybridEncodeWindow.Value;
@@ -766,7 +771,8 @@ public unsafe sealed class VideoExportService
                             sampleWindowFrames: ExportSampleWindowFrames,
                             sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                             sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                            encodedWindowFrameCount: ref encodedWindowFrameCount);
+                            encodedWindowFrameCount: ref encodedWindowFrameCount,
+                            encodedPacketFrameStep: encodedFrameStep);
 
                         if (hasLastEncodedPacketPts)
                         {
@@ -796,7 +802,8 @@ public unsafe sealed class VideoExportService
                         ref lastVideoCopyPacketPts,
                         ref hasLastVideoCopyPacketPts,
                         ref lastVideoCopyPacketDts,
-                        ref hasLastVideoCopyPacketDts);
+                        ref hasLastVideoCopyPacketDts,
+                        hybridCopyVideoFrameStep);
                     if (timestampAdjusted && string.IsNullOrWhiteSpace(packetDropFallbackReason))
                     {
                         packetDropFallbackReason = hasMissingTimestamps
@@ -877,7 +884,8 @@ public unsafe sealed class VideoExportService
                             sampleWindowFrames: ExportSampleWindowFrames,
                             sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                             sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                            encodedWindowFrameCount: ref encodedWindowFrameCount);
+                            encodedWindowFrameCount: ref encodedWindowFrameCount,
+                            encodedPacketFrameStep: encodedFrameStep);
                     ffmpeg.av_frame_unref(frame);
                 }
             }
@@ -925,7 +933,8 @@ public unsafe sealed class VideoExportService
                 sampleWindowFrames: ExportSampleWindowFrames,
                 sampleEncodedFrameCount: ref sampleEncodedFrameCount,
                 sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                encodedWindowFrameCount: ref encodedWindowFrameCount);
+                encodedWindowFrameCount: ref encodedWindowFrameCount,
+                encodedPacketFrameStep: encodedFrameStep);
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -1192,7 +1201,8 @@ public unsafe sealed class VideoExportService
         ref bool hasLastPacketPts,
         ref long lastPacketDts,
         ref bool hasLastPacketDts,
-        ref int outputVideoPacketCount)
+        ref int outputVideoPacketCount,
+        long encodedPacketFrameStep)
     {
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
@@ -1202,7 +1212,8 @@ public unsafe sealed class VideoExportService
                 ref lastPacketPts,
                 ref hasLastPacketPts,
                 ref lastPacketDts,
-                ref hasLastPacketDts);
+                ref hasLastPacketDts,
+                encodedPacketFrameStep);
             outPkt->stream_index = outStream->index;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
             outputVideoPacketCount++;
@@ -1252,7 +1263,8 @@ public unsafe sealed class VideoExportService
         int sampleWindowFrames,
         ref int sampleEncodedFrameCount,
         ref int sampleBlurredFrameCount,
-        ref int encodedWindowFrameCount)
+        ref int encodedWindowFrameCount,
+        long encodedPacketFrameStep)
     {
         if (cancellationToken.IsCancellationRequested)
             throw new OperationCanceledException(cancellationToken);
@@ -1271,6 +1283,7 @@ public unsafe sealed class VideoExportService
             inStream->time_base,
             enc->time_base,
             resolvedFrameIndex,
+            sourceFps,
             ref lastEncodedPts,
             ref hasLastEncodedPts);
 
@@ -1350,7 +1363,8 @@ public unsafe sealed class VideoExportService
                 ref hasLastEncodedPacketPts,
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
-                ref outputVideoPacketCount);
+                ref outputVideoPacketCount,
+                encodedPacketFrameStep);
             tEncode.Stop();
             encodeMs += tEncode.ElapsedMilliseconds;
         }
@@ -1389,15 +1403,16 @@ public unsafe sealed class VideoExportService
                 var tEncode = Stopwatch.StartNew();
                 Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
                 DrainEncoderPackets(
-                    enc,
-                    outPkt,
-                    outStream,
-                    outFmt,
-                    ref lastEncodedPacketPts,
-                    ref hasLastEncodedPacketPts,
-                    ref lastEncodedPacketDts,
-                    ref hasLastEncodedPacketDts,
-                    ref outputVideoPacketCount);
+                enc,
+                outPkt,
+                outStream,
+                outFmt,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
+                ref outputVideoPacketCount,
+                encodedPacketFrameStep);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
@@ -1407,15 +1422,16 @@ public unsafe sealed class VideoExportService
                 ApplyEncodingPts(frame, encodedPts);
                 Throw(ffmpeg.avcodec_send_frame(enc, frame));
                 DrainEncoderPackets(
-                    enc,
-                    outPkt,
-                    outStream,
-                    outFmt,
-                    ref lastEncodedPacketPts,
-                    ref hasLastEncodedPacketPts,
-                    ref lastEncodedPacketDts,
-                    ref hasLastEncodedPacketDts,
-                    ref outputVideoPacketCount);
+                enc,
+                outPkt,
+                outStream,
+                outFmt,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
+                ref outputVideoPacketCount,
+                encodedPacketFrameStep);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
@@ -1476,7 +1492,8 @@ public unsafe sealed class VideoExportService
         int sampleWindowFrames,
         ref int sampleEncodedFrameCount,
         ref int sampleBlurredFrameCount,
-        ref int encodedWindowFrameCount)
+        ref int encodedWindowFrameCount,
+        long encodedPacketFrameStep)
     {
         if (videoFlushed)
             return;
@@ -1529,23 +1546,25 @@ public unsafe sealed class VideoExportService
                 sampleWindowFrames,
                 ref sampleEncodedFrameCount,
                 ref sampleBlurredFrameCount,
-                ref encodedWindowFrameCount);
+                ref encodedWindowFrameCount,
+                encodedPacketFrameStep);
             ffmpeg.av_frame_unref(frame);
         }
 
         int encErr = ffmpeg.avcodec_send_frame(enc, null);
         if (encErr < 0 && encErr != ffmpeg.AVERROR_EOF)
             Throw(encErr);
-        DrainEncoderPackets(
-            enc,
-            outPkt,
-            outStream,
-            outFmt,
-            ref lastEncodedPacketPts,
-            ref hasLastEncodedPacketPts,
-            ref lastEncodedPacketDts,
-            ref hasLastEncodedPacketDts,
-            ref outputVideoPacketCount);
+            DrainEncoderPackets(
+                enc,
+                outPkt,
+                outStream,
+                outFmt,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
+                ref outputVideoPacketCount,
+                encodedPacketFrameStep);
         videoFlushed = true;
     }
 
@@ -1803,9 +1822,11 @@ public unsafe sealed class VideoExportService
         AVRational sourceTimeBase,
         AVRational targetTimeBase,
         int fallbackFrameIndex,
+        double sourceFps,
         ref long lastPts,
         ref bool hasLastPts)
     {
+        long frameStep = GetVideoFrameStep(sourceFps, targetTimeBase);
         long rawPts = frame != null
             ? (frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
                 ? frame->best_effort_timestamp
@@ -1814,7 +1835,9 @@ public unsafe sealed class VideoExportService
 
         if (rawPts == ffmpeg.AV_NOPTS_VALUE)
         {
-            rawPts = hasLastPts ? (lastPts + 1) : Math.Max(0, fallbackFrameIndex);
+            rawPts = hasLastPts
+                ? (lastPts + frameStep)
+                : Math.Max(0, fallbackFrameIndex * frameStep);
         }
 
         if (rawPts < 0)
@@ -1831,15 +1854,31 @@ public unsafe sealed class VideoExportService
         {
             hasLastPts = true;
         }
-        else if (normalizedPts <= lastPts || normalizedPts > lastPts + 1)
+        else if (normalizedPts <= lastPts)
         {
             // 디코딩 타임스탬프의 경계 편차가 있을 때도
             // 매 프레임이 연속된 재생 속도를 유지하도록 보정한다.
-            normalizedPts = lastPts + 1;
+            normalizedPts = lastPts + Math.Max(1, frameStep);
         }
 
         lastPts = normalizedPts;
         return normalizedPts;
+    }
+
+    private static long GetVideoFrameStep(double sourceFps, AVRational targetTimeBase)
+    {
+        if (sourceFps <= 0.0 || targetTimeBase.den == 0 || targetTimeBase.num == 0)
+            return 1;
+
+        double tickSeconds = ffmpeg.av_q2d(targetTimeBase);
+        if (tickSeconds <= 0.0 || double.IsNaN(tickSeconds) || double.IsInfinity(tickSeconds))
+            return 1;
+
+        double frameStep = (1.0 / sourceFps) / tickSeconds;
+        if (double.IsNaN(frameStep) || double.IsInfinity(frameStep))
+            return 1;
+
+        return Math.Max(1, (long)Math.Round(frameStep));
     }
 
     private static unsafe bool NormalizeEncodedPacketTimestamps(
@@ -1847,11 +1886,13 @@ public unsafe sealed class VideoExportService
         ref long lastPacketPts,
         ref bool hasLastPacketPts,
         ref long lastPacketDts,
-        ref bool hasLastPacketDts)
+        ref bool hasLastPacketDts,
+        long expectedFrameStep = 1)
     {
         if (packet == null)
             return false;
 
+        expectedFrameStep = Math.Max(1, expectedFrameStep);
         bool hadAdjustment = false;
 
         long noValue = ffmpeg.AV_NOPTS_VALUE;
@@ -1861,17 +1902,12 @@ public unsafe sealed class VideoExportService
         long normalizedPts = packet->pts;
         if (normalizedPts == noValue || normalizedPts < 0)
         {
-            normalizedPts = hasLastPacketPts ? Math.Max(0, lastPacketPts + 1) : 0;
+            normalizedPts = hasLastPacketPts ? (lastPacketPts + expectedFrameStep) : 0;
             hadAdjustment = true;
         }
         if (hasLastPacketPts && normalizedPts <= lastPacketPts)
         {
-            normalizedPts = lastPacketPts + 1;
-            hadAdjustment = true;
-        }
-        else if (hasLastPacketPts && normalizedPts > lastPacketPts + 1)
-        {
-            normalizedPts = lastPacketPts + 1;
+            normalizedPts = Math.Max(normalizedPts, lastPacketPts + expectedFrameStep);
             hadAdjustment = true;
         }
 
@@ -1883,12 +1919,7 @@ public unsafe sealed class VideoExportService
         }
         if (hasLastPacketDts && normalizedDts <= lastPacketDts)
         {
-            normalizedDts = lastPacketDts + 1;
-            hadAdjustment = true;
-        }
-        else if (hasLastPacketDts && normalizedDts > lastPacketDts + 1)
-        {
-            normalizedDts = lastPacketDts + 1;
+            normalizedDts = Math.Max(normalizedDts, lastPacketDts + expectedFrameStep);
             hadAdjustment = true;
         }
 
@@ -1903,7 +1934,14 @@ public unsafe sealed class VideoExportService
 
         if (packet->duration <= 0)
         {
-            packet->duration = 1;
+            long inferredDuration = hasLastPacketPts
+                ? (normalizedPts - lastPacketPts)
+                : expectedFrameStep;
+            if (inferredDuration <= 0)
+                inferredDuration = expectedFrameStep;
+            if (inferredDuration <= 0)
+                inferredDuration = 1;
+            packet->duration = inferredDuration;
             hadAdjustment = true;
         }
 
@@ -1923,9 +1961,16 @@ public unsafe sealed class VideoExportService
         ref long lastPacketPts,
         ref bool hasLastPacketPts,
         ref long lastPacketDts,
-        ref bool hasLastPacketDts)
+        ref bool hasLastPacketDts,
+        long expectedFrameStep = 1)
     {
-        return NormalizeEncodedPacketTimestamps(packet, ref lastPacketPts, ref hasLastPacketPts, ref lastPacketDts, ref hasLastPacketDts);
+        return NormalizeEncodedPacketTimestamps(
+            packet,
+            ref lastPacketPts,
+            ref hasLastPacketPts,
+            ref lastPacketDts,
+            ref hasLastPacketDts,
+            expectedFrameStep);
     }
 
     private static unsafe void ApplyEncodingPts(AVFrame* frame, long pts)
@@ -2061,13 +2106,17 @@ public unsafe sealed class VideoExportService
                 AVStream* inStream = inFmt->streams[inIndex];
                 int outIndex = streamMap[inIndex];
                 AVStream* outStream = outFmt->streams[outIndex];
+                long normalizeStep = inStream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO
+                    ? GetVideoFrameStep(sourceFps, outStream->time_base)
+                    : 1;
                 ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
                 NormalizeCopiedPacketTimestamps(
                     pkt,
                     ref lastRemuxPacketPts[outIndex],
                     ref hasLastRemuxPacketPts[outIndex],
                     ref lastRemuxPacketDts[outIndex],
-                    ref hasLastRemuxPacketDts[outIndex]);
+                    ref hasLastRemuxPacketDts[outIndex],
+                    normalizeStep);
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
                 Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
