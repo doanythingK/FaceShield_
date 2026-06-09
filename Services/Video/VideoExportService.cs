@@ -17,6 +17,8 @@ public unsafe sealed class VideoExportService
     private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
     private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
     private const int MaxHybridFrameGapBeforeFallback = 32;
+    private const double MaxEstimatedFrameCountSkewRatio = 1.25;
+    private const int MaxEstimatedFrameCountSkewAbsolute = 1200;
     private const long MaxHybridFrameStepTolerance = 1;
     private const long MaxHybridCopyGapMultiplierForFallback = 1;
     private const int MaxHybridCopyGapConsecutiveAfterThreshold = 3;
@@ -322,11 +324,31 @@ public unsafe sealed class VideoExportService
                 {
                     var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
                     hybridCandidateKeyframes = keyframes;
-                    if (estimatedTotalFrames > totalFrames && estimatedTotalFrames > 0)
+                    if (estimatedTotalFrames > 0)
                     {
-                        Debug.WriteLine(
-                            $"[Export] detected frame count expansion from keyframe scan: meta={totalFrames}, estimated={estimatedTotalFrames}");
-                        totalFrames = estimatedTotalFrames;
+                        int frameCountSkew = estimatedTotalFrames - totalFrames;
+                        bool disableHybridForUnstableFrameCount =
+                            frameCountSkew > 0
+                            && (estimatedTotalFrames > (int)(totalFrames * MaxEstimatedFrameCountSkewRatio)
+                                || frameCountSkew > MaxEstimatedFrameCountSkewAbsolute);
+
+                        if (disableHybridForUnstableFrameCount)
+                        {
+                            canCopyOutsideBlurWindow = false;
+                            allowHybridCopyCurrent = false;
+                            hybridCopyAttempted = true;
+                            string unstableFrameCountReason =
+                                $"키프레임 기반 총 프레임 추정치 불일치로 하이브리드 비활성 (estimated={estimatedTotalFrames}, reported={totalFrames}, delta={frameCountSkew})";
+                            hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                                ? unstableFrameCountReason
+                                : $"{hybridCopyFallbackReason}; {unstableFrameCountReason}";
+                        }
+                        else if (estimatedTotalFrames > totalFrames)
+                        {
+                            Debug.WriteLine(
+                                $"[Export] detected frame count expansion from keyframe scan: meta={totalFrames}, estimated={estimatedTotalFrames}");
+                            totalFrames = estimatedTotalFrames;
+                        }
                     }
                     blurRanges = AlignRangesToKeyframes(blurRanges, keyframes, totalFrames);
                     if (blurRanges.Count == 0)
