@@ -603,8 +603,15 @@ public unsafe sealed class VideoExportService
                 int packetFrameIndex;
                 if (useHybridCopyWindow)
                 {
-                    // 하이브리드 구간은 패킷 순번 기반 경계를 사용해 PTS 해상도 오차 영향에서 분리한다.
-                    packetFrameIndex = packetFrameFallback;
+                    // 하이브리드 구간도 프레임 경계 정합을 위해 타임스탬프 기반 인덱스를 우선 사용한다.
+                    packetFrameIndex = ResolveFrameIndexFromPacket(
+                        pkt,
+                        inStream->time_base,
+                        sourceFps,
+                        packetFrameFallback,
+                        totalFrames);
+                    if (packetFrameIndex < packetFrameFallback)
+                        packetFrameIndex = packetFrameFallback;
                 }
                 else
                 {
