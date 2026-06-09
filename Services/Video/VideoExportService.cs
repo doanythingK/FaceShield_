@@ -16,6 +16,8 @@ public unsafe sealed class VideoExportService
     private const int MinHybridCopySideFrames = 24;
     private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
     private const int MaxHybridCopyModeTransitionsBeforeFallback = 1;
+    private const int ExportSampleWindowFrames = 900;
+    private const int MaxAcceptableSampleWindowFrameShortfall = 1;
 
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
@@ -170,6 +172,10 @@ public unsafe sealed class VideoExportService
         int copiedVideoPacketCount = 0;
         int copiedSourceVideoPacketCount = 0;
         int encodedSourceVideoPacketCount = 0;
+        int sampleSourceVideoPacketCount = 0;
+        int sampleCopiedVideoPacketCount = 0;
+        int sampleEncodedFrameCount = 0;
+        int sampleBlurredFrameCount = 0;
         int copyTimestampFixCount = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
@@ -596,6 +602,8 @@ public unsafe sealed class VideoExportService
                 if (packetFrameIndex < packetFrameFallback)
                     packetFrameIndex = packetFrameFallback;
                 packetFrameFallback = packetFrameIndex + 1;
+                if (packetFrameIndex < ExportSampleWindowFrames)
+                    sampleSourceVideoPacketCount++;
 
                 bool packetInEncodeWindow =
                     !useHybridCopyWindow ||
@@ -678,6 +686,8 @@ public unsafe sealed class VideoExportService
                 if (!packetInEncodeWindow)
                 {
                     copiedSourceVideoPacketCount++;
+                    if (packetFrameIndex < ExportSampleWindowFrames)
+                        sampleCopiedVideoPacketCount++;
 
                     if (useHybridCopyWindow && packetFrameIndex >= encodeWindowEnd)
                     {
@@ -718,7 +728,10 @@ public unsafe sealed class VideoExportService
                             progress,
                             ref lastReportedFrame,
                             swTotal,
-                            cancellationToken);
+                            cancellationToken,
+                            sampleWindowFrames: ExportSampleWindowFrames,
+                            sampleEncodedFrameCount: ref sampleEncodedFrameCount,
+                            sampleBlurredFrameCount: ref sampleBlurredFrameCount);
 
                         if (hasLastEncodedPacketPts)
                         {
@@ -787,8 +800,8 @@ public unsafe sealed class VideoExportService
                 ffmpeg.av_packet_unref(pkt);
             while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
             {
-                ProcessDecodedVideoFrame(
-                    frame,
+                    ProcessDecodedVideoFrame(
+                        frame,
                         bgra,
                         encFrame,
                         dec,
@@ -823,7 +836,10 @@ public unsafe sealed class VideoExportService
                             progress,
                             ref lastReportedFrame,
                             swTotal,
-                            cancellationToken);
+                            cancellationToken,
+                            sampleWindowFrames: ExportSampleWindowFrames,
+                            sampleEncodedFrameCount: ref sampleEncodedFrameCount,
+                            sampleBlurredFrameCount: ref sampleBlurredFrameCount);
                     ffmpeg.av_frame_unref(frame);
                 }
             }
@@ -865,7 +881,10 @@ public unsafe sealed class VideoExportService
                             progress,
                             ref lastReportedFrame,
                             swTotal,
-                            cancellationToken);
+                            cancellationToken,
+                            sampleWindowFrames: ExportSampleWindowFrames,
+                            sampleEncodedFrameCount: ref sampleEncodedFrameCount,
+                            sampleBlurredFrameCount: ref sampleBlurredFrameCount);
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -928,10 +947,26 @@ public unsafe sealed class VideoExportService
             int droppedVideoPackets = useHybridCopyWindow
                 ? Math.Max(0, copiedSourceVideoPacketCount - copiedVideoPacketCount)
                 : Math.Max(0, inputVideoPacketCount - outputVideoPacketCount);
-            if (droppedVideoPackets > 0)
+            int sampleWindowLimit = totalFrames > 0
+                ? Math.Min(ExportSampleWindowFrames, totalFrames)
+                : 0;
+            int sampleWindowSourceFrames = Math.Max(0, Math.Min(sampleWindowLimit, sampleSourceVideoPacketCount));
+            int sampleWindowProducedFrames = sampleCopiedVideoPacketCount + sampleEncodedFrameCount;
+            int sampleWindowFrameShortfall = sampleWindowSourceFrames > 0
+                ? Math.Max(0, sampleWindowSourceFrames - sampleWindowProducedFrames)
+                : 0;
+            if (allowPacketDropRetry && useHybridCopyWindow && sampleWindowFrameShortfall > MaxAcceptableSampleWindowFrameShortfall)
             {
-                if (useHybridCopyWindow)
+                shouldRetryWithFullEncode = true;
+                packetDropFallbackReason =
+                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                        ? $"sample-window-frame-loss={sampleWindowFrameShortfall} (source={sampleWindowSourceFrames}, copied={sampleCopiedVideoPacketCount}, encoded={sampleEncodedFrameCount})"
+                        : $"{packetDropFallbackReason}; sample-window-frame-loss={sampleWindowFrameShortfall} (source={sampleWindowSourceFrames}, copied={sampleCopiedVideoPacketCount}, encoded={sampleEncodedFrameCount})";
+            }
+                if (droppedVideoPackets > 0)
                 {
+                    if (useHybridCopyWindow)
+                    {
                     Debug.WriteLine(
                         $"[Export] packetDropHint copySource={copiedSourceVideoPacketCount}, copiedOutput={copiedVideoPacketCount}, dropped={droppedVideoPackets}");
                 }
@@ -944,9 +979,15 @@ public unsafe sealed class VideoExportService
                 if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 0)
                 {
                     shouldRetryWithFullEncode = true;
-                    packetDropFallbackReason = useHybridCopyWindow
-                        ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
-                        : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
+                    packetDropFallbackReason =
+                        string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                            ? useHybridCopyWindow
+                                ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
+                                : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}"
+                            : $"{packetDropFallbackReason}; {(
+                                useHybridCopyWindow
+                                    ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
+                                    : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}")}";
                 }
             }
             int droppedVideoPacketsForSummary = Math.Max(0, droppedVideoPackets);
@@ -987,6 +1028,8 @@ public unsafe sealed class VideoExportService
                 forceH264Fallback);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
+            Debug.WriteLine(
+                $"[Export] sampleWindow={(sampleWindowLimit > 0 ? $\"0-{sampleWindowLimit - 1}\" : \"none\")} sourcePackets={sampleSourceVideoPacketCount} copiedPackets={sampleCopiedVideoPacketCount} encodedFrames={sampleEncodedFrameCount} blurredFrames={sampleBlurredFrameCount} sampleShortfall={sampleWindowFrameShortfall}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
             if (shouldRetryWithFullEncode)
             {
@@ -1128,7 +1171,10 @@ public unsafe sealed class VideoExportService
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
-        System.Threading.CancellationToken cancellationToken)
+        System.Threading.CancellationToken cancellationToken,
+        int sampleWindowFrames,
+        ref int sampleEncodedFrameCount,
+        ref int sampleBlurredFrameCount)
     {
         if (cancellationToken.IsCancellationRequested)
             throw new OperationCanceledException(cancellationToken);
@@ -1152,6 +1198,7 @@ public unsafe sealed class VideoExportService
         WriteableBitmap? mask = null;
         IReadOnlyList<Rect>? faceRects = null;
         bool mightHaveMask = blurRanges == null || IsFrameInBlurRanges(resolvedFrameIndex, blurRanges, ref blurRangeCursor);
+        bool frameWasBlurred = false;
 
         if (mightHaveMask && _maskProvider is FrameMaskProvider provider)
         {
@@ -1188,11 +1235,13 @@ public unsafe sealed class VideoExportService
             {
                 _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
                 _bitmapMaskBlurFrames++;
+                frameWasBlurred = true;
             }
             else
             {
                 _masked.ApplyFaceRectsAndBlur(bgra, faceRects!, blurRadius);
                 _directFaceBlurFrames++;
+                frameWasBlurred = true;
             }
             tMask.Stop();
             maskMs += tMask.ElapsedMilliseconds;
@@ -1292,6 +1341,10 @@ public unsafe sealed class VideoExportService
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
         }
+        if (resolvedFrameIndex < sampleWindowFrames)
+            sampleEncodedFrameCount++;
+        if (frameWasBlurred && resolvedFrameIndex < sampleWindowFrames)
+            sampleBlurredFrameCount++;
 
         ReportVideoProgress(progress, totalFrames, ref lastReportedFrame, resolvedFrameIndex);
         if (resolvedFrameIndex % 60 == 0)
@@ -1338,7 +1391,10 @@ public unsafe sealed class VideoExportService
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
-        System.Threading.CancellationToken cancellationToken)
+        System.Threading.CancellationToken cancellationToken,
+        int sampleWindowFrames,
+        ref int sampleEncodedFrameCount,
+        ref int sampleBlurredFrameCount)
     {
         if (videoFlushed)
             return;
@@ -1381,11 +1437,14 @@ public unsafe sealed class VideoExportService
                             ref lastEncodedPacketDts,
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
-                            ref outputVideoPacketCount,
-                            progress,
-                            ref lastReportedFrame,
-                            swTotal,
-                            cancellationToken);
+                ref outputVideoPacketCount,
+                progress,
+                ref lastReportedFrame,
+                swTotal,
+                cancellationToken,
+                sampleWindowFrames,
+                ref sampleEncodedFrameCount,
+                ref sampleBlurredFrameCount);
             ffmpeg.av_frame_unref(frame);
         }
 
