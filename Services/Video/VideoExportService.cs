@@ -302,13 +302,20 @@ public unsafe sealed class VideoExportService
                             hybridCopyFallbackReason =
                                 $"하이브리드 복사 구간 이득이 미미함(복사구간={copiedFrames}, 총={totalFrames}, 임계치={minExpectedCopyFrames})";
                         }
-                        else if (leadingCopyFrames < MinHybridCopySideFrames || trailingCopyFrames < MinHybridCopySideFrames)
+                        else if (encodeStart > 0 && encodeEnd < totalFrames)
+                        {
+                            canCopyOutsideBlurWindow = false;
+                            hybridCopyFallbackReason =
+                                $"하이브리드 구간 복사가 양끝에 존재(start={encodeStart}, end={encodeEnd}, total={totalFrames})";
+                        }
+                        else if ((encodeStart > 0 && leadingCopyFrames < MinHybridCopySideFrames) ||
+                                 (encodeEnd < totalFrames && trailingCopyFrames < MinHybridCopySideFrames))
                         {
                             canCopyOutsideBlurWindow = false;
                             hybridCopyFallbackReason =
                                 $"복사 쪽 경계 보강 필요(leading={leadingCopyFrames}, trailing={trailingCopyFrames}, 최소={MinHybridCopySideFrames})";
                         }
-                        else if (encodeStart > 0 && encodeEnd < totalFrames)
+                        else if (encodeStart > 0 || encodeEnd < totalFrames)
                         {
                             hybridEncodeWindow = (encodeStart, encodeEnd);
                             hybridWindowStartFrame = encodeStart;
