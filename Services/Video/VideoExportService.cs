@@ -324,15 +324,28 @@ public unsafe sealed class VideoExportService
                 {
                     var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
                     hybridCandidateKeyframes = keyframes;
+                    if (keyframes.Count < 2)
+                    {
+                        canCopyOutsideBlurWindow = false;
+                        allowHybridCopyCurrent = false;
+                        hybridCopyAttempted = true;
+                        string keyframeInsufficientReason =
+                            $"키프레임 후보가 불충분해 하이브리드 비활성 (keyframes={keyframes.Count}, reported={totalFrames}, estimated={estimatedTotalFrames})";
+                        hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                            ? keyframeInsufficientReason
+                            : $"{hybridCopyFallbackReason}; {keyframeInsufficientReason}";
+                    }
+
                     if (estimatedTotalFrames > 0)
                     {
                         int frameCountSkew = estimatedTotalFrames - totalFrames;
+                        int absFrameCountSkew = Math.Abs(frameCountSkew);
                         bool disableHybridForUnstableFrameCount =
-                            frameCountSkew > 0
-                            && (estimatedTotalFrames > (int)(totalFrames * MaxEstimatedFrameCountSkewRatio)
-                                || frameCountSkew > MaxEstimatedFrameCountSkewAbsolute);
+                            absFrameCountSkew > MaxEstimatedFrameCountSkewAbsolute
+                            || estimatedTotalFrames > (int)(totalFrames * MaxEstimatedFrameCountSkewRatio)
+                            || estimatedTotalFrames < (int)(totalFrames / MaxEstimatedFrameCountSkewRatio);
 
-                        if (disableHybridForUnstableFrameCount)
+                        if (disableHybridForUnstableFrameCount && canCopyOutsideBlurWindow)
                         {
                             canCopyOutsideBlurWindow = false;
                             allowHybridCopyCurrent = false;
@@ -343,7 +356,7 @@ public unsafe sealed class VideoExportService
                                 ? unstableFrameCountReason
                                 : $"{hybridCopyFallbackReason}; {unstableFrameCountReason}";
                         }
-                        else if (estimatedTotalFrames > totalFrames)
+                        else if (estimatedTotalFrames > totalFrames && canCopyOutsideBlurWindow)
                         {
                             Debug.WriteLine(
                                 $"[Export] detected frame count expansion from keyframe scan: meta={totalFrames}, estimated={estimatedTotalFrames}");
