@@ -158,6 +158,9 @@ public unsafe sealed class VideoExportService
         long lastAudioCopyPacketDts = -1;
         bool hasLastAudioCopyPacketDts = false;
         bool wasLastPacketEncoded = false;
+            int inputVideoPacketCount = 0;
+            int outputVideoPacketCount = 0;
+            int copiedVideoPacketCount = 0;
         var swTotal = Stopwatch.StartNew();
 
         try
@@ -238,6 +241,9 @@ public unsafe sealed class VideoExportService
                         HybridCopyAttempted: false,
                         HybridCopyUsed: false,
                         HybridCopyFallbackReason: null,
+                        InputVideoPackets: 0,
+                        OutputVideoPackets: 0,
+                        CopiedVideoPackets: 0,
                         ForceSoftwareEncoder: forceSoftwareEncoder,
                         ForceSafeEncoding: forceSafeEncoding,
                         ForceAudioTranscode: forceAudioTranscode,
@@ -529,6 +535,7 @@ public unsafe sealed class VideoExportService
                     ffmpeg.av_packet_unref(pkt);
                     continue;
                 }
+                inputVideoPacketCount++;
 
                 int packetFrameIndex = ResolveFrameIndexFromPacket(pkt, inStream->time_base, sourceFps, packetFrameFallback, totalFrames);
                 if (packetFrameIndex < packetFrameFallback)
@@ -599,6 +606,7 @@ public unsafe sealed class VideoExportService
                             ref lastEncodedPacketDts,
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
+                            ref outputVideoPacketCount,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
@@ -635,6 +643,8 @@ public unsafe sealed class VideoExportService
                     pkt->stream_index = outStream->index;
                     pkt->pos = -1;
                     Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
+                    outputVideoPacketCount++;
+                    copiedVideoPacketCount++;
                     hasLastVideoCopyPacketPts = true;
                     hasLastVideoCopyPacketDts = true;
                     lastVideoCopyPacketPts = pkt->pts;
@@ -677,12 +687,13 @@ public unsafe sealed class VideoExportService
                             ref encodeMs,
                             ref lastEncodedPts,
                             ref hasLastEncodedPts,
-                        ref lastEncodedPacketPts,
-                        ref hasLastEncodedPacketPts,
-                        ref lastEncodedPacketDts,
-                        ref hasLastEncodedPacketDts,
-                        ref reusableFaceMask,
-                        progress,
+                            ref lastEncodedPacketPts,
+                            ref hasLastEncodedPacketPts,
+                            ref lastEncodedPacketDts,
+                            ref hasLastEncodedPacketDts,
+                            ref reusableFaceMask,
+                            ref outputVideoPacketCount,
+                            progress,
                             ref lastReportedFrame,
                             swTotal,
                             cancellationToken);
@@ -719,14 +730,15 @@ public unsafe sealed class VideoExportService
                             ref lastEncodedPts,
                             ref hasLastEncodedPts,
                 ref lastEncodedPacketPts,
-                ref hasLastEncodedPacketPts,
-                ref lastEncodedPacketDts,
-                ref hasLastEncodedPacketDts,
-                ref reusableFaceMask,
+                            ref hasLastEncodedPacketPts,
+                            ref lastEncodedPacketDts,
+                            ref hasLastEncodedPacketDts,
+                            ref reusableFaceMask,
+                            ref outputVideoPacketCount,
                             progress,
                             ref lastReportedFrame,
-                swTotal,
-                cancellationToken);
+                            swTotal,
+                            cancellationToken);
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -804,6 +816,9 @@ public unsafe sealed class VideoExportService
                     : hybridCopyAttempted
                         ? hybridCopyFallbackReason
                         : null,
+                InputVideoPackets: inputVideoPacketCount,
+                OutputVideoPackets: outputVideoPacketCount,
+                CopiedVideoPackets: copiedVideoPacketCount,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
                 forceAudioTranscode,
@@ -811,6 +826,11 @@ public unsafe sealed class VideoExportService
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
+            int droppedVideoPackets = inputVideoPacketCount - outputVideoPacketCount;
+            if (droppedVideoPackets > 0)
+            {
+                Debug.WriteLine($"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
+            }
         }
         finally
         {
@@ -874,7 +894,8 @@ public unsafe sealed class VideoExportService
         ref long lastPacketPts,
         ref bool hasLastPacketPts,
         ref long lastPacketDts,
-        ref bool hasLastPacketDts)
+        ref bool hasLastPacketDts,
+        ref int outputVideoPacketCount)
     {
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
@@ -887,6 +908,7 @@ public unsafe sealed class VideoExportService
                 ref hasLastPacketDts);
             outPkt->stream_index = outStream->index;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+            outputVideoPacketCount++;
             ffmpeg.av_packet_unref(outPkt);
         }
     }
@@ -923,6 +945,7 @@ public unsafe sealed class VideoExportService
         ref long lastEncodedPacketDts,
         ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
+        ref int outputVideoPacketCount,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
@@ -1019,7 +1042,8 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketPts,
                 ref hasLastEncodedPacketPts,
                 ref lastEncodedPacketDts,
-                ref hasLastEncodedPacketDts);
+                ref hasLastEncodedPacketDts,
+                ref outputVideoPacketCount);
             tEncode.Stop();
             encodeMs += tEncode.ElapsedMilliseconds;
         }
@@ -1065,7 +1089,8 @@ public unsafe sealed class VideoExportService
                     ref lastEncodedPacketPts,
                     ref hasLastEncodedPacketPts,
                     ref lastEncodedPacketDts,
-                    ref hasLastEncodedPacketDts);
+                    ref hasLastEncodedPacketDts,
+                    ref outputVideoPacketCount);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
@@ -1082,7 +1107,8 @@ public unsafe sealed class VideoExportService
                     ref lastEncodedPacketPts,
                     ref hasLastEncodedPacketPts,
                     ref lastEncodedPacketDts,
-                    ref hasLastEncodedPacketDts);
+                    ref hasLastEncodedPacketDts,
+                    ref outputVideoPacketCount);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
             }
@@ -1129,6 +1155,7 @@ public unsafe sealed class VideoExportService
         ref long lastEncodedPacketDts,
         ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
+        ref int outputVideoPacketCount,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
@@ -1170,15 +1197,16 @@ public unsafe sealed class VideoExportService
                 ref encodeMs,
                 ref lastEncodedPts,
                 ref hasLastEncodedPts,
-                        ref lastEncodedPacketPts,
-                        ref hasLastEncodedPacketPts,
-                        ref lastEncodedPacketDts,
-                        ref hasLastEncodedPacketDts,
-                        ref reusableFaceMask,
-                        progress,
-                ref lastReportedFrame,
-                swTotal,
-                cancellationToken);
+                            ref lastEncodedPacketPts,
+                            ref hasLastEncodedPacketPts,
+                            ref lastEncodedPacketDts,
+                            ref hasLastEncodedPacketDts,
+                            ref reusableFaceMask,
+                            ref outputVideoPacketCount,
+                            progress,
+                            ref lastReportedFrame,
+                            swTotal,
+                            cancellationToken);
             ffmpeg.av_frame_unref(frame);
         }
 
@@ -1193,7 +1221,8 @@ public unsafe sealed class VideoExportService
             ref lastEncodedPacketPts,
             ref hasLastEncodedPacketPts,
             ref lastEncodedPacketDts,
-            ref hasLastEncodedPacketDts);
+            ref hasLastEncodedPacketDts,
+            ref outputVideoPacketCount);
         videoFlushed = true;
     }
 
