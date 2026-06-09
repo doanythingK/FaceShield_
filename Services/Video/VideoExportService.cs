@@ -2354,7 +2354,16 @@ public unsafe sealed class VideoExportService
         int totalFrames)
     {
         if (packet == null || sourceFps <= 0.0)
-            return fallback;
+        {
+            if (totalFrames > 0)
+                return Math.Clamp(fallback, 0, totalFrames - 1);
+            return Math.Max(0, fallback);
+        }
+
+        if (totalFrames > 0)
+            fallback = Math.Clamp(fallback, 0, totalFrames - 1);
+        else if (fallback < 0)
+            fallback = 0;
 
         long ts = packet->dts != ffmpeg.AV_NOPTS_VALUE
             ? packet->dts
@@ -2382,7 +2391,16 @@ public unsafe sealed class VideoExportService
         int totalFrames)
     {
         if (frame == null || sourceFps <= 0.0)
-            return fallback;
+        {
+            if (totalFrames > 0)
+                return Math.Clamp(fallback, 0, totalFrames - 1);
+            return Math.Max(0, fallback);
+        }
+
+        if (totalFrames > 0)
+            fallback = Math.Clamp(fallback, 0, totalFrames - 1);
+        else if (fallback < 0)
+            fallback = 0;
 
         long ts = frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
             ? frame->best_effort_timestamp
