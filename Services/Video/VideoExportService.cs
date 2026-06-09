@@ -16,6 +16,7 @@ public unsafe sealed class VideoExportService
     private const int MinHybridCopySideFrames = 24;
     private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
     private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
+    private const int MaxHybridFrameGapBeforeFallback = 32;
     private const long MaxHybridFrameStepTolerance = 1;
     private const int ExportSampleWindowFrames = 900;
     private readonly IFrameMaskProvider _maskProvider;
@@ -712,6 +713,18 @@ public unsafe sealed class VideoExportService
                         packetDropFallbackReason = $"hybrid-frame-backstep prev={lastPacketFrameIndexForHybrid}, curr={packetFrameIndex}";
                         throw new InvalidOperationException(
                             "Invalid argument: 하이브리드 경로에서 패킷 프레임 인덱스가 역행해 fallback 합니다.");
+                    }
+
+                    if (hasLastPacketFrameForHybrid &&
+                        packetFrameIndex - lastPacketFrameIndexForHybrid > MaxHybridFrameGapBeforeFallback)
+                    {
+                        shouldRetryWithFullEncode = true;
+                        packetDropFallbackReason =
+                            string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                                ? $"hybrid-frame-jump prev={lastPacketFrameIndexForHybrid}, curr={packetFrameIndex}, gap={packetFrameIndex - lastPacketFrameIndexForHybrid}"
+                                : $"{packetDropFallbackReason}; hybrid-frame-jump prev={lastPacketFrameIndexForHybrid}, curr={packetFrameIndex}, gap={packetFrameIndex - lastPacketFrameIndexForHybrid}";
+                        throw new InvalidOperationException(
+                            "Invalid argument: 하이브리드 경로에서 패킷 프레임 인덱스 점프가 과도하여 rollback 합니다.");
                     }
 
                     lastPacketFrameIndexForHybrid = packetFrameIndex;
