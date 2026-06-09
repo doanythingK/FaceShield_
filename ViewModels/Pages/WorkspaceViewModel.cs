@@ -214,7 +214,8 @@ namespace FaceShield.ViewModels.Pages
             IProgress<ExportProgress>? exportProgress = null,
             CancellationToken cancellationToken = default,
             bool updateToolPanel = true,
-            string? runId = null)
+            string? runId = null,
+            AutoMaskRunSummary? autoRunSummary = null)
         {
             string input = FrameList.VideoPath;
             string exportRunId = string.IsNullOrWhiteSpace(runId)
@@ -265,7 +266,10 @@ namespace FaceShield.ViewModels.Pages
                     exporter.Export(input, output, blurRadius: ToolPanel.BlurRadius, progress, _exportCts.Token, exportRunId);
                 }, _exportCts.Token);
                 if (exporter.LastExportSummary != null)
+                {
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
+                    LogExportQualityGate(autoRunSummary, exporter.LastExportSummary);
+                }
 
                 return true;
             }
@@ -286,6 +290,48 @@ namespace FaceShield.ViewModels.Pages
                 _exportCts?.Dispose();
                 _exportCts = null;
             }
+        }
+
+        private static void LogExportQualityGate(
+            AutoMaskRunSummary? autoRunSummary,
+            ExportRunSummary exportSummary)
+        {
+            string run = string.IsNullOrWhiteSpace(exportSummary.RunId)
+                ? (autoRunSummary?.RunId ?? "n/a")
+                : exportSummary.RunId;
+            int totalFrames = Math.Max(1, Math.Max(autoRunSummary?.TotalFrames ?? 0, exportSummary.Frames));
+            int inputVideoPackets = Math.Max(0, exportSummary.InputVideoPackets);
+            int droppedPackets = Math.Max(0, exportSummary.DroppedVideoPackets);
+            double packetDropRate = inputVideoPackets > 0 ? (double)droppedPackets / inputVideoPackets : 0.0;
+
+            int reviewRiskScore = 0;
+            if (autoRunSummary?.FinalMaskReviewRequired == true)
+                reviewRiskScore++;
+            if (exportSummary.HybridCopyAttempted)
+                reviewRiskScore++;
+            if (exportSummary.HybridCopyUsed && exportSummary.HybridCopyTimestampFixCount > 0)
+                reviewRiskScore++;
+            if (autoRunSummary != null &&
+                (autoRunSummary.FinalMaskShortGapCount > 0 ||
+                    autoRunSummary.FinalMaskPerFaceShortGapCount > 0 ||
+                    autoRunSummary.FinalMaskLargeJumpGapCount > 0))
+            {
+                reviewRiskScore++;
+            }
+
+            string hybridRange = exportSummary.HybridCopyUsed
+                ? $"{exportSummary.HybridWindowStartFrame}-{exportSummary.HybridWindowEndFrame}"
+                : "n/a";
+            string riskLabel = reviewRiskScore >= 3
+                ? "high"
+                : reviewRiskScore >= 2
+                    ? "medium"
+                    : reviewRiskScore >= 1
+                        ? "low"
+                        : "safe";
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[QualityGate] runId={run}, totalFrames={totalFrames}, exportMode={exportSummary.ExportMode}, risk={riskLabel}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}");
         }
 
         private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
@@ -514,7 +560,8 @@ namespace FaceShield.ViewModels.Pages
                         exportProgress,
                         _autoCts?.Token ?? CancellationToken.None,
                         updateToolPanel: false,
-                        runId: runId);
+                        runId: runId,
+                        autoRunSummary: generator.LastRunSummary);
                     if (!exported)
                     {
                         PersistWorkspaceState(includePreviewMask: false);
