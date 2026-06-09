@@ -234,11 +234,23 @@ public unsafe sealed class VideoExportService
             int blurRangeCursor = 0;
             (int Start, int EndExclusive)? hybridEncodeWindow = null;
             bool hybridCopyAttempted = false;
+            bool allowHybridCopyCurrent = allowHybridCopy;
             string? hybridCopyFallbackReason = null;
             int hybridWindowStartFrame = -1;
             int hybridWindowEndFrame = -1;
             int hybridModeTransitionCount = 0;
             int hybridModeTimestampSyncCount = 0;
+            if (allowHybridCopyCurrent &&
+                (inStream->time_base.den <= 0 ||
+                 inStream->time_base.num <= 0 ||
+                 sourceFps <= 0.0))
+            {
+                allowHybridCopyCurrent = false;
+                hybridCopyAttempted = true;
+                hybridCopyFallbackReason =
+                    $"하이브리드 사용 보류(타임스탬프 기준 불안정): sourceFps={sourceFps:0.###}, timeBase={inStream->time_base.num}/{inStream->time_base.den}";
+            }
+
             if (_maskProvider is FrameMaskProvider frameMaskProvider)
             {
                 blurFrameSet = BuildBlurFrameSet(frameMaskProvider, totalFrames);
@@ -289,7 +301,7 @@ public unsafe sealed class VideoExportService
 
                 blurRanges = BuildBlurFrameRanges(blurFrameSet);
                 bool canCopyOutsideBlurWindow =
-                    allowHybridCopy &&
+                    allowHybridCopyCurrent &&
                     blurRanges.Count > 0 &&
                     sourceFps > 0.0 &&
                     totalFrames > 0 &&
@@ -472,7 +484,7 @@ public unsafe sealed class VideoExportService
             }
 
             bool useHybridCopyWindow =
-                allowHybridCopy &&
+                allowHybridCopyCurrent &&
                 allowHybridWithAudio &&
                 hybridEncodeWindow.HasValue &&
                 enc != null &&
