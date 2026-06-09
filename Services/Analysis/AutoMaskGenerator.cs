@@ -349,9 +349,13 @@ namespace FaceShield.Services.Analysis
                         int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
                         int clearStart = Math.Max(0, idx - OffModeSceneCutCarryClearFrames);
                         int clearEnd = Math.Min(totalFrames, idx + clearRadius + OffModeSceneCutCarryClearFrames + 1);
+                        int clearBeforeStart = clearStart;
+                        int clearBeforeEnd = Math.Min(totalFrames, idx);
+                        int clearAfterStart = idx;
+                        int clearAfterEnd = clearEnd;
                         int removed = _maskProvider.RemoveFaceMasksRange(clearStart, clearEnd);
                         Debug.WriteLine(
-                            $"[AutoMask] scene-cut reset idx={idx} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###}");
+                            $"[AutoMask] scene-cut reset idx={idx} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off");
                     }
 
                     previousSceneSignature = currentSceneSignature;
@@ -724,11 +728,15 @@ namespace FaceShield.Services.Analysis
                             int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
                             clearStart = Math.Max(0, result.Index - OffModeSceneCutCarryClearFrames);
                             clearEnd = Math.Min(totalFrames, result.Index + clearRadius + OffModeSceneCutCarryClearFrames + 1);
+                            int clearBeforeStart = clearStart;
+                            int clearBeforeEnd = Math.Min(totalFrames, result.Index);
+                            int clearAfterStart = result.Index;
+                            int clearAfterEnd = clearEnd;
                             int removed = _maskProvider.RemoveFaceMasksRange(clearStart, clearEnd);
                             sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
                             lastSceneCutFrame = result.Index;
                             Debug.WriteLine(
-                                $"[AutoMask] scene-cut reset idx={result.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###}");
+                                $"[AutoMask] scene-cut reset idx={result.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe");
                         }
                     }
 
@@ -1218,11 +1226,15 @@ namespace FaceShield.Services.Analysis
                                 int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
                                 clearStart = Math.Max(0, orderedResult.Index - OffModeSceneCutCarryClearFrames);
                                 clearEnd = Math.Min(totalFrames, orderedResult.Index + clearRadius + OffModeSceneCutCarryClearFrames + 1);
+                                int clearBeforeStart = clearStart;
+                                int clearBeforeEnd = Math.Min(totalFrames, orderedResult.Index);
+                                int clearAfterStart = orderedResult.Index;
+                                int clearAfterEnd = clearEnd;
                                 int removed = _maskProvider.RemoveFaceMasksRange(clearStart, clearEnd);
                                 sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
                                 lastSceneCutFrame = orderedResult.Index;
                                 Debug.WriteLine(
-                                    $"[AutoMask] scene-cut reset idx={orderedResult.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###}");
+                                    $"[AutoMask] scene-cut reset idx={orderedResult.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe-parallel");
                             }
                         }
 

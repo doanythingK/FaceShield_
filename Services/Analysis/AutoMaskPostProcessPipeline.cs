@@ -190,6 +190,15 @@ namespace FaceShield.Services.Analysis
                     cancellationToken,
                     "pre-smooth");
                 yoloPreSmoothStrongCarryProbeCutPairs = preSmoothStrongCarryProbe.CutFramePairs;
+                if (yoloPreSmoothCutPairs.Count > 0 || yoloPreSmoothStrongCarryProbeCutPairs.Count > 0)
+                {
+                    var preSmoothCutWindows = BuildCutPairWindowRanges(yoloPreSmoothCutPairs, YoloSceneCutRebuildWindowFrames);
+                    var preSmoothStrongCarryProbeWindows = BuildCutPairWindowRanges(
+                        yoloPreSmoothStrongCarryProbeCutPairs,
+                        YoloSceneCutRebuildWindowFrames);
+                    Debug.WriteLine(
+                        $"[YoloSceneCutPairWindows] stage=pre-smooth preCutPairs={FormatTextList(yoloPreSmoothCutPairs)} preCutWindows={FormatTextList(preSmoothCutWindows)} preStrongPairs={FormatTextList(yoloPreSmoothStrongCarryProbeCutPairs)} preStrongWindows={FormatTextList(preSmoothStrongCarryProbeWindows)}");
+                }
             }
             swScenePre.Stop();
             Debug.WriteLine(
@@ -228,6 +237,15 @@ namespace FaceShield.Services.Analysis
                     cancellationToken,
                     "post-smooth");
                 yoloStrongCarryProbeCutPairs = strongCarryProbe.CutFramePairs;
+                if (yoloPostSmoothCutPairs.Count > 0 || yoloStrongCarryProbeCutPairs.Count > 0)
+                {
+                    var postSmoothCutWindows = BuildCutPairWindowRanges(yoloPostSmoothCutPairs, YoloSceneCutRebuildWindowFrames);
+                    var postStrongCarryProbeWindows = BuildCutPairWindowRanges(
+                        yoloStrongCarryProbeCutPairs,
+                        YoloSceneCutRebuildWindowFrames);
+                    Debug.WriteLine(
+                        $"[YoloSceneCutPairWindows] stage=post-smooth postCutPairs={FormatTextList(yoloPostSmoothCutPairs)} postCutWindows={FormatTextList(postSmoothCutWindows)} postStrongPairs={FormatTextList(yoloStrongCarryProbeCutPairs)} postStrongWindows={FormatTextList(postStrongCarryProbeWindows)}");
+                }
                 swScenePost.Stop();
                 Debug.WriteLine(
                     $"[AutoMaskPostProcessTiming] runId={runId} phase=yolo-scene-guard-post-smooth run=true elapsedMs={swScenePost.ElapsedMilliseconds} postCutPairs={yoloPostSmoothCutPairs.Count} postProbePairs={yoloStrongCarryProbeCutPairs.Count}");
@@ -248,11 +266,23 @@ namespace FaceShield.Services.Analysis
                     yoloPostSmoothCutPairs,
                     yoloCleanupPass.CutFramePairs,
                     yoloStrongCarryProbeCutPairs);
+                var preSceneWindows = BuildCutPairWindowRanges(
+                    yoloPreSmoothCutPairs,
+                    YoloSceneCutRebuildWindowFrames);
+                var preSceneStrongWindows = BuildCutPairWindowRanges(
+                    yoloPreSmoothStrongCarryProbeCutPairs,
+                    YoloSceneCutRebuildWindowFrames);
+                var postSceneWindows = BuildCutPairWindowRanges(
+                    yoloPostSmoothCutPairs,
+                    YoloSceneCutRebuildWindowFrames);
+                var postSceneStrongWindows = BuildCutPairWindowRanges(
+                    yoloStrongCarryProbeCutPairs,
+                    YoloSceneCutRebuildWindowFrames);
                 if (yoloCutPairs.Count > 0)
                 {
                     var yoloCutWindows = BuildCutPairWindowRanges(yoloCutPairs, YoloSceneCutRebuildWindowFrames);
                     Debug.WriteLine(
-                        $"[YoloSceneCutPairWindows] cutPairs={FormatTextList(yoloCutPairs)} cutWindows={FormatTextList(yoloCutWindows)}");
+                        $"[YoloSceneCutPairWindows] stage=final cutPairs={FormatTextList(yoloCutPairs)} cutWindows={FormatTextList(yoloCutWindows)} prePairs={FormatTextList(yoloPreSmoothCutPairs)} preWindows={FormatTextList(preSceneWindows)} preStrongPairs={FormatTextList(yoloPreSmoothStrongCarryProbeCutPairs)} preStrongWindows={FormatTextList(preSceneStrongWindows)} postPairs={FormatTextList(yoloPostSmoothCutPairs)} postWindows={FormatTextList(postSceneWindows)} postStrongPairs={FormatTextList(yoloStrongCarryProbeCutPairs)} postStrongWindows={FormatTextList(postSceneStrongWindows)}");
                 }
                 var yoloCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
                     _maskProvider,
