@@ -17,6 +17,8 @@ public sealed record ExportRunSummary(
     int InputVideoPackets,
     int OutputVideoPackets,
     int CopiedVideoPackets,
+    int DroppedVideoPackets,
+    string? PacketLossFallbackReason,
     bool ForceSoftwareEncoder,
     bool ForceSafeEncoding,
     bool ForceAudioTranscode,
@@ -26,6 +28,6 @@ public sealed record ExportRunSummary(
     {
         string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
             return
-            $"[ExportRunSummary] runId={run}, mode={ExportMode}, frames={Frames}, bitmapMaskFrames={BitmapMaskFrames}, directFaceFrames={DirectFaceFrames}, swsToBgraMs={SwsToBgraMs}, maskMs={MaskMs}, swsToEncMs={SwsToEncMs}, encodeMs={EncodeMs}, totalMs={TotalMs}, hybridCopyAttempted={HybridCopyAttempted.ToString().ToLowerInvariant()}, hybridCopyUsed={HybridCopyUsed.ToString().ToLowerInvariant()}, hybridCopyFallbackReason={HybridCopyFallbackReason ?? \"\"}, inputVideoPackets={InputVideoPackets}, outputVideoPackets={OutputVideoPackets}, copiedVideoPackets={CopiedVideoPackets}, forceSoftwareEncoder={ForceSoftwareEncoder.ToString().ToLowerInvariant()}, forceSafeEncoding={ForceSafeEncoding.ToString().ToLowerInvariant()}, forceAudioTranscode={ForceAudioTranscode.ToString().ToLowerInvariant()}, forceH264Fallback={ForceH264Fallback.ToString().ToLowerInvariant()}";
+            $"[ExportRunSummary] runId={run}, mode={ExportMode}, frames={Frames}, bitmapMaskFrames={BitmapMaskFrames}, directFaceFrames={DirectFaceFrames}, swsToBgraMs={SwsToBgraMs}, maskMs={MaskMs}, swsToEncMs={SwsToEncMs}, encodeMs={EncodeMs}, totalMs={TotalMs}, hybridCopyAttempted={HybridCopyAttempted.ToString().ToLowerInvariant()}, hybridCopyUsed={HybridCopyUsed.ToString().ToLowerInvariant()}, hybridCopyFallbackReason={HybridCopyFallbackReason ?? \"\"}, inputVideoPackets={InputVideoPackets}, outputVideoPackets={OutputVideoPackets}, copiedVideoPackets={CopiedVideoPackets}, droppedVideoPackets={DroppedVideoPackets}, packetLossFallbackReason={PacketLossFallbackReason ?? \"\"}, forceSoftwareEncoder={ForceSoftwareEncoder.ToString().ToLowerInvariant()}, forceSafeEncoding={ForceSafeEncoding.ToString().ToLowerInvariant()}, forceAudioTranscode={ForceAudioTranscode.ToString().ToLowerInvariant()}, forceH264Fallback={ForceH264Fallback.ToString().ToLowerInvariant()}";
     }
 }

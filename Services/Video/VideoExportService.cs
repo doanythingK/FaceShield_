@@ -247,6 +247,8 @@ public unsafe sealed class VideoExportService
                         InputVideoPackets: 0,
                         OutputVideoPackets: 0,
                         CopiedVideoPackets: 0,
+                        DroppedVideoPackets: 0,
+                        PacketLossFallbackReason: null,
                         ForceSoftwareEncoder: forceSoftwareEncoder,
                         ForceSafeEncoding: forceSafeEncoding,
                         ForceAudioTranscode: forceAudioTranscode,
@@ -801,6 +803,18 @@ public unsafe sealed class VideoExportService
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
+            int droppedVideoPackets = inputVideoPacketCount - outputVideoPacketCount;
+            if (droppedVideoPackets > 0)
+            {
+                Debug.WriteLine($"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
+                if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 2)
+                {
+                    shouldRetryWithFullEncode = true;
+                    packetDropFallbackReason = $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
+                }
+            }
+            int droppedVideoPacketsForSummary = Math.Max(0, droppedVideoPackets);
+            string? packetLossFallbackReason = shouldRetryWithFullEncode ? $"fallback-full-encode={packetDropFallbackReason}" : null;
             LastExportSummary = new ExportRunSummary(
                 frameIndex,
                 _bitmapMaskBlurFrames,
@@ -822,6 +836,8 @@ public unsafe sealed class VideoExportService
                 InputVideoPackets: inputVideoPacketCount,
                 OutputVideoPackets: outputVideoPacketCount,
                 CopiedVideoPackets: copiedVideoPacketCount,
+                DroppedVideoPackets: droppedVideoPacketsForSummary,
+                PacketLossFallbackReason: packetLossFallbackReason,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
                 forceAudioTranscode,
@@ -829,17 +845,6 @@ public unsafe sealed class VideoExportService
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
-            int droppedVideoPackets = inputVideoPacketCount - outputVideoPacketCount;
-            if (droppedVideoPackets > 0)
-            {
-                Debug.WriteLine($"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
-                if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 2)
-                {
-                    shouldRetryWithFullEncode = true;
-                    packetDropFallbackReason = $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
-                }
-            }
-
             if (shouldRetryWithFullEncode)
             {
                 Debug.WriteLine($"[Export] 패킷 누락 감지로 품질 보정 fallback 수행: {packetDropFallbackReason}");
