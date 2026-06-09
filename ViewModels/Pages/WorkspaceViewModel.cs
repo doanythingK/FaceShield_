@@ -322,6 +322,12 @@ namespace FaceShield.ViewModels.Pages
             string hybridRange = exportSummary.HybridCopyUsed
                 ? $"{exportSummary.HybridWindowStartFrame}-{exportSummary.HybridWindowEndFrame}"
                 : "n/a";
+            int hybridWindowLength = exportSummary.HybridCopyUsed
+                ? Math.Max(0, exportSummary.HybridWindowEndFrame - exportSummary.HybridWindowStartFrame)
+                : 0;
+            double throughputFps = exportSummary.TotalMs > 0 && exportSummary.Frames > 0
+                ? exportSummary.Frames * 1000.0 / exportSummary.TotalMs
+                : 0.0;
             string riskLabel = reviewRiskScore >= 3
                 ? "high"
                 : reviewRiskScore >= 2
@@ -331,7 +337,7 @@ namespace FaceShield.ViewModels.Pages
                         : "safe";
 
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGate] runId={run}, totalFrames={totalFrames}, exportMode={exportSummary.ExportMode}, risk={riskLabel}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}");
+                $"[QualityGate] runId={run}, totalFrames={totalFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}");
         }
 
         private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
