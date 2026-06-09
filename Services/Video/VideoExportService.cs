@@ -22,6 +22,7 @@ public unsafe sealed class VideoExportService
     private const long MaxHybridFrameStepTolerance = 1;
     private const long MaxHybridCopyGapMultiplierForFallback = 1;
     private const int MaxHybridCopyGapConsecutiveAfterThreshold = 3;
+    private const int MaxHybridPacketFrameIndexUnreliableSequence = 4;
     private const int ExportSampleWindowSeconds = 30;
     private const int MaxAllowedOutputPacketLoss = 0;
     private const long MaxOutputPacketGapMultiplier = 4;
@@ -193,6 +194,13 @@ public unsafe sealed class VideoExportService
         bool hasLastPacketFrameForHybrid = false;
         long encodedPacketFrameStep = 1;
         long hybridCopyVideoFrameStep = 1;
+        long packetTimestampBase = 0;
+        bool hasPacketTimestampBase = false;
+        long keyframeTimestampBase = 0;
+        bool hasKeyframeTimestampBase = false;
+        long frameTimestampBase = 0;
+        bool hasFrameTimestampBase = false;
+        int packetFrameIndexReliabilityFailureCount = 0;
         var swTotal = Stopwatch.StartNew();
 
         try
@@ -753,12 +761,38 @@ public unsafe sealed class VideoExportService
                 }
                 inputVideoPacketCount++;
 
-                int packetFrameIndex = ResolveFrameIndexFromPacket(
+                int resolvedPacketFrameIndex = ResolveFrameIndexFromPacket(
                     pkt,
                     inStream->time_base,
                     sourceFps,
                     packetFrameFallback,
-                    totalFrames);
+                    totalFrames,
+                    ref packetTimestampBase,
+                    ref hasPacketTimestampBase);
+
+                int packetFrameIndex = packetFrameFallback;
+                bool isPacketFrameIndexReliable =
+                    Math.Abs(resolvedPacketFrameIndex - packetFrameFallback) <= 2;
+                if (isPacketFrameIndexReliable)
+                {
+                    packetFrameIndex = resolvedPacketFrameIndex;
+                    packetFrameIndexReliabilityFailureCount = 0;
+                }
+                else
+                {
+                    packetFrameIndexReliabilityFailureCount++;
+                    if (useHybridCopyWindow && packetFrameIndexReliabilityFailureCount >= MaxHybridPacketFrameIndexUnreliableSequence)
+                    {
+                        shouldRetryWithFullEncode = true;
+                        packetDropFallbackReason =
+                            string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                                ? $"hybrid-frame-index-unstable frame={resolvedPacketFrameIndex}, fallback={packetFrameFallback}, failures={packetFrameIndexReliabilityFailureCount}"
+                                : $"{packetDropFallbackReason}; hybrid-frame-index-unstable frame={resolvedPacketFrameIndex}, fallback={packetFrameFallback}, failures={packetFrameIndexReliabilityFailureCount}";
+                        throw new InvalidOperationException(
+                            "Invalid argument: 하이브리드 경로에서 프레임 인덱스 신뢰 구간을 초과해 rollback 합니다.");
+                    }
+                }
+
                 if (packetFrameIndex < packetFrameFallback)
                     packetFrameIndex = packetFrameFallback;
                 packetFrameFallback = packetFrameIndex + 1;
@@ -823,6 +857,7 @@ public unsafe sealed class VideoExportService
                     hasLastPacketFrameForHybrid = true;
                 }
 
+                bool flushedForHybridBoundary = false;
                 if (useHybridCopyWindow && packetInEncodeWindow != wasLastPacketEncoded)
                 {
                     hybridModeTransitionCount++;
@@ -839,6 +874,17 @@ public unsafe sealed class VideoExportService
 
                     if (packetInEncodeWindow)
                     {
+                        if (!hasLastVideoCopyPacketPts || !hasLastVideoCopyPacketDts)
+                        {
+                            shouldRetryWithFullEncode = true;
+                            packetDropFallbackReason =
+                                string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                                    ? "hybrid-encode-entry-no-copy-state"
+                                    : $"{packetDropFallbackReason}; hybrid-encode-entry-no-copy-state";
+                            throw new InvalidOperationException(
+                                "Invalid argument: 하이브리드 인코딩 진입 시 복사 상태 기준이 없어 rollback 합니다.");
+                        }
+
                         if (hasLastVideoCopyPacketPts)
                         {
                             lastEncodedPacketPts = lastVideoCopyPacketPts;
@@ -861,6 +907,72 @@ public unsafe sealed class VideoExportService
                     }
                     else
                     {
+                        if (packetFrameIndex >= encodeWindowEnd)
+                        {
+                            FlushVideoPipeline(
+                                ref videoFlushed,
+                                dec,
+                                enc,
+                                frame,
+                                bgra,
+                                encFrame,
+                                swsDecToBgra,
+                                swsBgraToEnc,
+                                ref swsDecToEnc,
+                                inStream,
+                                outPkt,
+                                outStream,
+                                outFmt,
+                                blurRadius,
+                                blurRanges,
+                                ref blurRangeCursor,
+                                sourceFps,
+                                forceSafeEncoding,
+                                totalFrames,
+                                encodeWindowStart,
+                                encodeWindowEnd,
+                                ref frameIndex,
+                                ref lastResolvedFrameIndex,
+                                ref frameTimestampBase,
+                                ref hasFrameTimestampBase,
+                                ref swsToBgraMs,
+                                ref maskMs,
+                                ref swsToEncMs,
+                                ref encodeMs,
+                                ref lastEncodedPts,
+                                ref hasLastEncodedPts,
+                                ref lastEncodedPacketPts,
+                                ref hasLastEncodedPacketPts,
+                                ref lastEncodedPacketDts,
+                                ref hasLastEncodedPacketDts,
+                                ref reusableFaceMask,
+                                ref outputVideoPacketCount,
+                                ref outputPacketPtsGapOutlierCount,
+                                ref maxOutputPacketPtsGap,
+                                progress,
+                                ref lastReportedFrame,
+                                swTotal,
+                                cancellationToken,
+                                sampleWindowFrames: exportSampleWindowFrames,
+                                sampleEncodedFrameCount: ref sampleEncodedFrameCount,
+                                sampleBlurredFrameCount: ref sampleBlurredFrameCount,
+                                encodedWindowFrameCount: ref encodedWindowFrameCount,
+                                encodedPacketFrameStep: encodedPacketFrameStep);
+
+                            flushedForHybridBoundary = true;
+                        }
+
+                        if (!hasLastEncodedPacketPts || !hasLastEncodedPacketDts)
+                        {
+                            shouldRetryWithFullEncode = true;
+                            packetDropFallbackReason =
+                                string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                                    ? "hybrid-copy-exit-no-encoded-state"
+                                    : $"{packetDropFallbackReason}; hybrid-copy-exit-no-encoded-state";
+                            throw new InvalidOperationException(
+                                "Invalid argument: 하이브리드 복사 진입 시 인코더 상태 기준이 없어 rollback 합니다.");
+                        }
+
                         if (hasLastEncodedPacketPts)
                         {
                             lastVideoCopyPacketPts = lastEncodedPacketPts;
@@ -889,7 +1001,7 @@ public unsafe sealed class VideoExportService
                     if (packetFrameIndex < exportSampleWindowFrames)
                         sampleCopiedVideoPacketCount++;
 
-                    if (useHybridCopyWindow && packetFrameIndex >= encodeWindowEnd)
+                    if (useHybridCopyWindow && packetFrameIndex >= encodeWindowEnd && !flushedForHybridBoundary)
                     {
                         FlushVideoPipeline(
                             ref videoFlushed,
@@ -1047,52 +1159,54 @@ public unsafe sealed class VideoExportService
                 ffmpeg.av_packet_unref(pkt);
             while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
             {
-                    ProcessDecodedVideoFrame(
-                        frame,
-                        bgra,
-                        encFrame,
-                        dec,
-                        enc,
-                        swsDecToBgra,
-                        swsBgraToEnc,
-                        ref swsDecToEnc,
-                        inStream,
-                        outPkt,
-                        outStream,
-                        outFmt,
-                        blurRadius,
-                        blurRanges,
-                        ref blurRangeCursor,
-                        sourceFps,
-                        forceSafeEncoding,
-                        totalFrames,
-                        encodeWindowStart,
-                        encodeWindowEnd,
-                        ref frameIndex,
-                        ref lastResolvedFrameIndex,
-                        ref swsToBgraMs,
-                        ref maskMs,
-                            ref swsToEncMs,
-                            ref encodeMs,
-                            ref lastEncodedPts,
-                            ref hasLastEncodedPts,
-                            ref lastEncodedPacketPts,
-                            ref hasLastEncodedPacketPts,
-                            ref lastEncodedPacketDts,
-                            ref hasLastEncodedPacketDts,
-                            ref reusableFaceMask,
-                            ref outputVideoPacketCount,
-                            ref outputPacketPtsGapOutlierCount,
-                            ref maxOutputPacketPtsGap,
-                            progress,
-                            ref lastReportedFrame,
-                            swTotal,
-                            cancellationToken,
-                            sampleWindowFrames: exportSampleWindowFrames,
-                            sampleEncodedFrameCount: ref sampleEncodedFrameCount,
-                            sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                            encodedWindowFrameCount: ref encodedWindowFrameCount,
-                            encodedPacketFrameStep: encodedPacketFrameStep);
+                ProcessDecodedVideoFrame(
+                    frame,
+                    bgra,
+                    encFrame,
+                    dec,
+                    enc,
+                    swsDecToBgra,
+                    swsBgraToEnc,
+                    ref swsDecToEnc,
+                    inStream,
+                    outPkt,
+                    outStream,
+                    outFmt,
+                    blurRadius,
+                    blurRanges,
+                    ref blurRangeCursor,
+                    sourceFps,
+                    forceSafeEncoding,
+                    totalFrames,
+                    encodeWindowStart,
+                    encodeWindowEnd,
+                    ref frameIndex,
+                    ref lastResolvedFrameIndex,
+                    ref frameTimestampBase,
+                    ref hasFrameTimestampBase,
+                    ref swsToBgraMs,
+                    ref maskMs,
+                    ref swsToEncMs,
+                    ref encodeMs,
+                    ref lastEncodedPts,
+                    ref hasLastEncodedPts,
+                    ref lastEncodedPacketPts,
+                    ref hasLastEncodedPacketPts,
+                    ref lastEncodedPacketDts,
+                    ref hasLastEncodedPacketDts,
+                    ref reusableFaceMask,
+                    ref outputVideoPacketCount,
+                    ref outputPacketPtsGapOutlierCount,
+                    ref maxOutputPacketPtsGap,
+                    progress,
+                    ref lastReportedFrame,
+                    swTotal,
+                    cancellationToken,
+                    sampleWindowFrames: exportSampleWindowFrames,
+                    sampleEncodedFrameCount: ref sampleEncodedFrameCount,
+                    sampleBlurredFrameCount: ref sampleBlurredFrameCount,
+                    encodedWindowFrameCount: ref encodedWindowFrameCount,
+                    encodedPacketFrameStep: encodedPacketFrameStep);
                     ffmpeg.av_frame_unref(frame);
                 }
             }
@@ -1538,6 +1652,8 @@ public unsafe sealed class VideoExportService
         int encodeWindowEnd,
         ref int frameIndex,
         ref int lastResolvedFrameIndex,
+        ref long frameTimestampBase,
+        ref bool hasFrameTimestampBase,
         ref long swsToBgraMs,
         ref long maskMs,
         ref long swsToEncMs,
@@ -1566,7 +1682,14 @@ public unsafe sealed class VideoExportService
             throw new OperationCanceledException(cancellationToken);
 
         int fallbackIndex = Math.Max(frameIndex, lastResolvedFrameIndex + 1);
-        int resolvedFrameIndex = ResolveFrameIndexFromFrame(frame, inStream->time_base, sourceFps, fallbackIndex, totalFrames);
+        int resolvedFrameIndex = ResolveFrameIndexFromFrame(
+            frame,
+            inStream->time_base,
+            sourceFps,
+            fallbackIndex,
+            totalFrames,
+            ref frameTimestampBase,
+            ref hasFrameTimestampBase);
         if (resolvedFrameIndex < fallbackIndex)
             resolvedFrameIndex = fallbackIndex;
         lastResolvedFrameIndex = resolvedFrameIndex;
@@ -1831,17 +1954,19 @@ public unsafe sealed class VideoExportService
                 encodeWindowEnd,
                 ref frameIndex,
                 ref lastResolvedFrameIndex,
+                ref frameTimestampBase,
+                ref hasFrameTimestampBase,
                 ref swsToBgraMs,
                 ref maskMs,
                 ref swsToEncMs,
                 ref encodeMs,
                 ref lastEncodedPts,
                 ref hasLastEncodedPts,
-                            ref lastEncodedPacketPts,
-                            ref hasLastEncodedPacketPts,
-                            ref lastEncodedPacketDts,
-                            ref hasLastEncodedPacketDts,
-                            ref reusableFaceMask,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
+                ref reusableFaceMask,
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
@@ -1849,11 +1974,11 @@ public unsafe sealed class VideoExportService
                 ref lastReportedFrame,
                 swTotal,
                 cancellationToken,
-                sampleWindowFrames,
-                ref sampleEncodedFrameCount,
-                ref sampleBlurredFrameCount,
-                ref encodedWindowFrameCount,
-                encodedPacketFrameStep);
+                sampleWindowFrames: sampleWindowFrames,
+                sampleEncodedFrameCount: ref sampleEncodedFrameCount,
+                sampleBlurredFrameCount: ref sampleBlurredFrameCount,
+                encodedWindowFrameCount: ref encodedWindowFrameCount,
+                encodedPacketFrameStep: encodedPacketFrameStep);
             ffmpeg.av_frame_unref(frame);
         }
 
@@ -2121,7 +2246,9 @@ public unsafe sealed class VideoExportService
                     stream->time_base,
                     sourceFps,
                     fallbackFrameIndex,
-                    estimatedTotalFrameCount);
+                    estimatedTotalFrameCount,
+                    ref keyframeTimestampBase,
+                    ref hasKeyframeTimestampBase);
                 if (resolvedFrameIndex < fallbackFrameIndex)
                     resolvedFrameIndex = fallbackFrameIndex;
 
@@ -2351,7 +2478,9 @@ public unsafe sealed class VideoExportService
         AVRational timeBase,
         double sourceFps,
         int fallback,
-        int totalFrames)
+        int totalFrames,
+        ref long timestampBase,
+        ref bool hasTimestampBase)
     {
         if (packet == null || sourceFps <= 0.0)
         {
@@ -2371,7 +2500,18 @@ public unsafe sealed class VideoExportService
         if (ts == ffmpeg.AV_NOPTS_VALUE)
             return fallback;
 
-        double seconds = ts * ffmpeg.av_q2d(timeBase);
+        long normalizedTs = hasTimestampBase
+            ? ts - timestampBase
+            : ts;
+
+        if (!hasTimestampBase)
+        {
+            timestampBase = ts;
+            hasTimestampBase = true;
+            normalizedTs = 0;
+        }
+
+        double seconds = normalizedTs * ffmpeg.av_q2d(timeBase);
         if (double.IsNaN(seconds) || double.IsInfinity(seconds))
             return fallback;
 
@@ -2388,7 +2528,9 @@ public unsafe sealed class VideoExportService
         AVRational timeBase,
         double sourceFps,
         int fallback,
-        int totalFrames)
+        int totalFrames,
+        ref long timestampBase,
+        ref bool hasTimestampBase)
     {
         if (frame == null || sourceFps <= 0.0)
         {
@@ -2408,7 +2550,18 @@ public unsafe sealed class VideoExportService
         if (ts == ffmpeg.AV_NOPTS_VALUE)
             return fallback;
 
-        double seconds = ts * ffmpeg.av_q2d(timeBase);
+        long normalizedTs = hasTimestampBase
+            ? ts - timestampBase
+            : ts;
+
+        if (!hasTimestampBase)
+        {
+            timestampBase = ts;
+            hasTimestampBase = true;
+            normalizedTs = 0;
+        }
+
+        double seconds = normalizedTs * ffmpeg.av_q2d(timeBase);
         if (double.IsNaN(seconds) || double.IsInfinity(seconds))
             return fallback;
 
