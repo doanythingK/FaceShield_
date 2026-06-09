@@ -237,6 +237,7 @@ public unsafe sealed class VideoExportService
             List<(int Start, int EndExclusive)>? blurRanges = null;
             int blurRangeCursor = 0;
             (int Start, int EndExclusive)? hybridEncodeWindow = null;
+            List<int>? hybridCandidateKeyframes = null;
             bool hybridCopyAttempted = false;
             bool allowHybridCopyCurrent = allowHybridCopy;
             string? hybridCopyFallbackReason = null;
@@ -315,6 +316,7 @@ public unsafe sealed class VideoExportService
                 if (canCopyOutsideBlurWindow)
                 {
                     var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
+                    hybridCandidateKeyframes = keyframes;
                     if (estimatedTotalFrames > totalFrames && estimatedTotalFrames > 0)
                     {
                         Debug.WriteLine(
@@ -509,6 +511,30 @@ public unsafe sealed class VideoExportService
             if (dec != null && dec->has_b_frames > 0)
             {
                 useHybridCopyWindow = false;
+            }
+
+            if (useHybridCopyWindow &&
+                hybridCandidateKeyframes != null &&
+                hybridCandidateKeyframes.Count > 0 &&
+                hybridEncodeWindow.HasValue)
+            {
+                var window = hybridEncodeWindow.Value;
+                bool validStartBoundary =
+                    window.Start <= 0 ||
+                    IsKeyframeFrameIndex(hybridCandidateKeyframes, window.Start);
+                bool validEndBoundary =
+                    window.EndExclusive >= totalFrames ||
+                    IsKeyframeFrameIndex(hybridCandidateKeyframes, window.EndExclusive);
+                if (!validStartBoundary || !validEndBoundary)
+                {
+                    useHybridCopyWindow = false;
+                    hybridCopyAttempted = true;
+                    string boundaryReason =
+                        $"키프레임 경계 미일치(start={window.Start}:{validStartBoundary}, end={window.EndExclusive}:{validEndBoundary})로 하이브리드 비활성화";
+                    hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
+                        ? boundaryReason
+                        : $"{hybridCopyFallbackReason}; {boundaryReason}";
+                }
             }
 
             AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, useHybridCopyWindow ? null : encoder);
@@ -1934,6 +1960,33 @@ public unsafe sealed class VideoExportService
         }
 
         return found ? result : Math.Max(value + 1, keyframes[keyframes.Count - 1] + 1);
+    }
+
+    private static bool IsKeyframeFrameIndex(List<int> keyframes, int frameIndex)
+    {
+        if (keyframes == null || keyframes.Count == 0)
+            return false;
+
+        int lo = 0;
+        int hi = keyframes.Count - 1;
+        while (lo <= hi)
+        {
+            int mid = lo + ((hi - lo) >> 1);
+            int current = keyframes[mid];
+            if (current == frameIndex)
+                return true;
+
+            if (current < frameIndex)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+
+        return false;
     }
 
     private static unsafe List<int> CollectKeyframeFrameIndices(
