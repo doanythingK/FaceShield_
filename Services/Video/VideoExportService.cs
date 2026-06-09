@@ -18,7 +18,8 @@ public unsafe sealed class VideoExportService
     private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
     private const int MaxHybridFrameGapBeforeFallback = 32;
     private const long MaxHybridFrameStepTolerance = 1;
-    private const long MaxHybridCopyGapMultiplierForFallback = 2;
+    private const long MaxHybridCopyGapMultiplierForFallback = 1;
+    private const int MaxHybridCopyGapConsecutiveAfterThreshold = 3;
     private const int ExportSampleWindowSeconds = 30;
     private const int MaxAllowedOutputPacketLoss = 0;
     private const long MaxOutputPacketGapMultiplier = 4;
@@ -184,6 +185,7 @@ public unsafe sealed class VideoExportService
         int outputPacketPtsGapOutlierCount = 0;
         long maxOutputPacketPtsGap = 0;
         int copyGapOutlierCount = 0;
+        int copyGapLongRunCount = 0;
         long maxCopyGap = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
@@ -937,7 +939,8 @@ public unsafe sealed class VideoExportService
                     if (hasPreviousPacketPts)
                     {
                         long copyGap = Math.Abs(pkt->pts - previousPacketPts);
-                        long copyGapThreshold = Math.Max(1, hybridCopyVideoFrameStep * MaxHybridCopyGapMultiplierForFallback);
+                        long expectedGap = Math.Max(1, hybridCopyVideoFrameStep);
+                        long copyGapThreshold = Math.Max(1, expectedGap * MaxHybridCopyGapMultiplierForFallback);
                         if (copyGap > 0 && copyGap > copyGapThreshold)
                         {
                             copyGapOutlierCount++;
@@ -950,6 +953,25 @@ public unsafe sealed class VideoExportService
                                     : $"{packetDropFallbackReason}; hybrid-copy-pts-gap={copyGap}, frame={packetFrameIndex}";
                             throw new InvalidOperationException(
                                 "Invalid argument: 하이브리드 복사 구간의 PTS 점프가 과도하여 rollback 합니다.");
+                        }
+
+                        if (copyGap > expectedGap)
+                        {
+                            copyGapLongRunCount++;
+                            if (copyGapLongRunCount >= MaxHybridCopyGapConsecutiveAfterThreshold)
+                            {
+                                shouldRetryWithFullEncode = true;
+                                packetDropFallbackReason =
+                                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                                        ? $"hybrid-copy-constant-gap-anomaly-frames={copyGapLongRunCount}, gap={copyGap}, frame={packetFrameIndex}"
+                                        : $"{packetDropFallbackReason}; hybrid-copy-constant-gap-anomaly-frames={copyGapLongRunCount}, gap={copyGap}, frame={packetFrameIndex}";
+                                throw new InvalidOperationException(
+                                    "Invalid argument: 하이브리드 복사 구간에서 프레임 간격 이상치가 반복되어 rollback 합니다.");
+                            }
+                        }
+                        else
+                        {
+                            copyGapLongRunCount = 0;
                         }
                     }
                     if (timestampAdjusted && string.IsNullOrWhiteSpace(packetDropFallbackReason))
