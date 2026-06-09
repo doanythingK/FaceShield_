@@ -101,6 +101,7 @@ namespace FaceShield.Services.Analysis
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
         private readonly IFaceDetectorFactory? _detectorFactory;
+        private double _sourceFpsForSummary;
 
         public AutoMaskRunSummary? LastRunSummary { get; private set; }
 
@@ -130,6 +131,8 @@ namespace FaceShield.Services.Analysis
 
             if (fps <= 0 || totalFrames <= 0)
                 return;
+
+            _sourceFpsForSummary = fps;
 
             LastRunSummary = null;
 
@@ -522,6 +525,7 @@ namespace FaceShield.Services.Analysis
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
                 BuildDetectionSummary(roiStats, filterStats),
+                _sourceFpsForSummary,
                 _options.RunId,
                 GetDetectorName()));
             ApplyPostProcessResultToRunSummary(
@@ -871,6 +875,7 @@ namespace FaceShield.Services.Analysis
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
                 BuildDetectionSummary(roiStats, filterStats),
+                _sourceFpsForSummary,
                 _options.RunId,
                 GetDetectorName()));
             ApplyPostProcessResultToRunSummary(
@@ -1291,6 +1296,7 @@ namespace FaceShield.Services.Analysis
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
                 filterStats.BuildSummary(),
+                _sourceFpsForSummary,
                 _options.RunId,
                 GetDetectorName()));
             ApplyPostProcessResultToRunSummary(
@@ -1571,6 +1577,7 @@ namespace FaceShield.Services.Analysis
                 _options.DetectEveryNFrames,
                 _options.ParallelDetectorCount,
                 filterStats.BuildSummary(),
+                _sourceFpsForSummary,
                 _options.RunId,
                 GetDetectorName()));
             ApplyPostProcessResultToRunSummary(
@@ -1631,7 +1638,9 @@ namespace FaceShield.Services.Analysis
             if (summary.FinalProtectedSceneCarryFrameCount > 0)
                 riskScore++;
 
-            int sampleWindowFrames = Math.Min(summary.TotalFrames, 900);
+            int sampleWindowFrames = summary.SourceFps > 0
+                ? Math.Min(summary.TotalFrames, (int)Math.Round(summary.SourceFps * 30.0))
+                : Math.Min(summary.TotalFrames, 900);
             string riskLabel = riskScore >= 3
                 ? "high"
                 : riskScore >= 1
@@ -1654,7 +1663,8 @@ namespace FaceShield.Services.Analysis
                 EnableYoloWeakIsolatedCleanup = _options.EnableYoloWeakIsolatedCleanup,
                 EnableYoloGapFill = _options.EnableYoloGapFill,
                 EnableYoloSceneCutCarryCleanup = _options.EnableYoloSceneCutCarryCleanup,
-                EnableYoloTemporalSmoothing = _options.EnableYoloTemporalSmoothing
+                EnableYoloTemporalSmoothing = _options.EnableYoloTemporalSmoothing,
+                SourceFps = _sourceFpsForSummary
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
         }

@@ -21,6 +21,7 @@ namespace FaceShield.Services.Analysis
         int DetectEveryNFrames,
         int ParallelDetectorCount,
         string? RoiSummary,
+        double SourceFps,
         string? RunId,
         string? DetectorName)
     {
@@ -44,7 +45,7 @@ namespace FaceShield.Services.Analysis
             string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
             string detector = string.IsNullOrWhiteSpace(DetectorName) ? "n/a" : DetectorName;
             return
-                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, totalMs={TotalMs}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}, post={EnablePostProcessing}, roiPost={EnableRoiPostProcess}, weakIso={EnableYoloWeakIsolatedCleanup}, gapFill={EnableYoloGapFill}, sceneCut={EnableYoloSceneCutCarryCleanup}, smooth={EnableYoloTemporalSmoothing}, finalFrames={FinalMaskFrames}, finalRows={FinalMaskRows}, finalShortGaps={FinalMaskShortGapCount}, finalPerFaceShortGaps={FinalMaskPerFaceShortGapCount}, finalLargeJumps={FinalMaskLargeJumpGapCount}, finalProtectedSceneCarry={FinalProtectedSceneCarryFrameCount}, finalReview={FinalMaskReviewRequired}, finalReviewReasons={FinalMaskReviewReasons}";
+                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, totalMs={TotalMs}, srcFps={SourceFps:0.###}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}, post={EnablePostProcessing}, roiPost={EnableRoiPostProcess}, weakIso={EnableYoloWeakIsolatedCleanup}, gapFill={EnableYoloGapFill}, sceneCut={EnableYoloSceneCutCarryCleanup}, smooth={EnableYoloTemporalSmoothing}, finalFrames={FinalMaskFrames}, finalRows={FinalMaskRows}, finalShortGaps={FinalMaskShortGapCount}, finalPerFaceShortGaps={FinalMaskPerFaceShortGapCount}, finalLargeJumps={FinalMaskLargeJumpGapCount}, finalProtectedSceneCarry={FinalProtectedSceneCarryFrameCount}, finalReview={FinalMaskReviewRequired}, finalReviewReasons={FinalMaskReviewReasons}";
         }
     }
 }
