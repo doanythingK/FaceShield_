@@ -704,20 +704,18 @@ public unsafe sealed class VideoExportService
                         }
                     }
 
-                    if (pkt->pts == ffmpeg.AV_NOPTS_VALUE && pkt->dts == ffmpeg.AV_NOPTS_VALUE)
-                    {
-                        packetDropFallbackReason = $"missing-ts frame={packetFrameIndex}";
-                        throw new InvalidOperationException(
-                            "Invalid argument: 하이브리드 복사 구간에서 패킷 타임스탬프가 누락되어 품질 보존 fallback을 수행합니다.");
-                    }
-
                     ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
+                    bool hasMissingTimestamps = pkt->pts == ffmpeg.AV_NOPTS_VALUE && pkt->dts == ffmpeg.AV_NOPTS_VALUE;
                     bool timestampAdjusted = NormalizeCopiedPacketTimestamps(
                         pkt,
                         ref lastVideoCopyPacketPts,
                         ref hasLastVideoCopyPacketPts,
                         ref lastVideoCopyPacketDts,
                         ref hasLastVideoCopyPacketDts);
+                    if (timestampAdjusted && hasMissingTimestamps && string.IsNullOrWhiteSpace(packetDropFallbackReason))
+                    {
+                        packetDropFallbackReason = $"missing-ts-frame={packetFrameIndex}";
+                    }
                     if (timestampAdjusted)
                     {
                         copyTimestampFixCount++;
