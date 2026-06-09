@@ -325,10 +325,42 @@ namespace FaceShield.ViewModels.Pages
             {
                 reviewRiskScore++;
             }
+            if (autoRunSummary != null &&
+                (!string.IsNullOrWhiteSpace(autoRunSummary.FinalMaskReviewReasons) &&
+                    autoRunSummary.FinalMaskReviewReasons != "none"))
+            {
+                reviewRiskScore++;
+            }
+
+            if (!string.IsNullOrWhiteSpace(exportSummary.PacketLossFallbackReason))
+                reviewRiskScore++;
 
             int sampleWindowFrames = autoRunSummary != null && autoRunSummary.SourceFps > 0
                 ? Math.Min(autoRunSummary.TotalFrames, (int)Math.Round(autoRunSummary.SourceFps * 30.0))
                 : Math.Min(autoRunSummary?.TotalFrames ?? 0, 900);
+            int sampleFrameCount = autoRunSummary?.SampleFrameCount ?? 0;
+            int sampleRowCount = autoRunSummary?.SampleRowCount ?? 0;
+            int sampleShortGapCount = autoRunSummary?.SampleShortGapCount ?? 0;
+            int samplePerFaceShortGapCount = autoRunSummary?.SamplePerFaceShortGapCount ?? 0;
+            int sampleIsolatedFrameCount = autoRunSummary?.SampleIsolatedFrameCount ?? 0;
+            int sampleLargeJumpGapCount = autoRunSummary?.SampleLargeJumpGapCount ?? 0;
+            int sampleProtectedCarryCount = autoRunSummary?.SampleProtectedSceneCarryFrameCount ?? 0;
+            bool sampleReviewRequired = autoRunSummary?.SampleReviewRequired == true;
+            string sampleReviewReasons = autoRunSummary?.SampleReviewReasons ?? "none";
+            int sampleRiskScore = 0;
+            if (sampleReviewRequired || string.IsNullOrWhiteSpace(sampleReviewReasons) == false && sampleReviewReasons != "none")
+                sampleRiskScore++;
+            if (sampleShortGapCount > 0 || samplePerFaceShortGapCount > 0 || sampleLargeJumpGapCount > 0)
+                sampleRiskScore++;
+            if (sampleProtectedCarryCount > 0)
+                sampleRiskScore++;
+            string sampleRiskLabel = sampleRiskScore >= 3
+                ? "high"
+                : sampleRiskScore >= 2
+                    ? "medium"
+                    : sampleRiskScore >= 1
+                        ? "low"
+                        : "safe";
 
             string hybridRange = exportSummary.HybridCopyUsed
                 ? $"{exportSummary.HybridWindowStartFrame}-{exportSummary.HybridWindowEndFrame}"
@@ -349,6 +381,8 @@ namespace FaceShield.ViewModels.Pages
 
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGate] runId={run}, totalFrames={totalFrames}, sampleWindowFrames={sampleWindowFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}, sceneCut=preGuard:{autoRunSummary?.FinalSceneCutPreGuardPairCount ?? -1},preStrong:{autoRunSummary?.FinalSceneCutPreStrongProbePairCount ?? -1},postGuard:{autoRunSummary?.FinalSceneCutPostGuardPairCount ?? -1},postStrong:{autoRunSummary?.FinalSceneCutPostStrongProbePairCount ?? -1},carryPairs:{autoRunSummary?.FinalSceneCutCarryPairCount ?? -1},carryRemoved:{autoRunSummary?.FinalSceneCutCarryRemovedCount ?? -1},carryProtected:{autoRunSummary?.FinalSceneCutProtectedFrameCount ?? -1}");
+            System.Diagnostics.Debug.WriteLine(
+                $"[QualityGateSample] runId={run}, mode={autoRunSummary?.Mode ?? \"n/a\"}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}, sampleFrames={sampleFrameCount}, sampleRows={sampleRowCount}, sampleRisk={sampleRiskLabel}, sampleShortGaps={sampleShortGapCount}, samplePerFaceShortGaps={samplePerFaceShortGapCount}, sampleIsolated={sampleIsolatedFrameCount}, sampleLargeJumps={sampleLargeJumpGapCount}, sampleProtectedCarry={sampleProtectedCarryCount}, sampleReviewRequired={sampleReviewRequired.ToString().ToLowerInvariant()}, sampleReviewReasons={sampleReviewReasons}, packetLossFallbackReason={exportSummary.PacketLossFallbackReason ?? \"n/a\"}, hybridFallbackReason={exportSummary.HybridCopyFallbackReason ?? \"n/a\"}");
         }
 
         private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
