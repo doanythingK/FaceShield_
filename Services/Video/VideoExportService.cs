@@ -216,6 +216,10 @@ public unsafe sealed class VideoExportService
             (int Start, int EndExclusive)? hybridEncodeWindow = null;
             bool hybridCopyAttempted = false;
             string? hybridCopyFallbackReason = null;
+            int hybridWindowStartFrame = -1;
+            int hybridWindowEndFrame = -1;
+            int hybridModeTransitionCount = 0;
+            int hybridModeTimestampSyncCount = 0;
             if (_maskProvider is FrameMaskProvider frameMaskProvider)
             {
                 blurFrameSet = BuildBlurFrameSet(frameMaskProvider, totalFrames);
@@ -244,6 +248,10 @@ public unsafe sealed class VideoExportService
                         HybridCopyAttempted: false,
                         HybridCopyUsed: false,
                         HybridCopyFallbackReason: null,
+                        HybridWindowStartFrame: -1,
+                        HybridWindowEndFrame: -1,
+                        HybridModeTransitionCount: 0,
+                        HybridModeTimestampSyncCount: 0,
                         InputVideoPackets: 0,
                         OutputVideoPackets: 0,
                         CopiedVideoPackets: 0,
@@ -291,6 +299,8 @@ public unsafe sealed class VideoExportService
                         else if (encodeStart > 0 || encodeEnd < totalFrames)
                         {
                             hybridEncodeWindow = (encodeStart, encodeEnd);
+                            hybridWindowStartFrame = encodeStart;
+                            hybridWindowEndFrame = encodeEnd;
                             hybridCopyAttempted = true;
                         }
                         else
@@ -553,6 +563,10 @@ public unsafe sealed class VideoExportService
 
                 if (useHybridCopyWindow && packetInEncodeWindow != wasLastPacketEncoded)
                 {
+                    hybridModeTransitionCount++;
+                    if (hasLastEncodedPacketPts || hasLastEncodedPacketDts || hasLastVideoCopyPacketPts || hasLastVideoCopyPacketDts)
+                        hybridModeTimestampSyncCount++;
+
                     if (packetInEncodeWindow)
                     {
                         if (hasLastVideoCopyPacketPts)
@@ -858,6 +872,10 @@ public unsafe sealed class VideoExportService
                     : hybridCopyAttempted
                         ? hybridCopyFallbackReason
                         : null,
+                HybridWindowStartFrame: hybridWindowStartFrame,
+                HybridWindowEndFrame: hybridWindowEndFrame,
+                HybridModeTransitionCount: hybridModeTransitionCount,
+                HybridModeTimestampSyncCount: hybridModeTimestampSyncCount,
                 InputVideoPackets: inputVideoPacketCount,
                 OutputVideoPackets: outputVideoPacketCount,
                 CopiedVideoPackets: copiedVideoPacketCount,
