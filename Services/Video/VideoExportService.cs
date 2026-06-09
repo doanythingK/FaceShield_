@@ -13,6 +13,7 @@ public unsafe sealed class VideoExportService
     private const bool EnableHybridCopyWindow = true;
     private const int MinHybridCopyFrames = 240;
     private const double MinHybridCopyRatio = 0.05;
+    private const int MinHybridCopySideFrames = 24;
     private const int MaxHybridCopyTimestampFixBeforeFallback = 4;
 
     private readonly IFrameMaskProvider _maskProvider;
@@ -289,9 +290,9 @@ public unsafe sealed class VideoExportService
                     {
                         int encodeStart = blurRanges[0].Start;
                         int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
-                        bool hasLeadingCopy = encodeStart > 0;
-                        bool hasTrailingCopy = encodeEnd < totalFrames;
                         int copiedFrames = totalFrames - (encodeEnd - encodeStart);
+                        int leadingCopyFrames = encodeStart;
+                        int trailingCopyFrames = totalFrames - encodeEnd;
                         int minExpectedCopyFrames = Math.Max(
                             MinHybridCopyFrames,
                             (int)Math.Ceiling(totalFrames * MinHybridCopyRatio));
@@ -301,16 +302,13 @@ public unsafe sealed class VideoExportService
                             hybridCopyFallbackReason =
                                 $"하이브리드 복사 구간 이득이 미미함(복사구간={copiedFrames}, 총={totalFrames}, 임계치={minExpectedCopyFrames})";
                         }
-                        else if (hasLeadingCopy && hasTrailingCopy)
+                        else if (leadingCopyFrames < MinHybridCopySideFrames || trailingCopyFrames < MinHybridCopySideFrames)
                         {
                             canCopyOutsideBlurWindow = false;
                             hybridCopyFallbackReason =
-                                $"양끝 복사 구간 존재(start={encodeStart}, end={encodeEnd}, total={totalFrames})";
-                            Debug.WriteLine(
-                                $"[VideoExport] 하이브리드 구간 복사가 양끝에 존재합니다. "
-                                + $"안정성(품질 저하 우려)으로 인해 전체 인코딩으로 폴백: start={encodeStart}, end={encodeEnd}, total={totalFrames}.");
+                                $"복사 쪽 경계 보강 필요(leading={leadingCopyFrames}, trailing={trailingCopyFrames}, 최소={MinHybridCopySideFrames})";
                         }
-                        else if (encodeStart > 0 || encodeEnd < totalFrames)
+                        else if (encodeStart > 0 && encodeEnd < totalFrames)
                         {
                             hybridEncodeWindow = (encodeStart, encodeEnd);
                             hybridWindowStartFrame = encodeStart;
