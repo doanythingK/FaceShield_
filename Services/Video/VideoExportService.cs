@@ -286,7 +286,13 @@ public unsafe sealed class VideoExportService
                     (blurRanges[0].Start > 0 || blurRanges[^1].EndExclusive < totalFrames);
                 if (canCopyOutsideBlurWindow)
                 {
-                    var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames);
+                    var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, out var estimatedTotalFrames);
+                    if (estimatedTotalFrames > totalFrames && estimatedTotalFrames > 0)
+                    {
+                        Debug.WriteLine(
+                            $"[Export] detected frame count expansion from keyframe scan: meta={totalFrames}, estimated={estimatedTotalFrames}");
+                        totalFrames = estimatedTotalFrames;
+                    }
                     blurRanges = AlignRangesToKeyframes(blurRanges, keyframes, totalFrames);
                     if (blurRanges.Count == 0)
                     {
@@ -1566,9 +1572,10 @@ public unsafe sealed class VideoExportService
         return found ? result : Math.Max(value + 1, keyframes[keyframes.Count - 1] + 1);
     }
 
-    private static unsafe List<int> CollectKeyframeFrameIndices(string inputPath, double sourceFps, int totalFrames)
+    private static unsafe List<int> CollectKeyframeFrameIndices(string inputPath, double sourceFps, out int estimatedTotalFrames)
     {
         var keyframes = new List<int>();
+        estimatedTotalFrames = 0;
         if (string.IsNullOrWhiteSpace(inputPath) || sourceFps <= 0.0)
             return keyframes;
 
@@ -1597,7 +1604,7 @@ public unsafe sealed class VideoExportService
                 return keyframes;
 
             AVStream* stream = inFmt->streams[videoStreamIndex];
-            int frameIndex = 0;
+            int packetFrameIndex = 0;
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
                 if (pkt->stream_index != videoStreamIndex)
@@ -1606,16 +1613,34 @@ public unsafe sealed class VideoExportService
                     continue;
                 }
 
-                if (frameIndex >= totalFrames && totalFrames > 0)
+                int frameIndex = packetFrameIndex;
+                if (sourceFps > 0.0)
                 {
-                    ffmpeg.av_packet_unref(pkt);
-                    break;
+                    long ts = pkt->pts != ffmpeg.AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+                    if (ts != ffmpeg.AV_NOPTS_VALUE)
+                    {
+                        double seconds = ts * ffmpeg.av_q2d(stream->time_base);
+                        if (!double.IsNaN(seconds) && !double.IsInfinity(seconds))
+                        {
+                            int resolvedIndex = (int)Math.Floor(seconds * sourceFps);
+                            if (resolvedIndex >= 0)
+                                frameIndex = resolvedIndex;
+                        }
+                    }
                 }
+
+                if (frameIndex < 0)
+                    frameIndex = 0;
+                if (frameIndex < packetFrameIndex)
+                    frameIndex = packetFrameIndex;
+
+                if (frameIndex + 1 > estimatedTotalFrames)
+                    estimatedTotalFrames = frameIndex + 1;
 
                 if ((pkt->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0)
                     keyframes.Add(frameIndex);
 
-                frameIndex++;
+                packetFrameIndex++;
 
                 ffmpeg.av_packet_unref(pkt);
             }
