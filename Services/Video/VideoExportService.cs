@@ -100,12 +100,15 @@ public unsafe sealed class VideoExportService
         bool allowHybridCopy,
         bool forceSafeEncoding,
         bool forceAudioTranscode,
-        bool forceH264Fallback)
+        bool forceH264Fallback,
+        bool allowPacketDropRetry = true)
     {
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
         _directFaceBlurFrames = 0;
         _bitmapMaskBlurFrames = 0;
         LastExportSummary = null;
+        bool shouldRetryWithFullEncode = false;
+        string? packetDropFallbackReason = null;
 
         AVFormatContext* inFmt = null;
         AVFormatContext* outFmt = null;
@@ -830,6 +833,16 @@ public unsafe sealed class VideoExportService
             if (droppedVideoPackets > 0)
             {
                 Debug.WriteLine($"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
+                if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 2)
+                {
+                    shouldRetryWithFullEncode = true;
+                    packetDropFallbackReason = $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}";
+                }
+            }
+
+            if (shouldRetryWithFullEncode)
+            {
+                Debug.WriteLine($"[Export] 패킷 누락 감지로 품질 보정 fallback 수행: {packetDropFallbackReason}");
             }
         }
         finally
@@ -865,6 +878,24 @@ public unsafe sealed class VideoExportService
 
             if (inFmt != null)
                 ffmpeg.avformat_close_input(&inFmt);
+        }
+
+        if (shouldRetryWithFullEncode)
+        {
+            ExportInternal(
+                inputPath,
+                outputPath,
+                blurRadius,
+                progress,
+                cancellationToken,
+                runId,
+                exportMode: "fallback-full-encode",
+                forceSoftwareEncoder: forceSoftwareEncoder,
+                allowHybridCopy: false,
+                forceSafeEncoding: forceSafeEncoding,
+                forceAudioTranscode: forceAudioTranscode,
+                forceH264Fallback: forceH264Fallback,
+                allowPacketDropRetry: false);
         }
     }
 
