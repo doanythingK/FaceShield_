@@ -10,8 +10,8 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    // 품질 우선: 기본 동작에서는 하이브리드 구간 복사를 사용하지 않음
-    private const bool EnableHybridCopyWindow = false;
+    private const bool EnableHybridCopyWindow = true;
+    private const int MaxHybridCopyTimestampFixBeforeFallback = 4;
 
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
@@ -161,9 +161,10 @@ public unsafe sealed class VideoExportService
         long lastAudioCopyPacketDts = -1;
         bool hasLastAudioCopyPacketDts = false;
         bool wasLastPacketEncoded = false;
-            int inputVideoPacketCount = 0;
-            int outputVideoPacketCount = 0;
-            int copiedVideoPacketCount = 0;
+        int inputVideoPacketCount = 0;
+        int outputVideoPacketCount = 0;
+        int copiedVideoPacketCount = 0;
+        int copyTimestampFixCount = 0;
         var swTotal = Stopwatch.StartNew();
 
         try
@@ -256,6 +257,7 @@ public unsafe sealed class VideoExportService
                         OutputVideoPackets: 0,
                         CopiedVideoPackets: 0,
                         DroppedVideoPackets: 0,
+                        HybridCopyTimestampFixCount: 0,
                         PacketLossFallbackReason: null,
                         ForceSoftwareEncoder: forceSoftwareEncoder,
                         ForceSafeEncoding: forceSafeEncoding,
@@ -501,7 +503,7 @@ public unsafe sealed class VideoExportService
                     if (audioCopy && outAudioStream != null && inAudioStream != null)
                     {
                         ffmpeg.av_packet_rescale_ts(pkt, inAudioStream->time_base, outAudioStream->time_base);
-                        NormalizeCopiedPacketTimestamps(
+                        _ = NormalizeCopiedPacketTimestamps(
                             pkt,
                             ref lastAudioCopyPacketPts,
                             ref hasLastAudioCopyPacketPts,
@@ -677,13 +679,31 @@ public unsafe sealed class VideoExportService
                         }
                     }
 
+                    if (pkt->pts == ffmpeg.AV_NOPTS_VALUE && pkt->dts == ffmpeg.AV_NOPTS_VALUE)
+                    {
+                        packetDropFallbackReason = $"missing-ts frame={packetFrameIndex}";
+                        throw new InvalidOperationException(
+                            "Invalid argument: 하이브리드 복사 구간에서 패킷 타임스탬프가 누락되어 품질 보존 fallback을 수행합니다.");
+                    }
+
                     ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
-                    NormalizeCopiedPacketTimestamps(
+                    bool timestampAdjusted = NormalizeCopiedPacketTimestamps(
                         pkt,
                         ref lastVideoCopyPacketPts,
                         ref hasLastVideoCopyPacketPts,
                         ref lastVideoCopyPacketDts,
                         ref hasLastVideoCopyPacketDts);
+                    if (timestampAdjusted)
+                    {
+                        copyTimestampFixCount++;
+                        if (copyTimestampFixCount > MaxHybridCopyTimestampFixBeforeFallback)
+                        {
+                            packetDropFallbackReason = $"copy-ts-fix={copyTimestampFixCount}, frame={packetFrameIndex}";
+                            throw new InvalidOperationException(
+                                "Invalid argument: 하이브리드 복사 타임스탬프 보정 횟수가 임계값을 초과해 fallback합니다.");
+                        }
+                    }
+
                     pkt->stream_index = outStream->index;
                     pkt->pos = -1;
                     Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
@@ -880,6 +900,7 @@ public unsafe sealed class VideoExportService
                 OutputVideoPackets: outputVideoPacketCount,
                 CopiedVideoPackets: copiedVideoPacketCount,
                 DroppedVideoPackets: droppedVideoPacketsForSummary,
+                HybridCopyTimestampFixCount: copyTimestampFixCount,
                 PacketLossFallbackReason: packetLossFallbackReason,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
@@ -979,7 +1000,7 @@ public unsafe sealed class VideoExportService
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
-            NormalizeEncodedPacketTimestamps(
+            _ = NormalizeEncodedPacketTimestamps(
                 outPkt,
                 ref lastPacketPts,
                 ref hasLastPacketPts,
@@ -1609,7 +1630,7 @@ public unsafe sealed class VideoExportService
         return normalizedPts;
     }
 
-    private static unsafe void NormalizeEncodedPacketTimestamps(
+    private static unsafe bool NormalizeEncodedPacketTimestamps(
         AVPacket* packet,
         ref long lastPacketPts,
         ref bool hasLastPacketPts,
@@ -1617,27 +1638,52 @@ public unsafe sealed class VideoExportService
         ref bool hasLastPacketDts)
     {
         if (packet == null)
-            return;
+            return false;
+
+        bool hadAdjustment = false;
 
         long noValue = ffmpeg.AV_NOPTS_VALUE;
+        long originalPts = packet->pts;
+        long originalDts = packet->dts;
 
         long normalizedPts = packet->pts;
         if (normalizedPts == noValue || normalizedPts < 0)
+        {
             normalizedPts = hasLastPacketPts ? Math.Max(0, lastPacketPts + 1) : 0;
+            hadAdjustment = true;
+        }
         if (hasLastPacketPts && normalizedPts <= lastPacketPts)
+        {
             normalizedPts = lastPacketPts + 1;
+            hadAdjustment = true;
+        }
 
         long normalizedDts = packet->dts;
         if (normalizedDts == noValue || normalizedDts < 0)
+        {
             normalizedDts = normalizedPts;
+            hadAdjustment = true;
+        }
         if (hasLastPacketDts && normalizedDts <= lastPacketDts)
+        {
             normalizedDts = lastPacketDts + 1;
+            hadAdjustment = true;
+        }
 
         if (normalizedDts > normalizedPts)
+        {
             normalizedDts = normalizedPts;
+            hadAdjustment = true;
+        }
+
+        if (normalizedPts != originalPts || normalizedDts != originalDts)
+            hadAdjustment = true;
 
         if (packet->duration <= 0)
+        {
             packet->duration = 1;
+            hadAdjustment = true;
+        }
 
         packet->pts = normalizedPts;
         packet->dts = normalizedDts;
@@ -1646,16 +1692,18 @@ public unsafe sealed class VideoExportService
         hasLastPacketPts = true;
         lastPacketDts = normalizedDts;
         hasLastPacketDts = true;
+
+        return hadAdjustment;
     }
 
-    private static unsafe void NormalizeCopiedPacketTimestamps(
+    private static unsafe bool NormalizeCopiedPacketTimestamps(
         AVPacket* packet,
         ref long lastPacketPts,
         ref bool hasLastPacketPts,
         ref long lastPacketDts,
         ref bool hasLastPacketDts)
     {
-        NormalizeEncodedPacketTimestamps(packet, ref lastPacketPts, ref hasLastPacketPts, ref lastPacketDts, ref hasLastPacketDts);
+        return NormalizeEncodedPacketTimestamps(packet, ref lastPacketPts, ref hasLastPacketPts, ref lastPacketDts, ref hasLastPacketDts);
     }
 
     private static unsafe void ApplyEncodingPts(AVFrame* frame, long pts)
