@@ -28,6 +28,7 @@ namespace FaceShield.Services.Analysis
         private const float YoloSceneCutCarryPurgeMaxConfidence = 0.98f;
         private const int YoloFinalMaskStableGapMaxFrames = 8;
         private const double YoloFinalMaskEdgeMarginRatio = 0.02;
+        private const int YoloSceneCutRebuildWindowFrames = 5;
         private const double YoloFinalMaskTinyWeakAreaRatio = 0.0012;
         private const float YoloFinalMaskTinyShortConfidenceMax = 0.62f;
         private const double YoloFinalMaskTinyShortAreaRatio = 0.0009;
@@ -247,6 +248,12 @@ namespace FaceShield.Services.Analysis
                     yoloPostSmoothCutPairs,
                     yoloCleanupPass.CutFramePairs,
                     yoloStrongCarryProbeCutPairs);
+                if (yoloCutPairs.Count > 0)
+                {
+                    var yoloCutWindows = BuildCutPairWindowRanges(yoloCutPairs, YoloSceneCutRebuildWindowFrames);
+                    Debug.WriteLine(
+                        $"[YoloSceneCutPairWindows] cutPairs={FormatTextList(yoloCutPairs)} cutWindows={FormatTextList(yoloCutWindows)}");
+                }
                 var yoloCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
                     _maskProvider,
                     yoloCutPairs,
@@ -294,6 +301,12 @@ namespace FaceShield.Services.Analysis
                 if (postSceneCleanupPass.CutFramePairs.Count > 0)
                 {
                     var postGapFillCutPairs = CombineCutFramePairs(yoloCutPairs, postSceneCleanupPass.CutFramePairs);
+                    if (postGapFillCutPairs.Count > 0)
+                    {
+                        var postGapFillCutWindows = BuildCutPairWindowRanges(postGapFillCutPairs, YoloSceneCutRebuildWindowFrames);
+                        Debug.WriteLine(
+                            $"[YoloSceneCutPairWindows] stage=post-gap-fill cutPairs={FormatTextList(postGapFillCutPairs)} cutWindows={FormatTextList(postGapFillCutWindows)}");
+                    }
                         var postGapFillCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
                             _maskProvider,
                             postGapFillCutPairs,
@@ -508,15 +521,19 @@ namespace FaceShield.Services.Analysis
 
             if (!string.IsNullOrWhiteSpace(guard.Error))
             {
+                var checkedPairWindows = BuildCutPairWindowRanges(guard.CheckedFramePairs, YoloSceneCutRebuildWindowFrames);
+                var rejectedPairWindows = BuildCutPairWindowRanges(guard.CutFramePairs, YoloSceneCutRebuildWindowFrames);
                 Debug.WriteLine(
-                    $"[{gapFillSceneCutGuardLogLabel}] skipped candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} error={guard.Error}");
+                    $"[{gapFillSceneCutGuardLogLabel}] skipped candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} checkedWindows={FormatTextList(checkedPairWindows)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} cutWindows={FormatTextList(rejectedPairWindows)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} error={guard.Error}");
                 return Array.Empty<string>();
             }
 
             if (guard.Checked > 0)
             {
+                var checkedPairWindows = BuildCutPairWindowRanges(guard.CheckedFramePairs, YoloSceneCutRebuildWindowFrames);
+                var keptPairWindows = BuildCutPairWindowRanges(guard.CutFramePairs, YoloSceneCutRebuildWindowFrames);
                 Debug.WriteLine(
-                    $"[{gapFillSceneCutGuardLogLabel}] candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} threshold={guard.Threshold:0.###} elapsedMs={guard.ElapsedMs}");
+                    $"[{gapFillSceneCutGuardLogLabel}] candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} checkedWindows={FormatTextList(checkedPairWindows)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} cutWindows={FormatTextList(keptPairWindows)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} threshold={guard.Threshold:0.###} elapsedMs={guard.ElapsedMs}");
             }
 
             return guard.CutFramePairs.ToArray();
@@ -1251,6 +1268,44 @@ namespace FaceShield.Services.Analysis
             return values.Count > maxValues
                 ? $"{text},+{values.Count - maxValues}"
                 : text;
+        }
+
+        private static IReadOnlyList<string> BuildCutPairWindowRanges(
+            IReadOnlyCollection<string>? framePairs,
+            int windowFrames)
+        {
+            if (framePairs == null || framePairs.Count == 0 || windowFrames <= 0)
+                return Array.Empty<string>();
+
+            return framePairs
+                .Select(pair => TryParseCutFramePair(pair, out int sourceFrame, out int targetFrame)
+                    ? FormatFrameRange(Math.Max(0, sourceFrame - windowFrames), targetFrame + windowFrames)
+                    : null)
+                .Where(static range => !string.IsNullOrWhiteSpace(range))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static range => range)
+                .ToArray();
+        }
+
+        private static bool TryParseCutFramePair(string? pairText, out int sourceFrame, out int targetFrame)
+        {
+            sourceFrame = 0;
+            targetFrame = 0;
+
+            if (string.IsNullOrWhiteSpace(pairText))
+                return false;
+
+            int separatorIndex = pairText.IndexOf(':');
+            if (separatorIndex <= 0 || separatorIndex >= pairText.Length - 1)
+                return false;
+
+            if (!int.TryParse(pairText.AsSpan(0, separatorIndex), out sourceFrame))
+                return false;
+
+            if (!int.TryParse(pairText.AsSpan(separatorIndex + 1), out targetFrame))
+                return false;
+
+            return true;
         }
 
         private readonly record struct YoloFinalMaskCleanupPassResult(

@@ -295,7 +295,7 @@ public unsafe sealed class VideoExportService
                     (blurRanges[0].Start > 0 || blurRanges[^1].EndExclusive < totalFrames);
                 if (canCopyOutsideBlurWindow)
                 {
-                    var keyframes = CollectKeyframeFrameIndices(inputPath, out var estimatedTotalFrames);
+                    var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
                     if (estimatedTotalFrames > totalFrames && estimatedTotalFrames > 0)
                     {
                         Debug.WriteLine(
@@ -1796,7 +1796,11 @@ public unsafe sealed class VideoExportService
         return found ? result : Math.Max(value + 1, keyframes[keyframes.Count - 1] + 1);
     }
 
-    private static unsafe List<int> CollectKeyframeFrameIndices(string inputPath, out int estimatedTotalFrames)
+    private static unsafe List<int> CollectKeyframeFrameIndices(
+        string inputPath,
+        double sourceFps,
+        int totalFramesHint,
+        out int estimatedTotalFrames)
     {
         var keyframes = new List<int>();
         estimatedTotalFrames = 0;
@@ -1828,7 +1832,8 @@ public unsafe sealed class VideoExportService
                 return keyframes;
 
             AVStream* stream = inFmt->streams[videoStreamIndex];
-            int packetFrameIndex = 0;
+            int estimatedTotalFrameCount = Math.Max(0, totalFramesHint);
+            int fallbackFrameIndex = 0;
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
                 if (pkt->stream_index != videoStreamIndex)
@@ -1837,15 +1842,21 @@ public unsafe sealed class VideoExportService
                     continue;
                 }
 
-                if (packetFrameIndex < 0)
-                    packetFrameIndex = 0;
+                int resolvedFrameIndex = ResolveFrameIndexFromPacket(
+                    pkt,
+                    stream->time_base,
+                    sourceFps,
+                    fallbackFrameIndex,
+                    estimatedTotalFrameCount);
+                if (resolvedFrameIndex < fallbackFrameIndex)
+                    resolvedFrameIndex = fallbackFrameIndex;
 
                 if ((pkt->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0)
-                    keyframes.Add(packetFrameIndex);
+                    keyframes.Add(resolvedFrameIndex);
 
-                if (packetFrameIndex + 1 > estimatedTotalFrames)
-                    estimatedTotalFrames = packetFrameIndex + 1;
-                packetFrameIndex++;
+                fallbackFrameIndex = Math.Max(fallbackFrameIndex, resolvedFrameIndex + 1);
+                if (fallbackFrameIndex > estimatedTotalFrames)
+                    estimatedTotalFrames = fallbackFrameIndex;
 
                 ffmpeg.av_packet_unref(pkt);
             }
