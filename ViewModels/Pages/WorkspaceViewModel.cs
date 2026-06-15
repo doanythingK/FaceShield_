@@ -371,10 +371,16 @@ namespace FaceShield.ViewModels.Pages
                 riskReasons.Add("auto-scene-cut-carry");
             }
             int offModeResetPairCount = autoRunSummary?.FinalOffModeSceneCutResetPairCount ?? 0;
+            int finalOffModeWeakCleanupCount = autoRunSummary?.FinalOffModeWeakCleanupCount ?? 0;
             if (offModeResetPairCount > 0)
             {
                 reviewRiskScore++;
                 riskReasons.Add("auto-off-mode-scene-cut-reset");
+            }
+            if (finalOffModeWeakCleanupCount > 0)
+            {
+                reviewRiskScore++;
+                riskReasons.Add("auto-off-mode-weak-cleanup");
             }
             if (autoRunSummary != null &&
                 (!string.IsNullOrWhiteSpace(autoRunSummary.FinalMaskReviewReasons) &&
@@ -423,6 +429,7 @@ namespace FaceShield.ViewModels.Pages
             int sampleGapFillBlockedCutGapFramesAfterCut = autoRunSummary?.SampleGapFillBlockedCutGapFramesAfterCut ?? 0;
             int sampleGapFillBlockedCleanupGapFrames = autoRunSummary?.SampleGapFillBlockedCleanupGapFrames ?? 0;
             int sampleGapFillBlockedSceneCarryGapFrames = autoRunSummary?.SampleGapFillBlockedSceneCarryGapFrames ?? 0;
+            int sampleOffModeWeakCleanupSuppressionCount = autoRunSummary?.SampleOffModeWeakCleanupSuppressionCount ?? 0;
             int offModeResetRemoved = autoRunSummary?.FinalOffModeSceneCutResetRemovedFrameCount ?? 0;
             int offModeResetBeforeWindowFrames = autoRunSummary?.FinalOffModeSceneCutResetBeforeWindowFrameCount ?? 0;
             int offModeResetAfterWindowFrames = autoRunSummary?.FinalOffModeSceneCutResetAfterWindowFrameCount ?? 0;
@@ -461,6 +468,11 @@ namespace FaceShield.ViewModels.Pages
             {
                 sampleRiskScore++;
                 sampleReasons.Add("sample-gap-fill-blocked");
+            }
+            if (sampleOffModeWeakCleanupSuppressionCount > 0)
+            {
+                sampleRiskScore++;
+                sampleReasons.Add("sample-off-mode-weak-cleanup");
             }
             string sampleRiskLabel = sampleRiskScore >= 3
                 ? "high"
@@ -525,19 +537,19 @@ namespace FaceShield.ViewModels.Pages
                         : "safe";
 
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGate] runId={run}, totalFrames={totalFrames}, sampleWindowFrames={sampleWindowFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, riskReasons={FormatTextListForLog(riskReasons)}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, copiedSourcePackets={exportSummary.CopiedSourceVideoPackets}, encodedSourcePackets={exportSummary.EncodedSourceVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? "n/a"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}, sceneCut=preGuard:{autoRunSummary?.FinalSceneCutPreGuardPairCount ?? -1},preStrong:{autoRunSummary?.FinalSceneCutPreStrongProbePairCount ?? -1},postGuard:{autoRunSummary?.FinalSceneCutPostGuardPairCount ?? -1},postStrong:{autoRunSummary?.FinalSceneCutPostStrongProbePairCount ?? -1},carryPairs:{autoRunSummary?.FinalSceneCutCarryPairCount ?? -1},carryRemoved:{autoRunSummary?.FinalSceneCutCarryRemovedCount ?? -1},carryProtected:{autoRunSummary?.FinalSceneCutProtectedFrameCount ?? -1},offModeResetPairs:{offModeResetPairCount},offModeResetRemoved:{offModeResetRemoved},offModeResetWindows={offModeResetBeforeWindowFrames}/{offModeResetAfterWindowFrames},offModeResetRemovedWindows={offModeResetRemovedBeforeFrames}/{offModeResetRemovedAfterFrames},offModeResetBeforeRate={offModeResetBeforeRate:0.0000},offModeResetAfterRate={offModeResetAfterRate:0.0000}, autoHybridDisableReasons={FormatTextListForLog(autoHybridDisableReasons ?? Array.Empty<string>())}");
+                $"[QualityGate] runId={run}, totalFrames={totalFrames}, sampleWindowFrames={sampleWindowFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, riskReasons={FormatTextListForLog(riskReasons)}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, copiedSourcePackets={exportSummary.CopiedSourceVideoPackets}, encodedSourcePackets={exportSummary.EncodedSourceVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? "n/a"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}, sceneCut=preGuard:{autoRunSummary?.FinalSceneCutPreGuardPairCount ?? -1},preStrong:{autoRunSummary?.FinalSceneCutPreStrongProbePairCount ?? -1},postGuard:{autoRunSummary?.FinalSceneCutPostGuardPairCount ?? -1},postStrong:{autoRunSummary?.FinalSceneCutPostStrongProbePairCount ?? -1},carryPairs:{autoRunSummary?.FinalSceneCutCarryPairCount ?? -1},carryRemoved:{autoRunSummary?.FinalSceneCutCarryRemovedCount ?? -1},carryProtected:{autoRunSummary?.FinalSceneCutProtectedFrameCount ?? -1},offModeResetPairs:{offModeResetPairCount},offModeResetRemoved:{offModeResetRemoved},offModeResetWindows={offModeResetBeforeWindowFrames}/{offModeResetAfterWindowFrames},offModeResetRemovedWindows={offModeResetRemovedBeforeFrames}/{offModeResetRemovedAfterFrames},offModeResetBeforeRate={offModeResetBeforeRate:0.0000},offModeResetAfterRate={offModeResetAfterRate:0.0000}, finalOffModeWeakCleanupSuppressed={finalOffModeWeakCleanupCount}, autoHybridDisableReasons={FormatTextListForLog(autoHybridDisableReasons ?? Array.Empty<string>())}");
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGateHybridTiming] runId={run}, encStep={exportSummary.HybridEncodedPacketFrameStep}, copyStep={exportSummary.HybridCopyPacketFrameStep}, frameGap={Math.Abs(exportSummary.HybridEncodedPacketFrameStep - exportSummary.HybridCopyPacketFrameStep)}, fallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, copyFixes={exportSummary.HybridCopyTimestampFixCount}, mode={exportSummary.ExportMode}, transitions={exportSummary.HybridModeTransitionCount}");
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGateSample] runId={run}, mode={autoRunSummary?.Mode ?? "n/a"}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}, sampleFrames={sampleFrameCount}, sampleRows={sampleRowCount}, sampleRisk={sampleRiskLabel}, sampleRiskReasons={FormatTextListForLog(sampleReasons)}, sampleShortGaps={sampleShortGapCount}, samplePerFaceShortGaps={samplePerFaceShortGapCount}, sampleIsolated={sampleIsolatedFrameCount}, sampleLargeJumps={sampleLargeJumpGapCount}, sampleProtectedCarry={sampleProtectedCarryCount}, sampleReviewRequired={sampleReviewRequired.ToString().ToLowerInvariant()}, sampleReviewReasons={sampleReviewReasons}, packetLossFallbackReason={exportSummary.PacketLossFallbackReason ?? "n/a"}, hybridFallbackReason={exportSummary.HybridCopyFallbackReason ?? "n/a"}");
+                $"[QualityGateSample] runId={run}, mode={autoRunSummary?.Mode ?? "n/a"}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}, sampleFrames={sampleFrameCount}, sampleRows={sampleRowCount}, sampleRisk={sampleRiskLabel}, sampleRiskReasons={FormatTextListForLog(sampleReasons)}, sampleShortGaps={sampleShortGapCount}, samplePerFaceShortGaps={samplePerFaceShortGapCount}, sampleIsolated={sampleIsolatedFrameCount}, sampleLargeJumps={sampleLargeJumpGapCount}, sampleProtectedCarry={sampleProtectedCarryCount}, sampleReviewRequired={sampleReviewRequired.ToString().ToLowerInvariant()}, sampleReviewReasons={sampleReviewReasons}, sampleOffModeWeakCleanupSuppressed={sampleOffModeWeakCleanupSuppressionCount}, packetLossFallbackReason={exportSummary.PacketLossFallbackReason ?? "n/a"}, hybridFallbackReason={exportSummary.HybridCopyFallbackReason ?? "n/a"}");
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGateSampleGapFillBlocked] runId={run}, sampleGapFillBlocked={sampleGapFillBlockedCutGapFrames}/{sampleGapFillBlockedCutGapFramesBeforeCut}/{sampleGapFillBlockedCutGapFramesAfterCut}/{sampleGapFillBlockedCleanupGapFrames}/{sampleGapFillBlockedSceneCarryGapFrames}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}");
+                $"[QualityGateSampleGapFillBlocked] runId={run}, sampleGapFillBlocked={sampleGapFillBlockedCutGapFrames}/{sampleGapFillBlockedCutGapFramesBeforeCut}/{sampleGapFillBlockedCutGapFramesAfterCut}/{sampleGapFillBlockedCleanupGapFrames}/{sampleGapFillBlockedSceneCarryGapFrames}, sampleOffModeWeakCleanupSuppressed={sampleOffModeWeakCleanupSuppressionCount}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}");
             int sampleGapCount = sampleShortGapCount + samplePerFaceShortGapCount + sampleLargeJumpGapCount;
             string sampleGapRisk = sampleWindowFrames > 0
                 ? $"{sampleGapCount}/{sampleWindowFrames}"
                 : "0/0";
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, finalGapFillBlocked={finalGapFillBlockedCutGapFrames}/{finalGapFillBlockedCutGapFramesBeforeCut}/{finalGapFillBlockedCutGapFramesAfterCut}/{finalGapFillBlockedCleanupGapFrames}/{finalGapFillBlockedSceneCarryGapFrames}, finalGapFillBlockedRate={finalGapFillBlockedRate:0.0000}, offModeResetPairCount={offModeResetPairCount}, offModeResetBeforeRate={offModeResetBeforeRate:0.0000}, offModeResetAfterRate={offModeResetAfterRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, finalGapFillRiskRate={finalGapFillBlockedRate:0.0000}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, packetFallback={exportSummary.PacketLossFallbackReason ?? "n/a"}");
+                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, finalGapFillBlocked={finalGapFillBlockedCutGapFrames}/{finalGapFillBlockedCutGapFramesBeforeCut}/{finalGapFillBlockedCutGapFramesAfterCut}/{finalGapFillBlockedCleanupGapFrames}/{finalGapFillBlockedSceneCarryGapFrames}, finalGapFillBlockedRate={finalGapFillBlockedRate:0.0000}, finalOffModeWeakCleanupSuppressed={finalOffModeWeakCleanupCount}, sampleOffModeWeakCleanupSuppressed={sampleOffModeWeakCleanupSuppressionCount}, offModeResetPairCount={offModeResetPairCount}, offModeResetBeforeRate={offModeResetBeforeRate:0.0000}, offModeResetAfterRate={offModeResetAfterRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, finalGapFillRiskRate={finalGapFillBlockedRate:0.0000}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, packetFallback={exportSummary.PacketLossFallbackReason ?? "n/a"}");
         }
 
         private static string FormatTextListForLog(IReadOnlyList<string> values)
@@ -574,6 +586,12 @@ namespace FaceShield.ViewModels.Pages
                 sampleWindowFrames = Math.Max(1, autoRunSummary.TotalFrames);
             double sampleMissRecoveryRate = autoRunSummary.SampleMissRecoveryFillCount / (double)sampleWindowFrames;
             double sampleFpSuppressedRate = autoRunSummary.SampleFalsePositiveSuppressionCount / (double)sampleWindowFrames;
+            double finalOffModeWeakCleanupRate = autoRunSummary.TotalFrames > 0
+                ? autoRunSummary.FinalOffModeWeakCleanupCount / (double)autoRunSummary.TotalFrames
+                : 0.0;
+            double sampleOffModeWeakCleanupRate = sampleWindowFrames > 0
+                ? autoRunSummary.SampleOffModeWeakCleanupSuppressionCount / (double)sampleWindowFrames
+                : 0.0;
             double finalSceneCutRemovalRate = autoRunSummary.FinalSceneCutCarryPairCount > 0
                 ? autoRunSummary.FinalSceneCutCarryRemovedCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
                 : 0.0;
@@ -633,6 +651,11 @@ namespace FaceShield.ViewModels.Pages
                 finalRisk = true;
                 reasons.Add("auto-off-mode-scene-cut-reset");
             }
+            if (autoRunSummary.FinalOffModeWeakCleanupCount > 0)
+            {
+                finalRisk = true;
+                reasons.Add($"auto-off-mode-weak-cleanup:{finalOffModeWeakCleanupRate:0.0000}");
+            }
             if (offModeSceneCutResetBeforeRate > OffModeSceneCutResetRateThreshold)
             {
                 finalRisk = true;
@@ -667,6 +690,12 @@ namespace FaceShield.ViewModels.Pages
                 sampleRisk = true;
                 reasons.Add("sample-gap-fill-blocked-rate-above-threshold");
             }
+            if (sampleWindowFrames >= SampleGapRateMinWindowFrames &&
+                sampleOffModeWeakCleanupRate > SampleFpSuppressedRateThreshold)
+            {
+                sampleRisk = true;
+                reasons.Add("sample-off-mode-weak-cleanup-rate-above-threshold");
+            }
             if (autoRunSummary.SampleMissRecoveryFillCount > 0
                 || autoRunSummary.SampleFalsePositiveSuppressionCount > 0
                 || autoRunSummary.SampleProtectedSceneCarryFrameCount > 0
@@ -677,6 +706,11 @@ namespace FaceShield.ViewModels.Pages
                 sampleRisk = true;
                 reasons.Add("sample-gap-risk");
             }
+            if (autoRunSummary.SampleOffModeWeakCleanupSuppressionCount > 0)
+            {
+                sampleRisk = true;
+                reasons.Add("sample-off-mode-weak-cleanup");
+            }
             if (sampleMissRecoveryRate > SampleMissRecoveryRateThreshold)
                 reasons.Add($"sample-miss-recovery-rate:{sampleMissRecoveryRate:0.0000}");
             if (sampleFpSuppressedRate > SampleFpSuppressedRateThreshold)
@@ -685,6 +719,8 @@ namespace FaceShield.ViewModels.Pages
                 reasons.Add($"sample-gap-fill-blocked-rate:{sampleGapFillBlockedRate:0.0000}");
             if (finalGapFillBlockedRate > SampleFpSuppressedRateThreshold)
                 reasons.Add($"final-gap-fill-blocked-rate:{finalGapFillBlockedRate:0.0000}");
+            if (finalOffModeWeakCleanupRate > SampleFpSuppressedRateThreshold)
+                reasons.Add($"final-off-mode-weak-cleanup-rate:{finalOffModeWeakCleanupRate:0.0000}");
             if (finalSceneCutRemovalRate > 0.0)
                 reasons.Add($"final-scene-cut-removal-rate:{finalSceneCutRemovalRate:0.0000}");
             if (finalSceneCutProtectedRate > 0.0)
