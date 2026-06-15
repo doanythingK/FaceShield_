@@ -34,6 +34,12 @@
 .PARAMETER AllowReviewRequired
     Quick decision에서 reviewRequired=true를 통과 허용할지 지정합니다.
 
+.PARAMETER MaxRunTotalMsDelta
+    품질 게이트 보조 기준으로 AutoMask run totalMs 허용 증가량(기본 0ms)을 지정합니다.
+
+.PARAMETER MaxExportMsDelta
+    품질 게이트 보조 기준으로 Export totalMs 허용 증가량(기본 0ms)을 지정합니다.
+
 .PARAMETER MinPostGapFillRemovalRateDelta
     컷캐리 post-gap-fill 제거율 개선 최소 기준값입니다.
 
