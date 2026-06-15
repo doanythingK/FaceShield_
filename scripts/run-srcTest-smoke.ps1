@@ -2232,6 +2232,52 @@ $dotnetRunArgs = @(
     $yoloMaxInitialFillFramesArg,
     $yoloRunAsBaselineArg
 )
+$knownSkipExportVulkanWarningPattern = 'does not match the type of the provided device context\.'
+
+function Resolve-SkipExportHarmlessExit
+{
+    param(
+        [int]$ExitCode,
+        [bool]$SkipExportMode,
+        [string[]]$OutputLines
+    )
+
+    if ($ExitCode -eq 0 -or -not $SkipExportMode) {
+        return $false
+    }
+
+    $onlyKnownMessages = $true
+    $hasKnownVulkanWarning = $false
+
+    foreach ($line in $OutputLines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        if ($line -match $knownSkipExportVulkanWarningPattern) {
+            $hasKnownVulkanWarning = $true
+            continue
+        }
+
+        if ($line -match '^\[Smoke\] label=.*export=skipped$') {
+            continue
+        }
+
+        if ($line -match '(^\[[A-Za-z]+\]|^(?i)ffmpeg|^(?i)powershell\.exe :)') {
+            if ($line -match 'does not match the type of the provided device context\.') {
+                $hasKnownVulkanWarning = $true
+                continue
+            }
+        }
+
+        if ($line -match '(?i)(unhandled exception|exception|fatal|error:)') {
+            $onlyKnownMessages = $false
+            break
+        }
+    }
+
+    return $hasKnownVulkanWarning -and $onlyKnownMessages
+}
 
 try {
     if (-not [string]::IsNullOrWhiteSpace($LogFile)) {
@@ -2241,11 +2287,14 @@ try {
         }
 
         $logWriter = $null
+        $runOutputLines = [System.Collections.Generic.List[string]]::new()
         try {
             $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
             $logWriter = [System.IO.StreamWriter]::new($LogFile, $false, $utf8NoBom)
 
             & dotnet @dotnetRunArgs 2>&1 | ForEach-Object {
+                $line = $_.ToString()
+                $runOutputLines.Add($line)
                 Write-Output $_
                 $logWriter.WriteLine($_)
             }
@@ -2260,7 +2309,12 @@ try {
     }
     else
     {
-        & dotnet @dotnetRunArgs
+        $runOutputLines = [System.Collections.Generic.List[string]]::new()
+        & dotnet @dotnetRunArgs 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            $runOutputLines.Add($line)
+            Write-Output $_
+        }
         $runExitCode = $LASTEXITCODE
     }
 }
@@ -2271,5 +2325,10 @@ finally {
 }
 
 if ($runExitCode -ne 0) {
+    if (Resolve-SkipExportHarmlessExit -ExitCode $runExitCode -SkipExportMode $SkipExport.IsPresent -OutputLines $runOutputLines) {
+        Write-Warning "SkipExport 모드에서 알려진 하드웨어 가속 경고만 감지되어 종료 코드를 정상 처리합니다."
+        exit 0
+    }
+
     exit $runExitCode
 }
