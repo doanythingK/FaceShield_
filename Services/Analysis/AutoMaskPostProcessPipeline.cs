@@ -116,7 +116,7 @@ namespace FaceShield.Services.Analysis
                   enableWeakIsolationCleanup ||
                   enableGapFill));
             Debug.WriteLine(
-                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
+                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} offModeGapFillWindow={OffModeGapFillWindowFrames} offModeGapFillMaxGap={OffModeGapFillMaxGapFrames} offModeGapFillMinAnchor={OffModeGapFillMinAnchorConfidence:0.###} offModeGapFillSupportedAnchorMin={OffModeGapFillSupportedAnchorMinConfidence:0.###} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
             if (_options.FilterProfile == FaceFilterProfile.Yolo && enablePostProcessing && !hasAnyYoloPostModule)
             {
                 Debug.WriteLine(
@@ -925,6 +925,10 @@ namespace FaceShield.Services.Analysis
                     Array.Empty<string>());
 
             if (skipSceneCutGuard)
+            {
+                Debug.WriteLine(
+                    $"[{gapFillSceneCutGuardLogLabel}] skipped scene-cut guard candidates={gapFill.CutGuardFacesInfo.Count} blockedCut={gapFill.BlockedCutGapFaces} blockedCutBefore={gapFill.BlockedCutGapBeforeCutFaces} blockedCutAfter={gapFill.BlockedCutGapAfterCutFaces} blockedCleanup={gapFill.BlockedCleanupGapFrames} blockedSceneCarry={gapFill.BlockedSceneCarryGapFrames} filled={gapFill.FilledFaces}");
+
                 return new YoloGapFillRunSummary(
                     gapFill.FilledFrameIndices.Count,
                     gapFill.FilledFrameIndices,
@@ -974,6 +978,14 @@ namespace FaceShield.Services.Analysis
                 var keptPairWindows = BuildCutPairWindowRanges(guard.CutFramePairs, YoloSceneCutRebuildWindowFrames);
                 Debug.WriteLine(
                     $"[{gapFillSceneCutGuardLogLabel}] candidates={gapFill.CutGuardFacesInfo.Count} checked={guard.Checked} checkedPairs={FormatTextList(guard.CheckedFramePairs)} checkedWindows={FormatTextList(checkedPairWindows)} maxDiff={guard.MaxDifference:0.###} cutPairs={FormatTextList(guard.CutFramePairs)} cutWindows={FormatTextList(keptPairWindows)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} threshold={guard.Threshold:0.###} elapsedMs={guard.ElapsedMs}");
+                
+            }
+            else if (gapFill.CutGuardFacesInfo.Count > 0)
+            {
+                var checkedPairWindows = BuildCutPairWindowRanges(guard.CheckedFramePairs, YoloSceneCutRebuildWindowFrames);
+                var rejectedPairWindows = BuildCutPairWindowRanges(guard.CutFramePairs, YoloSceneCutRebuildWindowFrames);
+                Debug.WriteLine(
+                    $"[{gapFillSceneCutGuardLogLabel}] candidates={gapFill.CutGuardFacesInfo.Count} checked=0 checkedPairs={FormatTextList(guard.CheckedFramePairs)} checkedWindows={FormatTextList(checkedPairWindows)} cutPairs={FormatTextList(guard.CutFramePairs)} cutWindows={FormatTextList(rejectedPairWindows)} removed={guard.Removed} removedFrames={FormatFrameList(guard.RemovedFrameIndices)} error={guard.Error}");
             }
 
                 return new YoloGapFillRunSummary(
