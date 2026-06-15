@@ -485,6 +485,20 @@ namespace FaceShield.ViewModels.Pages
             double finalSceneCutProtectedRate = autoRunSummary != null && autoRunSummary.FinalSceneCutCarryPairCount > 0
                 ? autoRunSummary.FinalSceneCutProtectedFrameCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
                 : 0.0;
+            int finalGapFillBlockedCutGapFrames = autoRunSummary?.FinalGapFillBlockedCutGapFrames ?? 0;
+            int finalGapFillBlockedCutGapFramesBeforeCut = autoRunSummary?.FinalGapFillBlockedCutGapFramesBeforeCut ?? 0;
+            int finalGapFillBlockedCutGapFramesAfterCut = autoRunSummary?.FinalGapFillBlockedCutGapFramesAfterCut ?? 0;
+            int finalGapFillBlockedCleanupGapFrames = autoRunSummary?.FinalGapFillBlockedCleanupGapFrames ?? 0;
+            int finalGapFillBlockedSceneCarryGapFrames = autoRunSummary?.FinalGapFillBlockedSceneCarryGapFrames ?? 0;
+            int finalGapFillBlockedTotal = finalGapFillBlockedCutGapFrames
+                + finalGapFillBlockedCutGapFramesBeforeCut
+                + finalGapFillBlockedCutGapFramesAfterCut
+                + finalGapFillBlockedCleanupGapFrames
+                + finalGapFillBlockedSceneCarryGapFrames;
+            int finalGapFillBlockedWindowFrames = Math.Max(1, autoRunSummary?.TotalFrames ?? 0);
+            double finalGapFillBlockedRate = finalGapFillBlockedWindowFrames > 0
+                ? finalGapFillBlockedTotal / (double)finalGapFillBlockedWindowFrames
+                : 0.0;
             int opsWindowFrames = sampleWindowFrames > 0 ? sampleWindowFrames : 1;
             double sampleMissRecoveryRate = autoRunSummary != null
                 ? autoRunSummary.SampleMissRecoveryFillCount / (double)opsWindowFrames
@@ -523,7 +537,7 @@ namespace FaceShield.ViewModels.Pages
                 ? $"{sampleGapCount}/{sampleWindowFrames}"
                 : "0/0";
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, finalGapFillBlocked={autoRunSummary.FinalGapFillBlockedCutGapFrames}/{autoRunSummary.FinalGapFillBlockedCutGapFramesBeforeCut}/{autoRunSummary.FinalGapFillBlockedCutGapFramesAfterCut}/{autoRunSummary.FinalGapFillBlockedCleanupGapFrames}/{autoRunSummary.FinalGapFillBlockedSceneCarryGapFrames}, finalGapFillBlockedRate={finalGapFillBlockedRate:0.0000}, offModeResetPairCount={offModeResetPairCount}, offModeResetBeforeRate={offModeResetBeforeRate:0.0000}, offModeResetAfterRate={offModeResetAfterRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, packetFallback={exportSummary.PacketLossFallbackReason ?? "n/a"}");
+                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, finalGapFillBlocked={finalGapFillBlockedCutGapFrames}/{finalGapFillBlockedCutGapFramesBeforeCut}/{finalGapFillBlockedCutGapFramesAfterCut}/{finalGapFillBlockedCleanupGapFrames}/{finalGapFillBlockedSceneCarryGapFrames}, finalGapFillBlockedRate={finalGapFillBlockedRate:0.0000}, offModeResetPairCount={offModeResetPairCount}, offModeResetBeforeRate={offModeResetBeforeRate:0.0000}, offModeResetAfterRate={offModeResetAfterRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, finalGapFillRiskRate={finalGapFillBlockedRate:0.0000}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, packetFallback={exportSummary.PacketLossFallbackReason ?? "n/a"}");
         }
 
         private static string FormatTextListForLog(IReadOnlyList<string> values)
