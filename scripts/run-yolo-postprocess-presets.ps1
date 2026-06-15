@@ -274,7 +274,7 @@ function Read-NumericValue {
     }
 
     if ($value -is [bool]) {
-        return [double]($value ? 1 : 0)
+        return [double]([int]$value)
     }
 
     try {
