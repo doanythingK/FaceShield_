@@ -363,12 +363,14 @@ namespace FaceShield.Services.Analysis
             if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo && enableSceneCutCleanup)
             {
                 ranPreSceneGuard = true;
+                var swScenePreCut = Stopwatch.StartNew();
                 var preSmoothGuard = yoloSceneCutPostProcessor.RemoveTrackFillAcrossSceneCuts(
                     _maskProvider,
                     videoPath,
                     trackPost,
                     cancellationToken,
                     "pre-smooth");
+                swScenePreCut.Stop();
                 yoloPreSmoothCutPairs = preSmoothGuard.CutFramePairs;
                 yoloPreSmoothGuardChecked += preSmoothGuard.Checked;
                 yoloPreSmoothGuardDirectDifferenceChecks += preSmoothGuard.DirectDifferenceChecks;
@@ -377,11 +379,16 @@ namespace FaceShield.Services.Analysis
                     yoloPreSmoothCutPairs,
                     YoloSceneCutRebuildWindowFrames);
                 finalSceneCutPreGuardWindowCount = preSmoothCutWindows.Count;
+                Debug.WriteLine(
+                    $"[AutoMaskPostProcessTiming] runId={runId} stage=pre-smooth-cutGuard elapsedMs={swScenePreCut.ElapsedMilliseconds} pairs={yoloPreSmoothCutPairs.Count} checked={yoloPreSmoothGuardChecked} directChecks={yoloPreSmoothGuardDirectDifferenceChecks} directSkipped={yoloPreSmoothGuardDirectDifferenceSkipped}" );
+
+                var swScenePreStrongProbe = Stopwatch.StartNew();
                 var preSmoothStrongCarryProbe = yoloSceneCutPostProcessor.ProbeStrongCarrySceneCuts(
                     _maskProvider,
                     videoPath,
                     cancellationToken,
                     "pre-smooth");
+                swScenePreStrongProbe.Stop();
                 yoloPreSmoothStrongCarryProbeCutPairs = preSmoothStrongCarryProbe.CutFramePairs;
                 yoloPreSmoothStrongCarryProbeChecked += preSmoothStrongCarryProbe.Checked;
                 yoloPreSmoothStrongCarryProbeDirectDifferenceChecks += preSmoothStrongCarryProbe.DirectDifferenceChecks;
@@ -390,6 +397,8 @@ namespace FaceShield.Services.Analysis
                     yoloPreSmoothStrongCarryProbeCutPairs,
                     YoloSceneCutRebuildWindowFrames);
                 finalSceneCutPreStrongCarryWindowCount = preSmoothStrongCarryProbeWindows.Count;
+                Debug.WriteLine(
+                    $"[AutoMaskPostProcessTiming] runId={runId} stage=pre-smooth-strongProbe elapsedMs={swScenePreStrongProbe.ElapsedMilliseconds} pairs={yoloPreSmoothStrongCarryProbeCutPairs.Count} checked={yoloPreSmoothStrongCarryProbeChecked} directChecks={yoloPreSmoothStrongCarryProbeDirectDifferenceChecks} directSkipped={yoloPreSmoothStrongCarryProbeDirectDifferenceSkipped}");
                 if (yoloPreSmoothCutPairs.Count > 0 || yoloPreSmoothStrongCarryProbeCutPairs.Count > 0)
                 {
                     Debug.WriteLine(
@@ -428,25 +437,34 @@ namespace FaceShield.Services.Analysis
             if (_options.UseTracking && _options.FilterProfile == FaceFilterProfile.Yolo && enableTemporalSmoothing && enableSceneCutCleanup)
             {
                 var swScenePost = Stopwatch.StartNew();
+                var swScenePostCut = Stopwatch.StartNew();
                 var postSmoothGuard = yoloSceneCutPostProcessor.RemoveTrackFillAcrossSceneCuts(
                     _maskProvider,
                     videoPath,
                     trackPost,
                     cancellationToken,
                     "post-smooth");
+                swScenePostCut.Stop();
                 yoloPostSmoothCutPairs = postSmoothGuard.CutFramePairs;
                 yoloPostSmoothGuardChecked += postSmoothGuard.Checked;
                 yoloPostSmoothGuardDirectDifferenceChecks += postSmoothGuard.DirectDifferenceChecks;
                 yoloPostSmoothGuardDirectDifferenceSkipped += postSmoothGuard.DirectDifferenceSkipped;
+                Debug.WriteLine(
+                    $"[AutoMaskPostProcessTiming] runId={runId} stage=post-smooth-cutGuard elapsedMs={swScenePostCut.ElapsedMilliseconds} pairs={yoloPostSmoothCutPairs.Count} checked={yoloPostSmoothGuardChecked} directChecks={yoloPostSmoothGuardDirectDifferenceChecks} directSkipped={yoloPostSmoothGuardDirectDifferenceSkipped}");
+
+                var swScenePostStrongProbe = Stopwatch.StartNew();
                 var strongCarryProbe = yoloSceneCutPostProcessor.ProbeStrongCarrySceneCuts(
                     _maskProvider,
                     videoPath,
                     cancellationToken,
                     "post-smooth");
+                swScenePostStrongProbe.Stop();
                 yoloStrongCarryProbeCutPairs = strongCarryProbe.CutFramePairs;
                 yoloPostStrongCarryProbeChecked += strongCarryProbe.Checked;
                 yoloPostStrongCarryProbeDirectDifferenceChecks += strongCarryProbe.DirectDifferenceChecks;
                 yoloPostStrongCarryProbeDirectDifferenceSkipped += strongCarryProbe.DirectDifferenceSkipped;
+                Debug.WriteLine(
+                    $"[AutoMaskPostProcessTiming] runId={runId} stage=post-smooth-strongProbe elapsedMs={swScenePostStrongProbe.ElapsedMilliseconds} pairs={yoloStrongCarryProbeCutPairs.Count} checked={yoloPostStrongCarryProbeChecked} directChecks={yoloPostStrongCarryProbeDirectDifferenceChecks} directSkipped={yoloPostStrongCarryProbeDirectDifferenceSkipped}");
                 if (yoloPostSmoothCutPairs.Count > 0 || yoloStrongCarryProbeCutPairs.Count > 0)
                 {
                     var postSmoothCutWindows = BuildCutPairWindowRanges(yoloPostSmoothCutPairs, YoloSceneCutRebuildWindowFrames);
@@ -2196,7 +2214,20 @@ namespace FaceShield.Services.Analysis
             if (string.IsNullOrWhiteSpace(pairText))
                 return false;
 
-            int separatorIndex = pairText.IndexOf(':');
+            pairText = pairText.Trim();
+            int separatorIndex = pairText.IndexOf("->", StringComparison.Ordinal);
+            if (separatorIndex >= 0)
+            {
+                if (!int.TryParse(pairText.AsSpan(0, separatorIndex), out sourceFrame))
+                    return false;
+
+                if (!int.TryParse(pairText.AsSpan(separatorIndex + 2), out targetFrame))
+                    return false;
+
+                return true;
+            }
+
+            separatorIndex = pairText.IndexOf(':');
             if (separatorIndex <= 0 || separatorIndex >= pairText.Length - 1)
                 return false;
 
