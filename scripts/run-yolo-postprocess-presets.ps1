@@ -31,6 +31,9 @@
 .PARAMETER SkipExport
     실행 시 인코딩을 건너뛰어 로그/후처리 결과만 수집.
 
+.PARAMETER AllowReviewRequired
+    Quick decision에서 reviewRequired=true를 통과 허용할지 지정합니다.
+
 .PARAMETER SummaryFile
     오프셋 기반 비교 결과 집계 JSON 파일 경로.
     지정하지 않으면 `<LogRoot>\compare-summary.json`으로 저장됩니다.
@@ -49,6 +52,7 @@ param(
     [switch] $IncludeInteractionPresets,
     [string] $LogRoot = ".tmp/yolo-postprocess-presets",
     [switch] $SkipExport,
+    [switch] $AllowReviewRequired,
     [string] $SummaryFile = "",
     [string] $YoloModelPath = "",
     [ValidateSet("YoloV8Face", "Yolo5Face")]
@@ -194,6 +198,9 @@ function Invoke-Compare {
     $compareArgs += @('-MinPostGapFillRemovalRateDelta', '0')
     $compareArgs += @('-MaxRunTotalMsDelta', "$MaxRunTotalMsDelta")
     $compareArgs += @('-MaxExportTotalMsDelta', "$MaxExportMsDelta")
+    if ($AllowReviewRequired.IsPresent) {
+        $compareArgs += '-AllowReviewRequired'
+    }
 
     $compareOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compareScript @compareArgs | Out-String
     if ($LASTEXITCODE -ne 0) {
