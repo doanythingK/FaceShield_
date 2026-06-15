@@ -418,6 +418,11 @@ namespace FaceShield.ViewModels.Pages
             int sampleIsolatedFrameCount = autoRunSummary?.SampleIsolatedFrameCount ?? 0;
             int sampleLargeJumpGapCount = autoRunSummary?.SampleLargeJumpGapCount ?? 0;
             int sampleProtectedCarryCount = autoRunSummary?.SampleProtectedSceneCarryFrameCount ?? 0;
+            int sampleGapFillBlockedCutGapFrames = autoRunSummary?.SampleGapFillBlockedCutGapFrames ?? 0;
+            int sampleGapFillBlockedCutGapFramesBeforeCut = autoRunSummary?.SampleGapFillBlockedCutGapFramesBeforeCut ?? 0;
+            int sampleGapFillBlockedCutGapFramesAfterCut = autoRunSummary?.SampleGapFillBlockedCutGapFramesAfterCut ?? 0;
+            int sampleGapFillBlockedCleanupGapFrames = autoRunSummary?.SampleGapFillBlockedCleanupGapFrames ?? 0;
+            int sampleGapFillBlockedSceneCarryGapFrames = autoRunSummary?.SampleGapFillBlockedSceneCarryGapFrames ?? 0;
             int offModeResetRemoved = autoRunSummary?.FinalOffModeSceneCutResetRemovedFrameCount ?? 0;
             int offModeResetBeforeWindowFrames = autoRunSummary?.FinalOffModeSceneCutResetBeforeWindowFrameCount ?? 0;
             int offModeResetAfterWindowFrames = autoRunSummary?.FinalOffModeSceneCutResetAfterWindowFrameCount ?? 0;
@@ -447,6 +452,15 @@ namespace FaceShield.ViewModels.Pages
             {
                 sampleRiskScore++;
                 sampleReasons.Add("sample-scene-carry");
+            }
+            if (sampleGapFillBlockedCutGapFrames > 0
+                || sampleGapFillBlockedCutGapFramesBeforeCut > 0
+                || sampleGapFillBlockedCutGapFramesAfterCut > 0
+                || sampleGapFillBlockedCleanupGapFrames > 0
+                || sampleGapFillBlockedSceneCarryGapFrames > 0)
+            {
+                sampleRiskScore++;
+                sampleReasons.Add("sample-gap-fill-blocked");
             }
             string sampleRiskLabel = sampleRiskScore >= 3
                 ? "high"
@@ -478,6 +492,16 @@ namespace FaceShield.ViewModels.Pages
             double sampleFpSuppressedRate = autoRunSummary != null
                 ? autoRunSummary.SampleFalsePositiveSuppressionCount / (double)opsWindowFrames
                 : 0.0;
+            int sampleGapFillBlockedTotal = autoRunSummary != null
+                ? autoRunSummary.SampleGapFillBlockedCutGapFrames
+                    + autoRunSummary.SampleGapFillBlockedCutGapFramesBeforeCut
+                    + autoRunSummary.SampleGapFillBlockedCutGapFramesAfterCut
+                    + autoRunSummary.SampleGapFillBlockedCleanupGapFrames
+                    + autoRunSummary.SampleGapFillBlockedSceneCarryGapFrames
+                : 0;
+            double sampleGapFillBlockedRate = opsWindowFrames > 0
+                ? sampleGapFillBlockedTotal / (double)opsWindowFrames
+                : 0.0;
             string riskLabel = reviewRiskScore >= 3
                 ? "high"
                 : reviewRiskScore >= 2
@@ -492,6 +516,8 @@ namespace FaceShield.ViewModels.Pages
                 $"[QualityGateHybridTiming] runId={run}, encStep={exportSummary.HybridEncodedPacketFrameStep}, copyStep={exportSummary.HybridCopyPacketFrameStep}, frameGap={Math.Abs(exportSummary.HybridEncodedPacketFrameStep - exportSummary.HybridCopyPacketFrameStep)}, fallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, copyFixes={exportSummary.HybridCopyTimestampFixCount}, mode={exportSummary.ExportMode}, transitions={exportSummary.HybridModeTransitionCount}");
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGateSample] runId={run}, mode={autoRunSummary?.Mode ?? "n/a"}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}, sampleFrames={sampleFrameCount}, sampleRows={sampleRowCount}, sampleRisk={sampleRiskLabel}, sampleRiskReasons={FormatTextListForLog(sampleReasons)}, sampleShortGaps={sampleShortGapCount}, samplePerFaceShortGaps={samplePerFaceShortGapCount}, sampleIsolated={sampleIsolatedFrameCount}, sampleLargeJumps={sampleLargeJumpGapCount}, sampleProtectedCarry={sampleProtectedCarryCount}, sampleReviewRequired={sampleReviewRequired.ToString().ToLowerInvariant()}, sampleReviewReasons={sampleReviewReasons}, packetLossFallbackReason={exportSummary.PacketLossFallbackReason ?? "n/a"}, hybridFallbackReason={exportSummary.HybridCopyFallbackReason ?? "n/a"}");
+            System.Diagnostics.Debug.WriteLine(
+                $"[QualityGateSampleGapFillBlocked] runId={run}, sampleGapFillBlocked={sampleGapFillBlockedCutGapFrames}/{sampleGapFillBlockedCutGapFramesBeforeCut}/{sampleGapFillBlockedCutGapFramesAfterCut}/{sampleGapFillBlockedCleanupGapFrames}/{sampleGapFillBlockedSceneCarryGapFrames}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}");
             int sampleGapCount = sampleShortGapCount + samplePerFaceShortGapCount + sampleLargeJumpGapCount;
             string sampleGapRisk = sampleWindowFrames > 0
                 ? $"{sampleGapCount}/{sampleWindowFrames}"
@@ -606,6 +632,11 @@ namespace FaceShield.ViewModels.Pages
                 sampleRisk = true;
                 reasons.Add("sample-fp-suppressed-rate-above-threshold");
             }
+            if (sampleWindowFrames >= SampleGapRateMinWindowFrames && sampleGapFillBlockedRate > SampleFpSuppressedRateThreshold)
+            {
+                sampleRisk = true;
+                reasons.Add("sample-gap-fill-blocked-rate-above-threshold");
+            }
             if (autoRunSummary.SampleMissRecoveryFillCount > 0
                 || autoRunSummary.SampleFalsePositiveSuppressionCount > 0
                 || autoRunSummary.SampleProtectedSceneCarryFrameCount > 0
@@ -620,6 +651,8 @@ namespace FaceShield.ViewModels.Pages
                 reasons.Add($"sample-miss-recovery-rate:{sampleMissRecoveryRate:0.0000}");
             if (sampleFpSuppressedRate > SampleFpSuppressedRateThreshold)
                 reasons.Add($"sample-fp-suppressed-rate:{sampleFpSuppressedRate:0.0000}");
+            if (sampleGapFillBlockedRate > SampleFpSuppressedRateThreshold)
+                reasons.Add($"sample-gap-fill-blocked-rate:{sampleGapFillBlockedRate:0.0000}");
             if (finalSceneCutRemovalRate > 0.0)
                 reasons.Add($"final-scene-cut-removal-rate:{finalSceneCutRemovalRate:0.0000}");
             if (finalSceneCutProtectedRate > 0.0)
