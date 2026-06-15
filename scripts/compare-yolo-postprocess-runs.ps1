@@ -759,7 +759,20 @@ $preSmoothStrongPairsDelta = $runB.SceneCutControl.preSmoothStrongPairs - $runA.
 $postSmoothCutPairsDelta = $runB.SceneCutControl.postSmoothCutPairs - $runA.SceneCutControl.postSmoothCutPairs
 $postSmoothStrongPairsDelta = $runB.SceneCutControl.postSmoothStrongPairs - $runA.SceneCutControl.postSmoothStrongPairs
 $finalCarryCutPairsDelta = $runB.SceneCutControl.finalCutPairs - $runA.SceneCutControl.finalCutPairs
+$preSmoothCutWindowsDelta = $runB.SceneCutControl.preSmoothCutWindows - $runA.SceneCutControl.preSmoothCutWindows
+$preSmoothStrongWindowsDelta = $runB.SceneCutControl.preSmoothStrongWindows - $runA.SceneCutControl.preSmoothStrongWindows
+$postSmoothCutWindowsDelta = $runB.SceneCutControl.postSmoothCutWindows - $runA.SceneCutControl.postSmoothCutWindows
+$postSmoothStrongWindowsDelta = $runB.SceneCutControl.postSmoothStrongWindows - $runA.SceneCutControl.postSmoothStrongWindows
+$finalCarryWindowsDelta = $runB.SceneCutControl.finalCutWindows - $runA.SceneCutControl.finalCutWindows
+$finalPreWindowDelta =
+    ($runB.SceneCutControl.finalPreCutWindows + $runB.SceneCutControl.finalPreStrongWindows) -
+    ($runA.SceneCutControl.finalPreCutWindows + $runA.SceneCutControl.finalPreStrongWindows)
+$finalPostWindowDelta =
+    ($runB.SceneCutControl.finalPostCutWindows + $runB.SceneCutControl.finalPostStrongWindows) -
+    ($runA.SceneCutControl.finalPostCutWindows + $runA.SceneCutControl.finalPostStrongWindows)
 $finalPostGapFillCutPairsDelta = $runB.SceneCutControl.postGapFillCarryPairs - $runA.SceneCutControl.postGapFillCarryPairs
+$finalPostGapFillWindowsDelta =
+    $runB.SceneCutControl.postGapFillCarryWindows - $runA.SceneCutControl.postGapFillCarryWindows
 $runAHybridWindowShortfall = if ($runA.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runA.Export.hybridWindowFrameShortfall } else { 0 }
 $runBHybridWindowShortfall = if ($runB.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runB.Export.hybridWindowFrameShortfall } else { 0 }
 $runASampleWindowShortfall = if ($runA.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runA.Export.sampleWindowFrameShortfall } else { 0 }
@@ -779,7 +792,18 @@ Write-Host ("컷 전환 post-gap-fill carry 보존율: A={0:P1} B={1:P1} Δ={2:P
 Write-Host ("장면전환 pre-smooth 큐브: pre컷 {0}->{1} (Δ {2}), strong컷 {3}->{4} (Δ {5})" -f $runA.SceneCutControl.preSmoothCutPairs, $runB.SceneCutControl.preSmoothCutPairs, $preSmoothCutPairsDelta, $runA.SceneCutControl.preSmoothStrongPairs, $runB.SceneCutControl.preSmoothStrongPairs, $preSmoothStrongPairsDelta)
 Write-Host ("장면전환 post-smooth 큐브: pre컷 {0}->{1} (Δ {2}), strong컷 {3}->{4} (Δ {5})" -f $runA.SceneCutControl.postSmoothCutPairs, $runB.SceneCutControl.postSmoothCutPairs, $postSmoothCutPairsDelta, $runA.SceneCutControl.postSmoothStrongPairs, $runB.SceneCutControl.postSmoothStrongPairs, $postSmoothStrongPairsDelta)
 Write-Host ("장면전환 final carry 컷: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.finalCutPairs, $runB.SceneCutControl.finalCutPairs, $finalCarryCutPairsDelta)
+Write-Host ("장면전환 final carry 윈도우: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.finalCutWindows, $runB.SceneCutControl.finalCutWindows, $finalCarryWindowsDelta)
+Write-Host ("장면전환 pre-smooth 윈도우: A={0}->{1} (Δ {2}), strong pre-smooth 윈도우: A={3}->{4} (Δ {5})" -f $runA.SceneCutControl.preSmoothCutWindows, $runB.SceneCutControl.preSmoothCutWindows, $preSmoothCutWindowsDelta, $runA.SceneCutControl.preSmoothStrongWindows, $runB.SceneCutControl.preSmoothStrongWindows, $preSmoothStrongWindowsDelta)
+Write-Host ("장면전환 post-smooth 윈도우: A={0}->{1} (Δ {2}), strong post-smooth 윈도우: A={3}->{4} (Δ {5})" -f $runA.SceneCutControl.postSmoothCutWindows, $runB.SceneCutControl.postSmoothCutWindows, $postSmoothCutWindowsDelta, $runA.SceneCutControl.postSmoothStrongWindows, $runB.SceneCutControl.postSmoothStrongWindows, $postSmoothStrongWindowsDelta)
+Write-Host ("장면전환 final pre/post 윈도우: A={0}->{1} (Δ {2}) / A={3}->{4} (Δ {5})" -f 
+    ($runA.SceneCutControl.finalPreCutWindows + $runA.SceneCutControl.finalPreStrongWindows),
+    ($runB.SceneCutControl.finalPreCutWindows + $runB.SceneCutControl.finalPreStrongWindows),
+    $finalPreWindowDelta,
+    ($runA.SceneCutControl.finalPostCutWindows + $runA.SceneCutControl.finalPostStrongWindows),
+    ($runB.SceneCutControl.finalPostCutWindows + $runB.SceneCutControl.finalPostStrongWindows),
+    $finalPostWindowDelta)
 Write-Host ("장면전환 post-gap-fill carry 컷: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.postGapFillCarryPairs, $runB.SceneCutControl.postGapFillCarryPairs, $finalPostGapFillCutPairsDelta)
+Write-Host ("장면전환 post-gap-fill carry 윈도우: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.postGapFillCarryWindows, $runB.SceneCutControl.postGapFillCarryWindows, $finalPostGapFillWindowsDelta)
 Write-Host ("하이브리드 윈도우 누락: A={0} B={1} Δ={2}" -f $runAHybridWindowShortfall, $runBHybridWindowShortfall, ($runBHybridWindowShortfall - $runAHybridWindowShortfall))
 Write-Host ("샘플 구간 누락: A={0} B={1} Δ={2}" -f $runASampleWindowShortfall, $runBSampleWindowShortfall, ($runBSampleWindowShortfall - $runASampleWindowShortfall))
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
