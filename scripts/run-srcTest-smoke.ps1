@@ -2248,35 +2248,57 @@ function Resolve-SkipExportHarmlessExit
 
     $onlyKnownMessages = $true
     $hasKnownVulkanWarning = $false
+    $hasSkipExportMarker = $false
+    $harmlessLinePatterns = @(
+        'does not match the type of the provided device context\.',
+        'Invalid setup for format vulkan'
+    )
 
     foreach ($line in $OutputLines) {
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
         }
 
-        if ($line -match $knownSkipExportVulkanWarningPattern) {
+        $trimmedLine = $line.Trim()
+
+        if ($trimmedLine -match '^\[Smoke\] label=.*export=skipped$') {
+            $hasSkipExportMarker = $true
+            continue
+        }
+
+        if ($harmlessLinePatterns | Where-Object { $trimmedLine -match $_ }) {
             $hasKnownVulkanWarning = $true
             continue
         }
 
-        if ($line -match '^\[Smoke\] label=.*export=skipped$') {
+        if (
+            $trimmedLine -match '^(?i)\+ CategoryInfo:' -or
+            $trimmedLine -match '^(?i)\+ FullyQualifiedErrorId:' -or
+            $trimmedLine -match '^(?i)\+ ScriptStackTrace:' -or
+            $trimmedLine -match '^(?i)\+ FullyQualifiedErrorId$' -or
+            $trimmedLine -match '^\s+at '
+        ) {
             continue
         }
 
-        if ($line -match '(^\[[A-Za-z]+\]|^(?i)ffmpeg|^(?i)powershell\.exe :)') {
-            if ($line -match 'does not match the type of the provided device context\.') {
-                $hasKnownVulkanWarning = $true
-                continue
+        if (
+            $trimmedLine -match '^(?i)error' -or
+            $trimmedLine -match '^(?i)\[ERR\]' -or
+            $trimmedLine -match '(?i)\bexception\b' -or
+            $trimmedLine -match '(?i)\bfatal\b'
+        ) {
+            if ($trimmedLine -match '^(?i)dotnet\.exe\s*:') {
+                if ($harmlessLinePatterns | Where-Object { $trimmedLine -match $_ }) {
+                    $hasKnownVulkanWarning = $true
+                    continue
+                }
             }
-        }
-
-        if ($line -match '(?i)(unhandled exception|exception|fatal|error:)') {
             $onlyKnownMessages = $false
             break
         }
     }
 
-    return $hasKnownVulkanWarning -and $onlyKnownMessages
+    return $hasKnownVulkanWarning -and $onlyKnownMessages -and $hasSkipExportMarker
 }
 
 try {
