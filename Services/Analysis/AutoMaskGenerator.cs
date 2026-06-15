@@ -257,6 +257,10 @@ namespace FaceShield.Services.Analysis
             int processed = 0;
             int offModeSceneCutResetPairs = 0;
             int offModeSceneCutResetRemovedFrameCount = 0;
+            int offModeSceneCutResetBeforeWindowFrameCount = 0;
+            int offModeSceneCutResetAfterWindowFrameCount = 0;
+            int offModeSceneCutResetRemovedBeforeFrameCount = 0;
+            int offModeSceneCutResetRemovedAfterFrameCount = 0;
             var roiStats = new RoiDetectStats();
             var filterStats = new FaceFilterStats();
             var progressState = new ProgressState();
@@ -351,15 +355,30 @@ namespace FaceShield.Services.Analysis
                         int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
                         int clearStart = Math.Max(0, idx - OffModeSceneCutCarryClearFrames);
                         int clearEnd = Math.Min(totalFrames, idx + clearRadius + OffModeSceneCutCarryClearFrames + 1);
-                        int clearBeforeStart = clearStart;
-                        int clearBeforeEnd = Math.Min(totalFrames, idx);
-                        int clearAfterStart = idx;
-                        int clearAfterEnd = clearEnd;
-                        int removed = _maskProvider.RemoveFaceMasksRange(clearStart, clearEnd);
-                        offModeSceneCutResetPairs++;
-                        offModeSceneCutResetRemovedFrameCount += removed;
-                        Debug.WriteLine(
-                            $"[AutoMask] scene-cut reset idx={idx} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off");
+                            int clearBeforeStart = clearStart;
+                            int clearBeforeEnd = Math.Min(totalFrames, idx);
+                            int clearAfterStart = idx;
+                            int clearAfterEnd = clearEnd;
+                            int removedBefore = 0;
+                            int removedAfter = 0;
+                            int clearBeforeFrameCount = Math.Max(0, clearBeforeEnd - clearBeforeStart);
+                            int clearAfterFrameCount = Math.Max(0, clearAfterEnd - clearAfterStart);
+                            if (clearBeforeFrameCount > 0)
+                            {
+                                removedBefore = _maskProvider.RemoveFaceMasksRange(clearBeforeStart, clearBeforeEnd);
+                                offModeSceneCutResetRemovedBeforeFrameCount += removedBefore;
+                                offModeSceneCutResetBeforeWindowFrameCount += clearBeforeFrameCount;
+                            }
+                            if (clearAfterFrameCount > 0)
+                            {
+                                removedAfter = _maskProvider.RemoveFaceMasksRange(clearAfterStart, clearAfterEnd);
+                                offModeSceneCutResetRemovedAfterFrameCount += removedAfter;
+                                offModeSceneCutResetAfterWindowFrameCount += clearAfterFrameCount;
+                            }
+                            offModeSceneCutResetPairs++;
+                            offModeSceneCutResetRemovedFrameCount += removedBefore + removedAfter;
+                            Debug.WriteLine(
+                                $"[AutoMask] scene-cut reset idx={idx} clearFrom={clearStart} clearTo={clearEnd} removed={removedBefore + removedAfter} removedBefore={removedBefore} removedAfter={removedAfter} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off");
                     }
 
                     previousSceneSignature = currentSceneSignature;
@@ -539,7 +558,11 @@ namespace FaceShield.Services.Analysis
                 GetDetectorName())
             {
                 FinalOffModeSceneCutResetPairCount = offModeSceneCutResetPairs,
-                FinalOffModeSceneCutResetRemovedFrameCount = offModeSceneCutResetRemovedFrameCount
+                FinalOffModeSceneCutResetRemovedFrameCount = offModeSceneCutResetRemovedFrameCount,
+                FinalOffModeSceneCutResetBeforeWindowFrameCount = offModeSceneCutResetBeforeWindowFrameCount,
+                FinalOffModeSceneCutResetAfterWindowFrameCount = offModeSceneCutResetAfterWindowFrameCount,
+                FinalOffModeSceneCutResetRemovedBeforeFrameCount = offModeSceneCutResetRemovedBeforeFrameCount,
+                FinalOffModeSceneCutResetRemovedAfterFrameCount = offModeSceneCutResetRemovedAfterFrameCount
             });
             ApplyPostProcessResultToRunSummary(
                 RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
@@ -743,13 +766,28 @@ namespace FaceShield.Services.Analysis
                             int clearBeforeEnd = Math.Min(totalFrames, result.Index);
                             int clearAfterStart = result.Index;
                             int clearAfterEnd = clearEnd;
-                            int removed = _maskProvider.RemoveFaceMasksRange(clearStart, clearEnd);
+                            int removedBefore = 0;
+                            int removedAfter = 0;
+                            int clearBeforeFrameCount = Math.Max(0, clearBeforeEnd - clearBeforeStart);
+                            int clearAfterFrameCount = Math.Max(0, clearAfterEnd - clearAfterStart);
+                            if (clearBeforeFrameCount > 0)
+                            {
+                                removedBefore = _maskProvider.RemoveFaceMasksRange(clearBeforeStart, clearBeforeEnd);
+                                offModeSceneCutResetRemovedBeforeFrameCount += removedBefore;
+                                offModeSceneCutResetBeforeWindowFrameCount += clearBeforeFrameCount;
+                            }
+                            if (clearAfterFrameCount > 0)
+                            {
+                                removedAfter = _maskProvider.RemoveFaceMasksRange(clearAfterStart, clearAfterEnd);
+                                offModeSceneCutResetRemovedAfterFrameCount += removedAfter;
+                                offModeSceneCutResetAfterWindowFrameCount += clearAfterFrameCount;
+                            }
                             offModeSceneCutResetPairs++;
-                            offModeSceneCutResetRemovedFrameCount += removed;
+                            offModeSceneCutResetRemovedFrameCount += removedBefore + removedAfter;
                             sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
                             lastSceneCutFrame = result.Index;
                             Debug.WriteLine(
-                                $"[AutoMask] scene-cut reset idx={result.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe");
+                                $"[AutoMask] scene-cut reset idx={result.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removedBefore + removedAfter} removedBefore={removedBefore} removedAfter={removedAfter} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe");
                         }
                     }
 
@@ -902,7 +940,11 @@ namespace FaceShield.Services.Analysis
                 GetDetectorName())
             {
                 FinalOffModeSceneCutResetPairCount = offModeSceneCutResetPairs,
-                FinalOffModeSceneCutResetRemovedFrameCount = offModeSceneCutResetRemovedFrameCount
+                FinalOffModeSceneCutResetRemovedFrameCount = offModeSceneCutResetRemovedFrameCount,
+                FinalOffModeSceneCutResetBeforeWindowFrameCount = offModeSceneCutResetBeforeWindowFrameCount,
+                FinalOffModeSceneCutResetAfterWindowFrameCount = offModeSceneCutResetAfterWindowFrameCount,
+                FinalOffModeSceneCutResetRemovedBeforeFrameCount = offModeSceneCutResetRemovedBeforeFrameCount,
+                FinalOffModeSceneCutResetRemovedAfterFrameCount = offModeSceneCutResetRemovedAfterFrameCount
             });
             ApplyPostProcessResultToRunSummary(
                 RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
@@ -1246,17 +1288,32 @@ namespace FaceShield.Services.Analysis
                                 int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
                                 clearStart = Math.Max(0, orderedResult.Index - OffModeSceneCutCarryClearFrames);
                                 clearEnd = Math.Min(totalFrames, orderedResult.Index + clearRadius + OffModeSceneCutCarryClearFrames + 1);
-                                int clearBeforeStart = clearStart;
-                                int clearBeforeEnd = Math.Min(totalFrames, orderedResult.Index);
-                                int clearAfterStart = orderedResult.Index;
-                                int clearAfterEnd = clearEnd;
-                                int removed = _maskProvider.RemoveFaceMasksRange(clearStart, clearEnd);
-                                offModeSceneCutResetPairs++;
-                                offModeSceneCutResetRemovedFrameCount += removed;
-                                sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
-                                lastSceneCutFrame = orderedResult.Index;
-                                Debug.WriteLine(
-                                    $"[AutoMask] scene-cut reset idx={orderedResult.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removed} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe-parallel");
+                            int clearBeforeStart = clearStart;
+                            int clearBeforeEnd = Math.Min(totalFrames, orderedResult.Index);
+                            int clearAfterStart = orderedResult.Index;
+                            int clearAfterEnd = clearEnd;
+                            int removedBefore = 0;
+                            int removedAfter = 0;
+                            int clearBeforeFrameCount = Math.Max(0, clearBeforeEnd - clearBeforeStart);
+                            int clearAfterFrameCount = Math.Max(0, clearAfterEnd - clearAfterStart);
+                            if (clearBeforeFrameCount > 0)
+                            {
+                                removedBefore = _maskProvider.RemoveFaceMasksRange(clearBeforeStart, clearBeforeEnd);
+                                offModeSceneCutResetRemovedBeforeFrameCount += removedBefore;
+                                offModeSceneCutResetBeforeWindowFrameCount += clearBeforeFrameCount;
+                            }
+                            if (clearAfterFrameCount > 0)
+                            {
+                                removedAfter = _maskProvider.RemoveFaceMasksRange(clearAfterStart, clearAfterEnd);
+                                offModeSceneCutResetRemovedAfterFrameCount += removedAfter;
+                                offModeSceneCutResetAfterWindowFrameCount += clearAfterFrameCount;
+                            }
+                            offModeSceneCutResetPairs++;
+                            offModeSceneCutResetRemovedFrameCount += removedBefore + removedAfter;
+                            sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
+                            lastSceneCutFrame = orderedResult.Index;
+                            Debug.WriteLine(
+                                $"[AutoMask] scene-cut reset idx={orderedResult.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removedBefore + removedAfter} removedBefore={removedBefore} removedAfter={removedAfter} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe-parallel");
                             }
                         }
 
@@ -1336,7 +1393,11 @@ namespace FaceShield.Services.Analysis
                 GetDetectorName())
             {
                 FinalOffModeSceneCutResetPairCount = offModeSceneCutResetPairs,
-                FinalOffModeSceneCutResetRemovedFrameCount = offModeSceneCutResetRemovedFrameCount
+                FinalOffModeSceneCutResetRemovedFrameCount = offModeSceneCutResetRemovedFrameCount,
+                FinalOffModeSceneCutResetBeforeWindowFrameCount = offModeSceneCutResetBeforeWindowFrameCount,
+                FinalOffModeSceneCutResetAfterWindowFrameCount = offModeSceneCutResetAfterWindowFrameCount,
+                FinalOffModeSceneCutResetRemovedBeforeFrameCount = offModeSceneCutResetRemovedBeforeFrameCount,
+                FinalOffModeSceneCutResetRemovedAfterFrameCount = offModeSceneCutResetRemovedAfterFrameCount
             });
             ApplyPostProcessResultToRunSummary(
                 RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
@@ -1745,6 +1806,12 @@ namespace FaceShield.Services.Analysis
             double offModeSceneCutResetRate = summary.FinalOffModeSceneCutResetPairCount > 0
                 ? summary.FinalOffModeSceneCutResetRemovedFrameCount / (double)summary.FinalOffModeSceneCutResetPairCount
                 : 0.0;
+            double offModeSceneCutResetBeforeRate = summary.FinalOffModeSceneCutResetBeforeWindowFrameCount > 0
+                ? summary.FinalOffModeSceneCutResetRemovedBeforeFrameCount / (double)summary.FinalOffModeSceneCutResetBeforeWindowFrameCount
+                : 0.0;
+            double offModeSceneCutResetAfterRate = summary.FinalOffModeSceneCutResetAfterWindowFrameCount > 0
+                ? summary.FinalOffModeSceneCutResetRemovedAfterFrameCount / (double)summary.FinalOffModeSceneCutResetAfterWindowFrameCount
+                : 0.0;
             string riskLabel = riskScore >= 3
                 ? "high"
                 : riskScore >= 1
@@ -1767,7 +1834,7 @@ namespace FaceShield.Services.Analysis
                 : 0.0;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[AutoMaskQualityGate] runId={summary.RunId ?? "n/a"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, offModeResetPairs:{summary.FinalOffModeSceneCutResetPairCount},offModeResetRemoved:{summary.FinalOffModeSceneCutResetRemovedFrameCount}, offModeResetRate={offModeSceneCutResetRate:0.0000}, postGapFillCarryPairs:{summary.FinalSceneCutPostGapFillCarryPairCount},postGapFillRemoved:{summary.FinalSceneCutPostGapFillCarryRemovedCount},postGapFillProtected:{summary.FinalSceneCutPostGapFillProtectedFrameCount}, sampleWindowFrames={sampleWindowFrames}");
+                $"[AutoMaskQualityGate] runId={summary.RunId ?? "n/a"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, offModeResetPairs:{summary.FinalOffModeSceneCutResetPairCount},offModeResetRemoved:{summary.FinalOffModeSceneCutResetRemovedFrameCount},offModeResetWindows={summary.FinalOffModeSceneCutResetBeforeWindowFrameCount}/{summary.FinalOffModeSceneCutResetAfterWindowFrameCount},offModeResetRemovedWindows={summary.FinalOffModeSceneCutResetRemovedBeforeFrameCount}/{summary.FinalOffModeSceneCutResetRemovedAfterFrameCount}, offModeResetRate={offModeSceneCutResetRate:0.0000}, offModeResetBeforeRate={offModeSceneCutResetBeforeRate:0.0000}, offModeResetAfterRate={offModeSceneCutResetAfterRate:0.0000}, postGapFillCarryPairs:{summary.FinalSceneCutPostGapFillCarryPairCount},postGapFillRemoved:{summary.FinalSceneCutPostGapFillCarryRemovedCount},postGapFillProtected:{summary.FinalSceneCutPostGapFillProtectedFrameCount}, sampleWindowFrames={sampleWindowFrames}");
             System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskQualityGate] final runId={summary.RunId ?? "n/a"}, missRecovery={summary.FinalMissRecoveryFillCount}, fpSuppressed={summary.FinalFalsePositiveSuppressedCount}, gapFillRecovered={summary.FinalGapFillRecoveredCount}, gapFillBlocked={summary.FinalGapFillBlockedCutGapFrames}/{summary.FinalGapFillBlockedCleanupGapFrames}/{summary.FinalGapFillBlockedSceneCarryGapFrames}, gapFillAnchorChecks={summary.FinalGapFillSuppressedWeakGeometryAnchorChecks}/{summary.FinalGapFillSuppressedRiskyGeometryAnchorChecks}/{summary.FinalGapFillUnsupportedWeakAnchorChecks}, sceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, sceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, postGapFillRemovalRate={finalPostGapFillRemovalRate:0.0000}, postGapFillProtectedRate={finalPostGapFillProtectedRate:0.0000}, postProcessMs={summary.PostProcessMs}");
             System.Diagnostics.Debug.WriteLine(
