@@ -52,6 +52,10 @@ function Get-CsvValue {
         [string]$Column
     )
 
+    if ($null -eq $Row) {
+        return ""
+    }
+
     if ($null -eq $Row.PSObject.Properties[$Column]) {
         return ""
     }
