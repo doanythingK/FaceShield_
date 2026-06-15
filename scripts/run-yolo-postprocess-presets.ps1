@@ -73,6 +73,7 @@ param(
     [double] $YoloNmsThreshold = 0.45,
     [switch] $UseAutoTune,
     [switch] $OptimizedNoTracking,
+    [switch] $OptimizedCpuOnly,
     [int] $OptimizedDetectEvery = 1,
     [int] $ParallelDetectorCount = 2,
     [double] $DetectionThreshold = 0.2,
@@ -162,6 +163,7 @@ function Invoke-Run {
     if ($SkipOptimized) { $args += '-SkipOptimized' }
     if ($UseAutoTune.IsPresent) { $args += '-UseAutoTune' }
     if ($OptimizedNoTracking.IsPresent) { $args += '-OptimizedNoTracking' }
+    if ($OptimizedCpuOnly.IsPresent) { $args += '-OptimizedCpuOnly' }
     if ($SkipExport.IsPresent) { $args += '-SkipExport' }
     if ($SkipTrim.IsPresent) { $args += '-SkipTrim' }
 
