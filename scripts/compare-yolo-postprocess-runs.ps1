@@ -133,6 +133,24 @@ function Read-RunInfo {
     $finalSummary = [ordered]@{}
     $exportSummary = [ordered]@{}
     $sceneCutReset = [ordered]@{ resetCount = 0; removed = 0; clearRanges = @() }
+    $sceneCutControlSummary = [ordered]@{
+        preSmoothCutPairs = 0;
+        preSmoothCutWindows = 0;
+        preSmoothStrongPairs = 0;
+        preSmoothStrongWindows = 0;
+        postSmoothCutPairs = 0;
+        postSmoothCutWindows = 0;
+        postSmoothStrongPairs = 0;
+        postSmoothStrongWindows = 0;
+        finalCutPairs = 0;
+        finalCutWindows = 0;
+        finalPreCutWindows = 0;
+        finalPreStrongWindows = 0;
+        finalPostCutWindows = 0;
+        finalPostStrongWindows = 0;
+        postGapFillCarryPairs = 0;
+        postGapFillCarryWindows = 0;
+    }
 
     foreach ($line in $lines) {
         $lineRunId = $null
@@ -295,6 +313,42 @@ function Read-RunInfo {
             continue
         }
 
+        if ($line -match '^\[YoloSceneCutRebuild\] runId=(\S+) stage=pre-smooth action=plan preCutPairs=(\S+) preCutWindows=([^ ]+) preStrongPairs=(\S+) preStrongWindows=([^ ]+) rebuildWindowFrames=(\d+)') {
+            if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
+            $sceneCutControlSummary.preSmoothCutPairs = Parse-IntOrZero $matches[2]
+            $sceneCutControlSummary.preSmoothCutWindows = Count-TextListValues $matches[3]
+            $sceneCutControlSummary.preSmoothStrongPairs = Parse-IntOrZero $matches[4]
+            $sceneCutControlSummary.preSmoothStrongWindows = Count-TextListValues $matches[5]
+            continue
+        }
+
+        if ($line -match '^\[YoloSceneCutRebuild\] runId=(\S+) stage=post-smooth action=plan postCutPairs=(\S+) postCutWindows=([^ ]+) postStrongPairs=(\S+) postStrongWindows=([^ ]+) rebuildWindowFrames=(\d+)') {
+            if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
+            $sceneCutControlSummary.postSmoothCutPairs = Parse-IntOrZero $matches[2]
+            $sceneCutControlSummary.postSmoothCutWindows = Count-TextListValues $matches[3]
+            $sceneCutControlSummary.postSmoothStrongPairs = Parse-IntOrZero $matches[4]
+            $sceneCutControlSummary.postSmoothStrongWindows = Count-TextListValues $matches[5]
+            continue
+        }
+
+        if ($line -match '^\[YoloSceneCutRebuild\] runId=(\S+) stage=final action=cleanup carryCutPairs=(\S+) carryWindows=([^ ]+) preWindowSources=pre:(\S+) preStrong:([^ ]+) postWindowSources=post:(\S+) postStrong:([^ ]+) purgeFrames=(\d+) blockFrames=(\d+) maxConfidence=([0-9.]+) extendedWeakMaxConfidence=([0-9.]+)') {
+            if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
+            $sceneCutControlSummary.finalCutPairs = Parse-IntOrZero $matches[2]
+            $sceneCutControlSummary.finalCutWindows = Count-TextListValues $matches[3]
+            $sceneCutControlSummary.finalPreCutWindows = Count-TextListValues $matches[4]
+            $sceneCutControlSummary.finalPreStrongWindows = Count-TextListValues $matches[5]
+            $sceneCutControlSummary.finalPostCutWindows = Count-TextListValues $matches[6]
+            $sceneCutControlSummary.finalPostStrongWindows = Count-TextListValues $matches[7]
+            continue
+        }
+
+        if ($line -match '^\[YoloSceneCutRebuild\] runId=(\S+) stage=post-gap-fill action=cleanup carryCutPairs=(\S+) carryWindows=([^ ]+) purgeFrames=(\d+) blockFrames=(\d+) maxConfidence=([0-9.]+) extendedWeakMaxConfidence=([0-9.]+)') {
+            if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
+            $sceneCutControlSummary.postGapFillCarryPairs = Parse-IntOrZero $matches[2]
+            $sceneCutControlSummary.postGapFillCarryWindows = Count-TextListValues $matches[3]
+            continue
+        }
+
         if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* reviewRequired=(True|False|true|false) reviewReasons=([^\]]+)') {
             $finalSummary.reviewRequired = [bool]::Parse($matches[1])
             $finalSummary.reviewReasons = $matches[2]
@@ -400,6 +454,7 @@ function Read-RunInfo {
         RunSummary = $runSummary;
         FaceTrack = $faceTrackSummary;
         SceneCarry = $sceneCarrySummary;
+        SceneCutControl = $sceneCutControlSummary;
         FinalSummary = $finalSummary;
         Export = $exportSummary;
         SceneCutReset = $sceneCutReset;
@@ -425,6 +480,25 @@ function Read-LogLines {
     }
 
     return [System.IO.File]::ReadAllLines($Path, $encoding)
+}
+
+function Parse-IntOrZero {
+    param([Parameter(Mandatory = $true)][string] $Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text) -or $Text -eq "none") { return 0 }
+    $value = 0
+    if ([int]::TryParse($Text, [ref]$value)) {
+        return $value
+    }
+    return 0
+}
+
+function Count-TextListValues {
+    param([Parameter(Mandatory = $true)][string] $ListText)
+
+    if ([string]::IsNullOrWhiteSpace($ListText) -or $ListText -eq "none") { return 0 }
+    $tokens = $ListText -split '[,|]'
+    return @($tokens | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Trim()) }).Count
 }
 
 function Format-FrameRange {
@@ -617,6 +691,23 @@ Write-Host ("B postGapFillCarryPairs={0}, removed={1}, protected={2}, removalRat
     $(if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0 }), `
     $(if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0 }))
 
+Write-Host ""
+Write-Host "== scene-cut rebuild control summary =="
+Write-Host ("A pre-smooth cuts={0}, windows={1} / strongCuts={2}, windows={3}" -f `
+    $runA.SceneCutControl.preSmoothCutPairs, $runA.SceneCutControl.preSmoothCutWindows, $runA.SceneCutControl.preSmoothStrongPairs, $runA.SceneCutControl.preSmoothStrongWindows)
+Write-Host ("B pre-smooth cuts={0}, windows={1} / strongCuts={2}, windows={3}" -f `
+    $runB.SceneCutControl.preSmoothCutPairs, $runB.SceneCutControl.preSmoothCutWindows, $runB.SceneCutControl.preSmoothStrongPairs, $runB.SceneCutControl.preSmoothStrongWindows)
+Write-Host ("A post-smooth cuts={0}, windows={1} / strongCuts={2}, windows={3}" -f `
+    $runA.SceneCutControl.postSmoothCutPairs, $runA.SceneCutControl.postSmoothCutWindows, $runA.SceneCutControl.postSmoothStrongPairs, $runA.SceneCutControl.postSmoothStrongWindows)
+Write-Host ("B post-smooth cuts={0}, windows={1} / strongCuts={2}, windows={3}" -f `
+    $runB.SceneCutControl.postSmoothCutPairs, $runB.SceneCutControl.postSmoothCutWindows, $runB.SceneCutControl.postSmoothStrongPairs, $runB.SceneCutControl.postSmoothStrongWindows)
+Write-Host ("A final carry cuts={0}, carryWindows={1}, preWindows={2}/{3}, postWindows={4}/{5}" -f `
+    $runA.SceneCutControl.finalCutPairs, $runA.SceneCutControl.finalCutWindows, $runA.SceneCutControl.finalPreCutWindows, $runA.SceneCutControl.finalPreStrongWindows, $runA.SceneCutControl.finalPostCutWindows, $runA.SceneCutControl.finalPostStrongWindows)
+Write-Host ("B final carry cuts={0}, carryWindows={1}, preWindows={2}/{3}, postWindows={4}/{5}" -f `
+    $runB.SceneCutControl.finalCutPairs, $runB.SceneCutControl.finalCutWindows, $runB.SceneCutControl.finalPreCutWindows, $runB.SceneCutControl.finalPreStrongWindows, $runB.SceneCutControl.finalPostCutWindows, $runB.SceneCutControl.finalPostStrongWindows)
+Write-Host ("A post-gap-fill carry cuts={0}, windows={1}" -f $runA.SceneCutControl.postGapFillCarryPairs, $runA.SceneCutControl.postGapFillCarryWindows)
+Write-Host ("B post-gap-fill carry cuts={0}, windows={1}" -f $runB.SceneCutControl.postGapFillCarryPairs, $runB.SceneCutControl.postGapFillCarryWindows)
+
 if ($runA.SceneCutReset.removed -gt 0 -or $runB.SceneCutReset.removed -gt 0) {
     Write-Host ""
     Write-Host "== off-mode scene-cut reset evidence =="
@@ -663,6 +754,12 @@ $postGapFillRemovedDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillRemov
 $postGapFillProtectedDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runB.FinalSummary.postGapFillProtected } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runA.FinalSummary.postGapFillProtected } else { 0 })
 $postGapFillRemovalRateDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 })
 $postGapFillProtectedRateDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 })
+$preSmoothCutPairsDelta = $runB.SceneCutControl.preSmoothCutPairs - $runA.SceneCutControl.preSmoothCutPairs
+$preSmoothStrongPairsDelta = $runB.SceneCutControl.preSmoothStrongPairs - $runA.SceneCutControl.preSmoothStrongPairs
+$postSmoothCutPairsDelta = $runB.SceneCutControl.postSmoothCutPairs - $runA.SceneCutControl.postSmoothCutPairs
+$postSmoothStrongPairsDelta = $runB.SceneCutControl.postSmoothStrongPairs - $runA.SceneCutControl.postSmoothStrongPairs
+$finalCarryCutPairsDelta = $runB.SceneCutControl.finalCutPairs - $runA.SceneCutControl.finalCutPairs
+$finalPostGapFillCutPairsDelta = $runB.SceneCutControl.postGapFillCarryPairs - $runA.SceneCutControl.postGapFillCarryPairs
 $runAHybridWindowShortfall = if ($runA.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runA.Export.hybridWindowFrameShortfall } else { 0 }
 $runBHybridWindowShortfall = if ($runB.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runB.Export.hybridWindowFrameShortfall } else { 0 }
 $runASampleWindowShortfall = if ($runA.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runA.Export.sampleWindowFrameShortfall } else { 0 }
@@ -679,6 +776,10 @@ Write-Host ("컷 전환 post-gap-fill carry removed: A={0} B={1} Δ={2}" -f $(if
 Write-Host ("컷 전환 post-gap-fill carry protected: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { $runA.FinalSummary.postGapFillProtected } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { $runB.FinalSummary.postGapFillProtected } else { 0 }), $postGapFillProtectedDelta)
 Write-Host ("컷 전환 post-gap-fill carry 제거율: A={0:P1} B={1:P1} Δ={2:P1}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 }, $(if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }), $postGapFillRemovalRateDelta)
 Write-Host ("컷 전환 post-gap-fill carry 보존율: A={0:P1} B={1:P1} Δ={2:P1}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 }, $(if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }), $postGapFillProtectedRateDelta)
+Write-Host ("장면전환 pre-smooth 큐브: pre컷 {0}->{1} (Δ {2}), strong컷 {3}->{4} (Δ {5})" -f $runA.SceneCutControl.preSmoothCutPairs, $runB.SceneCutControl.preSmoothCutPairs, $preSmoothCutPairsDelta, $runA.SceneCutControl.preSmoothStrongPairs, $runB.SceneCutControl.preSmoothStrongPairs, $preSmoothStrongPairsDelta)
+Write-Host ("장면전환 post-smooth 큐브: pre컷 {0}->{1} (Δ {2}), strong컷 {3}->{4} (Δ {5})" -f $runA.SceneCutControl.postSmoothCutPairs, $runB.SceneCutControl.postSmoothCutPairs, $postSmoothCutPairsDelta, $runA.SceneCutControl.postSmoothStrongPairs, $runB.SceneCutControl.postSmoothStrongPairs, $postSmoothStrongPairsDelta)
+Write-Host ("장면전환 final carry 컷: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.finalCutPairs, $runB.SceneCutControl.finalCutPairs, $finalCarryCutPairsDelta)
+Write-Host ("장면전환 post-gap-fill carry 컷: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.postGapFillCarryPairs, $runB.SceneCutControl.postGapFillCarryPairs, $finalPostGapFillCutPairsDelta)
 Write-Host ("하이브리드 윈도우 누락: A={0} B={1} Δ={2}" -f $runAHybridWindowShortfall, $runBHybridWindowShortfall, ($runBHybridWindowShortfall - $runAHybridWindowShortfall))
 Write-Host ("샘플 구간 누락: A={0} B={1} Δ={2}" -f $runASampleWindowShortfall, $runBSampleWindowShortfall, ($runBSampleWindowShortfall - $runASampleWindowShortfall))
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
