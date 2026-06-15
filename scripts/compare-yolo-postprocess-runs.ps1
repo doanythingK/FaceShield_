@@ -619,15 +619,6 @@ $runB = Read-RunInfo -Path $RunBLog -TargetRunId $RunBId
 
 $allPhases = @($runA.Timings.Keys + $runB.Timings.Keys | Sort-Object -Unique)
 
-if ($JsonOutput.IsPresent) {
-    [pscustomobject]@{
-        RunA = $runA;
-        RunB = $runB;
-        Phases = $allPhases;
-    } | ConvertTo-Json -Depth 8
-    exit 0
-}
-
 $startFrameDisplay = $StartFrame
 $endFrameDisplay = $EndFrameExclusive
 $frameMode = if ($RequireFrameFilter.IsPresent) { "filtered" } else { "full" }
@@ -878,3 +869,39 @@ Write-Host ("컷캐리 제거율: A={0:P2}, B={1:P2}, Δ={2:P2}, 기준≥{3:P2}
 Write-Host ("속도(run/export): runΔ={0}, 기준≤{1}, exportΔ={2}, 기준≤{3}" -f (if ($null -ne $runMsDelta) { $runMsDelta } else { "n/a" }), $MaxRunTotalMsDelta, $exportDeltaForHint, $MaxExportTotalMsDelta)
 Write-Host ("심사 플래그: reviewRequired=$bReview -> {0}" -f $reviewText)
 Write-Host ("판정 사유: {0}" -f ($(if ($passReasons.Count -eq 0) { "pass" } else { $passReasons -join '; ' })))
+
+$quickDecision = [pscustomobject]@{
+    Passed = $passOverall;
+    WeakFaceDelta = $weakDelta;
+    MissRecoveryProxyA = $missRecoveryProxyA;
+    MissRecoveryProxyB = $missRecoveryProxyB;
+    MissRecoveryDelta = $missRecoveryDelta;
+    PostGapFillRemovalRateA = $aPostGapFillRemovalRate;
+    PostGapFillRemovalRateB = $bPostGapFillRemovalRate;
+    PostGapFillRemovalRateDelta = $postGapFillRemovalRateDelta;
+    RunTotalMsDelta = $runMsDelta;
+    ExportTotalMsDelta = $exportDeltaForHint;
+    RunTotalMsGate = $MaxRunTotalMsDelta;
+    ExportTotalMsGate = $MaxExportTotalMsDelta;
+    WeakScoreGate = $MaxWeakScoreDelta;
+    MissRecoveryGate = $MinMissRecoveryDelta;
+    PostGapFillRemovalRateGate = $MinPostGapFillRemovalRateDelta;
+    PassWeakScore = $passWeakScore;
+    PassMissRecovery = $passMissRecovery;
+    PassCutCarry = $passCutCarry;
+    PassRunSpeed = $passRunSpeed;
+    PassExportSpeed = $passExportSpeed;
+    PassReview = $passReview;
+    ReviewRequired = $bReview;
+    Reasons = if ($passReasons.Count -eq 0) { "pass" } else { $passReasons };
+}
+
+if ($JsonOutput.IsPresent) {
+    [pscustomobject]@{
+        RunA = $runA;
+        RunB = $runB;
+        Phases = $allPhases;
+        QuickDecision = $quickDecision;
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}

@@ -90,7 +90,8 @@ param(
     [double] $ExportMsPenaltyPerMs = 0.02,
     [double] $ShortGapPenaltyPerFrame = 7.5,
     [double] $LargeJumpPenaltyPerFrame = 7.5,
-    [double] $ReviewRequiredPenalty = 999
+    [double] $ReviewRequiredPenalty = 999,
+    [int] $MaxRunTotalMsDelta = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -188,6 +189,11 @@ function Invoke-Compare {
     }
     if ($StartFrame -ge 0) { $compareArgs += @('-StartFrame', "$StartFrame") }
     if ($EndFrameExclusive -ge 0) { $compareArgs += @('-EndFrameExclusive', "$EndFrameExclusive") }
+    $compareArgs += @('-MaxWeakScoreDelta', "$AllowedWeakFaceIncrease")
+    $compareArgs += @('-MinMissRecoveryDelta', "$MinDetectGain")
+    $compareArgs += @('-MinPostGapFillRemovalRateDelta', '0')
+    $compareArgs += @('-MaxRunTotalMsDelta', "$MaxRunTotalMsDelta")
+    $compareArgs += @('-MaxExportTotalMsDelta', "$MaxExportMsDelta")
 
     $compareOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compareScript @compareArgs | Out-String
     if ($LASTEXITCODE -ne 0) {
@@ -607,6 +613,11 @@ foreach ($name in $presetsToCompare) {
     $targetPerFaceShortGaps = Read-NumericValue -Container $targetFinal -Key 'perFaceShortGaps'
     $baselineReview = Read-BoolValue -Container $baselineFinal -Key 'reviewRequired'
     $targetReview = Read-BoolValue -Container $targetFinal -Key 'reviewRequired'
+    $quickDecision = Read-JsonValue -Container $compare -Key 'QuickDecision'
+    $quickPassed = if ($null -ne $quickDecision) { Read-BoolValue -Container $quickDecision -Key 'Passed' } else { $true }
+    $quickReasons = if ($null -ne $quickDecision) { Read-JsonValue -Container $quickDecision -Key 'Reasons' } else { "N/A" }
+    $quickMissRecoveryDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'MissRecoveryDelta' } else { 0 }
+    $quickPostGapFillRemovalRateDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'PostGapFillRemovalRateDelta' } else { 0 }
     $decision = Build-ScenarioDecision `
         -BaselineWeakFace $baselineWeakFace `
         -TargetWeakFace $targetWeakFace `
@@ -636,6 +647,8 @@ foreach ($name in $presetsToCompare) {
         -ShortGapPenaltyPerFrame $ShortGapPenaltyPerFrame `
         -LargeJumpPenaltyPerFrame $LargeJumpPenaltyPerFrame `
         -ReviewPenalty $ReviewRequiredPenalty
+
+    $combinedPassed = $decision.Passed -and $quickPassed
 
     $summary.Add([pscustomobject]@{
         Preset = $normalized
@@ -679,8 +692,12 @@ foreach ($name in $presetsToCompare) {
         PassExport = $decision.PassExport
         PassShortGaps = $decision.PassShortGaps
         PassLargeJumpGaps = $decision.PassLargeJumpGaps
-        Passed = $decision.Passed
+        PassQuickDecision = $quickPassed
+        QuickDecisionMissRecoveryDelta = $quickMissRecoveryDelta
+        QuickDecisionPostGapFillRemovalRateDelta = $quickPostGapFillRemovalRateDelta
+        Passed = $combinedPassed
         DecisionReasons = $decision.Reasons
+        QuickDecisionReasons = $quickReasons
         ResultPath = $resultPath
     })
     Write-Host "[PostprocessPresetCompare] result=$resultPath"
@@ -697,14 +714,15 @@ if ($summary.Count -gt 0) {
     }
 
     $passed = @($summarySorted | Where-Object { $_.Passed })
+    $quickReviewCriteria = if ($AllowReviewRequired.IsPresent) { 'ALLOW' } else { 'BLOCK' }
     if ($passed.Count -gt 0) {
         Write-Host "[PostprocessPresetCompare] passed preset count=$($passed.Count)"
         foreach ($entry in $passed) {
-            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) reasons=$($entry.DecisionReasons)"
+            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) passQuickDecision=$($entry.PassQuickDecision) quickMissRecoveryDelta=$($entry.QuickDecisionMissRecoveryDelta) quickPostGapFillRemovalRateDelta=$('{0:P2}' -f $entry.QuickDecisionPostGapFillRemovalRateDelta) reasons=$($entry.DecisionReasons) quickReasons=$($entry.QuickDecisionReasons)"
         }
     }
     else {
-        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, perFaceShortGaps<=+$AllowedPerFaceShortGapIncrease, sceneCarryRemoved<=+$AllowedSceneCarryIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta)"
+        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, perFaceShortGaps<=+$AllowedPerFaceShortGapIncrease, sceneCarryRemoved<=+$AllowedSceneCarryIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta, quick: weakScoreΔ<=+$AllowedWeakFaceIncrease, missRecoveryΔ>=$MinDetectGain, postGapFillRemovalRateΔ>=$MinPostGapFillRemovalRateDelta, runΔ<=$MaxRunTotalMsDelta, exportΔ<=$MaxExportMsDelta, reviewRequired=$quickReviewCriteria)"
     }
 }
 
