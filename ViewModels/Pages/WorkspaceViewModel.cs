@@ -260,15 +260,29 @@ namespace FaceShield.ViewModels.Pages
                 _exportCts = cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : new CancellationTokenSource();
+                var hybridPolicy = EvaluateAutoExportHybridPolicy(autoRunSummary);
+                System.Diagnostics.Debug.WriteLine(
+                    $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(autoRunSummary?.RunId ?? \"n/a\")}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
 
                 await Task.Run(() =>
                 {
-                    exporter.Export(input, output, blurRadius: ToolPanel.BlurRadius, progress, _exportCts.Token, exportRunId);
+                    exporter.Export(
+                        input,
+                        output,
+                        blurRadius: ToolPanel.BlurRadius,
+                        progress,
+                        _exportCts.Token,
+                        exportRunId,
+                        allowHybridCopy: hybridPolicy.allowHybridCopy);
                 }, _exportCts.Token);
                 if (exporter.LastExportSummary != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
-                    LogExportQualityGate(autoRunSummary, exporter.LastExportSummary);
+                    LogExportQualityGate(
+                        autoRunSummary,
+                        exporter.LastExportSummary,
+                        allowHybridCopy: hybridPolicy.allowHybridCopy,
+                        autoHybridDisableReasons: hybridPolicy.disableReasons);
                 }
 
                 return true;
@@ -294,7 +308,9 @@ namespace FaceShield.ViewModels.Pages
 
         private static void LogExportQualityGate(
             AutoMaskRunSummary? autoRunSummary,
-            ExportRunSummary exportSummary)
+            ExportRunSummary exportSummary,
+            bool allowHybridCopy,
+            IReadOnlyList<string>? autoHybridDisableReasons)
         {
             string run = string.IsNullOrWhiteSpace(exportSummary.RunId)
                 ? (autoRunSummary?.RunId ?? "n/a")
@@ -372,6 +388,19 @@ namespace FaceShield.ViewModels.Pages
                 reviewRiskScore++;
                 riskReasons.Add("hybrid-fallback");
             }
+            if (!allowHybridCopy)
+            {
+                reviewRiskScore++;
+                riskReasons.Add("auto-hybrid-disabled-by-summary");
+            }
+            if (autoHybridDisableReasons != null)
+            {
+                foreach (string reason in autoHybridDisableReasons)
+                {
+                    reviewRiskScore++;
+                    riskReasons.Add($"auto-hybrid-reason:{reason}");
+                }
+            }
 
             int sampleWindowFrames = autoRunSummary != null && autoRunSummary.SourceFps > 0
                 ? Math.Min(autoRunSummary.TotalFrames, (int)Math.Round(autoRunSummary.SourceFps * 30.0))
@@ -419,6 +448,12 @@ namespace FaceShield.ViewModels.Pages
             double throughputFps = exportSummary.TotalMs > 0 && exportSummary.Frames > 0
                 ? exportSummary.Frames * 1000.0 / exportSummary.TotalMs
                 : 0.0;
+            double finalSceneCutRemovalRate = autoRunSummary != null && autoRunSummary.FinalSceneCutCarryPairCount > 0
+                ? autoRunSummary.FinalSceneCutCarryRemovedCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
+                : 0.0;
+            double finalSceneCutProtectedRate = autoRunSummary != null && autoRunSummary.FinalSceneCutCarryPairCount > 0
+                ? autoRunSummary.FinalSceneCutProtectedFrameCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
+                : 0.0;
             string riskLabel = reviewRiskScore >= 3
                 ? "high"
                 : reviewRiskScore >= 2
@@ -428,11 +463,17 @@ namespace FaceShield.ViewModels.Pages
                         : "safe";
 
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGate] runId={run}, totalFrames={totalFrames}, sampleWindowFrames={sampleWindowFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, riskReasons={FormatTextListForLog(riskReasons)}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, copiedSourcePackets={exportSummary.CopiedSourceVideoPackets}, encodedSourcePackets={exportSummary.EncodedSourceVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}, sceneCut=preGuard:{autoRunSummary?.FinalSceneCutPreGuardPairCount ?? -1},preStrong:{autoRunSummary?.FinalSceneCutPreStrongProbePairCount ?? -1},postGuard:{autoRunSummary?.FinalSceneCutPostGuardPairCount ?? -1},postStrong:{autoRunSummary?.FinalSceneCutPostStrongProbePairCount ?? -1},carryPairs:{autoRunSummary?.FinalSceneCutCarryPairCount ?? -1},carryRemoved:{autoRunSummary?.FinalSceneCutCarryRemovedCount ?? -1},carryProtected:{autoRunSummary?.FinalSceneCutProtectedFrameCount ?? -1}");
+                $"[QualityGate] runId={run}, totalFrames={totalFrames}, sampleWindowFrames={sampleWindowFrames}, exportMode={exportSummary.ExportMode}, throughputFps={throughputFps:0.00}, risk={riskLabel}, riskReasons={FormatTextListForLog(riskReasons)}, packetDropRate={packetDropRate:0.000000}, packetDrops={droppedPackets}/{inputVideoPackets}, outputFrames={exportSummary.Frames}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridRange={hybridRange}, hybridLength={hybridWindowLength}, hybridFixes={exportSummary.HybridCopyTimestampFixCount}, hybridTransitions={exportSummary.HybridModeTransitionCount}, copiedPackets={exportSummary.CopiedVideoPackets}, copiedSourcePackets={exportSummary.CopiedSourceVideoPackets}, encodedSourcePackets={exportSummary.EncodedSourceVideoPackets}, outputPackets={exportSummary.OutputVideoPackets}, autoReviewRequired={autoRunSummary?.FinalMaskReviewRequired.ToString().ToLowerInvariant() ?? \"n/a\"}, finalShortGaps={autoRunSummary?.FinalMaskShortGapCount ?? -1}, finalPerFaceShortGaps={autoRunSummary?.FinalMaskPerFaceShortGapCount ?? -1}, finalLargeJumps={autoRunSummary?.FinalMaskLargeJumpGapCount ?? -1}, finalCarryFrames={autoRunSummary?.FinalProtectedSceneCarryFrameCount ?? -1}, sceneCut=preGuard:{autoRunSummary?.FinalSceneCutPreGuardPairCount ?? -1},preStrong:{autoRunSummary?.FinalSceneCutPreStrongProbePairCount ?? -1},postGuard:{autoRunSummary?.FinalSceneCutPostGuardPairCount ?? -1},postStrong:{autoRunSummary?.FinalSceneCutPostStrongProbePairCount ?? -1},carryPairs:{autoRunSummary?.FinalSceneCutCarryPairCount ?? -1},carryRemoved:{autoRunSummary?.FinalSceneCutCarryRemovedCount ?? -1},carryProtected:{autoRunSummary?.FinalSceneCutProtectedFrameCount ?? -1}, autoHybridDisableReasons={FormatTextListForLog(autoHybridDisableReasons ?? Array.Empty<string>())}");
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGateHybridTiming] runId={run}, encStep={exportSummary.HybridEncodedPacketFrameStep}, copyStep={exportSummary.HybridCopyPacketFrameStep}, frameGap={Math.Abs(exportSummary.HybridEncodedPacketFrameStep - exportSummary.HybridCopyPacketFrameStep)}, fallback={exportSummary.HybridCopyFallbackReason ?? \"n/a\"}, copyFixes={exportSummary.HybridCopyTimestampFixCount}, mode={exportSummary.ExportMode}, transitions={exportSummary.HybridModeTransitionCount}");
             System.Diagnostics.Debug.WriteLine(
                 $"[QualityGateSample] runId={run}, mode={autoRunSummary?.Mode ?? \"n/a\"}, sampleWindow={autoRunSummary?.SampleWindowFrames ?? 0}, sampleFrames={sampleFrameCount}, sampleRows={sampleRowCount}, sampleRisk={sampleRiskLabel}, sampleRiskReasons={FormatTextListForLog(sampleReasons)}, sampleShortGaps={sampleShortGapCount}, samplePerFaceShortGaps={samplePerFaceShortGapCount}, sampleIsolated={sampleIsolatedFrameCount}, sampleLargeJumps={sampleLargeJumpGapCount}, sampleProtectedCarry={sampleProtectedCarryCount}, sampleReviewRequired={sampleReviewRequired.ToString().ToLowerInvariant()}, sampleReviewReasons={sampleReviewReasons}, packetLossFallbackReason={exportSummary.PacketLossFallbackReason ?? \"n/a\"}, hybridFallbackReason={exportSummary.HybridCopyFallbackReason ?? \"n/a\"}");
+            int sampleGapCount = sampleShortGapCount + samplePerFaceShortGapCount + sampleLargeJumpGapCount;
+            string sampleGapRisk = sampleWindowFrames > 0
+                ? $"{sampleGapCount}/{sampleWindowFrames}"
+                : "0/0";
+            System.Diagnostics.Debug.WriteLine(
+                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? \"n/a\"}, packetFallback={exportSummary.PacketLossFallbackReason ?? \"n/a\"}");
         }
 
         private static string FormatTextListForLog(IReadOnlyList<string> values)
@@ -445,6 +486,107 @@ namespace FaceShield.ViewModels.Pages
             return values.Count > maxValues
                 ? $"{text},+{values.Count - maxValues}"
                 : text;
+        }
+
+        private static (bool allowHybridCopy, IReadOnlyList<string> disableReasons) EvaluateAutoExportHybridPolicy(
+            AutoMaskRunSummary? autoRunSummary)
+        {
+            if (autoRunSummary == null)
+                return (true, Array.Empty<string>());
+
+            const int SampleGapRateMinWindowFrames = 240;
+            const double SampleMissRecoveryRateThreshold = 0.001;     // 0.1%
+            const double SampleFpSuppressedRateThreshold = 0.001;     // 0.1%
+            const double FinalSceneCutRemovalRateThreshold = 0.02;    // 2%
+            const double FinalSceneCutProtectedRateThreshold = 0.02;  // 2%
+            var reasons = new List<string>();
+            int sampleWindowFrames = autoRunSummary.SampleWindowFrames > 0
+                ? autoRunSummary.SampleWindowFrames
+                : Math.Min(autoRunSummary.TotalFrames, Math.Min(
+                    Math.Max(1, (int)Math.Round(autoRunSummary.SourceFps * 30.0)),
+                    900));
+            if (sampleWindowFrames <= 0)
+                sampleWindowFrames = Math.Max(1, autoRunSummary.TotalFrames);
+            double sampleMissRecoveryRate = autoRunSummary.SampleMissRecoveryFillCount / (double)sampleWindowFrames;
+            double sampleFpSuppressedRate = autoRunSummary.SampleFalsePositiveSuppressionCount / (double)sampleWindowFrames;
+            double finalSceneCutRemovalRate = autoRunSummary.FinalSceneCutCarryPairCount > 0
+                ? autoRunSummary.FinalSceneCutCarryRemovedCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
+                : 0.0;
+            double finalSceneCutProtectedRate = autoRunSummary.FinalSceneCutCarryPairCount > 0
+                ? autoRunSummary.FinalSceneCutProtectedFrameCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
+                : 0.0;
+
+            bool finalRisk = autoRunSummary.FinalMaskReviewRequired;
+            if (autoRunSummary.FinalMaskReviewReasons != "none" &&
+                !string.IsNullOrWhiteSpace(autoRunSummary.FinalMaskReviewReasons))
+            {
+                finalRisk = true;
+                reasons.Add("final-review-reasons");
+            }
+
+            if (autoRunSummary.FinalMaskShortGapCount > 0
+                || autoRunSummary.FinalMaskPerFaceShortGapCount > 0
+                || autoRunSummary.FinalMaskLargeJumpGapCount > 0)
+            {
+                finalRisk = true;
+                reasons.Add("final-gap-risk");
+            }
+
+            if (finalSceneCutRemovalRate > FinalSceneCutRemovalRateThreshold
+                || finalSceneCutProtectedRate > FinalSceneCutProtectedRateThreshold
+                || autoRunSummary.FinalProtectedSceneCarryFrameCount > 0
+                || autoRunSummary.FinalSceneCutProtectedFrameCount > 0
+                || autoRunSummary.FinalSceneCutCarryRemovedCount > 0)
+            {
+                finalRisk = true;
+                reasons.Add("final-scene-cut-carry");
+            }
+
+            bool sampleRisk = autoRunSummary.SampleReviewRequired;
+            if (autoRunSummary.SampleReviewReasons != "none" &&
+                !string.IsNullOrWhiteSpace(autoRunSummary.SampleReviewReasons))
+            {
+                sampleRisk = true;
+                reasons.Add("sample-review-reasons");
+            }
+
+            if (sampleWindowFrames >= SampleGapRateMinWindowFrames && sampleMissRecoveryRate > SampleMissRecoveryRateThreshold)
+            {
+                sampleRisk = true;
+                reasons.Add("sample-miss-recovery-rate-above-threshold");
+            }
+            if (sampleWindowFrames >= SampleGapRateMinWindowFrames && sampleFpSuppressedRate > SampleFpSuppressedRateThreshold)
+            {
+                sampleRisk = true;
+                reasons.Add("sample-fp-suppressed-rate-above-threshold");
+            }
+            if (autoRunSummary.SampleMissRecoveryFillCount > 0
+                || autoRunSummary.SampleFalsePositiveSuppressionCount > 0
+                || autoRunSummary.SampleProtectedSceneCarryFrameCount > 0
+                || autoRunSummary.SampleShortGapCount > 0
+                || autoRunSummary.SamplePerFaceShortGapCount > 0
+                || autoRunSummary.SampleLargeJumpGapCount > 0)
+            {
+                sampleRisk = true;
+                reasons.Add("sample-gap-risk");
+            }
+            if (sampleMissRecoveryRate > SampleMissRecoveryRateThreshold)
+                reasons.Add($"sample-miss-recovery-rate:{sampleMissRecoveryRate:0.0000}");
+            if (sampleFpSuppressedRate > SampleFpSuppressedRateThreshold)
+                reasons.Add($"sample-fp-suppressed-rate:{sampleFpSuppressedRate:0.0000}");
+            if (finalSceneCutRemovalRate > 0.0)
+                reasons.Add($"final-scene-cut-removal-rate:{finalSceneCutRemovalRate:0.0000}");
+            if (finalSceneCutProtectedRate > 0.0)
+                reasons.Add($"final-scene-cut-protected-rate:{finalSceneCutProtectedRate:0.0000}");
+
+            if (autoRunSummary.FinalMaskFrames == 0)
+                reasons.Add("final-empty-mask");
+
+            bool allowHybridCopy = !(finalRisk || sampleRisk);
+            return (
+                allowHybridCopy: allowHybridCopy,
+                disableReasons: reasons.Distinct().ToList()
+            );
         }
 
         private async Task<string?> ResolveExportOutputPathAsync(string outputPath)

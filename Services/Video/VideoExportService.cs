@@ -44,7 +44,8 @@ public unsafe sealed class VideoExportService
         int blurRadius,
         IProgress<ExportProgress>? progress = null,
         System.Threading.CancellationToken cancellationToken = default,
-        string? runId = null)
+        string? runId = null,
+        bool allowHybridCopy = true)
     {
         try
         {
@@ -57,7 +58,7 @@ public unsafe sealed class VideoExportService
                 runId,
                 exportMode: "primary",
                 forceSoftwareEncoder: false,
-                allowHybridCopy: EnableHybridCopyWindow,
+                allowHybridCopy: allowHybridCopy && EnableHybridCopyWindow,
                 forceSafeEncoding: false,
                 forceAudioTranscode: false,
                 forceH264Fallback: false);

@@ -522,6 +522,7 @@ namespace FaceShield.Services.Analysis
                 0,
                 detectMs,
                 maskMs,
+                0,
                 swTotal.ElapsedMilliseconds,
                 _options.DownscaleRatio,
                 _options.DownscaleQuality,
@@ -875,6 +876,7 @@ namespace FaceShield.Services.Analysis
                 0,
                 decodeMs,
                 detectMs,
+                0,
                 0,
                 swTotal.ElapsedMilliseconds,
                 _options.DownscaleRatio,
@@ -1301,6 +1303,7 @@ namespace FaceShield.Services.Analysis
                 decodeMs,
                 detectMs,
                 0,
+                0,
                 swTotal.ElapsedMilliseconds,
                 _options.DownscaleRatio,
                 _options.DownscaleQuality,
@@ -1582,6 +1585,7 @@ namespace FaceShield.Services.Analysis
                 decodeMs,
                 detectMs,
                 0,
+                0,
                 swTotal.ElapsedMilliseconds,
                 _options.DownscaleRatio,
                 _options.DownscaleQuality,
@@ -1639,6 +1643,16 @@ namespace FaceShield.Services.Analysis
                 FinalMaskReviewReasons = string.IsNullOrWhiteSpace(finalSummary.FinalReviewReasons)
                     ? "none"
                     : finalSummary.FinalReviewReasons,
+                FinalMissRecoveryFillCount = finalSummary.FinalMissRecoveryFillCount,
+                FinalFalsePositiveSuppressedCount = finalSummary.FinalFalsePositiveSuppressedCount,
+                FinalGapFillRecoveredCount = finalSummary.FinalGapFillRecoveredCount,
+                FinalGapFillBlockedCutGapFrames = finalSummary.FinalGapFillBlockedCutGapFrames,
+                FinalGapFillBlockedCleanupGapFrames = finalSummary.FinalGapFillBlockedCleanupGapFrames,
+                FinalGapFillBlockedSceneCarryGapFrames = finalSummary.FinalGapFillBlockedSceneCarryGapFrames,
+                FinalGapFillSuppressedWeakGeometryAnchorChecks = finalSummary.FinalGapFillSuppressedWeakGeometryAnchorChecks,
+                FinalGapFillSuppressedRiskyGeometryAnchorChecks = finalSummary.FinalGapFillSuppressedRiskyGeometryAnchorChecks,
+                FinalGapFillUnsupportedWeakAnchorChecks = finalSummary.FinalGapFillUnsupportedWeakAnchorChecks,
+                PostProcessMs = postProcessResult.PostProcessElapsedMs,
                 SampleWindowFrames = finalSummary.SampleWindowFrames,
                 SampleFrameCount = finalSummary.SampleFrameCount,
                 SampleRowCount = finalSummary.SampleRowCount,
@@ -1650,7 +1664,9 @@ namespace FaceShield.Services.Analysis
                 SampleReviewReasons = string.IsNullOrWhiteSpace(finalSummary.SampleReviewReasons)
                     ? "none"
                     : finalSummary.SampleReviewReasons,
-                SampleProtectedSceneCarryFrameCount = finalSummary.SampleProtectedSceneCarryFrameCount
+                SampleProtectedSceneCarryFrameCount = finalSummary.SampleProtectedSceneCarryFrameCount,
+                SampleMissRecoveryFillCount = finalSummary.SampleMissRecoveryFillCount,
+                SampleFalsePositiveSuppressionCount = finalSummary.SampleFalsePositiveSuppressionCount
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
             LogAutoMaskQualityGate(LastRunSummary);
@@ -1676,6 +1692,18 @@ namespace FaceShield.Services.Analysis
                     : (summary.SourceFps > 0
                         ? Math.Min(summary.TotalFrames, (int)Math.Round(summary.SourceFps * 30.0))
                         : Math.Min(summary.TotalFrames, 900)));
+            double sampleMissRecoveryRate = sampleWindowFrames > 0
+                ? summary.SampleMissRecoveryFillCount / (double)sampleWindowFrames
+                : 0.0;
+            double sampleFpSuppressedRate = sampleWindowFrames > 0
+                ? summary.SampleFalsePositiveSuppressionCount / (double)sampleWindowFrames
+                : 0.0;
+            double finalSceneCutRemovalRate = summary.FinalSceneCutCarryPairCount > 0
+                ? summary.FinalSceneCutCarryRemovedCount / (double)summary.FinalSceneCutCarryPairCount
+                : 0.0;
+            double finalSceneCutProtectedRate = summary.FinalSceneCutCarryPairCount > 0
+                ? summary.FinalSceneCutProtectedFrameCount / (double)summary.FinalSceneCutCarryPairCount
+                : 0.0;
             string riskLabel = riskScore >= 3
                 ? "high"
                 : riskScore >= 1
@@ -1700,7 +1728,11 @@ namespace FaceShield.Services.Analysis
             System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskQualityGate] runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, sampleWindowFrames={sampleWindowFrames}");
             System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskQualityGate] final runId={summary.RunId ?? \"n/a\"}, missRecovery={summary.FinalMissRecoveryFillCount}, fpSuppressed={summary.FinalFalsePositiveSuppressedCount}, gapFillRecovered={summary.FinalGapFillRecoveredCount}, gapFillBlocked={summary.FinalGapFillBlockedCutGapFrames}/{summary.FinalGapFillBlockedCleanupGapFrames}/{summary.FinalGapFillBlockedSceneCarryGapFrames}, gapFillAnchorChecks={summary.FinalGapFillSuppressedWeakGeometryAnchorChecks}/{summary.FinalGapFillSuppressedRiskyGeometryAnchorChecks}/{summary.FinalGapFillUnsupportedWeakAnchorChecks}, sceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, sceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, postProcessMs={summary.PostProcessMs}");
+            System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskQualityGate] sample runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={sampleRiskLabel}, sampleWindow={summary.SampleWindowFrames}, sampleFrames={summary.SampleFrameCount}, sampleRows={summary.SampleRowCount}, shortGaps={summary.SampleShortGapCount}, perFaceShortGaps={summary.SamplePerFaceShortGapCount}, isolated={summary.SampleIsolatedFrameCount}, largeJumps={summary.SampleLargeJumpGapCount}, protectedCarry={summary.SampleProtectedSceneCarryFrameCount}, reviewRequired={summary.SampleReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.SampleReviewReasons}");
+            System.Diagnostics.Debug.WriteLine(
+                $"[AutoMaskQualityGate] sample runId={summary.RunId ?? \"n/a\"}, missRecovery={summary.SampleMissRecoveryFillCount}, missRecoveryRate={sampleMissRecoveryRate:0.0000}, fpSuppressed={summary.SampleFalsePositiveSuppressionCount}, fpSuppressedRate={sampleFpSuppressedRate:0.0000}, riskScore={sampleRiskScore}, riskLabel={sampleRiskLabel}");
         }
 
         private void SetLastRunSummary(AutoMaskRunSummary summary)
@@ -1708,7 +1740,7 @@ namespace FaceShield.Services.Analysis
             bool postEnabled = _options.EnablePostProcessing;
             bool postRoiEnabled = postEnabled && _options.EnableRoiPostProcess;
             bool postWeakIsoEnabled = postEnabled && _options.EnableYoloWeakIsolatedCleanup;
-            bool postGapFillEnabled = postEnabled && _options.EnableYoloGapFill;
+            bool postGapFillEnabled = _options.UseTracking && _options.EnableYoloGapFill;
             bool postSceneCutEnabled = postEnabled && _options.UseTracking && _options.EnableYoloSceneCutCarryCleanup;
             bool postTemporalEnabled = postEnabled && _options.EnableYoloTemporalSmoothing;
 

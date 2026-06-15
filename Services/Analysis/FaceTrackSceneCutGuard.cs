@@ -241,18 +241,25 @@ namespace FaceShield.Services.Analysis
             double candidateMatchMinIou = 0.80,
             double candidateMatchMaxCenterShiftRatio = 0.35,
             double candidateMatchMaxAreaChangeRatio = 1.8,
-            bool removeCandidates = true)
+            bool removeCandidates = true,
+            string stage = "default")
         {
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
             if (frameDifferenceProvider == null)
                 throw new ArgumentNullException(nameof(frameDifferenceProvider));
             if (candidates.Count == 0)
+            {
+                Debug.WriteLine($"[FaceTrackSceneCutGuard] stage={stage} skipped candidates=0");
                 return FaceTrackSceneCutGuardResult.Empty;
+            }
 
             candidates = DeduplicateCandidates(candidates);
             if (candidates.Count == 0)
+            {
+                Debug.WriteLine($"[FaceTrackSceneCutGuard] stage={stage} skipped after dedup candidates=0");
                 return FaceTrackSceneCutGuardResult.Empty;
+            }
 
             var sw = Stopwatch.StartNew();
             int checkedCandidates = 0;
