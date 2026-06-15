@@ -34,6 +34,9 @@
 .PARAMETER AllowReviewRequired
     Quick decision에서 reviewRequired=true를 통과 허용할지 지정합니다.
 
+.PARAMETER MinPostGapFillRemovalRateDelta
+    컷캐리 post-gap-fill 제거율 개선 최소 기준값입니다.
+
 .PARAMETER SummaryFile
     오프셋 기반 비교 결과 집계 JSON 파일 경로.
     지정하지 않으면 `<LogRoot>\compare-summary.json`으로 저장됩니다.
@@ -53,6 +56,7 @@ param(
     [string] $LogRoot = ".tmp/yolo-postprocess-presets",
     [switch] $SkipExport,
     [switch] $AllowReviewRequired,
+    [double] $MinPostGapFillRemovalRateDelta = 0.0,
     [string] $SummaryFile = "",
     [string] $YoloModelPath = "",
     [ValidateSet("YoloV8Face", "Yolo5Face")]
@@ -195,7 +199,7 @@ function Invoke-Compare {
     if ($EndFrameExclusive -ge 0) { $compareArgs += @('-EndFrameExclusive', "$EndFrameExclusive") }
     $compareArgs += @('-MaxWeakScoreDelta', "$AllowedWeakFaceIncrease")
     $compareArgs += @('-MinMissRecoveryDelta', "$MinDetectGain")
-    $compareArgs += @('-MinPostGapFillRemovalRateDelta', '0')
+    $compareArgs += @('-MinPostGapFillRemovalRateDelta', "$MinPostGapFillRemovalRateDelta")
     $compareArgs += @('-MaxRunTotalMsDelta', "$MaxRunTotalMsDelta")
     $compareArgs += @('-MaxExportTotalMsDelta', "$MaxExportMsDelta")
     if ($AllowReviewRequired.IsPresent) {
