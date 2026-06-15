@@ -655,6 +655,15 @@ public unsafe sealed class VideoExportService
 
             Throw(ffmpeg.avformat_write_header(outFmt, null));
 
+            // Muxers may rewrite outStream->time_base while writing the header.
+            // Packet gap checks must use the final output stream time base.
+            long muxedOutputFrameStep = GetVideoFrameStep(sourceFps, outStream->time_base);
+            if (muxedOutputFrameStep <= 0)
+                muxedOutputFrameStep = 1;
+            encodedPacketFrameStep = muxedOutputFrameStep;
+            if (useHybridCopyWindow)
+                hybridCopyVideoFrameStep = muxedOutputFrameStep;
+
             // ───────── frames ─────────
             bgra->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
             bgra->width = dec->width;
