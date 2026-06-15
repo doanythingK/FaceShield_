@@ -1963,6 +1963,7 @@ namespace FaceShield.Services.Analysis
             return sources
                 .Where(static x => x != null && x.Count > 0)
                 .SelectMany(static x => x!)
+                .Select(NormalizeCutFramePair)
                 .Where(static x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -2135,10 +2136,26 @@ namespace FaceShield.Services.Analysis
                 return "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0";
             }
 
-            var preCutSet = new HashSet<string>(preCutPairs ?? Array.Empty<string>());
-            var preStrongCutSet = new HashSet<string>(preStrongCutPairs ?? Array.Empty<string>());
-            var postCutSet = new HashSet<string>(postCutPairs ?? Array.Empty<string>());
-            var postStrongCutSet = new HashSet<string>(postStrongCutPairs ?? Array.Empty<string>());
+            var preCutSet = new HashSet<string>(preCutPairs?
+                .Select(NormalizeCutFramePair)
+                .Where(static pair => !string.IsNullOrWhiteSpace(pair))
+                ?? Array.Empty<string>());
+            var preStrongCutSet = new HashSet<string>(preStrongCutPairs?
+                .Select(NormalizeCutFramePair)
+                .Where(static pair => !string.IsNullOrWhiteSpace(pair))
+                ?? Array.Empty<string>());
+            var postCutSet = new HashSet<string>(postCutPairs?
+                .Select(NormalizeCutFramePair)
+                .Where(static pair => !string.IsNullOrWhiteSpace(pair))
+                ?? Array.Empty<string>());
+            var postStrongCutSet = new HashSet<string>(postStrongCutPairs?
+                .Select(NormalizeCutFramePair)
+                .Where(static pair => !string.IsNullOrWhiteSpace(pair))
+                ?? Array.Empty<string>());
+            finalCutPairs = finalCutPairs
+                .Select(NormalizeCutFramePair)
+                .Where(static pair => !string.IsNullOrWhiteSpace(pair))
+                .ToArray();
 
             int preCutOnly = 0;
             int preStrongOnly = 0;
@@ -2238,6 +2255,14 @@ namespace FaceShield.Services.Analysis
                 return false;
 
             return true;
+        }
+
+        private static string NormalizeCutFramePair(string? pairText)
+        {
+            if (TryParseCutFramePair(pairText, out int sourceFrame, out int targetFrame))
+                return $"{sourceFrame}->{targetFrame}";
+
+            return string.Empty;
         }
 
         private readonly record struct YoloFinalMaskCleanupPassResult(
