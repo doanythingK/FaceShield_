@@ -322,6 +322,24 @@ function Read-LogIntValue {
     return [int]::Parse($match.Groups["value"].Value, [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Read-LogDoubleValue {
+    param(
+        [string]$Line,
+        [string]$Name,
+        [double]$DefaultValue = 0.0
+    )
+
+    $match = [regex]::Match(
+        $Line,
+        "(?:^|,\s*)$([regex]::Escape($Name))=(?<value>[0-9]+(?:\.[0-9]+)?)",
+        [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if (-not $match.Success) {
+        return $DefaultValue
+    }
+
+    return [double]::Parse($match.Groups["value"].Value, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Get-FinalMaskCleanupEvidence {
     param([string]$Path)
 
@@ -375,6 +393,53 @@ function Get-FinalMaskCleanupEvidence {
         AreaChangedStrongCarryProtected = $areaChangedStrongCarryProtected
         StickyStrongCarryRemoved = $stickyStrongCarryRemoved
         SceneCutCarryRemoved = $sceneCutCarryRemoved
+    }
+}
+
+function Get-AutoRunGapFillCarryEvidence {
+    param([string]$Path)
+
+    $text = Read-OptionalText $Path
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return [pscustomobject]@{
+            RunId = "pending-log"
+            PostGapFillCarryPairs = 0
+            PostGapFillRemoved = 0
+            PostGapFillProtected = 0
+            PostGapFillRemovalRate = 0.0
+            PostGapFillProtectedRate = 0.0
+            Evidence = "prediction log not available; source=$Path"
+        }
+    }
+
+    $line = @(($text -split "`r?`n") | Where-Object { $_.StartsWith("[AutoRunSummary]") } | Select-Object -Last 1)
+    if ($line.Count -eq 0 -or [string]::IsNullOrWhiteSpace($line[-1])) {
+        return [pscustomobject]@{
+            RunId = "missing-autosummary"
+            PostGapFillCarryPairs = 0
+            PostGapFillRemoved = 0
+            PostGapFillProtected = 0
+            PostGapFillRemovalRate = 0.0
+            PostGapFillProtectedRate = 0.0
+            Evidence = "prediction log has no AutoRunSummary row; source=$Path"
+        }
+    }
+
+    $summaryLine = $line[-1]
+    $postGapFillCarryPairs = Read-LogIntValue $summaryLine "postGapFillCarryPairs"
+    $postGapFillRemoved = Read-LogIntValue $summaryLine "postGapFillRemoved"
+    $postGapFillProtected = Read-LogIntValue $summaryLine "postGapFillProtected"
+    $postGapFillRemovalRate = Read-LogDoubleValue $summaryLine "postGapFillRemovalRate"
+    $postGapFillProtectedRate = Read-LogDoubleValue $summaryLine "postGapFillProtectedRate"
+
+    return [pscustomobject]@{
+        RunId = if ($summaryLine -match 'runId=([^,]+)') { $matches[1] } else { "unknown" }
+        PostGapFillCarryPairs = $postGapFillCarryPairs
+        PostGapFillRemoved = $postGapFillRemoved
+        PostGapFillProtected = $postGapFillProtected
+        PostGapFillRemovalRate = $postGapFillRemovalRate
+        PostGapFillProtectedRate = $postGapFillProtectedRate
+        Evidence = "source=$Path, postGapFillCarryPairs=$postGapFillCarryPairs, postGapFillRemoved=$postGapFillRemoved, postGapFillProtected=$postGapFillProtected, postGapFillRemovalRate=$([math]::Round($postGapFillRemovalRate, 4)), postGapFillProtectedRate=$([math]::Round($postGapFillProtectedRate, 4))"
     }
 }
 
@@ -561,6 +626,7 @@ $pseudoGtClosureRowsWithFullFrameContinuityEvidence = Count-ColumnPresent $pseud
 $pseudoGtClosureRowsWithFullFrameContinuityReasonEvidence = Count-ColumnPresent $pseudoGtClosureRows "fullFrameContinuityCandidateReasons"
 $pseudoGtClosureRowsWithFullFrameContinuityHintEvidence = Count-ColumnPresent $pseudoGtClosureRows "fullFrameContinuityReviewHints"
 $finalMaskCleanupEvidence = Get-FinalMaskCleanupEvidence $FinalMaskCleanupLog
+$autoRunGapFillEvidence = Get-AutoRunGapFillCarryEvidence $PredictionLog
 $pseudoGtOpenRows = if ($pseudoGtRows.Count -eq 0) {
     0
 }
@@ -630,7 +696,7 @@ $rows = @(
     [pscustomobject]@{ Requirement = "Failure-axis classification"; Status = "pass"; Evidence = "axes=model/decode/preprocess/post-filter/track/roi/tiling/small-face/box-refine/speed documented" },
     [pscustomobject]@{ Requirement = "Anti-flicker track hold algorithm"; Status = "pass"; Evidence = "track-hold-state=pass, app YOLO MaxLostFillFrames=0, app YOLO MaxInitialFillFrames=3, app YOLO MaxConfirmedTrackHoldFrames=5, app keeps short internal gap-fill but does not carry final tracks into the next scene, YOLO synthetic track-fill confidence capped at 0.78 for opt-in lost-fill scene-cut cleanup, sceneCutLostRemoved=6 verifies capped high-confidence lost-fill tails are cleared after a hard cut, stable final-mask gap fill up to 8 frames, synthetic cap verifier still covers MaxLostFillFrames=6" },
     [pscustomobject]@{ Requirement = "Scene-cut track reset guard"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes scene-cut-guard=pass, final YOLO scene-cut cleanup runs after ROI/smoothing, post-scene weak cleanup runs without gap-fill, gap/lost track fill plus weak and medium-confidence direct carry-tail transitions checked, hardCutRemoved=True, sameSceneKept=True, directRemoved=3, mediumDirectRemoved=3, checkedPairs and removedFrames logged" },
-    [pscustomobject]@{ Requirement = "Scene-cut high-confidence carry cleanup"; Status = $finalMaskCleanupEvidence.Status; Evidence = "$($finalMaskCleanupEvidence.Evidence); same-size post-cut carry support is not enough to preserve a mask, while scale-changed strong support remains reviewable; shifted carry matching uses maxCenterShift=0.80 and maxAreaChange=3.5 in app/smoke paths" },
+    [pscustomobject]@{ Requirement = "Scene-cut high-confidence carry cleanup"; Status = $finalMaskCleanupEvidence.Status; Evidence = "$($finalMaskCleanupEvidence.Evidence); same-size post-cut carry support is not enough to preserve a mask, while scale-changed strong support remains reviewable; shifted carry matching uses maxCenterShift=0.80 and maxAreaChange=3.5 in app/smoke paths; postGapFillCarryPairs=$($autoRunGapFillEvidence.PostGapFillCarryPairs), postGapFillRemoved=$($autoRunGapFillEvidence.PostGapFillRemoved), postGapFillProtected=$($autoRunGapFillEvidence.PostGapFillProtected), postGapFillRemovalRate=$(Format-Double $autoRunGapFillEvidence.PostGapFillRemovalRate), postGapFillProtectedRate=$(Format-Double $autoRunGapFillEvidence.PostGapFillProtectedRate)" },
     [pscustomobject]@{ Requirement = "Sparse auto-detect scene-cut guard"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes automask-sparse-scene-cut-guard=pass and automask-sparse-materialize-scene-cut=pass, YOLO hard cut interpolated=0 sceneCutStops=1, yoloSceneCutTransitions=0->5, cutBeforePositiveInterpolated=0, sparseSceneCutPairs logged" },
     [pscustomobject]@{ Requirement = "Sparse/unstable-tail/edge-tail temporal false-positive filter"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes face-track-postprocess=pass, removedSparse=3, removedUnstableTail=1, removedEdgeTail=1, YOLO sparse weak track profile active, unstable geometry-jump tail cleanup covers confidence up to 0.45 after 3 stable detections, low-confidence edge lost-fill blocked, weak texture cluster cleanup removes 4-5 frame non-edge texture candidates up to confidence 0.45 while preserving strong continuation at 0.70+" },
     [pscustomobject]@{ Requirement = "YOLO aspect-ratio candidate filter"; Status = "pass"; Evidence = "verify-auto-mosaic-default includes yolo-aspect-ratio-filter=pass; YoloFaceOnnxDetectorOptions exposes UseAspectRatioFilter/MinAspectRatio/MaxAspectRatio, app YOLO path sets 0.35-1.65, smoke harness can exercise the filter" },
@@ -697,6 +763,11 @@ $lines = @(
     "- finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status)",
     "- finalMaskCleanupDriftingStrongCarryRemoved=$($finalMaskCleanupEvidence.DriftingStrongCarryRemoved)",
     "- finalMaskCleanupAreaChangedStrongCarryProtected=$($finalMaskCleanupEvidence.AreaChangedStrongCarryProtected)",
+    "- postGapFillCarryPairs=$($autoRunGapFillEvidence.PostGapFillCarryPairs)",
+    "- postGapFillRemoved=$($autoRunGapFillEvidence.PostGapFillRemoved)",
+    "- postGapFillProtected=$($autoRunGapFillEvidence.PostGapFillProtected)",
+    "- postGapFillRemovalRate=$(Format-Double $autoRunGapFillEvidence.PostGapFillRemovalRate)",
+    "- postGapFillProtectedRate=$(Format-Double $autoRunGapFillEvidence.PostGapFillProtectedRate)",
     "- pseudoGtStatus=$pseudoGtStatus",
     "- pseudoGtRows=$($pseudoGtRows.Count)",
     "- pseudoGtClosedRows=$pseudoGtClosedRows",
@@ -814,6 +885,11 @@ if ($Verify) {
         Assert-ReportContains "report records final-mask cleanup state" $report "finalMaskCleanupStatus=$($finalMaskCleanupEvidence.Status)"
         Assert-ReportContains "report records same-size carry removal count" $report "finalMaskCleanupDriftingStrongCarryRemoved=$($finalMaskCleanupEvidence.DriftingStrongCarryRemoved)"
         Assert-ReportContains "report records area-changed carry protection count" $report "finalMaskCleanupAreaChangedStrongCarryProtected=$($finalMaskCleanupEvidence.AreaChangedStrongCarryProtected)"
+        Assert-ReportContains "report records post-gap-fill carry pairs" $report "postGapFillCarryPairs=$($autoRunGapFillEvidence.PostGapFillCarryPairs)"
+        Assert-ReportContains "report records post-gap-fill carry removed" $report "postGapFillRemoved=$($autoRunGapFillEvidence.PostGapFillRemoved)"
+        Assert-ReportContains "report records post-gap-fill carry protected" $report "postGapFillProtected=$($autoRunGapFillEvidence.PostGapFillProtected)"
+        Assert-ReportContains "report records post-gap-fill removal rate" $report "postGapFillRemovalRate=$(Format-Double $autoRunGapFillEvidence.PostGapFillRemovalRate)"
+        Assert-ReportContains "report records post-gap-fill protected rate" $report "postGapFillProtectedRate=$(Format-Double $autoRunGapFillEvidence.PostGapFillProtectedRate)"
         Assert-ReportContains "report records pseudo-GT candidate evidence" $report "Test-only pseudo-GT candidate evidence | $pseudoGtStatus"
         Assert-ReportContains "report records pseudo-GT review queue" $report "Test-only pseudo-GT review queue | $pseudoGtReviewQueueStatus"
         Assert-ReportContains "report records pseudo-GT review queue state" $report "pseudoGtReviewQueueStatus=$pseudoGtReviewQueueStatus"

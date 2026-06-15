@@ -325,6 +325,21 @@ function Read-RunInfo {
             $finalSummary.largeJumpGaps = [int]$matches[1]
             continue
         }
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary\)] .* postGapFillCarryPairs=(\d+), postGapFillRemoved=(\d+), postGapFillProtected=(\d+), postGapFillRemovalRate=([0-9.]+), postGapFillProtectedRate=([0-9.]+)') {
+            $finalSummary.postGapFillCarryPairs = [int]$matches[1]
+            $finalSummary.postGapFillRemoved = [int]$matches[2]
+            $finalSummary.postGapFillProtected = [int]$matches[3]
+            $finalSummary.postGapFillRemovalRate = [double]$matches[4]
+            $finalSummary.postGapFillProtectedRate = [double]$matches[5]
+            continue
+        }
+
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary\)] .* postGapFillCarryPairs=(\d+), postGapFillRemoved=(\d+), postGapFillProtected=(\d+)') {
+            $finalSummary.postGapFillCarryPairs = [int]$matches[1]
+            $finalSummary.postGapFillRemoved = [int]$matches[2]
+            $finalSummary.postGapFillProtected = [int]$matches[3]
+            continue
+        }
 
         if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* perFaceShortGaps=(\d+)') {
             $finalSummary.perFaceShortGaps = [int]$matches[1]
@@ -589,6 +604,18 @@ Write-Host ""
 Write-Host "== scene-cut carry control summary =="
 Write-Host ("A removed={0} removedUnsupportedStrong={1} protectedStrong={2}" -f $runA.SceneCarry.removed, $runA.SceneCarry.removedUnsupportedStrong, $runA.SceneCarry.protectedStrong)
 Write-Host ("B removed={0} removedUnsupportedStrong={1} protectedStrong={2}" -f $runB.SceneCarry.removed, $runB.SceneCarry.removedUnsupportedStrong, $runB.SceneCarry.protectedStrong)
+Write-Host ("A postGapFillCarryPairs={0}, removed={1}, protected={2}, removalRate={3:P1}, protectedRate={4:P1}" -f `
+    $(if ($runA.FinalSummary.ContainsKey('postGapFillCarryPairs')) { $runA.FinalSummary.postGapFillCarryPairs } else { "n/a" }), `
+    $(if ($runA.FinalSummary.ContainsKey('postGapFillRemoved')) { $runA.FinalSummary.postGapFillRemoved } else { "n/a" }), `
+    $(if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { $runA.FinalSummary.postGapFillProtected } else { "n/a" }), `
+    $(if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0 }), `
+    $(if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0 }))
+Write-Host ("B postGapFillCarryPairs={0}, removed={1}, protected={2}, removalRate={3:P1}, protectedRate={4:P1}" -f `
+    $(if ($runB.FinalSummary.ContainsKey('postGapFillCarryPairs')) { $runB.FinalSummary.postGapFillCarryPairs } else { "n/a" }), `
+    $(if ($runB.FinalSummary.ContainsKey('postGapFillRemoved')) { $runB.FinalSummary.postGapFillRemoved } else { "n/a" }), `
+    $(if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { $runB.FinalSummary.postGapFillProtected } else { "n/a" }), `
+    $(if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0 }), `
+    $(if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0 }))
 
 if ($runA.SceneCutReset.removed -gt 0 -or $runB.SceneCutReset.removed -gt 0) {
     Write-Host ""
@@ -631,6 +658,11 @@ $exportDeltaForHint = $bExport - $aExport
 $sceneCutDelta = $runB.SceneCutReset.removed - $runA.SceneCutReset.removed
 $shortGapDelta = (if ($runB.FinalSummary.ContainsKey('shortGaps')) { [int]$runB.FinalSummary.shortGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('shortGaps')) { [int]$runA.FinalSummary.shortGaps } else { 0 })
 $largeJumpGapDelta = (if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runB.FinalSummary.largeJumpGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runA.FinalSummary.largeJumpGaps } else { 0 })
+$postGapFillCarryPairDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillCarryPairs')) { [int]$runB.FinalSummary.postGapFillCarryPairs } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillCarryPairs')) { [int]$runA.FinalSummary.postGapFillCarryPairs } else { 0 })
+$postGapFillRemovedDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillRemoved')) { [int]$runB.FinalSummary.postGapFillRemoved } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillRemoved')) { [int]$runA.FinalSummary.postGapFillRemoved } else { 0 })
+$postGapFillProtectedDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runB.FinalSummary.postGapFillProtected } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runA.FinalSummary.postGapFillProtected } else { 0 })
+$postGapFillRemovalRateDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 })
+$postGapFillProtectedRateDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 })
 $runAHybridWindowShortfall = if ($runA.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runA.Export.hybridWindowFrameShortfall } else { 0 }
 $runBHybridWindowShortfall = if ($runB.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runB.Export.hybridWindowFrameShortfall } else { 0 }
 $runASampleWindowShortfall = if ($runA.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runA.Export.sampleWindowFrameShortfall } else { 0 }
@@ -642,6 +674,11 @@ Write-Host ("미탐 보완 proxy (interpolated): A={0} B={1} Δ={2}" -f $aInterp
 Write-Host ("장면전환 carry reset 제거량: A={0} B={1} Δ={2}" -f $runA.SceneCutReset.removed, $runB.SceneCutReset.removed, $sceneCutDelta)
 Write-Host ("단기 미탐 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('shortGaps')) { $runA.FinalSummary.shortGaps } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('shortGaps')) { $runB.FinalSummary.shortGaps } else { 0 }), $shortGapDelta)
 Write-Host ("큰 점프 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { $runA.FinalSummary.largeJumpGaps } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { $runB.FinalSummary.largeJumpGaps } else { 0 }), $largeJumpGapDelta)
+Write-Host ("컷 전환 post-gap-fill carry pairs: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillCarryPairs')) { $runA.FinalSummary.postGapFillCarryPairs } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillCarryPairs')) { $runB.FinalSummary.postGapFillCarryPairs } else { 0 }), $postGapFillCarryPairDelta)
+Write-Host ("컷 전환 post-gap-fill carry removed: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillRemoved')) { $runA.FinalSummary.postGapFillRemoved } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillRemoved')) { $runB.FinalSummary.postGapFillRemoved } else { 0 }), $postGapFillRemovedDelta)
+Write-Host ("컷 전환 post-gap-fill carry protected: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { $runA.FinalSummary.postGapFillProtected } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { $runB.FinalSummary.postGapFillProtected } else { 0 }), $postGapFillProtectedDelta)
+Write-Host ("컷 전환 post-gap-fill carry 제거율: A={0:P1} B={1:P1} Δ={2:P1}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 }, $(if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }), $postGapFillRemovalRateDelta)
+Write-Host ("컷 전환 post-gap-fill carry 보존율: A={0:P1} B={1:P1} Δ={2:P1}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 }, $(if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }), $postGapFillProtectedRateDelta)
 Write-Host ("하이브리드 윈도우 누락: A={0} B={1} Δ={2}" -f $runAHybridWindowShortfall, $runBHybridWindowShortfall, ($runBHybridWindowShortfall - $runAHybridWindowShortfall))
 Write-Host ("샘플 구간 누락: A={0} B={1} Δ={2}" -f $runASampleWindowShortfall, $runBSampleWindowShortfall, ($runBSampleWindowShortfall - $runASampleWindowShortfall))
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
