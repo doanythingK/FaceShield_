@@ -45,6 +45,7 @@ namespace FaceShield.Services.Analysis
         private const double YoloFinalMaskLowerWeakMaxAreaRatio = 0.045;
         private const double YoloFinalMaskMinAspectRatio = 0.35;
         private const double YoloFinalMaskMaxAspectRatio = 1.65;
+        private const int YoloQualitySampleWindowFrames = 900;
         private const int OffModeGapFillWindowFrames = 4;
         private const int OffModeGapFillMaxGapFrames = 4;
         private const float OffModeGapFillMinAnchorConfidence = 0.62f;
@@ -866,6 +867,10 @@ namespace FaceShield.Services.Analysis
                 }
             }
             var perFaceShortGapRanges = FindPerFaceShortGapRanges(entries);
+            var sampleWindowIssueFrames = new HashSet<int>();
+            AddFrameRangeIssues(sampleWindowIssueFrames, shortGapRanges);
+            AddFrameRangeIssues(sampleWindowIssueFrames, perFaceShortGapRanges);
+            AddFrameRangeIssues(sampleWindowIssueFrames, largeJumpGapRanges);
 
             var isolatedFrames = new List<int>();
             for (int i = 0; i < frames.Length; i++)
@@ -873,7 +878,10 @@ namespace FaceShield.Services.Analysis
                 bool hasPreviousNeighbor = i > 0 && frames[i] - frames[i - 1] <= 1;
                 bool hasNextNeighbor = i < frames.Length - 1 && frames[i + 1] - frames[i] <= 1;
                 if (!hasPreviousNeighbor && !hasNextNeighbor)
+                {
                     isolatedFrames.Add(frames[i]);
+                    sampleWindowIssueFrames.Add(frames[i]);
+                }
             }
 
             int lowConfidenceRows = 0;
@@ -910,6 +918,7 @@ namespace FaceShield.Services.Analysis
                     {
                         lowConfidenceRows++;
                         lowConfidenceFrames.Add(frameIndex);
+                        sampleWindowIssueFrames.Add(frameIndex);
                     }
 
                     bool touchesEdge = TouchesFinalMaskFrameEdge(face, data.Size);
@@ -919,20 +928,24 @@ namespace FaceShield.Services.Analysis
                         {
                             edgeWeakRows++;
                             edgeWeakFrames.Add(frameIndex);
+                            sampleWindowIssueFrames.Add(frameIndex);
                             if (IsUpperWeakFinalMaskFace(face, data.Size))
                             {
                                 topEdgeWeakRows++;
                                 topEdgeWeakFrames.Add(frameIndex);
+                                sampleWindowIssueFrames.Add(frameIndex);
                             }
                         }
                         else
                         {
                             weakNonEdgeRows++;
                             weakNonEdgeFrames.Add(frameIndex);
+                            sampleWindowIssueFrames.Add(frameIndex);
                             if (IsTinyFinalMaskFace(face, data.Size, YoloFinalMaskTinyWeakAreaRatio))
                             {
                                 tinyWeakRows++;
                                 tinyWeakFrames.Add(frameIndex);
+                                sampleWindowIssueFrames.Add(frameIndex);
                             }
                         }
                     }
@@ -942,6 +955,7 @@ namespace FaceShield.Services.Analysis
                     {
                         topEdgeLargeRows++;
                         topEdgeLargeFrames.Add(frameIndex);
+                        sampleWindowIssueFrames.Add(frameIndex);
                     }
 
                     if (confidence <= YoloFinalMaskUpperWeakConfidenceMax &&
@@ -950,6 +964,7 @@ namespace FaceShield.Services.Analysis
                     {
                         upperWeakRows++;
                         upperWeakFrames.Add(frameIndex);
+                        sampleWindowIssueFrames.Add(frameIndex);
                     }
 
                     if (confidence <= YoloFinalMaskLowerWeakConfidenceMax &&
@@ -958,12 +973,14 @@ namespace FaceShield.Services.Analysis
                     {
                         lowerWeakRows++;
                         lowerWeakFrames.Add(frameIndex);
+                        sampleWindowIssueFrames.Add(frameIndex);
                     }
 
                     if (IsAbnormalFinalMaskAspect(face))
                     {
                         aspectBadRows++;
                         aspectBadFrames.Add(frameIndex);
+                        sampleWindowIssueFrames.Add(frameIndex);
                     }
 
                     if (confidence <= YoloFinalMaskTinyShortConfidenceMax &&
@@ -972,9 +989,13 @@ namespace FaceShield.Services.Analysis
                     {
                         tinyShortRows++;
                         tinyShortFrames.Add(frameIndex);
+                        sampleWindowIssueFrames.Add(frameIndex);
                     }
                 }
             }
+
+            foreach (int frameIndex in protectedSceneCarryFrames)
+                sampleWindowIssueFrames.Add(frameIndex);
 
             var reviewReasons = BuildFinalMaskReviewReasons(
                 shortGapCount,
@@ -1002,8 +1023,17 @@ namespace FaceShield.Services.Analysis
                 $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeLarge={topEdgeLargeRows} topEdgeLargeFrames={FormatFrameList(topEdgeLargeFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} sceneCutControl=preGuard={sceneCutPreGuardPairCount},preStrong={sceneCutPreStrongProbePairCount},postGuard={sceneCutPostGuardPairCount},postStrong={sceneCutPostStrongProbePairCount},carryPairs={sceneCutCarryPairCount},carryRemoved={sceneCutCarryRemovedCount},carryProtected={sceneCutProtectedFrameCount} reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
             string reviewReasonText = FormatTextList(reviewReasons);
             var sampleEntries = entries;
-            int sampleWindowStart = frames[0];
-            int sampleWindowEnd = Math.Min(_totalFrames - 1, frames[0] + 899);
+            int sampleWindowLength = Math.Min(YoloQualitySampleWindowFrames, Math.Max(1, _totalFrames - frames[0] + 1));
+            int sampleWindowIssueCandidateCount;
+            string sampleWindowStartReason;
+            int sampleWindowStart = ResolveSampleWindowStart(
+                frames[0],
+                _totalFrames - 1,
+                sampleWindowLength,
+                sampleWindowIssueFrames,
+                out sampleWindowIssueCandidateCount,
+                out sampleWindowStartReason);
+            int sampleWindowEnd = Math.Min(_totalFrames - 1, sampleWindowStart + sampleWindowLength - 1);
             int sampleWindowFrames = Math.Max(0, sampleWindowEnd - sampleWindowStart + 1);
             if (sampleWindowFrames <= 0)
             {
@@ -1012,13 +1042,14 @@ namespace FaceShield.Services.Analysis
             }
             else
             {
-                sampleEntries = entries.Where(static x => x.Key <= sampleWindowEnd).ToArray();
+                sampleEntries = entries.Where(x => x.Key >= sampleWindowStart && x.Key <= sampleWindowEnd).ToArray();
                 if (sampleEntries.Count == 0)
                     sampleEntries = Array.Empty<KeyValuePair<int, FrameMaskProvider.FaceMaskData>>();
             }
 
             int sampleFrameCount = sampleEntries.Length;
             int sampleRows = sampleEntries.Sum(static x => x.Value.Faces.Count);
+            Debug.WriteLine($"[FinalMaskSampleWindow] profile=Yolo candidateIssueFrames={sampleWindowIssueFrames.Count} selectedIssueFrames={sampleWindowIssueCandidateCount} reason={sampleWindowStartReason} totalFrames={_totalFrames} baseFirstFrame={frames[0]} baseLastFrame={frames[^1]} windowLength={sampleWindowLength} start={sampleWindowStart} end={sampleWindowEnd} entriesInWindow={sampleEntries.Length} sampleWindowRows={sampleRows}");
             var sampleShortGapRanges = new List<string>();
             var sampleShortGapFrames = sampleEntries.Select(static x => x.Key).ToArray();
             int sampleShortGapCount = 0;
@@ -1076,7 +1107,7 @@ namespace FaceShield.Services.Analysis
             int sampleAspectBadRows = 0;
             int sampleTinyWeakRows = 0;
             int sampleTinyShortRows = 0;
-            var sampleProtectedCarryFrames = protectedSceneCarryFrames.Count(x => x <= sampleWindowEnd);
+            var sampleProtectedCarryFrames = protectedSceneCarryFrames.Count(x => x >= sampleWindowStart && x <= sampleWindowEnd);
             foreach (var entry in sampleEntries)
             {
                 int frameIndex = entry.Key;
@@ -1527,6 +1558,109 @@ namespace FaceShield.Services.Analysis
 
             foreach (int frameIndex in frameIndices)
                 destination.Add(frameIndex);
+        }
+
+        private static void AddFrameRangeIssues(
+            ICollection<int> destination,
+            IReadOnlyCollection<string>? frameRanges)
+        {
+            if (destination == null || frameRanges == null || frameRanges.Count == 0)
+                return;
+
+            foreach (string rangeText in frameRanges)
+            {
+                if (TryParseFrameRange(rangeText, out int start, out int end))
+                {
+                    destination.Add(start);
+                    destination.Add(end);
+                }
+            }
+        }
+
+        private static int ResolveSampleWindowStart(
+            int firstFrame,
+            int lastFrame,
+            int sampleWindowLength,
+            IReadOnlyCollection<int> issueFrames,
+            out int issueCandidateCount,
+            out string sampleWindowStartReason)
+        {
+            issueCandidateCount = 0;
+            sampleWindowStartReason = "fallback:unknown";
+            if (firstFrame < 0 || sampleWindowLength <= 0 || firstFrame > lastFrame)
+            {
+                sampleWindowStartReason = $"fallback:invalidInput firstFrame={firstFrame},lastFrame={lastFrame},windowLength={sampleWindowLength}";
+                return Math.Max(0, firstFrame);
+            }
+
+            if (issueFrames.Count == 0)
+            {
+                sampleWindowStartReason = $"fallback:noIssueFrames firstFrame={firstFrame},lastFrame={lastFrame},windowLength={sampleWindowLength}";
+                return firstFrame;
+            }
+
+            var orderedIssueFrames = issueFrames
+                .Distinct()
+                .Where(static frame => frame >= firstFrame && frame <= lastFrame)
+                .OrderBy(static frame => frame)
+                .ToArray();
+            issueCandidateCount = orderedIssueFrames.Length;
+
+            if (issueCandidateCount == 0)
+            {
+                sampleWindowStartReason = $"fallback:noIssueFramesInRange issueFrames={issueFrames.Count},firstFrame={firstFrame},lastFrame={lastFrame}";
+                return firstFrame;
+            }
+
+            int selectedIndex = issueCandidateCount / 2;
+            int targetFrame = orderedIssueFrames[selectedIndex];
+            int halfWindow = Math.Max(0, sampleWindowLength - 1) / 2;
+            int maxStart = lastFrame - sampleWindowLength + 1;
+            if (maxStart < firstFrame)
+                maxStart = firstFrame;
+            int selectedStart = targetFrame - halfWindow;
+            if (selectedStart < firstFrame)
+            {
+                sampleWindowStartReason = $"clampedToFirstFrame firstFrame={firstFrame},targetFrame={targetFrame},issueIndex={selectedIndex}/{issueCandidateCount - 1},windowLength={sampleWindowLength}";
+                return firstFrame;
+            }
+
+            if (selectedStart > maxStart)
+            {
+                sampleWindowStartReason = $"clampedToMaxStart lastFrame={lastFrame},maxStart={maxStart},targetFrame={targetFrame},issueIndex={selectedIndex}/{issueCandidateCount - 1},windowLength={sampleWindowLength}";
+                return maxStart;
+            }
+
+            sampleWindowStartReason = $"medianIssue frame={targetFrame} index={selectedIndex}/{issueCandidateCount - 1} windowLength={sampleWindowLength}";
+            return selectedStart;
+        }
+
+        private static bool TryParseFrameRange(string? rangeText, out int startFrame, out int endFrame)
+        {
+            startFrame = 0;
+            endFrame = 0;
+
+            if (string.IsNullOrWhiteSpace(rangeText))
+                return false;
+
+            int separatorIndex = rangeText.IndexOf('-');
+            if (separatorIndex <= 0)
+            {
+                if (!int.TryParse(rangeText, out int frame))
+                    return false;
+
+                startFrame = frame;
+                endFrame = frame;
+                return true;
+            }
+
+            if (!int.TryParse(rangeText.AsSpan(0, separatorIndex), out startFrame))
+                return false;
+
+            if (!int.TryParse(rangeText.AsSpan(separatorIndex + 1), out endFrame))
+                return false;
+
+            return true;
         }
 
         private static void AddFrameIndices(
