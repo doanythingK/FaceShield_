@@ -215,9 +215,11 @@ namespace FaceShield.Services.Analysis
                 $"[AutoMaskPostProcessTiming] runId={runId} phase=roi-refine run={ranRoiRefine} elapsedMs={swRoi.ElapsedMilliseconds} enabled={enableRoiPostProcess}");
 
             YoloGapFillRunSummary yoloOffModeGapFillSummary = YoloGapFillRunSummary.Empty;
+            YoloFinalMaskCleanupPassResult yoloOffModeWeakCleanupSummary = YoloFinalMaskCleanupPassResult.Empty;
             IReadOnlyList<string> yoloOffModeGapFillCutPairs = Array.Empty<string>();
             var swOffGapFill = Stopwatch.StartNew();
             bool ranOffModeGapFill = false;
+            bool ranOffModeWeakIsolationCleanup = false;
             if (runYoloOffModeGapFill)
             {
                 ranOffModeGapFill = true;
@@ -256,12 +258,30 @@ namespace FaceShield.Services.Analysis
                 finalGapFillCutGuardDirectDifferenceSkipped += yoloOffModeGapFillSummary.CutGuardDirectDifferenceSkipped;
             }
             swOffGapFill.Stop();
+
+            var swOffWeakCleanup = Stopwatch.StartNew();
+            if (enableYoloOffModeWeakIsolationCleanup)
+            {
+                ranOffModeWeakIsolationCleanup = true;
+                yoloOffModeWeakCleanupSummary = RemoveYoloWeakIsolatedFinalMasks(
+                    videoPath,
+                    cancellationToken,
+                    fillStableGaps: false,
+                    skipSceneCutGuard: !enableYoloOffModeSceneCutCarryGuard,
+                    logLabel: "YoloFinalMaskOffModeWeakIsolation",
+                    logWhenNoRemovals: true);
+                finalFalsePositiveSuppressedCount += yoloOffModeWeakCleanupSummary.RemovedFacesInfo.Count;
+                AddFrameIndices(finalFalsePositiveSuppressedFrameIndices, yoloOffModeWeakCleanupSummary.RemovedFrameIndices);
+            }
+            swOffWeakCleanup.Stop();
             yoloOffModeGapFillCutPairs = yoloOffModeGapFillSummary.CutFramePairs;
             IReadOnlyList<string> offModeGapFillWindowRanges = BuildCutPairWindowRanges(
                 yoloOffModeGapFillCutPairs,
                 OffModeGapFillWindowFrames);
             Debug.WriteLine(
                 $"[AutoMaskPostProcessTiming] runId={runId} phase=yolo-off-mode-gap-fill run={ranOffModeGapFill} elapsedMs={swOffGapFill.ElapsedMilliseconds} enabled={runYoloOffModeGapFill} filled={yoloOffModeGapFillSummary.FilledFaces} blockedCut={yoloOffModeGapFillSummary.BlockedCutGapFrames} blockedCutBefore={yoloOffModeGapFillSummary.BlockedCutGapBeforeCutFrames} blockedCutAfter={yoloOffModeGapFillSummary.BlockedCutGapAfterCutFrames} blockedCleanup={yoloOffModeGapFillSummary.BlockedCleanupGapFrames} blockedSceneCarry={yoloOffModeGapFillSummary.BlockedSceneCarryGapFrames} suppressedWeak={yoloOffModeGapFillSummary.SuppressedWeakGeometryAnchorChecks} suppressedRisky={yoloOffModeGapFillSummary.SuppressedRiskyGeometryAnchorChecks} unsupported={yoloOffModeGapFillSummary.UnsupportedWeakAnchorChecks} gapPairs={FormatTextList(yoloOffModeGapFillCutPairs)} gapWindows={FormatTextList(offModeGapFillWindowRanges)}");
+            Debug.WriteLine(
+                $"[AutoMaskPostProcessTiming] runId={runId} phase=yolo-off-mode-weak-cleanup run={ranOffModeWeakIsolationCleanup} elapsedMs={swOffWeakCleanup.ElapsedMilliseconds} removed={yoloOffModeWeakCleanupSummary.RemovedFacesInfo.Count} removedFrames={FormatFrameList(yoloOffModeWeakCleanupSummary.RemovedFrameIndices)}");
 
             YoloFinalMaskCleanupPassResult yoloCleanupPass = YoloFinalMaskCleanupPassResult.Empty;
             var swInitialCleanup = Stopwatch.StartNew();
