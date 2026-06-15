@@ -260,6 +260,9 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<int> yoloSceneCutBlockedFrames = Array.Empty<int>();
             IReadOnlyCollection<FaceTrackFilledFace> yoloSceneCutBlockedFaces = Array.Empty<FaceTrackFilledFace>();
             int sceneCutCarryRemovedCount = 0;
+            int sceneCutPostGapFillCarryPairCount = 0;
+            int sceneCutPostGapFillCarryRemovedCount = 0;
+            int sceneCutPostGapFillProtectedFrameCount = 0;
             var yoloSceneCutPostProcessor = new YoloSceneCutPostProcessor();
             var swScenePre = Stopwatch.StartNew();
             bool ranPreSceneGuard = false;
@@ -491,6 +494,9 @@ namespace FaceShield.Services.Analysis
                     yoloProtectedSceneCarryFrames = CombineFrameIndices(
                         yoloProtectedSceneCarryFrames,
                         postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices);
+                    sceneCutPostGapFillCarryPairCount = postGapFillCutPairs.Count;
+                    sceneCutPostGapFillCarryRemovedCount = postGapFillCarryCleanup.RemovedFaces;
+                    sceneCutPostGapFillProtectedFrameCount = postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices.Count;
                     Debug.WriteLine(
                         $"[YoloSceneCutCarryCleanup] stage=post-gap-fill cutPairs={FormatTextList(postGapFillCutPairs)} removed={postGapFillCarryCleanup.RemovedFaces} removedFrames={FormatFrameList(postGapFillCarryCleanup.RemovedFrameIndices)} removedUnsupportedStrong={postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFaces} removedUnsupportedStrongFrames={FormatFrameList(postGapFillCarryCleanup.RemovedUnsupportedStrongCarryLikeFrameIndices)} protectedStrong={postGapFillCarryCleanup.ProtectedStrongCarryLikeFaces} protectedStrongFrames={FormatFrameList(postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices)} blockedFrames={FormatFrameList(postGapFillBlockedFrames)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                     finalFalsePositiveSuppressedCount += postGapFillCarryCleanup.RemovedFaces;
@@ -802,7 +808,10 @@ namespace FaceShield.Services.Analysis
             int finalGapFillBlockedSceneCarryGapFrames = 0,
             int finalGapFillSuppressedWeakGeometryAnchorChecks = 0,
             int finalGapFillSuppressedRiskyGeometryAnchorChecks = 0,
-            int finalGapFillUnsupportedWeakAnchorChecks = 0)
+            int finalGapFillUnsupportedWeakAnchorChecks = 0,
+            int finalSceneCutPostGapFillCarryPairCount = 0,
+            int finalSceneCutPostGapFillCarryRemovedCount = 0,
+            int finalSceneCutPostGapFillProtectedFrameCount = 0)
         {
             if (_options.FilterProfile != FaceFilterProfile.Yolo)
                 return AutoMaskPostProcessFinalSummary.Empty;
@@ -848,6 +857,9 @@ namespace FaceShield.Services.Analysis
                     finalGapFillSuppressedWeakGeometryAnchorChecks,
                     finalGapFillSuppressedRiskyGeometryAnchorChecks,
                     finalGapFillUnsupportedWeakAnchorChecks,
+                    finalSceneCutPostGapFillCarryPairCount: sceneCutPostGapFillCarryPairCount,
+                    finalSceneCutPostGapFillCarryRemovedCount: sceneCutPostGapFillCarryRemovedCount,
+                    finalSceneCutPostGapFillProtectedFrameCount: sceneCutPostGapFillProtectedFrameCount,
                     0,
                     0,
                     0,
@@ -1264,7 +1276,10 @@ namespace FaceShield.Services.Analysis
                 sampleFalsePositiveSuppressionCount,
                 sampleWindowIssueFrames.Count,
                 sampleWindowIssueCandidateCount,
-                sampleWindowStartReason);
+                sampleWindowStartReason,
+                finalSceneCutPostGapFillCarryPairCount: sceneCutPostGapFillCarryPairCount,
+                finalSceneCutPostGapFillCarryRemovedCount: sceneCutPostGapFillCarryRemovedCount,
+                finalSceneCutPostGapFillProtectedFrameCount: sceneCutPostGapFillProtectedFrameCount);
         }
 
         private static IReadOnlyList<string> BuildFinalMaskReviewReasons(
@@ -1863,7 +1878,10 @@ namespace FaceShield.Services.Analysis
         int SampleFalsePositiveSuppressionCount,
         int SampleWindowIssueFrameCount,
         int SampleWindowIssueCandidateCount,
-        string SampleWindowStartReason)
+        string SampleWindowStartReason,
+        int FinalSceneCutPostGapFillCarryPairCount,
+        int FinalSceneCutPostGapFillCarryRemovedCount,
+        int FinalSceneCutPostGapFillProtectedFrameCount)
     {
         public static AutoMaskPostProcessFinalSummary Empty { get; } = new(
             0,
@@ -1900,6 +1918,9 @@ namespace FaceShield.Services.Analysis
             0,
             0,
             0,
-            "none");
+            "none",
+            0,
+            0,
+            0);
     }
 }
