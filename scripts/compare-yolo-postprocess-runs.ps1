@@ -43,6 +43,24 @@
 .PARAMETER JsonOutput
     결과를 JSON 형식으로 출력합니다.
 
+.PARAMETER MaxWeakScoreDelta
+    품질 게이트: 오탐 proxy(weak face 점수) 허용 증가량(기본 0).
+
+.PARAMETER MinMissRecoveryDelta
+    품질 게이트: 미탐 보완 proxy(Track lost-filled + interpolated) 최소 개선량(기본 0).
+
+.PARAMETER MinPostGapFillRemovalRateDelta
+    품질 게이트: 컷캐리 post-gap-fill 제거율(비율) 최소 개선량(기본 0.00).
+
+.PARAMETER MaxRunTotalMsDelta
+    속도 게이트: AutoMask run totalMs 허용 증가량(기본 0).
+
+.PARAMETER MaxExportTotalMsDelta
+    속도 게이트: Export totalMs 허용 증가량(기본 0).
+
+.PARAMETER AllowReviewRequired
+    대상 비교군에 reviewRequired=true가 발생해도 게이트 통과를 허용할지 지정합니다.
+
 .EXAMPLE
     ./compare-yolo-postprocess-runs.ps1 .\runA.log .\runB.log -RunAId auto-a -RunBId auto-b
 
@@ -78,7 +96,19 @@ param(
     [Parameter(Mandatory = $false)]
     [double] $WindowFrameRate = 30.0,
     [Parameter(Mandatory = $false)]
-    [switch] $JsonOutput
+    [switch] $JsonOutput,
+    [Parameter(Mandatory = $false)]
+    [int] $MaxWeakScoreDelta = 0,
+    [Parameter(Mandatory = $false)]
+    [int] $MinMissRecoveryDelta = 0,
+    [Parameter(Mandatory = $false)]
+    [double] $MinPostGapFillRemovalRateDelta = 0.0,
+    [Parameter(Mandatory = $false)]
+    [int] $MaxRunTotalMsDelta = 0,
+    [Parameter(Mandatory = $false)]
+    [int] $MaxExportTotalMsDelta = 0,
+    [Parameter(Mandatory = $false)]
+    [switch] $AllowReviewRequired
 )
 
 $ErrorActionPreference = "Stop"
@@ -807,3 +837,44 @@ Write-Host ("장면전환 post-gap-fill carry 윈도우: A={0} B={1} Δ={2}" -f 
 Write-Host ("하이브리드 윈도우 누락: A={0} B={1} Δ={2}" -f $runAHybridWindowShortfall, $runBHybridWindowShortfall, ($runBHybridWindowShortfall - $runAHybridWindowShortfall))
 Write-Host ("샘플 구간 누락: A={0} B={1} Δ={2}" -f $runASampleWindowShortfall, $runBSampleWindowShortfall, ($runBSampleWindowShortfall - $runASampleWindowShortfall))
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
+
+$runMsDelta = if (($runA.RunSummary.ContainsKey('totalMs')) -and ($runB.RunSummary.ContainsKey('totalMs'))) {
+    [int]($runB.RunSummary.totalMs - $runA.RunSummary.totalMs)
+} else {
+    $null
+}
+$missRecoveryProxyA = $aTrackFilled + $aInterpolated
+$missRecoveryProxyB = $bTrackFilled + $bInterpolated
+$missRecoveryDelta = $missRecoveryProxyB - $missRecoveryProxyA
+$aPostGapFillRemovalRate = if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 }
+$bPostGapFillRemovalRate = if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }
+$postGapFillRemovalRateDelta = $bPostGapFillRemovalRate - $aPostGapFillRemovalRate
+$bReview = if ($runB.FinalSummary.ContainsKey('reviewRequired')) { [bool]$runB.FinalSummary.reviewRequired } else { $false }
+
+$passWeakScore = $weakDelta -le $MaxWeakScoreDelta
+$passMissRecovery = $missRecoveryDelta -ge $MinMissRecoveryDelta
+$passCutCarry = $postGapFillRemovalRateDelta -ge $MinPostGapFillRemovalRateDelta
+$passRunSpeed = if ($null -eq $runMsDelta) { $true } else { $runMsDelta -le $MaxRunTotalMsDelta }
+$passExportSpeed = if ($null -eq $exportDeltaForHint) { $true } else { $exportDeltaForHint -le $MaxExportTotalMsDelta }
+$passReview = if ($AllowReviewRequired.IsPresent) { $true } else { -not $bReview }
+$passOverall = $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passRunSpeed -and $passExportSpeed -and $passReview
+$passLabel = if ($passOverall) { "PASS" } else { "REVIEW" }
+$reviewText = if ($passReview) { "PASS" } else { "REVIEW_REQUIRED" }
+
+$passReasons = [System.Collections.Generic.List[string]]::new()
+if (-not $passWeakScore) { $passReasons.Add("weakScoreΔ=$weakDelta > $MaxWeakScoreDelta") }
+if (-not $passMissRecovery) { $passReasons.Add("missRecoveryΔ=$missRecoveryDelta < $MinMissRecoveryDelta") }
+if (-not $passCutCarry) { $passReasons.Add("postGapFillRemovalRateΔ=$('{0:P2}' -f $postGapFillRemovalRateDelta) < $('{0:P2}' -f $MinPostGapFillRemovalRateDelta)") }
+if (-not $passRunSpeed) { $passReasons.Add("runMsΔ=$runMsDelta > $MaxRunTotalMsDelta") }
+if (-not $passExportSpeed) { $passReasons.Add("exportMsΔ=$exportDeltaForHint > $MaxExportTotalMsDelta") }
+if (-not $passReview) { $passReasons.Add("reviewRequired=true") }
+
+Write-Host ""
+Write-Host "== 운영형 판단 (30초/문제구간 기준) =="
+Write-Host ("결론: {0}" -f $passLabel)
+Write-Host ("오탐 proxy: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aWeakScore, $bWeakScore, $weakDelta, $MaxWeakScoreDelta)
+Write-Host ("미탐 보완 proxy: A={0}, B={1}, Δ={2}, 기준≥{3}" -f $missRecoveryProxyA, $missRecoveryProxyB, $missRecoveryDelta, $MinMissRecoveryDelta)
+Write-Host ("컷캐리 제거율: A={0:P2}, B={1:P2}, Δ={2:P2}, 기준≥{3:P2}" -f $aPostGapFillRemovalRate, $bPostGapFillRemovalRate, $postGapFillRemovalRateDelta, $MinPostGapFillRemovalRateDelta)
+Write-Host ("속도(run/export): runΔ={0}, 기준≤{1}, exportΔ={2}, 기준≤{3}" -f (if ($null -ne $runMsDelta) { $runMsDelta } else { "n/a" }), $MaxRunTotalMsDelta, $exportDeltaForHint, $MaxExportTotalMsDelta)
+Write-Host ("심사 플래그: reviewRequired=$bReview -> {0}" -f $reviewText)
+Write-Host ("판정 사유: {0}" -f ($(if ($passReasons.Count -eq 0) { "pass" } else { $passReasons -join '; ' })))
