@@ -425,18 +425,24 @@ namespace FaceShield.Services.Analysis
                 var postSceneStrongWindows = BuildCutPairWindowRanges(
                     yoloStrongCarryProbeCutPairs,
                     YoloSceneCutRebuildWindowFrames);
+                var finalSceneCutPairSourceBreakdown = BuildSceneCutPairSourceBreakdown(
+                    yoloCutPairs,
+                    yoloPreSmoothCutPairs,
+                    yoloPreSmoothStrongCarryProbeCutPairs,
+                    yoloPostSmoothCutPairs,
+                    yoloStrongCarryProbeCutPairs);
                 if (yoloCutPairs.Count > 0)
                 {
                     var yoloCutWindows = BuildCutPairWindowRanges(yoloCutPairs, YoloSceneCutRebuildWindowFrames);
                     Debug.WriteLine(
                         $"[YoloSceneCutPairWindows] stage=final cutPairs={FormatTextList(yoloCutPairs)} cutWindows={FormatTextList(yoloCutWindows)} prePairs={FormatTextList(yoloPreSmoothCutPairs)} preWindows={FormatTextList(preSceneWindows)} preStrongPairs={FormatTextList(yoloPreSmoothStrongCarryProbeCutPairs)} preStrongWindows={FormatTextList(preSceneStrongWindows)} postPairs={FormatTextList(yoloPostSmoothCutPairs)} postWindows={FormatTextList(postSceneWindows)} postStrongPairs={FormatTextList(yoloStrongCarryProbeCutPairs)} postStrongWindows={FormatTextList(postSceneStrongWindows)}");
                     Debug.WriteLine(
-                        $"[YoloSceneCutRebuild] runId={runId} stage=final action=cleanup carryCutPairs={FormatTextList(yoloCutPairs)} carryWindows={FormatTextList(yoloCutWindows)} preWindowSources=pre:{FormatTextList(preSceneWindows)} preStrong:{FormatTextList(preSceneStrongWindows)} postWindowSources=post:{FormatTextList(postSceneWindows)} postStrong:{FormatTextList(postSceneStrongWindows)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
+                        $"[YoloSceneCutRebuild] runId={runId} stage=final action=cleanup carryCutPairs={FormatTextList(yoloCutPairs)} carryWindows={FormatTextList(yoloCutWindows)} preWindowSources=pre:{FormatTextList(preSceneWindows)} preStrong:{FormatTextList(preSceneStrongWindows)} postWindowSources=post:{FormatTextList(postSceneWindows)} postStrong:{FormatTextList(postSceneStrongWindows)} carryPairSourceBreakdown={finalSceneCutPairSourceBreakdown} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                 }
                 else
                 {
                     Debug.WriteLine(
-                        $"[YoloSceneCutRebuild] runId={runId} stage=final action=cleanup carryCutPairs=none purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
+                        $"[YoloSceneCutRebuild] runId={runId} stage=final action=cleanup carryCutPairs=none carryPairSourceBreakdown=preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0 purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                 }
                 var yoloCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
                     _maskProvider,
@@ -503,15 +509,21 @@ namespace FaceShield.Services.Analysis
                     if (postGapFillCutPairs.Count > 0)
                     {
                         var postGapFillCutWindows = BuildCutPairWindowRanges(postGapFillCutPairs, YoloSceneCutRebuildWindowFrames);
+                        var postGapFillSourceBreakdown = BuildSceneCutPairSourceBreakdown(
+                            postGapFillCutPairs,
+                            yoloCutPairs,
+                            Array.Empty<string>(),
+                            postSceneCleanupPass.CutFramePairs,
+                            Array.Empty<string>());
                         Debug.WriteLine(
                             $"[YoloSceneCutPairWindows] stage=post-gap-fill cutPairs={FormatTextList(postGapFillCutPairs)} cutWindows={FormatTextList(postGapFillCutWindows)}");
                         Debug.WriteLine(
-                            $"[YoloSceneCutRebuild] runId={runId} stage=post-gap-fill action=cleanup carryCutPairs={FormatTextList(postGapFillCutPairs)} carryWindows={FormatTextList(postGapFillCutWindows)} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
+                            $"[YoloSceneCutRebuild] runId={runId} stage=post-gap-fill action=cleanup carryCutPairs={FormatTextList(postGapFillCutPairs)} carryWindows={FormatTextList(postGapFillCutWindows)} carryPairSourceBreakdown={postGapFillSourceBreakdown} purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                     }
                     else
                     {
                         Debug.WriteLine(
-                            $"[YoloSceneCutRebuild] runId={runId} stage=post-gap-fill action=cleanup carryCutPairs=none purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
+                            $"[YoloSceneCutRebuild] runId={runId} stage=post-gap-fill action=cleanup carryCutPairs=none carryPairSourceBreakdown=preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0 purgeFrames={YoloSceneCutCarryPurgeFrames} blockFrames={YoloSceneCutCarryBlockFrames} maxConfidence={YoloSceneCutCarryPurgeMaxConfidence:0.###} extendedWeakMaxConfidence={YoloSceneCutExtendedWeakCarryMaxConfidence:0.###}");
                     }
                     var postGapFillCarryCleanup = new YoloFinalMaskPostProcessor().RemoveSceneCutCarryRemnants(
                         _maskProvider,
@@ -1864,6 +1876,72 @@ namespace FaceShield.Services.Analysis
             return values.Count > maxValues
                 ? $"{text},+{values.Count - maxValues}"
                 : text;
+        }
+
+        private static string BuildSceneCutPairSourceBreakdown(
+            IReadOnlyCollection<string> finalCutPairs,
+            IReadOnlyCollection<string>? preCutPairs,
+            IReadOnlyCollection<string>? preStrongCutPairs,
+            IReadOnlyCollection<string>? postCutPairs,
+            IReadOnlyCollection<string>? postStrongCutPairs)
+        {
+            if (finalCutPairs == null || finalCutPairs.Count == 0)
+            {
+                return "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0";
+            }
+
+            var preCutSet = new HashSet<string>(preCutPairs ?? Array.Empty<string>());
+            var preStrongCutSet = new HashSet<string>(preStrongCutPairs ?? Array.Empty<string>());
+            var postCutSet = new HashSet<string>(postCutPairs ?? Array.Empty<string>());
+            var postStrongCutSet = new HashSet<string>(postStrongCutPairs ?? Array.Empty<string>());
+
+            int preCutOnly = 0;
+            int preStrongOnly = 0;
+            int postCutOnly = 0;
+            int postStrongOnly = 0;
+            int shared = 0;
+            int pairOrphans = 0;
+
+            foreach (var pair in finalCutPairs)
+            {
+                bool fromPreCut = preCutSet.Contains(pair);
+                bool fromPreStrongCut = preStrongCutSet.Contains(pair);
+                bool fromPostCut = postCutSet.Contains(pair);
+                bool fromPostStrongCut = postStrongCutSet.Contains(pair);
+
+                int sourceCount = 0;
+                if (fromPreCut) sourceCount++;
+                if (fromPreStrongCut) sourceCount++;
+                if (fromPostCut) sourceCount++;
+                if (fromPostStrongCut) sourceCount++;
+
+                if (sourceCount == 0)
+                {
+                    pairOrphans++;
+                }
+                else if (sourceCount > 1)
+                {
+                    shared++;
+                }
+                else if (fromPreCut)
+                {
+                    preCutOnly++;
+                }
+                else if (fromPreStrongCut)
+                {
+                    preStrongOnly++;
+                }
+                else if (fromPostCut)
+                {
+                    postCutOnly++;
+                }
+                else
+                {
+                    postStrongOnly++;
+                }
+            }
+
+            return $"preCutOnly={preCutOnly},preStrongOnly={preStrongOnly},postCutOnly={postCutOnly},postStrongOnly={postStrongOnly},shared={shared},pairOrphans={pairOrphans}";
         }
 
         private static IReadOnlyList<string> BuildCutPairWindowRanges(
