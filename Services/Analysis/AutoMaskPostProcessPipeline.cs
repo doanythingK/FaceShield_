@@ -90,6 +90,10 @@ namespace FaceShield.Services.Analysis
                 _options.UseTracking &&
                 !_options.EnablePostProcessing &&
                 _options.FilterProfile == FaceFilterProfile.Yolo;
+            bool enableYoloOffModeSceneCutCarryGuard = _options.EnableYoloSceneCutCarryCleanup &&
+                _options.FilterProfile == FaceFilterProfile.Yolo &&
+                !_options.EnablePostProcessing &&
+                _options.UseTracking;
             bool runYoloOffModeGapFill = enableYoloOffModeGapFill &&
                 _options.DetectEveryNFrames > 1;
             bool runYoloPostProcess = _options.FilterProfile == FaceFilterProfile.Yolo &&
@@ -117,7 +121,7 @@ namespace FaceShield.Services.Analysis
             if (_options.FilterProfile == FaceFilterProfile.Yolo && runYoloOffModeGapFill)
             {
                 Debug.WriteLine(
-                    $"[AutoMaskPostProcess] off-mode gap-fill 활성화 run=enabled detectEveryN={_options.DetectEveryNFrames} window={OffModeGapFillWindowFrames}");
+                    $"[AutoMaskPostProcess] off-mode gap-fill 활성화 run=enabled detectEveryN={_options.DetectEveryNFrames} window={OffModeGapFillWindowFrames} sceneCutGuard={enableYoloOffModeSceneCutCarryGuard}");
             }
             else if (_options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnablePostProcessing && _options.UseTracking)
             {
@@ -203,7 +207,7 @@ namespace FaceShield.Services.Analysis
                     blockedCutFramePairs: Array.Empty<string>(),
                     blockedFrameIndices: Array.Empty<int>(),
                     blockedFaces: Array.Empty<FaceTrackFilledFace>(),
-                    skipSceneCutGuard: true,
+                    skipSceneCutGuard: !enableYoloOffModeSceneCutCarryGuard,
                     sceneCarryBlockedFaces: Array.Empty<FaceTrackFilledFace>(),
                     sceneCarryBlockedFrameIndices: Array.Empty<int>(),
                     gapFillLogLabel: "YoloFinalMaskGapFillOffMode",
