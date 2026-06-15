@@ -523,7 +523,7 @@ namespace FaceShield.ViewModels.Pages
                 ? $"{sampleGapCount}/{sampleWindowFrames}"
                 : "0/0";
             System.Diagnostics.Debug.WriteLine(
-                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, offModeResetPairCount={offModeResetPairCount}, offModeResetBeforeRate={offModeResetBeforeRate:0.0000}, offModeResetAfterRate={offModeResetAfterRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, packetFallback={exportSummary.PacketLossFallbackReason ?? "n/a"}");
+                $"[QualityGateOps] runId={run}, finalSceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, finalSceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, finalGapFillBlocked={autoRunSummary.FinalGapFillBlockedCutGapFrames}/{autoRunSummary.FinalGapFillBlockedCutGapFramesBeforeCut}/{autoRunSummary.FinalGapFillBlockedCutGapFramesAfterCut}/{autoRunSummary.FinalGapFillBlockedCleanupGapFrames}/{autoRunSummary.FinalGapFillBlockedSceneCarryGapFrames}, finalGapFillBlockedRate={finalGapFillBlockedRate:0.0000}, offModeResetPairCount={offModeResetPairCount}, offModeResetBeforeRate={offModeResetBeforeRate:0.0000}, offModeResetAfterRate={offModeResetAfterRate:0.0000}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleGapRisk={sampleGapRisk}, frameDropRate={packetDropRate:0.000000}, throughputFps={throughputFps:0.00}, hybridRequested={allowHybridCopy.ToString().ToLowerInvariant()}, hybridUsed={exportSummary.HybridCopyUsed.ToString().ToLowerInvariant()}, hybridFixFallback={exportSummary.HybridCopyFallbackReason ?? "n/a"}, packetFallback={exportSummary.PacketLossFallbackReason ?? "n/a"}");
         }
 
         private static string FormatTextListForLog(IReadOnlyList<string> values)
@@ -566,6 +566,13 @@ namespace FaceShield.ViewModels.Pages
             double finalSceneCutProtectedRate = autoRunSummary.FinalSceneCutCarryPairCount > 0
                 ? autoRunSummary.FinalSceneCutProtectedFrameCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
                 : 0.0;
+            double finalGapFillBlockedRate = autoRunSummary.TotalFrames > 0
+                ? (autoRunSummary.FinalGapFillBlockedCutGapFrames
+                    + autoRunSummary.FinalGapFillBlockedCutGapFramesBeforeCut
+                    + autoRunSummary.FinalGapFillBlockedCutGapFramesAfterCut
+                    + autoRunSummary.FinalGapFillBlockedCleanupGapFrames
+                    + autoRunSummary.FinalGapFillBlockedSceneCarryGapFrames) / (double)autoRunSummary.TotalFrames
+                : 0.0;
             double offModeSceneCutResetBeforeRate = autoRunSummary.FinalOffModeSceneCutResetBeforeWindowFrameCount > 0
                 ? autoRunSummary.FinalOffModeSceneCutResetRemovedBeforeFrameCount / (double)autoRunSummary.FinalOffModeSceneCutResetBeforeWindowFrameCount
                 : 0.0;
@@ -597,6 +604,15 @@ namespace FaceShield.ViewModels.Pages
             {
                 finalRisk = true;
                 reasons.Add("final-scene-cut-carry");
+            }
+            if (autoRunSummary.FinalGapFillBlockedCutGapFrames > 0
+                || autoRunSummary.FinalGapFillBlockedCutGapFramesBeforeCut > 0
+                || autoRunSummary.FinalGapFillBlockedCutGapFramesAfterCut > 0
+                || autoRunSummary.FinalGapFillBlockedCleanupGapFrames > 0
+                || autoRunSummary.FinalGapFillBlockedSceneCarryGapFrames > 0)
+            {
+                finalRisk = true;
+                reasons.Add("final-gap-fill-blocked");
             }
             if (autoRunSummary.FinalOffModeSceneCutResetPairCount > 0)
             {
@@ -653,6 +669,8 @@ namespace FaceShield.ViewModels.Pages
                 reasons.Add($"sample-fp-suppressed-rate:{sampleFpSuppressedRate:0.0000}");
             if (sampleGapFillBlockedRate > SampleFpSuppressedRateThreshold)
                 reasons.Add($"sample-gap-fill-blocked-rate:{sampleGapFillBlockedRate:0.0000}");
+            if (finalGapFillBlockedRate > SampleFpSuppressedRateThreshold)
+                reasons.Add($"final-gap-fill-blocked-rate:{finalGapFillBlockedRate:0.0000}");
             if (finalSceneCutRemovalRate > 0.0)
                 reasons.Add($"final-scene-cut-removal-rate:{finalSceneCutRemovalRate:0.0000}");
             if (finalSceneCutProtectedRate > 0.0)
