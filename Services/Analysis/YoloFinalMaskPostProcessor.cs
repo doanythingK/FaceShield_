@@ -283,10 +283,14 @@ namespace FaceShield.Services.Analysis
             var cutGuardFaceInfo = new List<FaceTrackFilledFace>();
             var filledFrames = new SortedSet<int>();
             var blockedCutFrames = new SortedSet<int>();
+            var blockedCutBeforeCutFrames = new SortedSet<int>();
+            var blockedCutAfterCutFrames = new SortedSet<int>();
             var blockedCleanupFrames = new SortedSet<int>();
             var blockedSceneCarryGapFrames = new SortedSet<int>();
             int filledFaces = 0;
             int blockedCutGapFaces = 0;
+            int blockedCutGapBeforeCutFaces = 0;
+            int blockedCutGapAfterCutFaces = 0;
             int suppressedWeakGeometryAnchorChecks = 0;
             int suppressedRiskyGeometryAnchorChecks = 0;
             int unsupportedWeakAnchorChecks = 0;
@@ -348,14 +352,26 @@ namespace FaceShield.Services.Analysis
                             continue;
                         }
 
-                        if (CrossesBlockedCut(previousFrame, nextFrame, options))
+                        if (TryGetCrossedCutRange(previousFrame, nextFrame, options, out int cutStart, out int cutEnd))
                         {
                             blockedCutGapFaces += gap;
                             for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
                             {
                                 if (!storedFrames.Contains(frameIndex))
+                                {
                                     blockedCutFrames.Add(frameIndex);
+                                    if (frameIndex < cutStart)
+                                    {
+                                        blockedCutBeforeCutFrames.Add(frameIndex);
+                                    }
+                                    else if (frameIndex > cutEnd)
+                                    {
+                                        blockedCutAfterCutFrames.Add(frameIndex);
+                                    }
+                                }
                             }
+                            blockedCutGapBeforeCutFaces = blockedCutBeforeCutFrames.Count;
+                            blockedCutGapAfterCutFaces = blockedCutAfterCutFrames.Count;
 
                             break;
                         }
@@ -481,11 +497,13 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
-            if (filledFaces == 0 &&
-                blockedCutGapFaces == 0 &&
-                blockedCleanupFrames.Count == 0 &&
-                blockedSceneCarryGapFrames.Count == 0 &&
-                suppressedWeakGeometryAnchorChecks == 0 &&
+                if (filledFaces == 0 &&
+                    blockedCutGapFaces == 0 &&
+                    blockedCutGapBeforeCutFaces == 0 &&
+                    blockedCutGapAfterCutFaces == 0 &&
+                    blockedCleanupFrames.Count == 0 &&
+                    blockedSceneCarryGapFrames.Count == 0 &&
+                    suppressedWeakGeometryAnchorChecks == 0 &&
                 suppressedRiskyGeometryAnchorChecks == 0 &&
                 unsupportedWeakAnchorChecks == 0)
             {
@@ -505,18 +523,22 @@ namespace FaceShield.Services.Analysis
                     entry.Value.Confidences);
             }
 
-            return new YoloFinalMaskGapFillResult(
-                filledFaces,
-                filledFrames.ToArray(),
-                filledFaceInfo.ToArray(),
-                cutGuardFaceInfo.ToArray(),
-                blockedCutGapFaces,
-                blockedCutFrames.ToArray(),
-                blockedCleanupFrames.Count,
-                blockedCleanupFrames.ToArray(),
-                blockedSceneCarryGapFrames.Count,
-                blockedSceneCarryGapFrames.ToArray(),
-                suppressedWeakGeometryAnchorChecks,
+                return new YoloFinalMaskGapFillResult(
+                    filledFaces,
+                    filledFrames.ToArray(),
+                    filledFaceInfo.ToArray(),
+                    cutGuardFaceInfo.ToArray(),
+                    blockedCutGapFaces,
+                    blockedCutFrames.ToArray(),
+                    blockedCutGapBeforeCutFaces,
+                    blockedCutBeforeCutFrames.ToArray(),
+                    blockedCutGapAfterCutFaces,
+                    blockedCutAfterCutFrames.ToArray(),
+                    blockedCleanupFrames.Count,
+                    blockedCleanupFrames.ToArray(),
+                    blockedSceneCarryGapFrames.Count,
+                    blockedSceneCarryGapFrames.ToArray(),
+                    suppressedWeakGeometryAnchorChecks,
                 suppressedRiskyGeometryAnchorChecks,
                 unsupportedWeakAnchorChecks);
         }
@@ -1552,8 +1574,15 @@ namespace FaceShield.Services.Analysis
                 IsAspectOutlierGapAnchorFace(face, options);
         }
 
-        private static bool CrossesBlockedCut(int previousFrame, int nextFrame, YoloFinalMaskGapFillOptions options)
+        private static bool TryGetCrossedCutRange(
+            int previousFrame,
+            int nextFrame,
+            YoloFinalMaskGapFillOptions options,
+            out int cutStart,
+            out int cutEnd)
         {
+            cutStart = 0;
+            cutEnd = 0;
             if (options.BlockedCutFramePairs.Count == 0)
                 return false;
 
@@ -1562,10 +1591,14 @@ namespace FaceShield.Services.Analysis
                 if (!TryParseFramePair(pair, out int sourceFrame, out int targetFrame))
                     continue;
 
-                int cutStart = Math.Min(sourceFrame, targetFrame);
-                int cutEnd = Math.Max(sourceFrame, targetFrame);
-                if (previousFrame <= cutStart && cutEnd <= nextFrame)
+                int candidateCutStart = Math.Min(sourceFrame, targetFrame);
+                int candidateCutEnd = Math.Max(sourceFrame, targetFrame);
+                if (previousFrame <= candidateCutStart && candidateCutEnd <= nextFrame)
+                {
+                    cutStart = candidateCutStart;
+                    cutEnd = candidateCutEnd;
                     return true;
+                }
             }
 
             return false;
@@ -2389,6 +2422,10 @@ namespace FaceShield.Services.Analysis
         IReadOnlyList<FaceTrackFilledFace> CutGuardFacesInfo,
         int BlockedCutGapFaces,
         IReadOnlyList<int> BlockedCutFrameIndices,
+        int BlockedCutGapBeforeCutFaces,
+        IReadOnlyList<int> BlockedCutBeforeCutFrameIndices,
+        int BlockedCutGapAfterCutFaces,
+        IReadOnlyList<int> BlockedCutAfterCutFrameIndices,
         int BlockedCleanupGapFrames,
         IReadOnlyList<int> BlockedCleanupFrameIndices,
         int BlockedSceneCarryGapFrames,
@@ -2397,7 +2434,24 @@ namespace FaceShield.Services.Analysis
         int SuppressedRiskyGeometryAnchorChecks,
         int UnsupportedWeakAnchorChecks)
     {
-        public static YoloFinalMaskGapFillResult Empty { get; } = new(0, Array.Empty<int>(), Array.Empty<FaceTrackFilledFace>(), Array.Empty<FaceTrackFilledFace>(), 0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, Array.Empty<int>(), 0, 0, 0);
+        public static YoloFinalMaskGapFillResult Empty { get; } = new(
+            0,
+            Array.Empty<int>(),
+            Array.Empty<FaceTrackFilledFace>(),
+            Array.Empty<FaceTrackFilledFace>(),
+            0,
+            Array.Empty<int>(),
+            0,
+            Array.Empty<int>(),
+            0,
+            Array.Empty<int>(),
+            0,
+            Array.Empty<int>(),
+            0,
+            Array.Empty<int>(),
+            0,
+            0,
+            0);
     }
 
     public readonly record struct YoloSceneCutCarryCleanupResult(
