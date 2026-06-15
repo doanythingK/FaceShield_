@@ -1754,7 +1754,10 @@ namespace FaceShield.Services.Analysis
             bool postEnabled = _options.EnablePostProcessing;
             bool postRoiEnabled = postEnabled && _options.EnableRoiPostProcess;
             bool postWeakIsoEnabled = postEnabled && _options.EnableYoloWeakIsolatedCleanup;
-            bool postGapFillEnabled = _options.UseTracking && _options.EnableYoloGapFill;
+            bool postGapFillEnabled = _options.FilterProfile == FaceFilterProfile.Yolo
+                && _options.UseTracking
+                && _options.EnableYoloGapFill
+                && (_options.EnablePostProcessing || _options.DetectEveryNFrames > 1);
             bool postSceneCutEnabled = postEnabled && _options.UseTracking && _options.EnableYoloSceneCutCarryCleanup;
             bool postTemporalEnabled = postEnabled && _options.EnableYoloTemporalSmoothing;
 
