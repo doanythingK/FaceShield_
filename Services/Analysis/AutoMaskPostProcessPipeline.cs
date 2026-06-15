@@ -94,6 +94,10 @@ namespace FaceShield.Services.Analysis
                 _options.FilterProfile == FaceFilterProfile.Yolo &&
                 !_options.EnablePostProcessing &&
                 _options.UseTracking;
+            bool enableYoloOffModeWeakIsolationCleanup = _options.EnableYoloWeakIsolatedCleanup &&
+                _options.FilterProfile == FaceFilterProfile.Yolo &&
+                !_options.EnablePostProcessing &&
+                _options.UseTracking;
             bool runYoloOffModeGapFill = enableYoloOffModeGapFill &&
                 _options.DetectEveryNFrames > 1;
             bool runYoloPostProcess = _options.FilterProfile == FaceFilterProfile.Yolo &&
@@ -112,16 +116,21 @@ namespace FaceShield.Services.Analysis
                   enableWeakIsolationCleanup ||
                   enableGapFill));
             Debug.WriteLine(
-                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} offModeGapFill={enableYoloOffModeGapFill} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
+                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
             if (_options.FilterProfile == FaceFilterProfile.Yolo && enablePostProcessing && !hasAnyYoloPostModule)
             {
                 Debug.WriteLine(
                     $"[AutoMaskPostProcess] 경고: post=true이지만 YOLO 모듈이 비활성 상태로 OFF baseline와 동일 동작 예정 (runTrackPost={runYoloTrackPost})");
             }
-            if (_options.FilterProfile == FaceFilterProfile.Yolo && runYoloOffModeGapFill)
+            if (_options.FilterProfile == FaceFilterProfile.Yolo && (runYoloOffModeGapFill || enableYoloOffModeWeakIsolationCleanup))
             {
+                string offModeRunMode = runYoloOffModeGapFill && enableYoloOffModeWeakIsolationCleanup
+                    ? "gap-fill+weak-cleanup"
+                    : runYoloOffModeGapFill
+                        ? "gap-fill"
+                        : "weak-cleanup";
                 Debug.WriteLine(
-                    $"[AutoMaskPostProcess] off-mode gap-fill 활성화 run=enabled detectEveryN={_options.DetectEveryNFrames} window={OffModeGapFillWindowFrames} sceneCutGuard={enableYoloOffModeSceneCutCarryGuard}");
+                    $"[AutoMaskPostProcess] off-mode YOLO 보정 활성화 run={offModeRunMode} detectEveryN={_options.DetectEveryNFrames} window={OffModeGapFillWindowFrames} sceneCutGuard={enableYoloOffModeSceneCutCarryGuard}");
             }
             else if (_options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnablePostProcessing && _options.UseTracking)
             {
@@ -129,6 +138,11 @@ namespace FaceShield.Services.Analysis
                 {
                     Debug.WriteLine(
                         $"[AutoMaskPostProcess] off-mode gap-fill 비활성화 설정=미사용 (EnableYoloGapFill=false)");
+                }
+                if (!enableYoloOffModeWeakIsolationCleanup)
+                {
+                    Debug.WriteLine(
+                        $"[AutoMaskPostProcess] off-mode weak-isolation cleanup 비활성화 설정=미사용 (EnableYoloWeakIsolatedCleanup=false)");
                 }
                 else if (_options.DetectEveryNFrames <= 1)
                 {
