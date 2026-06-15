@@ -358,7 +358,19 @@ function Build-ScenarioDecision {
         [double] $ExportPenaltyPerMs,
         [double] $ShortGapPenaltyPerFrame,
         [double] $LargeJumpPenaltyPerFrame,
-        [double] $ReviewPenalty
+        [double] $ReviewPenalty,
+        [double] $BaselineSampleIssueCandidate,
+        [double] $TargetSampleIssueCandidate,
+        [double] $BaselineSampleShortGap,
+        [double] $TargetSampleShortGap,
+        [double] $BaselineSamplePerFaceShortGap,
+        [double] $TargetSamplePerFaceShortGap,
+        [double] $BaselineSampleMissRecovery,
+        [double] $TargetSampleMissRecovery,
+        [int] $AllowedSampleIssueCandidateIncrease,
+        [int] $AllowedSampleShortGapIncrease,
+        [int] $AllowedSamplePerFaceShortGapIncrease,
+        [int] $MinSampleMissRecoveryDelta
     )
 
     $weakFaceDelta = $TargetWeakFace - $BaselineWeakFace
@@ -369,6 +381,10 @@ function Build-ScenarioDecision {
     $exportDelta = $TargetExportMs - $BaselineExportMs
     $shortGapDelta = $TargetShortGaps - $BaselineShortGaps
     $largeJumpDelta = $TargetLargeJumpGaps - $BaselineLargeJumpGaps
+    $sampleIssueCandidateDelta = $TargetSampleIssueCandidate - $BaselineSampleIssueCandidate
+    $sampleShortGapDelta = $TargetSampleShortGap - $BaselineSampleShortGap
+    $samplePerFaceShortGapDelta = $TargetSamplePerFaceShortGap - $BaselineSamplePerFaceShortGap
+    $sampleMissRecoveryDelta = $TargetSampleMissRecovery - $BaselineSampleMissRecovery
 
     $passesFalsePositive = $weakFaceDelta -le $AllowedWeakFaceIncrease
     $passesMissFill = $detectDelta -ge $MinDetectGain
@@ -379,8 +395,12 @@ function Build-ScenarioDecision {
     $passesExport = $exportDelta -le $MaxExportMsDelta
     $passesShortGap = $shortGapDelta -le $AllowedShortGapIncrease
     $passesLargeJump = $largeJumpDelta -le $AllowedLargeJumpIncrease
+    $passesSampleIssueCandidates = $sampleIssueCandidateDelta -le $AllowedSampleIssueCandidateIncrease
+    $passesSampleShortGap = $sampleShortGapDelta -le $AllowedSampleShortGapIncrease
+    $passesSamplePerFaceShortGap = $samplePerFaceShortGapDelta -le $AllowedSamplePerFaceShortGapIncrease
+    $passesSampleMissRecovery = $sampleMissRecoveryDelta -ge $MinSampleMissRecoveryDelta
 
-    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesSceneCarryRemoved -and $passesPerFaceShortGaps -and $passesExport -and $passesShortGap -and $passesLargeJump
+    $passed = $passesFalsePositive -and $passesMissFill -and $passesTransition -and $passesSceneCutCarry -and $passesSceneCarryRemoved -and $passesPerFaceShortGaps -and $passesExport -and $passesShortGap -and $passesLargeJump -and $passesSampleIssueCandidates -and $passesSampleShortGap -and $passesSamplePerFaceShortGap -and $passesSampleMissRecovery
     $weakPenalty = [Math]::Max(0, $weakFaceDelta) * $FalsePositivePenaltyPerFrame
     $detectLossPenalty = [Math]::Max(0, -$detectDelta) * $MissedDetectPenaltyPerFace
     $detectGainReward = [Math]::Max(0, $detectDelta) * $MissDetectGainRewardPerFace
@@ -400,6 +420,10 @@ function Build-ScenarioDecision {
         if (-not $passesSceneCutCarry) { "sceneCutRemovedDelta=+$sceneCutDelta" } else { $null }
         if (-not $passesSceneCarryRemoved) { "sceneCarryRemovedDelta=+$sceneCarryDelta" } else { $null }
         if (-not $passesPerFaceShortGaps) { "perFaceShortGapDelta=+$perFaceShortGapDelta" } else { $null }
+        if (-not $passesSampleIssueCandidates) { "sampleIssueCandidateDelta=+$sampleIssueCandidateDelta" } else { $null }
+        if (-not $passesSampleShortGap) { "sampleShortGapDelta=+$sampleShortGapDelta" } else { $null }
+        if (-not $passesSamplePerFaceShortGap) { "samplePerFaceShortGapDelta=+$samplePerFaceShortGapDelta" } else { $null }
+        if (-not $passesSampleMissRecovery) { "sampleMissRecoveryDelta=$sampleMissRecoveryDelta" } else { $null }
         if (-not $passesExport) { "exportMsDelta=+$exportDelta" } else { $null }
         if (-not $passesShortGap) { "shortGapsDelta=+$shortGapDelta" } else { $null }
         if (-not $passesLargeJump) { "largeJumpGapsDelta=+$largeJumpDelta" } else { $null }
@@ -420,6 +444,10 @@ function Build-ScenarioDecision {
         PassSceneCarry = $passesSceneCutCarry
         PassSceneCarryRemoved = $passesSceneCarryRemoved
         PassPerFaceShortGaps = $passesPerFaceShortGaps
+        PassSampleIssueCandidates = $passesSampleIssueCandidates
+        PassSampleShortGap = $passesSampleShortGap
+        PassSamplePerFaceShortGap = $passesSamplePerFaceShortGap
+        PassSampleMissRecovery = $passesSampleMissRecovery
         PassExport = $passesExport
         PassShortGaps = $passesShortGap
         PassLargeJumpGaps = $passesLargeJump
@@ -429,6 +457,10 @@ function Build-ScenarioDecision {
         SceneCutPenalty = $scenePenalty
         SceneCarryPenalty = $sceneCarryPenalty
         PerFaceShortGapPenalty = $perFaceShortGapPenalty
+        SampleIssueCandidateDelta = $sampleIssueCandidateDelta
+        SampleShortGapDelta = $sampleShortGapDelta
+        SamplePerFaceShortGapDelta = $samplePerFaceShortGapDelta
+        SampleMissRecoveryDelta = $sampleMissRecoveryDelta
         SceneCarryDelta = $sceneCarryDelta
         PerFaceShortGapDelta = $perFaceShortGapDelta
         ExportPenalty = $exportPenalty
@@ -640,11 +672,27 @@ foreach ($name in $presetsToCompare) {
     $targetLargeJumpGaps = Read-NumericValue -Container $targetFinal -Key 'largeJumpGaps'
     $baselinePerFaceShortGaps = Read-NumericValue -Container $baselineFinal -Key 'perFaceShortGaps'
     $targetPerFaceShortGaps = Read-NumericValue -Container $targetFinal -Key 'perFaceShortGaps'
+    $baselineSampleIssueCandidates = Read-NumericValue -Container $baselineFinal -Key 'sampleWindowIssueCandidateCount'
+    $targetSampleIssueCandidates = Read-NumericValue -Container $targetFinal -Key 'sampleWindowIssueCandidateCount'
+    $baselineSampleShortGaps = Read-NumericValue -Container $baselineFinal -Key 'sampleShortGaps'
+    $targetSampleShortGaps = Read-NumericValue -Container $targetFinal -Key 'sampleShortGaps'
+    $baselineSamplePerFaceShortGaps = Read-NumericValue -Container $baselineFinal -Key 'samplePerFaceShortGaps'
+    $targetSamplePerFaceShortGaps = Read-NumericValue -Container $targetFinal -Key 'samplePerFaceShortGaps'
+    $baselineSampleMissRecovery = Read-NumericValue -Container $baselineFinal -Key 'sampleMissRecovery'
+    $targetSampleMissRecovery = Read-NumericValue -Container $targetFinal -Key 'sampleMissRecovery'
     $baselineReview = Read-BoolValue -Container $baselineFinal -Key 'reviewRequired'
     $targetReview = Read-BoolValue -Container $targetFinal -Key 'reviewRequired'
     $quickDecision = Read-JsonValue -Container $compare -Key 'QuickDecision'
     $quickPassed = if ($null -ne $quickDecision) { Read-BoolValue -Container $quickDecision -Key 'Passed' } else { $true }
     $quickReasons = if ($null -ne $quickDecision) { Read-JsonValue -Container $quickDecision -Key 'Reasons' } else { "N/A" }
+    $quickSampleIssueCandidateDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'SampleIssueCandidateDelta' } else { 0 }
+    $quickSampleShortGapDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'SampleShortGapDelta' } else { 0 }
+    $quickSamplePerFaceShortGapDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'SamplePerFaceShortGapDelta' } else { 0 }
+    $quickSampleMissRecoveryDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'SampleMissRecoveryDelta' } else { 0 }
+    $quickPassSampleIssueCandidates = if ($null -ne $quickDecision) { Read-BoolValue -Container $quickDecision -Key 'PassSampleIssueCandidates' } else { $true }
+    $quickPassSampleShortGap = if ($null -ne $quickDecision) { Read-BoolValue -Container $quickDecision -Key 'PassSampleShortGap' } else { $true }
+    $quickPassSamplePerFaceShortGap = if ($null -ne $quickDecision) { Read-BoolValue -Container $quickDecision -Key 'PassSamplePerFaceShortGap' } else { $true }
+    $quickPassSampleMissRecovery = if ($null -ne $quickDecision) { Read-BoolValue -Container $quickDecision -Key 'PassSampleMissRecovery' } else { $true }
     $quickMissRecoveryDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'MissRecoveryDelta' } else { 0 }
     $quickPostGapFillRemovalRateDelta = if ($null -ne $quickDecision) { Read-NumericValue -Container $quickDecision -Key 'PostGapFillRemovalRateDelta' } else { 0 }
     $decision = Build-ScenarioDecision `
@@ -675,7 +723,19 @@ foreach ($name in $presetsToCompare) {
         -ExportPenaltyPerMs $ExportMsPenaltyPerMs `
         -ShortGapPenaltyPerFrame $ShortGapPenaltyPerFrame `
         -LargeJumpPenaltyPerFrame $LargeJumpPenaltyPerFrame `
-        -ReviewPenalty $ReviewRequiredPenalty
+        -ReviewPenalty $ReviewRequiredPenalty `
+        -BaselineSampleIssueCandidate $baselineSampleIssueCandidates `
+        -TargetSampleIssueCandidate $targetSampleIssueCandidates `
+        -BaselineSampleShortGap $baselineSampleShortGaps `
+        -TargetSampleShortGap $targetSampleShortGaps `
+        -BaselineSamplePerFaceShortGap $baselineSamplePerFaceShortGaps `
+        -TargetSamplePerFaceShortGap $targetSamplePerFaceShortGaps `
+        -BaselineSampleMissRecovery $baselineSampleMissRecovery `
+        -TargetSampleMissRecovery $targetSampleMissRecovery `
+        -AllowedSampleIssueCandidateIncrease $AllowedSampleIssueCandidateIncrease `
+        -AllowedSampleShortGapIncrease $AllowedSampleShortGapIncrease `
+        -AllowedSamplePerFaceShortGapIncrease $AllowedPerFaceShortGapIncrease `
+        -MinSampleMissRecoveryDelta $MinSampleMissRecoveryDelta
 
     $combinedPassed = $decision.Passed -and $quickPassed
 
@@ -690,6 +750,18 @@ foreach ($name in $presetsToCompare) {
         ShortGapDelta = $decision.ShortGapsDelta
         PerFaceShortGapDelta = $decision.PerFaceShortGapDelta
         LargeJumpGapsDelta = $decision.LargeJumpGapsDelta
+        SampleIssueCandidateCountBaseline = $baselineSampleIssueCandidates
+        SampleIssueCandidateCountTarget = $targetSampleIssueCandidates
+        SampleIssueCandidateDelta = $decision.SampleIssueCandidateDelta
+        SampleShortGapCountBaseline = $baselineSampleShortGaps
+        SampleShortGapCountTarget = $targetSampleShortGaps
+        SampleShortGapDelta = $decision.SampleShortGapDelta
+        SamplePerFaceShortGapCountBaseline = $baselineSamplePerFaceShortGaps
+        SamplePerFaceShortGapCountTarget = $targetSamplePerFaceShortGaps
+        SamplePerFaceShortGapDelta = $decision.SamplePerFaceShortGapDelta
+        SampleMissRecoveryCountBaseline = $baselineSampleMissRecovery
+        SampleMissRecoveryCountTarget = $targetSampleMissRecovery
+        SampleMissRecoveryDelta = $decision.SampleMissRecoveryDelta
         ShortGapsCountBaseline = $baselineShortGaps
         ShortGapsCountTarget = $targetShortGaps
         PerFaceShortGapsCountBaseline = $baselinePerFaceShortGaps
@@ -718,12 +790,24 @@ foreach ($name in $presetsToCompare) {
         PassSceneCarry = $decision.PassSceneCarry
         PassSceneCarryRemoved = $decision.PassSceneCarryRemoved
         PassPerFaceShortGaps = $decision.PassPerFaceShortGaps
+        PassSampleIssueCandidates = $decision.PassSampleIssueCandidates
+        PassSampleShortGap = $decision.PassSampleShortGap
+        PassSamplePerFaceShortGap = $decision.PassSamplePerFaceShortGap
+        PassSampleMissRecovery = $decision.PassSampleMissRecovery
         PassExport = $decision.PassExport
         PassShortGaps = $decision.PassShortGaps
         PassLargeJumpGaps = $decision.PassLargeJumpGaps
         PassQuickDecision = $quickPassed
+        PassQuickDecisionSampleIssueCandidates = $quickPassSampleIssueCandidates
+        PassQuickDecisionSampleShortGap = $quickPassSampleShortGap
+        PassQuickDecisionSamplePerFaceShortGap = $quickPassSamplePerFaceShortGap
+        PassQuickDecisionSampleMissRecovery = $quickPassSampleMissRecovery
         QuickDecisionMissRecoveryDelta = $quickMissRecoveryDelta
         QuickDecisionPostGapFillRemovalRateDelta = $quickPostGapFillRemovalRateDelta
+        QuickDecisionSampleIssueCandidateDelta = $quickSampleIssueCandidateDelta
+        QuickDecisionSampleShortGapDelta = $quickSampleShortGapDelta
+        QuickDecisionSamplePerFaceShortGapDelta = $quickSamplePerFaceShortGapDelta
+        QuickDecisionSampleMissRecoveryDelta = $quickSampleMissRecoveryDelta
         Passed = $combinedPassed
         DecisionReasons = $decision.Reasons
         QuickDecisionReasons = $quickReasons
@@ -734,12 +818,12 @@ foreach ($name in $presetsToCompare) {
 
 if ($summary.Count -gt 0) {
     $summaryPath = if ([string]::IsNullOrWhiteSpace($SummaryFile)) { Join-Path $LogRoot "compare-summary.json" } else { $SummaryFile }
-    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.PerFaceShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.ShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.SceneCarryRemovedDelta }; Descending = $false }, @{ Expression = { [double]$_.LargeJumpGapsDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
+    $summarySorted = $summary | Sort-Object @{ Expression = { [double]$_.CompositeScore }; Descending = $false }, @{ Expression = { [double]$_.WeakFaceCountDelta }; Descending = $false }, @{ Expression = { [double]$_.SampleIssueCandidateDelta }; Descending = $false }, @{ Expression = { [double]$_.SampleShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.SamplePerFaceShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.PerFaceShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.ShortGapDelta }; Descending = $false }, @{ Expression = { [double]$_.SceneCarryRemovedDelta }; Descending = $false }, @{ Expression = { [double]$_.LargeJumpGapsDelta }; Descending = $false }, @{ Expression = { [double]$_.ExportMsDelta }; Descending = $false }, @{ Expression = { [double]$_.DetectDelta }; Descending = $true }
     $summarySorted | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host "[PostprocessPresetCompare] summary=$summaryPath"
     Write-Host "[PostprocessPresetCompare] score top3="
     foreach ($entry in ($summarySorted | Select-Object -First 3)) {
-        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
+        Write-Host "[PostprocessPresetCompare] rank preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) sampleIssueCandidateDelta=$($entry.SampleIssueCandidateDelta) sampleShortGapDelta=$($entry.SampleShortGapDelta) samplePerFaceShortGapDelta=$($entry.SamplePerFaceShortGapDelta) sampleMissRecoveryDelta=$($entry.SampleMissRecoveryDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired)"
     }
 
     $passed = @($summarySorted | Where-Object { $_.Passed })
@@ -747,11 +831,11 @@ if ($summary.Count -gt 0) {
     if ($passed.Count -gt 0) {
         Write-Host "[PostprocessPresetCompare] passed preset count=$($passed.Count)"
         foreach ($entry in $passed) {
-            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) passQuickDecision=$($entry.PassQuickDecision) quickMissRecoveryDelta=$($entry.QuickDecisionMissRecoveryDelta) quickPostGapFillRemovalRateDelta=$('{0:P2}' -f $entry.QuickDecisionPostGapFillRemovalRateDelta) reasons=$($entry.DecisionReasons) quickReasons=$($entry.QuickDecisionReasons)"
+            Write-Host "[PostprocessPresetCompare] pass preset=$($entry.Preset) score=$($entry.CompositeScore) weakFaceDelta=$($entry.WeakFaceCountDelta) shortGapDelta=$($entry.ShortGapDelta) perFaceShortGapDelta=$($entry.PerFaceShortGapDelta) sampleIssueCandidateDelta=$($entry.SampleIssueCandidateDelta) sampleShortGapDelta=$($entry.SampleShortGapDelta) samplePerFaceShortGapDelta=$($entry.SamplePerFaceShortGapDelta) sampleMissRecoveryDelta=$($entry.SampleMissRecoveryDelta) largeJumpDelta=$($entry.LargeJumpGapsDelta) sceneCarryDelta=$($entry.SceneCarryRemovedDelta) detectDelta=$($entry.DetectDelta) sceneCutDelta=$($entry.SceneCutRemovedDelta) exportMsDelta=$($entry.ExportMsDelta) review=$($entry.ReviewRequired) passQuickDecision=$($entry.PassQuickDecision) quickMissRecoveryDelta=$($entry.QuickDecisionMissRecoveryDelta) quickPostGapFillRemovalRateDelta=$('{0:P2}' -f $entry.QuickDecisionPostGapFillRemovalRateDelta) quickSampleIssueCandidateDelta=$($entry.QuickDecisionSampleIssueCandidateDelta) quickSampleShortGapDelta=$($entry.QuickDecisionSampleShortGapDelta) quickSamplePerFaceShortGapDelta=$($entry.QuickDecisionSamplePerFaceShortGapDelta) quickSampleMissRecoveryDelta=$($entry.QuickDecisionSampleMissRecoveryDelta) reasons=$($entry.DecisionReasons) quickReasons=$($entry.QuickDecisionReasons)"
         }
     }
     else {
-        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, perFaceShortGaps<=+$AllowedPerFaceShortGapIncrease, sceneCarryRemoved<=+$AllowedSceneCarryIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta, quick: weakScoreΔ<=+$AllowedWeakFaceIncrease, missRecoveryΔ>=$MinDetectGain, postGapFillRemovalRateΔ>=$MinPostGapFillRemovalRateDelta, runΔ<=$MaxRunTotalMsDelta, exportΔ<=$MaxExportMsDelta, reviewRequired=$quickReviewCriteria)"
+        Write-Host "[PostprocessPresetCompare] pass preset none (criteria: weakFace<=+$AllowedWeakFaceIncrease, shortGaps<=+$AllowedShortGapIncrease, perFaceShortGaps<=+$AllowedPerFaceShortGapIncrease, sampleIssueCandidates<=+$AllowedSampleIssueCandidateIncrease, sampleShortGaps<=+$AllowedSampleShortGapIncrease, samplePerFaceShortGaps<=+$AllowedSamplePerFaceShortGapIncrease, sampleMissRecovery>=$MinSampleMissRecoveryDelta, sceneCarryRemoved<=+$AllowedSceneCarryIncrease, largeJumpGaps<=+$AllowedLargeJumpIncrease, detect>=$MinDetectGain, no review-required, sceneCutRemovedDelta<=0, exportMsDelta<=$MaxExportMsDelta, quick: weakScoreΔ<=+$AllowedWeakFaceIncrease, missRecoveryΔ>=$MinDetectGain, sampleMissRecoveryΔ>=$MinSampleMissRecoveryDelta, postGapFillRemovalRateΔ>=$MinPostGapFillRemovalRateDelta, runΔ<=$MaxRunTotalMsDelta, exportΔ<=$MaxExportMsDelta, reviewRequired=$quickReviewCriteria)"
     }
 }
 
