@@ -1838,7 +1838,7 @@ if (!skipBaseline)
         baselineYoloModelPath = yoloModelPath;
         if (string.IsNullOrWhiteSpace(baselineYoloModelPath))
         {
-            throw "YoloRunAsBaseline is enabled, but YOLO model path is not resolved. Provide -YoloModelPath or ensure Models\\Yolo contains one of the default model files.";
+            throw new Exception("YoloRunAsBaseline is enabled, but YOLO model path is not resolved. Provide -YoloModelPath or ensure Models\\Yolo contains one of the default model files.");
         }
     }
 

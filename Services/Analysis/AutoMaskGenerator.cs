@@ -659,6 +659,10 @@ namespace FaceShield.Services.Analysis
             var filterStats = new FaceFilterStats();
             int offModeSceneCutResetPairs = 0;
             int offModeSceneCutResetRemovedFrameCount = 0;
+            int offModeSceneCutResetBeforeWindowFrameCount = 0;
+            int offModeSceneCutResetAfterWindowFrameCount = 0;
+            int offModeSceneCutResetRemovedBeforeFrameCount = 0;
+            int offModeSceneCutResetRemovedAfterFrameCount = 0;
             bool applyOffModeSceneCutReset = _options.FilterProfile == FaceFilterProfile.Yolo
                 && !_options.EnablePostProcessing
                 && _options.UseTracking;
@@ -1087,6 +1091,10 @@ namespace FaceShield.Services.Analysis
             var filterStats = new FaceFilterStats();
             int offModeSceneCutResetPairs = 0;
             int offModeSceneCutResetRemovedFrameCount = 0;
+            int offModeSceneCutResetBeforeWindowFrameCount = 0;
+            int offModeSceneCutResetAfterWindowFrameCount = 0;
+            int offModeSceneCutResetRemovedBeforeFrameCount = 0;
+            int offModeSceneCutResetRemovedAfterFrameCount = 0;
             bool applyOffModeSceneCutReset = _options.FilterProfile == FaceFilterProfile.Yolo
                 && !_options.EnablePostProcessing
                 && _options.UseTracking;

@@ -370,6 +370,7 @@ namespace FaceShield.ViewModels.Pages
                 reviewRiskScore++;
                 riskReasons.Add("auto-scene-cut-carry");
             }
+            int offModeResetPairCount = autoRunSummary?.FinalOffModeSceneCutResetPairCount ?? 0;
             if (offModeResetPairCount > 0)
             {
                 reviewRiskScore++;
@@ -417,7 +418,6 @@ namespace FaceShield.ViewModels.Pages
             int sampleIsolatedFrameCount = autoRunSummary?.SampleIsolatedFrameCount ?? 0;
             int sampleLargeJumpGapCount = autoRunSummary?.SampleLargeJumpGapCount ?? 0;
             int sampleProtectedCarryCount = autoRunSummary?.SampleProtectedSceneCarryFrameCount ?? 0;
-            int offModeResetPairCount = autoRunSummary?.FinalOffModeSceneCutResetPairCount ?? 0;
             int offModeResetRemoved = autoRunSummary?.FinalOffModeSceneCutResetRemovedFrameCount ?? 0;
             int offModeResetBeforeWindowFrames = autoRunSummary?.FinalOffModeSceneCutResetBeforeWindowFrameCount ?? 0;
             int offModeResetAfterWindowFrames = autoRunSummary?.FinalOffModeSceneCutResetAfterWindowFrameCount ?? 0;

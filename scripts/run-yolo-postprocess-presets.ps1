@@ -105,7 +105,8 @@ param(
     [double] $ShortGapPenaltyPerFrame = 7.5,
     [double] $LargeJumpPenaltyPerFrame = 7.5,
     [double] $ReviewRequiredPenalty = 999,
-    [int] $MaxRunTotalMsDelta = 0
+    [int] $MaxRunTotalMsDelta = 0,
+    [switch] $SkipTrim
 )
 
 $ErrorActionPreference = 'Stop'
@@ -162,6 +163,7 @@ function Invoke-Run {
     if ($UseAutoTune.IsPresent) { $args += '-UseAutoTune' }
     if ($OptimizedNoTracking.IsPresent) { $args += '-OptimizedNoTracking' }
     if ($SkipExport.IsPresent) { $args += '-SkipExport' }
+    if ($SkipTrim.IsPresent) { $args += '-SkipTrim' }
 
     foreach ($key in $Switches.Keys) {
         if ($Switches[$key]) {
@@ -495,7 +497,7 @@ $presetsByName = @{
         YoloEnableGapFill = $false
         YoloEnableSceneCutCarryCleanup = $false
     }
-    weak-gap = @{
+    'weak-gap' = @{
         YoloEnablePostProcessing = $true
         YoloEnableWeakIsolatedCleanup = $true
         YoloEnableGapFill = $true
@@ -503,7 +505,7 @@ $presetsByName = @{
         YoloEnableSceneCutCarryCleanup = $false
         YoloEnableTemporalSmoothing = $false
     }
-    weak-scene = @{
+    'weak-scene' = @{
         YoloEnablePostProcessing = $true
         YoloEnableWeakIsolatedCleanup = $true
         YoloEnableSceneCutCarryCleanup = $true
@@ -511,7 +513,7 @@ $presetsByName = @{
         YoloEnableGapFill = $false
         YoloEnableTemporalSmoothing = $false
     }
-    gap-scene = @{
+    'gap-scene' = @{
         YoloEnablePostProcessing = $true
         YoloEnableGapFill = $true
         YoloEnableSceneCutCarryCleanup = $true
@@ -519,7 +521,7 @@ $presetsByName = @{
         YoloEnableWeakIsolatedCleanup = $false
         YoloEnableTemporalSmoothing = $false
     }
-    weak-gap-scene = @{
+    'weak-gap-scene' = @{
         YoloEnablePostProcessing = $true
         YoloEnableWeakIsolatedCleanup = $true
         YoloEnableGapFill = $true
@@ -527,7 +529,7 @@ $presetsByName = @{
         YoloEnableRoiPostProcess = $false
         YoloEnableTemporalSmoothing = $false
     }
-    scene-smooth = @{
+    'scene-smooth' = @{
         YoloEnablePostProcessing = $true
         YoloEnableSceneCutCarryCleanup = $true
         YoloEnableTemporalSmoothing = $true
