@@ -1701,7 +1701,8 @@ namespace FaceShield.Services.Analysis
             var postProcess = new AutoMaskPostProcessPipeline(
                 _maskProvider,
                 _options,
-                totalFrames);
+                totalFrames,
+                _sourceFpsForSummary);
 
             return postProcess.Apply(
                 videoPath,

@@ -45,7 +45,7 @@ namespace FaceShield.Services.Analysis
         private const double YoloFinalMaskLowerWeakMaxAreaRatio = 0.045;
         private const double YoloFinalMaskMinAspectRatio = 0.35;
         private const double YoloFinalMaskMaxAspectRatio = 1.65;
-        private const int YoloQualitySampleWindowFrames = 900;
+        private const double YoloQualitySampleWindowSeconds = 30.0;
         private const int OffModeGapFillWindowFrames = 4;
         private const int OffModeGapFillMaxGapFrames = 4;
         private const float OffModeGapFillMinAnchorConfidence = 0.62f;
@@ -54,15 +54,18 @@ namespace FaceShield.Services.Analysis
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
         private readonly int _totalFrames;
+        private readonly double _sourceFps;
 
         public AutoMaskPostProcessPipeline(
             FrameMaskProvider maskProvider,
             AutoMaskOptions options,
-            int totalFrames)
+            int totalFrames,
+            double sourceFps)
         {
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _totalFrames = totalFrames;
+            _sourceFps = sourceFps;
         }
 
         public AutoMaskPostProcessResult Apply(
@@ -1375,7 +1378,12 @@ namespace FaceShield.Services.Analysis
                 $"[FinalMaskSummary] profile=Yolo frames={frames.Length} rows={rows} frameRange={frames[0]}-{frames[^1]} shortGaps={shortGapCount} shortGapRanges={FormatTextList(shortGapRanges)} perFaceShortGaps={perFaceShortGapRanges.Count} perFaceShortGapRanges={FormatTextList(perFaceShortGapRanges)} largeJumpGaps={largeJumpGapRanges.Count} largeJumpRanges={FormatTextList(largeJumpGapRanges)} isolated={isolatedFrames.Count} isolatedFrames={FormatFrameList(isolatedFrames)} lowConf={lowConfidenceRows} lowConfFrames={FormatFrameList(lowConfidenceFrames.OrderBy(static x => x).ToArray())} weakNonEdge={weakNonEdgeRows} weakNonEdgeFrames={FormatFrameList(weakNonEdgeFrames.OrderBy(static x => x).ToArray())} edgeWeak={edgeWeakRows} edgeWeakFrames={FormatFrameList(edgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeWeak={topEdgeWeakRows} topEdgeWeakFrames={FormatFrameList(topEdgeWeakFrames.OrderBy(static x => x).ToArray())} topEdgeLarge={topEdgeLargeRows} topEdgeLargeFrames={FormatFrameList(topEdgeLargeFrames.OrderBy(static x => x).ToArray())} upperWeak={upperWeakRows} upperWeakFrames={FormatFrameList(upperWeakFrames.OrderBy(static x => x).ToArray())} lowerWeak={lowerWeakRows} lowerWeakFrames={FormatFrameList(lowerWeakFrames.OrderBy(static x => x).ToArray())} aspectBad={aspectBadRows} aspectBadFrames={FormatFrameList(aspectBadFrames.OrderBy(static x => x).ToArray())} tinyWeak={tinyWeakRows} tinyWeakFrames={FormatFrameList(tinyWeakFrames.OrderBy(static x => x).ToArray())} tinyShort={tinyShortRows} tinyShortFrames={FormatFrameList(tinyShortFrames.OrderBy(static x => x).ToArray())} protectedSceneCarry={protectedSceneCarryFrames.Length} protectedSceneCarryFrames={FormatFrameList(protectedSceneCarryFrames)} sceneCutControl=preGuard={sceneCutPreGuardPairCount},preStrong={sceneCutPreStrongProbePairCount},postGuard={sceneCutPostGuardPairCount},postStrong={sceneCutPostStrongProbePairCount},carryPairs={sceneCutCarryPairCount},carryRemoved={sceneCutCarryRemovedCount},carryProtected={sceneCutProtectedFrameCount},carryWindows=pre:{finalSceneCutPreGuardWindowCount},preStrong:{finalSceneCutPreStrongCarryWindowCount},post:{finalSceneCutPostGuardWindowCount},postStrong:{finalSceneCutPostStrongCarryWindowCount},final:{finalSceneCutCarryWindowCount},postGapFill:{finalSceneCutPostGapFillWindowCount},postGapFillCarryPairs={finalSceneCutPostGapFillCarryPairCount},postGapFillRemoved={finalSceneCutPostGapFillCarryRemovedCount},postGapFillProtected={finalSceneCutPostGapFillProtectedFrameCount},postGapFillRemovalRate={FormatRate(finalSceneCutPostGapFillCarryPairCount > 0 ? (double)finalSceneCutPostGapFillCarryRemovedCount / finalSceneCutPostGapFillCarryPairCount : 0.0)},postGapFillProtectedRate={FormatRate(finalSceneCutPostGapFillCarryPairCount > 0 ? (double)finalSceneCutPostGapFillProtectedFrameCount / finalSceneCutPostGapFillCarryPairCount : 0.0)}, reviewRequired={reviewReasons.Count > 0} reviewReasons={FormatTextList(reviewReasons)}");
             string reviewReasonText = FormatTextList(reviewReasons);
             var sampleEntries = entries;
-            int sampleWindowLength = Math.Min(YoloQualitySampleWindowFrames, Math.Max(1, _totalFrames - frames[0] + 1));
+            int sampleWindowLengthBase = Math.Max(
+                1,
+                _sourceFps > 0
+                    ? (int)Math.Ceiling(_sourceFps * YoloQualitySampleWindowSeconds)
+                    : (int)YoloQualitySampleWindowSeconds);
+            int sampleWindowLength = Math.Min(sampleWindowLengthBase, Math.Max(1, _totalFrames - frames[0] + 1));
             int sampleWindowIssueCandidateCount;
             string sampleWindowStartReason;
             int sampleWindowStart = ResolveSampleWindowStart(
