@@ -286,10 +286,10 @@ public unsafe sealed class VideoExportService
                         sourceFps,
                         progress,
                         cancellationToken);
-                    LastExportSummary = new ExportRunSummary(
-                        totalFrames,
-                        0,
-                        0,
+            LastExportSummary = new ExportRunSummary(
+                totalFrames,
+                0,
+                0,
                         0,
                         0,
                         0,
@@ -304,20 +304,22 @@ public unsafe sealed class VideoExportService
                         HybridWindowEndFrame: -1,
                         HybridModeTransitionCount: 0,
                         HybridModeTimestampSyncCount: 0,
-                        InputVideoPackets: 0,
-                        OutputVideoPackets: 0,
-                        CopiedVideoPackets: 0,
-                        CopiedSourceVideoPackets: 0,
-                        EncodedSourceVideoPackets: 0,
-                        DroppedVideoPackets: 0,
-                        OutputPacketPtsGapOutlierCount: 0,
-                        MaxOutputPacketPtsGap: 0,
-                        HybridCopyTimestampFixCount: 0,
-                        PacketLossFallbackReason: null,
-                        ForceSoftwareEncoder: forceSoftwareEncoder,
-                        ForceSafeEncoding: forceSafeEncoding,
-                        ForceAudioTranscode: forceAudioTranscode,
-                        ForceH264Fallback: forceH264Fallback);
+                InputVideoPackets: 0,
+                OutputVideoPackets: 0,
+                CopiedVideoPackets: 0,
+                CopiedSourceVideoPackets: 0,
+                EncodedSourceVideoPackets: 0,
+                DroppedVideoPackets: 0,
+                OutputPacketPtsGapOutlierCount: 0,
+                MaxOutputPacketPtsGap: 0,
+                HybridCopyTimestampFixCount: 0,
+                PacketLossFallbackReason: null,
+                HybridEncodedPacketFrameStep: 0,
+                HybridCopyPacketFrameStep: 0,
+                ForceSoftwareEncoder: forceSoftwareEncoder,
+                ForceSafeEncoding: forceSafeEncoding,
+                ForceAudioTranscode: forceAudioTranscode,
+                ForceH264Fallback: forceH264Fallback);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     return;
                 }
@@ -950,15 +952,15 @@ public unsafe sealed class VideoExportService
                                 ref outputVideoPacketCount,
                                 ref outputPacketPtsGapOutlierCount,
                                 ref maxOutputPacketPtsGap,
-                                progress,
-                                ref lastReportedFrame,
-                                swTotal,
-                                cancellationToken,
-                                sampleWindowFrames: exportSampleWindowFrames,
-                                sampleEncodedFrameCount: ref sampleEncodedFrameCount,
-                                sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                                encodedWindowFrameCount: ref encodedWindowFrameCount,
-                                encodedPacketFrameStep: encodedPacketFrameStep);
+                            progress,
+                            ref lastReportedFrame,
+                            swTotal,
+                            cancellationToken,
+                            exportSampleWindowFrames,
+                            ref sampleEncodedFrameCount,
+                            ref sampleBlurredFrameCount,
+                            ref encodedWindowFrameCount,
+                            encodedPacketFrameStep);
 
                             flushedForHybridBoundary = true;
                         }
@@ -1028,6 +1030,8 @@ public unsafe sealed class VideoExportService
                             encodeWindowEnd,
                             ref frameIndex,
                             ref lastResolvedFrameIndex,
+                            ref frameTimestampBase,
+                            ref hasFrameTimestampBase,
                             ref swsToBgraMs,
                             ref maskMs,
                             ref swsToEncMs,
@@ -1046,11 +1050,11 @@ public unsafe sealed class VideoExportService
                             ref lastReportedFrame,
                             swTotal,
                             cancellationToken,
-                            sampleWindowFrames: exportSampleWindowFrames,
-                            sampleEncodedFrameCount: ref sampleEncodedFrameCount,
-                            sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                            encodedWindowFrameCount: ref encodedWindowFrameCount,
-                            encodedPacketFrameStep: encodedPacketFrameStep);
+                            exportSampleWindowFrames,
+                            ref sampleEncodedFrameCount,
+                            ref sampleBlurredFrameCount,
+                            ref encodedWindowFrameCount,
+                            encodedPacketFrameStep);
 
                         if (hasLastEncodedPacketPts)
                         {
@@ -1203,11 +1207,11 @@ public unsafe sealed class VideoExportService
                     ref lastReportedFrame,
                     swTotal,
                     cancellationToken,
-                    sampleWindowFrames: exportSampleWindowFrames,
-                    sampleEncodedFrameCount: ref sampleEncodedFrameCount,
-                    sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                    encodedWindowFrameCount: ref encodedWindowFrameCount,
-                    encodedPacketFrameStep: encodedPacketFrameStep);
+                    exportSampleWindowFrames,
+                    ref sampleEncodedFrameCount,
+                    ref sampleBlurredFrameCount,
+                    ref encodedWindowFrameCount,
+                    encodedPacketFrameStep);
                     ffmpeg.av_frame_unref(frame);
                 }
             }
@@ -1234,31 +1238,33 @@ public unsafe sealed class VideoExportService
                 totalFrames,
                 encodeWindowStart,
                 encodeWindowEnd,
-                ref frameIndex,
-                ref lastResolvedFrameIndex,
-                ref swsToBgraMs,
-                ref maskMs,
-                ref swsToEncMs,
+                            ref frameIndex,
+                            ref lastResolvedFrameIndex,
+                            ref frameTimestampBase,
+                            ref hasFrameTimestampBase,
+                            ref swsToBgraMs,
+                            ref maskMs,
+                            ref swsToEncMs,
                 ref encodeMs,
                 ref lastEncodedPts,
                 ref hasLastEncodedPts,
-                ref lastEncodedPacketPts,
-                ref hasLastEncodedPacketPts,
-                ref lastEncodedPacketDts,
-                ref hasLastEncodedPacketDts,
+                    ref lastEncodedPacketPts,
+                    ref hasLastEncodedPacketPts,
+                    ref lastEncodedPacketDts,
+                    ref hasLastEncodedPacketDts,
                 ref reusableFaceMask,
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
                 progress,
-                ref lastReportedFrame,
-                swTotal,
-                cancellationToken,
-                sampleWindowFrames: exportSampleWindowFrames,
-                sampleEncodedFrameCount: ref sampleEncodedFrameCount,
-                sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                encodedWindowFrameCount: ref encodedWindowFrameCount,
-                encodedPacketFrameStep: encodedPacketFrameStep);
+                    ref lastReportedFrame,
+                    swTotal,
+                    cancellationToken,
+                    exportSampleWindowFrames,
+                    ref sampleEncodedFrameCount,
+                    ref sampleBlurredFrameCount,
+                    ref encodedWindowFrameCount,
+                    encodedPacketFrameStep);
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -1481,10 +1487,10 @@ public unsafe sealed class VideoExportService
                 HybridEncodedPacketFrameStep: encodedPacketFrameStep,
                 HybridCopyPacketFrameStep: hybridCopyVideoFrameStep,
                 PacketLossFallbackReason: packetLossFallbackReason,
-                forceSoftwareEncoder,
-                forceSafeEncoding,
-                forceAudioTranscode,
-                forceH264Fallback,
+                ForceSoftwareEncoder: forceSoftwareEncoder,
+                ForceSafeEncoding: forceSafeEncoding,
+                ForceAudioTranscode: forceAudioTranscode,
+                ForceH264Fallback: forceH264Fallback,
                 HybridWindowExpectedEncodedFrames: expectedHybridWindowEncodedFrames,
                 HybridWindowEncodedFrames: encodedWindowFrameCount,
                 HybridWindowFrameShortfall: encodedWindowFrameShortfall,
@@ -1494,7 +1500,7 @@ public unsafe sealed class VideoExportService
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
-                $"[Export] sampleWindow={(sampleWindowLimit > 0 ? $\"0-{sampleWindowLimit - 1}\" : \"none\")} sourcePackets={sampleSourceVideoPacketCount} copiedPackets={sampleCopiedVideoPacketCount} encodedFrames={sampleEncodedFrameCount} blurredFrames={sampleBlurredFrameCount} sampleShortfall={sampleWindowFrameShortfall}");
+                $"[Export] sampleWindow={(sampleWindowLimit > 0 ? $"0-{sampleWindowLimit - 1}" : "none")} sourcePackets={sampleSourceVideoPacketCount} copiedPackets={sampleCopiedVideoPacketCount} encodedFrames={sampleEncodedFrameCount} blurredFrames={sampleBlurredFrameCount} sampleShortfall={sampleWindowFrameShortfall}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
             if (shouldRetryWithFullEncode)
             {
@@ -1899,6 +1905,8 @@ public unsafe sealed class VideoExportService
         int encodeWindowEnd,
         ref int frameIndex,
         ref int lastResolvedFrameIndex,
+        ref long frameTimestampBase,
+        ref bool hasFrameTimestampBase,
         ref long swsToBgraMs,
         ref long maskMs,
         ref long swsToEncMs,
@@ -1971,15 +1979,15 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
-                progress,
-                ref lastReportedFrame,
-                swTotal,
-                cancellationToken,
-                sampleWindowFrames: sampleWindowFrames,
-                sampleEncodedFrameCount: ref sampleEncodedFrameCount,
-                sampleBlurredFrameCount: ref sampleBlurredFrameCount,
-                encodedWindowFrameCount: ref encodedWindowFrameCount,
-                encodedPacketFrameStep: encodedPacketFrameStep);
+                    progress,
+                    ref lastReportedFrame,
+                    swTotal,
+                    cancellationToken,
+                    sampleWindowFrames,
+                    ref sampleEncodedFrameCount,
+                    ref sampleBlurredFrameCount,
+                    ref encodedWindowFrameCount,
+                    encodedPacketFrameStep);
             ffmpeg.av_frame_unref(frame);
         }
 
@@ -2211,6 +2219,8 @@ public unsafe sealed class VideoExportService
         AVPacket* pkt = ffmpeg.av_packet_alloc();
         if (pkt == null)
             return keyframes;
+        long keyframeTimestampBase = 0;
+        bool hasKeyframeTimestampBase = false;
 
         try
         {

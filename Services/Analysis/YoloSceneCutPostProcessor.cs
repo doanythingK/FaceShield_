@@ -73,7 +73,7 @@ namespace FaceShield.Services.Analysis
                 candidateMatchMaxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                 candidateMatchMaxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
                 cancellationToken: cancellationToken,
-                stage: $"remove:{stage}");
+                removeCandidates: true);
 
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
@@ -128,8 +128,7 @@ namespace FaceShield.Services.Analysis
                 candidateMatchMaxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                 candidateMatchMaxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
                 removeCandidates: false,
-                cancellationToken: cancellationToken,
-                stage: $"probe:{stage}");
+                cancellationToken: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(result.Error))
             {
