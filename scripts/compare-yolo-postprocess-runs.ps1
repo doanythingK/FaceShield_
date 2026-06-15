@@ -108,6 +108,14 @@ param(
     [Parameter(Mandatory = $false)]
     [int] $MaxExportTotalMsDelta = 0,
     [Parameter(Mandatory = $false)]
+    [int] $AllowedSampleIssueCandidateIncrease = 0,
+    [Parameter(Mandatory = $false)]
+    [int] $AllowedSampleShortGapIncrease = 0,
+    [Parameter(Mandatory = $false)]
+    [int] $AllowedSamplePerFaceShortGapIncrease = 0,
+    [Parameter(Mandatory = $false)]
+    [int] $MinSampleMissRecoveryDelta = 0,
+    [Parameter(Mandatory = $false)]
     [switch] $AllowReviewRequired
 )
 
@@ -291,6 +299,63 @@ function Read-RunInfo {
                 totalMs = [long]$matches[14];
                 tracking = [bool]::Parse($matches[15]);
                 everyN = [int]$matches[16];
+            }
+
+            $autoRunSummarySampleWindow = Read-SummaryInt -Text $line -Key 'sampleWindow'
+            if ($null -ne $autoRunSummarySampleWindow) { $finalSummary.sampleWindow = $autoRunSummarySampleWindow }
+
+            $autoRunSummarySampleFrames = Read-SummaryInt -Text $line -Key 'sampleFrames'
+            if ($null -ne $autoRunSummarySampleFrames) { $finalSummary.sampleFrames = $autoRunSummarySampleFrames }
+
+            $autoRunSummarySampleRows = Read-SummaryInt -Text $line -Key 'sampleRows'
+            if ($null -ne $autoRunSummarySampleRows) { $finalSummary.sampleRows = $autoRunSummarySampleRows }
+
+            $autoRunSummarySampleShortGaps = Read-SummaryInt -Text $line -Key 'sampleShortGaps'
+            if ($null -ne $autoRunSummarySampleShortGaps) { $finalSummary.sampleShortGaps = $autoRunSummarySampleShortGaps }
+
+            $autoRunSummarySamplePerFaceShortGaps = Read-SummaryInt -Text $line -Key 'samplePerFaceShortGaps'
+            if ($null -ne $autoRunSummarySamplePerFaceShortGaps) { $finalSummary.samplePerFaceShortGaps = $autoRunSummarySamplePerFaceShortGaps }
+
+            $autoRunSummarySampleIsolated = Read-SummaryInt -Text $line -Key 'sampleIsolated'
+            if ($null -ne $autoRunSummarySampleIsolated) { $finalSummary.sampleIsolated = $autoRunSummarySampleIsolated }
+
+            $autoRunSummarySampleLargeJumps = Read-SummaryInt -Text $line -Key 'sampleLargeJumps'
+            if ($null -ne $autoRunSummarySampleLargeJumps) { $finalSummary.sampleLargeJumps = $autoRunSummarySampleLargeJumps }
+
+            $autoRunSummarySampleReview = Read-SummaryBool -Text $line -Key 'sampleReview'
+            if ($null -ne $autoRunSummarySampleReview) { $finalSummary.sampleReview = $autoRunSummarySampleReview }
+
+            $autoRunSummarySampleReviewReasons = Read-SummaryField -Text $line -Key 'sampleReviewReasons'
+            if ($null -ne $autoRunSummarySampleReviewReasons -and -not [string]::IsNullOrWhiteSpace($autoRunSummarySampleReviewReasons)) {
+                $finalSummary.sampleReviewReasons = $autoRunSummarySampleReviewReasons
+            }
+
+            $autoRunSummarySampleWindowIssueFrameCount = Read-SummaryInt -Text $line -Key 'sampleWindowIssueFrameCount'
+            if ($null -ne $autoRunSummarySampleWindowIssueFrameCount) { $finalSummary.sampleWindowIssueFrameCount = $autoRunSummarySampleWindowIssueFrameCount }
+
+            $autoRunSummarySampleWindowIssueCandidateCount = Read-SummaryInt -Text $line -Key 'sampleWindowIssueCandidateCount'
+            if ($null -ne $autoRunSummarySampleWindowIssueCandidateCount) { $finalSummary.sampleWindowIssueCandidateCount = $autoRunSummarySampleWindowIssueCandidateCount }
+
+            $autoRunSummarySampleWindowStartReason = Read-SummaryField -Text $line -Key 'sampleWindowStartReason'
+            if ($null -ne $autoRunSummarySampleWindowStartReason -and -not [string]::IsNullOrWhiteSpace($autoRunSummarySampleWindowStartReason)) {
+                $finalSummary.sampleWindowStartReason = $autoRunSummarySampleWindowStartReason
+            }
+
+            $autoRunSummarySampleMissRecovery = Read-SummaryInt -Text $line -Key 'sampleMissRecovery'
+            if ($null -ne $autoRunSummarySampleMissRecovery) { $finalSummary.sampleMissRecovery = $autoRunSummarySampleMissRecovery }
+
+            $autoRunSummarySampleFpSuppressed = Read-SummaryInt -Text $line -Key 'sampleFpSuppressed'
+            if ($null -ne $autoRunSummarySampleFpSuppressed) { $finalSummary.sampleFpSuppressed = $autoRunSummarySampleFpSuppressed }
+
+            $autoRunSummarySampleOffModeSuppression = Read-SummaryInt -Text $line -Key 'sampleOffModeWeakCleanupSuppression'
+            if ($null -ne $autoRunSummarySampleOffModeSuppression) { $finalSummary.sampleOffModeWeakCleanupSuppression = $autoRunSummarySampleOffModeSuppression }
+
+            $autoRunSummarySampleProtectedSceneCarry = Read-SummaryInt -Text $line -Key 'sampleProtectedSceneCarry'
+            if ($null -ne $autoRunSummarySampleProtectedSceneCarry) { $finalSummary.sampleProtectedSceneCarry = $autoRunSummarySampleProtectedSceneCarry }
+
+            $autoRunSummarySampleGapFillBlocked = Read-SummaryField -Text $line -Key 'sampleGapFillBlocked'
+            if ($null -ne $autoRunSummarySampleGapFillBlocked -and -not [string]::IsNullOrWhiteSpace($autoRunSummarySampleGapFillBlocked)) {
+                $finalSummary.sampleGapFillBlocked = $autoRunSummarySampleGapFillBlocked
             }
             continue
         }
@@ -573,6 +638,92 @@ function Get-WeakFaceScore {
     return $score
 }
 
+function Read-SummaryField {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Text,
+        [Parameter(Mandatory = $true)]
+        [string] $Key
+    )
+
+    $needle = "$Key="
+    $start = $Text.IndexOf($needle)
+    if ($start -lt 0) {
+        return $null
+    }
+
+    $slice = $Text.Substring($start + $needle.Length)
+    $comma = $slice.IndexOf(', ')
+    if ($comma -lt 0) {
+        return $slice.Trim()
+    }
+
+    return $slice.Substring(0, $comma).Trim()
+}
+
+function Read-SummaryInt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Text,
+        [Parameter(Mandatory = $true)]
+        [string] $Key
+    )
+
+    $raw = Read-SummaryField -Text $Text -Key $Key
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    $value = 0
+    if ([int]::TryParse($raw, [ref]$value)) {
+        return $value
+    }
+
+    return $null
+}
+
+function Read-SummaryDouble {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Text,
+        [Parameter(Mandatory = $true)]
+        [string] $Key
+    )
+
+    $raw = Read-SummaryField -Text $Text -Key $Key
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    $value = 0.0
+    if ([double]::TryParse($raw, [ref]$value)) {
+        return $value
+    }
+
+    return $null
+}
+
+function Read-SummaryBool {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Text,
+        [Parameter(Mandatory = $true)]
+        [string] $Key
+    )
+
+    $raw = Read-SummaryField -Text $Text -Key $Key
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    $value = $false
+    if ([bool]::TryParse($raw, [ref]$value)) {
+        return $value
+    }
+
+    return $null
+}
+
 function Format-ExportMeta {
     param(
         [Parameter(Mandatory = $true)]
@@ -798,6 +949,24 @@ $runAHybridWindowShortfall = if ($runA.Export.ContainsKey('hybridWindowFrameShor
 $runBHybridWindowShortfall = if ($runB.Export.ContainsKey('hybridWindowFrameShortfall')) { [int]$runB.Export.hybridWindowFrameShortfall } else { 0 }
 $runASampleWindowShortfall = if ($runA.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runA.Export.sampleWindowFrameShortfall } else { 0 }
 $runBSampleWindowShortfall = if ($runB.Export.ContainsKey('sampleWindowFrameShortfall')) { [int]$runB.Export.sampleWindowFrameShortfall } else { 0 }
+$aSampleIssueCandidates = if ($runA.FinalSummary.ContainsKey('sampleWindowIssueCandidateCount')) { [int]$runA.FinalSummary.sampleWindowIssueCandidateCount } else { 0 }
+$bSampleIssueCandidates = if ($runB.FinalSummary.ContainsKey('sampleWindowIssueCandidateCount')) { [int]$runB.FinalSummary.sampleWindowIssueCandidateCount } else { 0 }
+$sampleIssueCandidateDelta = $bSampleIssueCandidates - $aSampleIssueCandidates
+$aSampleShortGaps = if ($runA.FinalSummary.ContainsKey('sampleShortGaps')) { [int]$runA.FinalSummary.sampleShortGaps } else { 0 }
+$bSampleShortGaps = if ($runB.FinalSummary.ContainsKey('sampleShortGaps')) { [int]$runB.FinalSummary.sampleShortGaps } else { 0 }
+$sampleShortGapsDelta = $bSampleShortGaps - $aSampleShortGaps
+$aSamplePerFaceShortGaps = if ($runA.FinalSummary.ContainsKey('samplePerFaceShortGaps')) { [int]$runA.FinalSummary.samplePerFaceShortGaps } else { 0 }
+$bSamplePerFaceShortGaps = if ($runB.FinalSummary.ContainsKey('samplePerFaceShortGaps')) { [int]$runB.FinalSummary.samplePerFaceShortGaps } else { 0 }
+$samplePerFaceShortGapsDelta = $bSamplePerFaceShortGaps - $aSamplePerFaceShortGaps
+$aSampleMissRecovery = if ($runA.FinalSummary.ContainsKey('sampleMissRecovery')) { [int]$runA.FinalSummary.sampleMissRecovery } else { 0 }
+$bSampleMissRecovery = if ($runB.FinalSummary.ContainsKey('sampleMissRecovery')) { [int]$runB.FinalSummary.sampleMissRecovery } else { 0 }
+$sampleMissRecoveryDelta = $bSampleMissRecovery - $aSampleMissRecovery
+$aSampleFpSuppressed = if ($runA.FinalSummary.ContainsKey('sampleFpSuppressed')) { [int]$runA.FinalSummary.sampleFpSuppressed } else { 0 }
+$bSampleFpSuppressed = if ($runB.FinalSummary.ContainsKey('sampleFpSuppressed')) { [int]$runB.FinalSummary.sampleFpSuppressed } else { 0 }
+$sampleFpSuppressedDelta = $bSampleFpSuppressed - $aSampleFpSuppressed
+$aSampleOffModeSuppressed = if ($runA.FinalSummary.ContainsKey('sampleOffModeWeakCleanupSuppression')) { [int]$runA.FinalSummary.sampleOffModeWeakCleanupSuppression } else { 0 }
+$bSampleOffModeSuppressed = if ($runB.FinalSummary.ContainsKey('sampleOffModeWeakCleanupSuppression')) { [int]$runB.FinalSummary.sampleOffModeWeakCleanupSuppression } else { 0 }
+$sampleOffModeSuppressedDelta = $bSampleOffModeSuppressed - $aSampleOffModeSuppressed
 
 Write-Host ("오탐 후보 proxy: A={0} B={1} Δ={2}" -f $aWeakScore, $bWeakScore, $weakDelta)
 Write-Host ("미탐 보완 proxy (track lost-filled): A={0} B={1} Δ={2}" -f $aTrackFilled, $bTrackFilled, $trackDelta)
@@ -827,6 +996,11 @@ Write-Host ("장면전환 post-gap-fill carry 컷: A={0} B={1} Δ={2}" -f $runA.
 Write-Host ("장면전환 post-gap-fill carry 윈도우: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.postGapFillCarryWindows, $runB.SceneCutControl.postGapFillCarryWindows, $finalPostGapFillWindowsDelta)
 Write-Host ("하이브리드 윈도우 누락: A={0} B={1} Δ={2}" -f $runAHybridWindowShortfall, $runBHybridWindowShortfall, ($runBHybridWindowShortfall - $runAHybridWindowShortfall))
 Write-Host ("샘플 구간 누락: A={0} B={1} Δ={2}" -f $runASampleWindowShortfall, $runBSampleWindowShortfall, ($runBSampleWindowShortfall - $runASampleWindowShortfall))
+Write-Host ("샘플 오탐 후보 수: A={0} B={1} Δ={2}" -f $aSampleIssueCandidates, $bSampleIssueCandidates, $sampleIssueCandidateDelta)
+Write-Host ("샘플 단기 미탐 갭: A={0} B={1} Δ={2}" -f $aSampleShortGaps, $bSampleShortGaps, $sampleShortGapsDelta)
+Write-Host ("샘플 단기 미탐 퍼페이스 갭: A={0} B={1} Δ={2}" -f $aSamplePerFaceShortGaps, $bSamplePerFaceShortGaps, $samplePerFaceShortGapsDelta)
+Write-Host ("샘플 미탐 보완: A={0} B={1} Δ={2}" -f $aSampleMissRecovery, $bSampleMissRecovery, $sampleMissRecoveryDelta)
+Write-Host ("샘플 오탐 억제: A={0} B={1} Δ={2}" -f $aSampleFpSuppressed, $bSampleFpSuppressed, $sampleFpSuppressedDelta)
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
 
 $runMsDelta = if (($runA.RunSummary.ContainsKey('totalMs')) -and ($runB.RunSummary.ContainsKey('totalMs'))) {
@@ -844,18 +1018,26 @@ $bReview = if ($runB.FinalSummary.ContainsKey('reviewRequired')) { [bool]$runB.F
 
 $passWeakScore = $weakDelta -le $MaxWeakScoreDelta
 $passMissRecovery = $missRecoveryDelta -ge $MinMissRecoveryDelta
+$passSampleMissRecovery = $sampleMissRecoveryDelta -ge $MinSampleMissRecoveryDelta
 $passCutCarry = $postGapFillRemovalRateDelta -ge $MinPostGapFillRemovalRateDelta
+$passSampleIssueCandidates = $sampleIssueCandidateDelta -le $AllowedSampleIssueCandidateIncrease
+$passSampleShortGap = $sampleShortGapsDelta -le $AllowedSampleShortGapIncrease
+$passSamplePerFaceShortGap = $samplePerFaceShortGapsDelta -le $AllowedSamplePerFaceShortGapIncrease
 $passRunSpeed = if ($null -eq $runMsDelta) { $true } else { $runMsDelta -le $MaxRunTotalMsDelta }
 $passExportSpeed = if ($null -eq $exportDeltaForHint) { $true } else { $exportDeltaForHint -le $MaxExportTotalMsDelta }
 $passReview = if ($AllowReviewRequired.IsPresent) { $true } else { -not $bReview }
-$passOverall = $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passRunSpeed -and $passExportSpeed -and $passReview
+$passOverall = $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passSampleMissRecovery -and $passSampleIssueCandidates -and $passSampleShortGap -and $passSamplePerFaceShortGap -and $passRunSpeed -and $passExportSpeed -and $passReview
 $passLabel = if ($passOverall) { "PASS" } else { "REVIEW" }
 $reviewText = if ($passReview) { "PASS" } else { "REVIEW_REQUIRED" }
 
 $passReasons = [System.Collections.Generic.List[string]]::new()
 if (-not $passWeakScore) { $passReasons.Add("weakScoreΔ=$weakDelta > $MaxWeakScoreDelta") }
 if (-not $passMissRecovery) { $passReasons.Add("missRecoveryΔ=$missRecoveryDelta < $MinMissRecoveryDelta") }
+if (-not $passSampleMissRecovery) { $passReasons.Add("sampleMissRecoveryΔ=$sampleMissRecoveryDelta < $MinSampleMissRecoveryDelta") }
 if (-not $passCutCarry) { $passReasons.Add("postGapFillRemovalRateΔ=$('{0:P2}' -f $postGapFillRemovalRateDelta) < $('{0:P2}' -f $MinPostGapFillRemovalRateDelta)") }
+if (-not $passSampleIssueCandidates) { $passReasons.Add("sampleIssueCandidateΔ=$sampleIssueCandidateDelta > $AllowedSampleIssueCandidateIncrease") }
+if (-not $passSampleShortGap) { $passReasons.Add("sampleShortGapΔ=$sampleShortGapsDelta > $AllowedSampleShortGapIncrease") }
+if (-not $passSamplePerFaceShortGap) { $passReasons.Add("samplePerFaceShortGapΔ=$samplePerFaceShortGapsDelta > $AllowedSamplePerFaceShortGapIncrease") }
 if (-not $passRunSpeed) { $passReasons.Add("runMsΔ=$runMsDelta > $MaxRunTotalMsDelta") }
 if (-not $passExportSpeed) { $passReasons.Add("exportMsΔ=$exportDeltaForHint > $MaxExportTotalMsDelta") }
 if (-not $passReview) { $passReasons.Add("reviewRequired=true") }
@@ -866,6 +1048,10 @@ Write-Host ("결론: {0}" -f $passLabel)
 Write-Host ("오탐 proxy: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aWeakScore, $bWeakScore, $weakDelta, $MaxWeakScoreDelta)
 Write-Host ("미탐 보완 proxy: A={0}, B={1}, Δ={2}, 기준≥{3}" -f $missRecoveryProxyA, $missRecoveryProxyB, $missRecoveryDelta, $MinMissRecoveryDelta)
 Write-Host ("컷캐리 제거율: A={0:P2}, B={1:P2}, Δ={2:P2}, 기준≥{3:P2}" -f $aPostGapFillRemovalRate, $bPostGapFillRemovalRate, $postGapFillRemovalRateDelta, $MinPostGapFillRemovalRateDelta)
+Write-Host ("샘플 오탐 후보 수: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSampleIssueCandidates, $bSampleIssueCandidates, $sampleIssueCandidateDelta, $AllowedSampleIssueCandidateIncrease)
+Write-Host ("샘플 미탐 보완: A={0}, B={1}, Δ={2}, 기준≥{3}" -f $aSampleMissRecovery, $bSampleMissRecovery, $sampleMissRecoveryDelta, $MinSampleMissRecoveryDelta)
+Write-Host ("샘플 단기 미탐 갭: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSampleShortGaps, $bSampleShortGaps, $sampleShortGapsDelta, $AllowedSampleShortGapIncrease)
+Write-Host ("샘플 단기 미탐 퍼페이스 갭: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSamplePerFaceShortGaps, $bSamplePerFaceShortGaps, $samplePerFaceShortGapsDelta, $AllowedSamplePerFaceShortGapIncrease)
 Write-Host ("속도(run/export): runΔ={0}, 기준≤{1}, exportΔ={2}, 기준≤{3}" -f (if ($null -ne $runMsDelta) { $runMsDelta } else { "n/a" }), $MaxRunTotalMsDelta, $exportDeltaForHint, $MaxExportTotalMsDelta)
 Write-Host ("심사 플래그: reviewRequired=$bReview -> {0}" -f $reviewText)
 Write-Host ("판정 사유: {0}" -f ($(if ($passReasons.Count -eq 0) { "pass" } else { $passReasons -join '; ' })))
@@ -886,9 +1072,32 @@ $quickDecision = [pscustomobject]@{
     WeakScoreGate = $MaxWeakScoreDelta;
     MissRecoveryGate = $MinMissRecoveryDelta;
     PostGapFillRemovalRateGate = $MinPostGapFillRemovalRateDelta;
+    SampleIssueCandidateA = $aSampleIssueCandidates;
+    SampleIssueCandidateB = $bSampleIssueCandidates;
+    SampleIssueCandidateDelta = $sampleIssueCandidateDelta;
+    SampleShortGapA = $aSampleShortGaps;
+    SampleShortGapB = $bSampleShortGaps;
+    SampleShortGapDelta = $sampleShortGapsDelta;
+    SamplePerFaceShortGapA = $aSamplePerFaceShortGaps;
+    SamplePerFaceShortGapB = $bSamplePerFaceShortGaps;
+    SamplePerFaceShortGapDelta = $samplePerFaceShortGapsDelta;
+    SampleMissRecoveryA = $aSampleMissRecovery;
+    SampleMissRecoveryB = $bSampleMissRecovery;
+    SampleMissRecoveryDelta = $sampleMissRecoveryDelta;
+    SampleMissRecoveryGate = $MinSampleMissRecoveryDelta;
+    SampleFpSuppressedA = $aSampleFpSuppressed;
+    SampleFpSuppressedB = $bSampleFpSuppressed;
+    SampleFpSuppressedDelta = $sampleFpSuppressedDelta;
+    SampleOffModeWeakCleanupA = $aSampleOffModeSuppressed;
+    SampleOffModeWeakCleanupB = $bSampleOffModeSuppressed;
+    SampleOffModeWeakCleanupDelta = $sampleOffModeSuppressedDelta;
     PassWeakScore = $passWeakScore;
     PassMissRecovery = $passMissRecovery;
+    PassSampleMissRecovery = $passSampleMissRecovery;
     PassCutCarry = $passCutCarry;
+    PassSampleIssueCandidates = $passSampleIssueCandidates;
+    PassSampleShortGap = $passSampleShortGap;
+    PassSamplePerFaceShortGap = $passSamplePerFaceShortGap;
     PassRunSpeed = $passRunSpeed;
     PassExportSpeed = $passExportSpeed;
     PassReview = $passReview;

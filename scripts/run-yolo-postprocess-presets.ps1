@@ -63,6 +63,10 @@ param(
     [switch] $SkipExport,
     [switch] $AllowReviewRequired,
     [double] $MinPostGapFillRemovalRateDelta = 0.0,
+    [int] $AllowedSampleIssueCandidateIncrease = 0,
+    [int] $AllowedSampleShortGapIncrease = 0,
+    [int] $AllowedSamplePerFaceShortGapIncrease = 0,
+    [int] $MinSampleMissRecoveryDelta = 0,
     [string] $SummaryFile = "",
     [string] $YoloModelPath = "",
     [ValidateSet("YoloV8Face", "Yolo5Face")]
@@ -209,6 +213,10 @@ function Invoke-Compare {
     if ($EndFrameExclusive -ge 0) { $compareArgs += @('-EndFrameExclusive', "$EndFrameExclusive") }
     $compareArgs += @('-MaxWeakScoreDelta', "$AllowedWeakFaceIncrease")
     $compareArgs += @('-MinMissRecoveryDelta', "$MinDetectGain")
+    $compareArgs += @('-AllowedSampleIssueCandidateIncrease', "$AllowedSampleIssueCandidateIncrease")
+    $compareArgs += @('-AllowedSampleShortGapIncrease', "$AllowedSampleShortGapIncrease")
+    $compareArgs += @('-AllowedSamplePerFaceShortGapIncrease', "$AllowedSamplePerFaceShortGapIncrease")
+    $compareArgs += @('-MinSampleMissRecoveryDelta', "$MinSampleMissRecoveryDelta")
     $compareArgs += @('-MinPostGapFillRemovalRateDelta', "$MinPostGapFillRemovalRateDelta")
     $compareArgs += @('-MaxRunTotalMsDelta', "$MaxRunTotalMsDelta")
     $compareArgs += @('-MaxExportTotalMsDelta', "$MaxExportMsDelta")
