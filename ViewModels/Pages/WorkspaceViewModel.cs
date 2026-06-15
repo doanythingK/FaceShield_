@@ -592,6 +592,14 @@ namespace FaceShield.ViewModels.Pages
             double sampleOffModeWeakCleanupRate = sampleWindowFrames > 0
                 ? autoRunSummary.SampleOffModeWeakCleanupSuppressionCount / (double)sampleWindowFrames
                 : 0.0;
+            int sampleGapFillBlockedTotal = autoRunSummary.SampleGapFillBlockedCutGapFrames
+                + autoRunSummary.SampleGapFillBlockedCutGapFramesBeforeCut
+                + autoRunSummary.SampleGapFillBlockedCutGapFramesAfterCut
+                + autoRunSummary.SampleGapFillBlockedCleanupGapFrames
+                + autoRunSummary.SampleGapFillBlockedSceneCarryGapFrames;
+            double sampleGapFillBlockedRate = sampleWindowFrames > 0
+                ? sampleGapFillBlockedTotal / (double)sampleWindowFrames
+                : 0.0;
             double finalSceneCutRemovalRate = autoRunSummary.FinalSceneCutCarryPairCount > 0
                 ? autoRunSummary.FinalSceneCutCarryRemovedCount / (double)autoRunSummary.FinalSceneCutCarryPairCount
                 : 0.0;
