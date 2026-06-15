@@ -371,7 +371,7 @@ namespace FaceShield.Services.Analysis
                     cancellationToken,
                     "pre-smooth");
                 swScenePreCut.Stop();
-                yoloPreSmoothCutPairs = preSmoothGuard.CutFramePairs;
+                yoloPreSmoothCutPairs = NormalizeCutFramePairs(preSmoothGuard.CutFramePairs);
                 yoloPreSmoothGuardChecked += preSmoothGuard.Checked;
                 yoloPreSmoothGuardDirectDifferenceChecks += preSmoothGuard.DirectDifferenceChecks;
                 yoloPreSmoothGuardDirectDifferenceSkipped += preSmoothGuard.DirectDifferenceSkipped;
@@ -389,7 +389,7 @@ namespace FaceShield.Services.Analysis
                     cancellationToken,
                     "pre-smooth");
                 swScenePreStrongProbe.Stop();
-                yoloPreSmoothStrongCarryProbeCutPairs = preSmoothStrongCarryProbe.CutFramePairs;
+                yoloPreSmoothStrongCarryProbeCutPairs = NormalizeCutFramePairs(preSmoothStrongCarryProbe.CutFramePairs);
                 yoloPreSmoothStrongCarryProbeChecked += preSmoothStrongCarryProbe.Checked;
                 yoloPreSmoothStrongCarryProbeDirectDifferenceChecks += preSmoothStrongCarryProbe.DirectDifferenceChecks;
                 yoloPreSmoothStrongCarryProbeDirectDifferenceSkipped += preSmoothStrongCarryProbe.DirectDifferenceSkipped;
@@ -445,7 +445,7 @@ namespace FaceShield.Services.Analysis
                     cancellationToken,
                     "post-smooth");
                 swScenePostCut.Stop();
-                yoloPostSmoothCutPairs = postSmoothGuard.CutFramePairs;
+                yoloPostSmoothCutPairs = NormalizeCutFramePairs(postSmoothGuard.CutFramePairs);
                 yoloPostSmoothGuardChecked += postSmoothGuard.Checked;
                 yoloPostSmoothGuardDirectDifferenceChecks += postSmoothGuard.DirectDifferenceChecks;
                 yoloPostSmoothGuardDirectDifferenceSkipped += postSmoothGuard.DirectDifferenceSkipped;
@@ -459,7 +459,7 @@ namespace FaceShield.Services.Analysis
                     cancellationToken,
                     "post-smooth");
                 swScenePostStrongProbe.Stop();
-                yoloStrongCarryProbeCutPairs = strongCarryProbe.CutFramePairs;
+                yoloStrongCarryProbeCutPairs = NormalizeCutFramePairs(strongCarryProbe.CutFramePairs);
                 yoloPostStrongCarryProbeChecked += strongCarryProbe.Checked;
                 yoloPostStrongCarryProbeDirectDifferenceChecks += strongCarryProbe.DirectDifferenceChecks;
                 yoloPostStrongCarryProbeDirectDifferenceSkipped += strongCarryProbe.DirectDifferenceSkipped;
@@ -967,7 +967,9 @@ namespace FaceShield.Services.Analysis
                     0,
                     0,
                     0,
-                    gapFill.CutGuardFacesInfo.Select(x => $"{x.SourceFrameIndex}:{x.FrameIndex}").ToArray());
+                    NormalizeCutFramePairs(gapFill.CutGuardFacesInfo
+                        .Select(x => $"{x.SourceFrameIndex}:{x.FrameIndex}")
+                        .ToArray()));
 
             var guard = new FaceTrackSceneCutGuard().Apply(
                 _maskProvider,
@@ -1026,7 +1028,7 @@ namespace FaceShield.Services.Analysis
                     guard.Checked,
                     guard.DirectDifferenceChecks,
                     guard.DirectDifferenceSkipped,
-                    guard.CutFramePairs);
+                    NormalizeCutFramePairs(guard.CutFramePairs));
         }
 
         private AutoMaskPostProcessFinalSummary LogFinalMaskSummary(
@@ -2263,6 +2265,18 @@ namespace FaceShield.Services.Analysis
                 return $"{sourceFrame}->{targetFrame}";
 
             return string.Empty;
+        }
+
+        private static IReadOnlyList<string> NormalizeCutFramePairs(IReadOnlyCollection<string>? framePairs)
+        {
+            if (framePairs == null || framePairs.Count == 0)
+                return Array.Empty<string>();
+
+            return framePairs
+                .Select(NormalizeCutFramePair)
+                .Where(static pair => !string.IsNullOrWhiteSpace(pair))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
         }
 
         private readonly record struct YoloFinalMaskCleanupPassResult(
