@@ -1666,7 +1666,12 @@ namespace FaceShield.Services.Analysis
                     : finalSummary.SampleReviewReasons,
                 SampleProtectedSceneCarryFrameCount = finalSummary.SampleProtectedSceneCarryFrameCount,
                 SampleMissRecoveryFillCount = finalSummary.SampleMissRecoveryFillCount,
-                SampleFalsePositiveSuppressionCount = finalSummary.SampleFalsePositiveSuppressionCount
+                SampleFalsePositiveSuppressionCount = finalSummary.SampleFalsePositiveSuppressionCount,
+                SampleWindowIssueFrameCount = finalSummary.SampleWindowIssueFrameCount,
+                SampleWindowIssueCandidateCount = finalSummary.SampleWindowIssueCandidateCount,
+                SampleWindowStartReason = string.IsNullOrWhiteSpace(finalSummary.SampleWindowStartReason)
+                    ? "none"
+                    : finalSummary.SampleWindowStartReason
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
             LogAutoMaskQualityGate(LastRunSummary);
@@ -1732,7 +1737,7 @@ namespace FaceShield.Services.Analysis
             System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskQualityGate] sample runId={summary.RunId ?? \"n/a\"}, mode={summary.Mode}, risk={sampleRiskLabel}, sampleWindow={summary.SampleWindowFrames}, sampleFrames={summary.SampleFrameCount}, sampleRows={summary.SampleRowCount}, shortGaps={summary.SampleShortGapCount}, perFaceShortGaps={summary.SamplePerFaceShortGapCount}, isolated={summary.SampleIsolatedFrameCount}, largeJumps={summary.SampleLargeJumpGapCount}, protectedCarry={summary.SampleProtectedSceneCarryFrameCount}, reviewRequired={summary.SampleReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.SampleReviewReasons}");
             System.Diagnostics.Debug.WriteLine(
-                $"[AutoMaskQualityGate] sample runId={summary.RunId ?? \"n/a\"}, missRecovery={summary.SampleMissRecoveryFillCount}, missRecoveryRate={sampleMissRecoveryRate:0.0000}, fpSuppressed={summary.SampleFalsePositiveSuppressionCount}, fpSuppressedRate={sampleFpSuppressedRate:0.0000}, riskScore={sampleRiskScore}, riskLabel={sampleRiskLabel}");
+                $"[AutoMaskQualityGate] sample runId={summary.RunId ?? \"n/a\"}, sampleIssueFrames={summary.SampleWindowIssueFrameCount}, sampleIssueCandidates={summary.SampleWindowIssueCandidateCount}, sampleWindowStartReason={summary.SampleWindowStartReason}, missRecovery={summary.SampleMissRecoveryFillCount}, missRecoveryRate={sampleMissRecoveryRate:0.0000}, fpSuppressed={summary.SampleFalsePositiveSuppressionCount}, fpSuppressedRate={sampleFpSuppressedRate:0.0000}, riskScore={sampleRiskScore}, riskLabel={sampleRiskLabel}");
         }
 
         private void SetLastRunSummary(AutoMaskRunSummary summary)

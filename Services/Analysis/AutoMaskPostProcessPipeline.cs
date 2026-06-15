@@ -834,7 +834,10 @@ namespace FaceShield.Services.Analysis
                     noneReviewReasons,
                     0,
                     0,
-                    0);
+                    0,
+                    0,
+                    0,
+                    "none");
             }
 
             var frames = entries.Select(static x => x.Key).ToArray();
@@ -1234,7 +1237,10 @@ namespace FaceShield.Services.Analysis
                 sampleReviewReason,
                 sampleProtectedCarryFrames,
                 sampleMissRecoveryFillCount,
-                sampleFalsePositiveSuppressionCount);
+                sampleFalsePositiveSuppressionCount,
+                sampleWindowIssueFrames.Count,
+                sampleWindowIssueCandidateCount,
+                sampleWindowStartReason);
         }
 
         private static IReadOnlyList<string> BuildFinalMaskReviewReasons(
@@ -1830,7 +1836,10 @@ namespace FaceShield.Services.Analysis
         string SampleReviewReasons,
         int SampleProtectedSceneCarryFrameCount,
         int SampleMissRecoveryFillCount,
-        int SampleFalsePositiveSuppressionCount)
+        int SampleFalsePositiveSuppressionCount,
+        int SampleWindowIssueFrameCount,
+        int SampleWindowIssueCandidateCount,
+        string SampleWindowStartReason)
     {
         public static AutoMaskPostProcessFinalSummary Empty { get; } = new(
             0,
@@ -1864,6 +1873,9 @@ namespace FaceShield.Services.Analysis
             false,
             "none",
             0,
-            0);
+            0,
+            0,
+            0,
+            "none");
     }
 }
