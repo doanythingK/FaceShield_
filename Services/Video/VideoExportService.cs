@@ -20,7 +20,7 @@ public unsafe sealed class VideoExportService
     private const double MaxEstimatedFrameCountSkewRatio = 1.25;
     private const int MaxEstimatedFrameCountSkewAbsolute = 1200;
     private const long MaxHybridFrameStepTolerance = 1;
-    private const long MaxHybridCopyGapMultiplierForFallback = 1;
+    private const long MaxHybridCopyPtsJitterDivisor = 10;
     private const int MaxHybridCopyGapConsecutiveAfterThreshold = 3;
     private const int MaxHybridPacketFrameIndexUnreliableSequence = 4;
     private const int ExportSampleWindowSeconds = 30;
@@ -1101,7 +1101,8 @@ public unsafe sealed class VideoExportService
                     {
                         long copyGap = Math.Abs(pkt->pts - previousPacketPts);
                         long expectedGap = Math.Max(1, hybridCopyVideoFrameStep);
-                        long copyGapThreshold = Math.Max(1, expectedGap * MaxHybridCopyGapMultiplierForFallback);
+                        long copyGapJitterTolerance = Math.Max(1, expectedGap / MaxHybridCopyPtsJitterDivisor);
+                        long copyGapThreshold = expectedGap + copyGapJitterTolerance;
                         if (copyGap > 0 && copyGap > copyGapThreshold)
                         {
                             copyGapOutlierCount++;
@@ -1116,7 +1117,7 @@ public unsafe sealed class VideoExportService
                                 "Invalid argument: 하이브리드 복사 구간의 PTS 점프가 과도하여 rollback 합니다.");
                         }
 
-                        if (copyGap > expectedGap)
+                        if (copyGap > copyGapThreshold)
                         {
                             copyGapLongRunCount++;
                             if (copyGapLongRunCount >= MaxHybridCopyGapConsecutiveAfterThreshold)

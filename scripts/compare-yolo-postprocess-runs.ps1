@@ -793,7 +793,9 @@ foreach ($phase in $allPhases) {
     $b = if ($runB.Timings.ContainsKey($phase)) { $runB.Timings[$phase] } else { $null }
     $delta = if ($null -ne $a -and $null -ne $b) { $b - $a } else { $null }
     $deltaText = if ($null -eq $delta) { "n/a" } else { if ($delta -gt 0) { "+$delta" } else { "$delta" } }
-    Write-Host ([string]::Format("{0,-28} A={1,8}ms B={2,8}ms Δ={3}", $phase, ($a ?? "-").ToString(), ($b ?? "-").ToString(), $deltaText))
+    $aText = if ($null -ne $a) { $a.ToString() } else { "-" }
+    $bText = if ($null -ne $b) { $b.ToString() } else { "-" }
+    Write-Host ([string]::Format("{0,-28} A={1,8}ms B={2,8}ms Δ={3}", $phase, $aText, $bText, $deltaText))
 }
 
 Write-Host ""
@@ -811,7 +813,8 @@ if ($runA.RunSummary.Count -gt 0 -and $runB.RunSummary.Count -gt 0) {
     $deltaDetects = $runB.RunSummary.detects - $runA.RunSummary.detects
     $deltaInterpolated = $runB.RunSummary.interpolated - $runA.RunSummary.interpolated
     $deltaRunMs = $runB.RunSummary.totalMs - $runA.RunSummary.totalMs
-    Write-Host ("autoRunDelta processed={0} detects={1} interpolated={2} totalMs={3}" -f $deltaProcessed, $deltaDetects, $deltaInterpolated, ($deltaRunMs > 0 ? "+$deltaRunMs" : "$deltaRunMs"))
+    $deltaRunMsText = if ($deltaRunMs -gt 0) { "+$deltaRunMs" } else { "$deltaRunMs" }
+    Write-Host ("autoRunDelta processed={0} detects={1} interpolated={2} totalMs={3}" -f $deltaProcessed, $deltaDetects, $deltaInterpolated, $deltaRunMsText)
 }
 
 Write-Host ""
@@ -885,8 +888,10 @@ if ($runA.SceneCutReset.removed -gt 0 -or $runB.SceneCutReset.removed -gt 0) {
     Write-Host "== off-mode scene-cut reset evidence =="
     Write-Host ("A sceneCutResetCount={0} removedFrames={1}" -f $runA.SceneCutReset.resetCount, $runA.SceneCutReset.removed)
     Write-Host ("B sceneCutResetCount={0} removedFrames={1}" -f $runB.SceneCutReset.resetCount, $runB.SceneCutReset.removed)
-    Write-Host ("A clearRanges={0}" -f ($runA.SceneCutReset.clearRanges.Count -gt 0 ? ($runA.SceneCutReset.clearRanges -join ", ") : "n/a"))
-    Write-Host ("B clearRanges={0}" -f ($runB.SceneCutReset.clearRanges.Count -gt 0 ? ($runB.SceneCutReset.clearRanges -join ", ") : "n/a"))
+    $aClearRanges = if ($runA.SceneCutReset.clearRanges.Count -gt 0) { $runA.SceneCutReset.clearRanges -join ", " } else { "n/a" }
+    $bClearRanges = if ($runB.SceneCutReset.clearRanges.Count -gt 0) { $runB.SceneCutReset.clearRanges -join ", " } else { "n/a" }
+    Write-Host ("A clearRanges={0}" -f $aClearRanges)
+    Write-Host ("B clearRanges={0}" -f $bClearRanges)
 }
 
 Write-Host ""
@@ -900,7 +905,8 @@ if ($runB.Export.Count -gt 0) {
 
 $exportDelta = if (($runA.Export.ContainsKey('totalMs')) -and ($runB.Export.ContainsKey('totalMs'))) { $runB.Export.totalMs - $runA.Export.totalMs } else { $null }
 if ($null -ne $exportDelta) {
-    Write-Host ("exportDeltaMs={0}" -f ($exportDelta > 0 ? "+$exportDelta" : "$exportDelta"))
+    $exportDeltaText = if ($exportDelta -gt 0) { "+$exportDelta" } else { "$exportDelta" }
+    Write-Host ("exportDeltaMs={0}" -f $exportDeltaText)
 }
 
 Write-Host ""
@@ -977,8 +983,12 @@ Write-Host ("큰 점프 갭 보정 횟수: A={0} B={1} Δ={2}" -f $(if ($runA.Fi
 Write-Host ("컷 전환 post-gap-fill carry pairs: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillCarryPairs')) { $runA.FinalSummary.postGapFillCarryPairs } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillCarryPairs')) { $runB.FinalSummary.postGapFillCarryPairs } else { 0 }), $postGapFillCarryPairDelta)
 Write-Host ("컷 전환 post-gap-fill carry removed: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillRemoved')) { $runA.FinalSummary.postGapFillRemoved } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillRemoved')) { $runB.FinalSummary.postGapFillRemoved } else { 0 }), $postGapFillRemovedDelta)
 Write-Host ("컷 전환 post-gap-fill carry protected: A={0} B={1} Δ={2}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { $runA.FinalSummary.postGapFillProtected } else { 0 }), $(if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { $runB.FinalSummary.postGapFillProtected } else { 0 }), $postGapFillProtectedDelta)
-Write-Host ("컷 전환 post-gap-fill carry 제거율: A={0:P1} B={1:P1} Δ={2:P1}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 }, $(if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }), $postGapFillRemovalRateDelta)
-Write-Host ("컷 전환 post-gap-fill carry 보존율: A={0:P1} B={1:P1} Δ={2:P1}" -f $(if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 }, $(if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }), $postGapFillProtectedRateDelta)
+$aPostGapFillRemovalRate = if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 }
+$bPostGapFillRemovalRate = if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }
+$aPostGapFillProtectedRate = if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 }
+$bPostGapFillProtectedRate = if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }
+Write-Host ("컷 전환 post-gap-fill carry 제거율: A={0:P1} B={1:P1} Δ={2:P1}" -f $aPostGapFillRemovalRate, $bPostGapFillRemovalRate, $postGapFillRemovalRateDelta)
+Write-Host ("컷 전환 post-gap-fill carry 보존율: A={0:P1} B={1:P1} Δ={2:P1}" -f $aPostGapFillProtectedRate, $bPostGapFillProtectedRate, $postGapFillProtectedRateDelta)
 Write-Host ("장면전환 pre-smooth 큐브: pre컷 {0}->{1} (Δ {2}), strong컷 {3}->{4} (Δ {5})" -f $runA.SceneCutControl.preSmoothCutPairs, $runB.SceneCutControl.preSmoothCutPairs, $preSmoothCutPairsDelta, $runA.SceneCutControl.preSmoothStrongPairs, $runB.SceneCutControl.preSmoothStrongPairs, $preSmoothStrongPairsDelta)
 Write-Host ("장면전환 post-smooth 큐브: pre컷 {0}->{1} (Δ {2}), strong컷 {3}->{4} (Δ {5})" -f $runA.SceneCutControl.postSmoothCutPairs, $runB.SceneCutControl.postSmoothCutPairs, $postSmoothCutPairsDelta, $runA.SceneCutControl.postSmoothStrongPairs, $runB.SceneCutControl.postSmoothStrongPairs, $postSmoothStrongPairsDelta)
 Write-Host ("장면전환 final carry 컷: A={0} B={1} Δ={2}" -f $runA.SceneCutControl.finalCutPairs, $runB.SceneCutControl.finalCutPairs, $finalCarryCutPairsDelta)
