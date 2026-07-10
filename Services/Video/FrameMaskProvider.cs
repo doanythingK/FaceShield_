@@ -103,20 +103,10 @@ namespace FaceShield.Services.Video
         int end = Math.Max(start, endExclusive);
         int removedFaceMasks = 0;
         int removedStoredMasks = 0;
-        foreach (int frameIndex in _faceMasks.Keys)
+        for (int frameIndex = start; frameIndex < end; frameIndex++)
         {
-            if (frameIndex < start || frameIndex >= end)
-                continue;
-
             if (_faceMasks.TryRemove(frameIndex, out _))
                 removedFaceMasks++;
-        }
-
-        foreach (int frameIndex in _masks.Keys)
-        {
-            if (frameIndex < start || frameIndex >= end)
-                continue;
-
             if (_masks.TryRemove(frameIndex, out _))
                 removedStoredMasks++;
         }

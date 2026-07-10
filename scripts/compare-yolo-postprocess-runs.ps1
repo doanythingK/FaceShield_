@@ -133,6 +133,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Windows PowerShell routes Write-Host from a child process to native stdout.
+# Suppress the human report in JSON mode so preset runners receive one valid
+# JSON document instead of mixed text and JSON.
+if ($JsonOutput.IsPresent) {
+    function Write-Host {
+        param([Parameter(ValueFromRemainingArguments = $true)][object[]] $Object)
+    }
+}
+
 foreach ($path in @($RunALog, $RunBLog)) {
     if (-not (Test-Path $path)) {
         throw "log not found: $path"
@@ -439,6 +448,8 @@ function Read-RunInfo {
             $finalSummary.sampleWindowStartFrame = Read-SummaryInt -Text $line -Key 'startFrame'
             $finalSummary.sampleWindowEndFrame = Read-SummaryInt -Text $line -Key 'endFrame'
             $finalSummary.sampleWindowFrameCount = Read-SummaryInt -Text $line -Key 'frames'
+            $finalSummary.sampleWindowStartSec = Read-SummaryDouble -Text $line -Key 'startSec'
+            $finalSummary.sampleWindowEndSec = Read-SummaryDouble -Text $line -Key 'endSec'
             $finalSummary.sampleWindowDurationSec = Read-SummaryDouble -Text $line -Key 'durationSec'
             continue
         }
@@ -449,6 +460,10 @@ function Read-RunInfo {
             $yoloCascadeSummary = @{
                 enabled = Read-SummaryBool -Text $line -Key 'enabled';
                 riskFrames = Read-SummaryInt -Text $line -Key 'riskFrames';
+                timelineFrames = Read-SummaryInt -Text $line -Key 'timelineFrames';
+                ptsTimingFrames = Read-SummaryInt -Text $line -Key 'ptsTimingFrames';
+                unalignedTimelineFrames = Read-SummaryInt -Text $line -Key 'unalignedTimelineFrames';
+                unalignedRiskFrames = Read-SummaryInt -Text $line -Key 'unalignedRiskFrames';
                 attempts = Read-SummaryInt -Text $line -Key 'attempts';
                 protectedStoredMaskFrames = Read-SummaryInt -Text $line -Key 'protectedStoredMaskFrames';
                 acceptedFaces = Read-SummaryInt -Text $line -Key 'acceptedFaces';
@@ -602,6 +617,10 @@ function Read-RunInfo {
                 hybridCopyPacketFrameStep = Read-SummaryLong -Text $line -Key 'hybridCopyPacketFrameStep';
                 inputVideoPackets = Read-SummaryInt -Text $line -Key 'inputVideoPackets';
                 outputVideoPackets = Read-SummaryInt -Text $line -Key 'outputVideoPackets';
+                outputPacketCountMismatch = Read-SummaryInt -Text $line -Key 'outputPacketCountMismatch';
+                missingVideoPacketTimestampCount = Read-SummaryInt -Text $line -Key 'missingVideoPacketTimestampCount';
+                videoPacketTimestampAdjustmentCount = Read-SummaryInt -Text $line -Key 'videoPacketTimestampAdjustmentCount';
+                outputCommitted = Read-SummaryBool -Text $line -Key 'outputCommitted';
                 copiedVideoPackets = Read-SummaryInt -Text $line -Key 'copiedVideoPackets';
                 copiedSourceVideoPackets = Read-SummaryInt -Text $line -Key 'copiedSourceVideoPackets';
                 encodedSourceVideoPackets = Read-SummaryInt -Text $line -Key 'encodedSourceVideoPackets';
@@ -639,6 +658,10 @@ function Read-RunInfo {
             throw "target run id pattern '$targetIdPattern' not found in log: $Path. known runs: $knownRunIds"
         }
         throw "target run id '$targetId' not found in log: $Path. known runs: $knownRunIds"
+    }
+    if ($null -eq $targetIdPattern -and $encounteredRunIds.Count -gt 1) {
+        $knownRunIds = [string]::Join(", ", $encounteredRunIds)
+        throw "multiple run ids found in log; specify TargetRunId explicitly: $Path. known runs: $knownRunIds"
     }
 
     return [pscustomobject]@{
@@ -937,11 +960,27 @@ function Get-SampleWindowEvidenceValidation {
     $startFrame = if ($Summary.ContainsKey('sampleWindowStartFrame')) { $Summary.sampleWindowStartFrame } else { $null }
     $endFrame = if ($Summary.ContainsKey('sampleWindowEndFrame')) { $Summary.sampleWindowEndFrame } else { $null }
     $frameCount = if ($Summary.ContainsKey('sampleWindowFrameCount')) { $Summary.sampleWindowFrameCount } else { $null }
+    $startSec = if ($Summary.ContainsKey('sampleWindowStartSec')) { $Summary.sampleWindowStartSec } else { $null }
+    $endSec = if ($Summary.ContainsKey('sampleWindowEndSec')) { $Summary.sampleWindowEndSec } else { $null }
     $durationSec = if ($Summary.ContainsKey('sampleWindowDurationSec')) { $Summary.sampleWindowDurationSec } else { $null }
 
     $hasValidStart = $null -ne $startFrame -and [int]$startFrame -ge 0
     $hasValidEnd = $null -ne $endFrame -and [int]$endFrame -ge 0
     $hasValidFrameCount = $null -ne $frameCount -and [int]$frameCount -gt 0
+    $hasValidStartSec = $false
+    if ($null -ne $startSec) {
+        $startSecValue = [double]$startSec
+        $hasValidStartSec = -not [double]::IsNaN($startSecValue) -and
+            -not [double]::IsInfinity($startSecValue) -and
+            $startSecValue -ge 0
+    }
+    $hasValidEndSec = $false
+    if ($null -ne $endSec) {
+        $endSecValue = [double]$endSec
+        $hasValidEndSec = -not [double]::IsNaN($endSecValue) -and
+            -not [double]::IsInfinity($endSecValue) -and
+            $endSecValue -gt 0
+    }
     $hasValidDuration = $false
     if ($null -ne $durationSec) {
         $durationValue = [double]$durationSec
@@ -953,7 +992,18 @@ function Get-SampleWindowEvidenceValidation {
     if (-not $hasValidStart) { [void]$reasons.Add('startFrameMissingOrNegative') }
     if (-not $hasValidEnd) { [void]$reasons.Add('endFrameMissingOrNegative') }
     if (-not $hasValidFrameCount) { [void]$reasons.Add('framesMissingOrNonPositive') }
+    if (-not $hasValidStartSec) { [void]$reasons.Add('startSecMissingOrInvalid') }
+    if (-not $hasValidEndSec) { [void]$reasons.Add('endSecMissingOrInvalid') }
     if (-not $hasValidDuration) { [void]$reasons.Add('durationMissingOrNonPositive') }
+
+    if ($hasValidStartSec -and $hasValidEndSec -and $hasValidDuration) {
+        if ([double]$endSec -le [double]$startSec) {
+            [void]$reasons.Add('endSecNotAfterStartSec')
+        }
+        elseif ([math]::Abs((([double]$endSec - [double]$startSec) - [double]$durationSec)) -gt 0.005) {
+            [void]$reasons.Add('durationDoesNotMatchSecondRange')
+        }
+    }
 
     if ($hasValidStart -and $hasValidEnd) {
         if ([int]$endFrame -lt [int]$startFrame) {
@@ -1018,11 +1068,21 @@ function Get-YoloCascadeGateValidation {
         }
 
         $hasRiskFrames = $Summary.ContainsKey('riskFrames') -and $null -ne $Summary.riskFrames -and [int]$Summary.riskFrames -ge 0
+        $hasTimelineFrames = $Summary.ContainsKey('timelineFrames') -and $null -ne $Summary.timelineFrames -and [int]$Summary.timelineFrames -gt 0
+        $hasPtsTimingFrames = $Summary.ContainsKey('ptsTimingFrames') -and $null -ne $Summary.ptsTimingFrames -and [int]$Summary.ptsTimingFrames -ge 0
+        $hasUnalignedTimelineFrames = $Summary.ContainsKey('unalignedTimelineFrames') -and $null -ne $Summary.unalignedTimelineFrames -and [int]$Summary.unalignedTimelineFrames -ge 0
+        $hasUnalignedRiskFrames = $Summary.ContainsKey('unalignedRiskFrames') -and $null -ne $Summary.unalignedRiskFrames -and [int]$Summary.unalignedRiskFrames -ge 0
         $hasAttempts = $Summary.ContainsKey('attempts') -and $null -ne $Summary.attempts -and [int]$Summary.attempts -ge 0
         $hasProtectedStoredMasks = $Summary.ContainsKey('protectedStoredMaskFrames') -and $null -ne $Summary.protectedStoredMaskFrames -and [int]$Summary.protectedStoredMaskFrames -ge 0
         $hasAcceptedFaces = $Summary.ContainsKey('acceptedFaces') -and $null -ne $Summary.acceptedFaces -and [int]$Summary.acceptedFaces -ge 0
-        if (-not $hasRiskFrames -or -not $hasAttempts -or -not $hasProtectedStoredMasks -or -not $hasAcceptedFaces) {
+        if (-not $hasRiskFrames -or -not $hasTimelineFrames -or -not $hasPtsTimingFrames -or -not $hasUnalignedTimelineFrames -or -not $hasUnalignedRiskFrames -or -not $hasAttempts -or -not $hasProtectedStoredMasks -or -not $hasAcceptedFaces) {
             [void]$reasons.Add('cascadeMetricsMissingOrInvalid')
+        }
+        elseif ([int]$Summary.ptsTimingFrames -ne [int]$Summary.timelineFrames -or [int]$Summary.unalignedTimelineFrames -ne 0) {
+            [void]$reasons.Add("cascadePtsCoverage=$($Summary.ptsTimingFrames)/$($Summary.timelineFrames),unaligned=$($Summary.unalignedTimelineFrames)")
+        }
+        elseif ([int]$Summary.unalignedRiskFrames -ne 0) {
+            [void]$reasons.Add("cascadeUnalignedRiskFrames=$($Summary.unalignedRiskFrames)")
         }
         elseif ([int]$Summary.attempts + [int]$Summary.protectedStoredMaskFrames -ne [int]$Summary.riskFrames) {
             [void]$reasons.Add('cascadeRiskCoverageMismatch')
@@ -1142,7 +1202,7 @@ function Get-ExportIntegrityValidation {
         return [pscustomobject]@{ IsValid = $reasons.Count -eq 0; Reasons = @($reasons) }
     }
 
-    foreach ($key in @('frames', 'totalMs', 'inputVideoPackets', 'outputVideoPackets', 'droppedVideoPackets', 'outputPacketPtsGapOutlierCount', 'hybridWindowFrameShortfall', 'sampleWindowFrameShortfall')) {
+    foreach ($key in @('frames', 'totalMs', 'inputVideoPackets', 'outputVideoPackets', 'outputPacketCountMismatch', 'missingVideoPacketTimestampCount', 'videoPacketTimestampAdjustmentCount', 'outputCommitted', 'droppedVideoPackets', 'outputPacketPtsGapOutlierCount', 'hybridCopyTimestampFixCount', 'hybridWindowFrameShortfall', 'sampleWindowFrameShortfall')) {
         if (-not $Summary.ContainsKey($key) -or $null -eq $Summary[$key]) {
             [void]$reasons.Add("export${Label}${key}Missing")
         }
@@ -1163,11 +1223,26 @@ function Get-ExportIntegrityValidation {
         [int]$Summary.inputVideoPackets -ne [int]$Summary.outputVideoPackets) {
         [void]$reasons.Add("export${Label}PacketCount=$($Summary.inputVideoPackets)/$($Summary.outputVideoPackets)")
     }
+    if ($Summary.ContainsKey('outputPacketCountMismatch') -and [int]$Summary.outputPacketCountMismatch -ne 0) {
+        [void]$reasons.Add("export${Label}PacketCountMismatch=$($Summary.outputPacketCountMismatch)")
+    }
+    if ($Summary.ContainsKey('missingVideoPacketTimestampCount') -and [int]$Summary.missingVideoPacketTimestampCount -ne 0) {
+        [void]$reasons.Add("export${Label}MissingPacketTimestamps=$($Summary.missingVideoPacketTimestampCount)")
+    }
+    if ($Summary.ContainsKey('videoPacketTimestampAdjustmentCount') -and [int]$Summary.videoPacketTimestampAdjustmentCount -ne 0) {
+        [void]$reasons.Add("export${Label}TimestampAdjustments=$($Summary.videoPacketTimestampAdjustmentCount)")
+    }
+    if ($Summary.ContainsKey('outputCommitted') -and $Summary.outputCommitted -ne $true) {
+        [void]$reasons.Add("export${Label}OutputNotCommitted")
+    }
     if ($Summary.ContainsKey('droppedVideoPackets') -and [int]$Summary.droppedVideoPackets -ne 0) {
         [void]$reasons.Add("export${Label}DroppedVideoPackets=$($Summary.droppedVideoPackets)")
     }
     if ($Summary.ContainsKey('outputPacketPtsGapOutlierCount') -and [int]$Summary.outputPacketPtsGapOutlierCount -ne 0) {
         [void]$reasons.Add("export${Label}PtsGapOutliers=$($Summary.outputPacketPtsGapOutlierCount)")
+    }
+    if ($Summary.ContainsKey('hybridCopyTimestampFixCount') -and [int]$Summary.hybridCopyTimestampFixCount -ne 0) {
+        [void]$reasons.Add("export${Label}HybridTimestampFixes=$($Summary.hybridCopyTimestampFixCount)")
     }
     if ($Summary.ContainsKey('hybridWindowFrameShortfall') -and [int]$Summary.hybridWindowFrameShortfall -ne 0) {
         [void]$reasons.Add("export${Label}HybridShortfall=$($Summary.hybridWindowFrameShortfall)")
@@ -1472,6 +1547,12 @@ $passSampleWindowAlignment = if ($sampleWindowEvidenceA.IsValid -and $sampleWind
     $runA.FinalSummary.sampleWindowStartFrame -eq $runB.FinalSummary.sampleWindowStartFrame -and
     $runA.FinalSummary.sampleWindowEndFrame -eq $runB.FinalSummary.sampleWindowEndFrame -and
     $runA.FinalSummary.sampleWindowFrameCount -eq $runB.FinalSummary.sampleWindowFrameCount -and
+    [math]::Abs(
+        [double]$runA.FinalSummary.sampleWindowStartSec -
+        [double]$runB.FinalSummary.sampleWindowStartSec) -le 0.001 -and
+    [math]::Abs(
+        [double]$runA.FinalSummary.sampleWindowEndSec -
+        [double]$runB.FinalSummary.sampleWindowEndSec) -le 0.001 -and
     [math]::Abs(
         [double]$runA.FinalSummary.sampleWindowDurationSec -
         [double]$runB.FinalSummary.sampleWindowDurationSec) -le 0.001

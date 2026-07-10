@@ -108,6 +108,10 @@ namespace FaceShield.Services.Analysis
         public bool YoloRiskCascadeEnabled { get; init; } = false;
         public int YoloRiskFrameCount { get; init; } = 0;
         public int YoloPeriodicGlobalFrameCount { get; init; } = 0;
+        public int YoloTimelineFrameCount { get; init; } = 0;
+        public int YoloPtsTimingFrameCount { get; init; } = 0;
+        public int YoloUnalignedTimelineFrameCount { get; init; } = 0;
+        public int YoloUnalignedRiskFrameCount { get; init; } = 0;
         public int YoloSecondaryAttemptCount { get; init; } = 0;
         public int YoloProtectedStoredMaskFrameCount { get; init; } = 0;
         public int YoloSecondaryHitFrameCount { get; init; } = 0;
@@ -167,7 +171,7 @@ namespace FaceShield.Services.Analysis
         public string ToYoloCascadeLogLine()
         {
             string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
-            return $"[AutoRunYoloCascade] runId={run}, enabled={YoloRiskCascadeEnabled.ToString().ToLowerInvariant()}, riskFrames={YoloRiskFrameCount}, periodicFrames={YoloPeriodicGlobalFrameCount}, attempts={YoloSecondaryAttemptCount}, protectedStoredMaskFrames={YoloProtectedStoredMaskFrameCount}, hitFrames={YoloSecondaryHitFrameCount}, candidates={YoloSecondaryCandidateFaceCount}, acceptedFrames={YoloSecondaryAcceptedFrameCount}, acceptedFaces={YoloSecondaryAcceptedFaceCount}, rejectedFaces={YoloSecondaryRejectedFaceCount}, decodeMs={YoloCascadeDecodeMs}, detectMs={YoloCascadeDetectMs}, totalMs={YoloCascadeTotalMs}, analysisTotalMs={AnalysisTotalMs}, reasons={YoloCascadeReasonBreakdown}, error={YoloCascadeError}";
+            return $"[AutoRunYoloCascade] runId={run}, enabled={YoloRiskCascadeEnabled.ToString().ToLowerInvariant()}, riskFrames={YoloRiskFrameCount}, periodicFrames={YoloPeriodicGlobalFrameCount}, timelineFrames={YoloTimelineFrameCount}, ptsTimingFrames={YoloPtsTimingFrameCount}, unalignedTimelineFrames={YoloUnalignedTimelineFrameCount}, unalignedRiskFrames={YoloUnalignedRiskFrameCount}, attempts={YoloSecondaryAttemptCount}, protectedStoredMaskFrames={YoloProtectedStoredMaskFrameCount}, hitFrames={YoloSecondaryHitFrameCount}, candidates={YoloSecondaryCandidateFaceCount}, acceptedFrames={YoloSecondaryAcceptedFrameCount}, acceptedFaces={YoloSecondaryAcceptedFaceCount}, rejectedFaces={YoloSecondaryRejectedFaceCount}, decodeMs={YoloCascadeDecodeMs}, detectMs={YoloCascadeDetectMs}, totalMs={YoloCascadeTotalMs}, analysisTotalMs={AnalysisTotalMs}, reasons={YoloCascadeReasonBreakdown}, error={YoloCascadeError}";
         }
     }
 }

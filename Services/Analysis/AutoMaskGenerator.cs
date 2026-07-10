@@ -1740,6 +1740,8 @@ namespace FaceShield.Services.Analysis
                 _maskProvider,
                 videoPath,
                 totalFrames,
+                LastRunSummary?.StartFrameIndex ?? 0,
+                _frameTimings.Count,
                 _sourceFpsForSummary,
                 _options,
                 _frameTimings,
@@ -1771,6 +1773,10 @@ namespace FaceShield.Services.Analysis
                 YoloRiskCascadeEnabled = result.Enabled,
                 YoloRiskFrameCount = result.RiskFrames,
                 YoloPeriodicGlobalFrameCount = result.PeriodicFrames,
+                YoloTimelineFrameCount = result.TimelineFrames,
+                YoloPtsTimingFrameCount = result.PtsTimingFrames,
+                YoloUnalignedTimelineFrameCount = result.UnalignedTimelineFrames,
+                YoloUnalignedRiskFrameCount = result.UnalignedRiskFrames,
                 YoloSecondaryAttemptCount = result.Attempts,
                 YoloProtectedStoredMaskFrameCount = result.ProtectedStoredMaskFrames,
                 YoloSecondaryHitFrameCount = result.HitFrames,
@@ -1796,7 +1802,12 @@ namespace FaceShield.Services.Analysis
 
             double timestampSeconds = extractor.LastDecodedTimestampSeconds;
             if (!double.IsFinite(timestampSeconds))
+            {
+                _frameTimings[frameIndex] = new FrameTimingSample(
+                    double.NaN,
+                    FrameTimingSource.None);
                 return;
+            }
 
             FrameTimingSource source = string.Equals(
                 extractor.LastDecodedTimestampSource,

@@ -5,6 +5,7 @@ using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace FaceShield.Services.Video;
@@ -22,11 +23,9 @@ public unsafe sealed class VideoExportService
     private const int MaxEstimatedFrameCountSkewAbsolute = 1200;
     private const long MaxHybridFrameStepTolerance = 1;
     private const long MaxHybridCopyPtsJitterDivisor = 10;
-    private const int MaxHybridCopyGapConsecutiveAfterThreshold = 3;
     private const int MaxHybridPacketFrameIndexUnreliableSequence = 4;
     private const int ExportSampleWindowSeconds = 30;
     private const int MaxAllowedOutputPacketLoss = 0;
-    private const long MaxOutputPacketGapMultiplier = 4;
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
@@ -48,58 +47,121 @@ public unsafe sealed class VideoExportService
         string? runId = null,
         bool allowHybridCopy = true)
     {
+        string finalOutputPath = Path.GetFullPath(outputPath);
+        string stagedOutputPath = BuildStagedOutputPath(finalOutputPath);
         try
         {
-            ExportInternal(
-                inputPath,
-                outputPath,
-                blurRadius,
-                progress,
-                cancellationToken,
-                runId,
-                exportMode: "primary",
-                forceSoftwareEncoder: false,
-                allowHybridCopy: allowHybridCopy && EnableHybridCopyWindow,
-                forceSafeEncoding: false,
-                forceAudioTranscode: false,
-                forceH264Fallback: false);
-        }
-        catch (InvalidOperationException ex) when (IsInvalidArgumentError(ex))
-        {
-            Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: Invalid argument 발생. {ex.Message}");
             try
             {
                 ExportInternal(
                     inputPath,
-                    outputPath,
+                    stagedOutputPath,
                     blurRadius,
                     progress,
                     cancellationToken,
                     runId,
-                    exportMode: "fallback-safe",
-                    forceSoftwareEncoder: true,
-                    allowHybridCopy: false,
-                    forceSafeEncoding: true,
-                    forceAudioTranscode: true,
+                    exportMode: "primary",
+                    forceSoftwareEncoder: false,
+                    allowHybridCopy: allowHybridCopy && EnableHybridCopyWindow,
+                    forceSafeEncoding: false,
+                    forceAudioTranscode: false,
                     forceH264Fallback: false);
             }
-            catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
+            catch (InvalidOperationException ex) when (IsInvalidArgumentError(ex))
             {
-                Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
-                ExportInternal(
-                    inputPath,
-                    outputPath,
-                    blurRadius,
-                    progress,
-                    cancellationToken,
-                    runId,
-                    exportMode: "fallback-h264",
-                    forceSoftwareEncoder: true,
-                    allowHybridCopy: false,
-                    forceSafeEncoding: true,
-                    forceAudioTranscode: true,
-                    forceH264Fallback: true);
+                Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: Invalid argument 발생. {ex.Message}");
+                try
+                {
+                    ExportInternal(
+                        inputPath,
+                        stagedOutputPath,
+                        blurRadius,
+                        progress,
+                        cancellationToken,
+                        runId,
+                        exportMode: "fallback-safe",
+                        forceSoftwareEncoder: true,
+                        allowHybridCopy: false,
+                        forceSafeEncoding: true,
+                        forceAudioTranscode: true,
+                        forceH264Fallback: false);
+                }
+                catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
+                {
+                    Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
+                    ExportInternal(
+                        inputPath,
+                        stagedOutputPath,
+                        blurRadius,
+                        progress,
+                        cancellationToken,
+                        runId,
+                        exportMode: "fallback-h264",
+                        forceSoftwareEncoder: true,
+                        allowHybridCopy: false,
+                        forceSafeEncoding: true,
+                        forceAudioTranscode: true,
+                        forceH264Fallback: true);
+                }
             }
+
+            if (!File.Exists(stagedOutputPath))
+                throw new InvalidOperationException("검증된 임시 출력 파일이 생성되지 않았습니다.");
+            if (LastExportSummary == null)
+                throw new InvalidOperationException("검증된 내보내기 요약이 생성되지 않았습니다.");
+
+            string commitMode;
+            if (File.Exists(finalOutputPath))
+            {
+                File.Replace(
+                    stagedOutputPath,
+                    finalOutputPath,
+                    destinationBackupFileName: null,
+                    ignoreMetadataErrors: true);
+                commitMode = "replace";
+            }
+            else
+            {
+                File.Move(stagedOutputPath, finalOutputPath);
+                commitMode = "move";
+            }
+
+            LastExportSummary = LastExportSummary with { OutputCommitted = true };
+            string committedLine =
+                $"[ExportCommitted] runId={LastExportSummary.RunId ?? "n/a"}, mode={commitMode}";
+            Debug.WriteLine(committedLine);
+            Debug.WriteLine(LastExportSummary.ToLogLine());
+            RunMetricsLog.AppendRunLines(
+                LastExportSummary.RunId,
+                committedLine,
+                LastExportSummary.ToLogLine());
+        }
+        finally
+        {
+            TryDeleteStagedOutput(stagedOutputPath);
+        }
+    }
+
+    private static string BuildStagedOutputPath(string finalOutputPath)
+    {
+        string directory = Path.GetDirectoryName(finalOutputPath) ?? Directory.GetCurrentDirectory();
+        string name = Path.GetFileNameWithoutExtension(finalOutputPath);
+        string extension = Path.GetExtension(finalOutputPath);
+        return Path.Combine(
+            directory,
+            $".{name}.faceshield-{Guid.NewGuid():N}{extension}");
+    }
+
+    private static void TryDeleteStagedOutput(string stagedOutputPath)
+    {
+        try
+        {
+            if (File.Exists(stagedOutputPath))
+                File.Delete(stagedOutputPath);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Export] 임시 출력 정리 실패: {stagedOutputPath}, {ex.Message}");
         }
     }
 
@@ -189,8 +251,8 @@ public unsafe sealed class VideoExportService
         int copyTimestampFixCount = 0;
         int outputPacketPtsGapOutlierCount = 0;
         long maxOutputPacketPtsGap = 0;
+        var encodedTimestampIntegrity = new VideoPacketTimestampIntegrity();
         int copyGapOutlierCount = 0;
-        int copyGapLongRunCount = 0;
         long maxCopyGap = 0;
         int lastPacketFrameIndexForHybrid = -1;
         bool hasLastPacketFrameForHybrid = false;
@@ -287,10 +349,20 @@ public unsafe sealed class VideoExportService
                         sourceFps,
                         progress,
                         cancellationToken);
-            LastExportSummary = new ExportRunSummary(
-                remuxCounts.OutputVideoPackets,
-                0,
-                0,
+                    int remuxPacketCountMismatch = (int)Math.Min(
+                        int.MaxValue,
+                        Math.Abs((long)remuxCounts.InputVideoPackets - remuxCounts.OutputVideoPackets));
+                    bool remuxPacketIntegrityInvalid =
+                        remuxCounts.InputVideoPackets <= 0 ||
+                        remuxCounts.OutputVideoPackets <= 0 ||
+                        remuxPacketCountMismatch > 0 ||
+                        remuxCounts.MissingVideoPacketTimestamps > 0 ||
+                        remuxCounts.VideoPacketTimestampAdjustments > 0 ||
+                        remuxCounts.OutputPacketPtsGapOutlierCount > 0;
+                    LastExportSummary = new ExportRunSummary(
+                        remuxCounts.OutputVideoPackets,
+                        0,
+                        0,
                         0,
                         0,
                         0,
@@ -305,24 +377,38 @@ public unsafe sealed class VideoExportService
                         HybridWindowEndFrame: -1,
                         HybridModeTransitionCount: 0,
                         HybridModeTimestampSyncCount: 0,
-                InputVideoPackets: remuxCounts.InputVideoPackets,
-                OutputVideoPackets: remuxCounts.OutputVideoPackets,
-                CopiedVideoPackets: remuxCounts.OutputVideoPackets,
-                CopiedSourceVideoPackets: remuxCounts.OutputVideoPackets,
-                EncodedSourceVideoPackets: 0,
-                DroppedVideoPackets: Math.Max(0, remuxCounts.InputVideoPackets - remuxCounts.OutputVideoPackets),
-                OutputPacketPtsGapOutlierCount: 0,
-                MaxOutputPacketPtsGap: 0,
-                HybridCopyTimestampFixCount: 0,
-                PacketLossFallbackReason: null,
-                HybridEncodedPacketFrameStep: 0,
-                HybridCopyPacketFrameStep: 0,
-                ForceSoftwareEncoder: forceSoftwareEncoder,
-                ForceSafeEncoding: forceSafeEncoding,
-                ForceAudioTranscode: forceAudioTranscode,
-                ForceH264Fallback: forceH264Fallback);
+                        InputVideoPackets: remuxCounts.InputVideoPackets,
+                        OutputVideoPackets: remuxCounts.OutputVideoPackets,
+                        CopiedVideoPackets: remuxCounts.OutputVideoPackets,
+                        CopiedSourceVideoPackets: remuxCounts.OutputVideoPackets,
+                        EncodedSourceVideoPackets: 0,
+                        DroppedVideoPackets: Math.Max(0, remuxCounts.InputVideoPackets - remuxCounts.OutputVideoPackets),
+                        OutputPacketPtsGapOutlierCount: remuxCounts.OutputPacketPtsGapOutlierCount,
+                        MaxOutputPacketPtsGap: remuxCounts.MaxOutputPacketPtsGap,
+                        HybridCopyTimestampFixCount: 0,
+                        PacketLossFallbackReason: remuxPacketIntegrityInvalid
+                            ? $"remux-packet-integrity={remuxCounts.InputVideoPackets}/{remuxCounts.OutputVideoPackets}"
+                            : null,
+                        HybridEncodedPacketFrameStep: 0,
+                        HybridCopyPacketFrameStep: 0,
+                        ForceSoftwareEncoder: forceSoftwareEncoder,
+                        ForceSafeEncoding: forceSafeEncoding,
+                        ForceAudioTranscode: forceAudioTranscode,
+                        ForceH264Fallback: forceH264Fallback,
+                        OutputPacketCountMismatch: remuxPacketCountMismatch,
+                        MissingVideoPacketTimestampCount: remuxCounts.MissingVideoPacketTimestamps,
+                        VideoPacketTimestampAdjustmentCount: remuxCounts.VideoPacketTimestampAdjustments);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
+                    if (remuxPacketIntegrityInvalid)
+                    {
+                        throw new InvalidOperationException(
+                            $"원본 스트림 복사 출력의 비디오 패킷/PTS 무결성이 확인되지 않아 중단합니다. " +
+                            $"input={remuxCounts.InputVideoPackets}, output={remuxCounts.OutputVideoPackets}, " +
+                            $"missingTs={remuxCounts.MissingVideoPacketTimestamps}, " +
+                            $"timestampAdjustments={remuxCounts.VideoPacketTimestampAdjustments}, " +
+                            $"ptsOutliers={remuxCounts.OutputPacketPtsGapOutlierCount}");
+                    }
                     return;
                 }
 
@@ -963,6 +1049,7 @@ public unsafe sealed class VideoExportService
                                 ref outputVideoPacketCount,
                                 ref outputPacketPtsGapOutlierCount,
                                 ref maxOutputPacketPtsGap,
+                                encodedTimestampIntegrity,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
@@ -1057,6 +1144,7 @@ public unsafe sealed class VideoExportService
                             ref outputVideoPacketCount,
                             ref outputPacketPtsGapOutlierCount,
                             ref maxOutputPacketPtsGap,
+                            encodedTimestampIntegrity,
                             progress,
                             ref lastReportedFrame,
                             swTotal,
@@ -1105,37 +1193,11 @@ public unsafe sealed class VideoExportService
                         long expectedGap = Math.Max(1, hybridCopyVideoFrameStep);
                         long copyGapJitterTolerance = Math.Max(1, expectedGap / MaxHybridCopyPtsJitterDivisor);
                         long copyGapThreshold = expectedGap + copyGapJitterTolerance;
-                        if (copyGap > 0 && copyGap > copyGapThreshold)
+                        if (copyGap > copyGapThreshold)
                         {
                             copyGapOutlierCount++;
                             if (copyGap > maxCopyGap)
                                 maxCopyGap = copyGap;
-                            shouldRetryWithFullEncode = true;
-                            packetDropFallbackReason =
-                                string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                                    ? $"hybrid-copy-pts-gap={copyGap}, frame={packetFrameIndex}"
-                                    : $"{packetDropFallbackReason}; hybrid-copy-pts-gap={copyGap}, frame={packetFrameIndex}";
-                            throw new InvalidOperationException(
-                                "Invalid argument: 하이브리드 복사 구간의 PTS 점프가 과도하여 rollback 합니다.");
-                        }
-
-                        if (copyGap > copyGapThreshold)
-                        {
-                            copyGapLongRunCount++;
-                            if (copyGapLongRunCount >= MaxHybridCopyGapConsecutiveAfterThreshold)
-                            {
-                                shouldRetryWithFullEncode = true;
-                                packetDropFallbackReason =
-                                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                                        ? $"hybrid-copy-constant-gap-anomaly-frames={copyGapLongRunCount}, gap={copyGap}, frame={packetFrameIndex}"
-                                        : $"{packetDropFallbackReason}; hybrid-copy-constant-gap-anomaly-frames={copyGapLongRunCount}, gap={copyGap}, frame={packetFrameIndex}";
-                                throw new InvalidOperationException(
-                                    "Invalid argument: 하이브리드 복사 구간에서 프레임 간격 이상치가 반복되어 rollback 합니다.");
-                            }
-                        }
-                        else
-                        {
-                            copyGapLongRunCount = 0;
                         }
                     }
                     if (timestampAdjusted && string.IsNullOrWhiteSpace(packetDropFallbackReason))
@@ -1215,6 +1277,7 @@ public unsafe sealed class VideoExportService
                     ref outputVideoPacketCount,
                     ref outputPacketPtsGapOutlierCount,
                     ref maxOutputPacketPtsGap,
+                    encodedTimestampIntegrity,
                     progress,
                     ref lastReportedFrame,
                     swTotal,
@@ -1268,6 +1331,7 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
+                encodedTimestampIntegrity,
                 progress,
                     ref lastReportedFrame,
                     swTotal,
@@ -1357,9 +1421,47 @@ public unsafe sealed class VideoExportService
             int droppedVideoPackets = useHybridCopyWindow
                 ? hybridCopySourcePacketLoss + hybridEncodedWindowFrameLoss
                 : Math.Max(0, inputVideoPacketCount - outputVideoPacketCount);
-            int outputPacketDropCount = useHybridCopyWindow
-                ? Math.Max(0, inputVideoPacketCount - outputVideoPacketCount)
-                : 0;
+            int outputPacketCountMismatch = (int)Math.Min(
+                int.MaxValue,
+                Math.Abs((long)inputVideoPacketCount - outputVideoPacketCount));
+            int outputPacketDropCount = outputPacketCountMismatch;
+            if (inputVideoPacketCount <= 0 || outputVideoPacketCount <= 0)
+            {
+                string invalidPacketCountReason =
+                    $"final-output-packet-count-invalid={inputVideoPacketCount}/{outputVideoPacketCount}";
+                packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                    ? invalidPacketCountReason
+                    : $"{packetDropFallbackReason}; {invalidPacketCountReason}";
+
+                if (allowPacketDropRetry)
+                {
+                    shouldRetryWithFullEncode = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        "Invalid argument: 최종 출력 비디오 패킷 수가 유효하지 않아 품질 보전을 위해 중단합니다.");
+                }
+            }
+            if (encodedTimestampIntegrity.MissingPacketTimestamps > 0 ||
+                encodedTimestampIntegrity.PacketTimestampAdjustments > 0)
+            {
+                string timestampIntegrityReason =
+                    $"encoded-packet-timestamps missing={encodedTimestampIntegrity.MissingPacketTimestamps}, adjustments={encodedTimestampIntegrity.PacketTimestampAdjustments}";
+                packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
+                    ? timestampIntegrityReason
+                    : $"{packetDropFallbackReason}; {timestampIntegrityReason}";
+
+                if (allowPacketDropRetry)
+                {
+                    shouldRetryWithFullEncode = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        "Invalid argument: 인코더 출력 타임스탬프 보정이 필요해 품질 보전을 위해 중단합니다.");
+                }
+            }
             if (sampleWindowFrameShortfall > 0)
             {
                 packetDropFallbackReason =
@@ -1404,7 +1506,7 @@ public unsafe sealed class VideoExportService
             if (outputPacketDropCount > MaxAllowedOutputPacketLoss)
             {
                 string outputLossReason =
-                    $"final-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}";
+                    $"final-output-packet-count-mismatch={inputVideoPacketCount}/{outputVideoPacketCount}";
                 packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
                     ? outputLossReason
                     : $"{packetDropFallbackReason}; {outputLossReason}";
@@ -1447,22 +1549,24 @@ public unsafe sealed class VideoExportService
                                     : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}")}";
                 }
             }
-            if (allowPacketDropRetry && useHybridCopyWindow && outputPacketPtsGapOutlierCount > 0)
+            if (outputPacketPtsGapOutlierCount > 0)
             {
-                shouldRetryWithFullEncode = true;
                 packetDropFallbackReason =
                     string.IsNullOrWhiteSpace(packetDropFallbackReason)
                         ? $"output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}"
                         : $"{packetDropFallbackReason}; output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}";
+                if (allowPacketDropRetry)
+                {
+                    shouldRetryWithFullEncode = true;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        "Invalid argument: 최종 출력 PTS 간격 이상치가 남아 품질 보전을 위해 중단합니다.");
+                }
             }
-            if (allowPacketDropRetry && useHybridCopyWindow && copyGapOutlierCount > 0)
-            {
-                shouldRetryWithFullEncode = true;
-                packetDropFallbackReason =
-                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                        ? $"copy-pts-gap-outlier-count={copyGapOutlierCount}, maxGap={maxCopyGap}"
-                        : $"{packetDropFallbackReason}; copy-pts-gap-outlier-count={copyGapOutlierCount}, maxGap={maxCopyGap}";
-            }
+            if (copyGapOutlierCount > 0 && !shouldRetryWithFullEncode)
+                Debug.WriteLine($"[Export] hybrid copy source PTS gap observed count={copyGapOutlierCount}, maxGap={maxCopyGap}");
             int droppedVideoPacketsForSummary = Math.Max(0, droppedVideoPackets);
             string? packetLossFallbackReason = shouldRetryWithFullEncode ? $"fallback-full-encode={packetDropFallbackReason}" : null;
             LastExportSummary = new ExportRunSummary(
@@ -1508,7 +1612,10 @@ public unsafe sealed class VideoExportService
                 HybridWindowFrameShortfall: encodedWindowFrameShortfall,
                 SampleWindowSourceFrames: sampleWindowSourceFrames,
                 SampleWindowProducedFrames: sampleWindowProducedFrames,
-                SampleWindowFrameShortfall: sampleWindowFrameShortfall);
+                SampleWindowFrameShortfall: sampleWindowFrameShortfall,
+                OutputPacketCountMismatch: outputPacketCountMismatch,
+                MissingVideoPacketTimestampCount: encodedTimestampIntegrity.MissingPacketTimestamps,
+                VideoPacketTimestampAdjustmentCount: encodedTimestampIntegrity.PacketTimestampAdjustments);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
@@ -1592,6 +1699,12 @@ public unsafe sealed class VideoExportService
         }
     }
 
+    private sealed class VideoPacketTimestampIntegrity
+    {
+        public int MissingPacketTimestamps { get; set; }
+        public int PacketTimestampAdjustments { get; set; }
+    }
+
     private static unsafe void DrainEncoderPackets(
         AVCodecContext* enc,
         AVPacket* outPkt,
@@ -1604,20 +1717,20 @@ public unsafe sealed class VideoExportService
         ref int outputVideoPacketCount,
         ref int outputPacketPtsGapOutlierCount,
         ref long maxOutputPacketPtsGap,
+        VideoPacketTimestampIntegrity timestampIntegrity,
         long encodedPacketFrameStep)
     {
-        long normalizedEncodedFrameStep = Math.Max(1, encodedPacketFrameStep);
-        long gapOutlierThreshold = normalizedEncodedFrameStep * 2;
-        long gapFatalThreshold = normalizedEncodedFrameStep * MaxOutputPacketGapMultiplier;
-        if (gapFatalThreshold <= 0)
-            gapFatalThreshold = long.MaxValue;
-
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
             long previousPacketPts = lastPacketPts;
             bool hadPreviousPacketPts = hasLastPacketPts;
 
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
+            bool hasMissingTimestamp =
+                outPkt->pts == ffmpeg.AV_NOPTS_VALUE ||
+                outPkt->dts == ffmpeg.AV_NOPTS_VALUE;
+            long originalPts = outPkt->pts;
+            long originalDts = outPkt->dts;
             _ = NormalizeEncodedPacketTimestamps(
                 outPkt,
                 ref lastPacketPts,
@@ -1625,21 +1738,16 @@ public unsafe sealed class VideoExportService
                 ref lastPacketDts,
                 ref hasLastPacketDts,
                 encodedPacketFrameStep);
+            if (hasMissingTimestamp)
+                timestampIntegrity.MissingPacketTimestamps++;
+            if (outPkt->pts != originalPts || outPkt->dts != originalDts)
+                timestampIntegrity.PacketTimestampAdjustments++;
 
             if (hadPreviousPacketPts)
             {
                 long gap = Math.Abs(outPkt->pts - previousPacketPts);
                 if (gap > 0 && gap > maxOutputPacketPtsGap)
                     maxOutputPacketPtsGap = gap;
-
-                if (gap > 0 && gap > gapOutlierThreshold)
-                    outputPacketPtsGapOutlierCount++;
-
-                if (gapFatalThreshold < long.MaxValue && gap > gapFatalThreshold)
-                {
-                    throw new InvalidOperationException(
-                        $"Invalid argument: 인코더 출력 패킷 간격 점프가 과도해 하이브리드/재인코딩 품질 보장을 위해 rollback 합니다. gap={gap}, step={normalizedEncodedFrameStep}");
-                }
             }
 
             outPkt->stream_index = outStream->index;
@@ -1688,6 +1796,7 @@ public unsafe sealed class VideoExportService
         ref int outputVideoPacketCount,
         ref int outputPacketPtsGapOutlierCount,
         ref long maxOutputPacketPtsGap,
+        VideoPacketTimestampIntegrity timestampIntegrity,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
@@ -1805,6 +1914,7 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
+                timestampIntegrity,
                 encodedPacketFrameStep);
             tEncode.Stop();
             encodeMs += tEncode.ElapsedMilliseconds;
@@ -1855,6 +1965,7 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
+                timestampIntegrity,
                 encodedPacketFrameStep);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
@@ -1876,6 +1987,7 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
+                timestampIntegrity,
                 encodedPacketFrameStep);
                 tEncode.Stop();
                 encodeMs += tEncode.ElapsedMilliseconds;
@@ -1934,6 +2046,7 @@ public unsafe sealed class VideoExportService
         ref int outputVideoPacketCount,
         ref int outputPacketPtsGapOutlierCount,
         ref long maxOutputPacketPtsGap,
+        VideoPacketTimestampIntegrity timestampIntegrity,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
         Stopwatch swTotal,
@@ -1992,6 +2105,7 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
+                timestampIntegrity,
                     progress,
                     ref lastReportedFrame,
                     swTotal,
@@ -2019,6 +2133,7 @@ public unsafe sealed class VideoExportService
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
+                timestampIntegrity,
                 encodedPacketFrameStep);
         videoFlushed = true;
     }
@@ -2597,7 +2712,13 @@ public unsafe sealed class VideoExportService
         return index;
     }
 
-    private static unsafe (int InputVideoPackets, int OutputVideoPackets) ExportByRemuxCopy(
+    private static unsafe (
+        int InputVideoPackets,
+        int OutputVideoPackets,
+        int MissingVideoPacketTimestamps,
+        int VideoPacketTimestampAdjustments,
+        int OutputPacketPtsGapOutlierCount,
+        long MaxOutputPacketPtsGap) ExportByRemuxCopy(
         AVFormatContext* inFmt,
         string outputPath,
         int videoStreamIndex,
@@ -2619,6 +2740,10 @@ public unsafe sealed class VideoExportService
             bool[] hasLastRemuxPacketDts = Array.Empty<bool>();
             int inputVideoPackets = 0;
             int outputVideoPackets = 0;
+            int missingVideoPacketTimestamps = 0;
+            int videoPacketTimestampAdjustments = 0;
+            int outputPacketPtsGapOutlierCount = 0;
+            long maxOutputPacketPtsGap = 0;
 
         try
         {
@@ -2672,14 +2797,58 @@ public unsafe sealed class VideoExportService
                 long normalizeStep = inStream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO
                     ? GetVideoFrameStep(sourceFps, outStream->time_base)
                     : 1;
+                bool isVideoPacket = inIndex == videoStreamIndex;
+                bool hasMissingVideoTimestamp = isVideoPacket &&
+                    (pkt->pts == ffmpeg.AV_NOPTS_VALUE || pkt->dts == ffmpeg.AV_NOPTS_VALUE);
+                long previousVideoPacketDts = isVideoPacket
+                    ? lastRemuxPacketDts[outIndex]
+                    : 0;
+                bool hadPreviousVideoPacketDts = isVideoPacket && hasLastRemuxPacketDts[outIndex];
                 ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
-                NormalizeCopiedPacketTimestamps(
-                    pkt,
-                    ref lastRemuxPacketPts[outIndex],
-                    ref hasLastRemuxPacketPts[outIndex],
-                    ref lastRemuxPacketDts[outIndex],
-                    ref hasLastRemuxPacketDts[outIndex],
-                    normalizeStep);
+                if (isVideoPacket)
+                {
+                    if (hasMissingVideoTimestamp)
+                        missingVideoPacketTimestamps++;
+
+                    bool requiresTimestampRepair = hasMissingVideoTimestamp ||
+                        (hadPreviousVideoPacketDts && pkt->dts <= previousVideoPacketDts);
+                    if (requiresTimestampRepair)
+                    {
+                        videoPacketTimestampAdjustments++;
+                        NormalizeCopiedPacketTimestamps(
+                            pkt,
+                            ref lastRemuxPacketPts[outIndex],
+                            ref hasLastRemuxPacketPts[outIndex],
+                            ref lastRemuxPacketDts[outIndex],
+                            ref hasLastRemuxPacketDts[outIndex],
+                            normalizeStep);
+                    }
+                    else
+                    {
+                        lastRemuxPacketPts[outIndex] = pkt->pts;
+                        hasLastRemuxPacketPts[outIndex] = true;
+                        lastRemuxPacketDts[outIndex] = pkt->dts;
+                        hasLastRemuxPacketDts[outIndex] = true;
+                    }
+
+                    if (hadPreviousVideoPacketDts)
+                    {
+                        long timestampGap = Math.Abs(pkt->dts - previousVideoPacketDts);
+                        if (timestampGap > maxOutputPacketPtsGap)
+                            maxOutputPacketPtsGap = timestampGap;
+
+                    }
+                }
+                else
+                {
+                    NormalizeCopiedPacketTimestamps(
+                        pkt,
+                        ref lastRemuxPacketPts[outIndex],
+                        ref hasLastRemuxPacketPts[outIndex],
+                        ref lastRemuxPacketDts[outIndex],
+                        ref hasLastRemuxPacketDts[outIndex],
+                        normalizeStep);
+                }
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
                 Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
@@ -2722,7 +2891,13 @@ public unsafe sealed class VideoExportService
             }
         }
 
-        return (inputVideoPackets, outputVideoPackets);
+        return (
+            inputVideoPackets,
+            outputVideoPackets,
+            missingVideoPacketTimestamps,
+            videoPacketTimestampAdjustments,
+            outputPacketPtsGapOutlierCount,
+            maxOutputPacketPtsGap);
     }
 
     private static unsafe bool IsPixFmtSupported(AVCodec* encoder, AVPixelFormat fmt)

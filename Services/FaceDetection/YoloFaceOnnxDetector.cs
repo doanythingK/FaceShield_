@@ -17,6 +17,7 @@ namespace FaceShield.Services.FaceDetection
     {
         private const int Yolo5FaceAnchorsPerScale = 3;
         private const int Yolo5FaceFeaturesPerAnchor = 16;
+        private const int PreprocessCoordinateCacheCapacity = 16;
         private static readonly object StatusLock = new();
         private static string _lastExecutionProviderLabel = "CPU";
         private static string? _lastExecutionProviderError;
@@ -36,7 +37,9 @@ namespace FaceShield.Services.FaceDetection
         private readonly object _inferenceGate = new();
         private readonly DenseTensor<float> _inputTensor;
         private readonly NamedOnnxValue[] _inputValues;
-        private PreprocessCoordinateCache? _preprocessCoordinateCache;
+        private readonly List<PreprocessCoordinateCache> _preprocessCoordinateCaches =
+            new(PreprocessCoordinateCacheCapacity);
+        private TensorPaddingLayout? _initializedTensorPaddingLayout;
         private bool _disposed;
 
         public YoloFaceOnnxDetector(YoloFaceOnnxDetectorOptions? options)
@@ -772,103 +775,98 @@ namespace FaceShield.Services.FaceDetection
 
             float padding = _options.LetterboxPaddingValue * _options.InputScale;
             Span<float> values = tensor.Buffer.Span;
-            values.Fill(padding);
+            bool hasPadding = padX > 0 ||
+                padY > 0 ||
+                resizedWidth < _inputWidth ||
+                resizedHeight < _inputHeight;
+            if (hasPadding)
+            {
+                var paddingLayout = new TensorPaddingLayout(
+                    padX,
+                    padY,
+                    resizedWidth,
+                    resizedHeight,
+                    padding);
+                if (_initializedTensorPaddingLayout != paddingLayout)
+                {
+                    values.Fill(padding);
+                    _initializedTensorPaddingLayout = paddingLayout;
+                }
+            }
+            else
+            {
+                // The valid image covers every tensor element, so the pixel loop below
+                // fully initializes the buffer. Invalidate the padding state because a
+                // later letterboxed run must restore its border before inference.
+                _initializedTensorPaddingLayout = null;
+            }
+
             int planeSize = checked(_inputWidth * _inputHeight);
+            int redPlaneOffset = _options.UseRgbInput ? 0 : planeSize * 2;
+            int greenPlaneOffset = planeSize;
+            int bluePlaneOffset = _options.UseRgbInput ? planeSize * 2 : 0;
+            float inputScale = _options.InputScale;
 
             double modelToSourceX = 1.0 / scaleX;
             double modelToSourceY = 1.0 / scaleY;
             double sourceToActual = ratio > 0 && ratio < 1.0 ? 1.0 / ratio : 1.0;
-            int fullSourceWidth = ratio > 0 && ratio < 1.0
-                ? Math.Max(1, (int)Math.Round(width * ratio))
-                : width;
-            int fullSourceHeight = ratio > 0 && ratio < 1.0
-                ? Math.Max(1, (int)Math.Round(height * ratio))
-                : height;
-            bool isFullFrameRegion = sourceX == 0 &&
-                sourceY == 0 &&
-                sourceWidth == fullSourceWidth &&
-                sourceHeight == fullSourceHeight;
-            PreprocessCoordinateCache? coordinateCache = isFullFrameRegion
-                ? GetOrCreatePreprocessCoordinateCache(
-                    width,
-                    height,
-                    sourceX,
-                    sourceY,
-                    sourceWidth,
-                    sourceHeight,
-                    ratio,
-                    quality,
-                    scaleX,
-                    scaleY,
-                    resizedWidth,
-                    resizedHeight,
-                    padX,
-                    padY,
-                    modelToSourceX,
-                    modelToSourceY,
-                    sourceToActual)
-                : null;
+            PreprocessCoordinateCache coordinateCache = GetOrCreatePreprocessCoordinateCache(
+                width,
+                height,
+                sourceX,
+                sourceY,
+                sourceWidth,
+                sourceHeight,
+                ratio,
+                quality,
+                scaleX,
+                scaleY,
+                resizedWidth,
+                resizedHeight,
+                padX,
+                padY,
+                modelToSourceX,
+                modelToSourceY,
+                sourceToActual);
 
             for (int y = 0; y < _inputHeight; y++)
             {
                 if (y < padY || y >= padY + resizedHeight)
                     continue;
 
-                int y0;
-                int y1;
-                double fy;
-                if (coordinateCache != null)
+                int y0 = coordinateCache.Y0[y];
+                byte* row0 = src + y0 * stride;
+                if (quality == DownscaleQuality.FastNearest)
                 {
-                    y0 = coordinateCache.Y0[y];
-                    y1 = coordinateCache.Y1[y];
-                    fy = coordinateCache.Fy[y];
+                    for (int x = padX; x < padX + resizedWidth; x++)
+                    {
+                        byte* pixel = row0 + coordinateCache.X0ByteOffset[x];
+                        int pixelOffset = y * _inputWidth + x;
+                        values[redPlaneOffset + pixelOffset] = pixel[2] * inputScale;
+                        values[greenPlaneOffset + pixelOffset] = pixel[1] * inputScale;
+                        values[bluePlaneOffset + pixelOffset] = pixel[0] * inputScale;
+                    }
                 }
                 else
                 {
-                    double srcY = (sourceY + (y - padY) * modelToSourceY) * sourceToActual;
-                    y0 = Math.Clamp((int)Math.Floor(srcY), 0, height - 1);
-                    y1 = Math.Min(y0 + 1, height - 1);
-                    fy = srcY - y0;
-                }
-
-                for (int x = 0; x < _inputWidth; x++)
-                {
-                    if (x < padX || x >= padX + resizedWidth)
-                        continue;
-
-                    int x0;
-                    int x1;
-                    double fx;
-                    if (coordinateCache != null)
+                    byte* row1 = src + coordinateCache.Y1[y] * stride;
+                    double wy0 = coordinateCache.Wy0[y];
+                    double wy1 = coordinateCache.Wy1[y];
+                    for (int x = padX; x < padX + resizedWidth; x++)
                     {
-                        x0 = coordinateCache.X0[x];
-                        x1 = coordinateCache.X1[x];
-                        fx = coordinateCache.Fx[x];
-                    }
-                    else
-                    {
-                        double srcX = (sourceX + (x - padX) * modelToSourceX) * sourceToActual;
-                        x0 = Math.Clamp((int)Math.Floor(srcX), 0, width - 1);
-                        x1 = Math.Min(x0 + 1, width - 1);
-                        fx = srcX - x0;
-                    }
-
-                    (float b, float g, float r) = quality == DownscaleQuality.FastNearest
-                        ? ReadPixel(src, stride, x0, y0)
-                        : ReadBilinear(src, stride, x0, y0, x1, y1, fx, fy);
-                    int pixelOffset = y * _inputWidth + x;
-
-                    if (_options.UseRgbInput)
-                    {
-                        values[pixelOffset] = r * _options.InputScale;
-                        values[planeSize + pixelOffset] = g * _options.InputScale;
-                        values[planeSize * 2 + pixelOffset] = b * _options.InputScale;
-                    }
-                    else
-                    {
-                        values[pixelOffset] = b * _options.InputScale;
-                        values[planeSize + pixelOffset] = g * _options.InputScale;
-                        values[planeSize * 2 + pixelOffset] = r * _options.InputScale;
+                        (float b, float g, float r) = ReadBilinear(
+                            row0,
+                            row1,
+                            coordinateCache.X0ByteOffset[x],
+                            coordinateCache.X1ByteOffset[x],
+                            coordinateCache.Wx0[x],
+                            coordinateCache.Wx1[x],
+                            wy0,
+                            wy1);
+                        int pixelOffset = y * _inputWidth + x;
+                        values[redPlaneOffset + pixelOffset] = r * inputScale;
+                        values[greenPlaneOffset + pixelOffset] = g * inputScale;
+                        values[bluePlaneOffset + pixelOffset] = b * inputScale;
                     }
                 }
             }
@@ -914,78 +912,104 @@ namespace FaceShield.Services.FaceDetection
                 resizedHeight,
                 padX,
                 padY);
-            if (_preprocessCoordinateCache is { } cached && cached.Key == key)
-                return cached;
+            for (int i = 0; i < _preprocessCoordinateCaches.Count; i++)
+            {
+                var cached = _preprocessCoordinateCaches[i];
+                if (cached.Key != key)
+                    continue;
 
-            var x0 = new int[_inputWidth];
-            var x1 = new int[_inputWidth];
-            var fx = new double[_inputWidth];
+                if (i > 0)
+                {
+                    _preprocessCoordinateCaches.RemoveAt(i);
+                    _preprocessCoordinateCaches.Insert(0, cached);
+                }
+
+                return cached;
+            }
+
+            var x0ByteOffset = new int[_inputWidth];
+            var x1ByteOffset = new int[_inputWidth];
+            var wx0 = new double[_inputWidth];
+            var wx1 = new double[_inputWidth];
             for (int x = padX; x < padX + resizedWidth; x++)
             {
                 double srcX = (sourceX + (x - padX) * modelToSourceX) * sourceToActual;
                 int sourceX0 = Math.Clamp((int)Math.Floor(srcX), 0, width - 1);
-                x0[x] = sourceX0;
-                x1[x] = Math.Min(sourceX0 + 1, width - 1);
-                fx[x] = srcX - sourceX0;
+                double fx = srcX - sourceX0;
+                x0ByteOffset[x] = sourceX0 * 4;
+                x1ByteOffset[x] = Math.Min(sourceX0 + 1, width - 1) * 4;
+                wx0[x] = 1.0 - fx;
+                wx1[x] = fx;
             }
 
             var y0 = new int[_inputHeight];
             var y1 = new int[_inputHeight];
-            var fy = new double[_inputHeight];
+            var wy0 = new double[_inputHeight];
+            var wy1 = new double[_inputHeight];
             for (int y = padY; y < padY + resizedHeight; y++)
             {
                 double srcY = (sourceY + (y - padY) * modelToSourceY) * sourceToActual;
                 int sourceY0 = Math.Clamp((int)Math.Floor(srcY), 0, height - 1);
+                double fy = srcY - sourceY0;
                 y0[y] = sourceY0;
                 y1[y] = Math.Min(sourceY0 + 1, height - 1);
-                fy[y] = srcY - sourceY0;
+                wy0[y] = 1.0 - fy;
+                wy1[y] = fy;
             }
 
-            var created = new PreprocessCoordinateCache(key, x0, x1, fx, y0, y1, fy);
-            _preprocessCoordinateCache = created;
+            var created = new PreprocessCoordinateCache(
+                key,
+                x0ByteOffset,
+                x1ByteOffset,
+                wx0,
+                wx1,
+                y0,
+                y1,
+                wy0,
+                wy1);
+            if (_preprocessCoordinateCaches.Count >= PreprocessCoordinateCacheCapacity)
+                _preprocessCoordinateCaches.RemoveAt(_preprocessCoordinateCaches.Count - 1);
+            _preprocessCoordinateCaches.Insert(0, created);
             return created;
         }
 
-        private static unsafe (float B, float G, float R) ReadPixel(byte* src, int stride, int x, int y)
-        {
-            byte* p = src + y * stride + x * 4;
-            return (p[0], p[1], p[2]);
-        }
-
         private static unsafe (float B, float G, float R) ReadBilinear(
-            byte* src,
-            int stride,
-            int x0,
-            int y0,
-            int x1,
-            int y1,
-            double fx,
-            double fy)
+            byte* row0,
+            byte* row1,
+            int x0ByteOffset,
+            int x1ByteOffset,
+            double wx0,
+            double wx1,
+            double wy0,
+            double wy1)
         {
-            var p00 = ReadPixel(src, stride, x0, y0);
-            var p10 = ReadPixel(src, stride, x1, y0);
-            var p01 = ReadPixel(src, stride, x0, y1);
-            var p11 = ReadPixel(src, stride, x1, y1);
-            double wx0 = 1.0 - fx;
-            double wx1 = fx;
-            double wy0 = 1.0 - fy;
-            double wy1 = fy;
+            byte* p00 = row0 + x0ByteOffset;
+            byte* p10 = row0 + x1ByteOffset;
+            byte* p01 = row1 + x0ByteOffset;
+            byte* p11 = row1 + x1ByteOffset;
             return (
-                (float)(p00.B * wx0 * wy0 + p10.B * wx1 * wy0 + p01.B * wx0 * wy1 + p11.B * wx1 * wy1),
-                (float)(p00.G * wx0 * wy0 + p10.G * wx1 * wy0 + p01.G * wx0 * wy1 + p11.G * wx1 * wy1),
-                (float)(p00.R * wx0 * wy0 + p10.R * wx1 * wy0 + p01.R * wx0 * wy1 + p11.R * wx1 * wy1));
+                (float)(p00[0] * wx0 * wy0 + p10[0] * wx1 * wy0 + p01[0] * wx0 * wy1 + p11[0] * wx1 * wy1),
+                (float)(p00[1] * wx0 * wy0 + p10[1] * wx1 * wy0 + p01[1] * wx0 * wy1 + p11[1] * wx1 * wy1),
+                (float)(p00[2] * wx0 * wy0 + p10[2] * wx1 * wy0 + p01[2] * wx0 * wy1 + p11[2] * wx1 * wy1));
         }
 
         private static IReadOnlyList<Candidate> ApplyNms(IReadOnlyList<Candidate> candidates, float threshold, int maxDetections)
         {
-            var ordered = candidates.OrderByDescending(c => c.Score).ToList();
-            var kept = new List<Candidate>();
-            while (ordered.Count > 0 && kept.Count < maxDetections)
+            var ordered = candidates.OrderByDescending(c => c.Score).ToArray();
+            var suppressed = new bool[ordered.Length];
+            var kept = new List<Candidate>(Math.Min(Math.Max(0, maxDetections), ordered.Length));
+            for (int i = 0; i < ordered.Length && kept.Count < maxDetections; i++)
             {
-                var current = ordered[0];
-                ordered.RemoveAt(0);
+                if (suppressed[i])
+                    continue;
+
+                var current = ordered[i];
                 kept.Add(current);
-                ordered.RemoveAll(other => IoU(current, other) > threshold);
+                for (int j = i + 1; j < ordered.Length; j++)
+                {
+                    if (!suppressed[j] && IoU(current, ordered[j]) > threshold)
+                        suppressed[j] = true;
+                }
             }
 
             return kept;
@@ -1538,6 +1562,13 @@ namespace FaceShield.Services.FaceDetection
 
         private readonly record struct ResizeTransform(float ScaleX, float ScaleY, float PadX, float PadY);
 
+        private readonly record struct TensorPaddingLayout(
+            int PadX,
+            int PadY,
+            int ResizedWidth,
+            int ResizedHeight,
+            float PaddingValue);
+
         private readonly record struct PreprocessCoordinateCacheKey(
             int FrameWidth,
             int FrameHeight,
@@ -1560,12 +1591,14 @@ namespace FaceShield.Services.FaceDetection
 
         private sealed record PreprocessCoordinateCache(
             PreprocessCoordinateCacheKey Key,
-            int[] X0,
-            int[] X1,
-            double[] Fx,
+            int[] X0ByteOffset,
+            int[] X1ByteOffset,
+            double[] Wx0,
+            double[] Wx1,
             int[] Y0,
             int[] Y1,
-            double[] Fy);
+            double[] Wy0,
+            double[] Wy1);
 
         private readonly record struct OutputTensor
         {

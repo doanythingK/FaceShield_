@@ -140,7 +140,13 @@ namespace FaceShield.Services.Workspace
                 state.LastOpened,
                 state.AutoResumeIndex,
                 state.AutoCompleted,
-                state.AutoRunSignature);
+                state.AutoRunSignature,
+                state.AutoExportGateRequired,
+                state.AutoExportGatePassed,
+                state.AutoExportGateFailure,
+                state.AutoExportHybridPolicyAvailable,
+                state.AutoExportAllowHybridCopy,
+                state.AutoExportHybridDisableReasons);
 
             return true;
         }
@@ -205,7 +211,13 @@ namespace FaceShield.Services.Workspace
                 FaceMasks = faceMasks,
                 AutoResumeIndex = snapshot.AutoResumeIndex,
                 AutoCompleted = snapshot.AutoCompleted,
-                AutoRunSignature = snapshot.AutoRunSignature
+                AutoRunSignature = snapshot.AutoRunSignature,
+                AutoExportGateRequired = snapshot.AutoExportGateRequired,
+                AutoExportGatePassed = snapshot.AutoExportGatePassed,
+                AutoExportGateFailure = snapshot.AutoExportGateFailure,
+                AutoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable,
+                AutoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy,
+                AutoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons
             });
 
             SaveState();
@@ -326,6 +338,12 @@ namespace FaceShield.Services.Workspace
             public int AutoResumeIndex { get; set; }
             public bool AutoCompleted { get; set; }
             public string? AutoRunSignature { get; set; }
+            public bool AutoExportGateRequired { get; set; }
+            public bool AutoExportGatePassed { get; set; }
+            public string? AutoExportGateFailure { get; set; }
+            public bool AutoExportHybridPolicyAvailable { get; set; }
+            public bool AutoExportAllowHybridCopy { get; set; }
+            public string? AutoExportHybridDisableReasons { get; set; }
         }
 
         private sealed class FaceMaskState
@@ -427,6 +445,12 @@ namespace FaceShield.Services.Workspace
         public int AutoResumeIndex { get; }
         public bool AutoCompleted { get; }
         public string? AutoRunSignature { get; }
+        public bool AutoExportGateRequired { get; }
+        public bool AutoExportGatePassed { get; }
+        public string? AutoExportGateFailure { get; }
+        public bool AutoExportHybridPolicyAvailable { get; }
+        public bool AutoExportAllowHybridCopy { get; }
+        public string? AutoExportHybridDisableReasons { get; }
 
         public WorkspaceSnapshot(
             string videoPath,
@@ -437,7 +461,13 @@ namespace FaceShield.Services.Workspace
             DateTimeOffset lastOpened,
             int autoResumeIndex,
             bool autoCompleted,
-            string? autoRunSignature)
+            string? autoRunSignature,
+            bool autoExportGateRequired,
+            bool autoExportGatePassed,
+            string? autoExportGateFailure,
+            bool autoExportHybridPolicyAvailable,
+            bool autoExportAllowHybridCopy,
+            string? autoExportHybridDisableReasons)
         {
             VideoPath = videoPath;
             Mode = mode;
@@ -448,6 +478,12 @@ namespace FaceShield.Services.Workspace
             AutoResumeIndex = autoResumeIndex;
             AutoCompleted = autoCompleted;
             AutoRunSignature = autoRunSignature;
+            AutoExportGateRequired = autoExportGateRequired;
+            AutoExportGatePassed = autoExportGatePassed;
+            AutoExportGateFailure = autoExportGateFailure;
+            AutoExportHybridPolicyAvailable = autoExportHybridPolicyAvailable;
+            AutoExportAllowHybridCopy = autoExportAllowHybridCopy;
+            AutoExportHybridDisableReasons = autoExportHybridDisableReasons;
         }
     }
 }

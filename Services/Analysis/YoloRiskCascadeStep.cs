@@ -36,6 +36,8 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider maskProvider,
             string videoPath,
             int totalFrames,
+            int processedStartFrame,
+            int processedFrameCount,
             double sourceFps,
             AutoMaskOptions options,
             IReadOnlyDictionary<int, FrameTimingSample> frameTimings,
@@ -63,18 +65,72 @@ namespace FaceShield.Services.Analysis
             var primaryEntries = maskProvider.GetFaceMaskEntries()
                 .ToDictionary(static entry => entry.Key, static entry => entry.Value);
             var riskFrames = BuildRiskFrames(primaryEntries, totalFrames, options, frameTimings);
-            foreach (int frameIndex in riskFrames.Keys.Where(frame =>
-                         !frameTimings.TryGetValue(frame, out var timing) ||
-                         timing.Source != FrameTimingSource.PresentationTimestamp).ToArray())
+            int timelineStart = Math.Clamp(processedStartFrame, 0, Math.Max(0, totalFrames - 1));
+            int timelineEndExclusive = (int)Math.Min(
+                totalFrames,
+                (long)timelineStart + Math.Max(0, processedFrameCount));
+            int timelineFrames = Math.Max(0, timelineEndExclusive - timelineStart);
+            int ptsTimingFrames = 0;
+            for (int frameIndex = timelineStart; frameIndex < timelineEndExclusive; frameIndex++)
             {
-                riskFrames.Remove(frameIndex);
+                if (frameTimings.TryGetValue(frameIndex, out var timing) &&
+                    timing.Source == FrameTimingSource.PresentationTimestamp &&
+                    double.IsFinite(timing.TimestampSeconds))
+                {
+                    ptsTimingFrames++;
+                }
             }
+            int unalignedTimelineFrames = Math.Max(0, timelineFrames - ptsTimingFrames);
+            if (timelineFrames == 0)
+            {
+                return YoloRiskCascadeResult.Empty with
+                {
+                    Enabled = true,
+                    Error = "risk cascade has no processed timeline frames"
+                };
+            }
+
             if (riskFrames.Count == 0)
             {
                 return YoloRiskCascadeResult.Empty with
                 {
                     Enabled = true,
-                    Error = "risk cascade has no timing-aligned frames in the current run"
+                    TimelineFrames = timelineFrames,
+                    PtsTimingFrames = ptsTimingFrames,
+                    UnalignedTimelineFrames = unalignedTimelineFrames,
+                    Error = "risk cascade has no risk frames in the current run"
+                };
+            }
+
+            int[] unalignedRiskFrames = riskFrames.Keys
+                .Where(frame =>
+                    !frameTimings.TryGetValue(frame, out var timing) ||
+                    timing.Source != FrameTimingSource.PresentationTimestamp ||
+                    !double.IsFinite(timing.TimestampSeconds))
+                .OrderBy(static frame => frame)
+                .ToArray();
+            if (unalignedTimelineFrames > 0 || unalignedRiskFrames.Length > 0)
+            {
+                totalTimer.Stop();
+                int periodicRiskFrames = riskFrames.Count(static entry =>
+                    (entry.Value & YoloRiskReason.PeriodicGlobal) != 0);
+                string timingError =
+                    $"risk cascade PTS coverage is incomplete " +
+                    $"(timeline={ptsTimingFrames}/{timelineFrames}, unalignedRisk={unalignedRiskFrames.Length})";
+                Debug.WriteLine(
+                    $"[YoloRiskCascade] enabled=true riskFrames={riskFrames.Count} timelineFrames={timelineFrames} ptsTimingFrames={ptsTimingFrames} unalignedTimelineFrames={unalignedTimelineFrames} unalignedRiskFrames={unalignedRiskFrames.Length} attempts=0 error={timingError}");
+                return YoloRiskCascadeResult.Empty with
+                {
+                    Enabled = true,
+                    RiskFrames = riskFrames.Count,
+                    PeriodicFrames = periodicRiskFrames,
+                    TimelineFrames = timelineFrames,
+                    PtsTimingFrames = ptsTimingFrames,
+                    UnalignedTimelineFrames = unalignedTimelineFrames,
+                    UnalignedRiskFrames = unalignedRiskFrames.Length,
+                    TotalMs = totalTimer.ElapsedMilliseconds,
+                    ReasonBreakdown = BuildReasonBreakdown(riskFrames),
+                    Error = timingError
                 };
             }
 
@@ -302,19 +358,19 @@ namespace FaceShield.Services.Analysis
             totalTimer.Stop();
             int periodicFrames = riskFrames.Count(static entry =>
                 (entry.Value & YoloRiskReason.PeriodicGlobal) != 0);
-            string reasonBreakdown = string.Join(
-                ",",
-                Enum.GetValues<YoloRiskReason>()
-                    .Where(static reason => reason != YoloRiskReason.None)
-                    .Select(reason => $"{reason}={riskFrames.Count(entry => (entry.Value & reason) != 0)}"));
+            string reasonBreakdown = BuildReasonBreakdown(riskFrames);
 
             Debug.WriteLine(
-                $"[YoloRiskCascade] enabled=true riskFrames={riskFrames.Count} periodicFrames={periodicFrames} attempts={attempts} protectedStoredMaskFrames={protectedStoredMaskFrames} hitFrames={hitFrames} candidates={secondaryCandidates} acceptedFrames={acceptedFrames} acceptedFaces={acceptedFaces} rejectedFaces={rejectedFaces} decodeMs={decodeMs} detectMs={detectMs} totalMs={totalTimer.ElapsedMilliseconds} reasons={reasonBreakdown} error={error ?? "none"}");
+                $"[YoloRiskCascade] enabled=true riskFrames={riskFrames.Count} timelineFrames={timelineFrames} ptsTimingFrames={ptsTimingFrames} unalignedTimelineFrames=0 unalignedRiskFrames=0 periodicFrames={periodicFrames} attempts={attempts} protectedStoredMaskFrames={protectedStoredMaskFrames} hitFrames={hitFrames} candidates={secondaryCandidates} acceptedFrames={acceptedFrames} acceptedFaces={acceptedFaces} rejectedFaces={rejectedFaces} decodeMs={decodeMs} detectMs={detectMs} totalMs={totalTimer.ElapsedMilliseconds} reasons={reasonBreakdown} error={error ?? "none"}");
 
             return new YoloRiskCascadeResult(
                 Enabled: true,
                 RiskFrames: riskFrames.Count,
                 PeriodicFrames: periodicFrames,
+                TimelineFrames: timelineFrames,
+                PtsTimingFrames: ptsTimingFrames,
+                UnalignedTimelineFrames: 0,
+                UnalignedRiskFrames: 0,
                 Attempts: attempts,
                 ProtectedStoredMaskFrames: protectedStoredMaskFrames,
                 HitFrames: hitFrames,
@@ -327,6 +383,16 @@ namespace FaceShield.Services.Analysis
                 TotalMs: totalTimer.ElapsedMilliseconds,
                 ReasonBreakdown: reasonBreakdown,
                 Error: error);
+        }
+
+        private static string BuildReasonBreakdown(
+            IReadOnlyDictionary<int, YoloRiskReason> riskFrames)
+        {
+            return string.Join(
+                ",",
+                Enum.GetValues<YoloRiskReason>()
+                    .Where(static reason => reason != YoloRiskReason.None)
+                    .Select(reason => $"{reason}={riskFrames.Count(entry => (entry.Value & reason) != 0)}"));
         }
 
         private static Dictionary<int, YoloRiskReason> BuildRiskFrames(
@@ -864,6 +930,10 @@ namespace FaceShield.Services.Analysis
         bool Enabled,
         int RiskFrames,
         int PeriodicFrames,
+        int TimelineFrames,
+        int PtsTimingFrames,
+        int UnalignedTimelineFrames,
+        int UnalignedRiskFrames,
         int Attempts,
         int ProtectedStoredMaskFrames,
         int HitFrames,
@@ -881,6 +951,10 @@ namespace FaceShield.Services.Analysis
             Enabled: false,
             RiskFrames: 0,
             PeriodicFrames: 0,
+            TimelineFrames: 0,
+            PtsTimingFrames: 0,
+            UnalignedTimelineFrames: 0,
+            UnalignedRiskFrames: 0,
             Attempts: 0,
             ProtectedStoredMaskFrames: 0,
             HitFrames: 0,

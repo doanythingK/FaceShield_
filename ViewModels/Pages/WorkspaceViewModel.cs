@@ -40,7 +40,7 @@ namespace FaceShield.ViewModels.Pages
         private const int NoDetectionReviewSampleCount = 12;
         private const int SparseNoFaceReviewSampleCount = 12;
         private const double SparseNoFaceReviewMaxCoverageRatio = 0.20;
-        private const int AutoDetectionCompletionTailToleranceFrames = 2;
+        private const int AutoDetectionCompletionTailToleranceFrames = 0;
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private string? _autoRunSignature;
@@ -62,8 +62,16 @@ namespace FaceShield.ViewModels.Pages
         // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
         private bool _isAutoRunning;
         private long _autoLastPreviewTick;
+        private bool _autoPreviewNeedsExactRefresh;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
+        private bool _autoExportGateRequired;
+        private bool _autoExportGatePassed;
+        private string? _autoExportGateFailure;
+        private AutoMaskRunSummary? _lastCompletedAutoRunSummary;
+        private bool _autoExportHybridPolicyAvailable;
+        private bool _autoExportAllowHybridCopy = true;
+        private string? _autoExportHybridDisableReasons;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -131,7 +139,19 @@ namespace FaceShield.ViewModels.Pages
             FrameList.SelectedFrameIndexChanged += index =>
             {
                 if (!FrameList.IsPlaying)
-                    FramePreview.OnFrameIndexChanged(index);
+                {
+                    if (_isAutoRunning && Mode == WorkspaceMode.Auto)
+                    {
+                        // 분석 중에는 타임라인 번호만 갱신합니다. 정확 프레임 seek는
+                        // 종료 시 한 번 수행하고, FramePreview의 편집 대상 인덱스는
+                        // 현재 표시 중인 exact 프레임에 그대로 유지합니다.
+                        _autoPreviewNeedsExactRefresh = true;
+                    }
+                    else
+                    {
+                        FramePreview.OnFrameIndexChanged(index);
+                    }
+                }
             };
             FrameList.PlaybackStopped += () =>
             {
@@ -218,12 +238,50 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken = default,
             bool updateToolPanel = true,
             string? runId = null,
-            AutoMaskRunSummary? autoRunSummary = null)
+            AutoMaskRunSummary? autoRunSummary = null,
+            AutoMaskOptions? autoRunOptions = null)
         {
             string input = FrameList.VideoPath;
             string exportRunId = string.IsNullOrWhiteSpace(runId)
                 ? $"export-{Guid.NewGuid():N}"
                 : runId;
+            if (_isAutoRunning && autoRunOptions == null)
+            {
+                const string reason = "auto-analysis-in-progress";
+                string line = $"[ExportBlocked] runId={exportRunId}, reason={reason}";
+                System.Diagnostics.Debug.WriteLine(line);
+                RunMetricsLog.AppendRunLines(exportRunId, line);
+                throw new InvalidOperationException(
+                    "자동 분석이 진행 중이므로 내보내기를 중단했습니다. 분석 완료 후 다시 시도해 주세요.");
+            }
+
+            AutoMaskRunSummary? effectiveAutoRunSummary =
+                autoRunSummary ?? _lastCompletedAutoRunSummary;
+            string? cascadeFailure = null;
+            string cascadeError = "n/a";
+            if (autoRunOptions != null)
+            {
+                cascadeFailure = GetRequiredYoloCascadeFailure(autoRunOptions, autoRunSummary);
+                cascadeError = autoRunSummary?.YoloCascadeError ?? "summary-missing";
+            }
+            if (cascadeFailure == null && _autoExportGateRequired && !_autoExportGatePassed)
+            {
+                cascadeFailure = string.IsNullOrWhiteSpace(_autoExportGateFailure)
+                    ? "persisted-auto-export-gate-failed"
+                    : _autoExportGateFailure;
+                cascadeError = "persisted-gate";
+            }
+            if (cascadeFailure != null)
+            {
+                string line =
+                    $"[ExportBlocked] runId={exportRunId}, reason={cascadeFailure}, cascadeError={cascadeError}";
+                System.Diagnostics.Debug.WriteLine(line);
+                RunMetricsLog.AppendRunLines(exportRunId, line);
+                throw new InvalidOperationException(
+                    $"자동 분석 품질 검증이 완료되지 않아 내보내기를 중단했습니다. " +
+                    $"reason={cascadeFailure}");
+            }
+
             string output = System.IO.Path.Combine(
                 System.IO.Path.GetDirectoryName(input)!,
                 System.IO.Path.GetFileNameWithoutExtension(input) + "_blur.mp4");
@@ -263,9 +321,23 @@ namespace FaceShield.ViewModels.Pages
                 _exportCts = cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : new CancellationTokenSource();
-                var hybridPolicy = EvaluateAutoExportHybridPolicy(autoRunSummary);
+                (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy;
+                if (effectiveAutoRunSummary != null)
+                {
+                    hybridPolicy = EvaluateAutoExportHybridPolicy(effectiveAutoRunSummary);
+                }
+                else if (_autoExportHybridPolicyAvailable)
+                {
+                    hybridPolicy = (
+                        _autoExportAllowHybridCopy,
+                        ParseAutoExportHybridDisableReasons(_autoExportHybridDisableReasons));
+                }
+                else
+                {
+                    hybridPolicy = (true, Array.Empty<string>());
+                }
                 System.Diagnostics.Debug.WriteLine(
-                    $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(autoRunSummary?.RunId ?? "n/a")}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
+                    $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(effectiveAutoRunSummary?.RunId ?? "n/a")}, persistedPolicy={(_autoExportHybridPolicyAvailable && effectiveAutoRunSummary == null).ToString().ToLowerInvariant()}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
                 RunMetricsLog.AppendRunLines(
                     exportRunId,
                     $"[ExportRunConfig] runId={exportRunId}, blurRadius={ToolPanel.BlurRadius}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
@@ -285,7 +357,7 @@ namespace FaceShield.ViewModels.Pages
                 {
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
                     LogExportQualityGate(
-                        autoRunSummary,
+                        effectiveAutoRunSummary,
                         exporter.LastExportSummary,
                         allowHybridCopy: hybridPolicy.allowHybridCopy,
                         autoHybridDisableReasons: hybridPolicy.disableReasons);
@@ -572,6 +644,25 @@ namespace FaceShield.ViewModels.Pages
                 : text;
         }
 
+        private static string? SerializeAutoExportHybridDisableReasons(
+            IReadOnlyList<string> values)
+        {
+            return values.Count == 0
+                ? null
+                : string.Join('|', values);
+        }
+
+        private static IReadOnlyList<string> ParseAutoExportHybridDisableReasons(
+            string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return Array.Empty<string>();
+
+            return value.Split(
+                '|',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
         private static (bool allowHybridCopy, IReadOnlyList<string> disableReasons) EvaluateAutoExportHybridPolicy(
             AutoMaskRunSummary? autoRunSummary)
         {
@@ -844,6 +935,11 @@ namespace FaceShield.ViewModels.Pages
             string runId = $"auto-{Guid.NewGuid():N}";
             try
             {
+                // Progress updates no longer invoke the exact-frame path on every
+                // selection change, so preserve any pending manual edit once up front.
+                FramePreview.PersistCurrentMask();
+                _autoPreviewNeedsExactRefresh = false;
+
                 var detectorOptions = _detectorOptions;
                 var detectorFactoryOptions = _detectorFactoryOptions;
                 var effectiveAutoOptions = _autoOptions.ResolveProcessingMode();
@@ -856,8 +952,6 @@ namespace FaceShield.ViewModels.Pages
                 }
 
                 string runSignature = BuildAutoRunSignature(effectiveAutoOptions, detectorFactoryOptions);
-                ResetStaleAutoResumeIfSettingsChanged(runSignature);
-                _autoRunSignature = runSignature;
 
                 int tunedSessions = Math.Max(1, effectiveAutoOptions.ParallelDetectorCount);
                 if (_detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
@@ -930,13 +1024,14 @@ namespace FaceShield.ViewModels.Pages
                     FilterProfile = effectiveAutoOptions.FilterProfile,
                     DumpDetectionDiagnostics = effectiveAutoOptions.DumpDetectionDiagnostics
                 }.ResolveProcessingMode();
-
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
                 RunMetricsLog.AppendRunLines(
                     runId,
                     $"[AutoRunConfig] runId={runId}, sourceId={BuildSourceEvidenceId(FrameList.VideoPath)}, totalFrames={FrameList.TotalFrames}, signature={BuildAutoRunEvidenceSignature(runOptions, detectorFactoryOptions)}");
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
+                ResetStaleAutoResumeIfSettingsChanged(runSignature);
+                _autoRunSignature = runSignature;
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
                 if (runOptions.EnableYoloRiskCascade &&
@@ -948,6 +1043,7 @@ namespace FaceShield.ViewModels.Pages
                     lastProcessed = 0;
                     _autoResumeIndex = 0;
                 }
+                BeginAutoExportGate();
                 ResetAutoFaceMasksForRun(lastProcessed);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
@@ -995,6 +1091,7 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
+                CompleteAutoExportGate(runOptions, generator.LastRunSummary);
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
                 if (!exportAfter)
@@ -1028,7 +1125,8 @@ namespace FaceShield.ViewModels.Pages
                         _autoCts?.Token ?? CancellationToken.None,
                         updateToolPanel: false,
                         runId: runId,
-                        autoRunSummary: generator.LastRunSummary);
+                        autoRunSummary: generator.LastRunSummary,
+                        autoRunOptions: runOptions);
                     if (!exported)
                     {
                         PersistWorkspaceState(includePreviewMask: false);
@@ -1057,6 +1155,13 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                if (!exportAfter &&
+                    _autoPreviewNeedsExactRefresh &&
+                    FrameList.SelectedFrameIndex >= 0)
+                {
+                    _autoPreviewNeedsExactRefresh = false;
+                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+                }
                 if (!persisted)
                     PersistWorkspaceState(includePreviewMask: !exportAfter);
             }
@@ -1096,6 +1201,14 @@ namespace FaceShield.ViewModels.Pages
                 return "yolo-risk-cascade-summary-missing";
             if (!summary.YoloRiskCascadeEnabled)
                 return "yolo-risk-cascade-not-executed";
+            if (summary.YoloTimelineFrameCount <= 0 ||
+                summary.YoloPtsTimingFrameCount != summary.YoloTimelineFrameCount ||
+                summary.YoloUnalignedTimelineFrameCount != 0)
+            {
+                return "yolo-risk-cascade-incomplete-pts-coverage";
+            }
+            if (summary.YoloUnalignedRiskFrameCount != 0)
+                return "yolo-risk-cascade-unaligned-risk-frames";
             if (!string.Equals(summary.YoloCascadeError, "none", StringComparison.OrdinalIgnoreCase))
                 return "yolo-risk-cascade-error";
             if (summary.YoloSecondaryAttemptCount + summary.YoloProtectedStoredMaskFrameCount !=
@@ -1105,6 +1218,43 @@ namespace FaceShield.ViewModels.Pages
             }
 
             return null;
+        }
+
+        private void BeginAutoExportGate()
+        {
+            _autoExportGateRequired = true;
+            _autoExportGatePassed = false;
+            _autoExportGateFailure = "auto-run-incomplete";
+            _lastCompletedAutoRunSummary = null;
+            _autoExportHybridPolicyAvailable = false;
+            _autoExportAllowHybridCopy = true;
+            _autoExportHybridDisableReasons = null;
+        }
+
+        private void CompleteAutoExportGate(
+            AutoMaskOptions options,
+            AutoMaskRunSummary? summary)
+        {
+            _lastCompletedAutoRunSummary = summary;
+            _autoExportHybridPolicyAvailable = true;
+            if (summary == null)
+            {
+                _autoExportAllowHybridCopy = false;
+                _autoExportHybridDisableReasons = "auto-run-summary-missing";
+            }
+            else
+            {
+                var hybridPolicy = EvaluateAutoExportHybridPolicy(summary);
+                _autoExportAllowHybridCopy = hybridPolicy.allowHybridCopy;
+                _autoExportHybridDisableReasons =
+                    SerializeAutoExportHybridDisableReasons(hybridPolicy.disableReasons);
+            }
+
+            string? failure = summary == null
+                ? "auto-run-summary-missing"
+                : GetRequiredYoloCascadeFailure(options, summary);
+            _autoExportGatePassed = failure == null;
+            _autoExportGateFailure = failure;
         }
 
         private void ResetAutoFaceMasksForRun(int startFrameIndex)
@@ -1160,6 +1310,7 @@ namespace FaceShield.ViewModels.Pages
             if (exportAfter || FrameList.SelectedFrameIndex < 0)
                 return;
 
+            _autoPreviewNeedsExactRefresh = false;
             FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
         }
 
@@ -1857,7 +2008,13 @@ namespace FaceShield.ViewModels.Pages
                 DateTimeOffset.Now,
                 _autoResumeIndex,
                 _autoCompleted,
-                _autoRunSignature);
+                _autoRunSignature,
+                _autoExportGateRequired,
+                _autoExportGatePassed,
+                _autoExportGateFailure,
+                _autoExportHybridPolicyAvailable,
+                _autoExportAllowHybridCopy,
+                _autoExportHybridDisableReasons);
         }
 
         private void ApplySnapshot(WorkspaceSnapshot snapshot)
@@ -1868,6 +2025,33 @@ namespace FaceShield.ViewModels.Pages
             _autoResumeIndex = snapshot.AutoResumeIndex;
             _autoCompleted = snapshot.AutoCompleted;
             _autoRunSignature = snapshot.AutoRunSignature;
+            _autoExportGateRequired = snapshot.AutoExportGateRequired;
+            _autoExportGatePassed = snapshot.AutoExportGatePassed;
+            _autoExportGateFailure = snapshot.AutoExportGateFailure;
+            _lastCompletedAutoRunSummary = null;
+            _autoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable;
+            _autoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy;
+            _autoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons;
+
+            bool legacyIncompleteRun =
+                !_autoExportGateRequired &&
+                !_autoExportGatePassed &&
+                _autoResumeIndex > 0 &&
+                !_autoCompleted;
+            bool legacyYoloCascadeEvidenceMissing =
+                !_autoExportGateRequired &&
+                !_autoExportGatePassed &&
+                !string.IsNullOrWhiteSpace(_autoRunSignature) &&
+                _autoRunSignature.Contains("profile=Yolo", StringComparison.OrdinalIgnoreCase) &&
+                _autoRunSignature.Contains("riskCascade=True", StringComparison.OrdinalIgnoreCase);
+            if (legacyIncompleteRun || legacyYoloCascadeEvidenceMissing)
+            {
+                _autoExportGateRequired = true;
+                _autoExportGatePassed = false;
+                _autoExportGateFailure = legacyIncompleteRun
+                    ? "legacy-auto-run-incomplete"
+                    : "legacy-cascade-evidence-missing";
+            }
 
             double secondsPerScreen = snapshot.SecondsPerScreen;
             if (secondsPerScreen <= 0)
