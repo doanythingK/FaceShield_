@@ -109,6 +109,24 @@ if (-not (Test-Path $sourcePath)) {
     throw "Source video not found: $sourcePath"
 }
 
+$sourceInfo = Get-Item $sourcePath
+$sourceIdentityText = "{0}|{1}|{2}|{3}|{4}|{5}" -f `
+    $sourceInfo.FullName,
+    $sourceInfo.Length,
+    $sourceInfo.LastWriteTimeUtc.Ticks,
+    $Start,
+    $Seconds,
+    $SkipTrim.IsPresent
+$sourceIdentityBytes = [System.Text.Encoding]::UTF8.GetBytes($sourceIdentityText)
+$sourceIdentityHasher = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $sourceIdentityHash = $sourceIdentityHasher.ComputeHash($sourceIdentityBytes)
+    $env:FACESHIELD_SMOKE_SOURCE_ID = ([System.BitConverter]::ToString($sourceIdentityHash)).Replace('-', '').ToLowerInvariant().Substring(0, 24)
+}
+finally {
+    $sourceIdentityHasher.Dispose()
+}
+
 $work = Join-Path $repo ".tmp\srcTest-smoke"
 $clip = if ($SkipTrim) { $sourcePath } else { Join-Path $work "smoke-${Seconds}s.mp4" }
 $clipStem = [IO.Path]::GetFileNameWithoutExtension($clip)
@@ -149,6 +167,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -253,6 +273,27 @@ Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
 
 FFmpegBootstrap.Initialize();
+
+static string BuildFileEvidenceId(string path)
+{
+    string? configured = Environment.GetEnvironmentVariable("FACESHIELD_SMOKE_SOURCE_ID");
+    if (!string.IsNullOrWhiteSpace(configured))
+        return configured;
+
+    var file = new FileInfo(Path.GetFullPath(path));
+    string identity = $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+    byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
+    return Convert.ToHexString(hash.AsSpan(0, 12)).ToLowerInvariant();
+}
+
+static string BuildModelEvidence(string path)
+{
+    if (string.IsNullOrWhiteSpace(path))
+        return "builtin";
+
+    var file = new FileInfo(Path.GetFullPath(path));
+    return $"{file.Name}:{file.Length}:{file.LastWriteTimeUtc.Ticks}";
+}
 
 static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     string label,
@@ -479,7 +520,65 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
 
     var generator = new AutoMaskGenerator(detector, maskProvider, options, factory);
     await generator.GenerateAsync(input, new Progress<int>(_ => { }), CancellationToken.None);
-    Console.WriteLine(generator.LastRunSummary?.ToLogLine() ?? $"[Smoke] no auto summary label={label}");
+    var runSummary = generator.LastRunSummary;
+    if (runSummary != null)
+    {
+        string backend = useYolo
+            ? "YoloFaceOnnx"
+            : useScrfd
+                ? "ScrfdOnnx"
+                : useYuNet
+                    ? "YuNetOnnx"
+                    : "FaceOnnx";
+        string modelPath = useYolo
+            ? yoloModelPath
+            : useScrfd
+                ? scrfdModelPath
+                : useYuNet
+                    ? yuNetModelPath
+                    : string.Empty;
+        string signature = string.Join("|", new[]
+        {
+            "v4",
+            $"backend={backend}",
+            $"profile={options.FilterProfile}",
+            $"downscale={downscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"quality={downscaleQuality}",
+            $"post={options.EnablePostProcessing}",
+            $"roi={options.EnableRoiPostProcess}",
+            $"iso={options.EnableYoloWeakIsolatedCleanup}",
+            $"gap={options.EnableYoloGapFill}",
+            $"scene={options.EnableYoloSceneCutCarryCleanup}",
+            $"smooth={options.EnableYoloTemporalSmoothing}",
+            $"tracking={options.UseTracking}",
+            $"everyN={options.DetectEveryNFrames}",
+            $"parallel={options.ParallelDetectorCount}",
+            $"gpu={useGpu}",
+            $"model={BuildModelEvidence(modelPath)}",
+            $"input={yoloInputSize}",
+            $"obj={yoloObjectnessThreshold.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"conf={yoloConfidenceThreshold.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"nms={yoloNmsThreshold.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"tiling={yoloUseTiling}",
+            $"tileOnly={yoloTileOnly}",
+            $"tiles={yoloTileColumns}x{yoloTileRows}",
+            $"tileOverlap={yoloTileOverlapRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"lowPos={yoloUseLowConfidencePositionFilter}:{yoloLowConfidencePositionMaxConfidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLowConfidencePositionMinCenterYRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"small={yoloUseSmallAreaFilter}:{yoloSmallAreaMaxAreaRatio.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"aspect={yoloUseAspectRatioFilter}:{yoloMinAspectRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloMaxAspectRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"largeScale={yoloLargeBoxWidthScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLargeBoxHeightScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLargeBoxMinAreaRatio.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"landmark={yoloUseLandmarkBoxRefine}:{yoloLandmarkBoxMinAreaRatio.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLandmarkBoxWidthScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLandmarkBoxHeightScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLandmarkBoxCenterYOffsetRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLandmarkBoxMinOriginalIou.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"track={yoloMaxLostFillFrames}:{yoloMaxInitialFillFrames}:{yoloDropShortTrackMaxDetections}:{yoloShortTrackMaxConfidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}:{yoloLowerFrameTrackMaxConfidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",
+            $"faceOnnxRoi={yoloUseFaceOnnxRoiRefine}:{yoloFaceOnnxRoiMinAreaRatio.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}:{yoloFaceOnnxRoiMaxCandidates}"
+        });
+        Console.WriteLine(
+            $"[AutoRunConfig] runId={runId}, sourceId={BuildFileEvidenceId(input)}, totalFrames={runSummary.TotalFrames}, signature={signature}");
+        Console.WriteLine(runSummary.ToLogLine());
+    }
+    else
+    {
+        Console.WriteLine($"[Smoke] no auto summary label={label}");
+    }
     const float yoloSceneCutDirectCarryMaxConfidence = 0.98f;
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;

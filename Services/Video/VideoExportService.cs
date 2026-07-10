@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Media.Imaging;
+using FaceShield.Services.Diagnostics;
 using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
@@ -278,7 +279,7 @@ public unsafe sealed class VideoExportService
                 if (blurFrameSet.Count == 0)
                 {
                     progress?.Report(new ExportProgress(0, totalFrames, "블러 대상이 없어 원본 스트림을 고속 복사합니다..."));
-                    ExportByRemuxCopy(
+                    var remuxCounts = ExportByRemuxCopy(
                         inFmt,
                         outputPath,
                         videoStreamIndex,
@@ -287,7 +288,7 @@ public unsafe sealed class VideoExportService
                         progress,
                         cancellationToken);
             LastExportSummary = new ExportRunSummary(
-                totalFrames,
+                remuxCounts.OutputVideoPackets,
                 0,
                 0,
                         0,
@@ -304,12 +305,12 @@ public unsafe sealed class VideoExportService
                         HybridWindowEndFrame: -1,
                         HybridModeTransitionCount: 0,
                         HybridModeTimestampSyncCount: 0,
-                InputVideoPackets: 0,
-                OutputVideoPackets: 0,
-                CopiedVideoPackets: 0,
-                CopiedSourceVideoPackets: 0,
+                InputVideoPackets: remuxCounts.InputVideoPackets,
+                OutputVideoPackets: remuxCounts.OutputVideoPackets,
+                CopiedVideoPackets: remuxCounts.OutputVideoPackets,
+                CopiedSourceVideoPackets: remuxCounts.OutputVideoPackets,
                 EncodedSourceVideoPackets: 0,
-                DroppedVideoPackets: 0,
+                DroppedVideoPackets: Math.Max(0, remuxCounts.InputVideoPackets - remuxCounts.OutputVideoPackets),
                 OutputPacketPtsGapOutlierCount: 0,
                 MaxOutputPacketPtsGap: 0,
                 HybridCopyTimestampFixCount: 0,
@@ -321,6 +322,7 @@ public unsafe sealed class VideoExportService
                 ForceAudioTranscode: forceAudioTranscode,
                 ForceH264Fallback: forceH264Fallback);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
+                    RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
                     return;
                 }
 
@@ -1512,6 +1514,7 @@ public unsafe sealed class VideoExportService
             Debug.WriteLine(
                 $"[Export] sampleWindow={(sampleWindowLimit > 0 ? $"0-{sampleWindowLimit - 1}" : "none")} sourcePackets={sampleSourceVideoPacketCount} copiedPackets={sampleCopiedVideoPacketCount} encodedFrames={sampleEncodedFrameCount} blurredFrames={sampleBlurredFrameCount} sampleShortfall={sampleWindowFrameShortfall}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
+            RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
             if (shouldRetryWithFullEncode)
             {
                 Debug.WriteLine($"[Export] 패킷 누락 감지로 품질 보정 fallback 수행: {packetDropFallbackReason}");
@@ -2594,7 +2597,7 @@ public unsafe sealed class VideoExportService
         return index;
     }
 
-    private static unsafe void ExportByRemuxCopy(
+    private static unsafe (int InputVideoPackets, int OutputVideoPackets) ExportByRemuxCopy(
         AVFormatContext* inFmt,
         string outputPath,
         int videoStreamIndex,
@@ -2614,6 +2617,8 @@ public unsafe sealed class VideoExportService
             bool[] hasLastRemuxPacketPts = Array.Empty<bool>();
             long[] lastRemuxPacketDts = Array.Empty<long>();
             bool[] hasLastRemuxPacketDts = Array.Empty<bool>();
+            int inputVideoPackets = 0;
+            int outputVideoPackets = 0;
 
         try
         {
@@ -2662,6 +2667,8 @@ public unsafe sealed class VideoExportService
                 AVStream* inStream = inFmt->streams[inIndex];
                 int outIndex = streamMap[inIndex];
                 AVStream* outStream = outFmt->streams[outIndex];
+                if (inIndex == videoStreamIndex)
+                    inputVideoPackets++;
                 long normalizeStep = inStream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO
                     ? GetVideoFrameStep(sourceFps, outStream->time_base)
                     : 1;
@@ -2676,6 +2683,8 @@ public unsafe sealed class VideoExportService
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
                 Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
+                if (inIndex == videoStreamIndex)
+                    outputVideoPackets++;
 
                 if (progress != null && inIndex == videoStreamIndex && totalFrames > 0 && sourceFps > 0.0)
                 {
@@ -2712,6 +2721,8 @@ public unsafe sealed class VideoExportService
                 ffmpeg.avformat_free_context(outFmt);
             }
         }
+
+        return (inputVideoPackets, outputVideoPackets);
     }
 
     private static unsafe bool IsPixFmtSupported(AVCodec* encoder, AVPixelFormat fmt)

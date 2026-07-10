@@ -1998,7 +1998,7 @@ namespace FaceShield.ViewModels.Pages
                 EnableYoloGapFill = EnableYoloGapFill,
                 EnableYoloSceneCutCarryCleanup = EnableYoloSceneCutCarryCleanup,
                 EnableYoloTemporalSmoothing = EnableYoloTemporalSmoothing,
-                EnableYoloRiskCascade = EnableYoloRiskCascade && detectEvery <= 1,
+                EnableYoloRiskCascade = IsYoloDetectorSelected && EnableYoloRiskCascade && detectEvery <= 1,
                 UseTracking = useTracking,
                 DetectEveryNFrames = detectEvery,
                 ParallelDetectorCount = Math.Max(1, SelectedParallelSessionCount),

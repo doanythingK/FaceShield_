@@ -19,12 +19,13 @@ namespace FaceShield.Services.Analysis
         SmallFace = 4,
         EdgeFace = 8,
         PeriodicGlobal = 16,
-        Confirmation = 32
+        Confirmation = 32,
+        NewTrackEntry = 64
     }
 
     internal sealed class YoloRiskCascadeStep
     {
-        private const double ExistingOverlapIou = 0.45;
+        private const double ExistingDuplicateMinIou = 0.45;
         private const double TemporalSupportIou = 0.25;
         private const double TemporalSupportMaxCenterShift = 0.60;
         private const double TemporalSupportMaxAreaRatio = 2.5;
@@ -78,6 +79,7 @@ namespace FaceShield.Services.Analysis
             }
 
             int attempts = 0;
+            int protectedStoredMaskFrames = 0;
             int hitFrames = 0;
             int secondaryCandidates = 0;
             long decodeMs = 0;
@@ -118,8 +120,17 @@ namespace FaceShield.Services.Analysis
                             out int frameIndex);
                         decodeTimer.Stop();
                         decodeMs += decodeTimer.ElapsedMilliseconds;
-                        if (!ok || frameIndex > range.End)
+                        if (!ok)
+                        {
+                            if (!cancellationToken.IsCancellationRequested)
+                                error = $"secondary decode ended before risk range {range.Start}-{range.End}";
                             break;
+                        }
+                        if (frameIndex > range.End)
+                        {
+                            error = $"secondary decode skipped risk range {range.Start}-{range.End}";
+                            break;
+                        }
                         nextFrameIndex = frameIndex + 1;
 
                         if (!IsFrameTimingAligned(
@@ -132,12 +143,22 @@ namespace FaceShield.Services.Analysis
                             break;
                         }
 
-                        if (!riskFrames.ContainsKey(frameIndex) || maskProvider.TryGetStoredMask(frameIndex, out _))
+                        if (!riskFrames.ContainsKey(frameIndex))
                             continue;
 
-                        attempts++;
-                        if (bgra.Data == IntPtr.Zero)
+                        if (maskProvider.TryGetStoredMask(frameIndex, out _))
+                        {
+                            protectedStoredMaskFrames++;
                             continue;
+                        }
+
+                        if (bgra.Data == IntPtr.Zero)
+                        {
+                            error = $"secondary BGRA frame is unavailable at frame {frameIndex}";
+                            break;
+                        }
+
+                        attempts++;
 
                         var detectTimer = Stopwatch.StartNew();
                         var faces = secondary.DetectFacesBgra(
@@ -174,6 +195,14 @@ namespace FaceShield.Services.Analysis
                 error = ex.Message;
             }
 
+            if (error == null &&
+                !cancellationToken.IsCancellationRequested &&
+                attempts + protectedStoredMaskFrames != riskFrames.Count)
+            {
+                error =
+                    $"secondary risk coverage mismatch covered={attempts + protectedStoredMaskFrames} expected={riskFrames.Count}";
+            }
+
             int acceptedFaces = 0;
             int acceptedFrames = 0;
             int rejectedFaces = 0;
@@ -182,11 +211,8 @@ namespace FaceShield.Services.Analysis
                 foreach (var entry in strongResults.OrderBy(static entry => entry.Key))
                 {
                     int frameIndex = entry.Key;
-                    if (!riskFrames.TryGetValue(frameIndex, out var riskReason) ||
-                        (riskReason & ~YoloRiskReason.Confirmation) == YoloRiskReason.None)
-                    {
+                    if (!riskFrames.TryGetValue(frameIndex, out var riskReason))
                         continue;
-                    }
 
                     var strong = entry.Value;
                     primaryEntries.TryGetValue(frameIndex, out var primary);
@@ -201,11 +227,24 @@ namespace FaceShield.Services.Analysis
                             : primary.MinConfidence ?? 1.0f);
                     }
 
+                    // 한 primary 얼굴이 인접한 secondary 얼굴 여러 개를 모두 중복으로 삼지 못하게 한다.
+                    var duplicateCandidateIndices = FindOneToOneMatches(
+                            existingFaces,
+                            strong.Faces.Select(static face => face.Bounds).ToArray(),
+                            IsLikelyDuplicate,
+                            ComputeGeometryMatchScore)
+                        .Select(static match => match.RightIndex)
+                        .ToHashSet();
+
                     int acceptedOnFrame = 0;
-                    foreach (var candidate in strong.Faces)
+                    var acceptedSecondaryFaces = new List<Rect>();
+                    for (int candidateIndex = 0; candidateIndex < strong.Faces.Count; candidateIndex++)
                     {
-                        if (mergedFaces.Any(existing =>
-                                ComputeIou(existing, candidate.Bounds) >= ExistingOverlapIou))
+                        var candidate = strong.Faces[candidateIndex];
+                        if (duplicateCandidateIndices.Contains(candidateIndex))
+                            continue;
+                        if (acceptedSecondaryFaces.Any(existing =>
+                                ComputeIou(existing, candidate.Bounds) >= ExistingDuplicateMinIou))
                             continue;
 
                         bool supported = HasStrongTemporalSupport(
@@ -213,14 +252,32 @@ namespace FaceShield.Services.Analysis
                             frameIndex,
                             strong,
                             strongResults,
-                            Math.Max(1, options.YoloStrongConfirmationFrames));
+                            Math.Max(1, options.YoloStrongConfirmationFrames),
+                            (riskReason & (YoloRiskReason.ExpectedTrackMissing | YoloRiskReason.NewTrackEntry)) != 0 ||
+                                (riskReason & ~YoloRiskReason.Confirmation) == YoloRiskReason.None);
                         if (!supported)
                         {
                             rejectedFaces++;
                             continue;
                         }
 
+                        bool isConfirmationOnly =
+                            (riskReason & ~YoloRiskReason.Confirmation) == YoloRiskReason.None;
+                        if (isConfirmationOnly &&
+                            !HasPrimaryRiskTemporalSupport(
+                                candidate.Bounds,
+                                frameIndex,
+                                strong,
+                                strongResults,
+                                riskFrames,
+                                Math.Max(1, options.YoloStrongConfirmationFrames)))
+                        {
+                            rejectedFaces++;
+                            continue;
+                        }
+
                         mergedFaces.Add(candidate.Bounds);
+                        acceptedSecondaryFaces.Add(candidate.Bounds);
                         mergedConfidences.Add(candidate.Confidence);
                         acceptedFaces++;
                         acceptedOnFrame++;
@@ -252,13 +309,14 @@ namespace FaceShield.Services.Analysis
                     .Select(reason => $"{reason}={riskFrames.Count(entry => (entry.Value & reason) != 0)}"));
 
             Debug.WriteLine(
-                $"[YoloRiskCascade] enabled=true riskFrames={riskFrames.Count} periodicFrames={periodicFrames} attempts={attempts} hitFrames={hitFrames} candidates={secondaryCandidates} acceptedFrames={acceptedFrames} acceptedFaces={acceptedFaces} rejectedFaces={rejectedFaces} decodeMs={decodeMs} detectMs={detectMs} totalMs={totalTimer.ElapsedMilliseconds} reasons={reasonBreakdown} error={error ?? "none"}");
+                $"[YoloRiskCascade] enabled=true riskFrames={riskFrames.Count} periodicFrames={periodicFrames} attempts={attempts} protectedStoredMaskFrames={protectedStoredMaskFrames} hitFrames={hitFrames} candidates={secondaryCandidates} acceptedFrames={acceptedFrames} acceptedFaces={acceptedFaces} rejectedFaces={rejectedFaces} decodeMs={decodeMs} detectMs={detectMs} totalMs={totalTimer.ElapsedMilliseconds} reasons={reasonBreakdown} error={error ?? "none"}");
 
             return new YoloRiskCascadeResult(
                 Enabled: true,
                 RiskFrames: riskFrames.Count,
                 PeriodicFrames: periodicFrames,
                 Attempts: attempts,
+                ProtectedStoredMaskFrames: protectedStoredMaskFrames,
                 HitFrames: hitFrames,
                 CandidateFaces: secondaryCandidates,
                 AcceptedFrames: acceptedFrames,
@@ -311,26 +369,43 @@ namespace FaceShield.Services.Analysis
                 int previous = orderedFrames[i - 1];
                 int current = orderedFrames[i];
                 int missing = current - previous - 1;
-                if (missing > 0 && missing <= maxGap)
+                if (missing > 0)
                 {
-                    for (int frameIndex = previous + 1; frameIndex < current; frameIndex++)
-                        AddRisk(risks, frameIndex, YoloRiskReason.ExpectedTrackMissing, totalFrames);
+                    if (missing <= maxGap)
+                    {
+                        for (int frameIndex = previous + 1; frameIndex < current; frameIndex++)
+                            AddRisk(risks, frameIndex, YoloRiskReason.ExpectedTrackMissing, totalFrames);
+                    }
+                    else
+                    {
+                        AddRisk(risks, previous + 1, YoloRiskReason.ExpectedTrackMissing, totalFrames);
+                        AddRisk(risks, current - 1, YoloRiskReason.ExpectedTrackMissing, totalFrames);
+                    }
                 }
 
                 if (current == previous + 1 &&
                     entries.TryGetValue(previous, out var previousData) &&
-                    entries.TryGetValue(current, out var currentData) &&
-                    previousData.Faces.Any(previousFace =>
-                        !currentData.Faces.Any(currentFace => IsGeometrySupported(previousFace, currentFace))))
+                    entries.TryGetValue(current, out var currentData))
                 {
-                    AddRiskWindowByTimestamp(
-                        risks,
-                        current,
-                        intervalSeconds,
-                        frameTimings,
-                        YoloRiskReason.ExpectedTrackMissing,
-                        totalFrames,
-                        maxGap);
+                    var temporalMatches = FindOneToOneMatches(
+                        previousData.Faces,
+                        currentData.Faces,
+                        IsGeometrySupported,
+                        ComputeGeometryMatchScore);
+                    if (temporalMatches.Count < previousData.Faces.Count)
+                    {
+                        AddRiskWindowByTimestamp(
+                            risks,
+                            current,
+                            intervalSeconds,
+                            frameTimings,
+                            YoloRiskReason.ExpectedTrackMissing,
+                            totalFrames,
+                            maxGap);
+                    }
+
+                    if (temporalMatches.Count < currentData.Faces.Count)
+                        AddRisk(risks, current, YoloRiskReason.NewTrackEntry, totalFrames);
                 }
             }
 
@@ -526,8 +601,10 @@ namespace FaceShield.Services.Analysis
             int frameIndex,
             StrongFrameResult current,
             IReadOnlyDictionary<int, StrongFrameResult> strongResults,
-            int confirmationFrames)
+            int confirmationFrames,
+            bool allowOneSidedSupport)
         {
+            int supportingFrames = 0;
             bool hasPrevious = false;
             bool hasNext = false;
             for (int distance = 1; distance <= confirmationFrames; distance++)
@@ -536,6 +613,7 @@ namespace FaceShield.Services.Analysis
                     ComputeSceneDifference(current.SceneSample, previous.SceneSample) <= SceneDifferenceThreshold &&
                     previous.Faces.Any(face => IsGeometrySupported(candidate, face.Bounds)))
                 {
+                    supportingFrames++;
                     hasPrevious = true;
                 }
 
@@ -543,14 +621,61 @@ namespace FaceShield.Services.Analysis
                     ComputeSceneDifference(current.SceneSample, next.SceneSample) <= SceneDifferenceThreshold &&
                     next.Faces.Any(face => IsGeometrySupported(candidate, face.Bounds)))
                 {
+                    supportingFrames++;
                     hasNext = true;
                 }
 
-                if (hasPrevious && hasNext)
+                if (allowOneSidedSupport
+                    ? supportingFrames >= confirmationFrames
+                    : hasPrevious && hasNext)
                     return true;
             }
 
             return false;
+        }
+
+        private static bool HasPrimaryRiskTemporalSupport(
+            Rect candidate,
+            int frameIndex,
+            StrongFrameResult current,
+            IReadOnlyDictionary<int, StrongFrameResult> strongResults,
+            IReadOnlyDictionary<int, YoloRiskReason> riskFrames,
+            int confirmationFrames)
+        {
+            for (int distance = 1; distance <= confirmationFrames; distance++)
+            {
+                if (HasMatchingPrimaryRiskCandidate(
+                        candidate,
+                        frameIndex - distance,
+                        current,
+                        strongResults,
+                        riskFrames) ||
+                    HasMatchingPrimaryRiskCandidate(
+                        candidate,
+                        frameIndex + distance,
+                        current,
+                        strongResults,
+                        riskFrames))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasMatchingPrimaryRiskCandidate(
+            Rect candidate,
+            int candidateFrameIndex,
+            StrongFrameResult current,
+            IReadOnlyDictionary<int, StrongFrameResult> strongResults,
+            IReadOnlyDictionary<int, YoloRiskReason> riskFrames)
+        {
+            return riskFrames.TryGetValue(candidateFrameIndex, out var reason) &&
+                (reason & (YoloRiskReason.ExpectedTrackMissing | YoloRiskReason.NewTrackEntry)) != 0 &&
+                strongResults.TryGetValue(candidateFrameIndex, out var support) &&
+                ComputeSceneDifference(current.SceneSample, support.SceneSample) <= SceneDifferenceThreshold &&
+                support.Faces.Any(face => IsGeometrySupported(candidate, face.Bounds));
         }
 
         private static unsafe byte[] CaptureSceneSample(
@@ -611,6 +736,106 @@ namespace FaceShield.Services.Analysis
             return Math.Sqrt(dx * dx + dy * dy) / scale <= TemporalSupportMaxCenterShift;
         }
 
+        private static bool IsLikelyDuplicate(Rect existing, Rect candidate)
+            => ComputeIou(existing, candidate) >= ExistingDuplicateMinIou;
+
+        private static double ComputeGeometryMatchScore(Rect left, Rect right)
+        {
+            double leftArea = Math.Max(1.0, left.Width * left.Height);
+            double rightArea = Math.Max(1.0, right.Width * right.Height);
+            double areaRatio = Math.Max(leftArea, rightArea) / Math.Min(leftArea, rightArea);
+            double centerScore = Math.Max(0.0, 1.0 - ComputeSymmetricCenterShift(left, right));
+            return ComputeIou(left, right) * 3.0 + centerScore + 1.0 / areaRatio;
+        }
+
+        private static double ComputeSymmetricCenterShift(Rect left, Rect right)
+        {
+            double dx = left.Center.X - right.Center.X;
+            double dy = left.Center.Y - right.Center.Y;
+            double leftScale = Math.Max(left.Width, left.Height);
+            double rightScale = Math.Max(right.Width, right.Height);
+            double scale = Math.Max(1.0, Math.Min(leftScale, rightScale));
+            return Math.Sqrt(dx * dx + dy * dy) / scale;
+        }
+
+        private static IReadOnlyList<GeometryMatch> FindOneToOneMatches(
+            IReadOnlyList<Rect> leftFaces,
+            IReadOnlyList<Rect> rightFaces,
+            Func<Rect, Rect, bool> isCompatible,
+            Func<Rect, Rect, double> score)
+        {
+            if (leftFaces.Count == 0 || rightFaces.Count == 0)
+                return Array.Empty<GeometryMatch>();
+
+            var candidates = new List<GeometryMatch>();
+            for (int leftIndex = 0; leftIndex < leftFaces.Count; leftIndex++)
+            {
+                for (int rightIndex = 0; rightIndex < rightFaces.Count; rightIndex++)
+                {
+                    if (!isCompatible(leftFaces[leftIndex], rightFaces[rightIndex]))
+                        continue;
+
+                    candidates.Add(new GeometryMatch(
+                        leftIndex,
+                        rightIndex,
+                        score(leftFaces[leftIndex], rightFaces[rightIndex])));
+                }
+            }
+
+            var candidatesByLeft = candidates
+                .GroupBy(static candidate => candidate.LeftIndex)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group
+                        .OrderByDescending(static candidate => candidate.Score)
+                        .ThenBy(static candidate => candidate.RightIndex)
+                        .ToArray());
+            var leftByRight = Enumerable.Repeat(-1, rightFaces.Count).ToArray();
+
+            bool TryAssign(int leftIndex, bool[] visitedRight)
+            {
+                if (!candidatesByLeft.TryGetValue(leftIndex, out var edges))
+                    return false;
+
+                foreach (var edge in edges)
+                {
+                    if (visitedRight[edge.RightIndex])
+                        continue;
+                    visitedRight[edge.RightIndex] = true;
+                    int displacedLeft = leftByRight[edge.RightIndex];
+                    if (displacedLeft >= 0 && !TryAssign(displacedLeft, visitedRight))
+                        continue;
+
+                    leftByRight[edge.RightIndex] = leftIndex;
+                    return true;
+                }
+
+                return false;
+            }
+
+            foreach (int leftIndex in Enumerable.Range(0, leftFaces.Count)
+                         .OrderBy(index => candidatesByLeft.TryGetValue(index, out var edges)
+                             ? edges.Length
+                             : int.MaxValue)
+                         .ThenBy(static index => index))
+            {
+                _ = TryAssign(leftIndex, new bool[rightFaces.Count]);
+            }
+
+            return leftByRight
+                .Select((leftIndex, rightIndex) => leftIndex >= 0
+                    ? new GeometryMatch(
+                        leftIndex,
+                        rightIndex,
+                        score(leftFaces[leftIndex], rightFaces[rightIndex]))
+                    : (GeometryMatch?)null)
+                .Where(static match => match.HasValue)
+                .Select(static match => match!.Value)
+                .OrderBy(static match => match.LeftIndex)
+                .ThenBy(static match => match.RightIndex)
+                .ToArray();
+        }
+
         private static double ComputeIou(Rect a, Rect b)
         {
             double left = Math.Max(a.Left, b.Left);
@@ -630,6 +855,8 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<FaceDetectionResult> Faces,
             byte[] SceneSample);
 
+        private readonly record struct GeometryMatch(int LeftIndex, int RightIndex, double Score);
+
         private readonly record struct FrameRange(int Start, int End);
     }
 
@@ -638,6 +865,7 @@ namespace FaceShield.Services.Analysis
         int RiskFrames,
         int PeriodicFrames,
         int Attempts,
+        int ProtectedStoredMaskFrames,
         int HitFrames,
         int CandidateFaces,
         int AcceptedFrames,
@@ -654,6 +882,7 @@ namespace FaceShield.Services.Analysis
             RiskFrames: 0,
             PeriodicFrames: 0,
             Attempts: 0,
+            ProtectedStoredMaskFrames: 0,
             HitFrames: 0,
             CandidateFaces: 0,
             AcceptedFrames: 0,

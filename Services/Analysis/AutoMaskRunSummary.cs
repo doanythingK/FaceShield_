@@ -109,6 +109,7 @@ namespace FaceShield.Services.Analysis
         public int YoloRiskFrameCount { get; init; } = 0;
         public int YoloPeriodicGlobalFrameCount { get; init; } = 0;
         public int YoloSecondaryAttemptCount { get; init; } = 0;
+        public int YoloProtectedStoredMaskFrameCount { get; init; } = 0;
         public int YoloSecondaryHitFrameCount { get; init; } = 0;
         public int YoloSecondaryCandidateFaceCount { get; init; } = 0;
         public int YoloSecondaryAcceptedFrameCount { get; init; } = 0;
@@ -166,7 +167,7 @@ namespace FaceShield.Services.Analysis
         public string ToYoloCascadeLogLine()
         {
             string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
-            return $"[AutoRunYoloCascade] runId={run}, enabled={YoloRiskCascadeEnabled.ToString().ToLowerInvariant()}, riskFrames={YoloRiskFrameCount}, periodicFrames={YoloPeriodicGlobalFrameCount}, attempts={YoloSecondaryAttemptCount}, hitFrames={YoloSecondaryHitFrameCount}, candidates={YoloSecondaryCandidateFaceCount}, acceptedFrames={YoloSecondaryAcceptedFrameCount}, acceptedFaces={YoloSecondaryAcceptedFaceCount}, rejectedFaces={YoloSecondaryRejectedFaceCount}, decodeMs={YoloCascadeDecodeMs}, detectMs={YoloCascadeDetectMs}, totalMs={YoloCascadeTotalMs}, analysisTotalMs={AnalysisTotalMs}, reasons={YoloCascadeReasonBreakdown}, error={YoloCascadeError}";
+            return $"[AutoRunYoloCascade] runId={run}, enabled={YoloRiskCascadeEnabled.ToString().ToLowerInvariant()}, riskFrames={YoloRiskFrameCount}, periodicFrames={YoloPeriodicGlobalFrameCount}, attempts={YoloSecondaryAttemptCount}, protectedStoredMaskFrames={YoloProtectedStoredMaskFrameCount}, hitFrames={YoloSecondaryHitFrameCount}, candidates={YoloSecondaryCandidateFaceCount}, acceptedFrames={YoloSecondaryAcceptedFrameCount}, acceptedFaces={YoloSecondaryAcceptedFaceCount}, rejectedFaces={YoloSecondaryRejectedFaceCount}, decodeMs={YoloCascadeDecodeMs}, detectMs={YoloCascadeDetectMs}, totalMs={YoloCascadeTotalMs}, analysisTotalMs={AnalysisTotalMs}, reasons={YoloCascadeReasonBreakdown}, error={YoloCascadeError}";
         }
     }
 }

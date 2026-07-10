@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FaceShield.Enums.Workspace; // 🔹 추가
 using FaceShield.Services.Analysis;
+using FaceShield.Services.Diagnostics;
 using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
@@ -16,6 +17,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -263,6 +266,9 @@ namespace FaceShield.ViewModels.Pages
                 var hybridPolicy = EvaluateAutoExportHybridPolicy(autoRunSummary);
                 System.Diagnostics.Debug.WriteLine(
                     $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(autoRunSummary?.RunId ?? "n/a")}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
+                RunMetricsLog.AppendRunLines(
+                    exportRunId,
+                    $"[ExportRunConfig] runId={exportRunId}, blurRadius={ToolPanel.BlurRadius}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
 
                 await Task.Run(() =>
                 {
@@ -926,6 +932,9 @@ namespace FaceShield.ViewModels.Pages
                 }.ResolveProcessingMode();
 
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
+                RunMetricsLog.AppendRunLines(
+                    runId,
+                    $"[AutoRunConfig] runId={runId}, sourceId={BuildSourceEvidenceId(FrameList.VideoPath)}, totalFrames={FrameList.TotalFrames}, signature={BuildAutoRunEvidenceSignature(runOptions, detectorFactoryOptions)}");
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
                 _autoCompleted = false;
@@ -999,6 +1008,21 @@ namespace FaceShield.ViewModels.Pages
 
                 if (exportAfter)
                 {
+                    string? cascadeFailure = GetRequiredYoloCascadeFailure(
+                        runOptions,
+                        generator.LastRunSummary);
+                    if (cascadeFailure != null)
+                    {
+                        string cascadeError = generator.LastRunSummary?.YoloCascadeError ?? "summary-missing";
+                        string line =
+                            $"[AutoExportBlocked] runId={runId}, reason={cascadeFailure}, cascadeError={cascadeError}";
+                        System.Diagnostics.Debug.WriteLine(line);
+                        RunMetricsLog.AppendRunLines(runId, line);
+                        PersistWorkspaceState(includePreviewMask: false);
+                        persisted = true;
+                        return false;
+                    }
+
                     bool exported = await SaveVideoAsync(
                         exportProgress,
                         _autoCts?.Token ?? CancellationToken.None,
@@ -1060,6 +1084,27 @@ namespace FaceShield.ViewModels.Pages
 
             int summaryLastFrame = summary.StartFrameIndex + summary.ProcessedFrames - 1;
             return summaryLastFrame >= completionFrame;
+        }
+
+        private static string? GetRequiredYoloCascadeFailure(
+            AutoMaskOptions options,
+            AutoMaskRunSummary? summary)
+        {
+            if (!options.EnableYoloRiskCascade || options.FilterProfile != FaceFilterProfile.Yolo)
+                return null;
+            if (summary == null)
+                return "yolo-risk-cascade-summary-missing";
+            if (!summary.YoloRiskCascadeEnabled)
+                return "yolo-risk-cascade-not-executed";
+            if (!string.Equals(summary.YoloCascadeError, "none", StringComparison.OrdinalIgnoreCase))
+                return "yolo-risk-cascade-error";
+            if (summary.YoloSecondaryAttemptCount + summary.YoloProtectedStoredMaskFrameCount !=
+                summary.YoloRiskFrameCount)
+            {
+                return "yolo-risk-cascade-incomplete-coverage";
+            }
+
+            return null;
         }
 
         private void ResetAutoFaceMasksForRun(int startFrameIndex)
@@ -2012,6 +2057,47 @@ namespace FaceShield.ViewModels.Pages
             catch
             {
                 return path.Trim();
+            }
+        }
+
+        private static string BuildAutoRunEvidenceSignature(
+            AutoMaskOptions autoOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions)
+        {
+            string signature = BuildAutoRunSignature(autoOptions, detectorFactoryOptions);
+            string? modelPath = detectorFactoryOptions.YoloFaceOnnxOptions?.ModelPath;
+            if (string.IsNullOrWhiteSpace(modelPath))
+                return signature;
+
+            string normalizedPath = NormalizeSignaturePath(modelPath);
+            string modelIdentity;
+            try
+            {
+                var modelFile = new FileInfo(normalizedPath);
+                modelIdentity = $"{modelFile.Name}:{modelFile.Length}:{modelFile.LastWriteTimeUtc.Ticks}";
+            }
+            catch
+            {
+                modelIdentity = Path.GetFileName(modelPath);
+            }
+            return signature.Replace(
+                $"model={normalizedPath}",
+                $"model={modelIdentity}",
+                StringComparison.Ordinal);
+        }
+
+        private static string BuildSourceEvidenceId(string path)
+        {
+            try
+            {
+                var file = new FileInfo(Path.GetFullPath(path));
+                string identity = $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
+                return Convert.ToHexString(hash.AsSpan(0, 12)).ToLowerInvariant();
+            }
+            catch
+            {
+                return "unavailable";
             }
         }
 

@@ -36,6 +36,7 @@ namespace FaceShield.Services.FaceDetection
         private readonly object _inferenceGate = new();
         private readonly DenseTensor<float> _inputTensor;
         private readonly NamedOnnxValue[] _inputValues;
+        private PreprocessCoordinateCache? _preprocessCoordinateCache;
         private bool _disposed;
 
         public YoloFaceOnnxDetector(YoloFaceOnnxDetectorOptions? options)
@@ -777,26 +778,80 @@ namespace FaceShield.Services.FaceDetection
             double modelToSourceX = 1.0 / scaleX;
             double modelToSourceY = 1.0 / scaleY;
             double sourceToActual = ratio > 0 && ratio < 1.0 ? 1.0 / ratio : 1.0;
+            int fullSourceWidth = ratio > 0 && ratio < 1.0
+                ? Math.Max(1, (int)Math.Round(width * ratio))
+                : width;
+            int fullSourceHeight = ratio > 0 && ratio < 1.0
+                ? Math.Max(1, (int)Math.Round(height * ratio))
+                : height;
+            bool isFullFrameRegion = sourceX == 0 &&
+                sourceY == 0 &&
+                sourceWidth == fullSourceWidth &&
+                sourceHeight == fullSourceHeight;
+            PreprocessCoordinateCache? coordinateCache = isFullFrameRegion
+                ? GetOrCreatePreprocessCoordinateCache(
+                    width,
+                    height,
+                    sourceX,
+                    sourceY,
+                    sourceWidth,
+                    sourceHeight,
+                    ratio,
+                    quality,
+                    scaleX,
+                    scaleY,
+                    resizedWidth,
+                    resizedHeight,
+                    padX,
+                    padY,
+                    modelToSourceX,
+                    modelToSourceY,
+                    sourceToActual)
+                : null;
 
             for (int y = 0; y < _inputHeight; y++)
             {
                 if (y < padY || y >= padY + resizedHeight)
                     continue;
 
-                double srcY = (sourceY + (y - padY) * modelToSourceY) * sourceToActual;
-                int y0 = Math.Clamp((int)Math.Floor(srcY), 0, height - 1);
-                int y1 = Math.Min(y0 + 1, height - 1);
-                double fy = srcY - y0;
+                int y0;
+                int y1;
+                double fy;
+                if (coordinateCache != null)
+                {
+                    y0 = coordinateCache.Y0[y];
+                    y1 = coordinateCache.Y1[y];
+                    fy = coordinateCache.Fy[y];
+                }
+                else
+                {
+                    double srcY = (sourceY + (y - padY) * modelToSourceY) * sourceToActual;
+                    y0 = Math.Clamp((int)Math.Floor(srcY), 0, height - 1);
+                    y1 = Math.Min(y0 + 1, height - 1);
+                    fy = srcY - y0;
+                }
 
                 for (int x = 0; x < _inputWidth; x++)
                 {
                     if (x < padX || x >= padX + resizedWidth)
                         continue;
 
-                    double srcX = (sourceX + (x - padX) * modelToSourceX) * sourceToActual;
-                    int x0 = Math.Clamp((int)Math.Floor(srcX), 0, width - 1);
-                    int x1 = Math.Min(x0 + 1, width - 1);
-                    double fx = srcX - x0;
+                    int x0;
+                    int x1;
+                    double fx;
+                    if (coordinateCache != null)
+                    {
+                        x0 = coordinateCache.X0[x];
+                        x1 = coordinateCache.X1[x];
+                        fx = coordinateCache.Fx[x];
+                    }
+                    else
+                    {
+                        double srcX = (sourceX + (x - padX) * modelToSourceX) * sourceToActual;
+                        x0 = Math.Clamp((int)Math.Floor(srcX), 0, width - 1);
+                        x1 = Math.Min(x0 + 1, width - 1);
+                        fx = srcX - x0;
+                    }
 
                     (float b, float g, float r) = quality == DownscaleQuality.FastNearest
                         ? ReadPixel(src, stride, x0, y0)
@@ -819,6 +874,76 @@ namespace FaceShield.Services.FaceDetection
             }
 
             return new ResizeTransform((float)scaleX, (float)scaleY, padX, padY);
+        }
+
+        private PreprocessCoordinateCache GetOrCreatePreprocessCoordinateCache(
+            int width,
+            int height,
+            int sourceX,
+            int sourceY,
+            int sourceWidth,
+            int sourceHeight,
+            double ratio,
+            DownscaleQuality quality,
+            double scaleX,
+            double scaleY,
+            int resizedWidth,
+            int resizedHeight,
+            int padX,
+            int padY,
+            double modelToSourceX,
+            double modelToSourceY,
+            double sourceToActual)
+        {
+            var key = new PreprocessCoordinateCacheKey(
+                width,
+                height,
+                sourceX,
+                sourceY,
+                sourceWidth,
+                sourceHeight,
+                ratio,
+                quality,
+                _inputWidth,
+                _inputHeight,
+                _options.UseLetterboxResize,
+                _options.CenterLetterboxPadding,
+                scaleX,
+                scaleY,
+                resizedWidth,
+                resizedHeight,
+                padX,
+                padY);
+            if (_preprocessCoordinateCache is { } cached && cached.Key == key)
+                return cached;
+
+            var x0 = new int[_inputWidth];
+            var x1 = new int[_inputWidth];
+            var fx = new double[_inputWidth];
+            for (int x = padX; x < padX + resizedWidth; x++)
+            {
+                double srcX = (sourceX + (x - padX) * modelToSourceX) * sourceToActual;
+                int sourceX0 = Math.Clamp((int)Math.Floor(srcX), 0, width - 1);
+                x0[x] = sourceX0;
+                x1[x] = Math.Min(sourceX0 + 1, width - 1);
+                fx[x] = srcX - sourceX0;
+            }
+
+            var y0 = new int[_inputHeight];
+            var y1 = new int[_inputHeight];
+            var fy = new double[_inputHeight];
+            for (int y = padY; y < padY + resizedHeight; y++)
+            {
+                double srcY = (sourceY + (y - padY) * modelToSourceY) * sourceToActual;
+                int sourceY0 = Math.Clamp((int)Math.Floor(srcY), 0, height - 1);
+                y0[y] = sourceY0;
+                y1[y] = Math.Min(sourceY0 + 1, height - 1);
+                fy[y] = srcY - sourceY0;
+            }
+
+            var created = new PreprocessCoordinateCache(key, x0, x1, fx, y0, y1, fy);
+            _preprocessCoordinateCache = created;
+            return created;
         }
 
         private static unsafe (float B, float G, float R) ReadPixel(byte* src, int stride, int x, int y)
@@ -1412,6 +1537,35 @@ namespace FaceShield.Services.FaceDetection
         }
 
         private readonly record struct ResizeTransform(float ScaleX, float ScaleY, float PadX, float PadY);
+
+        private readonly record struct PreprocessCoordinateCacheKey(
+            int FrameWidth,
+            int FrameHeight,
+            int SourceX,
+            int SourceY,
+            int SourceWidth,
+            int SourceHeight,
+            double Ratio,
+            DownscaleQuality Quality,
+            int InputWidth,
+            int InputHeight,
+            bool UseLetterboxResize,
+            bool CenterLetterboxPadding,
+            double ScaleX,
+            double ScaleY,
+            int ResizedWidth,
+            int ResizedHeight,
+            int PadX,
+            int PadY);
+
+        private sealed record PreprocessCoordinateCache(
+            PreprocessCoordinateCacheKey Key,
+            int[] X0,
+            int[] X1,
+            double[] Fx,
+            int[] Y0,
+            int[] Y1,
+            double[] Fy);
 
         private readonly record struct OutputTensor
         {

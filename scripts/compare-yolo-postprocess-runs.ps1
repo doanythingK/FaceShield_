@@ -61,6 +61,14 @@
 .PARAMETER AllowReviewRequired
     대상 비교군에 reviewRequired=true가 발생해도 게이트 통과를 허용할지 지정합니다.
 
+.PARAMETER RequireYoloCascade
+    대상 비교군(B)에 enabled=true인 AutoRunYoloCascade 증거를 필수로 요구합니다.
+    지정하지 않으면 구형/YOLO OFF 로그 호환성을 위해 cascade 로그가 없는 실행은 허용합니다.
+
+.PARAMETER AllowMissingRunConfig
+    source/config 증거가 없는 구형 로그를 탐색용으로 비교할 때만 허용합니다.
+    지정하지 않으면 검증 완료 PASS를 막습니다.
+
 .EXAMPLE
     ./compare-yolo-postprocess-runs.ps1 .\runA.log .\runB.log -RunAId auto-a -RunBId auto-b
 
@@ -116,7 +124,11 @@ param(
     [Parameter(Mandatory = $false)]
     [int] $MinSampleMissRecoveryDelta = 0,
     [Parameter(Mandatory = $false)]
-    [switch] $AllowReviewRequired
+    [switch] $AllowReviewRequired,
+    [Parameter(Mandatory = $false)]
+    [switch] $RequireYoloCascade,
+    [Parameter(Mandatory = $false)]
+    [switch] $AllowMissingRunConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -165,7 +177,9 @@ function Read-RunInfo {
 
     $timingsByPhase = @{}
     $postOptions = @{}
+    $autoRunConfig = @{}
     $runSummary = @{}
+    $yoloCascadeSummary = @{}
     $faceTrackSummary = @{}
     $sceneCarrySummary = @{}
     $finalSummary = @{}
@@ -272,6 +286,17 @@ function Read-RunInfo {
             continue
         }
 
+        if ($line.StartsWith('[AutoRunConfig]')) {
+            $configRunId = Read-SummaryField -Text $line -Key 'runId'
+            if ($configRunId -ne $resolvedTargetRunId) { continue }
+            $autoRunConfig = @{
+                sourceId = Read-SummaryField -Text $line -Key 'sourceId';
+                totalFrames = Read-SummaryInt -Text $line -Key 'totalFrames';
+                signature = Read-SummaryField -Text $line -Key 'signature';
+            }
+            continue
+        }
+
         if ($line -match '^\[AutoMaskPostProcessTiming\] runId=(\S+) phase=([^ ]+) run=(True|False|true|false) elapsedMs=(\d+)') {
             if ($matches[1] -ne $resolvedTargetRunId) { continue }
 
@@ -364,6 +389,46 @@ function Read-RunInfo {
             if ($null -ne $autoRunSummarySampleGapFillBlocked -and -not [string]::IsNullOrWhiteSpace($autoRunSummarySampleGapFillBlocked)) {
                 $finalSummary.sampleGapFillBlocked = $autoRunSummarySampleGapFillBlocked
             }
+
+            $autoRunSummaryPostGapFillRemovalRate = Read-SummaryDouble -Text $line -Key 'sceneCutPostGapFillRemovalRate'
+            if (-not $finalSummary.ContainsKey('postGapFillRemovalRate') -and $null -ne $autoRunSummaryPostGapFillRemovalRate) {
+                $finalSummary.postGapFillRemovalRate = $autoRunSummaryPostGapFillRemovalRate
+            }
+
+            $autoRunSummaryPostGapFillProtectedRate = Read-SummaryDouble -Text $line -Key 'sceneCutPostGapFillProtectedRate'
+            if (-not $finalSummary.ContainsKey('postGapFillProtectedRate') -and $null -ne $autoRunSummaryPostGapFillProtectedRate) {
+                $finalSummary.postGapFillProtectedRate = $autoRunSummaryPostGapFillProtectedRate
+            }
+
+            $autoRunSummaryFinalReview = Read-SummaryBool -Text $line -Key 'finalReview'
+            if (-not $finalSummary.ContainsKey('reviewRequired') -and $null -ne $autoRunSummaryFinalReview) {
+                $finalSummary.reviewRequired = $autoRunSummaryFinalReview
+            }
+
+            $autoRunSummaryFinalReviewReasons = Read-SummaryField -Text $line -Key 'finalReviewReasons'
+            if (-not $finalSummary.ContainsKey('reviewReasons') -and -not [string]::IsNullOrWhiteSpace($autoRunSummaryFinalReviewReasons)) {
+                $finalSummary.reviewReasons = $autoRunSummaryFinalReviewReasons
+            }
+
+            $autoRunSummaryFinalShortGaps = Read-SummaryInt -Text $line -Key 'finalShortGaps'
+            if (-not $finalSummary.ContainsKey('shortGaps') -and $null -ne $autoRunSummaryFinalShortGaps) {
+                $finalSummary.shortGaps = $autoRunSummaryFinalShortGaps
+            }
+
+            $autoRunSummaryFinalPerFaceShortGaps = Read-SummaryInt -Text $line -Key 'finalPerFaceShortGaps'
+            if (-not $finalSummary.ContainsKey('perFaceShortGaps') -and $null -ne $autoRunSummaryFinalPerFaceShortGaps) {
+                $finalSummary.perFaceShortGaps = $autoRunSummaryFinalPerFaceShortGaps
+            }
+
+            $autoRunSummaryFinalLargeJumps = Read-SummaryInt -Text $line -Key 'finalLargeJumps'
+            if (-not $finalSummary.ContainsKey('largeJumpGaps') -and $null -ne $autoRunSummaryFinalLargeJumps) {
+                $finalSummary.largeJumpGaps = $autoRunSummaryFinalLargeJumps
+            }
+
+            $autoRunSummaryFinalMissRecovery = Read-SummaryInt -Text $line -Key 'finalMissRecovery'
+            if (-not $finalSummary.ContainsKey('finalMissRecovery') -and $null -ne $autoRunSummaryFinalMissRecovery) {
+                $finalSummary.finalMissRecovery = $autoRunSummaryFinalMissRecovery
+            }
             continue
         }
 
@@ -373,7 +438,22 @@ function Read-RunInfo {
             $finalSummary.sampleWindowTiming = Read-SummaryField -Text $line -Key 'timing'
             $finalSummary.sampleWindowStartFrame = Read-SummaryInt -Text $line -Key 'startFrame'
             $finalSummary.sampleWindowEndFrame = Read-SummaryInt -Text $line -Key 'endFrame'
+            $finalSummary.sampleWindowFrameCount = Read-SummaryInt -Text $line -Key 'frames'
             $finalSummary.sampleWindowDurationSec = Read-SummaryDouble -Text $line -Key 'durationSec'
+            continue
+        }
+
+        if ($line.StartsWith('[AutoRunYoloCascade]')) {
+            $cascadeRunId = Read-SummaryField -Text $line -Key 'runId'
+            if ($cascadeRunId -ne $resolvedTargetRunId) { continue }
+            $yoloCascadeSummary = @{
+                enabled = Read-SummaryBool -Text $line -Key 'enabled';
+                riskFrames = Read-SummaryInt -Text $line -Key 'riskFrames';
+                attempts = Read-SummaryInt -Text $line -Key 'attempts';
+                protectedStoredMaskFrames = Read-SummaryInt -Text $line -Key 'protectedStoredMaskFrames';
+                acceptedFaces = Read-SummaryInt -Text $line -Key 'acceptedFaces';
+                error = Read-SummaryField -Text $line -Key 'error';
+            }
             continue
         }
 
@@ -461,82 +541,85 @@ function Read-RunInfo {
             continue
         }
 
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* reviewRequired=(True|False|true|false) reviewReasons=([^\]]+)') {
-            $finalSummary.reviewRequired = [bool]::Parse($matches[1])
-            $finalSummary.reviewReasons = $matches[2]
+        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\]') {
+            if ($line -match ' reviewRequired=(True|False|true|false) reviewReasons=([^ ]+)') {
+                $finalSummary.reviewRequired = [bool]::Parse($matches[1])
+                $finalSummary.reviewReasons = $matches[2]
+            }
+            foreach ($weakKey in @('isolated', 'lowConf', 'weakNonEdge', 'edgeWeak', 'topEdgeWeak', 'topEdgeLarge', 'upperWeak', 'lowerWeak', 'aspectBad', 'tinyWeak', 'tinyShort')) {
+                $weakValue = Read-SummaryInt -Text $line -Key $weakKey
+                if ($null -ne $weakValue) {
+                    $finalSummary[$weakKey] = $weakValue
+                }
+            }
+            if ($line -match ' shortGaps=(\d+)') { $finalSummary.shortGaps = [int]$matches[1] }
+            if ($line -match ' largeJumpGaps=(\d+)') { $finalSummary.largeJumpGaps = [int]$matches[1] }
+            if ($line -match ' perFaceShortGaps=(\d+)') { $finalSummary.perFaceShortGaps = [int]$matches[1] }
+            if ($line -match ' postGapFillCarryPairs=(\d+), postGapFillRemoved=(\d+), postGapFillProtected=(\d+), postGapFillRemovalRate=([0-9.]+), postGapFillProtectedRate=([0-9.]+)') {
+                $finalSummary.postGapFillCarryPairs = [int]$matches[1]
+                $finalSummary.postGapFillRemoved = [int]$matches[2]
+                $finalSummary.postGapFillProtected = [int]$matches[3]
+                $finalSummary.postGapFillRemovalRate = [double]$matches[4]
+                $finalSummary.postGapFillProtectedRate = [double]$matches[5]
+            }
+            elseif ($line -match ' postGapFillCarryPairs=(\d+), postGapFillRemoved=(\d+), postGapFillProtected=(\d+)') {
+                $finalSummary.postGapFillCarryPairs = [int]$matches[1]
+                $finalSummary.postGapFillRemoved = [int]$matches[2]
+                $finalSummary.postGapFillProtected = [int]$matches[3]
+            }
             continue
         }
 
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* isolated=(\d+), isolatedFrames=([^,]+), lowConf=(\d+), lowConfFrames=([^,]+), weakNonEdge=(\d+), weakNonEdgeFrames=([^,]+), edgeWeak=(\d+), edgeWeakFrames=([^,]+), topEdgeWeak=(\d+), topEdgeWeakFrames=([^,]+), topEdgeLarge=(\d+), topEdgeLargeFrames=([^,]+), upperWeak=(\d+), upperWeakFrames=([^,]+), lowerWeak=(\d+), lowerWeakFrames=([^,]+), aspectBad=(\d+), aspectBadFrames=([^,]+), tinyWeak=(\d+), tinyWeakFrames=([^,]+), tinyShort=(\d+), tinyShortFrames=([^,]+)') {
-            $finalSummary.isolated = [int]$matches[1]
-            $finalSummary.lowConf = [int]$matches[3]
-            $finalSummary.weakNonEdge = [int]$matches[5]
-            $finalSummary.edgeWeak = [int]$matches[7]
-            $finalSummary.topEdgeWeak = [int]$matches[9]
-            $finalSummary.topEdgeLarge = [int]$matches[11]
-            $finalSummary.upperWeak = [int]$matches[13]
-            $finalSummary.lowerWeak = [int]$matches[15]
-            $finalSummary.aspectBad = [int]$matches[17]
-            $finalSummary.tinyWeak = [int]$matches[19]
-            $finalSummary.tinyShort = [int]$matches[21]
-            continue
-        }
+        if ($line.StartsWith('[ExportRunSummary]')) {
+            $exportRunId = Read-SummaryField -Text $line -Key 'runId'
+            if ($exportRunId -ne $resolvedTargetRunId) { continue }
 
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* shortGaps=(\d+)') {
-            $finalSummary.shortGaps = [int]$matches[1]
-            continue
-        }
-
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* largeJumpGaps=(\d+)') {
-            $finalSummary.largeJumpGaps = [int]$matches[1]
-            continue
-        }
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary\)] .* postGapFillCarryPairs=(\d+), postGapFillRemoved=(\d+), postGapFillProtected=(\d+), postGapFillRemovalRate=([0-9.]+), postGapFillProtectedRate=([0-9.]+)') {
-            $finalSummary.postGapFillCarryPairs = [int]$matches[1]
-            $finalSummary.postGapFillRemoved = [int]$matches[2]
-            $finalSummary.postGapFillProtected = [int]$matches[3]
-            $finalSummary.postGapFillRemovalRate = [double]$matches[4]
-            $finalSummary.postGapFillProtectedRate = [double]$matches[5]
-            continue
-        }
-
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary\)] .* postGapFillCarryPairs=(\d+), postGapFillRemoved=(\d+), postGapFillProtected=(\d+)') {
-            $finalSummary.postGapFillCarryPairs = [int]$matches[1]
-            $finalSummary.postGapFillRemoved = [int]$matches[2]
-            $finalSummary.postGapFillProtected = [int]$matches[3]
-            continue
-        }
-
-        if ($line -match '^\[(?:FinalMaskSummary|SmokeFinalMaskSummary)\] .* perFaceShortGaps=(\d+)') {
-            $finalSummary.perFaceShortGaps = [int]$matches[1]
-            continue
-        }
-
-        if ($line -match '^\[ExportRunSummary\] runId=([^,]+), mode=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+), hybridCopyAttempted=(True|False|true|false), hybridCopyUsed=(True|False|true|false), forceSoftwareEncoder=(True|False|true|false), forceSafeEncoding=(True|False|true|false), forceAudioTranscode=(True|False|true|false), forceH264Fallback=(True|False|true|false)(?:, hybridWindowExpectedEncodedFrames=(\d+), hybridWindowEncodedFrames=(\d+), hybridWindowFrameShortfall=(\d+), sampleWindowSourceFrames=(\d+), sampleWindowProducedFrames=(\d+), sampleWindowFrameShortfall=(\d+))?') {
-            if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
+            $hybridWindowExpectedEncodedFrames = Read-SummaryInt -Text $line -Key 'hybridWindowExpectedEncodedFrames'
+            $hybridWindowEncodedFrames = Read-SummaryInt -Text $line -Key 'hybridWindowEncodedFrames'
+            $hybridWindowFrameShortfall = Read-SummaryInt -Text $line -Key 'hybridWindowFrameShortfall'
+            $sampleWindowSourceFrames = Read-SummaryInt -Text $line -Key 'sampleWindowSourceFrames'
+            $sampleWindowProducedFrames = Read-SummaryInt -Text $line -Key 'sampleWindowProducedFrames'
+            $sampleWindowFrameShortfall = Read-SummaryInt -Text $line -Key 'sampleWindowFrameShortfall'
             $exportSummary = @{
-                runId = $matches[1].Trim();
-                exportMode = $matches[2];
-                frames = [int]$matches[3];
-                bitmapMaskFrames = [int]$matches[4];
-                directFaceFrames = [int]$matches[5];
-                swsToBgraMs = [long]$matches[6];
-                maskMs = [long]$matches[7];
-                swsToEncMs = [long]$matches[8];
-                encodeMs = [long]$matches[9];
-                totalMs = [long]$matches[10];
-                hybridCopyAttempted = [bool]::Parse($matches[11]);
-                hybridCopyUsed = [bool]::Parse($matches[12]);
-                forceSoftwareEncoder = [bool]::Parse($matches[13]);
-                forceSafeEncoding = [bool]::Parse($matches[14]);
-                forceAudioTranscode = [bool]::Parse($matches[15]);
-                forceH264Fallback = [bool]::Parse($matches[16]);
-                hybridWindowExpectedEncodedFrames = if ($null -ne $matches[17]) { [int]$matches[17] } else { 0 };
-                hybridWindowEncodedFrames = if ($null -ne $matches[18]) { [int]$matches[18] } else { 0 };
-                hybridWindowFrameShortfall = if ($null -ne $matches[19]) { [int]$matches[19] } else { 0 };
-                sampleWindowSourceFrames = if ($null -ne $matches[20]) { [int]$matches[20] } else { 0 };
-                sampleWindowProducedFrames = if ($null -ne $matches[21]) { [int]$matches[21] } else { 0 };
-                sampleWindowFrameShortfall = if ($null -ne $matches[22]) { [int]$matches[22] } else { 0 };
+                runId = $exportRunId;
+                exportMode = Read-SummaryField -Text $line -Key 'mode';
+                frames = Read-SummaryInt -Text $line -Key 'frames';
+                bitmapMaskFrames = Read-SummaryInt -Text $line -Key 'bitmapMaskFrames';
+                directFaceFrames = Read-SummaryInt -Text $line -Key 'directFaceFrames';
+                swsToBgraMs = Read-SummaryLong -Text $line -Key 'swsToBgraMs';
+                maskMs = Read-SummaryLong -Text $line -Key 'maskMs';
+                swsToEncMs = Read-SummaryLong -Text $line -Key 'swsToEncMs';
+                encodeMs = Read-SummaryLong -Text $line -Key 'encodeMs';
+                totalMs = Read-SummaryLong -Text $line -Key 'totalMs';
+                hybridCopyAttempted = Read-SummaryBool -Text $line -Key 'hybridCopyAttempted';
+                hybridCopyUsed = Read-SummaryBool -Text $line -Key 'hybridCopyUsed';
+                hybridCopyFallbackReason = Read-SummaryField -Text $line -Key 'hybridCopyFallbackReason';
+                hybridWindowStartFrame = Read-SummaryInt -Text $line -Key 'hybridWindowStart';
+                hybridWindowEndFrame = Read-SummaryInt -Text $line -Key 'hybridWindowEnd';
+                hybridModeTransitionCount = Read-SummaryInt -Text $line -Key 'hybridModeTransitions';
+                hybridModeTimestampSyncCount = Read-SummaryInt -Text $line -Key 'hybridModeTimestampSyncs';
+                hybridEncodedPacketFrameStep = Read-SummaryLong -Text $line -Key 'hybridEncodedPacketFrameStep';
+                hybridCopyPacketFrameStep = Read-SummaryLong -Text $line -Key 'hybridCopyPacketFrameStep';
+                inputVideoPackets = Read-SummaryInt -Text $line -Key 'inputVideoPackets';
+                outputVideoPackets = Read-SummaryInt -Text $line -Key 'outputVideoPackets';
+                copiedVideoPackets = Read-SummaryInt -Text $line -Key 'copiedVideoPackets';
+                copiedSourceVideoPackets = Read-SummaryInt -Text $line -Key 'copiedSourceVideoPackets';
+                encodedSourceVideoPackets = Read-SummaryInt -Text $line -Key 'encodedSourceVideoPackets';
+                droppedVideoPackets = Read-SummaryInt -Text $line -Key 'droppedVideoPackets';
+                outputPacketPtsGapOutlierCount = Read-SummaryInt -Text $line -Key 'outputPacketPtsGapOutlierCount';
+                maxOutputPacketPtsGap = Read-SummaryLong -Text $line -Key 'maxOutputPacketPtsGap';
+                hybridCopyTimestampFixCount = Read-SummaryInt -Text $line -Key 'hybridCopyTimestampFixCount';
+                packetLossFallbackReason = Read-SummaryField -Text $line -Key 'packetLossFallbackReason';
+                forceSoftwareEncoder = Read-SummaryBool -Text $line -Key 'forceSoftwareEncoder';
+                forceSafeEncoding = Read-SummaryBool -Text $line -Key 'forceSafeEncoding';
+                forceAudioTranscode = Read-SummaryBool -Text $line -Key 'forceAudioTranscode';
+                forceH264Fallback = Read-SummaryBool -Text $line -Key 'forceH264Fallback';
+                hybridWindowExpectedEncodedFrames = if ($null -ne $hybridWindowExpectedEncodedFrames) { $hybridWindowExpectedEncodedFrames } else { 0 };
+                hybridWindowEncodedFrames = if ($null -ne $hybridWindowEncodedFrames) { $hybridWindowEncodedFrames } else { 0 };
+                hybridWindowFrameShortfall = if ($null -ne $hybridWindowFrameShortfall) { $hybridWindowFrameShortfall } else { 0 };
+                sampleWindowSourceFrames = if ($null -ne $sampleWindowSourceFrames) { $sampleWindowSourceFrames } else { 0 };
+                sampleWindowProducedFrames = if ($null -ne $sampleWindowProducedFrames) { $sampleWindowProducedFrames } else { 0 };
+                sampleWindowFrameShortfall = if ($null -ne $sampleWindowFrameShortfall) { $sampleWindowFrameShortfall } else { 0 };
             }
             continue
         }
@@ -562,8 +645,10 @@ function Read-RunInfo {
         Path = (Resolve-Path $Path).Path;
         RunId = if ($null -ne $resolvedTargetRunId) { $resolvedTargetRunId } else { if ($null -ne $targetId) { $targetId } else { if ($null -ne $runIdFromStart) { $runIdFromStart } else { "none" } } };
         StartOptions = $postOptions;
+        AutoConfig = $autoRunConfig;
         Timings = $timingsByPhase;
         RunSummary = $runSummary;
+        YoloCascade = $yoloCascadeSummary;
         FaceTrack = $faceTrackSummary;
         SceneCarry = $sceneCarrySummary;
         SceneCutControl = $sceneCutControlSummary;
@@ -655,6 +740,27 @@ function Get-WeakFaceScore {
     return $score
 }
 
+function Get-FinalQualityEvidenceValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Summary,
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    $reasons = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($key in @('reviewRequired', 'reviewReasons', 'isolated', 'lowConf', 'weakNonEdge', 'edgeWeak', 'topEdgeWeak', 'topEdgeLarge', 'upperWeak', 'lowerWeak', 'aspectBad', 'tinyWeak', 'tinyShort')) {
+        if (-not $Summary.ContainsKey($key) -or $null -eq $Summary[$key]) {
+            [void]$reasons.Add("finalEvidence${Label}${key}Missing")
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $reasons.Count -eq 0;
+        Reasons = @($reasons);
+    }
+}
+
 function Read-SummaryField {
     param(
         [Parameter(Mandatory = $true)]
@@ -693,6 +799,27 @@ function Read-SummaryInt {
 
     $value = 0
     if ([int]::TryParse($raw, [ref]$value)) {
+        return $value
+    }
+
+    return $null
+}
+
+function Read-SummaryLong {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Text,
+        [Parameter(Mandatory = $true)]
+        [string] $Key
+    )
+
+    $raw = Read-SummaryField -Text $Text -Key $Key
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    $value = 0L
+    if ([long]::TryParse($raw, [ref]$value)) {
         return $value
     }
 
@@ -792,6 +919,264 @@ function Get-RunAnalysisTotalMs {
         return [long]$Summary.totalMs
     }
     return $null
+}
+
+function Get-SampleWindowEvidenceValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Summary
+    )
+
+    $reasons = New-Object 'System.Collections.Generic.List[string]'
+    $timing = if ($Summary.ContainsKey('sampleWindowTiming')) { [string]$Summary.sampleWindowTiming } else { $null }
+    $invalidTimingValues = @('n/a', 'na', 'none', 'unknown', 'unset', 'default', '-', '0')
+    if ([string]::IsNullOrWhiteSpace($timing) -or $invalidTimingValues -contains $timing.Trim().ToLowerInvariant()) {
+        [void]$reasons.Add('timingMissingOrDefault')
+    }
+
+    $startFrame = if ($Summary.ContainsKey('sampleWindowStartFrame')) { $Summary.sampleWindowStartFrame } else { $null }
+    $endFrame = if ($Summary.ContainsKey('sampleWindowEndFrame')) { $Summary.sampleWindowEndFrame } else { $null }
+    $frameCount = if ($Summary.ContainsKey('sampleWindowFrameCount')) { $Summary.sampleWindowFrameCount } else { $null }
+    $durationSec = if ($Summary.ContainsKey('sampleWindowDurationSec')) { $Summary.sampleWindowDurationSec } else { $null }
+
+    $hasValidStart = $null -ne $startFrame -and [int]$startFrame -ge 0
+    $hasValidEnd = $null -ne $endFrame -and [int]$endFrame -ge 0
+    $hasValidFrameCount = $null -ne $frameCount -and [int]$frameCount -gt 0
+    $hasValidDuration = $false
+    if ($null -ne $durationSec) {
+        $durationValue = [double]$durationSec
+        $hasValidDuration = -not [double]::IsNaN($durationValue) -and
+            -not [double]::IsInfinity($durationValue) -and
+            $durationValue -gt 0
+    }
+
+    if (-not $hasValidStart) { [void]$reasons.Add('startFrameMissingOrNegative') }
+    if (-not $hasValidEnd) { [void]$reasons.Add('endFrameMissingOrNegative') }
+    if (-not $hasValidFrameCount) { [void]$reasons.Add('framesMissingOrNonPositive') }
+    if (-not $hasValidDuration) { [void]$reasons.Add('durationMissingOrNonPositive') }
+
+    if ($hasValidStart -and $hasValidEnd) {
+        if ([int]$endFrame -lt [int]$startFrame) {
+            [void]$reasons.Add('endFrameBeforeStartFrame')
+        }
+        elseif ($hasValidFrameCount) {
+            $expectedFrameCount = [long]$endFrame - [long]$startFrame + 1L
+            if ([long]$frameCount -ne $expectedFrameCount) {
+                [void]$reasons.Add('framesDoNotMatchRange')
+            }
+        }
+    }
+
+    # AutoRunSummary의 sampleWindow은 과거 로그에서 없을 수 있으므로 선택 증거로 취급하되,
+    # 값이 제공됐다면 timing line의 frames와 반드시 일치해야 합니다.
+    if ($Summary.ContainsKey('sampleWindow')) {
+        $summaryFrameCount = $Summary.sampleWindow
+        if ($null -eq $summaryFrameCount -or [int]$summaryFrameCount -le 0) {
+            [void]$reasons.Add('summaryFramesMissingOrNonPositive')
+        }
+        elseif ($hasValidFrameCount -and [int]$summaryFrameCount -ne [int]$frameCount) {
+            [void]$reasons.Add('summaryFramesDoNotMatchTimingFrames')
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $reasons.Count -eq 0;
+        Reasons = @($reasons);
+    }
+}
+
+function Get-YoloCascadeGateValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Summary,
+        [Parameter(Mandatory = $true)]
+        [bool] $RequireEnabled
+    )
+
+    $reasons = New-Object 'System.Collections.Generic.List[string]'
+    $isPresent = $Summary.Count -gt 0
+    $enabled = $isPresent -and
+        $Summary.ContainsKey('enabled') -and
+        $null -ne $Summary.enabled -and
+        [bool]$Summary.enabled
+
+    if ($RequireEnabled) {
+        if (-not $isPresent) {
+            [void]$reasons.Add('cascadeLogMissing')
+        }
+        elseif (-not $enabled) {
+            [void]$reasons.Add('cascadeNotEnabled')
+        }
+    }
+
+    # 구형/YOLO OFF 로그는 cascade 증거가 없어도 허용합니다. 다만 enabled=true가
+    # 명시된 실행은 오류와 핵심 실행 지표가 모두 정상이어야 합니다.
+    if ($enabled) {
+        $errorText = if ($Summary.ContainsKey('error')) { [string]$Summary.error } else { $null }
+        if ([string]::IsNullOrWhiteSpace($errorText) -or $errorText.Trim() -ne 'none') {
+            [void]$reasons.Add("cascadeError=$errorText")
+        }
+
+        $hasRiskFrames = $Summary.ContainsKey('riskFrames') -and $null -ne $Summary.riskFrames -and [int]$Summary.riskFrames -ge 0
+        $hasAttempts = $Summary.ContainsKey('attempts') -and $null -ne $Summary.attempts -and [int]$Summary.attempts -ge 0
+        $hasProtectedStoredMasks = $Summary.ContainsKey('protectedStoredMaskFrames') -and $null -ne $Summary.protectedStoredMaskFrames -and [int]$Summary.protectedStoredMaskFrames -ge 0
+        $hasAcceptedFaces = $Summary.ContainsKey('acceptedFaces') -and $null -ne $Summary.acceptedFaces -and [int]$Summary.acceptedFaces -ge 0
+        if (-not $hasRiskFrames -or -not $hasAttempts -or -not $hasProtectedStoredMasks -or -not $hasAcceptedFaces) {
+            [void]$reasons.Add('cascadeMetricsMissingOrInvalid')
+        }
+        elseif ([int]$Summary.attempts + [int]$Summary.protectedStoredMaskFrames -ne [int]$Summary.riskFrames) {
+            [void]$reasons.Add('cascadeRiskCoverageMismatch')
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $reasons.Count -eq 0;
+        IsPresent = $isPresent;
+        Enabled = $enabled;
+        Reasons = @($reasons);
+    }
+}
+
+function Get-InvariantRunSignature {
+    param([string] $Signature)
+
+    if ([string]::IsNullOrWhiteSpace($Signature)) {
+        return $null
+    }
+
+    $ignoredKeys = @(
+        'post', 'roi', 'iso', 'gap', 'scene', 'smooth', 'processingMode',
+        'riskCascade', 'strongInterval', 'riskConfidence', 'riskArea',
+        'riskEdge', 'riskGap', 'strongConfirm', 'primaryRoi'
+    )
+    $kept = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($token in ($Signature -split '\|')) {
+        $separator = $token.IndexOf('=')
+        if ($separator -lt 0) {
+            continue
+        }
+        $key = $token.Substring(0, $separator)
+        if ($ignoredKeys -contains $key -or $key.StartsWith('secondary')) {
+            continue
+        }
+        [void]$kept.Add($token)
+    }
+
+    return $kept -join '|'
+}
+
+function Get-RunConfigGateValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $ConfigA,
+        [Parameter(Mandatory = $true)]
+        [hashtable] $ConfigB,
+        [Parameter(Mandatory = $true)]
+        [bool] $AllowMissing
+    )
+
+    $reasons = New-Object 'System.Collections.Generic.List[string]'
+    $presentA = $ConfigA.Count -gt 0
+    $presentB = $ConfigB.Count -gt 0
+    if (-not $presentA -and -not $presentB) {
+        $missingReasons = if ($AllowMissing) { @() } else { @('runConfigMissing') }
+        return [pscustomobject]@{ IsValid = $AllowMissing; Reasons = $missingReasons; PresentA = $false; PresentB = $false }
+    }
+    if (-not $presentA -or -not $presentB) {
+        [void]$reasons.Add('runConfigMissingOnOneSide')
+    }
+
+    if ($presentA -and $presentB) {
+        $sourceA = if ($ConfigA.ContainsKey('sourceId')) { [string]$ConfigA.sourceId } else { $null }
+        $sourceB = if ($ConfigB.ContainsKey('sourceId')) { [string]$ConfigB.sourceId } else { $null }
+        if ([string]::IsNullOrWhiteSpace($sourceA) -or
+            [string]::IsNullOrWhiteSpace($sourceB) -or
+            $sourceA -eq 'unavailable' -or
+            $sourceB -eq 'unavailable') {
+            [void]$reasons.Add('sourceIdentityMissing')
+        }
+        elseif ($sourceA -ne $sourceB) {
+            [void]$reasons.Add('sourceIdentityMismatch')
+        }
+
+        $framesA = if ($ConfigA.ContainsKey('totalFrames')) { $ConfigA.totalFrames } else { $null }
+        $framesB = if ($ConfigB.ContainsKey('totalFrames')) { $ConfigB.totalFrames } else { $null }
+        if ($null -eq $framesA -or $null -eq $framesB -or [int]$framesA -le 0 -or [int]$framesB -le 0) {
+            [void]$reasons.Add('configTotalFramesMissing')
+        }
+        elseif ([int]$framesA -ne [int]$framesB) {
+            [void]$reasons.Add('configTotalFramesMismatch')
+        }
+
+        $signatureA = Get-InvariantRunSignature -Signature $(if ($ConfigA.ContainsKey('signature')) { [string]$ConfigA.signature } else { $null })
+        $signatureB = Get-InvariantRunSignature -Signature $(if ($ConfigB.ContainsKey('signature')) { [string]$ConfigB.signature } else { $null })
+        if ([string]::IsNullOrWhiteSpace($signatureA) -or [string]::IsNullOrWhiteSpace($signatureB)) {
+            [void]$reasons.Add('runSignatureMissing')
+        }
+        elseif ($signatureA -ne $signatureB) {
+            [void]$reasons.Add('detectorConfigMismatch')
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $reasons.Count -eq 0;
+        Reasons = @($reasons);
+        PresentA = $presentA;
+        PresentB = $presentB;
+    }
+}
+
+function Get-ExportIntegrityValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Summary,
+        [Parameter(Mandatory = $true)]
+        [string] $Label,
+        [Parameter(Mandatory = $true)]
+        [bool] $Required
+    )
+
+    $reasons = New-Object 'System.Collections.Generic.List[string]'
+    if ($Summary.Count -eq 0) {
+        if ($Required) { [void]$reasons.Add("export${Label}Missing") }
+        return [pscustomobject]@{ IsValid = $reasons.Count -eq 0; Reasons = @($reasons) }
+    }
+
+    foreach ($key in @('frames', 'totalMs', 'inputVideoPackets', 'outputVideoPackets', 'droppedVideoPackets', 'outputPacketPtsGapOutlierCount', 'hybridWindowFrameShortfall', 'sampleWindowFrameShortfall')) {
+        if (-not $Summary.ContainsKey($key) -or $null -eq $Summary[$key]) {
+            [void]$reasons.Add("export${Label}${key}Missing")
+        }
+    }
+    if ($Summary.ContainsKey('frames') -and $null -ne $Summary.frames -and [int]$Summary.frames -le 0) {
+        [void]$reasons.Add("export${Label}FramesNonPositive")
+    }
+    if ($Summary.ContainsKey('inputVideoPackets') -and $null -ne $Summary.inputVideoPackets -and [int]$Summary.inputVideoPackets -le 0) {
+        [void]$reasons.Add("export${Label}InputPacketsNonPositive")
+    }
+    if ($Summary.ContainsKey('outputVideoPackets') -and $null -ne $Summary.outputVideoPackets -and [int]$Summary.outputVideoPackets -le 0) {
+        [void]$reasons.Add("export${Label}OutputPacketsNonPositive")
+    }
+    if ($Summary.ContainsKey('inputVideoPackets') -and
+        $Summary.ContainsKey('outputVideoPackets') -and
+        $null -ne $Summary.inputVideoPackets -and
+        $null -ne $Summary.outputVideoPackets -and
+        [int]$Summary.inputVideoPackets -ne [int]$Summary.outputVideoPackets) {
+        [void]$reasons.Add("export${Label}PacketCount=$($Summary.inputVideoPackets)/$($Summary.outputVideoPackets)")
+    }
+    if ($Summary.ContainsKey('droppedVideoPackets') -and [int]$Summary.droppedVideoPackets -ne 0) {
+        [void]$reasons.Add("export${Label}DroppedVideoPackets=$($Summary.droppedVideoPackets)")
+    }
+    if ($Summary.ContainsKey('outputPacketPtsGapOutlierCount') -and [int]$Summary.outputPacketPtsGapOutlierCount -ne 0) {
+        [void]$reasons.Add("export${Label}PtsGapOutliers=$($Summary.outputPacketPtsGapOutlierCount)")
+    }
+    if ($Summary.ContainsKey('hybridWindowFrameShortfall') -and [int]$Summary.hybridWindowFrameShortfall -ne 0) {
+        [void]$reasons.Add("export${Label}HybridShortfall=$($Summary.hybridWindowFrameShortfall)")
+    }
+    if ($Summary.ContainsKey('sampleWindowFrameShortfall') -and [int]$Summary.sampleWindowFrameShortfall -ne 0) {
+        [void]$reasons.Add("export${Label}SampleShortfall=$($Summary.sampleWindowFrameShortfall)")
+    }
+
+    return [pscustomobject]@{ IsValid = $reasons.Count -eq 0; Reasons = @($reasons) }
 }
 
 $runA = Read-RunInfo -Path $RunALog -TargetRunId $RunAId
@@ -945,25 +1330,37 @@ Write-Host ""
 Write-Host "== quick decision hints =="
 $aWeakScore = Get-WeakFaceScore -Summary $runA.FinalSummary
 $bWeakScore = Get-WeakFaceScore -Summary $runB.FinalSummary
-$aTrackFilled = if ($runA.FaceTrack.ContainsKey('lostFilled')) { [int]$runA.FaceTrack.lostFilled } else { 0 }
-$bTrackFilled = if ($runB.FaceTrack.ContainsKey('lostFilled')) { [int]$runB.FaceTrack.lostFilled } else { 0 }
+$finalEvidenceA = Get-FinalQualityEvidenceValidation -Summary $runA.FinalSummary -Label 'A'
+$finalEvidenceB = Get-FinalQualityEvidenceValidation -Summary $runB.FinalSummary -Label 'B'
+$aTrackFilled = if ($runA.FaceTrack.ContainsKey('lostFilled')) {
+    [int]$runA.FaceTrack.lostFilled
+} elseif ($runA.FinalSummary.ContainsKey('finalMissRecovery')) {
+    [int]$runA.FinalSummary.finalMissRecovery
+} else { 0 }
+$bTrackFilled = if ($runB.FaceTrack.ContainsKey('lostFilled')) {
+    [int]$runB.FaceTrack.lostFilled
+} elseif ($runB.FinalSummary.ContainsKey('finalMissRecovery')) {
+    [int]$runB.FinalSummary.finalMissRecovery
+} else { 0 }
 $aInterpolated = if ($runA.RunSummary.ContainsKey('interpolated')) { [int]$runA.RunSummary.interpolated } else { 0 }
 $bInterpolated = if ($runB.RunSummary.ContainsKey('interpolated')) { [int]$runB.RunSummary.interpolated } else { 0 }
-$aExport = if ($runA.Export.ContainsKey('totalMs')) { [long]$runA.Export.totalMs } else { 0 }
-$bExport = if ($runB.Export.ContainsKey('totalMs')) { [long]$runB.Export.totalMs } else { 0 }
+$hasExportA = $runA.Export.ContainsKey('totalMs') -and $null -ne $runA.Export.totalMs
+$hasExportB = $runB.Export.ContainsKey('totalMs') -and $null -ne $runB.Export.totalMs
+$aExport = if ($hasExportA) { [long]$runA.Export.totalMs } else { $null }
+$bExport = if ($hasExportB) { [long]$runB.Export.totalMs } else { $null }
 
 $weakDelta = $bWeakScore - $aWeakScore
 $trackDelta = $bTrackFilled - $aTrackFilled
 $interpDelta = $bInterpolated - $aInterpolated
-$exportDeltaForHint = $bExport - $aExport
+$exportDeltaForHint = if ($hasExportA -and $hasExportB) { $bExport - $aExport } else { $null }
 $sceneCutDelta = $runB.SceneCutReset.removed - $runA.SceneCutReset.removed
-$shortGapDelta = (if ($runB.FinalSummary.ContainsKey('shortGaps')) { [int]$runB.FinalSummary.shortGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('shortGaps')) { [int]$runA.FinalSummary.shortGaps } else { 0 })
-$largeJumpGapDelta = (if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runB.FinalSummary.largeJumpGaps } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runA.FinalSummary.largeJumpGaps } else { 0 })
-$postGapFillCarryPairDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillCarryPairs')) { [int]$runB.FinalSummary.postGapFillCarryPairs } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillCarryPairs')) { [int]$runA.FinalSummary.postGapFillCarryPairs } else { 0 })
-$postGapFillRemovedDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillRemoved')) { [int]$runB.FinalSummary.postGapFillRemoved } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillRemoved')) { [int]$runA.FinalSummary.postGapFillRemoved } else { 0 })
-$postGapFillProtectedDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runB.FinalSummary.postGapFillProtected } else { 0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runA.FinalSummary.postGapFillProtected } else { 0 })
-$postGapFillRemovalRateDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 })
-$postGapFillProtectedRateDelta = (if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }) - (if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 })
+$shortGapDelta = $(if ($runB.FinalSummary.ContainsKey('shortGaps')) { [int]$runB.FinalSummary.shortGaps } else { 0 }) - $(if ($runA.FinalSummary.ContainsKey('shortGaps')) { [int]$runA.FinalSummary.shortGaps } else { 0 })
+$largeJumpGapDelta = $(if ($runB.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runB.FinalSummary.largeJumpGaps } else { 0 }) - $(if ($runA.FinalSummary.ContainsKey('largeJumpGaps')) { [int]$runA.FinalSummary.largeJumpGaps } else { 0 })
+$postGapFillCarryPairDelta = $(if ($runB.FinalSummary.ContainsKey('postGapFillCarryPairs')) { [int]$runB.FinalSummary.postGapFillCarryPairs } else { 0 }) - $(if ($runA.FinalSummary.ContainsKey('postGapFillCarryPairs')) { [int]$runA.FinalSummary.postGapFillCarryPairs } else { 0 })
+$postGapFillRemovedDelta = $(if ($runB.FinalSummary.ContainsKey('postGapFillRemoved')) { [int]$runB.FinalSummary.postGapFillRemoved } else { 0 }) - $(if ($runA.FinalSummary.ContainsKey('postGapFillRemoved')) { [int]$runA.FinalSummary.postGapFillRemoved } else { 0 })
+$postGapFillProtectedDelta = $(if ($runB.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runB.FinalSummary.postGapFillProtected } else { 0 }) - $(if ($runA.FinalSummary.ContainsKey('postGapFillProtected')) { [int]$runA.FinalSummary.postGapFillProtected } else { 0 })
+$postGapFillRemovalRateDelta = $(if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }) - $(if ($runA.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runA.FinalSummary.postGapFillRemovalRate } else { 0.0 })
+$postGapFillProtectedRateDelta = $(if ($runB.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runB.FinalSummary.postGapFillProtectedRate } else { 0.0 }) - $(if ($runA.FinalSummary.ContainsKey('postGapFillProtectedRate')) { [double]$runA.FinalSummary.postGapFillProtectedRate } else { 0.0 })
 $preSmoothCutPairsDelta = $runB.SceneCutControl.preSmoothCutPairs - $runA.SceneCutControl.preSmoothCutPairs
 $preSmoothStrongPairsDelta = $runB.SceneCutControl.preSmoothStrongPairs - $runA.SceneCutControl.preSmoothStrongPairs
 $postSmoothCutPairsDelta = $runB.SceneCutControl.postSmoothCutPairs - $runA.SceneCutControl.postSmoothCutPairs
@@ -1057,22 +1454,24 @@ $aPostGapFillRemovalRate = if ($runA.FinalSummary.ContainsKey('postGapFillRemova
 $bPostGapFillRemovalRate = if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }
 $postGapFillRemovalRateDelta = $bPostGapFillRemovalRate - $aPostGapFillRemovalRate
 $bReview = if ($runB.FinalSummary.ContainsKey('reviewRequired')) { [bool]$runB.FinalSummary.reviewRequired } else { $false }
-$hasSampleWindowA = $runA.FinalSummary.ContainsKey('sampleWindowTiming') -and
-    $null -ne $runA.FinalSummary.sampleWindowStartFrame -and
-    $null -ne $runA.FinalSummary.sampleWindowEndFrame -and
-    [int]$runA.FinalSummary.sampleWindowStartFrame -ge 0 -and
-    [int]$runA.FinalSummary.sampleWindowEndFrame -ge [int]$runA.FinalSummary.sampleWindowStartFrame -and
-    [double]$runA.FinalSummary.sampleWindowDurationSec -gt 0
-$hasSampleWindowB = $runB.FinalSummary.ContainsKey('sampleWindowTiming') -and
-    $null -ne $runB.FinalSummary.sampleWindowStartFrame -and
-    $null -ne $runB.FinalSummary.sampleWindowEndFrame -and
-    [int]$runB.FinalSummary.sampleWindowStartFrame -ge 0 -and
-    [int]$runB.FinalSummary.sampleWindowEndFrame -ge [int]$runB.FinalSummary.sampleWindowStartFrame -and
-    [double]$runB.FinalSummary.sampleWindowDurationSec -gt 0
-$passSampleWindowAlignment = if ($hasSampleWindowA -and $hasSampleWindowB) {
+$sampleWindowEvidenceA = Get-SampleWindowEvidenceValidation -Summary $runA.FinalSummary
+$sampleWindowEvidenceB = Get-SampleWindowEvidenceValidation -Summary $runB.FinalSummary
+$runConfigValidation = Get-RunConfigGateValidation `
+    -ConfigA $runA.AutoConfig `
+    -ConfigB $runB.AutoConfig `
+    -AllowMissing ([bool]$AllowMissingRunConfig.IsPresent)
+$passDistinctRuns = $runA.RunId -ne $runB.RunId
+$requireExportEvidence = $hasExportA -or $hasExportB
+$exportIntegrityA = Get-ExportIntegrityValidation -Summary $runA.Export -Label 'A' -Required $requireExportEvidence
+$exportIntegrityB = Get-ExportIntegrityValidation -Summary $runB.Export -Label 'B' -Required $requireExportEvidence
+$cascadeValidationB = Get-YoloCascadeGateValidation `
+    -Summary $runB.YoloCascade `
+    -RequireEnabled ([bool]$RequireYoloCascade.IsPresent)
+$passSampleWindowAlignment = if ($sampleWindowEvidenceA.IsValid -and $sampleWindowEvidenceB.IsValid) {
     $runA.FinalSummary.sampleWindowTiming -eq $runB.FinalSummary.sampleWindowTiming -and
     $runA.FinalSummary.sampleWindowStartFrame -eq $runB.FinalSummary.sampleWindowStartFrame -and
     $runA.FinalSummary.sampleWindowEndFrame -eq $runB.FinalSummary.sampleWindowEndFrame -and
+    $runA.FinalSummary.sampleWindowFrameCount -eq $runB.FinalSummary.sampleWindowFrameCount -and
     [math]::Abs(
         [double]$runA.FinalSummary.sampleWindowDurationSec -
         [double]$runB.FinalSummary.sampleWindowDurationSec) -le 0.001
@@ -1081,6 +1480,7 @@ $passSampleWindowAlignment = if ($hasSampleWindowA -and $hasSampleWindowB) {
 }
 
 $passWeakScore = $weakDelta -le $MaxWeakScoreDelta
+$passFinalEvidence = $finalEvidenceA.IsValid -and $finalEvidenceB.IsValid
 $passMissRecovery = $missRecoveryDelta -ge $MinMissRecoveryDelta
 $passSampleMissRecovery = $sampleMissRecoveryDelta -ge $MinSampleMissRecoveryDelta
 $passCutCarry = $postGapFillRemovalRateDelta -ge $MinPostGapFillRemovalRateDelta
@@ -1088,13 +1488,27 @@ $passSampleIssueCandidates = $sampleIssueCandidateDelta -le $AllowedSampleIssueC
 $passSampleShortGap = $sampleShortGapsDelta -le $AllowedSampleShortGapIncrease
 $passSamplePerFaceShortGap = $samplePerFaceShortGapsDelta -le $AllowedSamplePerFaceShortGapIncrease
 $passRunSpeed = $null -ne $runMsDelta -and $runMsDelta -le $MaxRunTotalMsDelta
-$passExportSpeed = if ($null -eq $exportDeltaForHint) { $true } else { $exportDeltaForHint -le $MaxExportTotalMsDelta }
+$passExportSpeed = if (-not $requireExportEvidence) {
+    $true
+} elseif ($null -eq $exportDeltaForHint) {
+    $false
+} else {
+    $exportDeltaForHint -le $MaxExportTotalMsDelta
+}
+$passExportIntegrity = $exportIntegrityA.IsValid -and $exportIntegrityB.IsValid
+$passRunConfig = $runConfigValidation.IsValid
 $passReview = if ($AllowReviewRequired.IsPresent) { $true } else { -not $bReview }
-$passOverall = $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passSampleMissRecovery -and $passSampleIssueCandidates -and $passSampleShortGap -and $passSamplePerFaceShortGap -and $passSampleWindowAlignment -and $passRunSpeed -and $passExportSpeed -and $passReview
+$passYoloCascade = $cascadeValidationB.IsValid
+$passOverall = $passFinalEvidence -and $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passSampleMissRecovery -and $passSampleIssueCandidates -and $passSampleShortGap -and $passSamplePerFaceShortGap -and $passSampleWindowAlignment -and $passYoloCascade -and $passRunConfig -and $passDistinctRuns -and $passRunSpeed -and $passExportSpeed -and $passExportIntegrity -and $passReview
 $passLabel = if ($passOverall) { "PASS" } else { "REVIEW" }
 $reviewText = if ($passReview) { "PASS" } else { "REVIEW_REQUIRED" }
 
 $passReasons = [System.Collections.Generic.List[string]]::new()
+if (-not $passFinalEvidence) {
+    foreach ($evidenceReason in @($finalEvidenceA.Reasons) + @($finalEvidenceB.Reasons)) {
+        $passReasons.Add($evidenceReason)
+    }
+}
 if (-not $passWeakScore) { $passReasons.Add("weakScoreΔ=$weakDelta > $MaxWeakScoreDelta") }
 if (-not $passMissRecovery) { $passReasons.Add("missRecoveryΔ=$missRecoveryDelta < $MinMissRecoveryDelta") }
 if (-not $passSampleMissRecovery) { $passReasons.Add("sampleMissRecoveryΔ=$sampleMissRecoveryDelta < $MinSampleMissRecoveryDelta") }
@@ -1102,7 +1516,26 @@ if (-not $passCutCarry) { $passReasons.Add("postGapFillRemovalRateΔ=$('{0:P2}' 
 if (-not $passSampleIssueCandidates) { $passReasons.Add("sampleIssueCandidateΔ=$sampleIssueCandidateDelta > $AllowedSampleIssueCandidateIncrease") }
 if (-not $passSampleShortGap) { $passReasons.Add("sampleShortGapΔ=$sampleShortGapsDelta > $AllowedSampleShortGapIncrease") }
 if (-not $passSamplePerFaceShortGap) { $passReasons.Add("samplePerFaceShortGapΔ=$samplePerFaceShortGapsDelta > $AllowedSamplePerFaceShortGapIncrease") }
-if (-not $passSampleWindowAlignment) { $passReasons.Add("sampleWindowMismatch") }
+if (-not $passSampleWindowAlignment) {
+    $passReasons.Add("sampleWindowMismatch")
+    if (-not $sampleWindowEvidenceA.IsValid) {
+        $passReasons.Add("sampleWindowAInvalid=$($sampleWindowEvidenceA.Reasons -join ',')")
+    }
+    if (-not $sampleWindowEvidenceB.IsValid) {
+        $passReasons.Add("sampleWindowBInvalid=$($sampleWindowEvidenceB.Reasons -join ',')")
+    }
+}
+if (-not $passYoloCascade) {
+    foreach ($cascadeReason in $cascadeValidationB.Reasons) {
+        $passReasons.Add($cascadeReason)
+    }
+}
+if (-not $passRunConfig) {
+    foreach ($configReason in $runConfigValidation.Reasons) {
+        $passReasons.Add($configReason)
+    }
+}
+if (-not $passDistinctRuns) { $passReasons.Add("sameRunId=$($runA.RunId)") }
 if (-not $passRunSpeed) {
     if ($null -eq $runMsDelta) {
         $passReasons.Add("analysisRunMsMissing")
@@ -1111,6 +1544,11 @@ if (-not $passRunSpeed) {
     }
 }
 if (-not $passExportSpeed) { $passReasons.Add("exportMsΔ=$exportDeltaForHint > $MaxExportTotalMsDelta") }
+if (-not $passExportIntegrity) {
+    foreach ($exportReason in @($exportIntegrityA.Reasons) + @($exportIntegrityB.Reasons)) {
+        $passReasons.Add($exportReason)
+    }
+}
 if (-not $passReview) { $passReasons.Add("reviewRequired=true") }
 
 Write-Host ""
@@ -1123,8 +1561,31 @@ Write-Host ("샘플 오탐 후보 수: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $a
 Write-Host ("샘플 미탐 보완: A={0}, B={1}, Δ={2}, 기준≥{3}" -f $aSampleMissRecovery, $bSampleMissRecovery, $sampleMissRecoveryDelta, $MinSampleMissRecoveryDelta)
 Write-Host ("샘플 단기 미탐 갭: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSampleShortGaps, $bSampleShortGaps, $sampleShortGapsDelta, $AllowedSampleShortGapIncrease)
 Write-Host ("샘플 단기 미탐 퍼페이스 갭: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSamplePerFaceShortGaps, $bSamplePerFaceShortGaps, $samplePerFaceShortGapsDelta, $AllowedSamplePerFaceShortGapIncrease)
-Write-Host ("샘플 구간 정합성: A={0}:{1}-{2}, B={3}:{4}-{5} -> {6}" -f $runA.FinalSummary.sampleWindowTiming, $runA.FinalSummary.sampleWindowStartFrame, $runA.FinalSummary.sampleWindowEndFrame, $runB.FinalSummary.sampleWindowTiming, $runB.FinalSummary.sampleWindowStartFrame, $runB.FinalSummary.sampleWindowEndFrame, $(if ($passSampleWindowAlignment) { "PASS" } else { "MISMATCH" }))
-Write-Host ("속도(run/export): runΔ={0}, 기준≤{1}, exportΔ={2}, 기준≤{3}" -f (if ($null -ne $runMsDelta) { $runMsDelta } else { "n/a" }), $MaxRunTotalMsDelta, $exportDeltaForHint, $MaxExportTotalMsDelta)
+Write-Host ("샘플 구간 정합성: A={0}:{1}-{2}/frames={3}/duration={4}, B={5}:{6}-{7}/frames={8}/duration={9} -> {10}" -f `
+    $runA.FinalSummary.sampleWindowTiming,
+    $runA.FinalSummary.sampleWindowStartFrame,
+    $runA.FinalSummary.sampleWindowEndFrame,
+    $runA.FinalSummary.sampleWindowFrameCount,
+    $runA.FinalSummary.sampleWindowDurationSec,
+    $runB.FinalSummary.sampleWindowTiming,
+    $runB.FinalSummary.sampleWindowStartFrame,
+    $runB.FinalSummary.sampleWindowEndFrame,
+    $runB.FinalSummary.sampleWindowFrameCount,
+    $runB.FinalSummary.sampleWindowDurationSec,
+    $(if ($passSampleWindowAlignment) { "PASS" } else { "MISMATCH" }))
+Write-Host ("YOLO cascade: required={0}, present={1}, enabled={2}, riskFrames={3}, attempts={4}, protectedStored={5}, acceptedFaces={6}, error={7} -> {8}" -f `
+    $RequireYoloCascade.IsPresent,
+    $cascadeValidationB.IsPresent,
+    $cascadeValidationB.Enabled,
+    $(if ($runB.YoloCascade.ContainsKey('riskFrames')) { $runB.YoloCascade.riskFrames } else { "n/a" }),
+    $(if ($runB.YoloCascade.ContainsKey('attempts')) { $runB.YoloCascade.attempts } else { "n/a" }),
+    $(if ($runB.YoloCascade.ContainsKey('protectedStoredMaskFrames')) { $runB.YoloCascade.protectedStoredMaskFrames } else { "n/a" }),
+    $(if ($runB.YoloCascade.ContainsKey('acceptedFaces')) { $runB.YoloCascade.acceptedFaces } else { "n/a" }),
+    $(if ($runB.YoloCascade.ContainsKey('error')) { $runB.YoloCascade.error } else { "n/a" }),
+    $(if ($passYoloCascade) { "PASS" } else { "FAIL" }))
+Write-Host ("실행 정합성: distinctRun={0}, configA={1}, configB={2} -> {3}" -f $passDistinctRuns, $runConfigValidation.PresentA, $runConfigValidation.PresentB, $(if ($passRunConfig) { "PASS" } else { "FAIL" }))
+Write-Host ("export 무결성: required={0}, A={1}, B={2} -> {3}" -f $requireExportEvidence, $exportIntegrityA.IsValid, $exportIntegrityB.IsValid, $(if ($passExportIntegrity) { "PASS" } else { "FAIL" }))
+Write-Host ("속도(run/export): runΔ={0}, 기준≤{1}, exportΔ={2}, 기준≤{3}" -f $(if ($null -ne $runMsDelta) { $runMsDelta } else { "n/a" }), $MaxRunTotalMsDelta, $exportDeltaForHint, $MaxExportTotalMsDelta)
 Write-Host ("심사 플래그: reviewRequired=$bReview -> {0}" -f $reviewText)
 Write-Host ("판정 사유: {0}" -f ($(if ($passReasons.Count -eq 0) { "pass" } else { $passReasons -join '; ' })))
 
@@ -1164,6 +1625,9 @@ $quickDecision = [pscustomobject]@{
     SampleOffModeWeakCleanupB = $bSampleOffModeSuppressed;
     SampleOffModeWeakCleanupDelta = $sampleOffModeSuppressedDelta;
     PassWeakScore = $passWeakScore;
+    PassFinalEvidence = $passFinalEvidence;
+    FinalEvidenceAReasons = $finalEvidenceA.Reasons;
+    FinalEvidenceBReasons = $finalEvidenceB.Reasons;
     PassMissRecovery = $passMissRecovery;
     PassSampleMissRecovery = $passSampleMissRecovery;
     PassCutCarry = $passCutCarry;
@@ -1171,8 +1635,23 @@ $quickDecision = [pscustomobject]@{
     PassSampleShortGap = $passSampleShortGap;
     PassSamplePerFaceShortGap = $passSamplePerFaceShortGap;
     PassSampleWindowAlignment = $passSampleWindowAlignment;
+    SampleWindowEvidenceAValid = $sampleWindowEvidenceA.IsValid;
+    SampleWindowEvidenceBValid = $sampleWindowEvidenceB.IsValid;
+    SampleWindowEvidenceAReasons = $sampleWindowEvidenceA.Reasons;
+    SampleWindowEvidenceBReasons = $sampleWindowEvidenceB.Reasons;
+    PassYoloCascade = $passYoloCascade;
+    RequireYoloCascade = $RequireYoloCascade.IsPresent;
+    YoloCascadePresentB = $cascadeValidationB.IsPresent;
+    YoloCascadeEnabledB = $cascadeValidationB.Enabled;
+    YoloCascadeReasonsB = $cascadeValidationB.Reasons;
+    PassRunConfig = $passRunConfig;
+    RunConfigReasons = $runConfigValidation.Reasons;
+    PassDistinctRuns = $passDistinctRuns;
     PassRunSpeed = $passRunSpeed;
     PassExportSpeed = $passExportSpeed;
+    PassExportIntegrity = $passExportIntegrity;
+    ExportIntegrityAReasons = $exportIntegrityA.Reasons;
+    ExportIntegrityBReasons = $exportIntegrityB.Reasons;
     PassReview = $passReview;
     ReviewRequired = $bReview;
     Reasons = if ($passReasons.Count -eq 0) { "pass" } else { $passReasons };

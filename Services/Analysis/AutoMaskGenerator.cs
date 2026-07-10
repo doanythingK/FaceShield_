@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Media.Imaging;
+using FaceShield.Services.Diagnostics;
 using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
@@ -1771,6 +1772,7 @@ namespace FaceShield.Services.Analysis
                 YoloRiskFrameCount = result.RiskFrames,
                 YoloPeriodicGlobalFrameCount = result.PeriodicFrames,
                 YoloSecondaryAttemptCount = result.Attempts,
+                YoloProtectedStoredMaskFrameCount = result.ProtectedStoredMaskFrames,
                 YoloSecondaryHitFrameCount = result.HitFrames,
                 YoloSecondaryCandidateFaceCount = result.CandidateFaces,
                 YoloSecondaryAcceptedFrameCount = result.AcceptedFrames,
@@ -1890,6 +1892,12 @@ namespace FaceShield.Services.Analysis
             Debug.WriteLine(LastRunSummary.ToLogLine());
             Debug.WriteLine(LastRunSummary.ToSampleTimingLogLine());
             Debug.WriteLine(LastRunSummary.ToYoloCascadeLogLine());
+            RunMetricsLog.AppendRunLines(
+                LastRunSummary.RunId,
+                LastRunSummary.ToLogLine(),
+                LastRunSummary.ToSampleTimingLogLine(),
+                LastRunSummary.ToYoloCascadeLogLine(),
+                finalSummary.EvidenceLogLine);
             LogAutoMaskQualityGate(LastRunSummary);
         }
 
