@@ -123,7 +123,9 @@ namespace FaceShield.Services.Analysis
                     durationSeconds = 0;
                 }
 
-                int frames = (int)Math.Floor(durationSeconds * fpsValue);
+                int frames = videoStream->nb_frames > 0
+                    ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
+                    : (int)Math.Floor(durationSeconds * fpsValue);
 
                 return (
                     fps: fpsValue,

@@ -96,6 +96,10 @@ namespace FaceShield.Services.Video
         private bool _sequentialStarted;
         private int _sequentialIndex;
         private long _sequentialTargetPts;
+        private bool _sequentialDrainSent;
+        private bool _sequentialReachedEndOfStream;
+        private bool _sequentialCancelled;
+        private string? _sequentialDecodeError;
         private double _lastDecodedTimestampSeconds = double.NaN;
         private string _lastDecodedTimestampSource = "none";
 
@@ -186,6 +190,33 @@ namespace FaceShield.Services.Video
             }
         }
 
+        public bool SequentialReachedEndOfStream
+        {
+            get
+            {
+                lock (_sync)
+                    return _sequentialReachedEndOfStream;
+            }
+        }
+
+        public bool SequentialReadCancelled
+        {
+            get
+            {
+                lock (_sync)
+                    return _sequentialCancelled;
+            }
+        }
+
+        public string? SequentialDecodeError
+        {
+            get
+            {
+                lock (_sync)
+                    return _sequentialDecodeError;
+            }
+        }
+
         public PixelSize FrameSize => new(_dec->width, _dec->height);
 
         /// <summary>
@@ -240,9 +271,19 @@ namespace FaceShield.Services.Video
                     if (ffmpeg.av_frame_get_buffer(bgra, 32) < 0)
                         return null;
 
-                    bool decoded = false;
-                    while (ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                    int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
+                    while (true)
                     {
+                        int readResult = ffmpeg.av_read_frame(_fmt, pkt);
+                        if (readResult == ffmpeg.AVERROR_EOF)
+                            break;
+                        if (readResult < 0)
+                        {
+                            Debug.WriteLine(
+                                $"[FfFrameExtractor] av_read_frame failed (frame={frameIndex}, err={readResult}).");
+                            return null;
+                        }
+
                         if (pkt->stream_index != _videoStreamIndex)
                         {
                             ffmpeg.av_packet_unref(pkt);
@@ -250,14 +291,27 @@ namespace FaceShield.Services.Video
                         }
 
                         int sendResult = ffmpeg.avcodec_send_packet(_dec, pkt);
+                        ffmpeg.av_packet_unref(pkt);
                         if (sendResult < 0)
                         {
                             Debug.WriteLine($"[FfFrameExtractor] avcodec_send_packet failed (frame={frameIndex}, err={sendResult}).");
+                            return null;
                         }
-                        ffmpeg.av_packet_unref(pkt);
 
-                        while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
+                        while (true)
                         {
+                            int receiveResult = ffmpeg.avcodec_receive_frame(_dec, src);
+                            if (receiveResult == tryAgain)
+                                break;
+                            if (receiveResult == ffmpeg.AVERROR_EOF)
+                                return null;
+                            if (receiveResult < 0)
+                            {
+                                Debug.WriteLine(
+                                    $"[FfFrameExtractor] avcodec_receive_frame failed (frame={frameIndex}, err={receiveResult}).");
+                                return null;
+                            }
+
                             long pts = src->best_effort_timestamp;
                             if (pts == ffmpeg.AV_NOPTS_VALUE)
                                 pts = src->pts;
@@ -267,17 +321,53 @@ namespace FaceShield.Services.Video
 
                             var bmp = ConvertDecodedFrameToBitmap(src, bgra);
                             if (bmp != null)
-                            {
-                                decoded = true;
                                 return bmp;
-                            }
                             Debug.WriteLine($"[FfFrameExtractor] ConvertDecodedFrameToBitmap failed (frame={frameIndex}, pts={pts}).");
+                            return null;
                         }
                     }
 
-                    if (!decoded)
-                        Debug.WriteLine($"[FfFrameExtractor] no frame decoded (frame={frameIndex}, pts={targetPts}).");
+                    int drainResult = ffmpeg.avcodec_send_packet(_dec, null);
+                    if (drainResult < 0 && drainResult != ffmpeg.AVERROR_EOF)
+                    {
+                        Debug.WriteLine(
+                            $"[FfFrameExtractor] avcodec_send_packet drain failed (frame={frameIndex}, err={drainResult}).");
+                        return null;
+                    }
 
+                    while (drainResult != ffmpeg.AVERROR_EOF)
+                    {
+                        int receiveResult = ffmpeg.avcodec_receive_frame(_dec, src);
+                        if (receiveResult == ffmpeg.AVERROR_EOF)
+                            break;
+                        if (receiveResult == tryAgain)
+                        {
+                            Debug.WriteLine(
+                                $"[FfFrameExtractor] decoder returned EAGAIN after drain (frame={frameIndex}).");
+                            return null;
+                        }
+                        if (receiveResult < 0)
+                        {
+                            Debug.WriteLine(
+                                $"[FfFrameExtractor] drain receive failed (frame={frameIndex}, err={receiveResult}).");
+                            return null;
+                        }
+
+                        long pts = src->best_effort_timestamp;
+                        if (pts == ffmpeg.AV_NOPTS_VALUE)
+                            pts = src->pts;
+                        if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
+                            continue;
+
+                        var bmp = ConvertDecodedFrameToBitmap(src, bgra);
+                        if (bmp != null)
+                            return bmp;
+                        Debug.WriteLine(
+                            $"[FfFrameExtractor] drained frame conversion failed (frame={frameIndex}, pts={pts}).");
+                        return null;
+                    }
+
+                    Debug.WriteLine($"[FfFrameExtractor] no frame decoded (frame={frameIndex}, pts={targetPts}).");
                     return null;
                 }
                 finally
@@ -303,12 +393,20 @@ namespace FaceShield.Services.Video
                 double seconds = startFrameIndex / _fps;
                 _sequentialTargetPts = (long)Math.Floor(seconds / tbSec);
 
-                ffmpeg.av_seek_frame(_fmt, _videoStreamIndex, _sequentialTargetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                int seekResult = ffmpeg.av_seek_frame(
+                    _fmt,
+                    _videoStreamIndex,
+                    _sequentialTargetPts,
+                    ffmpeg.AVSEEK_FLAG_BACKWARD);
+                FFmpegErrorHelper.ThrowIfError(
+                    seekResult,
+                    $"Sequential seek failed for frame {startFrameIndex}");
                 ffmpeg.avcodec_flush_buffers(_dec);
 
                 _sequentialIndex = startFrameIndex;
                 _sequentialActive = true;
                 _sequentialStarted = false;
+                ResetSequentialCompletionState();
                 _lastDecodedTimestampSeconds = double.NaN;
                 _lastDecodedTimestampSource = "none";
             }
@@ -343,6 +441,7 @@ namespace FaceShield.Services.Video
                 _sequentialIndex = startFrameIndex;
                 _sequentialActive = true;
                 _sequentialStarted = false;
+                ResetSequentialCompletionState();
                 _lastDecodedTimestampSeconds = double.NaN;
                 _lastDecodedTimestampSource = "none";
             }
@@ -372,6 +471,7 @@ namespace FaceShield.Services.Video
                     if (pkt != null) ffmpeg.av_packet_free(&pkt);
                     if (src != null) ffmpeg.av_frame_free(&src);
                     if (bgra != null) ffmpeg.av_frame_free(&bgra);
+                    SetSequentialDecodeError("failed to allocate sequential bitmap decode buffers");
                     return false;
                 }
 
@@ -383,46 +483,28 @@ namespace FaceShield.Services.Video
                         bgra->width = _dec->width;
                         bgra->height = _dec->height;
 
-                        if (ffmpeg.av_frame_get_buffer(bgra, 32) < 0)
+                        int bufferResult = ffmpeg.av_frame_get_buffer(bgra, 32);
+                        if (bufferResult < 0)
+                        {
+                            SetSequentialDecodeError("av_frame_get_buffer failed", bufferResult);
                             return false;
+                        }
                     }
 
-                    while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                    if (!TryDecodeNextSequentialFrame(ct, pkt, src, out frameIndex))
+                        return false;
+
+                    if (!requireBitmap)
+                        return true;
+
+                    var bmp = ConvertDecodedFrameToBitmap(src, bgra);
+                    if (bmp != null)
                     {
-                        if (pkt->stream_index != _videoStreamIndex)
-                        {
-                            ffmpeg.av_packet_unref(pkt);
-                            continue;
-                        }
-
-                        ffmpeg.avcodec_send_packet(_dec, pkt);
-                        ffmpeg.av_packet_unref(pkt);
-
-                        while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
-                        {
-                            long pts = src->best_effort_timestamp;
-                            if (pts == ffmpeg.AV_NOPTS_VALUE)
-                                pts = src->pts;
-
-                            if (!_sequentialStarted && pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
-                                continue;
-
-                            _sequentialStarted = true;
-
-                            frameIndex = _sequentialIndex++;
-                            CaptureDecodedTimestamp(frameIndex, pts);
-                            if (!requireBitmap)
-                                return true;
-
-                            var bmp = ConvertDecodedFrameToBitmap(src, bgra);
-                            if (bmp != null)
-                            {
-                                frame = bmp;
-                                return true;
-                            }
-                        }
+                        frame = bmp;
+                        return true;
                     }
 
+                    SetSequentialDecodeError("decoded frame bitmap conversion failed");
                     return false;
                 }
                 finally
@@ -453,6 +535,7 @@ namespace FaceShield.Services.Video
                 {
                     if (pkt != null) ffmpeg.av_packet_free(&pkt);
                     if (src != null) ffmpeg.av_frame_free(&src);
+                    SetSequentialDecodeError("failed to allocate sequential raw decode buffers");
                     return false;
                 }
 
@@ -461,50 +544,35 @@ namespace FaceShield.Services.Video
                     if (requireBgra)
                     {
                         if (!EnsureReusableBgraFrame())
+                        {
+                            SetSequentialDecodeError("failed to allocate the reusable BGRA frame");
                             return false;
-                        if (ffmpeg.av_frame_make_writable(_bgraReusable) < 0)
+                        }
+                        int writableResult = ffmpeg.av_frame_make_writable(_bgraReusable);
+                        if (writableResult < 0)
+                        {
+                            SetSequentialDecodeError("av_frame_make_writable failed", writableResult);
                             return false;
+                        }
                     }
 
-                    while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                    if (!TryDecodeNextSequentialFrame(ct, pkt, src, out frameIndex))
+                        return false;
+
+                    if (!requireBgra)
+                        return true;
+
+                    if (ConvertDecodedFrameToBgra(src, _bgraReusable))
                     {
-                        if (pkt->stream_index != _videoStreamIndex)
-                        {
-                            ffmpeg.av_packet_unref(pkt);
-                            continue;
-                        }
-
-                        ffmpeg.avcodec_send_packet(_dec, pkt);
-                        ffmpeg.av_packet_unref(pkt);
-
-                        while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
-                        {
-                            long pts = src->best_effort_timestamp;
-                            if (pts == ffmpeg.AV_NOPTS_VALUE)
-                                pts = src->pts;
-
-                            if (!_sequentialStarted && pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
-                                continue;
-
-                            _sequentialStarted = true;
-                            frameIndex = _sequentialIndex++;
-                            CaptureDecodedTimestamp(frameIndex, pts);
-
-                            if (!requireBgra)
-                                return true;
-
-                            if (ConvertDecodedFrameToBgra(src, _bgraReusable))
-                            {
-                                frame = new BgraFrame(
-                                    (IntPtr)_bgraReusable->data[0],
-                                    _bgraReusable->linesize[0],
-                                    _bgraReusable->width,
-                                    _bgraReusable->height);
-                                return true;
-                            }
-                        }
+                        frame = new BgraFrame(
+                            (IntPtr)_bgraReusable->data[0],
+                            _bgraReusable->linesize[0],
+                            _bgraReusable->width,
+                            _bgraReusable->height);
+                        return true;
                     }
 
+                    SetSequentialDecodeError("decoded frame BGRA conversion failed");
                     return false;
                 }
                 finally
@@ -541,6 +609,7 @@ namespace FaceShield.Services.Video
                 {
                     if (pkt != null) ffmpeg.av_packet_free(&pkt);
                     if (src != null) ffmpeg.av_frame_free(&src);
+                    SetSequentialDecodeError("failed to allocate sequential scaled decode buffers");
                     return false;
                 }
 
@@ -549,51 +618,36 @@ namespace FaceShield.Services.Video
                     if (requireBgra)
                     {
                         if (!EnsureReusableScaledBgraFrame(targetWidth, targetHeight))
+                        {
+                            SetSequentialDecodeError("failed to allocate the reusable scaled BGRA frame");
                             return false;
-                        if (ffmpeg.av_frame_make_writable(_bgraScaledReusable) < 0)
+                        }
+                        int writableResult = ffmpeg.av_frame_make_writable(_bgraScaledReusable);
+                        if (writableResult < 0)
+                        {
+                            SetSequentialDecodeError("av_frame_make_writable failed", writableResult);
                             return false;
+                        }
                     }
 
-                    while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                    if (!TryDecodeNextSequentialFrame(ct, pkt, src, out frameIndex))
+                        return false;
+
+                    if (!requireBgra)
+                        return true;
+
+                    var flags = useBilinear ? SwsFlags.SWS_BILINEAR : SwsFlags.SWS_POINT;
+                    if (ConvertDecodedFrameToBgraScaled(src, _bgraScaledReusable, targetWidth, targetHeight, flags))
                     {
-                        if (pkt->stream_index != _videoStreamIndex)
-                        {
-                            ffmpeg.av_packet_unref(pkt);
-                            continue;
-                        }
-
-                        ffmpeg.avcodec_send_packet(_dec, pkt);
-                        ffmpeg.av_packet_unref(pkt);
-
-                        while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
-                        {
-                            long pts = src->best_effort_timestamp;
-                            if (pts == ffmpeg.AV_NOPTS_VALUE)
-                                pts = src->pts;
-
-                            if (!_sequentialStarted && pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
-                                continue;
-
-                            _sequentialStarted = true;
-                            frameIndex = _sequentialIndex++;
-                            CaptureDecodedTimestamp(frameIndex, pts);
-
-                            if (!requireBgra)
-                                return true;
-
-                            var flags = useBilinear ? SwsFlags.SWS_BILINEAR : SwsFlags.SWS_POINT;
-                            if (ConvertDecodedFrameToBgraScaled(src, _bgraScaledReusable, targetWidth, targetHeight, flags))
-                            {
-                                frame = new BgraFrame(
-                                    (IntPtr)_bgraScaledReusable->data[0],
-                                    _bgraScaledReusable->linesize[0],
-                                    _bgraScaledReusable->width,
-                                    _bgraScaledReusable->height);
-                                return true;
-                            }
-                        }
+                        frame = new BgraFrame(
+                            (IntPtr)_bgraScaledReusable->data[0],
+                            _bgraScaledReusable->linesize[0],
+                            _bgraScaledReusable->width,
+                            _bgraScaledReusable->height);
+                        return true;
                     }
 
+                    SetSequentialDecodeError("decoded frame scaled BGRA conversion failed");
                     return false;
                 }
                 finally
@@ -625,7 +679,7 @@ namespace FaceShield.Services.Video
             stride = dstW * 4;
             int bytes = stride * dstH;
             if (buffer.Length < bytes)
-                return false;
+                throw new ArgumentException("The destination buffer is too small.", nameof(buffer));
 
             lock (_sync)
             {
@@ -639,6 +693,7 @@ namespace FaceShield.Services.Video
                 {
                     if (pkt != null) ffmpeg.av_packet_free(&pkt);
                     if (src != null) ffmpeg.av_frame_free(&src);
+                    SetSequentialDecodeError("failed to allocate sequential buffer decode resources");
                     return false;
                 }
 
@@ -654,53 +709,31 @@ namespace FaceShield.Services.Video
                         bool scaled = dstW != _dec->width || dstH != _dec->height;
                         SwsFlags flags = useBilinear ? SwsFlags.SWS_BILINEAR : SwsFlags.SWS_POINT;
 
-                        while (!ct.IsCancellationRequested && ffmpeg.av_read_frame(_fmt, pkt) >= 0)
-                        {
-                            if (pkt->stream_index != _videoStreamIndex)
-                            {
-                                ffmpeg.av_packet_unref(pkt);
-                                continue;
-                            }
+                        if (!TryDecodeNextSequentialFrame(ct, pkt, src, out frameIndex))
+                            return false;
 
-                            ffmpeg.avcodec_send_packet(_dec, pkt);
-                            ffmpeg.av_packet_unref(pkt);
-
-                            while (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
-                            {
-                                long pts = src->best_effort_timestamp;
-                                if (pts == ffmpeg.AV_NOPTS_VALUE)
-                                    pts = src->pts;
-
-                                if (!_sequentialStarted && pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
-                                    continue;
-
-                                _sequentialStarted = true;
-                                frameIndex = _sequentialIndex++;
-                                CaptureDecodedTimestamp(frameIndex, pts);
-
-                                bool ok = scaled
-                                    ? ConvertDecodedFrameToBgraToBuffer(
-                                        src,
-                                        dstData,
-                                        dstLinesize,
-                                        dstW,
-                                        dstH,
-                                        flags,
-                                        ref _swsScaled)
-                                    : ConvertDecodedFrameToBgraToBuffer(
-                                        src,
-                                        dstData,
-                                        dstLinesize,
-                                        dstW,
-                                        dstH,
-                                        SwsFlags.SWS_BILINEAR,
-                                        ref _sws);
-                                if (ok)
-                                    return true;
-                            }
-                        }
+                        bool ok = scaled
+                            ? ConvertDecodedFrameToBgraToBuffer(
+                                src,
+                                dstData,
+                                dstLinesize,
+                                dstW,
+                                dstH,
+                                flags,
+                                ref _swsScaled)
+                            : ConvertDecodedFrameToBgraToBuffer(
+                                src,
+                                dstData,
+                                dstLinesize,
+                                dstW,
+                                dstH,
+                                SwsFlags.SWS_BILINEAR,
+                                ref _sws);
+                        if (ok)
+                            return true;
                     }
 
+                    SetSequentialDecodeError("decoded frame buffer conversion failed");
                     return false;
                 }
                 finally
@@ -709,6 +742,135 @@ namespace FaceShield.Services.Video
                     ffmpeg.av_frame_free(&src);
                 }
             }
+        }
+
+        private bool TryDecodeNextSequentialFrame(
+            CancellationToken ct,
+            AVPacket* packet,
+            AVFrame* decodedFrame,
+            out int frameIndex)
+        {
+            frameIndex = -1;
+            int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
+
+            while (true)
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    _sequentialCancelled = true;
+                    return false;
+                }
+
+                ffmpeg.av_frame_unref(decodedFrame);
+                int receiveResult = ffmpeg.avcodec_receive_frame(_dec, decodedFrame);
+                if (receiveResult == 0)
+                {
+                    long pts = decodedFrame->best_effort_timestamp;
+                    if (pts == ffmpeg.AV_NOPTS_VALUE)
+                        pts = decodedFrame->pts;
+
+                    if (!_sequentialStarted &&
+                        pts != ffmpeg.AV_NOPTS_VALUE &&
+                        pts < _sequentialTargetPts)
+                    {
+                        continue;
+                    }
+
+                    _sequentialStarted = true;
+                    frameIndex = _sequentialIndex++;
+                    CaptureDecodedTimestamp(frameIndex, pts);
+                    return true;
+                }
+
+                if (receiveResult == ffmpeg.AVERROR_EOF)
+                {
+                    _sequentialReachedEndOfStream = true;
+                    return false;
+                }
+
+                if (receiveResult != tryAgain)
+                {
+                    SetSequentialDecodeError("avcodec_receive_frame failed", receiveResult);
+                    return false;
+                }
+
+                if (_sequentialDrainSent)
+                {
+                    SetSequentialDecodeError(
+                        "decoder returned EAGAIN after the end-of-stream drain packet");
+                    return false;
+                }
+
+                int readResult;
+                do
+                {
+                    ffmpeg.av_packet_unref(packet);
+                    readResult = ffmpeg.av_read_frame(_fmt, packet);
+                }
+                while (readResult >= 0 && packet->stream_index != _videoStreamIndex);
+
+                if (readResult == ffmpeg.AVERROR_EOF)
+                {
+                    ffmpeg.av_packet_unref(packet);
+                    int drainResult = ffmpeg.avcodec_send_packet(_dec, null);
+                    _sequentialDrainSent = true;
+                    if (drainResult == 0)
+                        continue;
+                    if (drainResult == ffmpeg.AVERROR_EOF)
+                    {
+                        _sequentialReachedEndOfStream = true;
+                        return false;
+                    }
+
+                    SetSequentialDecodeError("avcodec_send_packet drain failed", drainResult);
+                    return false;
+                }
+
+                if (readResult < 0)
+                {
+                    ffmpeg.av_packet_unref(packet);
+                    SetSequentialDecodeError("av_read_frame failed", readResult);
+                    return false;
+                }
+
+                int sendResult = ffmpeg.avcodec_send_packet(_dec, packet);
+                ffmpeg.av_packet_unref(packet);
+                if (sendResult == 0)
+                    continue;
+
+                SetSequentialDecodeError(
+                    sendResult == tryAgain
+                        ? "decoder rejected an input packet with EAGAIN after output was drained"
+                        : "avcodec_send_packet failed",
+                    sendResult);
+                return false;
+            }
+        }
+
+        private void ResetSequentialCompletionState()
+        {
+            _sequentialDrainSent = false;
+            _sequentialReachedEndOfStream = false;
+            _sequentialCancelled = false;
+            _sequentialDecodeError = null;
+        }
+
+        private void SetSequentialDecodeError(string message)
+        {
+            string? detail = GetLastDecodeError();
+            _sequentialDecodeError = string.IsNullOrWhiteSpace(detail)
+                ? message
+                : $"{message}: {detail}";
+            UpdateDecodeStatus("디코딩: 실패", _sequentialDecodeError);
+            Debug.WriteLine($"[FfFrameExtractor] {_sequentialDecodeError}");
+        }
+
+        private void SetSequentialDecodeError(string message, int error)
+        {
+            _sequentialDecodeError =
+                $"{message} (ffmpeg: {FFmpegErrorHelper.GetErrorMessage(error)}, code: {error})";
+            UpdateDecodeStatus("디코딩: 실패", _sequentialDecodeError);
+            Debug.WriteLine($"[FfFrameExtractor] {_sequentialDecodeError}");
         }
 
         private void CaptureDecodedTimestamp(int frameIndex, long pts)

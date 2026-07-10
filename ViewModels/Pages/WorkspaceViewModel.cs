@@ -1085,7 +1085,7 @@ namespace FaceShield.ViewModels.Pages
                     _autoCompleted = false;
                     _autoResumeIndex = Math.Clamp(lastProcessed, 0, Math.Max(0, FrameList.TotalFrames - 1));
                     System.Diagnostics.Debug.WriteLine(
-                        $"[AutoMaskPostProcessSkipped] reason=incomplete totalFrames={FrameList.TotalFrames} startFrame={generator.LastRunSummary?.StartFrameIndex ?? lastProcessed} processed={generator.LastRunSummary?.ProcessedFrames ?? 0} lastProcessed={lastProcessed} resumeIndex={_autoResumeIndex}");
+                        $"[AutoMaskPostProcessSkipped] reason=incomplete totalFrames={FrameList.TotalFrames} startFrame={generator.LastRunSummary?.StartFrameIndex ?? lastProcessed} processed={generator.LastRunSummary?.ProcessedFrames ?? 0} decoded={generator.LastRunSummary?.DecodedFrames ?? 0} decodeEof={generator.LastRunSummary?.ReachedDecoderEof.ToString().ToLowerInvariant() ?? "false"} decodeCancelled={generator.LastRunSummary?.DecodeCancelled.ToString().ToLowerInvariant() ?? "false"} decodeError={generator.LastRunSummary?.DecodeError ?? "summary-missing"} lastProcessed={lastProcessed} resumeIndex={_autoResumeIndex}");
                     PersistWorkspaceState(includePreviewMask: !exportAfter);
                     persisted = true;
                     return false;
@@ -1172,8 +1172,17 @@ namespace FaceShield.ViewModels.Pages
             int lastProcessedFrame,
             int workspaceTotalFrames)
         {
-            int totalFrames = summary?.TotalFrames > 0
-                ? summary.TotalFrames
+            if (summary == null ||
+                !summary.ReachedDecoderEof ||
+                summary.DecodeCancelled ||
+                !string.Equals(summary.DecodeError, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            AutoMaskRunSummary runSummary = summary;
+            int totalFrames = runSummary.TotalFrames > 0
+                ? runSummary.TotalFrames
                 : workspaceTotalFrames;
             if (totalFrames <= 0)
                 return false;
@@ -1184,10 +1193,10 @@ namespace FaceShield.ViewModels.Pages
             if (lastProcessedFrame >= completionFrame)
                 return true;
 
-            if (summary == null || summary.ProcessedFrames <= 0)
+            if (runSummary.ProcessedFrames <= 0)
                 return false;
 
-            int summaryLastFrame = summary.StartFrameIndex + summary.ProcessedFrames - 1;
+            int summaryLastFrame = runSummary.StartFrameIndex + runSummary.ProcessedFrames - 1;
             return summaryLastFrame >= completionFrame;
         }
 

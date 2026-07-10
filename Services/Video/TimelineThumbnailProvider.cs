@@ -146,7 +146,13 @@ namespace FaceShield.Services.Video
             double seconds = frameIndex / _fps;
             long targetPts = (long)Math.Floor(seconds / tbSec);
 
-            ffmpeg.av_seek_frame(_fmt, _videoStreamIndex, targetPts, ffmpeg.AVSEEK_FLAG_BACKWARD);
+            int seekResult = ffmpeg.av_seek_frame(
+                _fmt,
+                _videoStreamIndex,
+                targetPts,
+                ffmpeg.AVSEEK_FLAG_BACKWARD);
+            if (seekResult < 0)
+                return null;
             ffmpeg.avcodec_flush_buffers(_dec);
 
             AVPacket* pkt = ffmpeg.av_packet_alloc();
@@ -165,18 +171,13 @@ namespace FaceShield.Services.Video
                 if (ffmpeg.av_frame_get_buffer(dst, 32) < 0)
                     return null;
 
-                while (ffmpeg.av_read_frame(_fmt, pkt) >= 0)
+                int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
+                bool drainSent = false;
+                while (true)
                 {
-                    if (pkt->stream_index != _videoStreamIndex)
-                    {
-                        ffmpeg.av_packet_unref(pkt);
-                        continue;
-                    }
-
-                    ffmpeg.avcodec_send_packet(_dec, pkt);
-                    ffmpeg.av_packet_unref(pkt);
-
-                    if (ffmpeg.avcodec_receive_frame(_dec, src) == 0)
+                    ffmpeg.av_frame_unref(src);
+                    int receiveResult = ffmpeg.avcodec_receive_frame(_dec, src);
+                    if (receiveResult == 0)
                     {
                         long pts = src->best_effort_timestamp;
                         if (pts == ffmpeg.AV_NOPTS_VALUE)
@@ -185,43 +186,42 @@ namespace FaceShield.Services.Video
                         if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
                             continue;
 
-                        ffmpeg.sws_scale(
-                            _sws,
-                            src->data,
-                            src->linesize,
-                            0,
-                            src->height,
-                            dst->data,
-                            dst->linesize);
-
-                        var bmp = new WriteableBitmap(
-                            new PixelSize(_thumbWidth, _thumbHeight),
-                            new Vector(96, 96),
-                            Avalonia.Platform.PixelFormat.Bgra8888,
-                            Avalonia.Platform.AlphaFormat.Premul);
-
-                        using (var fb = bmp.Lock())
-                        {
-                            byte* dstPtr = (byte*)fb.Address;
-                            byte* srcPtr = dst->data[0];
-
-                            int srcStride = dst->linesize[0];
-                            int dstStride = fb.RowBytes;
-
-                            int copyBytesPerRow = Math.Min(srcStride, dstStride);
-
-                            for (int y = 0; y < _thumbHeight; y++)
-                            {
-                                Buffer.MemoryCopy(
-                                    srcPtr + y * srcStride,
-                                    dstPtr + y * dstStride,
-                                    dstStride,
-                                    copyBytesPerRow);
-                            }
-                        }
-
-                        return bmp;
+                        return CreateThumbnail(src, dst);
                     }
+
+                    if (receiveResult == ffmpeg.AVERROR_EOF)
+                        return null;
+                    if (receiveResult != tryAgain || drainSent)
+                        return null;
+
+                    int readResult;
+                    do
+                    {
+                        ffmpeg.av_packet_unref(pkt);
+                        readResult = ffmpeg.av_read_frame(_fmt, pkt);
+                    }
+                    while (readResult >= 0 && pkt->stream_index != _videoStreamIndex);
+
+                    if (readResult == ffmpeg.AVERROR_EOF)
+                    {
+                        ffmpeg.av_packet_unref(pkt);
+                        int drainResult = ffmpeg.avcodec_send_packet(_dec, null);
+                        drainSent = true;
+                        if (drainResult == 0)
+                            continue;
+                        return null;
+                    }
+
+                    if (readResult < 0)
+                    {
+                        ffmpeg.av_packet_unref(pkt);
+                        return null;
+                    }
+
+                    int sendResult = ffmpeg.avcodec_send_packet(_dec, pkt);
+                    ffmpeg.av_packet_unref(pkt);
+                    if (sendResult < 0)
+                        return null;
                 }
             }
             finally
@@ -231,7 +231,42 @@ namespace FaceShield.Services.Video
                 if (dst != null) ffmpeg.av_frame_free(&dst);
             }
 
-            return null;
+        }
+
+        private WriteableBitmap CreateThumbnail(AVFrame* src, AVFrame* dst)
+        {
+            ffmpeg.sws_scale(
+                _sws,
+                src->data,
+                src->linesize,
+                0,
+                src->height,
+                dst->data,
+                dst->linesize);
+
+            var bmp = new WriteableBitmap(
+                new PixelSize(_thumbWidth, _thumbHeight),
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var fb = bmp.Lock();
+            byte* dstPtr = (byte*)fb.Address;
+            byte* srcPtr = dst->data[0];
+            int srcStride = dst->linesize[0];
+            int dstStride = fb.RowBytes;
+            int copyBytesPerRow = Math.Min(srcStride, dstStride);
+
+            for (int y = 0; y < _thumbHeight; y++)
+            {
+                Buffer.MemoryCopy(
+                    srcPtr + y * srcStride,
+                    dstPtr + y * dstStride,
+                    dstStride,
+                    copyBytesPerRow);
+            }
+
+            return bmp;
         }
 
         public void Dispose()

@@ -166,7 +166,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 durationSeconds = 0;
             }
 
-            int frames = (int)Math.Floor(durationSeconds * fpsValue);
+            int frames = videoStream->nb_frames > 0
+                ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
+                : (int)Math.Floor(durationSeconds * fpsValue);
             TotalFrames = Math.Max(frames, 0);
 
             // 전체 영상 길이(초)

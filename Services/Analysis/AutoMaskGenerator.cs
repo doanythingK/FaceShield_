@@ -259,7 +259,8 @@ namespace FaceShield.Services.Analysis
             long readMs = 0;
             long detectMs = 0;
             long maskMs = 0;
-            int processed = 0;
+            int decoded = 0;
+            int detected = 0;
             int offModeSceneCutResetPairs = 0;
             int offModeSceneCutResetRemovedFrameCount = 0;
             int offModeSceneCutResetBeforeWindowFrameCount = 0;
@@ -319,6 +320,7 @@ namespace FaceShield.Services.Analysis
                 RecordFrameTiming(extractor, idx);
 
                 onFrameProcessed?.Invoke(idx);
+                decoded++;
 
                 if (forceSceneCutDetection)
                 {
@@ -406,6 +408,7 @@ namespace FaceShield.Services.Analysis
 
                 if (shouldDetect)
                 {
+                    detected++;
                     var tDetect = Stopwatch.StartNew();
                     if (useRaw)
                     {
@@ -535,25 +538,23 @@ namespace FaceShield.Services.Analysis
                 }
 
                 ReportProgress(progress, idx, totalFrames, progressState);
-                processed++;
 
-                if (processed % 60 == 0)
+                if (decoded % 60 == 0)
                 {
                     Debug.WriteLine(
-                        $"[AutoMask] frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
+                        $"[AutoMask] decoded={decoded}, detects={detected}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
                 }
             }
 
-            progress?.Report(100);
             Debug.WriteLine(
-                $"[AutoMask] done frames={processed}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
+                $"[AutoMask] done decoded={decoded}, detects={detected}, readMs={readMs}, detectMs={detectMs}, maskMs={maskMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
             SetLastRunSummary(new AutoMaskRunSummary(
                 "sequential",
                 totalFrames,
                 start,
-                processed,
-                processed,
-                processed,
+                decoded,
+                decoded,
+                detected,
                 0,
                 readMs,
                 0,
@@ -578,8 +579,7 @@ namespace FaceShield.Services.Analysis
                 FinalOffModeSceneCutResetRemovedBeforeFrameCount = offModeSceneCutResetRemovedBeforeFrameCount,
                 FinalOffModeSceneCutResetRemovedAfterFrameCount = offModeSceneCutResetRemovedAfterFrameCount
             });
-            ApplyPostProcessResultToRunSummary(
-                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
+            FinalizeRunAfterDecode(extractor, videoPath, totalFrames, progress, ct);
         }
 
         private sealed class BgraBuffer
@@ -938,7 +938,6 @@ namespace FaceShield.Services.Analysis
                 try { writer.Wait(); } catch { }
             }
 
-            progress?.Report(100);
             Debug.WriteLine(
                 $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
             SetLastRunSummary(new AutoMaskRunSummary(
@@ -972,8 +971,7 @@ namespace FaceShield.Services.Analysis
                 FinalOffModeSceneCutResetRemovedBeforeFrameCount = offModeSceneCutResetRemovedBeforeFrameCount,
                 FinalOffModeSceneCutResetRemovedAfterFrameCount = offModeSceneCutResetRemovedAfterFrameCount
             });
-            ApplyPostProcessResultToRunSummary(
-                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
+            FinalizeRunAfterDecode(extractor, videoPath, totalFrames, progress, ct);
         }
 
         public async Task<bool> GenerateFrameAsync(
@@ -1404,7 +1402,6 @@ namespace FaceShield.Services.Analysis
                 try { writer.Wait(); } catch { }
             }
 
-            progress?.Report(100);
             Debug.WriteLine(
                 $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
             SetLastRunSummary(new AutoMaskRunSummary(
@@ -1438,8 +1435,7 @@ namespace FaceShield.Services.Analysis
                 FinalOffModeSceneCutResetRemovedBeforeFrameCount = offModeSceneCutResetRemovedBeforeFrameCount,
                 FinalOffModeSceneCutResetRemovedAfterFrameCount = offModeSceneCutResetRemovedAfterFrameCount
             });
-            ApplyPostProcessResultToRunSummary(
-                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
+            FinalizeRunAfterDecode(extractor, videoPath, totalFrames, progress, ct);
         }
 
         private void GenerateSparsePipelinedTrackingParallel(
@@ -1700,8 +1696,6 @@ namespace FaceShield.Services.Analysis
             var materialized = MaterializeSparseTrackingResults(results, start, materializeEndExclusive);
             int interpolated = materialized.Interpolated;
 
-            if (!ct.IsCancellationRequested)
-                progress?.Report(100);
             Debug.WriteLine(
                 $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, sparseSceneCuts={materialized.SceneCutStops}, sparseSceneCutPairs={FormatSparseSceneCutTransitions(materialized.SceneCutTransitions)}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
             SetLastRunSummary(new AutoMaskRunSummary(
@@ -1727,8 +1721,50 @@ namespace FaceShield.Services.Analysis
                 _sourceFpsForSummary,
                 _options.RunId,
                 GetDetectorName()));
+            FinalizeRunAfterDecode(extractor, videoPath, totalFrames, progress, ct);
+        }
+
+        private void FinalizeRunAfterDecode(
+            FfFrameExtractor extractor,
+            string videoPath,
+            int totalFrames,
+            IProgress<int>? progress,
+            CancellationToken ct)
+        {
+            if (LastRunSummary == null)
+                return;
+
+            bool decodeCancelled = ct.IsCancellationRequested || extractor.SequentialReadCancelled;
+            string decodeError = string.IsNullOrWhiteSpace(extractor.SequentialDecodeError)
+                ? "none"
+                : extractor.SequentialDecodeError;
+            LastRunSummary = LastRunSummary with
+            {
+                ReachedDecoderEof = extractor.SequentialReachedEndOfStream,
+                DecodeCancelled = decodeCancelled,
+                DecodeError = decodeError
+            };
+
+            int expectedFrames = Math.Max(0, totalFrames - LastRunSummary.StartFrameIndex);
+            bool complete = LastRunSummary.ReachedDecoderEof &&
+                !LastRunSummary.DecodeCancelled &&
+                string.Equals(LastRunSummary.DecodeError, "none", StringComparison.OrdinalIgnoreCase) &&
+                LastRunSummary.DecodedFrames >= expectedFrames;
+            if (!complete)
+            {
+                string incompleteLine =
+                    $"[AutoRunDecodeIncomplete] runId={LastRunSummary.RunId ?? "n/a"}, totalFrames={totalFrames}, startFrame={LastRunSummary.StartFrameIndex}, expected={expectedFrames}, decoded={LastRunSummary.DecodedFrames}, eof={LastRunSummary.ReachedDecoderEof.ToString().ToLowerInvariant()}, cancelled={LastRunSummary.DecodeCancelled.ToString().ToLowerInvariant()}, error={LastRunSummary.DecodeError}";
+                Debug.WriteLine(incompleteLine);
+                RunMetricsLog.AppendRunLines(
+                    LastRunSummary.RunId,
+                    LastRunSummary.ToLogLine(),
+                    incompleteLine);
+                return;
+            }
+
             ApplyPostProcessResultToRunSummary(
                 RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
+            progress?.Report(100);
         }
 
         private AutoMaskPostProcessResult RunAutoPostProcessIfNeeded(string videoPath, int totalFrames, CancellationToken ct)
@@ -2707,8 +2743,8 @@ namespace FaceShield.Services.Analysis
             if (progress == null)
                 return;
 
-            int percent = (int)Math.Round(frameIndex * 100.0 / Math.Max(1, totalFrames - 1));
-            if (percent > 100) percent = 100;
+            int percent = (int)Math.Floor(frameIndex * 100.0 / Math.Max(1, totalFrames - 1));
+            if (percent > 99) percent = 99;
             if (percent == state.LastPercent)
                 return;
             state.LastPercent = percent;
@@ -3168,7 +3204,9 @@ namespace FaceShield.Services.Analysis
                     durationSeconds = 0;
                 }
 
-                int frames = (int)Math.Floor(durationSeconds * fpsValue);
+                int frames = videoStream->nb_frames > 0
+                    ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
+                    : (int)Math.Floor(durationSeconds * fpsValue);
 
                 return (
                     fps: fpsValue,
