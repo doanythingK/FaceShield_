@@ -96,6 +96,8 @@ namespace FaceShield.Services.Video
         private bool _sequentialStarted;
         private int _sequentialIndex;
         private long _sequentialTargetPts;
+        private double _lastDecodedTimestampSeconds = double.NaN;
+        private string _lastDecodedTimestampSource = "none";
 
         private AVFrame* _bgraReusable;
         private int _bgraReusableWidth;
@@ -160,6 +162,28 @@ namespace FaceShield.Services.Video
 
             int openResult = ffmpeg.avcodec_open2(_dec, codec, null);
             FFmpegErrorHelper.ThrowIfError(openResult, "Failed to open decoder");
+        }
+
+        /// <summary>
+        /// 가장 최근에 순차 디코딩한 프레임의 표시 시각(초)입니다.
+        /// best_effort_timestamp가 없을 때만 평균 FPS 기반 값을 사용합니다.
+        /// </summary>
+        public double LastDecodedTimestampSeconds
+        {
+            get
+            {
+                lock (_sync)
+                    return _lastDecodedTimestampSeconds;
+            }
+        }
+
+        public string LastDecodedTimestampSource
+        {
+            get
+            {
+                lock (_sync)
+                    return _lastDecodedTimestampSource;
+            }
         }
 
         public PixelSize FrameSize => new(_dec->width, _dec->height);
@@ -285,6 +309,42 @@ namespace FaceShield.Services.Video
                 _sequentialIndex = startFrameIndex;
                 _sequentialActive = true;
                 _sequentialStarted = false;
+                _lastDecodedTimestampSeconds = double.NaN;
+                _lastDecodedTimestampSource = "none";
+            }
+        }
+
+        /// <summary>
+        /// 실제 표시 시각을 기준으로 순차 읽기를 시작합니다. VFR 위험 프레임 재검출에서 사용합니다.
+        /// </summary>
+        public void StartSequentialReadAtTimestamp(int startFrameIndex, double timestampSeconds)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
+            if (startFrameIndex < 0) startFrameIndex = 0;
+            if (!double.IsFinite(timestampSeconds))
+                throw new ArgumentOutOfRangeException(nameof(timestampSeconds));
+
+            lock (_sync)
+            {
+                double tbSec = ffmpeg.av_q2d(_timeBase);
+                if (tbSec <= 0)
+                    tbSec = 1.0 / 90000.0;
+
+                _sequentialTargetPts = (long)Math.Floor(timestampSeconds / tbSec);
+                int seekResult = ffmpeg.av_seek_frame(
+                    _fmt,
+                    _videoStreamIndex,
+                    _sequentialTargetPts,
+                    ffmpeg.AVSEEK_FLAG_BACKWARD);
+                if (seekResult < 0)
+                    throw new InvalidOperationException($"timestamp seek failed: {seekResult}");
+                ffmpeg.avcodec_flush_buffers(_dec);
+
+                _sequentialIndex = startFrameIndex;
+                _sequentialActive = true;
+                _sequentialStarted = false;
+                _lastDecodedTimestampSeconds = double.NaN;
+                _lastDecodedTimestampSource = "none";
             }
         }
 
@@ -350,6 +410,7 @@ namespace FaceShield.Services.Video
                             _sequentialStarted = true;
 
                             frameIndex = _sequentialIndex++;
+                            CaptureDecodedTimestamp(frameIndex, pts);
                             if (!requireBitmap)
                                 return true;
 
@@ -427,6 +488,7 @@ namespace FaceShield.Services.Video
 
                             _sequentialStarted = true;
                             frameIndex = _sequentialIndex++;
+                            CaptureDecodedTimestamp(frameIndex, pts);
 
                             if (!requireBgra)
                                 return true;
@@ -514,6 +576,7 @@ namespace FaceShield.Services.Video
 
                             _sequentialStarted = true;
                             frameIndex = _sequentialIndex++;
+                            CaptureDecodedTimestamp(frameIndex, pts);
 
                             if (!requireBgra)
                                 return true;
@@ -613,6 +676,7 @@ namespace FaceShield.Services.Video
 
                                 _sequentialStarted = true;
                                 frameIndex = _sequentialIndex++;
+                                CaptureDecodedTimestamp(frameIndex, pts);
 
                                 bool ok = scaled
                                     ? ConvertDecodedFrameToBgraToBuffer(
@@ -645,6 +709,28 @@ namespace FaceShield.Services.Video
                     ffmpeg.av_frame_free(&src);
                 }
             }
+        }
+
+        private void CaptureDecodedTimestamp(int frameIndex, long pts)
+        {
+            double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
+            if (pts != ffmpeg.AV_NOPTS_VALUE && timeBaseSeconds > 0 && double.IsFinite(timeBaseSeconds))
+            {
+                double timestampSeconds = pts * timeBaseSeconds;
+                if (double.IsFinite(timestampSeconds))
+                {
+                    _lastDecodedTimestampSeconds = timestampSeconds;
+                    _lastDecodedTimestampSource = "pts";
+                    return;
+                }
+            }
+
+            _lastDecodedTimestampSeconds = _fps > 0
+                ? frameIndex / _fps
+                : double.NaN;
+            _lastDecodedTimestampSource = double.IsFinite(_lastDecodedTimestampSeconds)
+                ? "fps-fallback"
+                : "none";
         }
 
         public void Dispose()

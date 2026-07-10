@@ -152,6 +152,19 @@
           </StackPanel>
 
           <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="분석 모드" Width="90" VerticalAlignment="Center"/>
+            <ComboBox Width="180"
+                      ItemsSource="{Binding AutoProcessingModeOptions}"
+                      SelectedItem="{Binding SelectedAutoProcessingModeOption}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}"/>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="해상도 축소" Width="90" VerticalAlignment="Center"/>
             <ComboBox Width="140"
                       ItemsSource="{Binding DownscaleOptions}"
@@ -177,13 +190,15 @@
             </ComboBox>
           </StackPanel>
 
-          <StackPanel Orientation="Horizontal" Spacing="8">
-          <CheckBox Content="추적 사용" IsChecked="{Binding AutoTrackingEnabled}"/>
+          <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsTrackingIntervalVisible}">
+          <CheckBox Content="추적 사용"
+                    IsVisible="{Binding IsLegacyProcessingMode}"
+                    IsChecked="{Binding AutoTrackingEnabled}"/>
           <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
           <ComboBox Width="80"
                     ItemsSource="{Binding DetectEveryOptions}"
                     SelectedItem="{Binding AutoDetectEveryNFrames}"
-                    IsEnabled="{Binding IsTrackingOptionsEnabled}"/>
+                    IsEnabled="{Binding IsTrackingIntervalEnabled}"/>
             <TextBlock Text="프레임" VerticalAlignment="Center"/>
         </StackPanel>
 
@@ -191,19 +206,27 @@
           <StackPanel Spacing="8">
             <TextBlock Text="후처리 토글 (YOLO 전용)"
                        FontWeight="SemiBold"/>
-            <CheckBox Content="후처리 단계 사용"
-                      IsChecked="{Binding EnablePostProcessing}"/>
-            <StackPanel Margin="10,0,0,0" Spacing="4" IsEnabled="{Binding EnablePostProcessing}">
-              <CheckBox Content="ROI 재검증 단계 사용"
-                        IsChecked="{Binding EnableRoiPostProcess}"/>
-              <CheckBox Content="약한 단일오탐 제거"
-                        IsChecked="{Binding EnableYoloWeakIsolatedCleanup}"/>
-              <CheckBox Content="짧은 간격 보강"
-                        IsChecked="{Binding EnableYoloGapFill}"/>
-              <CheckBox Content="장면전환 carry 정리"
-                        IsChecked="{Binding EnableYoloSceneCutCarryCleanup}"/>
-              <CheckBox Content="temporal smoothing"
-                        IsChecked="{Binding EnableYoloTemporalSmoothing}"/>
+            <TextBlock Text="{Binding EffectiveProcessingModeDescription}"
+                       TextWrapping="Wrap" Opacity="0.75"/>
+            <CheckBox Content="위험 프레임 FaceONNX 강검출 (간격 1 · 검증 전 실험 기능)"
+                      IsVisible="{Binding IsYoloCascadeOptionVisible}"
+                      IsEnabled="{Binding IsYoloCascadeOptionEnabled}"
+                      IsChecked="{Binding EnableYoloRiskCascade}"/>
+            <StackPanel Spacing="4" IsVisible="{Binding IsLegacyProcessingMode}">
+              <CheckBox Content="후처리 단계 사용"
+                        IsChecked="{Binding EnablePostProcessing}"/>
+              <StackPanel Margin="10,0,0,0" Spacing="4" IsEnabled="{Binding EnablePostProcessing}">
+                <CheckBox Content="ROI 재검증 단계 사용"
+                          IsChecked="{Binding EnableRoiPostProcess}"/>
+                <CheckBox Content="약한 단일오탐 제거"
+                          IsChecked="{Binding EnableYoloWeakIsolatedCleanup}"/>
+                <CheckBox Content="짧은 간격 보강"
+                          IsChecked="{Binding EnableYoloGapFill}"/>
+                <CheckBox Content="장면전환 carry 정리"
+                          IsChecked="{Binding EnableYoloSceneCutCarryCleanup}"/>
+                <CheckBox Content="temporal smoothing"
+                          IsChecked="{Binding EnableYoloTemporalSmoothing}"/>
+              </StackPanel>
             </StackPanel>
           </StackPanel>
         </Border>
@@ -294,6 +317,9 @@
                   IsChecked="{Binding AutoUseOrtOptimization}"/>
         <CheckBox Content="GPU 가속(가능한 경우, OS별)"
                   IsChecked="{Binding AutoUseGpu}"/>
+        <CheckBox Content="YOLO CoreML (macOS · 검증 전 실험 기능)"
+                  IsVisible="{Binding IsYoloDetectorSelected}"
+                  IsChecked="{Binding AutoYoloEnableCoreMl}"/>
           <CheckBox Content="자동 완료 후 파일 저장"
                     IsChecked="{Binding AutoExportAfter}"/>
 

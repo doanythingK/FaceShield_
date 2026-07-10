@@ -101,6 +101,7 @@ namespace FaceShield.Services.Analysis
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
         private readonly IFaceDetectorFactory? _detectorFactory;
+        private readonly Dictionary<int, FrameTimingSample> _frameTimings = new();
         private double _sourceFpsForSummary;
 
         public AutoMaskRunSummary? LastRunSummary { get; private set; }
@@ -113,7 +114,7 @@ namespace FaceShield.Services.Analysis
         {
             _detector = detector ?? throw new ArgumentNullException(nameof(detector));
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
-            _options = options ?? new AutoMaskOptions();
+            _options = (options ?? new AutoMaskOptions()).ResolveProcessingMode();
             _detectorFactory = detectorFactory;
         }
 
@@ -133,6 +134,9 @@ namespace FaceShield.Services.Analysis
                 return;
 
             _sourceFpsForSummary = fps;
+            _frameTimings.Clear();
+            if (_options.FilterProfile == FaceFilterProfile.Yolo)
+                _frameTimings.EnsureCapacity(Math.Max(0, totalFrames - Math.Max(0, startFrameIndex)));
 
             LastRunSummary = null;
 
@@ -275,6 +279,7 @@ namespace FaceShield.Services.Analysis
                 forceDetectAfterSceneCut = false;
 
                 bool forceSceneCutDetection = _options.FilterProfile == FaceFilterProfile.Yolo &&
+                    _options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
                     !_options.EnablePostProcessing &&
                     _options.UseTracking &&
                     lastFaces != null;
@@ -309,6 +314,8 @@ namespace FaceShield.Services.Analysis
 
                 if (idx >= totalFrames)
                     break;
+
+                RecordFrameTiming(extractor, idx);
 
                 onFrameProcessed?.Invoke(idx);
 
@@ -419,7 +426,9 @@ namespace FaceShield.Services.Analysis
                             useProxy,
                             _options.DownscaleRatio,
                             _options.DownscaleQuality,
-                            lastFaces,
+                            _options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnableYoloPrimaryRoiShortcut
+                                ? null
+                                : lastFaces,
                             fullSize,
                             scaleX,
                             scaleY,
@@ -444,7 +453,11 @@ namespace FaceShield.Services.Analysis
                     if (faces.Count > 0)
                     {
                         int rawFaceCount = faces.Count;
-                        if (useRaw && bgra.Data != IntPtr.Zero)
+                        if (_options.ProcessingMode == AutoMaskProcessingMode.Raw)
+                        {
+                            // Raw는 detector가 반환한 후보를 그대로 기록해 기준선을 오염시키지 않습니다.
+                        }
+                        else if (useRaw && bgra.Data != IntPtr.Zero)
                         {
                             unsafe
                             {
@@ -664,6 +677,7 @@ namespace FaceShield.Services.Analysis
             int offModeSceneCutResetRemovedBeforeFrameCount = 0;
             int offModeSceneCutResetRemovedAfterFrameCount = 0;
             bool applyOffModeSceneCutReset = _options.FilterProfile == FaceFilterProfile.Yolo
+                && _options.ProcessingMode == AutoMaskProcessingMode.Legacy
                 && !_options.EnablePostProcessing
                 && _options.UseTracking;
 
@@ -702,6 +716,8 @@ namespace FaceShield.Services.Analysis
                             pool.Return(buffer);
                             break;
                         }
+
+                        RecordFrameTiming(extractor, idx);
 
                         double[] sceneSignature = Array.Empty<double>();
                         if (applyOffModeSceneCutReset)
@@ -853,7 +869,9 @@ namespace FaceShield.Services.Analysis
                                         useProxy,
                                         _options.DownscaleRatio,
                                         _options.DownscaleQuality,
-                                        lastFaces,
+                                        _options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnableYoloPrimaryRoiShortcut
+                                            ? null
+                                            : lastFaces,
                                         fullSize,
                                         scaleX,
                                         scaleY,
@@ -864,17 +882,20 @@ namespace FaceShield.Services.Analysis
                                     if (faces.Count > 0)
                                     {
                                         int rawFaceCount = faces.Count;
-                                        faces = FilterFacesByAreaAndStats(
-                                            faces,
-                                            resultSize,
-                                            src,
-                                            item.Stride,
-                                            item.Width,
-                                            item.Height,
-                                            useProxy ? scaleX : 1.0,
-                                            useProxy ? scaleY : 1.0,
-                                            GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
-                                            filterStats);
+                                        if (_options.ProcessingMode != AutoMaskProcessingMode.Raw)
+                                        {
+                                            faces = FilterFacesByAreaAndStats(
+                                                faces,
+                                                resultSize,
+                                                src,
+                                                item.Stride,
+                                                item.Width,
+                                                item.Height,
+                                                useProxy ? scaleX : 1.0,
+                                                useProxy ? scaleY : 1.0,
+                                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                                filterStats);
+                                        }
                                         WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
                                         var payload = BuildMaskPayload(faces);
                                         bounds = payload.Bounds;
@@ -912,8 +933,8 @@ namespace FaceShield.Services.Analysis
             finally
             {
                 results.CompleteAdding();
-                try { producer.Wait(ct); } catch { }
-                try { writer.Wait(ct); } catch { }
+                try { producer.Wait(); } catch { }
+                try { writer.Wait(); } catch { }
             }
 
             progress?.Report(100);
@@ -984,20 +1005,23 @@ namespace FaceShield.Services.Analysis
                     if (faces.Count > 0)
                     {
                         int rawFaceCount = faces.Count;
-                        using var fb = frame.Lock();
-                        unsafe
+                        if (_options.ProcessingMode != AutoMaskProcessingMode.Raw)
                         {
-                            byte* src = (byte*)fb.Address;
-                            faces = FilterFacesByAreaAndStats(
-                                faces,
-                                frame.PixelSize,
-                                src,
-                                fb.RowBytes,
-                                frame.PixelSize.Width,
-                                frame.PixelSize.Height,
-                                1.0,
-                                1.0,
-                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing));
+                            using var fb = frame.Lock();
+                            unsafe
+                            {
+                                byte* src = (byte*)fb.Address;
+                                faces = FilterFacesByAreaAndStats(
+                                    faces,
+                                    frame.PixelSize,
+                                    src,
+                                    fb.RowBytes,
+                                    frame.PixelSize.Width,
+                                    frame.PixelSize.Height,
+                                    1.0,
+                                    1.0,
+                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing));
+                            }
                         }
                         WriteDetectionDiagnostics(frameIndex, rawFaceCount, faces, frame.PixelSize);
                     }
@@ -1096,6 +1120,7 @@ namespace FaceShield.Services.Analysis
             int offModeSceneCutResetRemovedBeforeFrameCount = 0;
             int offModeSceneCutResetRemovedAfterFrameCount = 0;
             bool applyOffModeSceneCutReset = _options.FilterProfile == FaceFilterProfile.Yolo
+                && _options.ProcessingMode == AutoMaskProcessingMode.Legacy
                 && !_options.EnablePostProcessing
                 && _options.UseTracking;
 
@@ -1134,6 +1159,8 @@ namespace FaceShield.Services.Analysis
                             pool.Return(buffer);
                             break;
                         }
+
+                        RecordFrameTiming(extractor, idx);
 
                         double[] sceneSignature = Array.Empty<double>();
                         if (applyOffModeSceneCutReset)
@@ -1216,17 +1243,20 @@ namespace FaceShield.Services.Analysis
                                         if (faces.Count > 0)
                                         {
                                             int rawFaceCount = faces.Count;
-                                            faces = FilterFacesByAreaAndStats(
-                                                faces,
-                                                resultSize,
-                                                src,
-                                                item.Stride,
-                                                item.Width,
-                                                item.Height,
-                                                useProxy ? scaleX : 1.0,
-                                                useProxy ? scaleY : 1.0,
-                                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
-                                                filterStats);
+                                            if (_options.ProcessingMode != AutoMaskProcessingMode.Raw)
+                                            {
+                                                faces = FilterFacesByAreaAndStats(
+                                                    faces,
+                                                    resultSize,
+                                                    src,
+                                                    item.Stride,
+                                                    item.Width,
+                                                    item.Height,
+                                                    useProxy ? scaleX : 1.0,
+                                                    useProxy ? scaleY : 1.0,
+                                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                                    filterStats);
+                                            }
                                             WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
                                             var payload = BuildMaskPayload(faces);
                                             bounds = payload.Bounds;
@@ -1369,8 +1399,8 @@ namespace FaceShield.Services.Analysis
             finally
             {
                 results.CompleteAdding();
-                try { producer.Wait(ct); } catch { }
-                try { writer.Wait(ct); } catch { }
+                try { producer.Wait(); } catch { }
+                try { writer.Wait(); } catch { }
             }
 
             progress?.Report(100);
@@ -1474,6 +1504,8 @@ namespace FaceShield.Services.Analysis
                             if (idx >= totalFrames)
                                 break;
 
+                            RecordFrameTiming(extractor, idx);
+
                             nextIndex = idx + 1;
                             highestDecodedFrame = idx;
                             onFrameProcessed?.Invoke(idx);
@@ -1507,6 +1539,8 @@ namespace FaceShield.Services.Analysis
                             pool.Return(buffer);
                             break;
                         }
+
+                        RecordFrameTiming(extractor, idx);
 
                         nextIndex = idx + 1;
                         highestDecodedFrame = idx;
@@ -1593,17 +1627,20 @@ namespace FaceShield.Services.Analysis
                                     if (faces.Count > 0)
                                     {
                                         int rawFaceCount = faces.Count;
-                                        faces = FilterFacesByAreaAndStats(
-                                            faces,
-                                            resultSize,
-                                            src,
-                                            item.Stride,
-                                            item.Width,
-                                            item.Height,
-                                            useProxy ? scaleX : 1.0,
-                                            useProxy ? scaleY : 1.0,
-                                            GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
-                                            filterStats);
+                                        if (_options.ProcessingMode != AutoMaskProcessingMode.Raw)
+                                        {
+                                            faces = FilterFacesByAreaAndStats(
+                                                faces,
+                                                resultSize,
+                                                src,
+                                                item.Stride,
+                                                item.Width,
+                                                item.Height,
+                                                useProxy ? scaleX : 1.0,
+                                                useProxy ? scaleY : 1.0,
+                                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                                filterStats);
+                                        }
                                         WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
                                         var payload = BuildMaskPayload(faces);
                                         bounds = payload.Bounds;
@@ -1648,7 +1685,7 @@ namespace FaceShield.Services.Analysis
 
             try
             {
-                producer.Wait(ct);
+                producer.Wait();
                 Task.WaitAll(consumers.ToArray());
             }
             catch
@@ -1698,11 +1735,22 @@ namespace FaceShield.Services.Analysis
             if (ct.IsCancellationRequested || totalFrames <= 0)
                 return AutoMaskPostProcessResult.Empty;
 
+            var cascadeResult = new YoloRiskCascadeStep().Apply(
+                _maskProvider,
+                videoPath,
+                totalFrames,
+                _sourceFpsForSummary,
+                _options,
+                _frameTimings,
+                ct);
+            ApplyYoloRiskCascadeResultToRunSummary(cascadeResult);
+
             var postProcess = new AutoMaskPostProcessPipeline(
                 _maskProvider,
                 _options,
                 totalFrames,
-                _sourceFpsForSummary);
+                _sourceFpsForSummary,
+                _frameTimings);
 
             return postProcess.Apply(
                 videoPath,
@@ -1710,6 +1758,52 @@ namespace FaceShield.Services.Analysis
                 _detector as IBgraFaceDetector,
                 _options.RoiRefinerDetectorOptions,
                 _options.UseFaceOnnxRoiRefiner);
+        }
+
+        private void ApplyYoloRiskCascadeResultToRunSummary(YoloRiskCascadeResult result)
+        {
+            if (LastRunSummary == null)
+                return;
+
+            LastRunSummary = LastRunSummary with
+            {
+                YoloRiskCascadeEnabled = result.Enabled,
+                YoloRiskFrameCount = result.RiskFrames,
+                YoloPeriodicGlobalFrameCount = result.PeriodicFrames,
+                YoloSecondaryAttemptCount = result.Attempts,
+                YoloSecondaryHitFrameCount = result.HitFrames,
+                YoloSecondaryCandidateFaceCount = result.CandidateFaces,
+                YoloSecondaryAcceptedFrameCount = result.AcceptedFrames,
+                YoloSecondaryAcceptedFaceCount = result.AcceptedFaces,
+                YoloSecondaryRejectedFaceCount = result.RejectedFaces,
+                YoloCascadeDecodeMs = result.DecodeMs,
+                YoloCascadeDetectMs = result.DetectMs,
+                YoloCascadeTotalMs = result.TotalMs,
+                YoloCascadeReasonBreakdown = string.IsNullOrWhiteSpace(result.ReasonBreakdown)
+                    ? "none"
+                    : result.ReasonBreakdown,
+                YoloCascadeError = string.IsNullOrWhiteSpace(result.Error) ? "none" : result.Error
+            };
+            Debug.WriteLine(LastRunSummary.ToYoloCascadeLogLine());
+        }
+
+        private void RecordFrameTiming(FfFrameExtractor extractor, int frameIndex)
+        {
+            if (_options.FilterProfile != FaceFilterProfile.Yolo)
+                return;
+
+            double timestampSeconds = extractor.LastDecodedTimestampSeconds;
+            if (!double.IsFinite(timestampSeconds))
+                return;
+
+            FrameTimingSource source = string.Equals(
+                extractor.LastDecodedTimestampSource,
+                "pts",
+                StringComparison.Ordinal)
+                ? FrameTimingSource.PresentationTimestamp
+                : FrameTimingSource.FpsFallback;
+
+            _frameTimings[frameIndex] = new FrameTimingSample(timestampSeconds, source);
         }
 
         private void ApplyPostProcessResultToRunSummary(AutoMaskPostProcessResult postProcessResult)
@@ -1762,6 +1856,12 @@ namespace FaceShield.Services.Analysis
                 FinalGapFillUnsupportedWeakAnchorChecks = finalSummary.FinalGapFillUnsupportedWeakAnchorChecks,
                 PostProcessMs = postProcessResult.PostProcessElapsedMs,
                 SampleWindowFrames = finalSummary.SampleWindowFrames,
+                SampleWindowStartFrame = finalSummary.SampleWindowStartFrame,
+                SampleWindowEndFrame = finalSummary.SampleWindowEndFrame,
+                SampleWindowStartSeconds = finalSummary.SampleWindowStartSeconds,
+                SampleWindowEndSeconds = finalSummary.SampleWindowEndSeconds,
+                SampleWindowDurationSeconds = finalSummary.SampleWindowDurationSeconds,
+                SampleWindowTimingSource = finalSummary.SampleWindowTimingSource,
                 SampleFrameCount = finalSummary.SampleFrameCount,
                 SampleRowCount = finalSummary.SampleRowCount,
                 SampleShortGapCount = finalSummary.SampleShortGapCount,
@@ -1788,6 +1888,8 @@ namespace FaceShield.Services.Analysis
                     : finalSummary.SampleWindowStartReason
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
+            Debug.WriteLine(LastRunSummary.ToSampleTimingLogLine());
+            Debug.WriteLine(LastRunSummary.ToYoloCascadeLogLine());
             LogAutoMaskQualityGate(LastRunSummary);
         }
 
@@ -1855,12 +1957,12 @@ namespace FaceShield.Services.Analysis
                 : sampleRiskScore >= 1
                     ? "medium"
                     : "low";
-            double detectionFps = summary.ProcessedFrames > 0 && summary.TotalMs > 0
-                ? summary.ProcessedFrames * 1000.0 / summary.TotalMs
+            double detectionFps = summary.ProcessedFrames > 0 && summary.AnalysisTotalMs > 0
+                ? summary.ProcessedFrames * 1000.0 / summary.AnalysisTotalMs
                 : 0.0;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[AutoMaskQualityGate] runId={summary.RunId ?? "n/a"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, offModeResetPairs:{summary.FinalOffModeSceneCutResetPairCount},offModeResetRemoved:{summary.FinalOffModeSceneCutResetRemovedFrameCount},offModeResetWindows={summary.FinalOffModeSceneCutResetBeforeWindowFrameCount}/{summary.FinalOffModeSceneCutResetAfterWindowFrameCount},offModeResetRemovedWindows={summary.FinalOffModeSceneCutResetRemovedBeforeFrameCount}/{summary.FinalOffModeSceneCutResetRemovedAfterFrameCount}, offModeResetRate={offModeSceneCutResetRate:0.0000}, offModeResetBeforeRate={offModeSceneCutResetBeforeRate:0.0000}, offModeResetAfterRate={offModeSceneCutResetAfterRate:0.0000}, postGapFillCarryPairs:{summary.FinalSceneCutPostGapFillCarryPairCount},postGapFillRemoved:{summary.FinalSceneCutPostGapFillCarryRemovedCount},postGapFillProtected:{summary.FinalSceneCutPostGapFillProtectedFrameCount}, sceneCutSourceBreakdown={summary.FinalSceneCutPairSourceBreakdown}, postGapFillPairSourceBreakdown={summary.FinalSceneCutPostGapFillPairSourceBreakdown}, sampleWindowFrames={sampleWindowFrames}");
+                $"[AutoMaskQualityGate] runId={summary.RunId ?? "n/a"}, mode={summary.Mode}, risk={riskLabel}, detectionFps={detectionFps:0.00}, detectorTotalMs={summary.TotalMs}, analysisTotalMs={summary.AnalysisTotalMs}, totalFrames={summary.TotalFrames}, processed={summary.ProcessedFrames}, finalMaskFrames={summary.FinalMaskFrames}, finalRows={summary.FinalMaskRows}, reviewRequired={summary.FinalMaskReviewRequired.ToString().ToLowerInvariant()}, reviewReasons={summary.FinalMaskReviewReasons}, post={summary.EnablePostProcessing}, roiPost={summary.EnableRoiPostProcess}, weakIso={summary.EnableYoloWeakIsolatedCleanup}, gapFill={summary.EnableYoloGapFill}, scene={summary.EnableYoloSceneCutCarryCleanup}, smooth={summary.EnableYoloTemporalSmoothing}, shortGaps={summary.FinalMaskShortGapCount}, perFaceShortGaps={summary.FinalMaskPerFaceShortGapCount}, largeJumps={summary.FinalMaskLargeJumpGapCount}, carryFrames={summary.FinalProtectedSceneCarryFrameCount}, sceneCut=preGuard:{summary.FinalSceneCutPreGuardPairCount},preStrong:{summary.FinalSceneCutPreStrongProbePairCount},postGuard:{summary.FinalSceneCutPostGuardPairCount},postStrong:{summary.FinalSceneCutPostStrongProbePairCount},carryPairs:{summary.FinalSceneCutCarryPairCount},carryRemoved:{summary.FinalSceneCutCarryRemovedCount},carryProtected:{summary.FinalSceneCutProtectedFrameCount}, offModeResetPairs:{summary.FinalOffModeSceneCutResetPairCount},offModeResetRemoved:{summary.FinalOffModeSceneCutResetRemovedFrameCount},offModeResetWindows={summary.FinalOffModeSceneCutResetBeforeWindowFrameCount}/{summary.FinalOffModeSceneCutResetAfterWindowFrameCount},offModeResetRemovedWindows={summary.FinalOffModeSceneCutResetRemovedBeforeFrameCount}/{summary.FinalOffModeSceneCutResetRemovedAfterFrameCount}, offModeResetRate={offModeSceneCutResetRate:0.0000}, offModeResetBeforeRate={offModeSceneCutResetBeforeRate:0.0000}, offModeResetAfterRate={offModeSceneCutResetAfterRate:0.0000}, postGapFillCarryPairs:{summary.FinalSceneCutPostGapFillCarryPairCount},postGapFillRemoved:{summary.FinalSceneCutPostGapFillCarryRemovedCount},postGapFillProtected:{summary.FinalSceneCutPostGapFillProtectedFrameCount}, sceneCutSourceBreakdown={summary.FinalSceneCutPairSourceBreakdown}, postGapFillPairSourceBreakdown={summary.FinalSceneCutPostGapFillPairSourceBreakdown}, sampleWindowFrames={sampleWindowFrames}");
             System.Diagnostics.Debug.WriteLine(
                 $"[AutoMaskQualityGate] final runId={summary.RunId ?? "n/a"}, missRecovery={summary.FinalMissRecoveryFillCount}, fpSuppressed={summary.FinalFalsePositiveSuppressedCount}, offModeWeakCleanupSuppressed={summary.FinalOffModeWeakCleanupCount}, gapFillRecovered={summary.FinalGapFillRecoveredCount}, gapFillBlocked={summary.FinalGapFillBlockedCutGapFrames}/{summary.FinalGapFillBlockedCutGapFramesBeforeCut}/{summary.FinalGapFillBlockedCutGapFramesAfterCut}/{summary.FinalGapFillBlockedCleanupGapFrames}/{summary.FinalGapFillBlockedSceneCarryGapFrames}, gapFillAnchorChecks={summary.FinalGapFillSuppressedWeakGeometryAnchorChecks}/{summary.FinalGapFillSuppressedRiskyGeometryAnchorChecks}/{summary.FinalGapFillUnsupportedWeakAnchorChecks}, sceneCutRemovalRate={finalSceneCutRemovalRate:0.0000}, sceneCutProtectedRate={finalSceneCutProtectedRate:0.0000}, postGapFillRemovalRate={finalPostGapFillRemovalRate:0.0000}, postGapFillProtectedRate={finalPostGapFillProtectedRate:0.0000}, postProcessMs={summary.PostProcessMs}");
             System.Diagnostics.Debug.WriteLine(
@@ -1883,6 +1985,7 @@ namespace FaceShield.Services.Analysis
 
             LastRunSummary = summary with
             {
+                ProcessingMode = _options.ProcessingMode,
                 EnablePostProcessing = postEnabled,
                 EnableRoiPostProcess = postRoiEnabled,
                 EnableYoloWeakIsolatedCleanup = postWeakIsoEnabled,
@@ -1892,6 +1995,7 @@ namespace FaceShield.Services.Analysis
                 SourceFps = _sourceFpsForSummary
             };
             Debug.WriteLine(LastRunSummary.ToLogLine());
+            Debug.WriteLine(LastRunSummary.ToSampleTimingLogLine());
         }
 
         private string GetDetectorName()

@@ -39,12 +39,15 @@ namespace FaceShield.Services.FaceDetection
             };
         }
 
-        public static FaceDetectorFactoryOptions ForYoloFaceOnnx(YoloFaceOnnxDetectorOptions options)
+        public static FaceDetectorFactoryOptions ForYoloFaceOnnx(
+            YoloFaceOnnxDetectorOptions options,
+            FaceOnnxDetectorOptions? secondaryFaceOnnxOptions = null)
         {
             return new FaceDetectorFactoryOptions
             {
                 Backend = FaceDetectorBackend.YoloFaceOnnx,
-                YoloFaceOnnxOptions = options
+                YoloFaceOnnxOptions = options,
+                FaceOnnxOptions = secondaryFaceOnnxOptions
             };
         }
 

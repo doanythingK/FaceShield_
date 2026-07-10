@@ -33,6 +33,10 @@ namespace FaceShield.Services.FaceDetection
         private readonly int _inputWidth;
         private readonly int _inputHeight;
         private readonly YoloFaceOnnxDetectorOptions _options;
+        private readonly object _inferenceGate = new();
+        private readonly DenseTensor<float> _inputTensor;
+        private readonly NamedOnnxValue[] _inputValues;
+        private bool _disposed;
 
         public YoloFaceOnnxDetector(YoloFaceOnnxDetectorOptions? options)
         {
@@ -42,26 +46,31 @@ namespace FaceShield.Services.FaceDetection
             if (!File.Exists(_options.ModelPath))
                 throw new FileNotFoundException("YOLO face ONNX model was not found.", _options.ModelPath);
 
-            var sessionOptions = CreateSessionOptions();
+            using var sessionOptions = CreateSessionOptions();
             string? gpuProvider = null;
-            if (_options.UseGpu)
+            bool shouldTryGpu = _options.UseGpu &&
+                (!OperatingSystem.IsMacOS() || _options.EnableCoreMl);
+            if (shouldTryGpu)
                 gpuProvider = TryAppendGpuExecutionProvider(sessionOptions);
 
-            if (_options.UseGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
+            if (shouldTryGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
                 UpdateExecutionProviderError("GPU execution provider load failed.");
 
             try
             {
                 _session = new InferenceSession(_options.ModelPath, sessionOptions);
-                UpdateExecutionProviderLabel(gpuProvider != null
-                    ? $"GPU:{gpuProvider}"
-                    : _options.UseGpu ? "CPU(가속 실패)" : "CPU");
-                if (gpuProvider != null || !_options.UseGpu)
+                UpdateExecutionProviderLabel(gpuProvider == "CoreML"
+                    ? "CoreML(default)"
+                    : gpuProvider != null
+                        ? $"GPU:{gpuProvider}"
+                        : shouldTryGpu ? "CPU(가속 실패)" : "CPU");
+                if (gpuProvider != null || !shouldTryGpu)
                     UpdateExecutionProviderError(null);
             }
-            catch (Exception ex) when (_options.UseGpu)
+            catch (Exception ex) when (shouldTryGpu)
             {
-                _session = new InferenceSession(_options.ModelPath, CreateSessionOptions());
+                using var fallbackOptions = CreateSessionOptions();
+                _session = new InferenceSession(_options.ModelPath, fallbackOptions);
                 UpdateExecutionProviderLabel("CPU(가속 실패)");
                 UpdateExecutionProviderError(ex.Message);
             }
@@ -71,6 +80,8 @@ namespace FaceShield.Services.FaceDetection
             var dims = _session.InputMetadata[_inputName].Dimensions;
             _inputHeight = ResolveInputDimension(dims, 2, 640, _options.InputHeight);
             _inputWidth = ResolveInputDimension(dims, 3, 640, _options.InputWidth);
+            _inputTensor = new DenseTensor<float>(new[] { 1, 3, _inputHeight, _inputWidth });
+            _inputValues = new[] { NamedOnnxValue.CreateFromTensor(_inputName, _inputTensor) };
 
             if (_options.DumpDebug)
             {
@@ -210,7 +221,14 @@ namespace FaceShield.Services.FaceDetection
 
         public void Dispose()
         {
-            _session.Dispose();
+            lock (_inferenceGate)
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                _session.Dispose();
+            }
         }
 
         public static string GetLastExecutionProviderLabel()
@@ -326,6 +344,7 @@ namespace FaceShield.Services.FaceDetection
             List<Candidate> candidates)
         {
             var anchors = Yolo5FaceAnchors[Math.Min(scaleIndex, Yolo5FaceAnchors.Length - 1)];
+            ReadOnlySpan<float> values = tensor.Values.Span;
             float strideX = _inputWidth / (float)Math.Max(1, gridWidth);
             float strideY = _inputHeight / (float)Math.Max(1, gridHeight);
 
@@ -336,19 +355,19 @@ namespace FaceShield.Services.FaceDetection
                 {
                     for (int x = 0; x < gridWidth; x++)
                     {
-                        float objectness = Sigmoid(ReadYolo5FaceFeature(tensor.Values, anchorIndex, 4, y, x, gridHeight, gridWidth));
+                        float objectness = Sigmoid(ReadYolo5FaceFeature(values, anchorIndex, 4, y, x, gridHeight, gridWidth));
                         if (objectness < _options.ObjectnessThreshold)
                             continue;
 
-                        float classScore = Sigmoid(ReadYolo5FaceFeature(tensor.Values, anchorIndex, 15, y, x, gridHeight, gridWidth));
+                        float classScore = Sigmoid(ReadYolo5FaceFeature(values, anchorIndex, 15, y, x, gridHeight, gridWidth));
                         float score = objectness * classScore;
                         if (score < _options.ConfidenceThreshold)
                             continue;
 
-                        float rawX = Sigmoid(ReadYolo5FaceFeature(tensor.Values, anchorIndex, 0, y, x, gridHeight, gridWidth));
-                        float rawY = Sigmoid(ReadYolo5FaceFeature(tensor.Values, anchorIndex, 1, y, x, gridHeight, gridWidth));
-                        float rawW = Sigmoid(ReadYolo5FaceFeature(tensor.Values, anchorIndex, 2, y, x, gridHeight, gridWidth));
-                        float rawH = Sigmoid(ReadYolo5FaceFeature(tensor.Values, anchorIndex, 3, y, x, gridHeight, gridWidth));
+                        float rawX = Sigmoid(ReadYolo5FaceFeature(values, anchorIndex, 0, y, x, gridHeight, gridWidth));
+                        float rawY = Sigmoid(ReadYolo5FaceFeature(values, anchorIndex, 1, y, x, gridHeight, gridWidth));
+                        float rawW = Sigmoid(ReadYolo5FaceFeature(values, anchorIndex, 2, y, x, gridHeight, gridWidth));
+                        float rawH = Sigmoid(ReadYolo5FaceFeature(values, anchorIndex, 3, y, x, gridHeight, gridWidth));
 
                         float cx = (rawX * 2.0f - 0.5f + x) * strideX;
                         float cy = (rawY * 2.0f - 0.5f + y) * strideY;
@@ -359,7 +378,7 @@ namespace FaceShield.Services.FaceDetection
                         float y1 = (cy - h * 0.5f - resize.PadY) / resize.ScaleY;
                         float x2 = (cx + w * 0.5f - resize.PadX) / resize.ScaleX;
                         float y2 = (cy + h * 0.5f - resize.PadY) / resize.ScaleY;
-                        var landmarks = DecodeYolo5LandmarkBounds(tensor.Values, anchorIndex, y, x, gridHeight, gridWidth, strideX, strideY, anchor.Width, anchor.Height, resize);
+                        var landmarks = DecodeYolo5LandmarkBounds(values, anchorIndex, y, x, gridHeight, gridWidth, strideX, strideY, anchor.Width, anchor.Height, resize);
                         AddClampedCandidate(candidates, x1, y1, x2, y2, sourceWidth, sourceHeight, score, landmarks);
                     }
                 }
@@ -430,25 +449,33 @@ namespace FaceShield.Services.FaceDetection
             DownscaleQuality quality,
             List<Candidate> candidates)
         {
-            var tensor = new DenseTensor<float>(new[] { 1, 3, _inputHeight, _inputWidth });
-            var resize = FillTensorFromBgra(
-                data,
-                stride,
-                width,
-                height,
-                sourceX,
-                sourceY,
-                sourceWidth,
-                sourceHeight,
-                ratio,
-                tensor,
-                quality);
+            List<Candidate> regionCandidates;
+            long inferElapsedMs;
+            lock (_inferenceGate)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(YoloFaceOnnxDetector));
 
-            var infer = Stopwatch.StartNew();
-            using var results = _session.Run(new[] { NamedOnnxValue.CreateFromTensor(_inputName, tensor) });
-            infer.Stop();
+                var resize = FillTensorFromBgra(
+                    data,
+                    stride,
+                    width,
+                    height,
+                    sourceX,
+                    sourceY,
+                    sourceWidth,
+                    sourceHeight,
+                    ratio,
+                    _inputTensor,
+                    quality);
 
-            var regionCandidates = DecodeOutputs(results, sourceWidth, sourceHeight, resize);
+                var infer = Stopwatch.StartNew();
+                using var results = _session.Run(_inputValues);
+                infer.Stop();
+                inferElapsedMs = infer.ElapsedMilliseconds;
+                regionCandidates = DecodeOutputs(results, sourceWidth, sourceHeight, resize);
+            }
+
             foreach (var candidate in regionCandidates)
             {
                 candidates.Add(new Candidate(
@@ -460,7 +487,7 @@ namespace FaceShield.Services.FaceDetection
                     candidate.Landmarks.HasValue ? candidate.Landmarks.Value.Offset(sourceX, sourceY) : null));
             }
 
-            return infer.ElapsedMilliseconds;
+            return inferElapsedMs;
         }
 
         private List<Candidate> DecodeCandidateTensor(
@@ -473,20 +500,21 @@ namespace FaceShield.Services.FaceDetection
             ResizeTransform resize)
         {
             var candidates = new List<Candidate>();
+            ReadOnlySpan<float> values = tensor.Values.Span;
             for (int i = 0; i < count; i++)
             {
-                float objectness = ReadFeature(tensor.Values, i, 4, count, features, channelFirst);
+                float objectness = ReadFeature(values, i, 4, count, features, channelFirst);
                 if (objectness < _options.ObjectnessThreshold)
                     continue;
 
-                float score = BuildScore(tensor.Values, i, count, features, channelFirst, objectness);
+                float score = BuildScore(values, i, count, features, channelFirst, objectness);
                 if (score < _options.ConfidenceThreshold)
                     continue;
 
-                float cx = ReadFeature(tensor.Values, i, 0, count, features, channelFirst);
-                float cy = ReadFeature(tensor.Values, i, 1, count, features, channelFirst);
-                float w = ReadFeature(tensor.Values, i, 2, count, features, channelFirst);
-                float h = ReadFeature(tensor.Values, i, 3, count, features, channelFirst);
+                float cx = ReadFeature(values, i, 0, count, features, channelFirst);
+                float cy = ReadFeature(values, i, 1, count, features, channelFirst);
+                float w = ReadFeature(values, i, 2, count, features, channelFirst);
+                float h = ReadFeature(values, i, 3, count, features, channelFirst);
                 if (LooksNormalized(cx, cy, w, h))
                 {
                     cx *= _inputWidth;
@@ -506,7 +534,7 @@ namespace FaceShield.Services.FaceDetection
         }
 
         private float BuildScore(
-            float[] values,
+            ReadOnlySpan<float> values,
             int index,
             int count,
             int features,
@@ -599,7 +627,7 @@ namespace FaceShield.Services.FaceDetection
                 gridWidth > 0;
         }
 
-        private static float ReadYolo5FaceFeature(float[] values, int anchorIndex, int feature, int y, int x, int gridHeight, int gridWidth)
+        private static float ReadYolo5FaceFeature(ReadOnlySpan<float> values, int anchorIndex, int feature, int y, int x, int gridHeight, int gridWidth)
         {
             int channel = anchorIndex * Yolo5FaceFeaturesPerAnchor + feature;
             int offset = ((channel * gridHeight) + y) * gridWidth + x;
@@ -608,7 +636,7 @@ namespace FaceShield.Services.FaceDetection
             return values[offset];
         }
 
-        private static float ReadFeature(float[] values, int index, int feature, int count, int features, bool channelFirst)
+        private static float ReadFeature(ReadOnlySpan<float> values, int index, int feature, int count, int features, bool channelFirst)
         {
             int offset = channelFirst
                 ? feature * count + index
@@ -639,7 +667,7 @@ namespace FaceShield.Services.FaceDetection
         }
 
         private static LandmarkBounds? DecodeYolo5LandmarkBounds(
-            float[] values,
+            ReadOnlySpan<float> values,
             int anchorIndex,
             int gridY,
             int gridX,
@@ -742,14 +770,9 @@ namespace FaceShield.Services.FaceDetection
             }
 
             float padding = _options.LetterboxPaddingValue * _options.InputScale;
-            for (int c = 0; c < 3; c++)
-            {
-                for (int y = 0; y < _inputHeight; y++)
-                {
-                    for (int x = 0; x < _inputWidth; x++)
-                        tensor[0, c, y, x] = padding;
-                }
-            }
+            Span<float> values = tensor.Buffer.Span;
+            values.Fill(padding);
+            int planeSize = checked(_inputWidth * _inputHeight);
 
             double modelToSourceX = 1.0 / scaleX;
             double modelToSourceY = 1.0 / scaleY;
@@ -778,18 +801,19 @@ namespace FaceShield.Services.FaceDetection
                     (float b, float g, float r) = quality == DownscaleQuality.FastNearest
                         ? ReadPixel(src, stride, x0, y0)
                         : ReadBilinear(src, stride, x0, y0, x1, y1, fx, fy);
+                    int pixelOffset = y * _inputWidth + x;
 
                     if (_options.UseRgbInput)
                     {
-                        tensor[0, 0, y, x] = r * _options.InputScale;
-                        tensor[0, 1, y, x] = g * _options.InputScale;
-                        tensor[0, 2, y, x] = b * _options.InputScale;
+                        values[pixelOffset] = r * _options.InputScale;
+                        values[planeSize + pixelOffset] = g * _options.InputScale;
+                        values[planeSize * 2 + pixelOffset] = b * _options.InputScale;
                     }
                     else
                     {
-                        tensor[0, 0, y, x] = b * _options.InputScale;
-                        tensor[0, 1, y, x] = g * _options.InputScale;
-                        tensor[0, 2, y, x] = r * _options.InputScale;
+                        values[pixelOffset] = b * _options.InputScale;
+                        values[planeSize + pixelOffset] = g * _options.InputScale;
+                        values[planeSize * 2 + pixelOffset] = r * _options.InputScale;
                     }
                 }
             }
@@ -1161,10 +1185,24 @@ namespace FaceShield.Services.FaceDetection
 
         private static string? TryAppendGpuExecutionProvider(SessionOptions options)
         {
+            if (OperatingSystem.IsMacOS())
+            {
+                if (TryAppendExecutionProvider(options, "AppendExecutionProvider_CoreML", "Microsoft.ML.OnnxRuntime"))
+                {
+                    UpdateExecutionProviderLabel("CoreML(default)");
+                    UpdateExecutionProviderError(null);
+                    return "CoreML";
+                }
+
+                return null;
+            }
+
             if (OperatingSystem.IsWindows())
             {
                 if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
                 {
+                    options.EnableMemoryPattern = false;
+                    options.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
                     UpdateExecutionProviderLabel("GPU:DirectML");
                     UpdateExecutionProviderError(null);
                     return "DirectML";
@@ -1174,13 +1212,6 @@ namespace FaceShield.Services.FaceDetection
                 if (GetLastExecutionProviderError() == null)
                     UpdateExecutionProviderError(BuildDirectMlDiagnostics());
                 return null;
-            }
-
-            if (TryAppendExecutionProvider(options, "AppendExecutionProvider_DML", "Microsoft.ML.OnnxRuntime.DirectML"))
-            {
-                UpdateExecutionProviderLabel("GPU:DirectML");
-                UpdateExecutionProviderError(null);
-                return "DirectML";
             }
 
             return null;
@@ -1234,7 +1265,9 @@ namespace FaceShield.Services.FaceDetection
                                     ? 0u
                                     : pType == typeof(int)
                                         ? 0
-                                        : null;
+                                        : pType.IsEnum
+                                            ? Enum.ToObject(pType, 0)
+                                            : null;
 
                                 if (arg == null)
                                     continue;
@@ -1311,7 +1344,9 @@ namespace FaceShield.Services.FaceDetection
                             ? 0u
                             : pType == typeof(int)
                                 ? 0
-                                : null;
+                                : pType.IsEnum
+                                    ? Enum.ToObject(pType, 0)
+                                    : null;
 
                         if (arg == null)
                             continue;
@@ -1384,14 +1419,16 @@ namespace FaceShield.Services.FaceDetection
             {
                 Name = name;
                 Dimensions = tensor.Dimensions.ToArray();
-                Values = tensor.ToArray();
+                Values = tensor is DenseTensor<float> dense
+                    ? dense.Buffer
+                    : tensor.ToArray();
             }
 
             public string Name { get; }
 
             public int[] Dimensions { get; }
 
-            public float[] Values { get; }
+            public ReadOnlyMemory<float> Values { get; }
         }
     }
 }

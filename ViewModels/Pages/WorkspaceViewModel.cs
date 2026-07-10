@@ -414,9 +414,11 @@ namespace FaceShield.ViewModels.Pages
                 }
             }
 
-            int sampleWindowFrames = autoRunSummary != null && autoRunSummary.SourceFps > 0
-                ? Math.Min(autoRunSummary.TotalFrames, (int)Math.Round(autoRunSummary.SourceFps * 30.0))
-                : Math.Min(autoRunSummary?.TotalFrames ?? 0, 900);
+            int sampleWindowFrames = autoRunSummary?.SampleWindowFrames > 0
+                ? autoRunSummary.SampleWindowFrames
+                : autoRunSummary != null && autoRunSummary.SourceFps > 0
+                    ? Math.Min(autoRunSummary.TotalFrames, (int)Math.Round(autoRunSummary.SourceFps * 30.0))
+                    : Math.Min(autoRunSummary?.TotalFrames ?? 0, 900);
             int sampleFrameCount = autoRunSummary?.SampleFrameCount ?? 0;
             int sampleRowCount = autoRunSummary?.SampleRowCount ?? 0;
             int sampleShortGapCount = autoRunSummary?.SampleShortGapCount ?? 0;
@@ -838,11 +840,20 @@ namespace FaceShield.ViewModels.Pages
             {
                 var detectorOptions = _detectorOptions;
                 var detectorFactoryOptions = _detectorFactoryOptions;
-                string runSignature = BuildAutoRunSignature(_autoOptions, detectorFactoryOptions);
+                var effectiveAutoOptions = _autoOptions.ResolveProcessingMode();
+                FaceOnnxDetectorOptions? yoloSecondaryOptions = null;
+                if (detectorFactoryOptions.Backend == FaceDetectorBackend.YoloFaceOnnx &&
+                    effectiveAutoOptions.EnableYoloRiskCascade)
+                {
+                    yoloSecondaryOptions = CreateYoloSecondaryDetectorOptions(detectorOptions);
+                    detectorFactoryOptions = detectorFactoryOptions.WithFaceOnnxOptions(yoloSecondaryOptions);
+                }
+
+                string runSignature = BuildAutoRunSignature(effectiveAutoOptions, detectorFactoryOptions);
                 ResetStaleAutoResumeIfSettingsChanged(runSignature);
                 _autoRunSignature = runSignature;
 
-                int tunedSessions = Math.Max(1, _autoOptions.ParallelDetectorCount);
+                int tunedSessions = Math.Max(1, effectiveAutoOptions.ParallelDetectorCount);
                 if (_detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
                     _detectorOptions.AllowAutoTune != false)
                 {
@@ -851,8 +862,8 @@ namespace FaceShield.ViewModels.Pages
                     {
                         bool tuned = DetectorAutoTuner.TryTune(
                             FrameList.VideoPath,
-                            _autoOptions.DownscaleRatio,
-                            _autoOptions.DownscaleQuality,
+                            effectiveAutoOptions.DownscaleRatio,
+                            effectiveAutoOptions.DownscaleQuality,
                             _detectorOptions,
                             tunedSessions,
                             _detectorOptions.AllowAutoGpu == true,
@@ -881,31 +892,53 @@ namespace FaceShield.ViewModels.Pages
                     detectorFactoryOptions = detectorFactoryOptions.WithFaceOnnxOptions(detectorOptions);
                 }
 
+                bool useAllPostProcessModules = effectiveAutoOptions.ProcessingMode == AutoMaskProcessingMode.Full;
                 var runOptions = new AutoMaskOptions
                 {
-                    DownscaleRatio = _autoOptions.DownscaleRatio,
-                    DownscaleQuality = _autoOptions.DownscaleQuality,
-                    EnablePostProcessing = _autoOptions.EnablePostProcessing,
-                    EnableRoiPostProcess = _autoOptions.EnableRoiPostProcess,
-                    EnableYoloWeakIsolatedCleanup = _autoOptions.EnableYoloWeakIsolatedCleanup,
-                    EnableYoloGapFill = _autoOptions.EnableYoloGapFill,
-                    EnableYoloSceneCutCarryCleanup = _autoOptions.EnableYoloSceneCutCarryCleanup,
-                    EnableYoloTemporalSmoothing = _autoOptions.EnableYoloTemporalSmoothing,
-                    RoiRefinerDetectorOptions = _autoOptions.EnableRoiPostProcess ? detectorOptions : null,
+                    ProcessingMode = effectiveAutoOptions.ProcessingMode,
+                    DownscaleRatio = effectiveAutoOptions.DownscaleRatio,
+                    DownscaleQuality = effectiveAutoOptions.DownscaleQuality,
+                    EnablePostProcessing = effectiveAutoOptions.EnablePostProcessing,
+                    EnableRoiPostProcess = useAllPostProcessModules || effectiveAutoOptions.EnableRoiPostProcess,
+                    EnableYoloWeakIsolatedCleanup = useAllPostProcessModules || effectiveAutoOptions.EnableYoloWeakIsolatedCleanup,
+                    EnableYoloGapFill = useAllPostProcessModules || effectiveAutoOptions.EnableYoloGapFill,
+                    EnableYoloSceneCutCarryCleanup = useAllPostProcessModules || effectiveAutoOptions.EnableYoloSceneCutCarryCleanup,
+                    EnableYoloTemporalSmoothing = useAllPostProcessModules || effectiveAutoOptions.EnableYoloTemporalSmoothing,
+                    EnableYoloRiskCascade = effectiveAutoOptions.EnableYoloRiskCascade,
+                    YoloStrongFullScanIntervalSeconds = effectiveAutoOptions.YoloStrongFullScanIntervalSeconds,
+                    YoloRiskLowConfidenceThreshold = effectiveAutoOptions.YoloRiskLowConfidenceThreshold,
+                    YoloRiskSmallFaceAreaRatio = effectiveAutoOptions.YoloRiskSmallFaceAreaRatio,
+                    YoloRiskEdgeMarginRatio = effectiveAutoOptions.YoloRiskEdgeMarginRatio,
+                    YoloRiskMaxTrackGapFrames = effectiveAutoOptions.YoloRiskMaxTrackGapFrames,
+                    YoloStrongConfirmationFrames = effectiveAutoOptions.YoloStrongConfirmationFrames,
+                    EnableYoloPrimaryRoiShortcut = effectiveAutoOptions.EnableYoloPrimaryRoiShortcut,
+                    YoloSecondaryDetectorOptions = yoloSecondaryOptions,
+                    RoiRefinerDetectorOptions = useAllPostProcessModules || effectiveAutoOptions.EnableRoiPostProcess
+                        ? detectorOptions
+                        : null,
                     UseFaceOnnxRoiRefiner = detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx,
-                    UseTracking = _autoOptions.UseTracking,
-                    DetectEveryNFrames = _autoOptions.DetectEveryNFrames,
+                    UseTracking = effectiveAutoOptions.UseTracking,
+                    DetectEveryNFrames = effectiveAutoOptions.DetectEveryNFrames,
                     ParallelDetectorCount = tunedSessions,
                     RunId = runId,
-                    FilterProfile = _autoOptions.FilterProfile,
-                    DumpDetectionDiagnostics = _autoOptions.DumpDetectionDiagnostics
-                };
+                    FilterProfile = effectiveAutoOptions.FilterProfile,
+                    DumpDetectionDiagnostics = effectiveAutoOptions.DumpDetectionDiagnostics
+                }.ResolveProcessingMode();
 
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
+                if (runOptions.EnableYoloRiskCascade &&
+                    detectorFactoryOptions.Backend == FaceDetectorBackend.YoloFaceOnnx &&
+                    lastProcessed > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[AutoMaskResumeReset] reason=yolo-risk-cascade-requires-complete-timeline resumeIndex={lastProcessed}");
+                    lastProcessed = 0;
+                    _autoResumeIndex = 0;
+                }
                 ResetAutoFaceMasksForRun(lastProcessed);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
@@ -1827,12 +1860,16 @@ namespace FaceShield.ViewModels.Pages
             AutoMaskOptions autoOptions,
             FaceDetectorFactoryOptions detectorFactoryOptions)
         {
-            autoOptions ??= new AutoMaskOptions();
+            autoOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
             detectorFactoryOptions ??= FaceDetectorFactoryOptions.ForOnnx(new FaceOnnxDetectorOptions());
+            bool useLegacyCompatibleSignature =
+                autoOptions.ProcessingMode == AutoMaskProcessingMode.Legacy &&
+                !autoOptions.EnableYoloRiskCascade &&
+                autoOptions.EnableYoloPrimaryRoiShortcut;
 
             var parts = new List<string>
             {
-                "v3",
+                useLegacyCompatibleSignature ? "v3" : "v4",
                 $"backend={detectorFactoryOptions.Backend}",
                 $"profile={autoOptions.FilterProfile}",
                 $"downscale={autoOptions.DownscaleRatio:0.###}",
@@ -1842,17 +1879,35 @@ namespace FaceShield.ViewModels.Pages
                 $"iso={autoOptions.EnableYoloWeakIsolatedCleanup}",
                 $"gap={autoOptions.EnableYoloGapFill}",
                 $"scene={autoOptions.EnableYoloSceneCutCarryCleanup}",
-                $"smooth={autoOptions.EnableYoloTemporalSmoothing}",
+                $"smooth={autoOptions.EnableYoloTemporalSmoothing}"
+            };
+            if (!useLegacyCompatibleSignature)
+            {
+                parts.Add($"processingMode={autoOptions.ProcessingMode}");
+                parts.Add($"riskCascade={autoOptions.EnableYoloRiskCascade}");
+                parts.Add($"strongInterval={autoOptions.YoloStrongFullScanIntervalSeconds:0.###}");
+                parts.Add($"riskConfidence={autoOptions.YoloRiskLowConfidenceThreshold:0.###}");
+                parts.Add($"riskArea={autoOptions.YoloRiskSmallFaceAreaRatio:0.######}");
+                parts.Add($"riskEdge={autoOptions.YoloRiskEdgeMarginRatio:0.###}");
+                parts.Add($"riskGap={autoOptions.YoloRiskMaxTrackGapFrames}");
+                parts.Add($"strongConfirm={autoOptions.YoloStrongConfirmationFrames}");
+                parts.Add($"primaryRoi={autoOptions.EnableYoloPrimaryRoiShortcut}");
+            }
+
+            parts.AddRange(new[]
+            {
                 $"tracking={autoOptions.UseTracking}",
                 $"everyN={autoOptions.DetectEveryNFrames}",
                 $"parallel={autoOptions.ParallelDetectorCount}",
                 $"dump={autoOptions.DumpDetectionDiagnostics}"
-            };
+            });
 
             switch (detectorFactoryOptions.Backend)
             {
                 case FaceDetectorBackend.YoloFaceOnnx:
                     AppendYoloSignature(parts, detectorFactoryOptions.YoloFaceOnnxOptions);
+                    if (autoOptions.EnableYoloRiskCascade)
+                        AppendSecondaryFaceOnnxSignature(parts, detectorFactoryOptions.FaceOnnxOptions);
                     break;
                 case FaceDetectorBackend.FaceOnnx:
                     AppendFaceOnnxSignature(parts, detectorFactoryOptions.FaceOnnxOptions);
@@ -1878,6 +1933,39 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"nms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
         }
 
+        private static void AppendSecondaryFaceOnnxSignature(List<string> parts, FaceOnnxDetectorOptions? options)
+        {
+            options ??= new FaceOnnxDetectorOptions();
+            parts.Add($"secondaryOrt={options.UseOrtOptimization}");
+            parts.Add($"secondaryGpu={options.UseGpu}");
+            parts.Add($"secondaryIntra={options.IntraOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"secondaryInter={options.InterOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"secondaryParallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
+            parts.Add($"secondaryDetect={options.DetectionThreshold?.ToString("0.###") ?? "null"}");
+            parts.Add($"secondaryConf={options.ConfidenceThreshold?.ToString("0.###") ?? "null"}");
+            parts.Add($"secondaryNms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
+        }
+
+        private static FaceOnnxDetectorOptions CreateYoloSecondaryDetectorOptions(
+            FaceOnnxDetectorOptions? configured)
+        {
+            configured ??= new FaceOnnxDetectorOptions();
+            return new FaceOnnxDetectorOptions
+            {
+                UseOrtOptimization = configured.UseOrtOptimization,
+                UseGpu = false,
+                IntraOpNumThreads = configured.IntraOpNumThreads,
+                InterOpNumThreads = configured.InterOpNumThreads,
+                UseParallelExecution = false,
+                DetectionThreshold = null,
+                ConfidenceThreshold = null,
+                NmsThreshold = null,
+                EnablePreprocessParallelism = configured.EnablePreprocessParallelism,
+                AllowAutoTune = false,
+                AllowAutoGpu = false
+            };
+        }
+
         private static void AppendYoloSignature(List<string> parts, YoloFaceOnnxDetectorOptions? options)
         {
             if (options == null)
@@ -1890,6 +1978,8 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"type={options.ModelType}");
             parts.Add($"ort={options.UseOrtOptimization}");
             parts.Add($"gpu={options.UseGpu}");
+            if (options.EnableCoreMl)
+                parts.Add("coreMl=True");
             parts.Add($"input={options.InputWidth?.ToString() ?? "null"}x{options.InputHeight?.ToString() ?? "null"}");
             parts.Add($"obj={options.ObjectnessThreshold:0.###}");
             parts.Add($"conf={options.ConfidenceThreshold:0.###}");

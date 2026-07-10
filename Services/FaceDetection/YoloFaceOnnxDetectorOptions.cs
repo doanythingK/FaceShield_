@@ -10,6 +10,12 @@ namespace FaceShield.Services.FaceDetection
 
         public bool UseGpu { get; init; } = false;
 
+        /// <summary>
+        /// macOS에서 CoreML 실행 공급자를 명시적으로 허용합니다.
+        /// 실행 품질 검증 전에는 false를 유지합니다.
+        /// </summary>
+        public bool EnableCoreMl { get; init; } = false;
+
         public int? IntraOpNumThreads { get; init; }
 
         public int? InterOpNumThreads { get; init; }

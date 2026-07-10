@@ -26,6 +26,7 @@ namespace FaceShield.Services.Analysis
         string? RunId,
         string? DetectorName)
     {
+        public AutoMaskProcessingMode ProcessingMode { get; init; } = AutoMaskProcessingMode.Legacy;
         public bool EnablePostProcessing { get; init; } = false;
         public bool EnableRoiPostProcess { get; init; } = false;
         public bool EnableYoloWeakIsolatedCleanup { get; init; } = false;
@@ -77,6 +78,12 @@ namespace FaceShield.Services.Analysis
         public int FinalGapFillSuppressedRiskyGeometryAnchorChecks { get; init; } = 0;
         public int FinalGapFillUnsupportedWeakAnchorChecks { get; init; } = 0;
         public int SampleWindowFrames { get; init; } = 0;
+        public int SampleWindowStartFrame { get; init; } = -1;
+        public int SampleWindowEndFrame { get; init; } = -1;
+        public double SampleWindowStartSeconds { get; init; } = 0.0;
+        public double SampleWindowEndSeconds { get; init; } = 0.0;
+        public double SampleWindowDurationSeconds { get; init; } = 0.0;
+        public string SampleWindowTimingSource { get; init; } = "fps-fallback";
         public int SampleFrameCount { get; init; } = 0;
         public int SampleRowCount { get; init; } = 0;
         public int SampleShortGapCount { get; init; } = 0;
@@ -87,6 +94,7 @@ namespace FaceShield.Services.Analysis
         public string SampleReviewReasons { get; init; } = "none";
         public int SampleMissRecoveryFillCount { get; init; } = 0;
         public int SampleFalsePositiveSuppressionCount { get; init; } = 0;
+        public int SampleFalsePositiveSuppressedCount => SampleFalsePositiveSuppressionCount;
         public int SampleOffModeWeakCleanupSuppressionCount { get; init; } = 0;
         public int SampleGapFillBlockedCutGapFrames { get; init; } = 0;
         public int SampleGapFillBlockedCutGapFramesBeforeCut { get; init; } = 0;
@@ -97,6 +105,21 @@ namespace FaceShield.Services.Analysis
         public int SampleWindowIssueFrameCount { get; init; } = 0;
         public int SampleWindowIssueCandidateCount { get; init; } = 0;
         public string SampleWindowStartReason { get; init; } = "none";
+        public bool YoloRiskCascadeEnabled { get; init; } = false;
+        public int YoloRiskFrameCount { get; init; } = 0;
+        public int YoloPeriodicGlobalFrameCount { get; init; } = 0;
+        public int YoloSecondaryAttemptCount { get; init; } = 0;
+        public int YoloSecondaryHitFrameCount { get; init; } = 0;
+        public int YoloSecondaryCandidateFaceCount { get; init; } = 0;
+        public int YoloSecondaryAcceptedFrameCount { get; init; } = 0;
+        public int YoloSecondaryAcceptedFaceCount { get; init; } = 0;
+        public int YoloSecondaryRejectedFaceCount { get; init; } = 0;
+        public long YoloCascadeDecodeMs { get; init; } = 0;
+        public long YoloCascadeDetectMs { get; init; } = 0;
+        public long YoloCascadeTotalMs { get; init; } = 0;
+        public string YoloCascadeReasonBreakdown { get; init; } = "none";
+        public string YoloCascadeError { get; init; } = "none";
+        public long AnalysisTotalMs => TotalMs + PostProcessMs + YoloCascadeTotalMs;
 
         public string ToLogLine()
         {
@@ -131,7 +154,19 @@ namespace FaceShield.Services.Analysis
                 : 0.0;
 
             return
-                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, postProcessMs={PostProcessMs}, totalMs={TotalMs}, srcFps={SourceFps:0.###}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}, post={EnablePostProcessing}, roiPost={EnableRoiPostProcess}, weakIso={EnableYoloWeakIsolatedCleanup}, gapFill={EnableYoloGapFill}, sceneCut={EnableYoloSceneCutCarryCleanup}, smooth={EnableYoloTemporalSmoothing}, finalFrames={FinalMaskFrames}, finalRows={FinalMaskRows}, finalShortGaps={FinalMaskShortGapCount}, finalPerFaceShortGaps={FinalMaskPerFaceShortGapCount}, finalLargeJumps={FinalMaskLargeJumpGapCount}, sceneCutStats=preGuard:{FinalSceneCutPreGuardPairCount},preStrong:{FinalSceneCutPreStrongProbePairCount},postGuard:{FinalSceneCutPostGuardPairCount},postStrong:{FinalSceneCutPostStrongProbePairCount},carryPairs:{FinalSceneCutCarryPairCount},carryRemoved:{FinalSceneCutCarryRemovedCount},carryProtected:{FinalSceneCutProtectedFrameCount},carryWindows=pre:{FinalSceneCutPreGuardWindowCount},preStrong:{FinalSceneCutPreStrongCarryWindowCount},post:{FinalSceneCutPostGuardWindowCount},postStrong:{FinalSceneCutPostStrongCarryWindowCount},final:{FinalSceneCutCarryWindowCount},postGapFill:{FinalSceneCutPostGapFillWindowCount},offModeResetPairs:{FinalOffModeSceneCutResetPairCount},offModeResetRemoved:{FinalOffModeSceneCutResetRemovedFrameCount},offModeResetWindows={FinalOffModeSceneCutResetBeforeWindowFrameCount}/{FinalOffModeSceneCutResetAfterWindowFrameCount},offModeResetRemovedWindows={FinalOffModeSceneCutResetRemovedBeforeFrameCount}/{FinalOffModeSceneCutResetRemovedAfterFrameCount},finalProtectedSceneCarry={FinalProtectedSceneCarryFrameCount}, sceneCutStats2=pairSourceBreakdown:{FinalSceneCutPairSourceBreakdown},postGapFillPairSourceBreakdown:{FinalSceneCutPostGapFillPairSourceBreakdown}, finalReview={FinalMaskReviewRequired}, finalReviewReasons={FinalMaskReviewReasons}, finalMissRecovery={FinalMissRecoveryFillCount}, finalFpSuppressed={FinalFalsePositiveSuppressedCount}, finalOffModeWeakCleanupSuppressed={FinalOffModeWeakCleanupCount}, finalGapFillRecovered={FinalGapFillRecoveredCount}, finalGapFillBlocked={FinalGapFillBlockedCutGapFrames}/{FinalGapFillBlockedCutGapFramesBeforeCut}/{FinalGapFillBlockedCutGapFramesAfterCut}/{FinalGapFillBlockedCleanupGapFrames}/{FinalGapFillBlockedSceneCarryGapFrames}, gapFillAnchorChecks={FinalGapFillSuppressedWeakGeometryAnchorChecks}/{FinalGapFillSuppressedRiskyGeometryAnchorChecks}/{FinalGapFillUnsupportedWeakAnchorChecks}, sceneCutRemovalRate={sceneCutRemovalRate:0.0000}, sceneCutProtectedRate={sceneCutProtectedRate:0.0000}, sceneCutPostGapFillRemovalRate={sceneCutPostGapFillRemovalRate:0.0000}, sceneCutPostGapFillProtectedRate={sceneCutPostGapFillProtectedRate:0.0000}, offModeSceneCutResetRate={offModeSceneCutResetRate:0.0000}, offModeSceneCutResetBeforeRate={offModeSceneCutResetBeforeRate:0.0000}, offModeSceneCutResetAfterRate={offModeSceneCutResetAfterRate:0.0000}, sampleWindow={SampleWindowFrames}, sampleFrames={SampleFrameCount}, sampleRows={SampleRowCount}, sampleShortGaps={SampleShortGapCount}, samplePerFaceShortGaps={SamplePerFaceShortGapCount}, sampleIsolated={SampleIsolatedFrameCount}, sampleLargeJumps={SampleLargeJumpGapCount}, sampleReview={SampleReviewRequired}, sampleReviewReasons={SampleReviewReasons}, sampleWindowIssueFrameCount={SampleWindowIssueFrameCount}, sampleWindowIssueCandidateCount={SampleWindowIssueCandidateCount}, sampleWindowStartReason={SampleWindowStartReason}, sampleMissRecovery={SampleMissRecoveryFillCount}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressed={SampleFalsePositiveSuppressionCount}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleOffModeWeakCleanupSuppression={SampleOffModeWeakCleanupSuppressionCount}, sampleProtectedSceneCarry={SampleProtectedSceneCarryFrameCount}, sampleGapFillBlocked={SampleGapFillBlockedCutGapFrames}/{SampleGapFillBlockedCutGapFramesBeforeCut}/{SampleGapFillBlockedCutGapFramesAfterCut}/{SampleGapFillBlockedCleanupGapFrames}/{SampleGapFillBlockedSceneCarryGapFrames}";
+                $"[AutoRunSummary] runId={run}, detector={detector}, mode={Mode}, totalFrames={TotalFrames}, startFrame={StartFrameIndex}, processed={ProcessedFrames}, decoded={DecodedFrames}, detects={DetectedFrames}, interpolated={InterpolatedFrames}, readMs={ReadMs}, decodeMs={DecodeMs}, detectMs={DetectMs}, maskMs={MaskMs}, postProcessMs={PostProcessMs}, totalMs={TotalMs}, analysisTotalMs={AnalysisTotalMs}, srcFps={SourceFps:0.###}, downscale={DownscaleRatio:F3}, quality={DownscaleQuality}, tracking={UseTracking}, everyN={DetectEveryNFrames}, parallel={ParallelDetectorCount}, roi={RoiSummary ?? "n/a"}, post={EnablePostProcessing}, roiPost={EnableRoiPostProcess}, weakIso={EnableYoloWeakIsolatedCleanup}, gapFill={EnableYoloGapFill}, sceneCut={EnableYoloSceneCutCarryCleanup}, smooth={EnableYoloTemporalSmoothing}, processingMode={ProcessingMode}, finalFrames={FinalMaskFrames}, finalRows={FinalMaskRows}, finalShortGaps={FinalMaskShortGapCount}, finalPerFaceShortGaps={FinalMaskPerFaceShortGapCount}, finalLargeJumps={FinalMaskLargeJumpGapCount}, sceneCutStats=preGuard:{FinalSceneCutPreGuardPairCount},preStrong:{FinalSceneCutPreStrongProbePairCount},postGuard:{FinalSceneCutPostGuardPairCount},postStrong:{FinalSceneCutPostStrongProbePairCount},carryPairs:{FinalSceneCutCarryPairCount},carryRemoved:{FinalSceneCutCarryRemovedCount},carryProtected:{FinalSceneCutProtectedFrameCount},carryWindows=pre:{FinalSceneCutPreGuardWindowCount},preStrong:{FinalSceneCutPreStrongCarryWindowCount},post:{FinalSceneCutPostGuardWindowCount},postStrong:{FinalSceneCutPostStrongCarryWindowCount},final:{FinalSceneCutCarryWindowCount},postGapFill:{FinalSceneCutPostGapFillWindowCount},offModeResetPairs:{FinalOffModeSceneCutResetPairCount},offModeResetRemoved:{FinalOffModeSceneCutResetRemovedFrameCount},offModeResetWindows={FinalOffModeSceneCutResetBeforeWindowFrameCount}/{FinalOffModeSceneCutResetAfterWindowFrameCount},offModeResetRemovedWindows={FinalOffModeSceneCutResetRemovedBeforeFrameCount}/{FinalOffModeSceneCutResetRemovedAfterFrameCount},finalProtectedSceneCarry={FinalProtectedSceneCarryFrameCount}, sceneCutStats2=pairSourceBreakdown:{FinalSceneCutPairSourceBreakdown},postGapFillPairSourceBreakdown:{FinalSceneCutPostGapFillPairSourceBreakdown}, finalReview={FinalMaskReviewRequired}, finalReviewReasons={FinalMaskReviewReasons}, finalMissRecovery={FinalMissRecoveryFillCount}, finalFpSuppressed={FinalFalsePositiveSuppressedCount}, finalOffModeWeakCleanupSuppressed={FinalOffModeWeakCleanupCount}, finalGapFillRecovered={FinalGapFillRecoveredCount}, finalGapFillBlocked={FinalGapFillBlockedCutGapFrames}/{FinalGapFillBlockedCutGapFramesBeforeCut}/{FinalGapFillBlockedCutGapFramesAfterCut}/{FinalGapFillBlockedCleanupGapFrames}/{FinalGapFillBlockedSceneCarryGapFrames}, gapFillAnchorChecks={FinalGapFillSuppressedWeakGeometryAnchorChecks}/{FinalGapFillSuppressedRiskyGeometryAnchorChecks}/{FinalGapFillUnsupportedWeakAnchorChecks}, sceneCutRemovalRate={sceneCutRemovalRate:0.0000}, sceneCutProtectedRate={sceneCutProtectedRate:0.0000}, sceneCutPostGapFillRemovalRate={sceneCutPostGapFillRemovalRate:0.0000}, sceneCutPostGapFillProtectedRate={sceneCutPostGapFillProtectedRate:0.0000}, offModeSceneCutResetRate={offModeSceneCutResetRate:0.0000}, offModeSceneCutResetBeforeRate={offModeSceneCutResetBeforeRate:0.0000}, offModeSceneCutResetAfterRate={offModeSceneCutResetAfterRate:0.0000}, sampleWindow={SampleWindowFrames}, sampleFrames={SampleFrameCount}, sampleRows={SampleRowCount}, sampleShortGaps={SampleShortGapCount}, samplePerFaceShortGaps={SamplePerFaceShortGapCount}, sampleIsolated={SampleIsolatedFrameCount}, sampleLargeJumps={SampleLargeJumpGapCount}, sampleReview={SampleReviewRequired}, sampleReviewReasons={SampleReviewReasons}, sampleWindowIssueFrameCount={SampleWindowIssueFrameCount}, sampleWindowIssueCandidateCount={SampleWindowIssueCandidateCount}, sampleWindowStartReason={SampleWindowStartReason}, sampleMissRecovery={SampleMissRecoveryFillCount}, sampleMissRecoveryRate={sampleMissRecoveryRate:0.0000}, sampleFpSuppressed={SampleFalsePositiveSuppressedCount}, sampleFpSuppressedRate={sampleFpSuppressedRate:0.0000}, sampleOffModeWeakCleanupSuppression={SampleOffModeWeakCleanupSuppressionCount}, sampleProtectedSceneCarry={SampleProtectedSceneCarryFrameCount}, sampleGapFillBlocked={SampleGapFillBlockedCutGapFrames}/{SampleGapFillBlockedCutGapFramesBeforeCut}/{SampleGapFillBlockedCutGapFramesAfterCut}/{SampleGapFillBlockedCleanupGapFrames}/{SampleGapFillBlockedSceneCarryGapFrames}";
+        }
+
+        public string ToSampleTimingLogLine()
+        {
+            string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
+            return $"[AutoRunSampleTiming] runId={run}, processingMode={ProcessingMode}, timing={SampleWindowTimingSource}, startFrame={SampleWindowStartFrame}, endFrame={SampleWindowEndFrame}, frames={SampleWindowFrames}, startSec={SampleWindowStartSeconds:0.###}, endSec={SampleWindowEndSeconds:0.###}, durationSec={SampleWindowDurationSeconds:0.###}";
+        }
+
+        public string ToYoloCascadeLogLine()
+        {
+            string run = string.IsNullOrWhiteSpace(RunId) ? "n/a" : RunId;
+            return $"[AutoRunYoloCascade] runId={run}, enabled={YoloRiskCascadeEnabled.ToString().ToLowerInvariant()}, riskFrames={YoloRiskFrameCount}, periodicFrames={YoloPeriodicGlobalFrameCount}, attempts={YoloSecondaryAttemptCount}, hitFrames={YoloSecondaryHitFrameCount}, candidates={YoloSecondaryCandidateFaceCount}, acceptedFrames={YoloSecondaryAcceptedFrameCount}, acceptedFaces={YoloSecondaryAcceptedFaceCount}, rejectedFaces={YoloSecondaryRejectedFaceCount}, decodeMs={YoloCascadeDecodeMs}, detectMs={YoloCascadeDetectMs}, totalMs={YoloCascadeTotalMs}, analysisTotalMs={AnalysisTotalMs}, reasons={YoloCascadeReasonBreakdown}, error={YoloCascadeError}";
         }
     }
 }

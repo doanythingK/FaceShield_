@@ -15,8 +15,25 @@ namespace FaceShield.Services.Analysis
         Yolo
     }
 
+    /// <summary>
+    /// 자동 마스크 분석 단계의 동작 범위.
+    /// Legacy는 기존 저장 설정 및 결과 호환을 위해 기존 bool 조합을 그대로 사용합니다.
+    /// </summary>
+    public enum AutoMaskProcessingMode
+    {
+        Legacy = 0,
+        Raw = 1,
+        Tracked = 2,
+        Full = 3
+    }
+
     public sealed class AutoMaskOptions
     {
+        /// <summary>
+        /// 분석 단계의 명시 모드. 기본값 Legacy는 기존 동작을 변경하지 않습니다.
+        /// </summary>
+        public AutoMaskProcessingMode ProcessingMode { get; init; } = AutoMaskProcessingMode.Legacy;
+
         /// <summary>
         /// 1.0 = 원본 해상도, 0.5 = 가로/세로 절반
         /// </summary>
@@ -64,6 +81,31 @@ namespace FaceShield.Services.Analysis
         public bool EnableYoloTemporalSmoothing { get; init; } = false;
 
         /// <summary>
+        /// YOLO 위험 프레임만 강한 FaceONNX 검출기로 재검증합니다. 기본값은 검증 전 안전을 위해 false입니다.
+        /// </summary>
+        public bool EnableYoloRiskCascade { get; init; } = false;
+
+        public double YoloStrongFullScanIntervalSeconds { get; init; } = 2.0;
+
+        public float YoloRiskLowConfidenceThreshold { get; init; } = 0.45f;
+
+        public double YoloRiskSmallFaceAreaRatio { get; init; } = 0.0012;
+
+        public double YoloRiskEdgeMarginRatio { get; init; } = 0.025;
+
+        public int YoloRiskMaxTrackGapFrames { get; init; } = 8;
+
+        public int YoloStrongConfirmationFrames { get; init; } = 2;
+
+        /// <summary>
+        /// YOLO single-session 경로에서 이전 얼굴 ROI만 먼저 검사하는 단축 경로입니다.
+        /// false이면 신규 진입 얼굴 보호를 위해 매 검출 프레임 전체 화면을 검사합니다.
+        /// </summary>
+        public bool EnableYoloPrimaryRoiShortcut { get; init; } = true;
+
+        public FaceOnnxDetectorOptions? YoloSecondaryDetectorOptions { get; init; }
+
+        /// <summary>
         /// 검출 간격 (1이면 모든 프레임 검출)
         /// </summary>
         public int DetectEveryNFrames { get; init; } = 1;
@@ -98,5 +140,50 @@ namespace FaceShield.Services.Analysis
         /// detector raw 후보와 post-filter 후보 수를 frame별 로그로 남긴다.
         /// </summary>
         public bool DumpDetectionDiagnostics { get; init; } = false;
+
+        /// <summary>
+        /// 명시 모드의 불변 조건을 적용한 실행 옵션을 만듭니다.
+        /// Legacy는 기존 옵션 조합을 그대로 보존합니다.
+        /// </summary>
+        public AutoMaskOptions ResolveProcessingMode()
+        {
+            if (ProcessingMode == AutoMaskProcessingMode.Legacy)
+                return this;
+
+            bool useTracking = ProcessingMode != AutoMaskProcessingMode.Raw;
+            bool enablePostProcessing = ProcessingMode == AutoMaskProcessingMode.Full;
+
+            return new AutoMaskOptions
+            {
+                ProcessingMode = ProcessingMode,
+                DownscaleRatio = DownscaleRatio,
+                DownscaleQuality = DownscaleQuality,
+                UseTracking = useTracking,
+                EnablePostProcessing = enablePostProcessing,
+                EnableRoiPostProcess = enablePostProcessing,
+                EnableYoloWeakIsolatedCleanup = enablePostProcessing,
+                EnableYoloGapFill = enablePostProcessing,
+                EnableYoloSceneCutCarryCleanup = enablePostProcessing,
+                EnableYoloTemporalSmoothing = enablePostProcessing,
+                EnableYoloRiskCascade = ProcessingMode == AutoMaskProcessingMode.Full && EnableYoloRiskCascade,
+                YoloStrongFullScanIntervalSeconds = YoloStrongFullScanIntervalSeconds,
+                YoloRiskLowConfidenceThreshold = YoloRiskLowConfidenceThreshold,
+                YoloRiskSmallFaceAreaRatio = YoloRiskSmallFaceAreaRatio,
+                YoloRiskEdgeMarginRatio = YoloRiskEdgeMarginRatio,
+                YoloRiskMaxTrackGapFrames = YoloRiskMaxTrackGapFrames,
+                YoloStrongConfirmationFrames = YoloStrongConfirmationFrames,
+                EnableYoloPrimaryRoiShortcut = false,
+                YoloSecondaryDetectorOptions = ProcessingMode == AutoMaskProcessingMode.Full
+                    ? YoloSecondaryDetectorOptions
+                    : null,
+                DetectEveryNFrames = useTracking ? System.Math.Max(1, DetectEveryNFrames) : 1,
+                RoiRefinerDetectorOptions = enablePostProcessing ? RoiRefinerDetectorOptions : null,
+                UseFaceOnnxRoiRefiner = enablePostProcessing && UseFaceOnnxRoiRefiner,
+                ParallelDetectorCount = System.Math.Max(1, ParallelDetectorCount),
+                RunId = RunId,
+                FilterProfile = FilterProfile,
+                DumpDetectionDiagnostics = DumpDetectionDiagnostics
+            };
+        }
     }
 }

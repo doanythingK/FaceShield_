@@ -1,4 +1,5 @@
 using FaceShield.Enums.Workspace;
+using FaceShield.Services.Analysis;
 using FaceShield.Services.FaceDetection;
 using System;
 using System.Collections.Generic;
@@ -14,6 +15,8 @@ namespace FaceShield.Models
         public string? YoloModelPath { get; private init; }
         public WorkspaceMode? OpenMode { get; private init; }
         public bool? AutoExportAfter { get; private init; }
+        public AutoMaskProcessingMode? ProcessingMode { get; private init; }
+        public bool? EnableYoloRiskCascade { get; private init; }
         public int? FrameIndex { get; private init; }
 
         public bool HasValues =>
@@ -23,6 +26,8 @@ namespace FaceShield.Models
             !string.IsNullOrWhiteSpace(YoloModelPath) ||
             OpenMode.HasValue ||
             AutoExportAfter.HasValue ||
+            ProcessingMode.HasValue ||
+            EnableYoloRiskCascade.HasValue ||
             FrameIndex.HasValue;
 
         public static AppStartupOptions Parse(IEnumerable<string>? args)
@@ -33,6 +38,8 @@ namespace FaceShield.Models
             string? yoloModelPath = null;
             WorkspaceMode? openMode = null;
             bool? autoExportAfter = null;
+            AutoMaskProcessingMode? processingMode = null;
+            bool? enableYoloRiskCascade = null;
             int? frameIndex = null;
 
             var tokens = args is null ? Array.Empty<string>() : [.. args];
@@ -71,6 +78,15 @@ namespace FaceShield.Models
                     case "--auto-export":
                         autoExportAfter = true;
                         break;
+                    case "--auto-processing-mode":
+                        processingMode = ParseProcessingMode(ReadValue(tokens, ref i, token));
+                        break;
+                    case "--yolo-risk-cascade":
+                        enableYoloRiskCascade = true;
+                        break;
+                    case "--no-yolo-risk-cascade":
+                        enableYoloRiskCascade = false;
+                        break;
                     case "--frame":
                         frameIndex = ParseFrameIndex(ReadValue(tokens, ref i, token));
                         break;
@@ -85,6 +101,8 @@ namespace FaceShield.Models
                 YoloModelPath = NormalizePath(yoloModelPath),
                 OpenMode = openMode,
                 AutoExportAfter = autoExportAfter,
+                ProcessingMode = processingMode,
+                EnableYoloRiskCascade = enableYoloRiskCascade,
                 FrameIndex = frameIndex
             };
         }
@@ -124,6 +142,18 @@ namespace FaceShield.Models
                 throw new ArgumentException($"Unsupported frame index: {value}");
 
             return frameIndex;
+        }
+
+        private static AutoMaskProcessingMode ParseProcessingMode(string value)
+        {
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "legacy" => AutoMaskProcessingMode.Legacy,
+                "raw" => AutoMaskProcessingMode.Raw,
+                "tracked" or "track" => AutoMaskProcessingMode.Tracked,
+                "full" => AutoMaskProcessingMode.Full,
+                _ => throw new ArgumentException($"Unsupported auto processing mode: {value}")
+            };
         }
 
         private static string? ResolveExistingPath(string relativePath)

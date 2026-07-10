@@ -35,7 +35,7 @@
     Quick decision에서 reviewRequired=true를 통과 허용할지 지정합니다.
 
 .PARAMETER MaxRunTotalMsDelta
-    품질 게이트 보조 기준으로 AutoMask run totalMs 허용 증가량(기본 0ms)을 지정합니다.
+    품질 게이트 보조 기준으로 검출·보조 검출·후처리 analysisTotalMs 허용 증가량(기본 0ms)을 지정합니다.
 
 .PARAMETER MaxExportMsDelta
     품질 게이트 보조 기준으로 Export totalMs 허용 증가량(기본 0ms)을 지정합니다.
@@ -680,6 +680,10 @@ foreach ($name in $presetsToCompare) {
     $targetSamplePerFaceShortGaps = Read-NumericValue -Container $targetFinal -Key 'samplePerFaceShortGaps'
     $baselineSampleMissRecovery = Read-NumericValue -Container $baselineFinal -Key 'sampleMissRecovery'
     $targetSampleMissRecovery = Read-NumericValue -Container $targetFinal -Key 'sampleMissRecovery'
+    $baselineAnalysisMs = Read-JsonValue -Container $baselineSummary -Key 'analysisTotalMs'
+    $baselineRunMs = if ($null -ne $baselineAnalysisMs) { [double]$baselineAnalysisMs } else { Read-NumericValue -Container $baselineSummary -Key 'totalMs' }
+    $targetAnalysisMs = Read-JsonValue -Container $targetSummary -Key 'analysisTotalMs'
+    $targetRunMs = if ($null -ne $targetAnalysisMs) { [double]$targetAnalysisMs } else { Read-NumericValue -Container $targetSummary -Key 'totalMs' }
     $baselineReview = Read-BoolValue -Container $baselineFinal -Key 'reviewRequired'
     $targetReview = Read-BoolValue -Container $targetFinal -Key 'reviewRequired'
     $quickDecision = Read-JsonValue -Container $compare -Key 'QuickDecision'
@@ -768,7 +772,7 @@ foreach ($name in $presetsToCompare) {
         PerFaceShortGapsCountTarget = $targetPerFaceShortGaps
         LargeJumpGapsCountBaseline = $baselineLargeJumpGaps
         LargeJumpGapsCountTarget = $targetLargeJumpGaps
-        RunMsDelta = if ($null -ne $baselineSummary -and $null -ne $targetSummary -and $baselineSummary.ContainsKey('totalMs') -and $targetSummary.ContainsKey('totalMs')) { $targetSummary.totalMs - $baselineSummary.totalMs } else { $null }
+        RunMsDelta = if ($null -ne $baselineRunMs -and $null -ne $targetRunMs) { $targetRunMs - $baselineRunMs } else { $null }
         ExportMsDelta = $decision.ExportMsDelta
         ReviewRequired = $targetReview
         SceneCutRemovedDelta = $decision.SceneCutRemovedDelta

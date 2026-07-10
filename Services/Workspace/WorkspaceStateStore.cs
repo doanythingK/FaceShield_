@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using FaceShield.Enums.Workspace;
 using FaceShield.Models;
+using FaceShield.Services.Analysis;
 using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
@@ -349,6 +350,7 @@ namespace FaceShield.Services.Workspace
     public sealed class AutoSettingsState
     {
         public int SettingsVersion { get; set; }
+        public int ProcessingMode { get; set; } = (int)AutoMaskProcessingMode.Legacy;
         public double DownscaleRatio { get; set; } = 1.0;
         public int DownscaleQuality { get; set; }
         public bool AutoTrackingEnabled { get; set; } = true;
@@ -356,6 +358,7 @@ namespace FaceShield.Services.Workspace
         public int ParallelSessionCount { get; set; } = 2;
         public bool AutoUseOrtOptimization { get; set; } = true;
         public bool AutoUseGpu { get; set; }
+        public bool AutoYoloEnableCoreMl { get; set; } = false;
         public int? OrtThreads { get; set; }
         public bool AutoExportAfter { get; set; } = true;
         public double? DetectionThreshold { get; set; }
@@ -410,6 +413,7 @@ namespace FaceShield.Services.Workspace
         public bool EnableYoloGapFill { get; set; } = false;
         public bool EnableYoloSceneCutCarryCleanup { get; set; } = false;
         public bool EnableYoloTemporalSmoothing { get; set; } = false;
+        public bool EnableYoloRiskCascade { get; set; } = false;
     }
 
     public sealed class WorkspaceSnapshot

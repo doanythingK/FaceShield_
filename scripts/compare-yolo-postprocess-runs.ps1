@@ -53,7 +53,7 @@
     품질 게이트: 컷캐리 post-gap-fill 제거율(비율) 최소 개선량(기본 0.00).
 
 .PARAMETER MaxRunTotalMsDelta
-    속도 게이트: AutoMask run totalMs 허용 증가량(기본 0).
+    속도 게이트: 검출·보조 검출·후처리를 합친 analysisTotalMs 허용 증가량(기본 0).
 
 .PARAMETER MaxExportTotalMsDelta
     속도 게이트: Export totalMs 허용 증가량(기본 0).
@@ -163,15 +163,15 @@ function Read-RunInfo {
     $foundTargetRun = $false
     $encounteredRunIds = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
 
-    $timingsByPhase = [ordered]@{}
+    $timingsByPhase = @{}
     $postOptions = @{}
-    $runSummary = [ordered]@{}
-    $faceTrackSummary = [ordered]@{}
-    $sceneCarrySummary = [ordered]@{}
-    $finalSummary = [ordered]@{}
-    $exportSummary = [ordered]@{}
-    $sceneCutReset = [ordered]@{ resetCount = 0; removed = 0; clearRanges = @() }
-    $sceneCutControlSummary = [ordered]@{
+    $runSummary = @{}
+    $faceTrackSummary = @{}
+    $sceneCarrySummary = @{}
+    $finalSummary = @{}
+    $exportSummary = @{}
+    $sceneCutReset = @{ resetCount = 0; removed = 0; clearRanges = @() }
+    $sceneCutControlSummary = @{
         preSmoothCutPairs = 0;
         preSmoothCutWindows = 0;
         preSmoothStrongPairs = 0;
@@ -239,7 +239,7 @@ function Read-RunInfo {
             continue
         }
 
-        if ($line -match 'runId=([^ ]+)') {
+        if ($line -match 'runId=([^,\s]+)') {
             $lineRunId = $matches[1]
             $encounteredRunIds.Add($lineRunId) | Out-Null
             if ($null -eq $targetIdPattern) {
@@ -281,24 +281,31 @@ function Read-RunInfo {
             continue
         }
 
-        if ($line -match '^\[AutoRunSummary\] runId=([^,]+), .* detector=([^,]+), mode=([^,]+), totalFrames=(\d+), startFrame=(\d+), processed=(\d+), decoded=(\d+), detects=(\d+), interpolated=(\d+), readMs=(\d+), decodeMs=(\d+), detectMs=(\d+), maskMs=(\d+), totalMs=(\d+), .* tracking=(True|False|true|false), everyN=(\d+)') {
-            if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
-            $runSummary = [ordered]@{
-                detector = $matches[2];
-                mode = $matches[3];
-                totalFrames = [int]$matches[4];
-                startFrame = [int]$matches[5];
-                processed = [int]$matches[6];
-                decoded = [int]$matches[7];
-                detects = [int]$matches[8];
-                interpolated = [int]$matches[9];
-                readMs = [long]$matches[10];
-                decodeMs = [long]$matches[11];
-                detectMs = [long]$matches[12];
-                maskMs = [long]$matches[13];
-                totalMs = [long]$matches[14];
-                tracking = [bool]::Parse($matches[15]);
-                everyN = [int]$matches[16];
+        if ($line.StartsWith('[AutoRunSummary]')) {
+            $summaryRunId = Read-SummaryField -Text $line -Key 'runId'
+            if ($summaryRunId -ne $resolvedTargetRunId) { continue }
+            $runSummary = @{
+                detector = Read-SummaryField -Text $line -Key 'detector';
+                mode = Read-SummaryField -Text $line -Key 'mode';
+                totalFrames = Read-SummaryInt -Text $line -Key 'totalFrames';
+                startFrame = Read-SummaryInt -Text $line -Key 'startFrame';
+                processed = Read-SummaryInt -Text $line -Key 'processed';
+                decoded = Read-SummaryInt -Text $line -Key 'decoded';
+                detects = Read-SummaryInt -Text $line -Key 'detects';
+                interpolated = Read-SummaryInt -Text $line -Key 'interpolated';
+                readMs = Read-SummaryInt -Text $line -Key 'readMs';
+                decodeMs = Read-SummaryInt -Text $line -Key 'decodeMs';
+                detectMs = Read-SummaryInt -Text $line -Key 'detectMs';
+                maskMs = Read-SummaryInt -Text $line -Key 'maskMs';
+                postProcessMs = Read-SummaryInt -Text $line -Key 'postProcessMs';
+                totalMs = Read-SummaryInt -Text $line -Key 'totalMs';
+                analysisTotalMs = Read-SummaryInt -Text $line -Key 'analysisTotalMs';
+                tracking = Read-SummaryBool -Text $line -Key 'tracking';
+                everyN = Read-SummaryInt -Text $line -Key 'everyN';
+            }
+
+            if ($null -eq $runSummary.analysisTotalMs) {
+                $runSummary.analysisTotalMs = $runSummary.totalMs
             }
 
             $autoRunSummarySampleWindow = Read-SummaryInt -Text $line -Key 'sampleWindow'
@@ -360,8 +367,18 @@ function Read-RunInfo {
             continue
         }
 
+        if ($line.StartsWith('[AutoRunSampleTiming]')) {
+            $sampleTimingRunId = Read-SummaryField -Text $line -Key 'runId'
+            if ($sampleTimingRunId -ne $resolvedTargetRunId) { continue }
+            $finalSummary.sampleWindowTiming = Read-SummaryField -Text $line -Key 'timing'
+            $finalSummary.sampleWindowStartFrame = Read-SummaryInt -Text $line -Key 'startFrame'
+            $finalSummary.sampleWindowEndFrame = Read-SummaryInt -Text $line -Key 'endFrame'
+            $finalSummary.sampleWindowDurationSec = Read-SummaryDouble -Text $line -Key 'durationSec'
+            continue
+        }
+
         if ($line -match '^\[FaceTrackPost\] .* tracks=(\d+), filled=(\d+), lostFilled=(\d+), fillInitial=(\d+), lostFrames=([^,]+), removedShort=(\d+), removedSparse=(\d+), removedUnstableTail=(\d+), removedEdgeTail=(\d+), removedLower=(\d+), rewritten=(\d+)') {
-            $faceTrackSummary = [ordered]@{
+            $faceTrackSummary = @{
                 tracks = [int]$matches[1];
                 filled = [int]$matches[2];
                 lostFilled = [int]$matches[3];
@@ -377,7 +394,7 @@ function Read-RunInfo {
         }
 
         if ($line -match '^\[SmokeFaceTrackPost\] label=([^,]+), tracks=(\d+), filled=(\d+), lostFilled=(\d+), initialFilled=(\d+), blockedInitialFill=(\d+), lostFrames=([^,]+), removedShort=(\d+), removedSparse=(\d+), removedUnstableTail=(\d+), removedEdgeTail=(\d+), removedLower=(\d+), rewritten=(\d+)') {
-            $faceTrackSummary = [ordered]@{
+            $faceTrackSummary = @{
                 tracks = [int]$matches[2];
                 filled = [int]$matches[3];
                 lostFilled = [int]$matches[4];
@@ -393,7 +410,7 @@ function Read-RunInfo {
         }
 
         if ($line -match '^\[YoloSceneCutCarryCleanup\] .* removed=(\d+), removedFrames=([^,]+), removedUnsupportedStrong=(\d+), removedUnsupportedStrongFrames=([^,]+), protectedStrong=(\d+), protectedStrongFrames=([^,]+), blockedFrames=([^,]+), purgeFrames=(\d+), blockFrames=(\d+), extendedWeakMaxConfidence=([0-9.]+)') {
-            $sceneCarrySummary = [ordered]@{
+            $sceneCarrySummary = @{
                 removed = [int]$matches[1];
                 removedFrames = $matches[2];
                 removedUnsupportedStrong = [int]$matches[3];
@@ -497,7 +514,7 @@ function Read-RunInfo {
 
         if ($line -match '^\[ExportRunSummary\] runId=([^,]+), mode=([^,]+), frames=(\d+), bitmapMaskFrames=(\d+), directFaceFrames=(\d+), swsToBgraMs=(\d+), maskMs=(\d+), swsToEncMs=(\d+), encodeMs=(\d+), totalMs=(\d+), hybridCopyAttempted=(True|False|true|false), hybridCopyUsed=(True|False|true|false), forceSoftwareEncoder=(True|False|true|false), forceSafeEncoding=(True|False|true|false), forceAudioTranscode=(True|False|true|false), forceH264Fallback=(True|False|true|false)(?:, hybridWindowExpectedEncodedFrames=(\d+), hybridWindowEncodedFrames=(\d+), hybridWindowFrameShortfall=(\d+), sampleWindowSourceFrames=(\d+), sampleWindowProducedFrames=(\d+), sampleWindowFrameShortfall=(\d+))?') {
             if ($matches[1].Trim() -ne $resolvedTargetRunId) { continue }
-            $exportSummary = [ordered]@{
+            $exportSummary = @{
                 runId = $matches[1].Trim();
                 exportMode = $matches[2];
                 frames = [int]$matches[3];
@@ -765,8 +782,22 @@ function Format-ExportIntegrity {
     )
 }
 
+function Get-RunAnalysisTotalMs {
+    param([Parameter(Mandatory = $true)][hashtable] $Summary)
+
+    if ($Summary.ContainsKey('analysisTotalMs') -and $null -ne $Summary.analysisTotalMs) {
+        return [long]$Summary.analysisTotalMs
+    }
+    if ($Summary.ContainsKey('totalMs') -and $null -ne $Summary.totalMs) {
+        return [long]$Summary.totalMs
+    }
+    return $null
+}
+
 $runA = Read-RunInfo -Path $RunALog -TargetRunId $RunAId
 $runB = Read-RunInfo -Path $RunBLog -TargetRunId $RunBId
+$runAAnalysisTotalMs = Get-RunAnalysisTotalMs -Summary $runA.RunSummary
+$runBAnalysisTotalMs = Get-RunAnalysisTotalMs -Summary $runB.RunSummary
 
 $allPhases = @($runA.Timings.Keys + $runB.Timings.Keys | Sort-Object -Unique)
 
@@ -801,18 +832,19 @@ foreach ($phase in $allPhases) {
 Write-Host ""
 Write-Host "== run summary (auto detect/export pipeline) =="
 if ($runA.RunSummary.Count -gt 0) {
-    Write-Host ("A detector={0} mode={1} totalFrames={2} processed={3} detects={4} interpolated={5} totalMs={6}" -f `
-        $runA.RunSummary.detector, $runA.RunSummary.mode, $runA.RunSummary.totalFrames, $runA.RunSummary.processed, $runA.RunSummary.detects, $runA.RunSummary.interpolated, $runA.RunSummary.totalMs)
+    Write-Host ("A detector={0} mode={1} totalFrames={2} processed={3} detects={4} interpolated={5} detectorMs={6} analysisMs={7}" -f `
+        $runA.RunSummary.detector, $runA.RunSummary.mode, $runA.RunSummary.totalFrames, $runA.RunSummary.processed, $runA.RunSummary.detects, $runA.RunSummary.interpolated, $runA.RunSummary.totalMs, $runAAnalysisTotalMs)
 }
 if ($runB.RunSummary.Count -gt 0) {
-    Write-Host ("B detector={0} mode={1} totalFrames={2} processed={3} detects={4} interpolated={5} totalMs={6}" -f `
-        $runB.RunSummary.detector, $runB.RunSummary.mode, $runB.RunSummary.totalFrames, $runB.RunSummary.processed, $runB.RunSummary.detects, $runB.RunSummary.interpolated, $runB.RunSummary.totalMs)
+    Write-Host ("B detector={0} mode={1} totalFrames={2} processed={3} detects={4} interpolated={5} detectorMs={6} analysisMs={7}" -f `
+        $runB.RunSummary.detector, $runB.RunSummary.mode, $runB.RunSummary.totalFrames, $runB.RunSummary.processed, $runB.RunSummary.detects, $runB.RunSummary.interpolated, $runB.RunSummary.totalMs, $runBAnalysisTotalMs)
 }
-if ($runA.RunSummary.Count -gt 0 -and $runB.RunSummary.Count -gt 0) {
+if ($runA.RunSummary.Count -gt 0 -and $runB.RunSummary.Count -gt 0 -and
+    $null -ne $runAAnalysisTotalMs -and $null -ne $runBAnalysisTotalMs) {
     $deltaProcessed = $runB.RunSummary.processed - $runA.RunSummary.processed
     $deltaDetects = $runB.RunSummary.detects - $runA.RunSummary.detects
     $deltaInterpolated = $runB.RunSummary.interpolated - $runA.RunSummary.interpolated
-    $deltaRunMs = $runB.RunSummary.totalMs - $runA.RunSummary.totalMs
+    $deltaRunMs = $runBAnalysisTotalMs - $runAAnalysisTotalMs
     $deltaRunMsText = if ($deltaRunMs -gt 0) { "+$deltaRunMs" } else { "$deltaRunMs" }
     Write-Host ("autoRunDelta processed={0} detects={1} interpolated={2} totalMs={3}" -f $deltaProcessed, $deltaDetects, $deltaInterpolated, $deltaRunMsText)
 }
@@ -1013,8 +1045,8 @@ Write-Host ("샘플 미탐 보완: A={0} B={1} Δ={2}" -f $aSampleMissRecovery, 
 Write-Host ("샘플 오탐 억제: A={0} B={1} Δ={2}" -f $aSampleFpSuppressed, $bSampleFpSuppressed, $sampleFpSuppressedDelta)
 Write-Host ("익스포트 시간: A={0} B={1} Δ={2}" -f $aExport, $bExport, $exportDeltaForHint)
 
-$runMsDelta = if (($runA.RunSummary.ContainsKey('totalMs')) -and ($runB.RunSummary.ContainsKey('totalMs'))) {
-    [int]($runB.RunSummary.totalMs - $runA.RunSummary.totalMs)
+$runMsDelta = if ($null -ne $runAAnalysisTotalMs -and $null -ne $runBAnalysisTotalMs) {
+    [int]($runBAnalysisTotalMs - $runAAnalysisTotalMs)
 } else {
     $null
 }
@@ -1025,6 +1057,28 @@ $aPostGapFillRemovalRate = if ($runA.FinalSummary.ContainsKey('postGapFillRemova
 $bPostGapFillRemovalRate = if ($runB.FinalSummary.ContainsKey('postGapFillRemovalRate')) { [double]$runB.FinalSummary.postGapFillRemovalRate } else { 0.0 }
 $postGapFillRemovalRateDelta = $bPostGapFillRemovalRate - $aPostGapFillRemovalRate
 $bReview = if ($runB.FinalSummary.ContainsKey('reviewRequired')) { [bool]$runB.FinalSummary.reviewRequired } else { $false }
+$hasSampleWindowA = $runA.FinalSummary.ContainsKey('sampleWindowTiming') -and
+    $null -ne $runA.FinalSummary.sampleWindowStartFrame -and
+    $null -ne $runA.FinalSummary.sampleWindowEndFrame -and
+    [int]$runA.FinalSummary.sampleWindowStartFrame -ge 0 -and
+    [int]$runA.FinalSummary.sampleWindowEndFrame -ge [int]$runA.FinalSummary.sampleWindowStartFrame -and
+    [double]$runA.FinalSummary.sampleWindowDurationSec -gt 0
+$hasSampleWindowB = $runB.FinalSummary.ContainsKey('sampleWindowTiming') -and
+    $null -ne $runB.FinalSummary.sampleWindowStartFrame -and
+    $null -ne $runB.FinalSummary.sampleWindowEndFrame -and
+    [int]$runB.FinalSummary.sampleWindowStartFrame -ge 0 -and
+    [int]$runB.FinalSummary.sampleWindowEndFrame -ge [int]$runB.FinalSummary.sampleWindowStartFrame -and
+    [double]$runB.FinalSummary.sampleWindowDurationSec -gt 0
+$passSampleWindowAlignment = if ($hasSampleWindowA -and $hasSampleWindowB) {
+    $runA.FinalSummary.sampleWindowTiming -eq $runB.FinalSummary.sampleWindowTiming -and
+    $runA.FinalSummary.sampleWindowStartFrame -eq $runB.FinalSummary.sampleWindowStartFrame -and
+    $runA.FinalSummary.sampleWindowEndFrame -eq $runB.FinalSummary.sampleWindowEndFrame -and
+    [math]::Abs(
+        [double]$runA.FinalSummary.sampleWindowDurationSec -
+        [double]$runB.FinalSummary.sampleWindowDurationSec) -le 0.001
+} else {
+    $false
+}
 
 $passWeakScore = $weakDelta -le $MaxWeakScoreDelta
 $passMissRecovery = $missRecoveryDelta -ge $MinMissRecoveryDelta
@@ -1033,10 +1087,10 @@ $passCutCarry = $postGapFillRemovalRateDelta -ge $MinPostGapFillRemovalRateDelta
 $passSampleIssueCandidates = $sampleIssueCandidateDelta -le $AllowedSampleIssueCandidateIncrease
 $passSampleShortGap = $sampleShortGapsDelta -le $AllowedSampleShortGapIncrease
 $passSamplePerFaceShortGap = $samplePerFaceShortGapsDelta -le $AllowedSamplePerFaceShortGapIncrease
-$passRunSpeed = if ($null -eq $runMsDelta) { $true } else { $runMsDelta -le $MaxRunTotalMsDelta }
+$passRunSpeed = $null -ne $runMsDelta -and $runMsDelta -le $MaxRunTotalMsDelta
 $passExportSpeed = if ($null -eq $exportDeltaForHint) { $true } else { $exportDeltaForHint -le $MaxExportTotalMsDelta }
 $passReview = if ($AllowReviewRequired.IsPresent) { $true } else { -not $bReview }
-$passOverall = $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passSampleMissRecovery -and $passSampleIssueCandidates -and $passSampleShortGap -and $passSamplePerFaceShortGap -and $passRunSpeed -and $passExportSpeed -and $passReview
+$passOverall = $passWeakScore -and $passMissRecovery -and $passCutCarry -and $passSampleMissRecovery -and $passSampleIssueCandidates -and $passSampleShortGap -and $passSamplePerFaceShortGap -and $passSampleWindowAlignment -and $passRunSpeed -and $passExportSpeed -and $passReview
 $passLabel = if ($passOverall) { "PASS" } else { "REVIEW" }
 $reviewText = if ($passReview) { "PASS" } else { "REVIEW_REQUIRED" }
 
@@ -1048,7 +1102,14 @@ if (-not $passCutCarry) { $passReasons.Add("postGapFillRemovalRateΔ=$('{0:P2}' 
 if (-not $passSampleIssueCandidates) { $passReasons.Add("sampleIssueCandidateΔ=$sampleIssueCandidateDelta > $AllowedSampleIssueCandidateIncrease") }
 if (-not $passSampleShortGap) { $passReasons.Add("sampleShortGapΔ=$sampleShortGapsDelta > $AllowedSampleShortGapIncrease") }
 if (-not $passSamplePerFaceShortGap) { $passReasons.Add("samplePerFaceShortGapΔ=$samplePerFaceShortGapsDelta > $AllowedSamplePerFaceShortGapIncrease") }
-if (-not $passRunSpeed) { $passReasons.Add("runMsΔ=$runMsDelta > $MaxRunTotalMsDelta") }
+if (-not $passSampleWindowAlignment) { $passReasons.Add("sampleWindowMismatch") }
+if (-not $passRunSpeed) {
+    if ($null -eq $runMsDelta) {
+        $passReasons.Add("analysisRunMsMissing")
+    } else {
+        $passReasons.Add("runMsΔ=$runMsDelta > $MaxRunTotalMsDelta")
+    }
+}
 if (-not $passExportSpeed) { $passReasons.Add("exportMsΔ=$exportDeltaForHint > $MaxExportTotalMsDelta") }
 if (-not $passReview) { $passReasons.Add("reviewRequired=true") }
 
@@ -1062,6 +1123,7 @@ Write-Host ("샘플 오탐 후보 수: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $a
 Write-Host ("샘플 미탐 보완: A={0}, B={1}, Δ={2}, 기준≥{3}" -f $aSampleMissRecovery, $bSampleMissRecovery, $sampleMissRecoveryDelta, $MinSampleMissRecoveryDelta)
 Write-Host ("샘플 단기 미탐 갭: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSampleShortGaps, $bSampleShortGaps, $sampleShortGapsDelta, $AllowedSampleShortGapIncrease)
 Write-Host ("샘플 단기 미탐 퍼페이스 갭: A={0}, B={1}, Δ={2}, 기준≤{3}" -f $aSamplePerFaceShortGaps, $bSamplePerFaceShortGaps, $samplePerFaceShortGapsDelta, $AllowedSamplePerFaceShortGapIncrease)
+Write-Host ("샘플 구간 정합성: A={0}:{1}-{2}, B={3}:{4}-{5} -> {6}" -f $runA.FinalSummary.sampleWindowTiming, $runA.FinalSummary.sampleWindowStartFrame, $runA.FinalSummary.sampleWindowEndFrame, $runB.FinalSummary.sampleWindowTiming, $runB.FinalSummary.sampleWindowStartFrame, $runB.FinalSummary.sampleWindowEndFrame, $(if ($passSampleWindowAlignment) { "PASS" } else { "MISMATCH" }))
 Write-Host ("속도(run/export): runΔ={0}, 기준≤{1}, exportΔ={2}, 기준≤{3}" -f (if ($null -ne $runMsDelta) { $runMsDelta } else { "n/a" }), $MaxRunTotalMsDelta, $exportDeltaForHint, $MaxExportTotalMsDelta)
 Write-Host ("심사 플래그: reviewRequired=$bReview -> {0}" -f $reviewText)
 Write-Host ("판정 사유: {0}" -f ($(if ($passReasons.Count -eq 0) { "pass" } else { $passReasons -join '; ' })))
@@ -1108,6 +1170,7 @@ $quickDecision = [pscustomobject]@{
     PassSampleIssueCandidates = $passSampleIssueCandidates;
     PassSampleShortGap = $passSampleShortGap;
     PassSamplePerFaceShortGap = $passSamplePerFaceShortGap;
+    PassSampleWindowAlignment = $passSampleWindowAlignment;
     PassRunSpeed = $passRunSpeed;
     PassExportSpeed = $passExportSpeed;
     PassReview = $passReview;
