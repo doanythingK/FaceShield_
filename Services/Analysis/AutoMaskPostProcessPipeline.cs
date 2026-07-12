@@ -105,6 +105,11 @@ namespace FaceShield.Services.Analysis
                 _options.FilterProfile == FaceFilterProfile.Yolo &&
                 !_options.EnablePostProcessing &&
                 _options.UseTracking;
+            bool runYoloTrackedContinuity = _options.FilterProfile == FaceFilterProfile.Yolo &&
+                _options.UseTracking &&
+                _options.ProcessingMode == AutoMaskProcessingMode.Tracked &&
+                !_options.EnablePostProcessing &&
+                _options.DetectEveryNFrames <= 1;
             bool runYoloOffModeGapFill = enableYoloOffModeGapFill &&
                 _options.DetectEveryNFrames > 1;
             bool runYoloPostProcess = _options.FilterProfile == FaceFilterProfile.Yolo &&
@@ -116,6 +121,7 @@ namespace FaceShield.Services.Analysis
                 enableSceneCutCleanup ||
                 enableTemporalSmoothing;
             bool runYoloTrackPost = runYoloMissRecovery ||
+                runYoloTrackedContinuity ||
                 (runYoloPostProcess &&
                  (enableSceneCutCleanup ||
                   enableTemporalSmoothing ||
@@ -123,7 +129,7 @@ namespace FaceShield.Services.Analysis
                   enableWeakIsolationCleanup ||
                   enableGapFill));
             Debug.WriteLine(
-                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} processingMode={_options.ProcessingMode} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} offModeGapFillWindow={OffModeGapFillWindowFrames} offModeGapFillMaxGap={OffModeGapFillMaxGapFrames} offModeGapFillMinAnchor={OffModeGapFillMinAnchorConfidence:0.###} offModeGapFillSupportedAnchorMin={OffModeGapFillSupportedAnchorMinConfidence:0.###} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
+                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} processingMode={_options.ProcessingMode} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} trackedContinuity={runYoloTrackedContinuity} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} offModeGapFillWindow={OffModeGapFillWindowFrames} offModeGapFillMaxGap={OffModeGapFillMaxGapFrames} offModeGapFillMinAnchor={OffModeGapFillMinAnchorConfidence:0.###} offModeGapFillSupportedAnchorMin={OffModeGapFillSupportedAnchorMinConfidence:0.###} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
             if (_options.FilterProfile == FaceFilterProfile.Yolo && enablePostProcessing && !hasAnyYoloPostModule)
             {
                 Debug.WriteLine(
@@ -139,7 +145,10 @@ namespace FaceShield.Services.Analysis
                 Debug.WriteLine(
                     $"[AutoMaskPostProcess] off-mode YOLO 보정 활성화 run={offModeRunMode} detectEveryN={_options.DetectEveryNFrames} window={OffModeGapFillWindowFrames} sceneCutGuard={enableYoloOffModeSceneCutCarryGuard}");
             }
-            else if (_options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnablePostProcessing && _options.UseTracking)
+            else if (_options.FilterProfile == FaceFilterProfile.Yolo &&
+                !_options.EnablePostProcessing &&
+                _options.UseTracking &&
+                !runYoloTrackedContinuity)
             {
                 if (!_options.EnableYoloGapFill)
                 {
@@ -172,11 +181,12 @@ namespace FaceShield.Services.Analysis
                     _totalFrames,
                     _options.FilterProfile,
                     useTrackingForTemporalFixes,
-                    missRecoveryOnly: runYoloMissRecovery)
+                    missRecoveryOnly: runYoloMissRecovery,
+                    continuityOnly: runYoloTrackedContinuity)
                 : FaceTrackPostProcessResult.Empty;
             swTrack.Stop();
             Debug.WriteLine(
-                $"[AutoMaskPostProcessTiming] runId={runId} phase=track-post run={runTrackPost} elapsedMs={swTrack.ElapsedMilliseconds} trackCount={trackPost.TrackCount} fillGap={trackPost.FilledGapFaces} fillLost={trackPost.FilledLostFaces} fillInitial={trackPost.FilledInitialFaces}");
+                $"[AutoMaskPostProcessTiming] runId={runId} phase=track-post run={runTrackPost} continuity={runYoloTrackedContinuity} elapsedMs={swTrack.ElapsedMilliseconds} trackCount={trackPost.TrackCount} fillGap={trackPost.FilledGapFaces} fillLost={trackPost.FilledLostFaces} fillInitial={trackPost.FilledInitialFaces}");
             int finalMissRecoveryFillCount = trackPost.FilledGapFaces + trackPost.FilledLostFaces + trackPost.FilledInitialFaces;
             var finalMissRecoveryFillFrameIndices = new HashSet<int>();
             AddFrameIndices(finalMissRecoveryFillFrameIndices, trackPost.FilledGapFacesInfo);

@@ -368,7 +368,7 @@ namespace FaceShield.Services.Workspace
     public sealed class AutoSettingsState
     {
         public int SettingsVersion { get; set; }
-        public int ProcessingMode { get; set; } = (int)AutoMaskProcessingMode.Legacy;
+        public int ProcessingMode { get; set; } = (int)AutoMaskProcessingMode.Tracked;
         public double DownscaleRatio { get; set; } = 1.0;
         public int DownscaleQuality { get; set; }
         public bool AutoTrackingEnabled { get; set; } = true;

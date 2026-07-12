@@ -31,7 +31,7 @@ namespace FaceShield.ViewModels.Pages
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
         private const int DefaultAutoDetectEveryNFrames = 1;
-        private const int CurrentAutoSettingsVersion = 8;
+        private const int CurrentAutoSettingsVersion = 9;
         private const double DefaultYolo5FaceObjectnessThreshold = 0.12;
         private const double DefaultYolo5FaceConfidenceThreshold = 0.18;
         private const double DefaultYoloNmsThreshold = 0.45;
@@ -213,10 +213,10 @@ namespace FaceShield.ViewModels.Pages
 
         public IReadOnlyList<AutoProcessingModeOption> AutoProcessingModeOptions { get; } = new[]
         {
-            new AutoProcessingModeOption("기존 호환", AutoMaskProcessingMode.Legacy),
-            new AutoProcessingModeOption("Raw · 검출만", AutoMaskProcessingMode.Raw),
-            new AutoProcessingModeOption("Tracked · 추적 허용", AutoMaskProcessingMode.Tracked),
-            new AutoProcessingModeOption("Full · 전체 후처리", AutoMaskProcessingMode.Full)
+            new AutoProcessingModeOption("자동 안정화 (권장)", AutoMaskProcessingMode.Tracked),
+            new AutoProcessingModeOption("검출 결과 그대로", AutoMaskProcessingMode.Raw),
+            new AutoProcessingModeOption("전체 보정", AutoMaskProcessingMode.Full),
+            new AutoProcessingModeOption("이전 설정 호환", AutoMaskProcessingMode.Legacy)
         };
 
         [ObservableProperty]
@@ -496,6 +496,14 @@ namespace FaceShield.ViewModels.Pages
 
         public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
         public bool CanStartWorkspace => CanOpenWorkspace && !IsAutoRunning && !IsWorkspaceLoading;
+        public string SelectedVideoDisplayName => string.IsNullOrWhiteSpace(SelectedVideoPath)
+            ? "영상을 선택해 주세요"
+            : Path.GetFileName(SelectedVideoPath);
+        public string SelectedVideoDirectory => string.IsNullOrWhiteSpace(SelectedVideoPath)
+            ? ""
+            : Path.GetDirectoryName(SelectedVideoPath) ?? "";
+        public bool HasRecents => Recents.Count > 0;
+        public bool HasNoRecents => !HasRecents;
         public bool IsBusy => IsWorkspaceLoading || IsAutoRunning || IsExportRunning;
         public int BusyProgress => IsExportRunning
             ? ExportProgress
@@ -525,7 +533,7 @@ namespace FaceShield.ViewModels.Pages
             (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Legacy) switch
             {
                 AutoMaskProcessingMode.Raw => "매 프레임 검출만 수행하며 추적·보간·후처리를 적용하지 않습니다.",
-                AutoMaskProcessingMode.Tracked => "추적 간격과 보간만 허용하며 후처리 마스크 변경은 적용하지 않습니다.",
+                AutoMaskProcessingMode.Tracked => "짧은 검출 누락만 연결하며 전체 후처리는 사용하지 않습니다.",
                 AutoMaskProcessingMode.Full => "추적과 모든 후처리 모듈을 적용합니다.",
                 _ => "기존 추적 및 후처리 토글 조합을 그대로 사용합니다."
             };
@@ -540,6 +548,8 @@ namespace FaceShield.ViewModels.Pages
         {
             OnPropertyChanged(nameof(CanOpenWorkspace));
             OnPropertyChanged(nameof(CanStartWorkspace));
+            OnPropertyChanged(nameof(SelectedVideoDisplayName));
+            OnPropertyChanged(nameof(SelectedVideoDirectory));
         }
 
         partial void OnSelectedRecentChanged(RecentItem? value)
@@ -1191,7 +1201,10 @@ namespace FaceShield.ViewModels.Pages
                 var backend = AutoDetectorBackendOptions.FirstOrDefault(o => (int)o.Backend == saved.DetectorBackend);
                 if (backend != null)
                     SelectedAutoDetectorBackendOption = backend;
-                var processingMode = AutoProcessingModeOptions.FirstOrDefault(o => (int)o.Mode == saved.ProcessingMode);
+                int savedProcessingMode = saved.ProcessingMode;
+                if (requiresSettingsUpgrade && savedProcessingMode == (int)AutoMaskProcessingMode.Raw)
+                    savedProcessingMode = (int)AutoMaskProcessingMode.Tracked;
+                var processingMode = AutoProcessingModeOptions.FirstOrDefault(o => (int)o.Mode == savedProcessingMode);
                 if (processingMode != null)
                     SelectedAutoProcessingModeOption = processingMode;
 
@@ -1201,7 +1214,7 @@ namespace FaceShield.ViewModels.Pages
                 EnableYoloGapFill = requiresSettingsUpgrade ? false : saved.EnableYoloGapFill;
                 EnableYoloSceneCutCarryCleanup = requiresSettingsUpgrade ? false : saved.EnableYoloSceneCutCarryCleanup;
                 EnableYoloTemporalSmoothing = requiresSettingsUpgrade ? false : saved.EnableYoloTemporalSmoothing;
-                EnableYoloRiskCascade = saved.EnableYoloRiskCascade;
+                EnableYoloRiskCascade = requiresSettingsUpgrade ? false : saved.EnableYoloRiskCascade;
 
                 _yoloV8Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType);
                 _yolo5Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType);
@@ -2306,6 +2319,8 @@ namespace FaceShield.ViewModels.Pages
             Recents.Insert(0, new RecentItem(Path.GetFileName(videoPath), videoPath, DateTimeOffset.Now));
             TrimRecents();
             _stateStore.SaveRecents(Recents);
+            OnPropertyChanged(nameof(HasRecents));
+            OnPropertyChanged(nameof(HasNoRecents));
         }
 
         public void PersistAllWorkspaces()

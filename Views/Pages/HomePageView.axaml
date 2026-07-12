@@ -3,372 +3,560 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:FaceShield.ViewModels.Pages"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             mc:Ignorable="d" d:DesignWidth="1100" d:DesignHeight="720"
              x:DataType="vm:HomePageViewModel"
-             x:Class="FaceShield.Views.Pages.HomePageView">
-  <Grid RowDefinitions="Auto,*" ColumnDefinitions="2*,3*"
-        Margin="24" RowSpacing="16" ColumnSpacing="16">
+             x:Class="FaceShield.Views.Pages.HomePageView"
+             Background="#0F1110">
+  <UserControl.Styles>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="#171A18"/>
+      <Setter Property="BorderBrush" Value="#2B302D"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="18"/>
+    </Style>
 
-    <!-- Header -->
-    <Border Grid.Row="0" Grid.ColumnSpan="2"
-            Padding="18" CornerRadius="12"
-            Background="#1B1B1B">
-      <StackPanel>
-        <TextBlock Text="FaceShield" FontSize="28" FontWeight="Bold"/>
+    <Style Selector="Border.selection">
+      <Setter Property="Background" Value="#202421"/>
+      <Setter Property="BorderBrush" Value="#343A36"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Padding" Value="12"/>
+    </Style>
+
+    <Style Selector="TextBlock.sectionTitle">
+      <Setter Property="FontSize" Value="20"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+
+    <Style Selector="TextBlock.groupTitle">
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#DDE5E0"/>
+    </Style>
+
+    <Style Selector="TextBlock.label">
+      <Setter Property="Foreground" Value="#C7CECA"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#9AA39E"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#238B68"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style Selector="Button.primary:pointerover">
+      <Setter Property="Background" Value="#2BA77D"/>
+    </Style>
+
+    <Style Selector="Button.secondary">
+      <Setter Property="Background" Value="#252A27"/>
+      <Setter Property="Foreground" Value="#E7EBE9"/>
+      <Setter Property="BorderBrush" Value="#3A413D"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style Selector="Button.secondary:pointerover">
+      <Setter Property="Background" Value="#303632"/>
+    </Style>
+
+    <Style Selector="Button.danger">
+      <Setter Property="Background" Value="#7D3E43"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="6"/>
+    </Style>
+
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Margin" Value="0,0,0,8"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*"
+        ColumnDefinitions="3*,2*"
+        Margin="20"
+        RowSpacing="14"
+        ColumnSpacing="16">
+
+    <Grid Grid.Row="0" Grid.ColumnSpan="2"
+          ColumnDefinitions="*,Auto"
+          Margin="2,0,2,2">
+      <StackPanel Spacing="2">
+        <TextBlock Text="FaceShield"
+                   FontSize="26"
+                   FontWeight="Bold"/>
+        <TextBlock Text="영상 모자이크"
+                   Classes="muted"/>
       </StackPanel>
-    </Border>
+    </Grid>
 
-    <!-- Left: Start -->
     <Border Grid.Row="1" Grid.Column="0"
-            Padding="18" CornerRadius="12"
-            Background="#151515">
+            Classes="panel">
       <ScrollViewer VerticalScrollBarVisibility="Auto"
                     HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Spacing="12">
-
-        <TextBlock Text="시작" FontSize="18" FontWeight="SemiBold"/>
-        <TextBlock Text="최근 워크스페이스는 최대 5개까지 저장되며, 종료 후에도 자동 복원됩니다."
-                   Opacity="0.7"
-                   TextWrapping="Wrap"/>
-
-          <Button Content="새 프로젝트 (영상 선택)"
-        Height="44"
-        Click="PickVideo_Click"/>
-
-        <!--<Button Content="새 프로젝트 (영상 선택)"
-                Command="{Binding PickVideoCommand}"
-                Height="44"/>-->
-
-        <!-- TODO: 기능 구현 전까지 숨김 -->
-        <!--<Button Content="설정"
-                Command="{Binding OpenSettingsCommand}"
-                Height="40"/>
-
-        <Button Content="정보"
-                Command="{Binding OpenAboutCommand}"
-                Height="40"/>-->
-
-        <Separator Margin="0,12,0,12"/>
-
-        <TextBlock Text="선택된 영상" Opacity="0.75"/>
-        <TextBlock Text="{Binding SelectedVideoPath}"
-                   TextWrapping="Wrap"
-                   Opacity="0.9"/>
-
-        <TextBlock Text="모드 선택" Margin="0,12,0,4" Opacity="0.8"/>
-
-        <StackPanel Orientation="Horizontal" Spacing="8">
-          <Button Content="자동 모자이크 하기"
-                  Command="{Binding OpenAutoWorkspaceCommand}"
-                  IsEnabled="{Binding CanStartWorkspace}"
-                  Height="44"/>
-
-          <Button Content="수동 모자이크 하기"
-                  Command="{Binding OpenManualWorkspaceCommand}"
-                  IsEnabled="{Binding CanStartWorkspace}"
-                  Height="44"/>
-        </StackPanel>
-
-        <TextBlock Text="자동 옵션" Margin="0,12,0,4" Opacity="0.8"/>
-        <TextBlock Text="일부 옵션은 속도가 빨라지는 대신 검출 정확도가 낮아질 수 있습니다."
-                   Opacity="0.6"
-                   TextWrapping="Wrap"/>
-
-        <StackPanel Spacing="6">
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="검출 모델" Width="90" VerticalAlignment="Center"/>
-            <ComboBox Width="180"
-                      ItemsSource="{Binding AutoDetectorBackendOptions}"
-                      SelectedItem="{Binding SelectedAutoDetectorBackendOption}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-            <Button Content="YOLO 다운로드"
-                    Command="{Binding DownloadYoloModelCommand}"/>
+        <StackPanel Spacing="18">
+          <StackPanel Spacing="6">
+            <TextBlock Text="새 영상 작업"
+                       Classes="sectionTitle"/>
+            <Button Content="영상 선택"
+                    Classes="secondary"
+                    Height="42"
+                    HorizontalAlignment="Stretch"
+                    Click="PickVideo_Click"/>
           </StackPanel>
 
-          <StackPanel Spacing="6" IsVisible="{Binding IsYoloDetectorSelected}">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="YOLO 종류" Width="90" VerticalAlignment="Center"/>
-              <ComboBox Width="180"
-                        ItemsSource="{Binding YoloModelTypeOptions}"
-                        SelectedItem="{Binding SelectedYoloModelTypeOption}">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding Label}"/>
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
+          <Border Classes="selection">
+            <StackPanel Spacing="5">
+              <TextBlock Text="선택한 영상"
+                         Classes="muted"/>
+              <TextBlock Text="{Binding SelectedVideoDisplayName}"
+                         FontWeight="SemiBold"
+                         TextTrimming="CharacterEllipsis"/>
+              <TextBlock Text="{Binding SelectedVideoDirectory}"
+                         Classes="muted"
+                         TextWrapping="Wrap"
+                         MaxLines="2"/>
             </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="YOLO 모델" Width="90" VerticalAlignment="Center"/>
-              <TextBox Width="220"
-                       Text="{Binding AutoYoloModelPath, Mode=TwoWay}"
-                       Watermark="*.onnx"/>
-              <Button Content="찾기" Click="PickYoloModel_Click"/>
-            </StackPanel>
-            <StackPanel Spacing="4">
-              <ProgressBar Height="8" Minimum="0" Maximum="100"
-                           Value="{Binding YoloModelDownloadProgress}"
-                           IsVisible="{Binding IsYoloModelDownloading}"/>
-              <TextBlock Text="{Binding YoloModelDownloadStatus}"
-                         FontSize="12"
-                         Opacity="0.7"
-                         TextWrapping="Wrap"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="입력 크기" Width="90" VerticalAlignment="Center"/>
-              <NumericUpDown Width="128" Minimum="64" Maximum="2048" Increment="32"
-                             Value="{Binding AutoYoloInputSize, Mode=TwoWay}"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <CheckBox Content="타일 검출"
-                        IsChecked="{Binding AutoYoloUseTiling}"/>
-              <CheckBox Content="타일만"
-                        IsChecked="{Binding AutoYoloTileOnly}"
-                        IsEnabled="{Binding AutoYoloUseTiling}"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="타일" Width="90" VerticalAlignment="Center"/>
-              <NumericUpDown Width="92" Minimum="1" Maximum="8" Increment="1"
-                             Value="{Binding AutoYoloTileColumns, Mode=TwoWay}"
-                             IsEnabled="{Binding AutoYoloUseTiling}"/>
-              <TextBlock Text="x" VerticalAlignment="Center"/>
-              <NumericUpDown Width="92" Minimum="1" Maximum="8" Increment="1"
-                             Value="{Binding AutoYoloTileRows, Mode=TwoWay}"
-                             IsEnabled="{Binding AutoYoloUseTiling}"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="타일 겹침" Width="90" VerticalAlignment="Center"/>
-              <Slider Width="160" Minimum="0" Maximum="0.45"
-                      Value="{Binding AutoYoloTileOverlapRatio, Mode=TwoWay}"
-                      IsEnabled="{Binding AutoYoloUseTiling}"/>
-              <TextBlock Text="{Binding AutoYoloTileOverlapRatio, StringFormat={}{0:0.00}}"
-                         Width="48" VerticalAlignment="Center"/>
-            </StackPanel>
+          </Border>
+
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+              <TextBlock Text="모자이크 강도"
+                         Classes="groupTitle"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1"
+                      Content="미리 보기"
+                      Classes="secondary"
+                      Padding="12,6"
+                      Command="{Binding ShowBlurPreviewCommand}"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,52" ColumnSpacing="12">
+              <Slider Minimum="{Binding MinBlurRadius}"
+                      Maximum="{Binding MaxBlurRadius}"
+                      Value="{Binding BlurRadius, Mode=TwoWay}"
+                      TickFrequency="2"
+                      IsSnapToTickEnabled="True"
+                      VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1"
+                         Text="{Binding BlurRadius}"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         FontWeight="SemiBold"/>
+            </Grid>
           </StackPanel>
 
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="분석 모드" Width="90" VerticalAlignment="Center"/>
-            <ComboBox Width="180"
-                      ItemsSource="{Binding AutoProcessingModeOptions}"
-                      SelectedItem="{Binding SelectedAutoProcessingModeOption}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="해상도 축소" Width="90" VerticalAlignment="Center"/>
-            <ComboBox Width="140"
-                      ItemsSource="{Binding DownscaleOptions}"
-                      SelectedItem="{Binding SelectedDownscaleOption}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="축소 품질" Width="90" VerticalAlignment="Center"/>
-            <ComboBox Width="140"
-                      ItemsSource="{Binding DownscaleQualityOptions}"
-                      SelectedItem="{Binding SelectedDownscaleQualityOption}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsTrackingIntervalVisible}">
-          <CheckBox Content="추적 사용"
-                    IsVisible="{Binding IsLegacyProcessingMode}"
-                    IsChecked="{Binding AutoTrackingEnabled}"/>
-          <TextBlock Text="검출 간격" VerticalAlignment="Center"/>
-          <ComboBox Width="80"
-                    ItemsSource="{Binding DetectEveryOptions}"
-                    SelectedItem="{Binding AutoDetectEveryNFrames}"
-                    IsEnabled="{Binding IsTrackingIntervalEnabled}"/>
-            <TextBlock Text="프레임" VerticalAlignment="Center"/>
-        </StackPanel>
-
-        <Border Background="#222222" CornerRadius="8" Padding="10" IsVisible="{Binding IsYoloDetectorSelected}">
-          <StackPanel Spacing="8">
-            <TextBlock Text="후처리 토글 (YOLO 전용)"
-                       FontWeight="SemiBold"/>
-            <TextBlock Text="{Binding EffectiveProcessingModeDescription}"
-                       TextWrapping="Wrap" Opacity="0.75"/>
-            <CheckBox Content="위험 프레임 FaceONNX 강검출 (간격 1 · 검증 전 실험 기능)"
-                      IsVisible="{Binding IsYoloCascadeOptionVisible}"
-                      IsEnabled="{Binding IsYoloCascadeOptionEnabled}"
-                      IsChecked="{Binding EnableYoloRiskCascade}"/>
-            <StackPanel Spacing="4" IsVisible="{Binding IsLegacyProcessingMode}">
-              <CheckBox Content="후처리 단계 사용"
-                        IsChecked="{Binding EnablePostProcessing}"/>
-              <StackPanel Margin="10,0,0,0" Spacing="4" IsEnabled="{Binding EnablePostProcessing}">
-                <CheckBox Content="ROI 재검증 단계 사용"
-                          IsChecked="{Binding EnableRoiPostProcess}"/>
-                <CheckBox Content="약한 단일오탐 제거"
-                          IsChecked="{Binding EnableYoloWeakIsolatedCleanup}"/>
-                <CheckBox Content="짧은 간격 보강"
-                          IsChecked="{Binding EnableYoloGapFill}"/>
-                <CheckBox Content="장면전환 carry 정리"
-                          IsChecked="{Binding EnableYoloSceneCutCarryCleanup}"/>
-                <CheckBox Content="temporal smoothing"
-                          IsChecked="{Binding EnableYoloTemporalSmoothing}"/>
-              </StackPanel>
-            </StackPanel>
-          </StackPanel>
-        </Border>
-
-        <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
-          <TextBlock Text="Detection Threshold (얼굴 후보 기준)"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Slider Width="220" Minimum="0.05" Maximum="0.95"
-                    Value="{Binding AutoDetectionThreshold, Mode=TwoWay}"/>
-            <TextBlock Text="{Binding AutoDetectionThreshold, StringFormat={}{0:0.00}}"
-                       Width="48" VerticalAlignment="Center"/>
-          </StackPanel>
-          <TextBlock Text="값을 낮추면: 얼굴 후보를 더 많이 잡아 작은 얼굴도 잘 탐지되지만 오탐이 늘 수 있습니다."
-                     Opacity="0.7" TextWrapping="Wrap"/>
-          <TextBlock Text="값을 높이면: 오탐은 줄 수 있지만, 작은 얼굴을 놓칠 수 있습니다."
-                     Opacity="0.7" TextWrapping="Wrap"/>
-        </StackPanel>
-
-        <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
-          <TextBlock Text="Confidence Threshold (최종 확정 기준)"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Slider Width="220" Minimum="0.05" Maximum="0.95"
-                    Value="{Binding AutoConfidenceThreshold, Mode=TwoWay}"/>
-            <TextBlock Text="{Binding AutoConfidenceThreshold, StringFormat={}{0:0.00}}"
-                       Width="48" VerticalAlignment="Center"/>
-          </StackPanel>
-          <TextBlock Text="값을 낮추면: 얼굴로 확정되는 결과가 늘 수 있지만, 오탐이 늘 수 있습니다."
-                     Opacity="0.7" TextWrapping="Wrap"/>
-          <TextBlock Text="값을 높이면: 확정이 엄격해져 오탐은 줄 수 있지만, 미탐이 늘 수 있습니다."
-                     Opacity="0.7" TextWrapping="Wrap"/>
-        </StackPanel>
-
-        <StackPanel Spacing="4" IsVisible="{Binding IsFaceOnnxDetectorSelected}">
-          <TextBlock Text="NMS Threshold (겹친 결과 정리)"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Slider Width="220" Minimum="0.05" Maximum="0.95"
-                    Value="{Binding AutoNmsThreshold, Mode=TwoWay}"/>
-            <TextBlock Text="{Binding AutoNmsThreshold, StringFormat={}{0:0.00}}"
-                       Width="48" VerticalAlignment="Center"/>
-          </StackPanel>
-          <TextBlock Text="값을 낮추면: 겹친 박스를 더 강하게 제거해 중복은 줄지만, 가까운 얼굴이 하나로 합쳐질 수 있습니다."
-                     Opacity="0.7" TextWrapping="Wrap"/>
-          <TextBlock Text="값을 높이면: 덜 제거되어 가까운 얼굴은 분리될 수 있지만, 중복 박스가 남을 수 있습니다."
-                     Opacity="0.7" TextWrapping="Wrap"/>
-        </StackPanel>
-
-        <StackPanel Spacing="4" IsVisible="{Binding IsYoloDetectorSelected}">
-          <TextBlock Text="YOLO Objectness"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Slider Width="220" Minimum="0.05" Maximum="0.95"
-                    Value="{Binding AutoYoloObjectnessThreshold, Mode=TwoWay}"/>
-            <TextBlock Text="{Binding AutoYoloObjectnessThreshold, StringFormat={}{0:0.00}}"
-                       Width="48" VerticalAlignment="Center"/>
-          </StackPanel>
-        </StackPanel>
-
-        <StackPanel Spacing="4" IsVisible="{Binding IsYoloDetectorSelected}">
-          <TextBlock Text="YOLO Confidence"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Slider Width="220" Minimum="0.05" Maximum="0.95"
-                    Value="{Binding AutoYoloConfidenceThreshold, Mode=TwoWay}"/>
-            <TextBlock Text="{Binding AutoYoloConfidenceThreshold, StringFormat={}{0:0.00}}"
-                       Width="48" VerticalAlignment="Center"/>
-          </StackPanel>
-        </StackPanel>
-
-        <StackPanel Spacing="4" IsVisible="{Binding IsYoloDetectorSelected}">
-          <TextBlock Text="YOLO NMS"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Slider Width="220" Minimum="0.05" Maximum="0.95"
-                    Value="{Binding AutoYoloNmsThreshold, Mode=TwoWay}"/>
-            <TextBlock Text="{Binding AutoYoloNmsThreshold, StringFormat={}{0:0.00}}"
-                       Width="48" VerticalAlignment="Center"/>
-          </StackPanel>
-        </StackPanel>
-
-        <StackPanel Spacing="6">
-          <TextBlock Text="블러 강도" Margin="0,6,0,0"/>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="{Binding BlurRadius, StringFormat=현재 {0}}"
-                       Width="120"
-                       VerticalAlignment="Center"/>
-            <Button Content="예시 보기" Command="{Binding ShowBlurPreviewCommand}"/>
-          </StackPanel>
-        </StackPanel>
-
-        <CheckBox Content="가속(ONNX Runtime 최적화)"
-                  IsChecked="{Binding AutoUseOrtOptimization}"/>
-        <CheckBox Content="GPU 가속(가능한 경우, OS별)"
-                  IsChecked="{Binding AutoUseGpu}"/>
-        <CheckBox Content="YOLO CoreML (macOS · 검증 전 실험 기능)"
-                  IsVisible="{Binding IsYoloDetectorSelected}"
-                  IsChecked="{Binding AutoYoloEnableCoreMl}"/>
-          <CheckBox Content="자동 완료 후 파일 저장"
+          <CheckBox Content="완료되면 원본 영상 폴더에 저장"
                     IsChecked="{Binding AutoExportAfter}"/>
 
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="ONNX 스레드" Width="90" VerticalAlignment="Center"/>
-            <ComboBox Width="140"
-                      ItemsSource="{Binding OrtThreadOptions}"
-                      SelectedItem="{Binding SelectedOrtThreadOption}">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}"/>
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
+          <StackPanel Spacing="8">
+            <Button Content="자동 모자이크 시작"
+                    Classes="primary"
+                    Height="48"
+                    Command="{Binding OpenAutoWorkspaceCommand}"
+                    IsEnabled="{Binding CanStartWorkspace}"/>
+            <Button Content="직접 편집"
+                    Classes="secondary"
+                    Height="40"
+                    Command="{Binding OpenManualWorkspaceCommand}"
+                    IsEnabled="{Binding CanStartWorkspace}"/>
           </StackPanel>
 
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="병렬 세션" Width="90" VerticalAlignment="Center"/>
-            <ComboBox Width="140"
-                      ItemsSource="{Binding ParallelSessionOptions}"
-                      SelectedItem="{Binding SelectedParallelSessionCount}"/>
-          </StackPanel>
+          <Separator/>
 
-        </StackPanel>
+          <Expander Header="상세 설정"
+                    IsExpanded="False"
+                    HorizontalAlignment="Stretch">
+            <StackPanel Margin="0,14,0,4" Spacing="20">
+              <StackPanel Spacing="10">
+                <TextBlock Text="검출 모델"
+                           Classes="groupTitle"/>
+                <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                  <TextBlock Text="모델"
+                             Classes="label"/>
+                  <ComboBox Grid.Column="1"
+                            ItemsSource="{Binding AutoDetectorBackendOptions}"
+                            SelectedItem="{Binding SelectedAutoDetectorBackendOption}"
+                            HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Button Content="YOLO 모델 다운로드"
+                        Classes="secondary"
+                        HorizontalAlignment="Left"
+                        Command="{Binding DownloadYoloModelCommand}"/>
 
+                <StackPanel Spacing="10"
+                            IsVisible="{Binding IsYoloDetectorSelected}">
+                  <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                    <TextBlock Text="YOLO 종류"
+                               Classes="label"/>
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding YoloModelTypeOptions}"
+                              SelectedItem="{Binding SelectedYoloModelTypeOption}"
+                              HorizontalAlignment="Stretch">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                          <TextBlock Text="{Binding Label}"/>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </Grid>
+                  <Grid ColumnDefinitions="120,*,Auto" ColumnSpacing="8">
+                    <TextBlock Text="모델 파일"
+                               Classes="label"/>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding AutoYoloModelPath, Mode=TwoWay}"
+                             Watermark="*.onnx"
+                             HorizontalAlignment="Stretch"/>
+                    <Button Grid.Column="2"
+                            Content="찾기"
+                            Classes="secondary"
+                            Click="PickYoloModel_Click"/>
+                  </Grid>
+                  <StackPanel Spacing="4">
+                    <ProgressBar Height="8"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Value="{Binding YoloModelDownloadProgress}"
+                                 IsVisible="{Binding IsYoloModelDownloading}"/>
+                    <TextBlock Text="{Binding YoloModelDownloadStatus}"
+                               Classes="muted"
+                               TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                    <TextBlock Text="입력 크기"
+                               Classes="label"/>
+                    <NumericUpDown Width="128"
+                                   Grid.Column="1"
+                                   HorizontalAlignment="Left"
+                                   Minimum="64"
+                                   Maximum="2048"
+                                   Increment="32"
+                                   Value="{Binding AutoYoloInputSize, Mode=TwoWay}"/>
+                  </Grid>
+                  <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                    <TextBlock Text="타일 검출"
+                               Classes="label"/>
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="14">
+                      <CheckBox Content="사용"
+                                IsChecked="{Binding AutoYoloUseTiling}"/>
+                      <CheckBox Content="타일만 검사"
+                                IsChecked="{Binding AutoYoloTileOnly}"
+                                IsEnabled="{Binding AutoYoloUseTiling}"/>
+                    </StackPanel>
+                  </Grid>
+                  <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                    <TextBlock Text="타일 구성"
+                               Classes="label"/>
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                      <NumericUpDown Width="92"
+                                     Minimum="1"
+                                     Maximum="8"
+                                     Increment="1"
+                                     Value="{Binding AutoYoloTileColumns, Mode=TwoWay}"
+                                     IsEnabled="{Binding AutoYoloUseTiling}"/>
+                      <TextBlock Text="x"
+                                 VerticalAlignment="Center"/>
+                      <NumericUpDown Width="92"
+                                     Minimum="1"
+                                     Maximum="8"
+                                     Increment="1"
+                                     Value="{Binding AutoYoloTileRows, Mode=TwoWay}"
+                                     IsEnabled="{Binding AutoYoloUseTiling}"/>
+                    </StackPanel>
+                  </Grid>
+                  <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                    <TextBlock Text="타일 겹침"
+                               Classes="label"/>
+                    <Grid Grid.Column="1"
+                          ColumnDefinitions="*,48"
+                          ColumnSpacing="8">
+                      <Slider Minimum="0"
+                              Maximum="0.45"
+                              Value="{Binding AutoYoloTileOverlapRatio, Mode=TwoWay}"
+                              IsEnabled="{Binding AutoYoloUseTiling}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoYoloTileOverlapRatio, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </Grid>
+                </StackPanel>
+              </StackPanel>
+
+              <Separator/>
+
+              <StackPanel Spacing="10">
+                <TextBlock Text="분석"
+                           Classes="groupTitle"/>
+                <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                  <TextBlock Text="분석 모드"
+                             Classes="label"/>
+                  <ComboBox Grid.Column="1"
+                            ItemsSource="{Binding AutoProcessingModeOptions}"
+                            SelectedItem="{Binding SelectedAutoProcessingModeOption}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                  <TextBlock Text="검출 해상도"
+                             Classes="label"/>
+                  <ComboBox Grid.Column="1"
+                            ItemsSource="{Binding DownscaleOptions}"
+                            SelectedItem="{Binding SelectedDownscaleOption}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                  <TextBlock Text="축소 품질"
+                             Classes="label"/>
+                  <ComboBox Grid.Column="1"
+                            ItemsSource="{Binding DownscaleQualityOptions}"
+                            SelectedItem="{Binding SelectedDownscaleQualityOption}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <StackPanel Orientation="Horizontal"
+                            Spacing="12"
+                            IsVisible="{Binding IsTrackingIntervalVisible}">
+                  <CheckBox Content="추적 사용"
+                            IsVisible="{Binding IsLegacyProcessingMode}"
+                            IsChecked="{Binding AutoTrackingEnabled}"/>
+                  <TextBlock Text="검출 간격"
+                             Classes="label"/>
+                  <ComboBox Width="82"
+                            ItemsSource="{Binding DetectEveryOptions}"
+                            SelectedItem="{Binding AutoDetectEveryNFrames}"
+                            IsEnabled="{Binding IsTrackingIntervalEnabled}"/>
+                  <TextBlock Text="프레임"
+                             Classes="label"/>
+                </StackPanel>
+
+                <StackPanel Spacing="7"
+                            IsVisible="{Binding IsYoloDetectorSelected}">
+                  <TextBlock Text="후처리"
+                             Classes="label"/>
+                  <TextBlock Text="{Binding EffectiveProcessingModeDescription}"
+                             Classes="muted"
+                             TextWrapping="Wrap"/>
+                  <StackPanel Spacing="6"
+                              IsVisible="{Binding IsLegacyProcessingMode}">
+                    <CheckBox Content="후처리 사용"
+                              IsChecked="{Binding EnablePostProcessing}"/>
+                    <StackPanel Margin="18,0,0,0"
+                                Spacing="5"
+                                IsEnabled="{Binding EnablePostProcessing}">
+                      <CheckBox Content="ROI 재검증"
+                                IsChecked="{Binding EnableRoiPostProcess}"/>
+                      <CheckBox Content="약한 단일 오탐 제거"
+                                IsChecked="{Binding EnableYoloWeakIsolatedCleanup}"/>
+                      <CheckBox Content="짧은 누락 구간 보강"
+                                IsChecked="{Binding EnableYoloGapFill}"/>
+                      <CheckBox Content="장면 전환 잔상 정리"
+                                IsChecked="{Binding EnableYoloSceneCutCarryCleanup}"/>
+                      <CheckBox Content="시간축 흔들림 완화"
+                                IsChecked="{Binding EnableYoloTemporalSmoothing}"/>
+                    </StackPanel>
+                  </StackPanel>
+                </StackPanel>
+              </StackPanel>
+
+              <Separator/>
+
+              <StackPanel Spacing="12">
+                <TextBlock Text="검출 민감도"
+                           Classes="groupTitle"/>
+                <StackPanel Spacing="12"
+                            IsVisible="{Binding IsFaceOnnxDetectorSelected}">
+                  <StackPanel Spacing="5">
+                    <TextBlock Text="얼굴 후보" Classes="label"/>
+                    <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
+                      <Slider Minimum="0.05"
+                              Maximum="0.95"
+                              Value="{Binding AutoDetectionThreshold, Mode=TwoWay}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoDetectionThreshold, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </StackPanel>
+                  <StackPanel Spacing="5">
+                    <TextBlock Text="얼굴 확정" Classes="label"/>
+                    <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
+                      <Slider Minimum="0.05"
+                              Maximum="0.95"
+                              Value="{Binding AutoConfidenceThreshold, Mode=TwoWay}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoConfidenceThreshold, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </StackPanel>
+                  <StackPanel Spacing="5">
+                    <TextBlock Text="중복 정리" Classes="label"/>
+                    <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
+                      <Slider Minimum="0.05"
+                              Maximum="0.95"
+                              Value="{Binding AutoNmsThreshold, Mode=TwoWay}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoNmsThreshold, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </StackPanel>
+                </StackPanel>
+
+                <StackPanel Spacing="12"
+                            IsVisible="{Binding IsYoloDetectorSelected}">
+                  <StackPanel Spacing="5">
+                    <TextBlock Text="Objectness" Classes="label"/>
+                    <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
+                      <Slider Minimum="0.05"
+                              Maximum="0.95"
+                              Value="{Binding AutoYoloObjectnessThreshold, Mode=TwoWay}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoYoloObjectnessThreshold, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </StackPanel>
+                  <StackPanel Spacing="5">
+                    <TextBlock Text="Confidence" Classes="label"/>
+                    <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
+                      <Slider Minimum="0.05"
+                              Maximum="0.95"
+                              Value="{Binding AutoYoloConfidenceThreshold, Mode=TwoWay}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoYoloConfidenceThreshold, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </StackPanel>
+                  <StackPanel Spacing="5">
+                    <TextBlock Text="NMS" Classes="label"/>
+                    <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
+                      <Slider Minimum="0.05"
+                              Maximum="0.95"
+                              Value="{Binding AutoYoloNmsThreshold, Mode=TwoWay}"/>
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding AutoYoloNmsThreshold, StringFormat={}{0:0.00}}"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+                  </StackPanel>
+                </StackPanel>
+              </StackPanel>
+
+              <Separator/>
+
+              <StackPanel Spacing="10">
+                <TextBlock Text="성능"
+                           Classes="groupTitle"/>
+                <CheckBox Content="ONNX Runtime 최적화"
+                          IsChecked="{Binding AutoUseOrtOptimization}"/>
+                <CheckBox Content="GPU 가속"
+                          IsChecked="{Binding AutoUseGpu}"/>
+                <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                  <TextBlock Text="ONNX 스레드"
+                             Classes="label"/>
+                  <ComboBox Grid.Column="1"
+                            ItemsSource="{Binding OrtThreadOptions}"
+                            SelectedItem="{Binding SelectedOrtThreadOption}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}"/>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="120,*" ColumnSpacing="10">
+                  <TextBlock Text="병렬 세션"
+                             Classes="label"/>
+                  <ComboBox Grid.Column="1"
+                            ItemsSource="{Binding ParallelSessionOptions}"
+                            SelectedItem="{Binding SelectedParallelSessionCount}"/>
+                </Grid>
+              </StackPanel>
+
+              <Separator/>
+
+              <StackPanel Spacing="8"
+                          IsVisible="{Binding IsYoloDetectorSelected}">
+                <TextBlock Text="실험 기능"
+                           Classes="groupTitle"
+                           Foreground="#D9B36C"/>
+                <CheckBox Content="위험 프레임 FaceONNX 재검출"
+                          IsVisible="{Binding IsYoloCascadeOptionVisible}"
+                          IsEnabled="{Binding IsYoloCascadeOptionEnabled}"
+                          IsChecked="{Binding EnableYoloRiskCascade}"/>
+                <CheckBox Content="YOLO CoreML (macOS)"
+                          IsChecked="{Binding AutoYoloEnableCoreMl}"/>
+              </StackPanel>
+            </StackPanel>
+          </Expander>
         </StackPanel>
       </ScrollViewer>
     </Border>
 
-    <!-- Right: Recent -->
     <Border Grid.Row="1" Grid.Column="1"
-            Padding="18" CornerRadius="12"
-            Background="#151515">
-      <Grid RowDefinitions="Auto,*" ColumnDefinitions="*">
-        <TextBlock Text="최근"
-                   FontSize="18"
-                   FontWeight="SemiBold"/>
+            Classes="panel">
+      <Grid RowDefinitions="Auto,*">
+        <TextBlock Text="최근 프로젝트"
+                   Classes="sectionTitle"/>
+
+        <TextBlock Grid.Row="1"
+                   Text="최근 프로젝트가 없습니다."
+                   Classes="muted"
+                   IsVisible="{Binding HasNoRecents}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"/>
 
         <ListBox Grid.Row="1"
                  ItemsSource="{Binding Recents}"
                  SelectedItem="{Binding SelectedRecent, Mode=TwoWay}"
-                 Margin="0,12,0,0">
+                 IsVisible="{Binding HasRecents}"
+                 Margin="0,16,0,0"
+                 Background="Transparent"
+                 BorderThickness="0">
           <ListBox.ItemTemplate>
             <DataTemplate>
-              <Border Padding="12" CornerRadius="10" Background="#1E1E1E" Margin="0,0,0,10">
-                <StackPanel>
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
-                  <TextBlock Text="{Binding Path}" Opacity="0.75" TextWrapping="Wrap"/>
-                  <TextBlock Text="{Binding LastOpenedText}" Opacity="0.6" FontSize="12" Margin="0,6,0,0"/>
+              <Border Classes="selection">
+                <StackPanel Spacing="5">
+                  <TextBlock Text="{Binding Title}"
+                             FontWeight="SemiBold"
+                             TextTrimming="CharacterEllipsis"/>
+                  <TextBlock Text="{Binding Path}"
+                             Classes="muted"
+                             TextWrapping="Wrap"
+                             MaxLines="2"/>
+                  <TextBlock Text="{Binding LastOpenedText}"
+                             Classes="muted"/>
                 </StackPanel>
               </Border>
             </DataTemplate>
@@ -377,55 +565,59 @@
       </Grid>
     </Border>
 
-    <!-- Loading overlay -->
     <Border Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
-            Background="#AA000000"
+            Background="#D90F1110"
             IsVisible="{Binding IsBusy}">
-      <Border Background="#1B1B1B" CornerRadius="12" Padding="18"
-              HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel Spacing="10" Width="420">
-          <TextBlock Text="{Binding BusyMessage}" FontSize="15" TextWrapping="Wrap"/>
-          <ProgressBar Height="10" Minimum="0" Maximum="100"
+      <Border Classes="panel"
+              Width="420"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Center">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding BusyMessage}"
+                     FontSize="15"
+                     FontWeight="SemiBold"
+                     TextWrapping="Wrap"/>
+          <ProgressBar Height="10"
+                       Minimum="0"
+                       Maximum="100"
                        IsIndeterminate="{Binding IsBusyIndeterminate}"
-                       Value="{Binding BusyProgress}" />
+                       Value="{Binding BusyProgress}"/>
           <TextBlock Text="{Binding BusyProgress, StringFormat={}{0}%}"
-                     Opacity="0.8" FontSize="13" />
+                     Classes="muted"/>
           <TextBlock Text="{Binding ExportProgress, StringFormat=내보내기 {0}%}"
                      IsVisible="{Binding IsExportRunning}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+                     Classes="muted"
+                     TextWrapping="Wrap"/>
           <TextBlock Text="{Binding ExportEtaText}"
                      IsVisible="{Binding IsExportRunning}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+                     Classes="muted"
+                     TextWrapping="Wrap"/>
           <TextBlock Text="{Binding ExportStatusText}"
                      IsVisible="{Binding IsExportRunning}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+                     Classes="muted"
+                     TextWrapping="Wrap"/>
           <Button Content="내보내기 취소"
+                  Classes="danger"
                   IsVisible="{Binding IsExportRunning}"
-                  Command="{Binding CancelExportCommand}" />
+                  Command="{Binding CancelExportCommand}"/>
           <TextBlock Text="{Binding WorkspaceEtaText}"
                      IsVisible="{Binding IsWorkspaceLoading}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+                     Classes="muted"
+                     TextWrapping="Wrap"/>
           <TextBlock Text="{Binding AutoEtaText}"
                      IsVisible="{Binding IsAutoStatusVisible}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
+                     Classes="muted"
+                     TextWrapping="Wrap"/>
           <TextBlock Text="{Binding AutoStatusText}"
                      IsVisible="{Binding IsAutoStatusVisible}"
-                     Opacity="0.85" FontSize="13" TextWrapping="Wrap"/>
-          <StackPanel Orientation="Horizontal" Spacing="8"
-                      IsVisible="{Binding IsAutoStatusVisible}">
-            <TextBlock Text="{Binding AutoAccelStatus}"
-                       Opacity="0.85" FontSize="13" TextWrapping="Wrap" Width="360"/>
-            <Button Content="복사"
-                    Command="{Binding CopyAccelStatusCommand}"
-                    VerticalAlignment="Center"
-                    Padding="8,2"/>
-          </StackPanel>
-          <Button Content="취소"
+                     Classes="muted"
+                     TextWrapping="Wrap"/>
+          <Button Content="작업 취소"
+                  Classes="danger"
                   IsVisible="{Binding IsAutoStatusVisible}"
-                  Command="{Binding CancelAutoCommand}" />
+                  Command="{Binding CancelAutoCommand}"/>
         </StackPanel>
       </Border>
     </Border>
-
   </Grid>
 </UserControl>

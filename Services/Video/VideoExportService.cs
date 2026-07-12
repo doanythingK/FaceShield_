@@ -1729,19 +1729,45 @@ public unsafe sealed class VideoExportService
             bool hasMissingTimestamp =
                 outPkt->pts == ffmpeg.AV_NOPTS_VALUE ||
                 outPkt->dts == ffmpeg.AV_NOPTS_VALUE;
-            long originalPts = outPkt->pts;
-            long originalDts = outPkt->dts;
-            _ = NormalizeEncodedPacketTimestamps(
-                outPkt,
-                ref lastPacketPts,
-                ref hasLastPacketPts,
-                ref lastPacketDts,
-                ref hasLastPacketDts,
-                encodedPacketFrameStep);
             if (hasMissingTimestamp)
+            {
                 timestampIntegrity.MissingPacketTimestamps++;
-            if (outPkt->pts != originalPts || outPkt->dts != originalDts)
-                timestampIntegrity.PacketTimestampAdjustments++;
+                long originalPts = outPkt->pts;
+                long originalDts = outPkt->dts;
+                _ = NormalizeEncodedPacketTimestamps(
+                    outPkt,
+                    ref lastPacketPts,
+                    ref hasLastPacketPts,
+                    ref lastPacketDts,
+                    ref hasLastPacketDts,
+                    encodedPacketFrameStep);
+                if (outPkt->pts != originalPts || outPkt->dts != originalDts)
+                    timestampIntegrity.PacketTimestampAdjustments++;
+            }
+            else
+            {
+                // B-frame encoders emit packets in decode order. Their PTS can move backward and
+                // initial DTS values can be negative; both are required for correct presentation.
+                bool allowsEqualDts = outFmt->oformat != null &&
+                    (outFmt->oformat->flags & ffmpeg.AVFMT_TS_NONSTRICT) != 0;
+                bool invalidDtsOrder = hasLastPacketDts &&
+                    (allowsEqualDts
+                        ? outPkt->dts < lastPacketDts
+                        : outPkt->dts <= lastPacketDts);
+                if (outPkt->pts < outPkt->dts || invalidDtsOrder)
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid argument: 인코더 출력 패킷 순서가 유효하지 않습니다 " +
+                        $"(pts={outPkt->pts}, dts={outPkt->dts}, previousDts={lastPacketDts}).");
+                }
+
+                if (outPkt->duration <= 0)
+                    outPkt->duration = Math.Max(1, encodedPacketFrameStep);
+                lastPacketPts = outPkt->pts;
+                hasLastPacketPts = true;
+                lastPacketDts = outPkt->dts;
+                hasLastPacketDts = true;
+            }
 
             if (hadPreviousPacketPts)
             {
@@ -2529,31 +2555,22 @@ public unsafe sealed class VideoExportService
         long originalPts = packet->pts;
         long originalDts = packet->dts;
 
+        // Preserve valid reordered and negative timestamps. Only missing values are synthesized.
         long normalizedPts = packet->pts;
-        if (normalizedPts == noValue || normalizedPts < 0)
+        if (normalizedPts == noValue)
         {
-            normalizedPts = hasLastPacketPts ? (lastPacketPts + expectedFrameStep) : 0;
-            hadAdjustment = true;
-        }
-        if (hasLastPacketPts && normalizedPts <= lastPacketPts)
-        {
-            normalizedPts = Math.Max(normalizedPts, lastPacketPts + expectedFrameStep);
+            normalizedPts = packet->dts != noValue
+                ? packet->dts
+                : hasLastPacketPts
+                    ? lastPacketPts + expectedFrameStep
+                    : hasLastPacketDts
+                        ? lastPacketDts + expectedFrameStep
+                        : 0;
             hadAdjustment = true;
         }
 
         long normalizedDts = packet->dts;
-        if (normalizedDts == noValue || normalizedDts < 0)
-        {
-            normalizedDts = normalizedPts;
-            hadAdjustment = true;
-        }
-        if (hasLastPacketDts && normalizedDts <= lastPacketDts)
-        {
-            normalizedDts = Math.Max(normalizedDts, lastPacketDts + expectedFrameStep);
-            hadAdjustment = true;
-        }
-
-        if (normalizedDts > normalizedPts)
+        if (normalizedDts == noValue)
         {
             normalizedDts = normalizedPts;
             hadAdjustment = true;
@@ -2561,19 +2578,6 @@ public unsafe sealed class VideoExportService
 
         if (normalizedPts != originalPts || normalizedDts != originalDts)
             hadAdjustment = true;
-
-        if (packet->duration <= 0)
-        {
-            long inferredDuration = hasLastPacketPts
-                ? (normalizedPts - lastPacketPts)
-                : expectedFrameStep;
-            if (inferredDuration <= 0)
-                inferredDuration = expectedFrameStep;
-            if (inferredDuration <= 0)
-                inferredDuration = 1;
-            packet->duration = inferredDuration;
-            hadAdjustment = true;
-        }
 
         packet->pts = normalizedPts;
         packet->dts = normalizedDts;
@@ -2609,7 +2613,7 @@ public unsafe sealed class VideoExportService
             return;
 
         frame->pts = pts;
-        frame->pkt_dts = pts;
+        frame->pkt_dts = ffmpeg.AV_NOPTS_VALUE;
     }
 
     private static int ResolveFrameIndexFromPacket(
