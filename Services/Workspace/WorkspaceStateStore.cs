@@ -370,7 +370,7 @@ namespace FaceShield.Services.Workspace
         public int SettingsVersion { get; set; }
         public int ProcessingMode { get; set; } = (int)AutoMaskProcessingMode.Tracked;
         public double DownscaleRatio { get; set; } = 1.0;
-        public int DownscaleQuality { get; set; }
+        public int DownscaleQuality { get; set; } = (int)FaceShield.Services.Analysis.DownscaleQuality.BalancedBilinear;
         public bool AutoTrackingEnabled { get; set; } = true;
         public int AutoDetectEveryNFrames { get; set; } = 1;
         public int ParallelSessionCount { get; set; } = 2;
