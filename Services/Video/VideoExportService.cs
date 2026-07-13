@@ -287,16 +287,12 @@ public unsafe sealed class VideoExportService
             Throw(ffmpeg.avformat_open_input(&inFmt, inputPath, null, null));
             Throw(ffmpeg.avformat_find_stream_info(inFmt, null));
 
+            videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(inFmt);
             var audioStreamIndices = new List<int>();
             for (int i = 0; i < inFmt->nb_streams; i++)
             {
                 var stream = inFmt->streams[i];
-                if (stream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
-                {
-                    if (videoStreamIndex < 0)
-                        videoStreamIndex = i;
-                }
-                else if (stream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO)
+                if (stream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO)
                 {
                     audioStreamIndices.Add(i);
                     if (audioStreamIndex < 0)
@@ -1940,15 +1936,7 @@ public unsafe sealed class VideoExportService
             Throw(ffmpeg.avformat_open_input(&format, inputPath, null, null));
             Throw(ffmpeg.avformat_find_stream_info(format, null));
 
-            int videoStreamIndex = -1;
-            for (int i = 0; i < format->nb_streams; i++)
-            {
-                if (format->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
-                {
-                    videoStreamIndex = i;
-                    break;
-                }
-            }
+            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(format);
             if (videoStreamIndex < 0)
                 return null;
 
@@ -2846,15 +2834,7 @@ public unsafe sealed class VideoExportService
             if (ffmpeg.avformat_find_stream_info(inFmt, null) < 0)
                 return keyframes;
 
-            int videoStreamIndex = -1;
-            for (int i = 0; i < inFmt->nb_streams; i++)
-            {
-                if (inFmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
-                {
-                    videoStreamIndex = i;
-                    break;
-                }
-            }
+            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(inFmt);
             if (videoStreamIndex < 0)
                 return keyframes;
 

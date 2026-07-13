@@ -85,16 +85,9 @@ namespace FaceShield.Services.Analysis
                 int streamInfo = FFmpeg.AutoGen.ffmpeg.avformat_find_stream_info(fmt, null);
                 FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
 
-                FFmpeg.AutoGen.AVStream* videoStream = null;
-
-                for (int i = 0; i < fmt->nb_streams; i++)
-                {
-                    if (fmt->streams[i]->codecpar->codec_type == FFmpeg.AutoGen.AVMediaType.AVMEDIA_TYPE_VIDEO)
-                    {
-                        videoStream = fmt->streams[i];
-                        break;
-                    }
-                }
+                int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
+                FFmpeg.AutoGen.AVStream* videoStream =
+                    videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
 
                 if (videoStream == null)
                     throw new InvalidOperationException("Video stream not found.");

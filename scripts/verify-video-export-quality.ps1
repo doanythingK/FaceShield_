@@ -132,6 +132,29 @@ function Get-PropertyText {
     return [string]$property.Value
 }
 
+function Test-AuxiliaryVideoStream {
+    param([object]$Stream)
+
+    $disposition = $Stream.disposition
+    return (Get-PropertyText $disposition "attached_pic" "0") -eq "1" -or
+        (Get-PropertyText $disposition "timed_thumbnails" "0") -eq "1" -or
+        (Get-PropertyText $disposition "still_image" "0") -eq "1"
+}
+
+function Get-PrimaryVideoStream {
+    param([object[]]$Streams)
+
+    $regularStreams = @($Streams | Where-Object { -not (Test-AuxiliaryVideoStream $_) })
+    $defaultStream = $regularStreams | Where-Object {
+        (Get-PropertyText $_.disposition "default" "0") -eq "1"
+    } | Select-Object -First 1
+    if ($null -ne $defaultStream) {
+        return $defaultStream
+    }
+
+    return $regularStreams | Select-Object -First 1
+}
+
 function Convert-ToDouble {
     param(
         [object]$Value,
@@ -251,12 +274,13 @@ function Get-MediaProbe {
 function Get-VideoProbeFrames {
     param(
         [string]$Tool,
-        [string]$Path
+        [string]$Path,
+        [string]$StreamSpecifier
     )
 
     $probe = Invoke-ProbeJson $Tool @(
         "-v", "error",
-        "-select_streams", "v:0",
+        "-select_streams", $StreamSpecifier,
         "-read_intervals", "%+#32",
         "-show_frames",
         "-of", "json",
@@ -488,12 +512,25 @@ Write-Host "[ExportQualityGate] output=$output"
 $pixelFormats = Get-PixelFormatMap $ffprobe
 $sourceProbe = Get-MediaProbe $ffprobe $source
 $outputProbe = Get-MediaProbe $ffprobe $output
-$sourceVideoProbeFrames = @(Get-VideoProbeFrames $ffprobe $source)
-$outputVideoProbeFrames = @(Get-VideoProbeFrames $ffprobe $output)
 $sourceVideos = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "video" })
 $outputVideos = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "video" })
 $sourceAudios = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
 $outputAudios = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
+$sourceVideo = Get-PrimaryVideoStream $sourceVideos
+$outputVideo = Get-PrimaryVideoStream $outputVideos
+if ($null -eq $sourceVideo -or $null -eq $outputVideo) {
+    throw "A source and output primary video stream are required."
+}
+$sourcePrimaryVideoIndex = Get-PropertyText $sourceVideo "index" "-1"
+$outputPrimaryVideoIndex = Get-PropertyText $outputVideo "index" "-1"
+$sourceVideoProbeFrames = @(Get-VideoProbeFrames $ffprobe $source $sourcePrimaryVideoIndex)
+$outputVideoProbeFrames = @(Get-VideoProbeFrames $ffprobe $output $outputPrimaryVideoIndex)
+$sourceAdditionalVideos = @($sourceVideos | Where-Object {
+    (Get-PropertyText $_ "index" "-1") -ne $sourcePrimaryVideoIndex
+})
+$outputAdditionalVideos = @($outputVideos | Where-Object {
+    (Get-PropertyText $_ "index" "-1") -ne $outputPrimaryVideoIndex
+})
 $preservedStreamTypes = @("subtitle", "data", "attachment")
 $sourceChapters = @($sourceProbe.chapters)
 $outputChapters = @($outputProbe.chapters)
@@ -521,11 +558,11 @@ foreach ($streamType in $preservedStreamTypes) {
     }
 }
 
-$additionalVideoPairCount = [Math]::Min($sourceVideos.Count, $outputVideos.Count)
-for ($i = 1; $i -lt $additionalVideoPairCount; $i++) {
-    $sourceCodec = Get-PropertyText $sourceVideos[$i] "codec_name" "unknown"
-    $outputCodec = Get-PropertyText $outputVideos[$i] "codec_name" "unknown"
-    Add-Check "video[$i]-codec" ($sourceCodec -eq $outputCodec) `
+$additionalVideoPairCount = [Math]::Min($sourceAdditionalVideos.Count, $outputAdditionalVideos.Count)
+for ($i = 0; $i -lt $additionalVideoPairCount; $i++) {
+    $sourceCodec = Get-PropertyText $sourceAdditionalVideos[$i] "codec_name" "unknown"
+    $outputCodec = Get-PropertyText $outputAdditionalVideos[$i] "codec_name" "unknown"
+    Add-Check "additional-video[$i]-codec" ($sourceCodec -eq $outputCodec) `
         $sourceCodec $outputCodec "equal (additional video stream copy)"
 }
 
@@ -540,12 +577,6 @@ foreach ($tagName in @(
         $sourceTag $outputTag "preserve when present"
 }
 
-if ($sourceVideos.Count -eq 0 -or $outputVideos.Count -eq 0) {
-    throw "A source and output primary video stream are required."
-}
-
-$sourceVideo = $sourceVideos[0]
-$outputVideo = $outputVideos[0]
 $sourceWidth = [int](Get-PropertyText $sourceVideo "width" "0")
 $sourceHeight = [int](Get-PropertyText $sourceVideo "height" "0")
 $outputWidth = [int](Get-PropertyText $outputVideo "width" "0")
@@ -698,8 +729,8 @@ Add-Check "container-duration" (-not [double]::IsNaN($formatDurationDelta) -and 
 
 $sourceVideoStart = Get-StreamStart $sourceVideo $sourceProbe.format
 $outputVideoStart = Get-StreamStart $outputVideo $outputProbe.format
-$sourceVideoEnd = Get-PacketEnd $ffprobe $source "v:0" $sourceVideo $sourceProbe.format $PacketTailSeconds
-$outputVideoEnd = Get-PacketEnd $ffprobe $output "v:0" $outputVideo $outputProbe.format $PacketTailSeconds
+$sourceVideoEnd = Get-PacketEnd $ffprobe $source $sourcePrimaryVideoIndex $sourceVideo $sourceProbe.format $PacketTailSeconds
+$outputVideoEnd = Get-PacketEnd $ffprobe $output $outputPrimaryVideoIndex $outputVideo $outputProbe.format $PacketTailSeconds
 $sourceVideoSpan = $sourceVideoEnd.value - $sourceVideoStart
 $outputVideoSpan = $outputVideoEnd.value - $outputVideoStart
 $videoSpanDelta = [Math]::Abs($sourceVideoSpan - $outputVideoSpan)
@@ -765,7 +796,7 @@ if ($SkipDecodeCheck) {
     $decodeOutput = & $ffmpeg @(
         "-hide_banner", "-v", "error", "-xerror",
         "-i", $output,
-        "-map", "0:v:0",
+        "-map", "0:$outputPrimaryVideoIndex",
         "-map", "0:a?",
         "-f", "null", "-"
     ) 2>&1

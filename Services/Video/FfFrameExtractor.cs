@@ -126,14 +126,7 @@ namespace FaceShield.Services.Video
             int streamInfo = ffmpeg.avformat_find_stream_info(_fmt, null);
             FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {videoPath}");
 
-            for (int i = 0; i < _fmt->nb_streams; i++)
-            {
-                if (_fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
-                {
-                    _videoStreamIndex = i;
-                    break;
-                }
-            }
+            _videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(_fmt);
             if (_videoStreamIndex < 0)
                 throw new InvalidOperationException("video stream not found");
 

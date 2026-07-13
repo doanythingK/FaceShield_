@@ -79,16 +79,8 @@ public sealed class VideoSession
             if (ffmpeg.avformat_find_stream_info(fmt, null) < 0)
                 return 0;
 
-            AVStream* videoStream = null;
-
-            for (int i = 0; i < fmt->nb_streams; i++)
-            {
-                if (fmt->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
-                {
-                    videoStream = fmt->streams[i];
-                    break;
-                }
-            }
+            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
+            AVStream* videoStream = videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
 
             if (videoStream == null)
                 return 0;
