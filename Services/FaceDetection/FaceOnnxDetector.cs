@@ -35,9 +35,17 @@ namespace FaceShield.Services.FaceDetection
         private static long _perfInferMs;
         private static long _perfTotalMs;
 
+        internal string ExecutionProviderLabel { get; }
+
+        internal bool UsesGpuExecutionProvider =>
+            ExecutionProviderLabel.StartsWith("GPU:", StringComparison.OrdinalIgnoreCase);
+
         public FaceOnnxDetector()
         {
             _detector = new FaceDetector(); // 확실함
+            ExecutionProviderLabel = "CPU";
+            UpdateExecutionProviderLabel(ExecutionProviderLabel);
+            UpdateExecutionProviderError(null);
         }
 
         private static readonly Lazy<(float Detection, float Confidence, float Nms)> DefaultThresholds = new(() =>
@@ -58,7 +66,8 @@ namespace FaceShield.Services.FaceDetection
             if (options == null || (!options.UseOrtOptimization && !options.UseGpu))
             {
                 _detector = new FaceDetector();
-                UpdateExecutionProviderLabel("CPU");
+                ExecutionProviderLabel = "CPU";
+                UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 UpdateExecutionProviderError(null);
                 return;
             }
@@ -93,16 +102,18 @@ namespace FaceShield.Services.FaceDetection
             try
             {
                 _detector = new FaceDetector(so, detection, confidence, nms);
-                UpdateExecutionProviderLabel(gpuProvider != null
+                ExecutionProviderLabel = gpuProvider != null
                     ? $"GPU:{gpuProvider}"
-                    : options.UseGpu ? "CPU(가속 실패)" : "CPU");
+                    : options.UseGpu ? "CPU(가속 실패)" : "CPU";
+                UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 if (gpuProvider != null)
                     UpdateExecutionProviderError(null);
             }
             catch (Exception ex)
             {
                 _detector = new FaceDetector(detection, confidence, nms);
-                UpdateExecutionProviderLabel("CPU(가속 실패)");
+                ExecutionProviderLabel = "CPU(가속 실패)";
+                UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 UpdateExecutionProviderError(ex.Message);
             }
         }

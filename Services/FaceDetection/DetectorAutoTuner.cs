@@ -6,6 +6,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -21,6 +22,7 @@ namespace FaceShield.Services.FaceDetection
         private readonly record struct AutoTuneKey(
             int Width,
             int Height,
+            string SourceIdentity,
             int MaxSessions,
             DownscaleQuality Quality,
             bool UseOrtOptimization,
@@ -41,6 +43,46 @@ namespace FaceShield.Services.FaceDetection
         private static readonly ConcurrentDictionary<AutoTuneKey, AutoTuneResult> Cache = new();
 
         public static bool TryTune(
+            string videoPath,
+            double downscaleRatio,
+            DownscaleQuality downscaleQuality,
+            FaceOnnxDetectorOptions baseOptions,
+            int maxSessions,
+            bool allowGpuAuto,
+            CancellationToken cancellationToken,
+            out FaceOnnxDetectorOptions tunedOptions,
+            out int tunedSessions,
+            out string? label)
+        {
+            try
+            {
+                return TryTuneCore(
+                    videoPath,
+                    downscaleRatio,
+                    downscaleQuality,
+                    baseOptions,
+                    maxSessions,
+                    allowGpuAuto,
+                    cancellationToken,
+                    out tunedOptions,
+                    out tunedSessions,
+                    out label);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                tunedOptions = baseOptions;
+                tunedSessions = Math.Max(1, maxSessions);
+                label = null;
+                Debug.WriteLine($"[AutoTune] skipped after failure: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryTuneCore(
             string videoPath,
             double downscaleRatio,
             DownscaleQuality downscaleQuality,
@@ -78,6 +120,7 @@ namespace FaceShield.Services.FaceDetection
             var key = new AutoTuneKey(
                 targetWidth,
                 targetHeight,
+                BuildCacheSourceIdentity(videoPath, allowGpu),
                 maxSessions,
                 downscaleQuality,
                 baseOptions.UseOrtOptimization,
@@ -94,6 +137,7 @@ namespace FaceShield.Services.FaceDetection
                 tunedOptions = cached.Options;
                 tunedSessions = cached.Sessions;
                 label = cached.Label;
+                Debug.WriteLine($"[AutoTune] cache hit: {label}");
                 return true;
             }
 
@@ -194,7 +238,14 @@ namespace FaceShield.Services.FaceDetection
                                     targetHeight,
                                     detectorRatio,
                                     downscaleQuality,
-                                    candidate.Options);
+                                    candidate.Options,
+                                    out string? gpuProviderLabel);
+
+                                if (!IsActiveGpuProvider(gpuProviderLabel))
+                                {
+                                    Debug.WriteLine($"[AutoTune] skip {candidate.Label}, GPU provider was not active");
+                                    continue;
+                                }
 
                                 if (!IsQualityCompatible(cpuReference, gpuReference))
                                 {
@@ -203,15 +254,30 @@ namespace FaceShield.Services.FaceDetection
                                 }
                             }
 
-                            double score = MeasureThroughput(
-                                performanceSamples,
-                                targetWidth,
-                                targetHeight,
-                                detectorRatio,
-                                downscaleQuality,
-                                candidate.Options,
-                                candidate.Sessions,
-                                cancellationToken);
+                            double score;
+                            try
+                            {
+                                score = MeasureThroughput(
+                                    performanceSamples,
+                                    targetWidth,
+                                    targetHeight,
+                                    detectorRatio,
+                                    downscaleQuality,
+                                    candidate.Options,
+                                    candidate.Sessions,
+                                    cancellationToken);
+                            }
+                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                            {
+                                throw;
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[AutoTune] skip {candidate.Label}, benchmark failed: {ex.Message}");
+                                continue;
+                            }
+
+                            Debug.WriteLine($"[AutoTune] candidate={candidate.Label}, score={score:F2}/s");
 
                             if (candidate.Options.UseGpu && score > bestGpuScore)
                             {
@@ -376,10 +442,23 @@ namespace FaceShield.Services.FaceDetection
             double ratio,
             DownscaleQuality quality,
             FaceOnnxDetectorOptions options)
+            => DetectOnce(data, stride, width, height, ratio, quality, options, out _);
+
+        private static IReadOnlyList<FaceDetectionResult>? DetectOnce(
+            IntPtr data,
+            int stride,
+            int width,
+            int height,
+            double ratio,
+            DownscaleQuality quality,
+            FaceOnnxDetectorOptions options,
+            out string? providerLabel)
         {
+            providerLabel = null;
             try
             {
                 using var detector = new FaceOnnxDetector(options);
+                providerLabel = detector.ExecutionProviderLabel;
                 return detector.DetectFacesBgra(data, stride, width, height, ratio, quality);
             }
             catch
@@ -396,7 +475,7 @@ namespace FaceShield.Services.FaceDetection
                 return false;
 
             if (reference.Count == 0)
-                return candidate.Count == 0;
+                return false;
 
             if (reference.Count != candidate.Count)
                 return false;
@@ -426,6 +505,29 @@ namespace FaceShield.Services.FaceDetection
             }
 
             return true;
+        }
+
+        private static bool IsActiveGpuProvider(string? label)
+            => !string.IsNullOrWhiteSpace(label) &&
+                label.StartsWith("GPU:", StringComparison.OrdinalIgnoreCase);
+
+        private static string BuildCacheSourceIdentity(string videoPath, bool requireSourceIdentity)
+        {
+            if (!requireSourceIdentity)
+                return "shared-cpu-performance";
+
+            try
+            {
+                string fullPath = Path.GetFullPath(videoPath).Trim();
+                if (OperatingSystem.IsWindows())
+                    fullPath = fullPath.ToUpperInvariant();
+                var info = new FileInfo(fullPath);
+                return $"{fullPath}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+            }
+            catch
+            {
+                return $"source:{videoPath.Trim()}";
+            }
         }
 
         private static double IoU(Rect a, Rect b)
@@ -463,7 +565,17 @@ namespace FaceShield.Services.FaceDetection
             try
             {
                 for (int i = 0; i < sessions; i++)
-                    detectors.Add(new FaceOnnxDetector(options));
+                {
+                    var detector = new FaceOnnxDetector(options);
+                    if (options.UseGpu && !detector.UsesGpuExecutionProvider)
+                    {
+                        detector.Dispose();
+                        DisposeAll(detectors);
+                        return 0;
+                    }
+
+                    detectors.Add(detector);
+                }
             }
             catch
             {

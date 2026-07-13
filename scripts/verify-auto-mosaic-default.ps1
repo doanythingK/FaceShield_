@@ -58,6 +58,7 @@ $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sp
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
+$detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
 $yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-followup-quality-evidence.ps1"
 $yoloProblemSpanRunnerVerify = Join-Path $repo "scripts\verify-yolo-problem-span-runner-state.ps1"
@@ -244,7 +245,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $detectorAutoTunerSessionRangeVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -280,6 +281,11 @@ Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "gpuSessions=1,2,3,4"
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "roiPolicies=6"
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "fullFramePaths=2"
+
+$autoTunerSafetyOutput = Invoke-ScriptStep "detector-autotune-safety" $detectorAutoTunerSafetyVerify @()
+Assert-Contains "detector-autotune-safety" $autoTunerSafetyOutput "qualityCases=5"
+Assert-Contains "detector-autotune-safety" $autoTunerSafetyOutput "providerCases=4"
+Assert-Contains "detector-autotune-safety" $autoTunerSafetyOutput "fallback=True cancellation=True"
 
 $sceneCutOutput = Invoke-ScriptStep "face-track-scene-cut-guard" $faceTrackSceneCutGuardVerify @()
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "\[FaceTrackSceneCutGuardVerify\]"

@@ -2168,6 +2168,9 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
             parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
             parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
+            parts.Add($"preprocess={options.EnablePreprocessParallelism?.ToString() ?? "null"}");
+            parts.Add($"autoTune={options.AllowAutoTune?.ToString() ?? "null"}");
+            parts.Add($"autoGpu={options.AllowAutoGpu?.ToString() ?? "null"}");
             parts.Add($"detect={options.DetectionThreshold?.ToString("0.###") ?? "null"}");
             parts.Add($"conf={options.ConfidenceThreshold?.ToString("0.###") ?? "null"}");
             parts.Add($"nms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
@@ -2181,6 +2184,9 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"secondaryIntra={options.IntraOpNumThreads?.ToString() ?? "null"}");
             parts.Add($"secondaryInter={options.InterOpNumThreads?.ToString() ?? "null"}");
             parts.Add($"secondaryParallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
+            parts.Add($"secondaryPreprocess={options.EnablePreprocessParallelism?.ToString() ?? "null"}");
+            parts.Add($"secondaryAutoTune={options.AllowAutoTune?.ToString() ?? "null"}");
+            parts.Add($"secondaryAutoGpu={options.AllowAutoGpu?.ToString() ?? "null"}");
             parts.Add($"secondaryDetect={options.DetectionThreshold?.ToString("0.###") ?? "null"}");
             parts.Add($"secondaryConf={options.ConfidenceThreshold?.ToString("0.###") ?? "null"}");
             parts.Add($"secondaryNms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
