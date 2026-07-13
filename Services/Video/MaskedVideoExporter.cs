@@ -10,10 +10,10 @@ public unsafe sealed class MaskedVideoExporter
 {
     private byte[]? _temp;
     private byte[]? _blurred;
-    private int[]? _integralB;
-    private int[]? _integralG;
-    private int[]? _integralR;
-    private int[]? _integralA;
+    private uint[]? _integralB;
+    private uint[]? _integralG;
+    private uint[]? _integralR;
+    private uint[]? _integralA;
     private byte[]? _radiusMap;
     private byte[]? _nativeAlpha;
     private long[]? _nativeIntegral;
@@ -265,7 +265,7 @@ public unsafe sealed class MaskedVideoExporter
                 int rowIndex = y * rowStride;
                 int prevIndex = (y - 1) * rowStride;
 
-                int sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+                uint sumB = 0, sumG = 0, sumR = 0, sumA = 0;
                 for (int x = 1; x <= pw; x++)
                 {
                     byte* p = srcRow + (x - 1) * 4;
@@ -275,10 +275,10 @@ public unsafe sealed class MaskedVideoExporter
                     sumA += p[3];
 
                     int idx = rowIndex + x;
-                    _integralB![idx] = _integralB[prevIndex + x] + sumB;
-                    _integralG![idx] = _integralG[prevIndex + x] + sumG;
-                    _integralR![idx] = _integralR[prevIndex + x] + sumR;
-                    _integralA![idx] = _integralA[prevIndex + x] + sumA;
+                    _integralB![idx] = unchecked(_integralB[prevIndex + x] + sumB);
+                    _integralG![idx] = unchecked(_integralG[prevIndex + x] + sumG);
+                    _integralR![idx] = unchecked(_integralR[prevIndex + x] + sumR);
+                    _integralA![idx] = unchecked(_integralA[prevIndex + x] + sumA);
                 }
             }
 
@@ -357,15 +357,15 @@ public unsafe sealed class MaskedVideoExporter
                     int idxD = iy0 * rowStride + ix0;
 
                     int area = (ix1 - ix0 + 1) * (iy1 - iy0 + 1);
-                    int sumB = _integralB![idxA] - _integralB[idxB] - _integralB[idxC] + _integralB[idxD];
-                    int sumG = _integralG![idxA] - _integralG[idxB] - _integralG[idxC] + _integralG[idxD];
-                    int sumR = _integralR![idxA] - _integralR[idxB] - _integralR[idxC] + _integralR[idxD];
-                    int sumA = _integralA![idxA] - _integralA[idxB] - _integralA[idxC] + _integralA[idxD];
+                    uint sumB = GetIntegralSum(_integralB!, idxA, idxB, idxC, idxD);
+                    uint sumG = GetIntegralSum(_integralG!, idxA, idxB, idxC, idxD);
+                    uint sumR = GetIntegralSum(_integralR!, idxA, idxB, idxC, idxD);
+                    uint sumA = GetIntegralSum(_integralA!, idxA, idxB, idxC, idxD);
 
-                    byte blurB = (byte)(sumB / area);
-                    byte blurG = (byte)(sumG / area);
-                    byte blurR = (byte)(sumR / area);
-                    byte blurA = (byte)(sumA / area);
+                    byte blurB = (byte)(sumB / (uint)area);
+                    byte blurG = (byte)(sumG / (uint)area);
+                    byte blurR = (byte)(sumR / (uint)area);
+                    byte blurA = (byte)(sumA / (uint)area);
 
                     if (alpha == 255)
                     {
@@ -446,7 +446,7 @@ public unsafe sealed class MaskedVideoExporter
             int rowIndex = y * rowStride;
             int prevIndex = (y - 1) * rowStride;
 
-            int sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+            uint sumB = 0, sumG = 0, sumR = 0, sumA = 0;
             for (int x = 1; x <= pw; x++)
             {
                 byte* p = srcRow + (x - 1) * 4;
@@ -456,10 +456,10 @@ public unsafe sealed class MaskedVideoExporter
                 sumA += p[3];
 
                 int idx = rowIndex + x;
-                _integralB![idx] = _integralB[prevIndex + x] + sumB;
-                _integralG![idx] = _integralG[prevIndex + x] + sumG;
-                _integralR![idx] = _integralR[prevIndex + x] + sumR;
-                _integralA![idx] = _integralA[prevIndex + x] + sumA;
+                _integralB![idx] = unchecked(_integralB[prevIndex + x] + sumB);
+                _integralG![idx] = unchecked(_integralG[prevIndex + x] + sumG);
+                _integralR![idx] = unchecked(_integralR[prevIndex + x] + sumR);
+                _integralA![idx] = unchecked(_integralA[prevIndex + x] + sumA);
             }
         }
 
@@ -527,15 +527,15 @@ public unsafe sealed class MaskedVideoExporter
                 int idxD = iy0 * rowStride + ix0;
 
                 int area = (ix1 - ix0 + 1) * (iy1 - iy0 + 1);
-                int sumB = _integralB![idxA] - _integralB[idxB] - _integralB[idxC] + _integralB[idxD];
-                int sumG = _integralG![idxA] - _integralG[idxB] - _integralG[idxC] + _integralG[idxD];
-                int sumR = _integralR![idxA] - _integralR[idxB] - _integralR[idxC] + _integralR[idxD];
-                int sumA = _integralA![idxA] - _integralA[idxB] - _integralA[idxC] + _integralA[idxD];
+                uint sumB = GetIntegralSum(_integralB!, idxA, idxB, idxC, idxD);
+                uint sumG = GetIntegralSum(_integralG!, idxA, idxB, idxC, idxD);
+                uint sumR = GetIntegralSum(_integralR!, idxA, idxB, idxC, idxD);
+                uint sumA = GetIntegralSum(_integralA!, idxA, idxB, idxC, idxD);
 
-                byte blurB = (byte)(sumB / area);
-                byte blurG = (byte)(sumG / area);
-                byte blurR = (byte)(sumR / area);
-                byte blurA = (byte)(sumA / area);
+                byte blurB = (byte)(sumB / (uint)area);
+                byte blurG = (byte)(sumG / (uint)area);
+                byte blurR = (byte)(sumR / (uint)area);
+                byte blurA = (byte)(sumA / (uint)area);
 
                 if (alpha == 255)
                 {
@@ -606,7 +606,7 @@ public unsafe sealed class MaskedVideoExporter
             int rowIndex = y * rowStride;
             int prevIndex = (y - 1) * rowStride;
 
-            int sumB = 0, sumG = 0, sumR = 0, sumA = 0;
+            uint sumB = 0, sumG = 0, sumR = 0, sumA = 0;
             for (int x = 1; x <= pw; x++)
             {
                 byte* p = srcRow + (x - 1) * 4;
@@ -616,10 +616,10 @@ public unsafe sealed class MaskedVideoExporter
                 sumA += p[3];
 
                 int idx = rowIndex + x;
-                _integralB![idx] = _integralB[prevIndex + x] + sumB;
-                _integralG![idx] = _integralG[prevIndex + x] + sumG;
-                _integralR![idx] = _integralR[prevIndex + x] + sumR;
-                _integralA![idx] = _integralA[prevIndex + x] + sumA;
+                _integralB![idx] = unchecked(_integralB[prevIndex + x] + sumB);
+                _integralG![idx] = unchecked(_integralG[prevIndex + x] + sumG);
+                _integralR![idx] = unchecked(_integralR[prevIndex + x] + sumR);
+                _integralA![idx] = unchecked(_integralA[prevIndex + x] + sumA);
             }
         }
 
@@ -658,15 +658,15 @@ public unsafe sealed class MaskedVideoExporter
                 int idxD = iy0 * rowStride + ix0;
 
                 int area = (ix1 - ix0 + 1) * (iy1 - iy0 + 1);
-                int sumB = _integralB![idxA] - _integralB[idxB] - _integralB[idxC] + _integralB[idxD];
-                int sumG = _integralG![idxA] - _integralG[idxB] - _integralG[idxC] + _integralG[idxD];
-                int sumR = _integralR![idxA] - _integralR[idxB] - _integralR[idxC] + _integralR[idxD];
-                int sumA = _integralA![idxA] - _integralA[idxB] - _integralA[idxC] + _integralA[idxD];
+                uint sumB = GetIntegralSum(_integralB!, idxA, idxB, idxC, idxD);
+                uint sumG = GetIntegralSum(_integralG!, idxA, idxB, idxC, idxD);
+                uint sumR = GetIntegralSum(_integralR!, idxA, idxB, idxC, idxD);
+                uint sumA = GetIntegralSum(_integralA!, idxA, idxB, idxC, idxD);
 
-                byte blurB = (byte)(sumB / area);
-                byte blurG = (byte)(sumG / area);
-                byte blurR = (byte)(sumR / area);
-                byte blurA = (byte)(sumA / area);
+                byte blurB = (byte)(sumB / (uint)area);
+                byte blurG = (byte)(sumG / (uint)area);
+                byte blurR = (byte)(sumR / (uint)area);
+                byte blurA = (byte)(sumA / (uint)area);
 
                 if (alpha == 255)
                 {
@@ -1144,13 +1144,13 @@ public unsafe sealed class MaskedVideoExporter
 
     private void EnsureIntegralBuffers(int width, int height)
     {
-        int size = (width + 1) * (height + 1);
+        int size = checked((width + 1) * (height + 1));
         if (_integralB == null || _integralB.Length < size)
         {
-            _integralB = new int[size];
-            _integralG = new int[size];
-            _integralR = new int[size];
-            _integralA = new int[size];
+            _integralB = new uint[size];
+            _integralG = new uint[size];
+            _integralR = new uint[size];
+            _integralA = new uint[size];
         }
         else
         {
@@ -1173,6 +1173,22 @@ public unsafe sealed class MaskedVideoExporter
                 integralA[idx] = 0;
             }
         }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static uint GetIntegralSum(
+        uint[] integral,
+        int bottomRight,
+        int topRight,
+        int bottomLeft,
+        int topLeft)
+    {
+        return unchecked(
+            integral[bottomRight] -
+            integral[topRight] -
+            integral[bottomLeft] +
+            integral[topLeft]);
     }
 
     private byte[] EnsureRadiusMap(int width, int height)

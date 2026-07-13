@@ -59,6 +59,7 @@ $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-autom
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-reset.ps1"
 $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
+$bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -248,7 +249,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -285,6 +286,9 @@ Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "precision=True cultu
 
 $blurRenderOutput = Invoke-ScriptStep "blur-render-consistency" $blurRenderConsistencyVerify @()
 Assert-Contains "blur-render-consistency" $blurRenderOutput "radiusPolicy=true radiusMapHeight=true previewExportMatch=true overlapOrderIndependent=true stateless=true crossThreadCacheReset=true"
+
+$bgraIntegralOutput = Invoke-ScriptStep "bgra-integral-range" $bgraIntegralRangeVerify @()
+Assert-Contains "bgra-integral-range" $bgraIntegralOutput "storage=uint32 dci4kFull=2256076800 wrapCases=10000 maxWindow=81 checkedSize=true"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"
