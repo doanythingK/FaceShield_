@@ -152,6 +152,7 @@ function Invoke-Run {
         '-YoloDropShortTrackMaxDetections', "$YoloDropShortTrackMaxDetections",
         '-YoloShortTrackMaxConfidence', $YoloShortTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         '-YoloLowerFrameTrackMaxConfidence', $YoloLowerFrameTrackMaxConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        '-ProcessingMode', 'Legacy',
         '-DetectionThreshold', $DetectionThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         '-ConfidenceThreshold', $ConfidenceThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         '-NmsThreshold', $NmsThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture),

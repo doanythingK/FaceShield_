@@ -8,7 +8,7 @@ param(
     [ValidateSet("FastNearest", "BalancedBilinear")]
     [string]$DownscaleQuality = "BalancedBilinear",
     [ValidateSet("Legacy", "Raw", "Tracked", "Full")]
-    [string]$ProcessingMode = "Legacy",
+    [string]$ProcessingMode = "Tracked",
     [switch]$OptimizedNoTracking,
     [switch]$OptimizedUseGpu,
     [switch]$OptimizedCpuOnly,
@@ -272,7 +272,7 @@ int yoloMaxInitialFillFrames = args.Length > 88 ? int.Parse(args[88], System.Glo
 bool yoloRunAsBaseline = args.Length > 89 && bool.Parse(args[89]);
 var optimizedProcessingMode = args.Length > 90
     ? Enum.Parse<AutoMaskProcessingMode>(args[90])
-    : AutoMaskProcessingMode.Legacy;
+    : AutoMaskProcessingMode.Tracked;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;

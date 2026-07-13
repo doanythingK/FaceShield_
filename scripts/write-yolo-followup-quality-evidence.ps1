@@ -946,6 +946,7 @@ if ($shouldRunSmoke) {
     Add-SwitchArg $smokeArgs "-SkipBaseline" $true
     Add-SwitchArg $smokeArgs "-SkipExport" $true
     Add-SwitchArg $smokeArgs "-DumpDetections" $true
+    Add-ValueArg $smokeArgs "-ProcessingMode" "Legacy"
     $resolvedYoloModelPath = Resolve-YoloModelPath `
         -Repo $repo `
         -YoloModelPath $YoloModelPath `

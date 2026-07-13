@@ -49,6 +49,7 @@ $arguments = @(
     "-SkipTrim",
     "-Source", $QualityClip,
     "-OptimizedCpuOnly",
+    "-ProcessingMode", "Legacy",
     "-ParallelDetectorCount", "$ParallelDetectorCount",
     "-YoloModelPath", $resolvedYoloModelPath,
     "-YoloModelType", $YoloModelType,

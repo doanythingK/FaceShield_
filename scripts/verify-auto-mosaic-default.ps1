@@ -411,6 +411,7 @@ $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(
     "-SkipExport",
     "-OptimizedCpuOnly",
     "-OptimizedNoTracking",
+    "-ProcessingMode", "Legacy",
     "-ParallelDetectorCount", "2",
     "-MinAvgIou", "0.99",
     "-MinBestIou", "0.99"
@@ -426,6 +427,7 @@ $roiHitOutput = Invoke-Step "roi-refiner-hit-representative" @(
     "-SkipExport",
     "-OptimizedCpuOnly",
     "-OptimizedNoTracking",
+    "-ProcessingMode", "Legacy",
     "-ParallelDetectorCount", "2"
 )
 Assert-Contains "roi-refiner-hit-representative" $roiHitOutput "\[SmokeFaceTrackRoiRefine\].*attempts=1[0-9]"
@@ -440,6 +442,7 @@ if ($RunExportSmoke) {
         "-SkipBaseline",
         "-OptimizedCpuOnly",
         "-OptimizedNoTracking",
+        "-ProcessingMode", "Legacy",
         "-ParallelDetectorCount", "2"
     )
     Assert-Contains "direct-face-export-smoke" $exportOutput "\[ExportRunSummary\].*bitmapMaskFrames=0"
@@ -455,6 +458,7 @@ if ($RunMediumAuto) {
         "-SkipExport",
         "-OptimizedCpuOnly",
         "-OptimizedNoTracking",
+        "-ProcessingMode", "Legacy",
         "-ParallelDetectorCount", "2"
     )
     Assert-Contains "medium-auto-track-roi" $mediumOutput "processed=899"
@@ -476,6 +480,7 @@ if ($RunMediumExport) {
         "-SkipBaseline",
         "-OptimizedCpuOnly",
         "-OptimizedNoTracking",
+        "-ProcessingMode", "Legacy",
         "-ParallelDetectorCount", "2"
     )
     Assert-Contains "medium-auto-export" $mediumExportOutput "processed=899"
@@ -499,6 +504,7 @@ $shortTuneOutput = Invoke-Step "default-autotune-provider-short" @(
 )
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[SmokeTune\].*tuned="
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "detector=FaceOnnxDetector/(CPU|GPU:DirectML)"
+Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[AutoRunSummary\].*tracking=True.*post=False.*processingMode=Tracked"
 Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "mode=pipe-parallel"
 Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "detects=150"
 Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "interpolated=0"
