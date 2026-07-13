@@ -14,6 +14,7 @@ using FaceShield.ViewModels.Workspace;
 using FaceShield.Views.Dialogs;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -44,6 +45,7 @@ namespace FaceShield.ViewModels.Pages
         private int _autoResumeIndex;
         private bool _autoCompleted;
         private string? _autoRunSignature;
+        private string? _autoExecutionSignature;
         private int _autoLastProcessedFrame = -1;
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private bool _sessionInitialized;
@@ -97,7 +99,11 @@ namespace FaceShield.ViewModels.Pages
             Mode == WorkspaceMode.Auto &&
             !_autoCompleted &&
             _autoResumeIndex > 0 &&
-            IsAutoResumeSignatureCurrent(BuildAutoRunSignature(_autoOptions, _detectorFactoryOptions));
+            !RequiresCompleteAutoTimeline(_autoOptions, _detectorFactoryOptions) &&
+            IsAutoResumeSignatureCurrent(BuildAutoRunIntentSignature(
+                _autoOptions,
+                _detectorOptions,
+                _detectorFactoryOptions));
 
         public int AutoLastProcessedFrame => _autoLastProcessedFrame;
         public DateTime AutoLastProcessedAtUtc => _autoLastProcessedAtUtc;
@@ -953,15 +959,12 @@ namespace FaceShield.ViewModels.Pages
                 _autoPreviewNeedsExactRefresh = false;
 
                 var detectorOptions = _detectorOptions;
-                var detectorFactoryOptions = _detectorFactoryOptions;
                 var effectiveAutoOptions = _autoOptions.ResolveProcessingMode();
-                FaceOnnxDetectorOptions? yoloSecondaryOptions = null;
-                if (detectorFactoryOptions.Backend == FaceDetectorBackend.YoloFaceOnnx &&
-                    effectiveAutoOptions.EnableYoloRiskCascade)
-                {
-                    yoloSecondaryOptions = CreateYoloSecondaryDetectorOptions(detectorOptions);
-                    detectorFactoryOptions = detectorFactoryOptions.WithFaceOnnxOptions(yoloSecondaryOptions);
-                }
+                var detectorFactoryOptions = ResolveAutoRunDetectorFactoryOptions(
+                    effectiveAutoOptions,
+                    detectorOptions,
+                    _detectorFactoryOptions,
+                    out FaceOnnxDetectorOptions? yoloSecondaryOptions);
 
                 string runSignature = BuildAutoRunSignature(effectiveAutoOptions, detectorFactoryOptions);
 
@@ -1037,17 +1040,23 @@ namespace FaceShield.ViewModels.Pages
                     DumpDetectionDiagnostics = effectiveAutoOptions.DumpDetectionDiagnostics
                 }.ResolveProcessingMode();
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
+                using IFaceDetector detector = detectorFactory.CreateDetector();
+                string sourceEvidenceId = BuildSourceEvidenceId(FrameList.VideoPath);
+                string executionSignature = BuildAutoExecutionSignature(
+                    runOptions,
+                    detectorFactoryOptions,
+                    GetDetectorExecutionProviderLabel(detector),
+                    sourceEvidenceId);
                 RunMetricsLog.AppendRunLines(
                     runId,
-                    $"[AutoRunConfig] runId={runId}, sourceId={BuildSourceEvidenceId(FrameList.VideoPath)}, totalFrames={FrameList.TotalFrames}, signature={BuildAutoRunEvidenceSignature(runOptions, detectorFactoryOptions)}");
-                using IFaceDetector detector = detectorFactory.CreateDetector();
+                    $"[AutoRunConfig] runId={runId}, sourceId={sourceEvidenceId}, totalFrames={FrameList.TotalFrames}, signature={BuildAutoRunEvidenceSignature(runOptions, detectorFactoryOptions)}, executionSignature={executionSignature}");
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
-                ResetStaleAutoResumeIfSettingsChanged(runSignature);
+                ResetStaleAutoResumeIfRunChanged(runSignature, executionSignature);
                 _autoRunSignature = runSignature;
+                _autoExecutionSignature = executionSignature;
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
-                if (runOptions.EnableYoloRiskCascade &&
-                    detectorFactoryOptions.Backend == FaceDetectorBackend.YoloFaceOnnx &&
+                if (RequiresCompleteAutoTimeline(runOptions, detectorFactoryOptions) &&
                     lastProcessed > 0)
                 {
                     System.Diagnostics.Debug.WriteLine(
@@ -2025,7 +2034,8 @@ namespace FaceShield.ViewModels.Pages
                 _autoExportGateFailure,
                 _autoExportHybridPolicyAvailable,
                 _autoExportAllowHybridCopy,
-                _autoExportHybridDisableReasons);
+                _autoExportHybridDisableReasons,
+                _autoExecutionSignature);
         }
 
         private void ApplySnapshot(WorkspaceSnapshot snapshot)
@@ -2036,6 +2046,7 @@ namespace FaceShield.ViewModels.Pages
             _autoResumeIndex = snapshot.AutoResumeIndex;
             _autoCompleted = snapshot.AutoCompleted;
             _autoRunSignature = snapshot.AutoRunSignature;
+            _autoExecutionSignature = snapshot.AutoExecutionSignature;
             _autoExportGateRequired = snapshot.AutoExportGateRequired;
             _autoExportGatePassed = snapshot.AutoExportGatePassed;
             _autoExportGateFailure = snapshot.AutoExportGateFailure;
@@ -2085,15 +2096,50 @@ namespace FaceShield.ViewModels.Pages
             => !string.IsNullOrWhiteSpace(_autoRunSignature) &&
                 string.Equals(_autoRunSignature, currentSignature, StringComparison.Ordinal);
 
-        private void ResetStaleAutoResumeIfSettingsChanged(string currentSignature)
+        private void ResetStaleAutoResumeIfRunChanged(
+            string currentRunSignature,
+            string currentExecutionSignature)
         {
-            if (_autoResumeIndex <= 0 || IsAutoResumeSignatureCurrent(currentSignature))
+            string? reason = GetAutoResumeResetReason(
+                _autoResumeIndex,
+                _autoRunSignature,
+                currentRunSignature,
+                _autoExecutionSignature,
+                currentExecutionSignature);
+            if (reason == null)
                 return;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[AutoMaskResumeReset] reason=settings-changed resumeIndex={_autoResumeIndex}");
+                $"[AutoMaskResumeReset] reason={reason} resumeIndex={_autoResumeIndex}");
             _autoResumeIndex = 0;
             _autoCompleted = false;
+        }
+
+        private static string? GetAutoResumeResetReason(
+            int resumeIndex,
+            string? storedRunSignature,
+            string currentRunSignature,
+            string? storedExecutionSignature,
+            string currentExecutionSignature)
+        {
+            if (resumeIndex <= 0)
+                return null;
+            if (string.IsNullOrWhiteSpace(storedRunSignature) ||
+                !string.Equals(storedRunSignature, currentRunSignature, StringComparison.Ordinal))
+            {
+                return "settings-changed";
+            }
+            if (string.IsNullOrWhiteSpace(storedExecutionSignature) ||
+                string.IsNullOrWhiteSpace(currentExecutionSignature))
+            {
+                return "execution-signature-missing";
+            }
+            if (!string.Equals(storedExecutionSignature, currentExecutionSignature, StringComparison.Ordinal))
+            {
+                return "execution-changed";
+            }
+
+            return null;
         }
 
         private static string BuildAutoRunSignature(
@@ -2112,7 +2158,7 @@ namespace FaceShield.ViewModels.Pages
                 useLegacyCompatibleSignature ? "v3" : "v5",
                 $"backend={detectorFactoryOptions.Backend}",
                 $"profile={autoOptions.FilterProfile}",
-                $"downscale={autoOptions.DownscaleRatio:0.###}",
+                $"downscale={FormatSignatureNumber(autoOptions.DownscaleRatio)}",
                 $"quality={autoOptions.DownscaleQuality}",
                 $"post={autoOptions.EnablePostProcessing}",
                 $"roi={autoOptions.EnableRoiPostProcess}",
@@ -2125,10 +2171,10 @@ namespace FaceShield.ViewModels.Pages
             {
                 parts.Add($"processingMode={autoOptions.ProcessingMode}");
                 parts.Add($"riskCascade={autoOptions.EnableYoloRiskCascade}");
-                parts.Add($"strongInterval={autoOptions.YoloStrongFullScanIntervalSeconds:0.###}");
-                parts.Add($"riskConfidence={autoOptions.YoloRiskLowConfidenceThreshold:0.###}");
-                parts.Add($"riskArea={autoOptions.YoloRiskSmallFaceAreaRatio:0.######}");
-                parts.Add($"riskEdge={autoOptions.YoloRiskEdgeMarginRatio:0.###}");
+                parts.Add($"strongInterval={FormatSignatureNumber(autoOptions.YoloStrongFullScanIntervalSeconds)}");
+                parts.Add($"riskConfidence={FormatSignatureNumber(autoOptions.YoloRiskLowConfidenceThreshold)}");
+                parts.Add($"riskArea={FormatSignatureNumber(autoOptions.YoloRiskSmallFaceAreaRatio)}");
+                parts.Add($"riskEdge={FormatSignatureNumber(autoOptions.YoloRiskEdgeMarginRatio)}");
                 parts.Add($"riskGap={autoOptions.YoloRiskMaxTrackGapFrames}");
                 parts.Add($"strongConfirm={autoOptions.YoloStrongConfirmationFrames}");
                 parts.Add($"primaryRoi={autoOptions.EnableYoloPrimaryRoiShortcut}");
@@ -2152,12 +2198,60 @@ namespace FaceShield.ViewModels.Pages
                 case FaceDetectorBackend.FaceOnnx:
                     AppendFaceOnnxSignature(parts, detectorFactoryOptions.FaceOnnxOptions);
                     break;
+                case FaceDetectorBackend.ScrfdOnnx:
+                    AppendScrfdSignature(parts, detectorFactoryOptions.ScrfdOnnxOptions);
+                    break;
+                case FaceDetectorBackend.YuNetOnnx:
+                    AppendYuNetSignature(parts, detectorFactoryOptions.YuNetOnnxOptions);
+                    break;
                 default:
                     parts.Add($"detector={detectorFactoryOptions.Backend}");
                     break;
             }
 
             return string.Join("|", parts);
+        }
+
+        private static string BuildAutoRunIntentSignature(
+            AutoMaskOptions autoOptions,
+            FaceOnnxDetectorOptions detectorOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions)
+        {
+            AutoMaskOptions effectiveAutoOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
+            FaceDetectorFactoryOptions effectiveFactoryOptions = ResolveAutoRunDetectorFactoryOptions(
+                effectiveAutoOptions,
+                detectorOptions,
+                detectorFactoryOptions,
+                out _);
+            return BuildAutoRunSignature(effectiveAutoOptions, effectiveFactoryOptions);
+        }
+
+        private static bool RequiresCompleteAutoTimeline(
+            AutoMaskOptions autoOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions)
+        {
+            AutoMaskOptions effectiveOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
+            return effectiveOptions.EnableYoloRiskCascade &&
+                detectorFactoryOptions?.Backend == FaceDetectorBackend.YoloFaceOnnx;
+        }
+
+        private static FaceDetectorFactoryOptions ResolveAutoRunDetectorFactoryOptions(
+            AutoMaskOptions autoOptions,
+            FaceOnnxDetectorOptions detectorOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions,
+            out FaceOnnxDetectorOptions? yoloSecondaryOptions)
+        {
+            detectorOptions ??= new FaceOnnxDetectorOptions();
+            detectorFactoryOptions ??= FaceDetectorFactoryOptions.ForOnnx(detectorOptions);
+            yoloSecondaryOptions = null;
+            if (detectorFactoryOptions.Backend != FaceDetectorBackend.YoloFaceOnnx ||
+                !autoOptions.EnableYoloRiskCascade)
+            {
+                return detectorFactoryOptions;
+            }
+
+            yoloSecondaryOptions = CreateYoloSecondaryDetectorOptions(detectorOptions);
+            return detectorFactoryOptions.WithFaceOnnxOptions(yoloSecondaryOptions);
         }
 
         private static void AppendFaceOnnxSignature(List<string> parts, FaceOnnxDetectorOptions? options)
@@ -2171,9 +2265,9 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"preprocess={options.EnablePreprocessParallelism?.ToString() ?? "null"}");
             parts.Add($"autoTune={options.AllowAutoTune?.ToString() ?? "null"}");
             parts.Add($"autoGpu={options.AllowAutoGpu?.ToString() ?? "null"}");
-            parts.Add($"detect={options.DetectionThreshold?.ToString("0.###") ?? "null"}");
-            parts.Add($"conf={options.ConfidenceThreshold?.ToString("0.###") ?? "null"}");
-            parts.Add($"nms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
+            parts.Add($"detect={FormatSignatureNumber(options.DetectionThreshold)}");
+            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
+            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
         }
 
         private static void AppendSecondaryFaceOnnxSignature(List<string> parts, FaceOnnxDetectorOptions? options)
@@ -2187,9 +2281,9 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"secondaryPreprocess={options.EnablePreprocessParallelism?.ToString() ?? "null"}");
             parts.Add($"secondaryAutoTune={options.AllowAutoTune?.ToString() ?? "null"}");
             parts.Add($"secondaryAutoGpu={options.AllowAutoGpu?.ToString() ?? "null"}");
-            parts.Add($"secondaryDetect={options.DetectionThreshold?.ToString("0.###") ?? "null"}");
-            parts.Add($"secondaryConf={options.ConfidenceThreshold?.ToString("0.###") ?? "null"}");
-            parts.Add($"secondaryNms={options.NmsThreshold?.ToString("0.###") ?? "null"}");
+            parts.Add($"secondaryDetect={FormatSignatureNumber(options.DetectionThreshold)}");
+            parts.Add($"secondaryConf={FormatSignatureNumber(options.ConfidenceThreshold)}");
+            parts.Add($"secondaryNms={FormatSignatureNumber(options.NmsThreshold)}");
         }
 
         private static FaceOnnxDetectorOptions CreateYoloSecondaryDetectorOptions(
@@ -2224,27 +2318,89 @@ namespace FaceShield.ViewModels.Pages
             parts.Add($"type={options.ModelType}");
             parts.Add($"ort={options.UseOrtOptimization}");
             parts.Add($"gpu={options.UseGpu}");
+            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
             if (options.EnableCoreMl)
                 parts.Add("coreMl=True");
             parts.Add($"input={options.InputWidth?.ToString() ?? "null"}x{options.InputHeight?.ToString() ?? "null"}");
-            parts.Add($"obj={options.ObjectnessThreshold:0.###}");
-            parts.Add($"conf={options.ConfidenceThreshold:0.###}");
-            parts.Add($"nms={options.NmsThreshold:0.###}");
+            parts.Add($"obj={FormatSignatureNumber(options.ObjectnessThreshold)}");
+            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
+            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
             parts.Add($"max={options.MaxDetections}");
             parts.Add($"tiling={options.UseTiling}");
             parts.Add($"tileOnly={!options.IncludeFullFrameWhenTiling}");
             parts.Add($"tiles={options.TileColumns}x{options.TileRows}");
-            parts.Add($"tileOverlap={options.TileOverlapRatio:0.###}");
+            parts.Add($"tileOverlap={FormatSignatureNumber(options.TileOverlapRatio)}");
             parts.Add($"letterbox={options.UseLetterboxResize}");
             parts.Add($"centerPad={options.CenterLetterboxPadding}");
+            parts.Add($"padValue={FormatSignatureNumber(options.LetterboxPaddingValue)}");
             parts.Add($"rgb={options.UseRgbInput}");
-            parts.Add($"lowPos={options.UseLowConfidencePositionFilter}:{options.LowConfidencePositionMaxConfidence:0.###}:{options.LowConfidencePositionMinCenterYRatio:0.###}");
-            parts.Add($"small={options.UseSmallAreaFilter}:{options.SmallAreaMaxAreaRatio:0.####}");
-            parts.Add($"aspect={options.UseAspectRatioFilter}:{options.MinAspectRatio:0.###}:{options.MaxAspectRatio:0.###}");
-            parts.Add($"topSmall={options.UseTopSmallLowConfidenceFilter}:{options.TopSmallLowConfidenceMaxConfidence:0.###}:{options.TopSmallLowConfidenceMaxCenterYRatio:0.###}:{options.TopSmallLowConfidenceMaxAreaRatio:0.####}");
-            parts.Add($"largeScale={options.LargeBoxWidthScale:0.###}:{options.LargeBoxHeightScale:0.###}:{options.LargeBoxMinAreaRatio:0.####}");
-            parts.Add($"landmark={options.UseYolo5LandmarkBoxRefine}:{options.Yolo5LandmarkBoxMinAreaRatio:0.####}:{options.Yolo5LandmarkBoxWidthScale:0.###}:{options.Yolo5LandmarkBoxHeightScale:0.###}:{options.Yolo5LandmarkBoxCenterYOffsetRatio:0.###}:{options.Yolo5LandmarkBoxMinOriginalIou:0.###}");
+            parts.Add($"inputScale={FormatSignatureNumber(options.InputScale)}");
+            parts.Add($"lowPos={options.UseLowConfidencePositionFilter}:{FormatSignatureNumber(options.LowConfidencePositionMaxConfidence)}:{FormatSignatureNumber(options.LowConfidencePositionMinCenterYRatio)}");
+            parts.Add($"small={options.UseSmallAreaFilter}:{FormatSignatureNumber(options.SmallAreaMaxAreaRatio)}");
+            parts.Add($"aspect={options.UseAspectRatioFilter}:{FormatSignatureNumber(options.MinAspectRatio)}:{FormatSignatureNumber(options.MaxAspectRatio)}");
+            parts.Add($"topSmall={options.UseTopSmallLowConfidenceFilter}:{FormatSignatureNumber(options.TopSmallLowConfidenceMaxConfidence)}:{FormatSignatureNumber(options.TopSmallLowConfidenceMaxCenterYRatio)}:{FormatSignatureNumber(options.TopSmallLowConfidenceMaxAreaRatio)}");
+            parts.Add($"largeScale={FormatSignatureNumber(options.LargeBoxWidthScale)}:{FormatSignatureNumber(options.LargeBoxHeightScale)}:{FormatSignatureNumber(options.LargeBoxMinAreaRatio)}");
+            parts.Add($"landmark={options.UseYolo5LandmarkBoxRefine}:{FormatSignatureNumber(options.Yolo5LandmarkBoxMinAreaRatio)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxWidthScale)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxHeightScale)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxCenterYOffsetRatio)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxMinOriginalIou)}");
         }
+
+        private static void AppendScrfdSignature(List<string> parts, ScrfdOnnxDetectorOptions? options)
+        {
+            if (options == null)
+            {
+                parts.Add("scrfd=null");
+                return;
+            }
+
+            parts.Add($"model={NormalizeSignaturePath(options.ModelPath)}");
+            parts.Add($"ort={options.UseOrtOptimization}");
+            parts.Add($"gpu={options.UseGpu}");
+            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
+            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
+            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
+            parts.Add($"input={options.InputWidth?.ToString() ?? "null"}x{options.InputHeight?.ToString() ?? "null"}");
+            parts.Add($"normalize={FormatSignatureNumber(options.InputMean)}:{FormatSignatureNumber(options.InputStd)}");
+            parts.Add($"bboxStride={options.MultiplyBboxByStride}");
+            parts.Add($"anchorOffset={FormatSignatureNumber(options.AnchorCenterOffset)}");
+            parts.Add($"letterbox={options.UseLetterboxResize}");
+            parts.Add($"centerPad={options.CenterLetterboxPadding}");
+            parts.Add($"padValue={FormatSignatureNumber(options.LetterboxPaddingValue)}");
+            parts.Add($"rgb={options.UseRgbInput}");
+        }
+
+        private static void AppendYuNetSignature(List<string> parts, YuNetOnnxDetectorOptions? options)
+        {
+            if (options == null)
+            {
+                parts.Add("yunet=null");
+                return;
+            }
+
+            parts.Add($"model={NormalizeSignaturePath(options.ModelPath)}");
+            parts.Add($"ort={options.UseOrtOptimization}");
+            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
+            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
+            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
+            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
+            parts.Add($"topK={options.TopK}");
+            parts.Add($"tiling={options.UseTiling}");
+            parts.Add($"tileOnly={!options.IncludeFullFrameWhenTiling}");
+            parts.Add($"tiles={options.TileColumns}x{options.TileRows}");
+            parts.Add($"tileOverlap={FormatSignatureNumber(options.TileOverlapRatio)}");
+        }
+
+        private static string FormatSignatureNumber(double value)
+            => value.ToString("R", CultureInfo.InvariantCulture);
+
+        private static string FormatSignatureNumber(float value)
+            => value.ToString("R", CultureInfo.InvariantCulture);
+
+        private static string FormatSignatureNumber(float? value)
+            => value?.ToString("R", CultureInfo.InvariantCulture) ?? "null";
 
         private static string NormalizeSignaturePath(string? path)
         {
@@ -2266,7 +2422,7 @@ namespace FaceShield.ViewModels.Pages
             FaceDetectorFactoryOptions detectorFactoryOptions)
         {
             string signature = BuildAutoRunSignature(autoOptions, detectorFactoryOptions);
-            string? modelPath = detectorFactoryOptions.YoloFaceOnnxOptions?.ModelPath;
+            string? modelPath = GetDetectorModelPath(detectorFactoryOptions);
             if (string.IsNullOrWhiteSpace(modelPath))
                 return signature;
 
@@ -2285,6 +2441,38 @@ namespace FaceShield.ViewModels.Pages
                 $"model={normalizedPath}",
                 $"model={modelIdentity}",
                 StringComparison.Ordinal);
+        }
+
+        private static string? GetDetectorModelPath(FaceDetectorFactoryOptions options)
+        {
+            return options.Backend switch
+            {
+                FaceDetectorBackend.YoloFaceOnnx => options.YoloFaceOnnxOptions?.ModelPath,
+                FaceDetectorBackend.ScrfdOnnx => options.ScrfdOnnxOptions?.ModelPath,
+                FaceDetectorBackend.YuNetOnnx => options.YuNetOnnxOptions?.ModelPath,
+                _ => null
+            };
+        }
+
+        private static string BuildAutoExecutionSignature(
+            AutoMaskOptions autoOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions,
+            string executionProviderLabel,
+            string sourceEvidenceId)
+        {
+            string provider = NormalizeExecutionProviderLabel(executionProviderLabel);
+            string source = string.IsNullOrWhiteSpace(sourceEvidenceId)
+                ? "unavailable"
+                : sourceEvidenceId.Trim();
+            return $"exec-v1|{BuildAutoRunEvidenceSignature(autoOptions, detectorFactoryOptions)}|provider={provider}|source={source}";
+        }
+
+        private static string NormalizeExecutionProviderLabel(string? label)
+            => DetectorExecutionProviderIdentity.NormalizeLabel(label);
+
+        private static string GetDetectorExecutionProviderLabel(IFaceDetector detector)
+        {
+            return DetectorExecutionProviderIdentity.GetCanonicalLabel(detector);
         }
 
         private static string BuildSourceEvidenceId(string path)

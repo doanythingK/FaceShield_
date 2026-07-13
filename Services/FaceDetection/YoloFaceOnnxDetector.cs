@@ -22,6 +22,8 @@ namespace FaceShield.Services.FaceDetection
         private static string _lastExecutionProviderLabel = "CPU";
         private static string? _lastExecutionProviderError;
 
+        internal string ExecutionProviderLabel { get; }
+
         private static readonly (float Width, float Height)[][] Yolo5FaceAnchors =
         {
             new[] { (4f, 5f), (8f, 10f), (13f, 16f) },
@@ -63,11 +65,12 @@ namespace FaceShield.Services.FaceDetection
             try
             {
                 _session = new InferenceSession(_options.ModelPath, sessionOptions);
-                UpdateExecutionProviderLabel(gpuProvider == "CoreML"
+                ExecutionProviderLabel = gpuProvider == "CoreML"
                     ? "CoreML(default)"
                     : gpuProvider != null
                         ? $"GPU:{gpuProvider}"
-                        : shouldTryGpu ? "CPU(가속 실패)" : "CPU");
+                        : shouldTryGpu ? "CPU(가속 실패)" : "CPU";
+                UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 if (gpuProvider != null || !shouldTryGpu)
                     UpdateExecutionProviderError(null);
             }
@@ -75,7 +78,8 @@ namespace FaceShield.Services.FaceDetection
             {
                 using var fallbackOptions = CreateSessionOptions();
                 _session = new InferenceSession(_options.ModelPath, fallbackOptions);
-                UpdateExecutionProviderLabel("CPU(가속 실패)");
+                ExecutionProviderLabel = "CPU(가속 실패)";
+                UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 UpdateExecutionProviderError(ex.Message);
             }
 

@@ -21,6 +21,8 @@ namespace FaceShield.Services.FaceDetection
         private readonly int _inputHeight;
         private readonly ScrfdOnnxDetectorOptions _options;
 
+        internal string ExecutionProviderLabel { get; }
+
         public ScrfdOnnxDetector(ScrfdOnnxDetectorOptions? options)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -43,8 +45,8 @@ namespace FaceShield.Services.FaceDetection
             if (_options.UseParallelExecution == true)
                 sessionOptions.ExecutionMode = ExecutionMode.ORT_PARALLEL;
 
-            if (_options.UseGpu)
-                TryAppendGpuExecutionProvider(sessionOptions);
+            bool usesGpuExecutionProvider = _options.UseGpu && TryAppendGpuExecutionProvider(sessionOptions);
+            ExecutionProviderLabel = usesGpuExecutionProvider ? "GPU:DirectML" : "CPU";
 
             _session = new InferenceSession(_options.ModelPath, sessionOptions);
             _inputName = _session.InputMetadata.Keys.First();

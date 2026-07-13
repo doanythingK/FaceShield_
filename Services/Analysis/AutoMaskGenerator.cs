@@ -173,13 +173,8 @@ namespace FaceShield.Services.Analysis
                                 for (int i = 0; i < toCreate; i++)
                                 {
                                     var created = _detectorFactory.CreateDetector();
-                                    if (created is IBgraFaceDetector extra)
-                                        detectors.Add(extra);
-                                    else
-                                    {
-                                        created.Dispose();
+                                    if (!TryAddCompatibleParallelDetector(detectors, bgraDetector, created))
                                         break;
-                                    }
                                 }
 
                                 if (detectors.Count > 1)
@@ -210,13 +205,8 @@ namespace FaceShield.Services.Analysis
                             for (int i = 0; i < toCreate; i++)
                             {
                                 var created = _detectorFactory!.CreateDetector();
-                                if (created is IBgraFaceDetector extra)
-                                    detectors.Add(extra);
-                                else
-                                {
-                                    created.Dispose();
+                                if (!TryAddCompatibleParallelDetector(detectors, sparseBgraDetector, created))
                                     break;
-                                }
                             }
 
                             GenerateSparsePipelinedTrackingParallel(videoPath, detectors, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
@@ -237,6 +227,29 @@ namespace FaceShield.Services.Analysis
             {
                 // 취소는 정상 흐름으로 처리 (디버그 예외 노이즈 방지)
             }
+        }
+
+        private static bool TryAddCompatibleParallelDetector(
+            ICollection<IBgraFaceDetector> detectors,
+            IFaceDetector primary,
+            IFaceDetector candidate)
+        {
+            if (candidate is not IBgraFaceDetector bgraCandidate)
+            {
+                candidate.Dispose();
+                return false;
+            }
+
+            if (!DetectorExecutionProviderIdentity.AreCompatible(primary, candidate))
+            {
+                Debug.WriteLine(
+                    $"[AutoMask] parallel detector provider mismatch; expected={DetectorExecutionProviderIdentity.GetCanonicalLabel(primary)}, actual={DetectorExecutionProviderIdentity.GetCanonicalLabel(candidate)}, usingSessions={detectors.Count}");
+                candidate.Dispose();
+                return false;
+            }
+
+            detectors.Add(bgraCandidate);
+            return true;
         }
 
         private void GenerateSequential(

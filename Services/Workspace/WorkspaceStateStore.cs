@@ -146,7 +146,8 @@ namespace FaceShield.Services.Workspace
                 state.AutoExportGateFailure,
                 state.AutoExportHybridPolicyAvailable,
                 state.AutoExportAllowHybridCopy,
-                state.AutoExportHybridDisableReasons);
+                state.AutoExportHybridDisableReasons,
+                state.AutoExecutionSignature);
 
             return true;
         }
@@ -212,6 +213,7 @@ namespace FaceShield.Services.Workspace
                 AutoResumeIndex = snapshot.AutoResumeIndex,
                 AutoCompleted = snapshot.AutoCompleted,
                 AutoRunSignature = snapshot.AutoRunSignature,
+                AutoExecutionSignature = snapshot.AutoExecutionSignature,
                 AutoExportGateRequired = snapshot.AutoExportGateRequired,
                 AutoExportGatePassed = snapshot.AutoExportGatePassed,
                 AutoExportGateFailure = snapshot.AutoExportGateFailure,
@@ -338,6 +340,7 @@ namespace FaceShield.Services.Workspace
             public int AutoResumeIndex { get; set; }
             public bool AutoCompleted { get; set; }
             public string? AutoRunSignature { get; set; }
+            public string? AutoExecutionSignature { get; set; }
             public bool AutoExportGateRequired { get; set; }
             public bool AutoExportGatePassed { get; set; }
             public string? AutoExportGateFailure { get; set; }
@@ -445,6 +448,7 @@ namespace FaceShield.Services.Workspace
         public int AutoResumeIndex { get; }
         public bool AutoCompleted { get; }
         public string? AutoRunSignature { get; }
+        public string? AutoExecutionSignature { get; }
         public bool AutoExportGateRequired { get; }
         public bool AutoExportGatePassed { get; }
         public string? AutoExportGateFailure { get; }
@@ -467,7 +471,8 @@ namespace FaceShield.Services.Workspace
             string? autoExportGateFailure,
             bool autoExportHybridPolicyAvailable,
             bool autoExportAllowHybridCopy,
-            string? autoExportHybridDisableReasons)
+            string? autoExportHybridDisableReasons,
+            string? autoExecutionSignature = null)
         {
             VideoPath = videoPath;
             Mode = mode;
@@ -478,6 +483,7 @@ namespace FaceShield.Services.Workspace
             AutoResumeIndex = autoResumeIndex;
             AutoCompleted = autoCompleted;
             AutoRunSignature = autoRunSignature;
+            AutoExecutionSignature = autoExecutionSignature;
             AutoExportGateRequired = autoExportGateRequired;
             AutoExportGatePassed = autoExportGatePassed;
             AutoExportGateFailure = autoExportGateFailure;
