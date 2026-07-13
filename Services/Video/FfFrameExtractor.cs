@@ -109,6 +109,8 @@ namespace FaceShield.Services.Video
         private AVFrame* _bgraScaledReusable;
         private int _bgraScaledWidth;
         private int _bgraScaledHeight;
+        private AVPacket* _sequentialPacketReusable;
+        private AVFrame* _sequentialDecodedFrameReusable;
 
         public FfFrameExtractor(string videoPath, bool enableHardware = true)
         {
@@ -528,16 +530,14 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRaw.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
-
-                if (pkt == null || src == null)
+                if (!EnsureSequentialDecodeResources())
                 {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
                     SetSequentialDecodeError("failed to allocate sequential raw decode buffers");
                     return false;
                 }
+
+                AVPacket* pkt = _sequentialPacketReusable;
+                AVFrame* src = _sequentialDecodedFrameReusable;
 
                 try
                 {
@@ -577,8 +577,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -602,16 +602,14 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawScaled.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
-
-                if (pkt == null || src == null)
+                if (!EnsureSequentialDecodeResources())
                 {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
                     SetSequentialDecodeError("failed to allocate sequential scaled decode buffers");
                     return false;
                 }
+
+                AVPacket* pkt = _sequentialPacketReusable;
+                AVFrame* src = _sequentialDecodedFrameReusable;
 
                 try
                 {
@@ -652,8 +650,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -686,16 +684,14 @@ namespace FaceShield.Services.Video
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawToBuffer.");
 
-                AVPacket* pkt = ffmpeg.av_packet_alloc();
-                AVFrame* src = ffmpeg.av_frame_alloc();
-
-                if (pkt == null || src == null)
+                if (!EnsureSequentialDecodeResources())
                 {
-                    if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                    if (src != null) ffmpeg.av_frame_free(&src);
                     SetSequentialDecodeError("failed to allocate sequential buffer decode resources");
                     return false;
                 }
+
+                AVPacket* pkt = _sequentialPacketReusable;
+                AVFrame* src = _sequentialDecodedFrameReusable;
 
                 try
                 {
@@ -738,8 +734,8 @@ namespace FaceShield.Services.Video
                 }
                 finally
                 {
-                    ffmpeg.av_packet_free(&pkt);
-                    ffmpeg.av_frame_free(&src);
+                    ffmpeg.av_packet_unref(pkt);
+                    ffmpeg.av_frame_unref(src);
                 }
             }
         }
@@ -855,6 +851,15 @@ namespace FaceShield.Services.Video
             _sequentialDecodeError = null;
         }
 
+        private bool EnsureSequentialDecodeResources()
+        {
+            if (_sequentialPacketReusable == null)
+                _sequentialPacketReusable = ffmpeg.av_packet_alloc();
+            if (_sequentialDecodedFrameReusable == null)
+                _sequentialDecodedFrameReusable = ffmpeg.av_frame_alloc();
+            return _sequentialPacketReusable != null && _sequentialDecodedFrameReusable != null;
+        }
+
         private void SetSequentialDecodeError(string message)
         {
             string? detail = GetLastDecodeError();
@@ -911,6 +916,17 @@ namespace FaceShield.Services.Video
                 {
                     ffmpeg.sws_freeContext(_swsScaled);
                     _swsScaled = null;
+                }
+
+                if (_sequentialPacketReusable != null)
+                {
+                    fixed (AVPacket** packet = &_sequentialPacketReusable)
+                        ffmpeg.av_packet_free(packet);
+                }
+                if (_sequentialDecodedFrameReusable != null)
+                {
+                    fixed (AVFrame** decodedFrame = &_sequentialDecodedFrameReusable)
+                        ffmpeg.av_frame_free(decodedFrame);
                 }
 
                 if (_hwDeviceCtx != null)
