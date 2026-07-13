@@ -62,6 +62,7 @@ public unsafe sealed class VideoExportService
     private int _bitmapMaskBlurFrames;
     private int _nativeYuvBlurFrames;
     private bool _staticHdrConfigured;
+    private bool _losslessX264RgbConfigured;
     private VideoHdrMetadata? _configuredHdrMetadata;
 
     public ExportRunSummary? LastExportSummary { get; private set; }
@@ -247,6 +248,7 @@ public unsafe sealed class VideoExportService
         _bitmapMaskBlurFrames = 0;
         _nativeYuvBlurFrames = 0;
         _staticHdrConfigured = false;
+        _losslessX264RgbConfigured = false;
         LastExportSummary = null;
         bool shouldRetryWithFullEncode = false;
         string? packetDropFallbackReason = null;
@@ -612,6 +614,15 @@ public unsafe sealed class VideoExportService
                 : null;
             _configuredHdrMetadata = hdrMetadata;
             _staticHdrConfigured = hdrMetadata?.HasStaticMetadata == true;
+            bool sourceIsRgbH264 =
+                inStream->codecpar->codec_id == AVCodecID.AV_CODEC_ID_H264 &&
+                IsRgbPixelFormat(ResolveSourcePixelFormat(inStream, dec));
+            if (sourceIsRgbH264 && hdrMetadata?.HasStaticMetadata == true)
+            {
+                throw new VideoExportIntegrityException(
+                    "정적 HDR 메타데이터가 있는 RGB H.264 영상은 libx264rgb에서 " +
+                    "원본 표현을 보존할 수 없습니다. HEVC 손실 변환 없이 내보내기를 중단했습니다.");
+            }
 
             // ───────── output ─────────
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
@@ -682,6 +693,10 @@ public unsafe sealed class VideoExportService
                     $"10비트 원본 품질을 보존하기 위해 " +
                     $"{GetEncoderName(encoder)} 인코더를 사용합니다.";
             }
+            _losslessX264RgbConfigured = string.Equals(
+                GetEncoderName(encoder),
+                "libx264rgb",
+                StringComparison.OrdinalIgnoreCase);
 
             AVStream* outAudioStream = null;
             string? audioNotice = null;
@@ -2831,6 +2846,7 @@ public unsafe sealed class VideoExportService
             FFmpegHdrMetadataGuard.FindUnsupportedMetadata(frame);
         if (unsupportedFrameMetadata != null)
             ThrowUnsupportedDynamicVideoMetadata(unsupportedFrameMetadata);
+        ValidateDecodedFramePixelFidelity(frame, enc);
 
         if (FFmpegHdrMetadataGuard.RequiresStaticHdrConfiguration(
                 frame,
@@ -4014,6 +4030,92 @@ public unsafe sealed class VideoExportService
 #pragma warning restore CS0618
     }
 
+    private static unsafe AVPixelFormat ResolveSourcePixelFormat(
+        AVStream* stream,
+        AVCodecContext* decoder)
+    {
+        if (decoder != null && decoder->pix_fmt != AVPixelFormat.AV_PIX_FMT_NONE)
+            return decoder->pix_fmt;
+        if (stream != null && stream->codecpar != null && stream->codecpar->format != -1)
+            return (AVPixelFormat)stream->codecpar->format;
+        return AVPixelFormat.AV_PIX_FMT_NONE;
+    }
+
+    private static unsafe bool IsRgbPixelFormat(AVPixelFormat pixelFormat)
+    {
+        AVPixFmtDescriptor* descriptor = ffmpeg.av_pix_fmt_desc_get(pixelFormat);
+        return descriptor != null &&
+            (descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
+    }
+
+    private static unsafe bool CanEncodeLosslessX264Rgb(
+        AVPixelFormat sourcePixelFormat,
+        AVColorRange sourceColorRange,
+        AVColorSpace sourceColorSpace,
+        out string? error)
+    {
+        error = null;
+        AVPixFmtDescriptor* descriptor = ffmpeg.av_pix_fmt_desc_get(sourcePixelFormat);
+        if (descriptor == null)
+        {
+            error = $"원본 픽셀 형식({GetPixelFormatName(sourcePixelFormat)}) 정보를 확인할 수 없습니다.";
+            return false;
+        }
+        if ((descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) == 0)
+        {
+            error = $"원본 픽셀 형식({GetPixelFormatName(sourcePixelFormat)})이 RGB가 아닙니다.";
+            return false;
+        }
+        if ((descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0)
+        {
+            error = $"알파 채널이 있는 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 H.264에 보존할 수 없습니다.";
+            return false;
+        }
+        if (descriptor->nb_components != 3)
+        {
+            error =
+                $"RGB 색상 성분 수({descriptor->nb_components})를 H.264에서 정확히 보존할 수 없습니다.";
+            return false;
+        }
+        if (descriptor->log2_chroma_w != 0 || descriptor->log2_chroma_h != 0)
+        {
+            error =
+                $"서브샘플링된 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 " +
+                "libx264rgb에서 정확히 보존할 수 없습니다.";
+            return false;
+        }
+        for (int component = 0; component < descriptor->nb_components; component++)
+        {
+            if (descriptor->comp[(uint)component].depth != 8)
+            {
+                error =
+                    $"8비트가 아닌 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 " +
+                    "libx264rgb에서 원본 정밀도를 보존할 수 없습니다.";
+                return false;
+            }
+        }
+        if (sourceColorRange is not
+            AVColorRange.AVCOL_RANGE_UNSPECIFIED and not
+            AVColorRange.AVCOL_RANGE_JPEG)
+        {
+            error =
+                $"지원하지 않는 RGB 범위 태그({sourceColorRange})는 " +
+                "libx264rgb full-range 경로에서 정확히 보존할 수 없습니다.";
+            return false;
+        }
+        if (sourceColorSpace is not
+            AVColorSpace.AVCOL_SPC_UNSPECIFIED and not
+            AVColorSpace.AVCOL_SPC_RGB)
+        {
+            error =
+                $"RGB가 아닌 matrix 태그({sourceColorSpace})가 지정된 RGB 영상은 " +
+                "색상 해석을 바꾸지 않고 보존할 수 없습니다.";
+            return false;
+        }
+
+        return true;
+    }
+
     private static unsafe AVCodecContext* TryCreateEncoderContext(
         AVCodecID codecId,
         AVStream* inStream,
@@ -4041,14 +4143,34 @@ public unsafe sealed class VideoExportService
             }
         }
 
+        AVPixelFormat sourcePixelFormat = ResolveSourcePixelFormat(inStream, dec);
+        bool requiresLosslessRgbH264 =
+            codecId == AVCodecID.AV_CODEC_ID_H264 &&
+            IsRgbPixelFormat(sourcePixelFormat);
+        if (requiresLosslessRgbH264 &&
+            !CanEncodeLosslessX264Rgb(
+                sourcePixelFormat,
+                dec->color_range,
+                dec->colorspace,
+                out string? rgbCompatibilityError))
+        {
+            throw new VideoExportIntegrityException(
+                "RGB H.264 원본을 품질 저하 없이 내보낼 수 없습니다. " +
+                rgbCompatibilityError);
+        }
+
         bool allowTenBitHevcFallback =
             codecId == AVCodecID.AV_CODEC_ID_H264 &&
+            !requiresLosslessRgbH264 &&
             GetPixelFormatBitDepth(dec->pix_fmt) > 8;
         var attemptedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var candidateName in GetEncoderCandidateNames(
-                     codecId,
-                     forceSoftwareEncoder,
-                     allowTenBitHevcFallback))
+        IReadOnlyList<string> candidateNames = requiresLosslessRgbH264
+            ? new[] { "libx264rgb" }
+            : GetEncoderCandidateNames(
+                codecId,
+                forceSoftwareEncoder,
+                allowTenBitHevcFallback);
+        foreach (var candidateName in candidateNames)
         {
             if (string.IsNullOrWhiteSpace(candidateName) || !attemptedNames.Add(candidateName))
                 continue;
@@ -4111,6 +4233,13 @@ public unsafe sealed class VideoExportService
             error = AppendEncoderError(error, candidateName, openError);
         }
 
+        if (requiresLosslessRgbH264)
+        {
+            throw new VideoExportIntegrityException(
+                "RGB H.264 원본은 검증된 무손실 libx264rgb 경로로만 내보낼 수 있습니다. " +
+                $"인코더 초기화 실패: {error ?? "libx264rgb를 찾을 수 없습니다."}");
+        }
+
         AVCodec* fallback = SelectFallbackEncoder(
             codecId,
             forceSoftwareEncoder || hdrMetadata?.HasStaticMetadata == true);
@@ -4169,11 +4298,35 @@ public unsafe sealed class VideoExportService
             return null;
         }
 
+        string encoderName = GetEncoderName(encoder);
+        bool isLosslessX264Rgb = string.Equals(
+            encoderName,
+            "libx264rgb",
+            StringComparison.OrdinalIgnoreCase);
+        AVPixelFormat sourcePixelFormat = ResolveSourcePixelFormat(inStream, dec);
         ctx->width = dec->width;
         ctx->height = dec->height;
-        ctx->pix_fmt = dec->pix_fmt;
-        if (ctx->pix_fmt == AVPixelFormat.AV_PIX_FMT_NONE && inStream->codecpar->format != -1)
-            ctx->pix_fmt = (AVPixelFormat)inStream->codecpar->format;
+        ctx->pix_fmt = sourcePixelFormat;
+        if (isLosslessX264Rgb)
+        {
+            if (!CanEncodeLosslessX264Rgb(
+                    sourcePixelFormat,
+                    dec->color_range,
+                    dec->colorspace,
+                    out string? rgbCompatibilityError))
+            {
+                error = rgbCompatibilityError;
+                ffmpeg.avcodec_free_context(&ctx);
+                return null;
+            }
+            if (!IsPixFmtSupported(encoder, AVPixelFormat.AV_PIX_FMT_BGR24))
+            {
+                error = "libx264rgb가 검증된 BGR24 입력 형식을 지원하지 않습니다.";
+                ffmpeg.avcodec_free_context(&ctx);
+                return null;
+            }
+            ctx->pix_fmt = AVPixelFormat.AV_PIX_FMT_BGR24;
+        }
         ctx->time_base = inStream->time_base;
         ctx->framerate = inStream->r_frame_rate.num != 0 ? inStream->r_frame_rate : inStream->avg_frame_rate;
         if (ctx->framerate.num == 0 || ctx->framerate.den == 0)
@@ -4197,7 +4350,6 @@ public unsafe sealed class VideoExportService
             ctx->framerate,
             encoder->id);
 
-        string encoderName = GetEncoderName(encoder);
         bool usesSoftwareConstantQuality = UsesSoftwareConstantQuality(encoderName);
         if (usesSoftwareConstantQuality)
         {
@@ -4216,7 +4368,7 @@ public unsafe sealed class VideoExportService
         {
             if (inStream->codecpar->profile != -99)
                 ctx->profile = inStream->codecpar->profile;
-            if (inStream->codecpar->level > 0)
+            if (!isLosslessX264Rgb && inStream->codecpar->level > 0)
                 ctx->level = inStream->codecpar->level;
         }
 
@@ -4226,6 +4378,12 @@ public unsafe sealed class VideoExportService
         ctx->color_trc = dec->color_trc;
         ctx->colorspace = dec->colorspace;
         ctx->chroma_sample_location = ResolveSourceChromaLocation(inStream, dec);
+        if (isLosslessX264Rgb)
+        {
+            ctx->color_range = AVColorRange.AVCOL_RANGE_JPEG;
+            ctx->colorspace = AVColorSpace.AVCOL_SPC_RGB;
+            ctx->chroma_sample_location = AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED;
+        }
         ctx->flags |= ffmpeg.AV_CODEC_FLAG_FRAME_DURATION;
 
         if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
@@ -4234,7 +4392,7 @@ public unsafe sealed class VideoExportService
         if (!IsPixFmtSupported(encoder, ctx->pix_fmt))
             ctx->pix_fmt = PickPreferredPixelFormat(encoder, ctx->pix_fmt);
 
-        string? pixelFormatLoss = GetPixelFormatLossReason(dec->pix_fmt, ctx->pix_fmt);
+        string? pixelFormatLoss = GetPixelFormatLossReason(sourcePixelFormat, ctx->pix_fmt);
         if (!string.IsNullOrWhiteSpace(pixelFormatLoss))
         {
             error = $"원본 픽셀 품질을 보존할 수 없습니다: {pixelFormatLoss}";
@@ -4745,6 +4903,7 @@ public unsafe sealed class VideoExportService
                 requiredFailures.Add(failure);
         }
 
+        bool isX264Rgb = string.Equals(name, "libx264rgb", StringComparison.OrdinalIgnoreCase);
         bool isX264 = name.Contains("x264", StringComparison.OrdinalIgnoreCase);
         bool isX265 = name.Contains("x265", StringComparison.OrdinalIgnoreCase);
         bool isSvtAv1 = name.Contains("svtav1", StringComparison.OrdinalIgnoreCase);
@@ -4755,7 +4914,15 @@ public unsafe sealed class VideoExportService
         bool isVideoToolbox = name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase);
         string mode;
 
-        if (isX264)
+        if (isX264Rgb)
+        {
+            SetOption("preset", "fast", required: true);
+            SetOption("crf", "0", required: true);
+            mode = forceSafeEncoding
+                ? "lossless-crf0-fast-rgb-safe"
+                : "lossless-crf0-fast-rgb";
+        }
+        else if (isX264)
         {
             SetOption("preset", "fast", required: true);
             SetOption("crf", "14", required: true);
@@ -4924,12 +5091,32 @@ public unsafe sealed class VideoExportService
         if (source == null || output == null)
             return null;
 
-        int sourceBitDepth = source->nb_components == 0 ? 0 : source->comp[0].depth;
-        int outputBitDepth = output->nb_components == 0 ? 0 : output->comp[0].depth;
-        if (sourceBitDepth > 0 && outputBitDepth > 0 && outputBitDepth < sourceBitDepth)
+        bool sourceIsRgb = (source->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
+        bool outputIsRgb = (output->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
+        if (sourceIsRgb != outputIsRgb)
         {
-            return $"비트 심도 하락 {GetPixelFormatName(sourcePixelFormat)}({sourceBitDepth}) -> " +
-                   $"{GetPixelFormatName(outputPixelFormat)}({outputBitDepth})";
+            return $"색상 모델 변경 {GetPixelFormatName(sourcePixelFormat)} -> " +
+                   GetPixelFormatName(outputPixelFormat);
+        }
+
+        bool sourceHasAlpha = (source->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0;
+        bool outputHasAlpha = (output->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0;
+        if (sourceHasAlpha && !outputHasAlpha)
+        {
+            return $"알파 채널 유실 {GetPixelFormatName(sourcePixelFormat)} -> " +
+                   GetPixelFormatName(outputPixelFormat);
+        }
+
+        int comparableComponents = Math.Min(source->nb_components, output->nb_components);
+        for (int component = 0; component < comparableComponents; component++)
+        {
+            int sourceBitDepth = source->comp[(uint)component].depth;
+            int outputBitDepth = output->comp[(uint)component].depth;
+            if (sourceBitDepth > 0 && outputBitDepth > 0 && outputBitDepth < sourceBitDepth)
+            {
+                return $"비트 심도 하락 {GetPixelFormatName(sourcePixelFormat)}({sourceBitDepth}) -> " +
+                       $"{GetPixelFormatName(outputPixelFormat)}({outputBitDepth})";
+            }
         }
 
         if (output->nb_components < source->nb_components)
@@ -4947,6 +5134,60 @@ public unsafe sealed class VideoExportService
         }
 
         return null;
+    }
+
+    private unsafe void ValidateDecodedFramePixelFidelity(
+        AVFrame* frame,
+        AVCodecContext* encoderContext)
+    {
+        if (frame == null || encoderContext == null)
+        {
+            throw new VideoExportIntegrityException(
+                "프레임 픽셀 품질 검증에 필요한 디코더 또는 인코더 정보가 없습니다.");
+        }
+        if (frame->width != encoderContext->width || frame->height != encoderContext->height)
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 해상도가 변경됐습니다({frame->width}x{frame->height} -> " +
+                $"{encoderContext->width}x{encoderContext->height}). " +
+                "자동 크기 변환 없이 원본 품질을 보존할 수 없어 내보내기를 중단했습니다.");
+        }
+
+        AVPixelFormat framePixelFormat = (AVPixelFormat)frame->format;
+        string? pixelFormatLoss = GetPixelFormatLossReason(
+            framePixelFormat,
+            encoderContext->pix_fmt);
+        if (!string.IsNullOrWhiteSpace(pixelFormatLoss))
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 원본 픽셀 형식이 변경되어 품질을 보존할 수 없습니다: {pixelFormatLoss}");
+        }
+
+        if (!_losslessX264RgbConfigured)
+            return;
+
+        if (!CanEncodeLosslessX264Rgb(
+                framePixelFormat,
+                frame->color_range,
+                frame->colorspace,
+                out string? rgbCompatibilityError))
+        {
+            throw new VideoExportIntegrityException(
+                "영상 도중 RGB H.264 픽셀 속성이 변경됐습니다. " +
+                rgbCompatibilityError);
+        }
+        if (frame->color_primaries != AVColorPrimaries.AVCOL_PRI_UNSPECIFIED &&
+            frame->color_primaries != encoderContext->color_primaries)
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 RGB color primaries가 변경됐습니다({frame->color_primaries}).");
+        }
+        if (frame->color_trc != AVColorTransferCharacteristic.AVCOL_TRC_UNSPECIFIED &&
+            frame->color_trc != encoderContext->color_trc)
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 RGB transfer characteristic이 변경됐습니다({frame->color_trc}).");
+        }
     }
 
     private static unsafe long ResolveSourceVideoBitrate(AVStream* stream, AVCodecContext* decoder)

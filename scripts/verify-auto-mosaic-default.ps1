@@ -65,6 +65,7 @@ $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.p
 $swsFrameColorFidelityVerify = Join-Path $repo "scripts\verify-sws-frame-color-fidelity.ps1"
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
 $encoderQualityOptionsVerify = Join-Path $repo "scripts\verify-encoder-quality-options.ps1"
+$rgbLosslessExportVerify = Join-Path $repo "scripts\verify-rgb-lossless-export.ps1"
 $av1EncoderPolicyVerify = Join-Path $repo "scripts\verify-av1-encoder-policy.ps1"
 $hdrMetadataGuardVerify = Join-Path $repo "scripts\verify-hdr-metadata-guard.ps1"
 $av1HdrFilmGrainPolicyVerify = Join-Path $repo "scripts\verify-av1-hdr-film-grain-policy.ps1"
@@ -323,6 +324,13 @@ Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx26
 
 $encoderQualityOutput = Invoke-ScriptStep "encoder-quality-options" $encoderQualityOptionsVerify @()
 Assert-Contains "encoder-quality-options" $encoderQualityOutput "av1Software=[1-9][0-9]*"
+Assert-Contains "encoder-quality-options" $encoderQualityOutput "PASS rgbPolicy=7 pixelLossCases=5"
+Assert-Contains "encoder-quality-options" $encoderQualityOutput "PASS encoder=libx264rgb option=crf value=0"
+
+$rgbLosslessOutput = Invoke-ScriptStep "rgb-lossless-export" $rgbLosslessExportVerify @()
+Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "serviceExport=true encoder=libx264rgb quality=lossless-crf0-fast-rgb .*frames=6 submitted=6 masked=1 packets=6/6 attemptCount=1 outputCommitted=true packetMismatch=0"
+Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "pixelFidelity=true unmaskedFrames=5/5 outsideMaskExact=5120/5120 changedInside=1024/1024 canonicalRgb=true"
+Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "tenBitFailClosed=true .*finalOutput=false stagedOutputs=0 outputCommitted=false"
 
 $av1EncoderOutput = Invoke-ScriptStep "av1-encoder-policy" $av1EncoderPolicyVerify @()
 Assert-Contains "av1-encoder-policy" $av1EncoderOutput "software=libsvtav1,libaom-av1 .*bitDepths=8,10,12 .*bitrateFloor=true"
