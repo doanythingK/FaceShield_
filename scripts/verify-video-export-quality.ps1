@@ -3,8 +3,8 @@
     Verifies that an exported video preserves source format quality and timeline.
 
 .DESCRIPTION
-    Uses ffprobe to compare video, audio, color, pixel-format, and packet-timeline
-    metadata. Uses ffmpeg to fully decode the output and reject corrupt media.
+    Uses ffprobe to compare video, audio, color, pixel-format, chapters, container
+    metadata, and packet timelines. Uses ffmpeg to fully decode the output and reject corrupt media.
     The command exits with a non-zero status when a required check fails.
 
 .PARAMETER SourcePath
@@ -241,6 +241,7 @@ function Get-MediaProbe {
         "-v", "error",
         "-count_frames",
         "-show_streams",
+        "-show_chapters",
         "-show_format",
         "-of", "json",
         $Path
@@ -493,11 +494,24 @@ $sourceVideos = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "co
 $outputVideos = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "video" })
 $sourceAudios = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
 $outputAudios = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
+$sourceChapters = @($sourceProbe.chapters)
+$outputChapters = @($outputProbe.chapters)
 
 Add-Check "video-stream-count" ($sourceVideos.Count -eq $outputVideos.Count -and $sourceVideos.Count -gt 0) `
     ([string]$sourceVideos.Count) ([string]$outputVideos.Count) "equal and at least one"
 Add-Check "audio-stream-count" ($sourceAudios.Count -eq $outputAudios.Count) `
     ([string]$sourceAudios.Count) ([string]$outputAudios.Count) "equal"
+
+foreach ($tagName in @(
+    "title", "artist", "album", "album_artist", "composer", "comment", "description",
+    "synopsis", "genre", "date", "creation_time", "copyright", "location", "publisher",
+    "show", "episode_id", "network")) {
+    $sourceTag = Get-PropertyText $sourceProbe.format.tags $tagName ""
+    $outputTag = Get-PropertyText $outputProbe.format.tags $tagName ""
+    Add-Check "container-tag-$($tagName.Replace('_', '-'))" `
+        ([string]::IsNullOrWhiteSpace($sourceTag) -or $sourceTag -eq $outputTag) `
+        $sourceTag $outputTag "preserve when present"
+}
 
 if ($sourceVideos.Count -eq 0 -or $outputVideos.Count -eq 0) {
     throw "A source and output primary video stream are required."
@@ -620,6 +634,33 @@ $derivedTimelineDelta = if (-not [double]::IsNaN($sourceFps) -and $sourceFps -gt
     0.018
 }
 $timelineLimit = if ($MaxTimelineDeltaSeconds -gt 0) { $MaxTimelineDeltaSeconds } else { $derivedTimelineDelta }
+
+Add-Check "chapter-count" ($sourceChapters.Count -eq $outputChapters.Count) `
+    ([string]$sourceChapters.Count) ([string]$outputChapters.Count) "equal"
+$chapterPairCount = [Math]::Min($sourceChapters.Count, $outputChapters.Count)
+for ($i = 0; $i -lt $chapterPairCount; $i++) {
+    $sourceChapter = $sourceChapters[$i]
+    $outputChapter = $outputChapters[$i]
+    $sourceChapterStart = Convert-ToDouble (Get-PropertyText $sourceChapter "start_time")
+    $outputChapterStart = Convert-ToDouble (Get-PropertyText $outputChapter "start_time")
+    $sourceChapterEnd = Convert-ToDouble (Get-PropertyText $sourceChapter "end_time")
+    $outputChapterEnd = Convert-ToDouble (Get-PropertyText $outputChapter "end_time")
+    $chapterStartDelta = [Math]::Abs($sourceChapterStart - $outputChapterStart)
+    $chapterEndDelta = [Math]::Abs($sourceChapterEnd - $outputChapterEnd)
+    $sourceChapterTitle = Get-PropertyText $sourceChapter.tags "title" ""
+    $outputChapterTitle = Get-PropertyText $outputChapter.tags "title" ""
+    Add-Check "chapter[$i]-start" `
+        (-not [double]::IsNaN($chapterStartDelta) -and $chapterStartDelta -le $timelineLimit) `
+        (Format-Number $sourceChapterStart) (Format-Number $outputChapterStart) `
+        "delta <= $(Format-Number $timelineLimit) seconds"
+    Add-Check "chapter[$i]-end" `
+        (-not [double]::IsNaN($chapterEndDelta) -and $chapterEndDelta -le $timelineLimit) `
+        (Format-Number $sourceChapterEnd) (Format-Number $outputChapterEnd) `
+        "delta <= $(Format-Number $timelineLimit) seconds"
+    Add-Check "chapter[$i]-title" `
+        ([string]::IsNullOrWhiteSpace($sourceChapterTitle) -or $sourceChapterTitle -eq $outputChapterTitle) `
+        $sourceChapterTitle $outputChapterTitle "preserve when present"
+}
 
 $videoDurationDelta = [Math]::Abs($sourceDuration - $outputDuration)
 Add-Check "video-duration" (-not [double]::IsNaN($videoDurationDelta) -and $videoDurationDelta -le $timelineLimit) `

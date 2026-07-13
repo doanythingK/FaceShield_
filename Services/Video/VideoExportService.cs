@@ -558,6 +558,7 @@ public unsafe sealed class VideoExportService
 
             // ───────── output ─────────
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
+            CopyFormatPresentationMetadata(inFmt, outFmt);
 
             AVCodec* encoder;
             AVCodecID inputCodecId = inStream->codecpar->codec_id;
@@ -3177,6 +3178,7 @@ public unsafe sealed class VideoExportService
         try
         {
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
+            CopyFormatPresentationMetadata(inFmt, outFmt);
 
             int streamCount = (int)inFmt->nb_streams;
             var streamMap = new int[streamCount];
@@ -4034,6 +4036,44 @@ public unsafe sealed class VideoExportService
         output->disposition = source->disposition;
         ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0);
         CopyCodecPresentationSideData(source->codecpar, output->codecpar);
+    }
+
+    private static unsafe void CopyFormatPresentationMetadata(
+        AVFormatContext* source,
+        AVFormatContext* output)
+    {
+        if (source == null || output == null)
+            return;
+
+        ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0);
+        int chapterCount = checked((int)source->nb_chapters);
+        if (chapterCount <= 0)
+            return;
+
+        output->chapters = (AVChapter**)ffmpeg.av_calloc(
+            (ulong)chapterCount,
+            (ulong)sizeof(AVChapter*));
+        if (output->chapters == null)
+            throw new InvalidOperationException("챕터 목록 메모리를 할당할 수 없습니다.");
+
+        for (int i = 0; i < chapterCount; i++)
+        {
+            AVChapter* sourceChapter = source->chapters[i];
+            if (sourceChapter == null)
+                throw new InvalidOperationException($"원본 챕터 {i + 1} 정보가 없습니다.");
+
+            AVChapter* outputChapter = (AVChapter*)ffmpeg.av_mallocz((ulong)sizeof(AVChapter));
+            if (outputChapter == null)
+                throw new InvalidOperationException($"챕터 {i + 1} 메모리를 할당할 수 없습니다.");
+
+            outputChapter->id = sourceChapter->id;
+            outputChapter->time_base = sourceChapter->time_base;
+            outputChapter->start = sourceChapter->start;
+            outputChapter->end = sourceChapter->end;
+            ffmpeg.av_dict_copy(&outputChapter->metadata, sourceChapter->metadata, 0);
+            output->chapters[i] = outputChapter;
+            output->nb_chapters++;
+        }
     }
 
     private static unsafe void CopyCodecPresentationSideData(
