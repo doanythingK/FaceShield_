@@ -534,6 +534,11 @@ public unsafe sealed class VideoExportService
 
             int exportSampleWindowFrames = ResolveExportSampleWindowFrames(sourceFps, totalFrames);
 
+            string? unsupportedStreamMetadata =
+                FFmpegHdrMetadataGuard.FindUnsupportedMetadata(inStream->codecpar);
+            if (unsupportedStreamMetadata != null)
+                ThrowUnsupportedDynamicVideoMetadata(unsupportedStreamMetadata);
+
             AVCodec* decoder = ffmpeg.avcodec_find_decoder(inStream->codecpar->codec_id);
             dec = ffmpeg.avcodec_alloc_context3(decoder);
             Throw(ffmpeg.avcodec_parameters_to_context(dec, inStream->codecpar));
@@ -2210,7 +2215,13 @@ public unsafe sealed class VideoExportService
         if (cancellationToken.IsCancellationRequested)
             throw new OperationCanceledException(cancellationToken);
 
-        if (IsHardwareEncoder(enc->codec) && HasHdrFrameSideData(frame))
+        string? unsupportedFrameMetadata =
+            FFmpegHdrMetadataGuard.FindUnsupportedMetadata(frame);
+        if (unsupportedFrameMetadata != null)
+            ThrowUnsupportedDynamicVideoMetadata(unsupportedFrameMetadata);
+
+        if (IsHardwareEncoder(enc->codec) &&
+            FFmpegHdrMetadataGuard.HasStaticHdrMetadata(frame))
         {
             throw new InvalidOperationException(
                 "현재 하드웨어 인코더로는 프레임의 HDR 부가정보를 보존할 수 없어 " +
@@ -4077,24 +4088,11 @@ public unsafe sealed class VideoExportService
         Throw(ffmpeg.av_frame_copy_props(destination, source));
     }
 
-    private static unsafe bool HasHdrFrameSideData(AVFrame* frame)
+    private static void ThrowUnsupportedDynamicVideoMetadata(string metadataName)
     {
-        if (frame == null)
-            return false;
-
-        return
-            ffmpeg.av_frame_get_side_data(
-                frame,
-                AVFrameSideDataType.AV_FRAME_DATA_MASTERING_DISPLAY_METADATA) != null ||
-            ffmpeg.av_frame_get_side_data(
-                frame,
-                AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL) != null ||
-            ffmpeg.av_frame_get_side_data(
-                frame,
-                AVFrameSideDataType.AV_FRAME_DATA_DYNAMIC_HDR_PLUS) != null ||
-            ffmpeg.av_frame_get_side_data(
-                frame,
-                AVFrameSideDataType.AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT) != null;
+        throw new InvalidOperationException(
+            $"{metadataName} 영상 메타데이터는 현재 내보내기에서 원본 그대로 보존할 수 없습니다. " +
+            "품질 저하를 막기 위해 내보내기를 중단했습니다.");
     }
 
     private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)
