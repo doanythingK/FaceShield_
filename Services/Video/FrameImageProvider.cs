@@ -25,7 +25,7 @@ namespace FaceShield.Services.Video
                 ct.ThrowIfCancellationRequested();
 
                 var ex = _sessions.GetOrAdd(videoPath, p => new FfFrameExtractor(p));
-                return ex.GetFrameByIndex(frameIndex);
+                return ex.GetFrameByIndex(frameIndex, ct);
 
             }, ct);
         }

@@ -1,5 +1,6 @@
 // FILE: Services/Video/Session/ExactFrameProvider.cs
 using Avalonia.Media.Imaging;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,14 +18,28 @@ public sealed class ExactFrameProvider
 
     public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
     {
-        await _decodeGate.WaitAsync();
+        try
+        {
+            await _decodeGate.WaitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+
         try
         {
             if (ct.IsCancellationRequested)
                 return null;
 
-            var frame = await Task.Run(() => _extractor.GetFrameByIndex(frameIndex));
-            return ct.IsCancellationRequested ? null : frame;
+            var frame = await Task.Run(() => _extractor.GetFrameByIndex(frameIndex, ct));
+            if (ct.IsCancellationRequested)
+            {
+                frame?.Dispose();
+                return null;
+            }
+
+            return frame;
         }
         finally
         {

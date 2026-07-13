@@ -58,6 +58,7 @@ $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sp
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-reset.ps1"
+$autoMaskResumeEofVerify = Join-Path $repo "scripts\verify-automask-resume-eof.ps1"
 $autoProcessingModeMigrationVerify = Join-Path $repo "scripts\verify-auto-processing-mode-migration.ps1"
 $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
@@ -67,6 +68,7 @@ $exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progres
 $videoFieldFidelityPolicyVerify = Join-Path $repo "scripts\verify-video-field-fidelity-policy.ps1"
 $encodedPresentationGapsVerify = Join-Path $repo "scripts\verify-encoded-presentation-gaps.ps1"
 $vfrMaskOrdinalVerify = Join-Path $repo "scripts\verify-vfr-mask-ordinal.ps1"
+$vfrFrameExtractorOrdinalVerify = Join-Path $repo "scripts\verify-vfr-frame-extractor-ordinal.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -256,7 +258,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $autoProcessingModeMigrationVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $swsFrameColorFidelityVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $autoMaskResumeEofVerify, $autoProcessingModeMigrationVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $swsFrameColorFidelityVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $vfrFrameExtractorOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -291,6 +293,11 @@ $autoResumeOutput = Invoke-ScriptStep "auto-resume-mask-reset" $autoResumeMaskRe
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "resetCases=5"
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "precision=True culture=True provider=True source=True sessions=True models=True backends=True riskIntent=True timelinePrompt=True providerPool=True snapshot=True json=True"
 
+$autoResumeEofOutput = Invoke-ScriptStep "automask-resume-eof" $autoMaskResumeEofVerify @("-SourcePath", $QualityClip)
+Assert-Contains "automask-resume-eof" $autoResumeEofOutput "trackedResume=full-replay firstCallbackCancel=zero misalignedSparse=full-replay"
+Assert-Contains "automask-resume-eof" $autoResumeEofOutput "sparseCancelWatermark=10 sparseFaultWatermark=0 sparseOutOfOrderClean=true sparseResumeEquivalent=true"
+Assert-Contains "automask-resume-eof" $autoResumeEofOutput "metadataMismatch=zero\+under\+over staleResume=full-replay"
+
 $processingModeMigrationOutput = Invoke-ScriptStep "auto-processing-mode-migration" $autoProcessingModeMigrationVerify @()
 Assert-Contains "auto-processing-mode-migration" $processingModeMigrationOutput "validModesPreserved=8 validQualitiesPreserved=4 postprocessPreserved=7"
 Assert-Contains "auto-processing-mode-migration" $processingModeMigrationOutput "upgradeRoundTrip=true modeSemantics=4 isolatedNoUserStateAccess=true"
@@ -318,6 +325,9 @@ Assert-Contains "encoded-presentation-gaps" $encodedPresentationOutput "gapCases
 
 $vfrMaskOrdinalOutput = Invoke-ScriptStep "vfr-mask-ordinal" $vfrMaskOrdinalVerify @()
 Assert-Contains "vfr-mask-ordinal" $vfrMaskOrdinalOutput "coverage-cases=3"
+
+$vfrFrameExtractorOutput = Invoke-ScriptStep "vfr-frame-extractor-ordinal" $vfrFrameExtractorOrdinalVerify @()
+Assert-Contains "vfr-frame-extractor-ordinal" $vfrFrameExtractorOutput "source-guards=true actual=false"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"

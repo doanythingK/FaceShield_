@@ -42,7 +42,7 @@ namespace FaceShield.Services.Analysis
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    var bmp = extractor.GetFrameByIndex(idx);
+                    using var bmp = extractor.GetFrameByIndex(idx, ct);
                     if (bmp == null) continue;
 
                     var faces = _detector.DetectFaces(bmp);

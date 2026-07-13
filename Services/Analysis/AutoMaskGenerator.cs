@@ -1128,7 +1128,7 @@ namespace FaceShield.Services.Analysis
                         return false;
 
             using var extractor = new FfFrameExtractor(videoPath);
-                    var frame = extractor.GetFrameByIndex(frameIndex);
+                    using var frame = extractor.GetFrameByIndex(frameIndex, ct);
                     if (frame == null)
                     {
                         progress?.Report(100);
