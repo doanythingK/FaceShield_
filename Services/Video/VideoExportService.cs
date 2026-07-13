@@ -525,15 +525,29 @@ public unsafe sealed class VideoExportService
             dec = ffmpeg.avcodec_alloc_context3(decoder);
             Throw(ffmpeg.avcodec_parameters_to_context(dec, inStream->codecpar));
             Throw(ffmpeg.avcodec_open2(dec, decoder, null));
+            bool sourceUsesHdrTransfer = dec->color_trc is
+                AVColorTransferCharacteristic.AVCOL_TRC_SMPTE2084 or
+                AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67;
+            bool sourceMayCarryHdrMetadata =
+                sourceUsesHdrTransfer ||
+                GetPixelFormatBitDepth(dec->pix_fmt) > 8 ||
+                inStream->codecpar->codec_id is
+                    AVCodecID.AV_CODEC_ID_HEVC or
+                    AVCodecID.AV_CODEC_ID_AV1;
+            VideoHdrMetadata? hdrMetadata = sourceMayCarryHdrMetadata
+                ? ProbeVideoHdrMetadata(inputPath)
+                : null;
 
             // ───────── output ─────────
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
 
             AVCodec* encoder;
             AVCodecID inputCodecId = inStream->codecpar->codec_id;
-            AVCodecID encoderInputCodecId = forceH264Fallback && inputCodecId != AVCodecID.AV_CODEC_ID_H264
-                ? AVCodecID.AV_CODEC_ID_H264
-                : inputCodecId;
+            AVCodecID encoderInputCodecId = hdrMetadata?.HasStaticMetadata == true
+                ? AVCodecID.AV_CODEC_ID_HEVC
+                : forceH264Fallback && inputCodecId != AVCodecID.AV_CODEC_ID_H264
+                    ? AVCodecID.AV_CODEC_ID_H264
+                    : inputCodecId;
             enc = TryCreateEncoderContext(
                 encoderInputCodecId,
                 inStream,
@@ -542,20 +556,32 @@ public unsafe sealed class VideoExportService
                 out encoder,
                 out var encoderError,
                 forceSoftwareEncoder,
-                forceSafeEncoding);
+                forceSafeEncoding,
+                hdrMetadata);
 
             string? exportNotice = null;
             if (enc == null)
             {
                 string inputName = GetCodecName(encoderInputCodecId);
-                var fallbackCodecId = AVCodecID.AV_CODEC_ID_H264;
+                var fallbackCodecId = hdrMetadata?.HasStaticMetadata == true
+                    ? AVCodecID.AV_CODEC_ID_HEVC
+                    : AVCodecID.AV_CODEC_ID_H264;
                 string fallbackName = GetCodecName(fallbackCodecId);
                 string reason = string.IsNullOrWhiteSpace(encoderError)
                     ? "원본 코덱 인코더를 찾을 수 없습니다."
                     : encoderError;
                 exportNotice = $"원본 코덱({inputName}) 인코더를 사용할 수 없어 {fallbackName}로 내보냅니다. 사유: {reason}";
 
-                enc = TryCreateEncoderContext(fallbackCodecId, inStream, dec, outFmt, out encoder, out var fallbackError, forceSoftwareEncoder, forceSafeEncoding);
+                enc = TryCreateEncoderContext(
+                    fallbackCodecId,
+                    inStream,
+                    dec,
+                    outFmt,
+                    out encoder,
+                    out var fallbackError,
+                    forceSoftwareEncoder,
+                    forceSafeEncoding,
+                    hdrMetadata);
                 if (enc == null)
                     throw new InvalidOperationException($"대체 인코더 초기화 실패: {fallbackError}");
             }
@@ -1689,7 +1715,10 @@ public unsafe sealed class VideoExportService
                 MissingVideoPacketTimestampCount: encodedTimestampIntegrity.MissingPacketTimestamps,
                 VideoPacketTimestampAdjustmentCount: encodedTimestampIntegrity.PacketTimestampAdjustments,
                 EncoderName: GetEncoderName(encoder),
-                EncoderQualityMode: GetEncoderQualityMode(encoder, forceSafeEncoding),
+                EncoderQualityMode: GetEncoderQualityMode(
+                    encoder,
+                    forceSafeEncoding,
+                    hdrMetadata?.HasStaticMetadata == true),
                 SourcePixelFormat: GetPixelFormatName(dec->pix_fmt),
                 OutputPixelFormat: GetPixelFormatName(enc->pix_fmt),
                 SourceBitDepth: GetPixelFormatBitDepth(dec->pix_fmt),
@@ -1805,6 +1834,175 @@ public unsafe sealed class VideoExportService
             InputStream = inputStream;
             OutputStream = outputStream;
         }
+    }
+
+    private sealed record VideoHdrMetadata(string? MasterDisplay, string? MaxContentLightLevel)
+    {
+        public bool HasStaticMetadata =>
+            !string.IsNullOrWhiteSpace(MasterDisplay) ||
+            !string.IsNullOrWhiteSpace(MaxContentLightLevel);
+
+        public string ToX265Params()
+        {
+            var values = new List<string>(2);
+            if (!string.IsNullOrWhiteSpace(MasterDisplay))
+                values.Add($"master-display={MasterDisplay}");
+            if (!string.IsNullOrWhiteSpace(MaxContentLightLevel))
+                values.Add($"max-cll={MaxContentLightLevel}");
+            return string.Join(':', values);
+        }
+    }
+
+    private static unsafe VideoHdrMetadata? ProbeVideoHdrMetadata(string inputPath)
+    {
+        const int MaxProbeFrames = 16;
+        AVFormatContext* format = null;
+        AVCodecContext* decoderContext = null;
+        AVPacket* packet = ffmpeg.av_packet_alloc();
+        AVFrame* decodedFrame = ffmpeg.av_frame_alloc();
+        if (packet == null || decodedFrame == null)
+        {
+            ffmpeg.av_packet_free(&packet);
+            ffmpeg.av_frame_free(&decodedFrame);
+            throw new InvalidOperationException("HDR 메타데이터 확인용 프레임을 할당할 수 없습니다.");
+        }
+
+        try
+        {
+            Throw(ffmpeg.avformat_open_input(&format, inputPath, null, null));
+            Throw(ffmpeg.avformat_find_stream_info(format, null));
+
+            int videoStreamIndex = -1;
+            for (int i = 0; i < format->nb_streams; i++)
+            {
+                if (format->streams[i]->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO)
+                {
+                    videoStreamIndex = i;
+                    break;
+                }
+            }
+            if (videoStreamIndex < 0)
+                return null;
+
+            AVCodecParameters* parameters = format->streams[videoStreamIndex]->codecpar;
+            AVCodec* decoder = ffmpeg.avcodec_find_decoder(parameters->codec_id);
+            if (decoder == null)
+                throw new InvalidOperationException("HDR 메타데이터 확인용 비디오 디코더를 찾을 수 없습니다.");
+
+            decoderContext = ffmpeg.avcodec_alloc_context3(decoder);
+            if (decoderContext == null)
+                throw new InvalidOperationException("HDR 메타데이터 확인용 디코더를 만들 수 없습니다.");
+            Throw(ffmpeg.avcodec_parameters_to_context(decoderContext, parameters));
+            Throw(ffmpeg.avcodec_open2(decoderContext, decoder, null));
+
+            int decodedFrames = 0;
+            while (ffmpeg.av_read_frame(format, packet) >= 0)
+            {
+                if (packet->stream_index != videoStreamIndex)
+                {
+                    ffmpeg.av_packet_unref(packet);
+                    continue;
+                }
+
+                int sendError = ffmpeg.avcodec_send_packet(decoderContext, packet);
+                ffmpeg.av_packet_unref(packet);
+                if (sendError < 0)
+                    continue;
+
+                while (ffmpeg.avcodec_receive_frame(decoderContext, decodedFrame) == 0)
+                {
+                    decodedFrames++;
+                    VideoHdrMetadata? metadata = ReadVideoHdrMetadata(decodedFrame);
+                    ffmpeg.av_frame_unref(decodedFrame);
+                    if (metadata?.HasStaticMetadata == true)
+                        return metadata;
+                    if (decodedFrames >= MaxProbeFrames)
+                        return null;
+                }
+            }
+
+            _ = ffmpeg.avcodec_send_packet(decoderContext, null);
+            while (ffmpeg.avcodec_receive_frame(decoderContext, decodedFrame) == 0)
+            {
+                decodedFrames++;
+                VideoHdrMetadata? metadata = ReadVideoHdrMetadata(decodedFrame);
+                ffmpeg.av_frame_unref(decodedFrame);
+                if (metadata?.HasStaticMetadata == true)
+                    return metadata;
+                if (decodedFrames >= MaxProbeFrames)
+                    return null;
+            }
+
+            return null;
+        }
+        finally
+        {
+            ffmpeg.av_frame_free(&decodedFrame);
+            ffmpeg.av_packet_free(&packet);
+            ffmpeg.avcodec_free_context(&decoderContext);
+            if (format != null)
+                ffmpeg.avformat_close_input(&format);
+        }
+    }
+
+    private static unsafe VideoHdrMetadata? ReadVideoHdrMetadata(AVFrame* frame)
+    {
+        if (frame == null)
+            return null;
+
+        string? masterDisplay = null;
+        AVFrameSideData* masteringSideData = ffmpeg.av_frame_get_side_data(
+            frame,
+            AVFrameSideDataType.AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+        if (masteringSideData != null &&
+            masteringSideData->data != null &&
+            masteringSideData->size >= (ulong)sizeof(AVMasteringDisplayMetadata))
+        {
+            AVMasteringDisplayMetadata* mastering =
+                (AVMasteringDisplayMetadata*)masteringSideData->data;
+            if (mastering->has_primaries != 0 && mastering->has_luminance != 0)
+            {
+                long redX = ScaleHdrRational(mastering->display_primaries[0][0], 50_000);
+                long redY = ScaleHdrRational(mastering->display_primaries[0][1], 50_000);
+                long greenX = ScaleHdrRational(mastering->display_primaries[1][0], 50_000);
+                long greenY = ScaleHdrRational(mastering->display_primaries[1][1], 50_000);
+                long blueX = ScaleHdrRational(mastering->display_primaries[2][0], 50_000);
+                long blueY = ScaleHdrRational(mastering->display_primaries[2][1], 50_000);
+                long whiteX = ScaleHdrRational(mastering->white_point[0], 50_000);
+                long whiteY = ScaleHdrRational(mastering->white_point[1], 50_000);
+                long maxLuminance = ScaleHdrRational(mastering->max_luminance, 10_000);
+                long minLuminance = ScaleHdrRational(mastering->min_luminance, 10_000);
+                masterDisplay =
+                    $"G({greenX},{greenY})B({blueX},{blueY})R({redX},{redY})" +
+                    $"WP({whiteX},{whiteY})L({maxLuminance},{minLuminance})";
+            }
+        }
+
+        string? maxContentLightLevel = null;
+        AVFrameSideData* contentLightSideData = ffmpeg.av_frame_get_side_data(
+            frame,
+            AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+        if (contentLightSideData != null &&
+            contentLightSideData->data != null &&
+            contentLightSideData->size >= (ulong)sizeof(AVContentLightMetadata))
+        {
+            AVContentLightMetadata* contentLight =
+                (AVContentLightMetadata*)contentLightSideData->data;
+            maxContentLightLevel = $"{contentLight->MaxCLL},{contentLight->MaxFALL}";
+        }
+
+        return string.IsNullOrWhiteSpace(masterDisplay) && string.IsNullOrWhiteSpace(maxContentLightLevel)
+            ? null
+            : new VideoHdrMetadata(masterDisplay, maxContentLightLevel);
+    }
+
+    private static long ScaleHdrRational(AVRational value, long scale)
+    {
+        if (value.den == 0)
+            return 0;
+        return (long)Math.Round(
+            value.num * (double)scale / value.den,
+            MidpointRounding.AwayFromZero);
     }
 
     private static unsafe void DrainEncoderPackets(
@@ -1937,6 +2135,13 @@ public unsafe sealed class VideoExportService
     {
         if (cancellationToken.IsCancellationRequested)
             throw new OperationCanceledException(cancellationToken);
+
+        if (IsHardwareEncoder(enc->codec) && HasHdrFrameSideData(frame))
+        {
+            throw new InvalidOperationException(
+                "현재 하드웨어 인코더로는 프레임의 HDR 부가정보를 보존할 수 없어 " +
+                "내보내기를 중단합니다.");
+        }
 
         int fallbackIndex = Math.Max(frameIndex, lastResolvedFrameIndex + 1);
         int resolvedFrameIndex = ResolveFrameIndexFromFrame(
@@ -3120,7 +3325,8 @@ public unsafe sealed class VideoExportService
         out AVCodec* encoder,
         out string? error,
         bool forceSoftwareEncoder,
-        bool forceSafeEncoding)
+        bool forceSafeEncoding,
+        VideoHdrMetadata? hdrMetadata)
     {
         encoder = null;
         error = null;
@@ -3155,6 +3361,15 @@ public unsafe sealed class VideoExportService
                  !(allowTenBitHevcHardwareFallback && candidate->id == AVCodecID.AV_CODEC_ID_HEVC)))
                 continue;
 
+            if (hdrMetadata?.HasStaticMetadata == true && IsHardwareEncoder(candidate))
+            {
+                error = AppendEncoderError(
+                    error,
+                    candidateName,
+                    "HDR mastering/CLL 메타데이터 전달이 검증되지 않은 하드웨어 인코더입니다.");
+                continue;
+            }
+
             if (outFmt != null && outFmt->oformat != null &&
                 ffmpeg.avformat_query_codec(outFmt->oformat, candidate->id, 0) <= 0)
             {
@@ -3165,7 +3380,14 @@ public unsafe sealed class VideoExportService
                 continue;
             }
 
-            var ctx = TryOpenEncoderContext(candidate, inStream, dec, outFmt, out var openError, forceSafeEncoding);
+            var ctx = TryOpenEncoderContext(
+                candidate,
+                inStream,
+                dec,
+                outFmt,
+                out var openError,
+                forceSafeEncoding,
+                hdrMetadata);
             if (ctx != null)
             {
                 encoder = candidate;
@@ -3178,7 +3400,9 @@ public unsafe sealed class VideoExportService
             error = AppendEncoderError(error, candidateName, openError);
         }
 
-        AVCodec* fallback = SelectFallbackEncoder(codecId, forceSoftwareEncoder);
+        AVCodec* fallback = SelectFallbackEncoder(
+            codecId,
+            forceSoftwareEncoder || hdrMetadata?.HasStaticMetadata == true);
         if (fallback == null)
         {
             error = AppendEncoderError(
@@ -3193,7 +3417,14 @@ public unsafe sealed class VideoExportService
             : GetCodecName(codecId);
         if (attemptedNames.Add(fallbackName))
         {
-            var ctx = TryOpenEncoderContext(fallback, inStream, dec, outFmt, out var fallbackError, forceSafeEncoding);
+            var ctx = TryOpenEncoderContext(
+                fallback,
+                inStream,
+                dec,
+                outFmt,
+                out var fallbackError,
+                forceSafeEncoding,
+                hdrMetadata);
             if (ctx != null)
             {
                 encoder = fallback;
@@ -3212,7 +3443,8 @@ public unsafe sealed class VideoExportService
         AVCodecContext* dec,
         AVFormatContext* outFmt,
         out string? error,
-        bool forceSafeEncoding)
+        bool forceSafeEncoding,
+        VideoHdrMetadata? hdrMetadata)
     {
         error = null;
         AVCodecContext* ctx = ffmpeg.avcodec_alloc_context3(encoder);
@@ -3304,6 +3536,26 @@ public unsafe sealed class VideoExportService
             : Math.Max(1, Environment.ProcessorCount - 2);
 
         ApplyHighQualityEncoderOptions(ctx, encoder, forceSafeEncoding);
+        if (hdrMetadata?.HasStaticMetadata == true)
+        {
+            string hdrEncoderName = GetEncoderName(encoder);
+            if (!hdrEncoderName.Contains("x265", StringComparison.OrdinalIgnoreCase))
+            {
+                error = $"인코더({hdrEncoderName})가 HDR mastering/CLL 메타데이터 보존을 지원하지 않습니다.";
+                ffmpeg.avcodec_free_context(&ctx);
+                return null;
+            }
+
+            string x265Params = hdrMetadata.ToX265Params();
+            if (!TrySetEncoderOption(ctx, "crf", "12") ||
+                string.IsNullOrWhiteSpace(x265Params) ||
+                !TrySetEncoderOption(ctx, "x265-params", x265Params))
+            {
+                error = "libx265 HDR mastering/CLL 메타데이터 옵션을 적용하지 못했습니다.";
+                ffmpeg.avcodec_free_context(&ctx);
+                return null;
+            }
+        }
 
         int openErr = ffmpeg.avcodec_open2(ctx, encoder, null);
         if (openErr < 0)
@@ -3554,6 +3806,7 @@ public unsafe sealed class VideoExportService
             TrySetEncoderOption(ctx, "spatial_aq", "1");
             TrySetEncoderOption(ctx, "temporal_aq", "1");
             TrySetEncoderOption(ctx, "rc-lookahead", "20");
+            TrySetEncoderOption(ctx, "extra_sei", "1");
             return;
         }
 
@@ -3585,11 +3838,16 @@ public unsafe sealed class VideoExportService
         return Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? "unknown";
     }
 
-    private static unsafe string GetEncoderQualityMode(AVCodec* encoder, bool forceSafeEncoding)
+    private static unsafe string GetEncoderQualityMode(
+        AVCodec* encoder,
+        bool forceSafeEncoding,
+        bool preservesStaticHdr)
     {
         string name = GetEncoderName(encoder);
         if (name.Contains("x264", StringComparison.OrdinalIgnoreCase))
             return forceSafeEncoding ? "crf14-fast-safe" : "crf14-fast";
+        if (name.Contains("x265", StringComparison.OrdinalIgnoreCase) && preservesStaticHdr)
+            return forceSafeEncoding ? "crf12-fast-safe-hdr" : "crf12-fast-hdr";
         if (name.Contains("x265", StringComparison.OrdinalIgnoreCase))
             return forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
         if (name.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
@@ -3697,6 +3955,26 @@ public unsafe sealed class VideoExportService
         }
         ffmpeg.av_dict_free(&destination->metadata);
         Throw(ffmpeg.av_frame_copy_props(destination, source));
+    }
+
+    private static unsafe bool HasHdrFrameSideData(AVFrame* frame)
+    {
+        if (frame == null)
+            return false;
+
+        return
+            ffmpeg.av_frame_get_side_data(
+                frame,
+                AVFrameSideDataType.AV_FRAME_DATA_MASTERING_DISPLAY_METADATA) != null ||
+            ffmpeg.av_frame_get_side_data(
+                frame,
+                AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL) != null ||
+            ffmpeg.av_frame_get_side_data(
+                frame,
+                AVFrameSideDataType.AV_FRAME_DATA_DYNAMIC_HDR_PLUS) != null ||
+            ffmpeg.av_frame_get_side_data(
+                frame,
+                AVFrameSideDataType.AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT) != null;
     }
 
     private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)

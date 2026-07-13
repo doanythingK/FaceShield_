@@ -247,6 +247,51 @@ function Get-MediaProbe {
     )
 }
 
+function Get-VideoProbeFrames {
+    param(
+        [string]$Tool,
+        [string]$Path
+    )
+
+    $probe = Invoke-ProbeJson $Tool @(
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-read_intervals", "%+#32",
+        "-show_frames",
+        "-of", "json",
+        $Path
+    )
+    $frames = @($probe.frames)
+    return @($frames | Select-Object -First 16)
+}
+
+function Get-FrameSideDataSignature {
+    param(
+        [object[]]$Frames,
+        [string]$SideDataType,
+        [string[]]$Fields
+    )
+
+    if ($null -eq $Frames -or $Frames.Count -eq 0) {
+        return "none"
+    }
+
+    foreach ($frame in $Frames) {
+        foreach ($sideData in @($frame.side_data_list)) {
+            if ((Get-PropertyText $sideData "side_data_type" "") -ne $SideDataType) {
+                continue
+            }
+
+            $values = foreach ($field in $Fields) {
+                "$field=$(Get-PropertyText $sideData $field 'unknown')"
+            }
+            return $values -join "|"
+        }
+    }
+
+    return "none"
+}
+
 function Get-PixelFormatMap {
     param([string]$Tool)
 
@@ -442,6 +487,8 @@ Write-Host "[ExportQualityGate] output=$output"
 $pixelFormats = Get-PixelFormatMap $ffprobe
 $sourceProbe = Get-MediaProbe $ffprobe $source
 $outputProbe = Get-MediaProbe $ffprobe $output
+$sourceVideoProbeFrames = @(Get-VideoProbeFrames $ffprobe $source)
+$outputVideoProbeFrames = @(Get-VideoProbeFrames $ffprobe $output)
 $sourceVideos = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "video" })
 $outputVideos = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "video" })
 $sourceAudios = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
@@ -534,6 +581,34 @@ foreach ($field in @("color_range", "color_space", "color_transfer", "color_prim
     $requirement = if ($sourceKnown) { "preserve source value" } else { "source unspecified; reported only" }
     Add-Check "video-$($field.Replace('_', '-'))" $passed $sourceColor $outputColor $requirement
 }
+
+$masteringFields = @(
+    "red_x", "red_y", "green_x", "green_y", "blue_x", "blue_y",
+    "white_point_x", "white_point_y", "min_luminance", "max_luminance"
+)
+$sourceTransfer = Get-PropertyText $sourceVideo "color_transfer" "unknown"
+$sourceUsesHdrTransfer = $sourceTransfer -in @("smpte2084", "arib-std-b67")
+Add-Check "video-hdr-frame-probe" `
+    (-not $sourceUsesHdrTransfer -or $sourceVideoProbeFrames.Count -gt 0) `
+    ([string]$sourceVideoProbeFrames.Count) ([string]$outputVideoProbeFrames.Count) `
+    "an HDR source must yield decoded frames for side-data verification"
+
+$sourceMastering = Get-FrameSideDataSignature `
+    $sourceVideoProbeFrames "Mastering display metadata" $masteringFields
+$outputMastering = Get-FrameSideDataSignature `
+    $outputVideoProbeFrames "Mastering display metadata" $masteringFields
+Add-Check "video-mastering-display-metadata" `
+    ($sourceMastering -eq "none" -or $sourceMastering -eq $outputMastering) `
+    $sourceMastering $outputMastering "preserve when present"
+
+$contentLightFields = @("max_content", "max_average")
+$sourceContentLight = Get-FrameSideDataSignature `
+    $sourceVideoProbeFrames "Content light level metadata" $contentLightFields
+$outputContentLight = Get-FrameSideDataSignature `
+    $outputVideoProbeFrames "Content light level metadata" $contentLightFields
+Add-Check "video-content-light-level-metadata" `
+    ($sourceContentLight -eq "none" -or $sourceContentLight -eq $outputContentLight) `
+    $sourceContentLight $outputContentLight "preserve when present"
 
 $sourceDuration = Get-StreamDuration $sourceVideo $sourceProbe.format
 $outputDuration = Get-StreamDuration $outputVideo $outputProbe.format
