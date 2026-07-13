@@ -593,6 +593,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
         Console.WriteLine($"[Smoke] label={label}, export=skipped");
         return (label, maskProvider);
     }
+    IReadOnlyList<int> protectedSceneCarryFrameIndices = Array.Empty<int>();
+    if (processingMode == AutoMaskProcessingMode.Legacy)
+    {
     const float yoloSceneCutDirectCarryMaxConfidence = 0.98f;
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
@@ -714,7 +717,6 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             yoloFaceOnnxRoiMaxCandidates);
         Console.WriteLine($"[SmokeYoloFaceOnnxRoiRefine] label={label}, candidates={candidates.Count}, minAreaRatio={yoloFaceOnnxRoiMinAreaRatio:F3}, attempts={refine.Attempts}, hits={refine.Hits}, seeks={refine.SeekCount}, decoded={refine.DecodedFrames}, elapsedMs={refine.ElapsedMs}");
     }
-    IReadOnlyList<int> protectedSceneCarryFrameIndices = Array.Empty<int>();
     if (useYolo)
     {
         var postProcessor = new YoloFinalMaskPostProcessor();
@@ -870,8 +872,9 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
             Console.WriteLine($"[SmokeYoloFinalMaskPostGapFillCleanup] label={label}, removedWeakIsolated={postGapFillCleanup.RemovedWeakIsolatedFaces}, removedWeakUnsupported={postGapFillCleanup.RemovedWeakUnsupportedFaces}, removedMediumUnsupported={postGapFillCleanup.RemovedMediumUnsupportedFaces}, removedWeakShortClusters={postGapFillCleanup.RemovedWeakShortClusterFaces}, removedWeakTextureClusters={postGapFillCleanup.RemovedWeakTextureClusterFaces}, removedWeakTinyClusters={postGapFillCleanup.RemovedWeakTinyClusterFaces}, removedTinyShortClusters={postGapFillCleanup.RemovedTinyShortClusterFaces}, removedTinyIsolated={postGapFillCleanup.RemovedTinyIsolatedFaces}, removedTopEdgeWeakClusters={postGapFillCleanup.RemovedTopEdgeWeakClusterFaces}, removedTopEdgeLargeDuplicates={postGapFillCleanup.RemovedTopEdgeLargeDuplicateFaces}, removedUpperWeakClusters={postGapFillCleanup.RemovedUpperWeakClusterFaces}, removedLowerWeakClusters={postGapFillCleanup.RemovedLowerWeakClusterFaces}, removedAspectOutliers={postGapFillCleanup.RemovedAspectOutlierClusterFaces}, removedFrames={FormatFrames(postGapFillCleanup.RemovedFrameIndices)}");
         }
     }
+    }
     Console.WriteLine($"[Smoke] label={label}, faceMaskFrames={maskProvider.GetFaceMaskFrameIndices().Length}, storedMaskFrames={maskProvider.GetStoredMaskFrameIndices().Length}");
-    if (useYolo)
+    if (processingMode == AutoMaskProcessingMode.Legacy && useYolo)
         LogFinalMaskSummary(label, maskProvider, protectedSceneCarryFrameIndices);
     if (dumpDetections)
         DumpDetections(label, maskProvider);
