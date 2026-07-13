@@ -3152,7 +3152,9 @@ public unsafe sealed class VideoExportService
         ctx->framerate = inStream->r_frame_rate.num != 0 ? inStream->r_frame_rate : inStream->avg_frame_rate;
         if (ctx->framerate.num == 0 || ctx->framerate.den == 0)
             ctx->framerate = new AVRational { num = 30, den = 1 };
-        if (ctx->framerate.num > 0 && ctx->framerate.den > 0)
+        if ((ctx->time_base.num <= 0 || ctx->time_base.den <= 0) &&
+            ctx->framerate.num > 0 &&
+            ctx->framerate.den > 0)
         {
             AVRational stableTimeBase = ffmpeg.av_inv_q(ctx->framerate);
             if (stableTimeBase.num > 0 && stableTimeBase.den > 0)
