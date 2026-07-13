@@ -864,7 +864,7 @@ public unsafe sealed class VideoExportService
                         auxiliaryInputStream->codecpar->codec_id,
                         0)
                     : 0;
-                if (supported <= 0)
+                if (supported < 0)
                 {
                     string mediaType = GetMediaTypeName(auxiliaryInputStream->codecpar->codec_type);
                     string codec = GetCodecName(auxiliaryInputStream->codecpar->codec_id);
