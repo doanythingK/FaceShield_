@@ -568,6 +568,7 @@ public unsafe sealed class VideoExportService
                 dec,
                 outFmt,
                 out encoder,
+                out var encoderQualityConfiguration,
                 out var encoderError,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
@@ -592,6 +593,7 @@ public unsafe sealed class VideoExportService
                     dec,
                     outFmt,
                     out encoder,
+                    out encoderQualityConfiguration,
                     out var fallbackError,
                     forceSoftwareEncoder,
                     forceSafeEncoding,
@@ -1779,10 +1781,9 @@ public unsafe sealed class VideoExportService
                 MissingVideoPacketTimestampCount: encodedTimestampIntegrity.MissingPacketTimestamps,
                 VideoPacketTimestampAdjustmentCount: encodedTimestampIntegrity.PacketTimestampAdjustments,
                 EncoderName: GetEncoderName(encoder),
-                EncoderQualityMode: GetEncoderQualityMode(
-                    encoder,
-                    forceSafeEncoding,
-                    hdrMetadata?.HasStaticMetadata == true),
+                EncoderQualityMode: encoderQualityConfiguration.Mode,
+                EncoderOptionsApplied: encoderQualityConfiguration.AppliedOptions,
+                EncoderOptionFailures: encoderQualityConfiguration.FailedOptions,
                 SourcePixelFormat: GetPixelFormatName(dec->pix_fmt),
                 OutputPixelFormat: GetPixelFormatName(enc->pix_fmt),
                 SourceBitDepth: GetPixelFormatBitDepth(dec->pix_fmt),
@@ -1922,6 +1923,16 @@ public unsafe sealed class VideoExportService
                 values.Add($"max-cll={MaxContentLightLevel}");
             return string.Join(':', values);
         }
+    }
+
+    private sealed record EncoderQualityConfiguration(
+        string Mode,
+        bool RequiredOptionsApplied,
+        string AppliedOptions,
+        string FailedOptions)
+    {
+        public static EncoderQualityConfiguration Unconfigured { get; } =
+            new("unconfigured", false, string.Empty, "encoder-options-not-configured");
     }
 
     private static unsafe VideoHdrMetadata? ProbeVideoHdrMetadata(string inputPath)
@@ -3369,12 +3380,14 @@ public unsafe sealed class VideoExportService
         AVCodecContext* dec,
         AVFormatContext* outFmt,
         out AVCodec* encoder,
+        out EncoderQualityConfiguration qualityConfiguration,
         out string? error,
         bool forceSoftwareEncoder,
         bool forceSafeEncoding,
         VideoHdrMetadata? hdrMetadata)
     {
         encoder = null;
+        qualityConfiguration = EncoderQualityConfiguration.Unconfigured;
         error = null;
 
         if (outFmt != null && outFmt->oformat != null)
@@ -3431,12 +3444,14 @@ public unsafe sealed class VideoExportService
                 inStream,
                 dec,
                 outFmt,
+                out var candidateQualityConfiguration,
                 out var openError,
                 forceSafeEncoding,
                 hdrMetadata);
             if (ctx != null)
             {
                 encoder = candidate;
+                qualityConfiguration = candidateQualityConfiguration;
                 return ctx;
             }
 
@@ -3468,12 +3483,14 @@ public unsafe sealed class VideoExportService
                 inStream,
                 dec,
                 outFmt,
+                out var fallbackQualityConfiguration,
                 out var fallbackError,
                 forceSafeEncoding,
                 hdrMetadata);
             if (ctx != null)
             {
                 encoder = fallback;
+                qualityConfiguration = fallbackQualityConfiguration;
                 return ctx;
             }
 
@@ -3488,10 +3505,12 @@ public unsafe sealed class VideoExportService
         AVStream* inStream,
         AVCodecContext* dec,
         AVFormatContext* outFmt,
+        out EncoderQualityConfiguration qualityConfiguration,
         out string? error,
         bool forceSafeEncoding,
         VideoHdrMetadata? hdrMetadata)
     {
+        qualityConfiguration = EncoderQualityConfiguration.Unconfigured;
         error = null;
         AVCodecContext* ctx = ffmpeg.avcodec_alloc_context3(encoder);
         if (ctx == null)
@@ -3581,7 +3600,6 @@ public unsafe sealed class VideoExportService
             ? 0
             : Math.Max(1, Environment.ProcessorCount - 2);
 
-        ApplyHighQualityEncoderOptions(ctx, encoder, forceSafeEncoding);
         if (hdrMetadata?.HasStaticMetadata == true)
         {
             string hdrEncoderName = GetEncoderName(encoder);
@@ -3591,16 +3609,19 @@ public unsafe sealed class VideoExportService
                 ffmpeg.avcodec_free_context(&ctx);
                 return null;
             }
+        }
 
-            string x265Params = hdrMetadata.ToX265Params();
-            if (!TrySetEncoderOption(ctx, "crf", "12") ||
-                string.IsNullOrWhiteSpace(x265Params) ||
-                !TrySetEncoderOption(ctx, "x265-params", x265Params))
-            {
-                error = "libx265 HDR mastering/CLL 메타데이터 옵션을 적용하지 못했습니다.";
-                ffmpeg.avcodec_free_context(&ctx);
-                return null;
-            }
+        qualityConfiguration = ApplyHighQualityEncoderOptions(
+            ctx,
+            encoder,
+            forceSafeEncoding,
+            hdrMetadata);
+        if (!qualityConfiguration.RequiredOptionsApplied)
+        {
+            error =
+                $"필수 품질 옵션을 적용하지 못했습니다: {qualityConfiguration.FailedOptions}";
+            ffmpeg.avcodec_free_context(&ctx);
+            return null;
         }
 
         int openErr = ffmpeg.avcodec_open2(ctx, encoder, null);
@@ -3797,84 +3818,156 @@ public unsafe sealed class VideoExportService
 #pragma warning restore CS0618
     }
 
-    private static unsafe void ApplyHighQualityEncoderOptions(AVCodecContext* ctx, AVCodec* encoder, bool forceSafeEncoding)
+    private static unsafe EncoderQualityConfiguration ApplyHighQualityEncoderOptions(
+        AVCodecContext* ctx,
+        AVCodec* encoder,
+        bool forceSafeEncoding,
+        VideoHdrMetadata? hdrMetadata)
     {
         if (ctx == null || encoder == null || encoder->name == null)
-            return;
+            return EncoderQualityConfiguration.Unconfigured;
 
         string name = Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? string.Empty;
         if (string.IsNullOrWhiteSpace(name))
-            return;
+            return EncoderQualityConfiguration.Unconfigured;
+
+        var applied = new List<string>();
+        var failed = new List<string>();
+        var requiredFailures = new List<string>();
+        void SetOption(string key, string value, bool required)
+        {
+            string setting = $"{key}={value}";
+            if (TrySetEncoderOption(ctx, key, value, out string? optionError))
+            {
+                applied.Add(setting);
+                return;
+            }
+
+            string failure = $"{setting}:{optionError ?? "unknown"}";
+            failed.Add(failure);
+            if (required)
+                requiredFailures.Add(failure);
+        }
 
         bool isX264 = name.Contains("x264", StringComparison.OrdinalIgnoreCase);
         bool isX265 = name.Contains("x265", StringComparison.OrdinalIgnoreCase);
-        bool isH264Family = name.Contains("h264", StringComparison.OrdinalIgnoreCase);
-        bool isHevcFamily = name.Contains("hevc", StringComparison.OrdinalIgnoreCase) ||
-                            name.Contains("h265", StringComparison.OrdinalIgnoreCase);
         bool isNvenc = name.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
-
-        if (forceSafeEncoding)
-        {
-            if (isX264)
-            {
-                TrySetEncoderOption(ctx, "preset", "fast");
-                TrySetEncoderOption(ctx, "crf", "14");
-            }
-            else if (isX265)
-            {
-                TrySetEncoderOption(ctx, "preset", "fast");
-                TrySetEncoderOption(ctx, "crf", "16");
-            }
-            return;
-        }
+        bool isQsv = name.Contains("qsv", StringComparison.OrdinalIgnoreCase);
+        bool isAmf = name.Contains("amf", StringComparison.OrdinalIgnoreCase);
+        bool isVideoToolbox = name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase);
+        string mode;
 
         if (isX264)
         {
-            TrySetEncoderOption(ctx, "preset", "fast");
-            TrySetEncoderOption(ctx, "crf", "14");
-            return;
+            SetOption("preset", "fast", required: true);
+            SetOption("crf", "14", required: true);
+            mode = forceSafeEncoding ? "crf14-fast-safe" : "crf14-fast";
         }
-
-        if (isX265)
+        else if (isX265)
         {
-            TrySetEncoderOption(ctx, "preset", "fast");
-            TrySetEncoderOption(ctx, "crf", "16");
-            return;
+            SetOption("preset", "fast", required: true);
+            if (hdrMetadata?.HasStaticMetadata == true)
+            {
+                string x265Params = hdrMetadata.ToX265Params();
+                SetOption("crf", "12", required: true);
+                if (string.IsNullOrWhiteSpace(x265Params))
+                {
+                    const string failure = "x265-params=empty:missing-hdr-parameters";
+                    failed.Add(failure);
+                    requiredFailures.Add(failure);
+                }
+                else
+                {
+                    SetOption("x265-params", x265Params, required: true);
+                }
+                mode = forceSafeEncoding ? "crf12-fast-safe-hdr" : "crf12-fast-hdr";
+            }
+            else
+            {
+                SetOption("crf", "16", required: true);
+                mode = forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
+            }
         }
-
-        if (isNvenc)
+        else if (isNvenc)
         {
-            TrySetEncoderOption(ctx, "preset", "p6");
-            TrySetEncoderOption(ctx, "tune", "hq");
-            TrySetEncoderOption(ctx, "rc", "vbr");
-            TrySetEncoderOption(ctx, "cq", "12");
-            TrySetEncoderOption(ctx, "multipass", "qres");
-            TrySetEncoderOption(ctx, "spatial_aq", "1");
-            TrySetEncoderOption(ctx, "temporal_aq", "1");
-            TrySetEncoderOption(ctx, "rc-lookahead", "20");
-            TrySetEncoderOption(ctx, "extra_sei", "1");
-            return;
+            SetOption("preset", "p6", required: true);
+            SetOption("tune", "hq", required: true);
+            SetOption("rc", "vbr", required: true);
+            SetOption("cq", "12", required: true);
+            SetOption("multipass", "qres", required: false);
+            SetOption("spatial_aq", "1", required: false);
+            SetOption("temporal_aq", "1", required: false);
+            SetOption("rc-lookahead", "20", required: false);
+            SetOption("extra_sei", "1", required: false);
+            mode = forceSafeEncoding ? "p6-hq-vbr-cq12-safe" : "p6-hq-vbr-cq12";
         }
-
-        if (isH264Family || isHevcFamily)
+        else if (isQsv)
         {
-            TrySetEncoderOption(ctx, "qmin", "8");
-            TrySetEncoderOption(ctx, "qmax", "20");
+            SetOption("preset", "veryslow", required: true);
+            if (encoder->id == AVCodecID.AV_CODEC_ID_H264)
+                SetOption("look_ahead", "1", required: false);
+            SetOption("look_ahead_depth", "40", required: false);
+            SetOption("rdo", "1", required: false);
+            SetOption("adaptive_i", "1", required: false);
+            SetOption("adaptive_b", "1", required: false);
+            mode = forceSafeEncoding
+                ? "veryslow-vbr-bitrate-safe"
+                : "veryslow-vbr-bitrate";
+        }
+        else if (isAmf)
+        {
+            SetOption("usage", "high_quality", required: true);
+            SetOption("quality", "quality", required: true);
+            SetOption("rc", "hqvbr", required: true);
+            SetOption("preanalysis", "1", required: false);
+            SetOption("vbaq", "1", required: false);
+            SetOption("high_motion_quality_boost_enable", "1", required: false);
+            mode = forceSafeEncoding ? "high-quality-hqvbr-safe" : "high-quality-hqvbr";
+        }
+        else if (isVideoToolbox)
+        {
+            SetOption("realtime", "false", required: true);
+            SetOption("prio_speed", "0", required: true);
+            SetOption("spatial_aq", "1", required: false);
+            mode = forceSafeEncoding
+                ? "bitrate-quality-priority-safe"
+                : "bitrate-quality-priority";
+        }
+        else
+        {
+            mode = forceSafeEncoding ? "bitrate-bounded-safe" : "bitrate-bounded";
         }
 
-        if (name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase))
-            TrySetEncoderOption(ctx, "realtime", "false");
+        return new EncoderQualityConfiguration(
+            mode,
+            requiredFailures.Count == 0,
+            string.Join('|', applied),
+            string.Join('|', failed));
     }
 
-    private static unsafe bool TrySetEncoderOption(AVCodecContext* ctx, string key, string value)
+    private static unsafe bool TrySetEncoderOption(
+        AVCodecContext* ctx,
+        string key,
+        string value,
+        out string? error)
     {
         if (ctx == null || ctx->priv_data == null)
+        {
+            error = "encoder-private-options-unavailable";
             return false;
+        }
 
         int result = ffmpeg.av_opt_set(ctx->priv_data, key, value, 0);
         if (result < 0)
-            Debug.WriteLine($"[ExportEncoderOption] key={key}, value={value}, applied=false, error={GetErrorMessage(result)}");
-        return result >= 0;
+        {
+            error = GetErrorMessage(result);
+            Debug.WriteLine($"[ExportEncoderOption] key={key}, value={value}, applied=false, error={error}");
+            return false;
+        }
+
+        error = null;
+        Debug.WriteLine($"[ExportEncoderOption] key={key}, value={value}, applied=true");
+        return true;
     }
 
     private static unsafe string GetEncoderName(AVCodec* encoder)
@@ -3882,25 +3975,6 @@ public unsafe sealed class VideoExportService
         if (encoder == null || encoder->name == null)
             return "unknown";
         return Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? "unknown";
-    }
-
-    private static unsafe string GetEncoderQualityMode(
-        AVCodec* encoder,
-        bool forceSafeEncoding,
-        bool preservesStaticHdr)
-    {
-        string name = GetEncoderName(encoder);
-        if (name.Contains("x264", StringComparison.OrdinalIgnoreCase))
-            return forceSafeEncoding ? "crf14-fast-safe" : "crf14-fast";
-        if (name.Contains("x265", StringComparison.OrdinalIgnoreCase) && preservesStaticHdr)
-            return forceSafeEncoding ? "crf12-fast-safe-hdr" : "crf12-fast-hdr";
-        if (name.Contains("x265", StringComparison.OrdinalIgnoreCase))
-            return forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
-        if (name.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
-            return "p6-hq-vbr-cq12";
-        if (name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase))
-            return "quality-vbr-realtime-off";
-        return forceSafeEncoding ? "quality-bounded-safe" : "quality-bounded";
     }
 
     private static unsafe string GetPixelFormatName(AVPixelFormat pixelFormat)
