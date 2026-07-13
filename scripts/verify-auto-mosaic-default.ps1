@@ -62,6 +62,7 @@ $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consi
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
 $exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progress-completion.ps1"
+$videoFieldFidelityPolicyVerify = Join-Path $repo "scripts\verify-video-field-fidelity-policy.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -297,6 +298,9 @@ Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx26
 
 $exportProgressOutput = Invoke-ScriptStep "export-progress-completion" $exportProgressCompletionVerify @()
 Assert-Contains "export-progress-completion" $exportProgressOutput "processingMax=99 committed=100 unknownTotal=100"
+
+$videoFieldOutput = Invoke-ScriptStep "video-field-fidelity-policy" $videoFieldFidelityPolicyVerify @()
+Assert-Contains "video-field-fidelity-policy" $videoFieldOutput "fieldOrders=6 .*interlacedFailClosed=true nonLeftChromaSoftware=true"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"

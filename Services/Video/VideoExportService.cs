@@ -592,6 +592,9 @@ public unsafe sealed class VideoExportService
             dec = ffmpeg.avcodec_alloc_context3(decoder);
             Throw(ffmpeg.avcodec_parameters_to_context(dec, inStream->codecpar));
             Throw(ffmpeg.avcodec_open2(dec, decoder, null));
+            AVFieldOrder sourceFieldOrder = ResolveSourceFieldOrder(inStream, dec);
+            if (IsInterlacedFieldOrder(sourceFieldOrder))
+                ThrowInterlacedAutoMosaicUnsupported(sourceFieldOrder);
             bool sourceUsesHdrTransfer = dec->color_trc is
                 AVColorTransferCharacteristic.AVCOL_TRC_SMPTE2084 or
                 AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67;
@@ -2448,6 +2451,15 @@ public unsafe sealed class VideoExportService
         if (cancellationToken.IsCancellationRequested)
             throw new OperationCanceledException(cancellationToken);
 
+        if ((frame->flags & ffmpeg.AV_FRAME_FLAG_INTERLACED) != 0)
+        {
+            AVFieldOrder frameFieldOrder =
+                (frame->flags & ffmpeg.AV_FRAME_FLAG_TOP_FIELD_FIRST) != 0
+                    ? AVFieldOrder.AV_FIELD_TT
+                    : AVFieldOrder.AV_FIELD_BB;
+            ThrowInterlacedAutoMosaicUnsupported(frameFieldOrder);
+        }
+
         string? unsupportedFrameMetadata =
             FFmpegHdrMetadataGuard.FindUnsupportedMetadata(frame);
         if (unsupportedFrameMetadata != null)
@@ -3670,6 +3682,17 @@ public unsafe sealed class VideoExportService
                 continue;
             }
 
+            AVChromaLocation sourceChromaLocation = ResolveSourceChromaLocation(inStream, dec);
+            if (RequiresSoftwareEncoderForChromaLocation(sourceChromaLocation) &&
+                IsHardwareEncoder(candidate))
+            {
+                error = AppendEncoderError(
+                    error,
+                    candidateName,
+                    $"원본 chroma 위치({sourceChromaLocation}) 보존이 검증되지 않은 하드웨어 인코더입니다.");
+                continue;
+            }
+
             if (outFmt != null && outFmt->oformat != null &&
                 ffmpeg.avformat_query_codec(outFmt->oformat, candidate->id, 0) <= 0)
             {
@@ -3816,7 +3839,7 @@ public unsafe sealed class VideoExportService
         ctx->color_primaries = dec->color_primaries;
         ctx->color_trc = dec->color_trc;
         ctx->colorspace = dec->colorspace;
-        ctx->chroma_sample_location = dec->chroma_sample_location;
+        ctx->chroma_sample_location = ResolveSourceChromaLocation(inStream, dec);
 
         if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
             ctx->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -3891,6 +3914,63 @@ public unsafe sealed class VideoExportService
                name.Contains("amf", StringComparison.OrdinalIgnoreCase) ||
                name.Contains("vaapi", StringComparison.OrdinalIgnoreCase) ||
                name.Contains("v4l2m2m", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static unsafe AVFieldOrder ResolveSourceFieldOrder(
+        AVStream* stream,
+        AVCodecContext* decoder)
+    {
+        if (decoder != null && decoder->field_order != AVFieldOrder.AV_FIELD_UNKNOWN)
+            return decoder->field_order;
+        if (stream != null &&
+            stream->codecpar != null &&
+            stream->codecpar->field_order != AVFieldOrder.AV_FIELD_UNKNOWN)
+        {
+            return stream->codecpar->field_order;
+        }
+        return AVFieldOrder.AV_FIELD_UNKNOWN;
+    }
+
+    private static bool IsInterlacedFieldOrder(AVFieldOrder fieldOrder)
+    {
+        return fieldOrder is
+            AVFieldOrder.AV_FIELD_TT or
+            AVFieldOrder.AV_FIELD_BB or
+            AVFieldOrder.AV_FIELD_TB or
+            AVFieldOrder.AV_FIELD_BT;
+    }
+
+    private static void ThrowInterlacedAutoMosaicUnsupported(AVFieldOrder fieldOrder)
+    {
+        throw new VideoExportIntegrityException(
+            "인터레이스 영상은 현재 자동 모자이크 시 필드 순서를 안전하게 보존할 수 없어 " +
+            $"내보내기를 중단했습니다(fieldOrder={fieldOrder}). 원본 영상은 변경되지 않았습니다.");
+    }
+
+    private static unsafe AVChromaLocation ResolveSourceChromaLocation(
+        AVStream* stream,
+        AVCodecContext* decoder)
+    {
+        if (decoder != null &&
+            decoder->chroma_sample_location != AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED)
+        {
+            return decoder->chroma_sample_location;
+        }
+        if (stream != null &&
+            stream->codecpar != null &&
+            stream->codecpar->chroma_location != AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED)
+        {
+            return stream->codecpar->chroma_location;
+        }
+        return AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED;
+    }
+
+    private static bool RequiresSoftwareEncoderForChromaLocation(
+        AVChromaLocation chromaLocation)
+    {
+        return chromaLocation is not
+            AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED and not
+            AVChromaLocation.AVCHROMA_LOC_LEFT;
     }
 
     private static IReadOnlyList<string> GetPreferredEncoderNames(AVCodecID codecId, bool forceSoftwareOnly)

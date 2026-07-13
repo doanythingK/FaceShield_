@@ -407,6 +407,32 @@ function Get-FrameSideDataSignature {
     return "none"
 }
 
+function Get-FrameInterlaceSignature {
+    param([object[]]$Frames)
+
+    if ($null -eq $Frames -or $Frames.Count -eq 0) {
+        return "none"
+    }
+
+    $values = foreach ($frame in $Frames) {
+        $interlaced = Get-PropertyText $frame "interlaced_frame" "unknown"
+        $topFieldFirst = Get-PropertyText $frame "top_field_first" "unknown"
+        "${interlaced}/${topFieldFirst}"
+    }
+    return $values -join ","
+}
+
+function Test-HasInterlacedFrame {
+    param([object[]]$Frames)
+
+    foreach ($frame in @($Frames)) {
+        if ((Get-PropertyText $frame "interlaced_frame" "0") -eq "1") {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Get-PixelFormatMap {
     param([string]$Tool)
 
@@ -741,6 +767,37 @@ $outputChroma = if ($null -eq $outputPixelInfo) {
 Add-Check "chroma-sampling" $chromaPassed $sourceChroma $outputChroma `
     "component count must not decrease; log2 chroma subsampling must not increase"
 
+$sourceFrameInterlace = Get-FrameInterlaceSignature $sourceVideoProbeFrames
+$outputFrameInterlace = Get-FrameInterlaceSignature $outputVideoProbeFrames
+$sourceHasInterlacedFrame = Test-HasInterlacedFrame $sourceVideoProbeFrames
+$outputHasInterlacedFrame = Test-HasInterlacedFrame $outputVideoProbeFrames
+
+$sourceChromaLocation = Get-PropertyText $sourceVideo "chroma_location" "unknown"
+$outputChromaLocation = Get-PropertyText $outputVideo "chroma_location" "unknown"
+$sourceChromaKnown = Test-KnownMetadata $sourceChromaLocation
+Add-Check "video-chroma-location" `
+    (-not $sourceChromaKnown -or $sourceChromaLocation -eq $outputChromaLocation) `
+    $sourceChromaLocation $outputChromaLocation `
+    $(if ($sourceChromaKnown) { "preserve source value" } else { "source unspecified; reported only" })
+
+$sourceFieldOrder = Get-PropertyText $sourceVideo "field_order" "unknown"
+$outputFieldOrder = Get-PropertyText $outputVideo "field_order" "unknown"
+$sourceFieldOrderKnown = Test-KnownMetadata $sourceFieldOrder
+$outputFieldOrderKnown = Test-KnownMetadata $outputFieldOrder
+$fieldOrderPassed = if ($sourceFieldOrder -eq "progressive") {
+    $outputFieldOrder -eq "progressive" -or
+        (-not $outputFieldOrderKnown -and -not $outputHasInterlacedFrame)
+} else {
+    -not $sourceFieldOrderKnown -or $sourceFieldOrder -eq $outputFieldOrder
+}
+Add-Check "video-field-order" $fieldOrderPassed $sourceFieldOrder $outputFieldOrder `
+    "preserve interlaced order; progressive may be unspecified only when decoded frames remain progressive"
+
+Add-Check "video-frame-interlace-signature" `
+    (-not $sourceHasInterlacedFrame -or $sourceFrameInterlace -eq $outputFrameInterlace) `
+    $sourceFrameInterlace $outputFrameInterlace `
+    "preserve interlaced_frame/top_field_first for the first decoded frames when interlaced"
+
 foreach ($field in @("color_range", "color_space", "color_transfer", "color_primaries")) {
     $sourceColor = Get-PropertyText $sourceVideo $field "unknown"
     $outputColor = Get-PropertyText $outputVideo $field "unknown"
@@ -926,6 +983,9 @@ $report = [pscustomobject]@{
         frameCount = $sourceFrameCount
         pixelFormat = $sourcePixFmt
         bitDepth = $sourceBitDepth
+        chromaLocation = Get-PropertyText $sourceVideo "chroma_location" "unknown"
+        fieldOrder = Get-PropertyText $sourceVideo "field_order" "unknown"
+        frameInterlaceSignature = $sourceFrameInterlace
         videoDurationSeconds = Format-Number $sourceDuration
         videoPacketEndSeconds = Format-Number $sourceVideoEnd.value
         audioStreamCount = $sourceAudios.Count
@@ -937,6 +997,9 @@ $report = [pscustomobject]@{
         frameCount = $outputFrameCount
         pixelFormat = $outputPixFmt
         bitDepth = $outputBitDepth
+        chromaLocation = Get-PropertyText $outputVideo "chroma_location" "unknown"
+        fieldOrder = Get-PropertyText $outputVideo "field_order" "unknown"
+        frameInterlaceSignature = $outputFrameInterlace
         videoDurationSeconds = Format-Number $outputDuration
         videoPacketEndSeconds = Format-Number $outputVideoEnd.value
         audioStreamCount = $outputAudios.Count
