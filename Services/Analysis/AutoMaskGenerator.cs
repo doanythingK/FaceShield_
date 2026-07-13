@@ -105,6 +105,7 @@ namespace FaceShield.Services.Analysis
         private readonly Dictionary<int, FrameTimingSample> _frameTimings = new();
         private readonly HashSet<int> _sceneCutStarts = new();
         private double _sourceFpsForSummary;
+        private int _postProcessStartFrameIndex;
 
         public AutoMaskRunSummary? LastRunSummary { get; private set; }
 
@@ -136,8 +137,11 @@ namespace FaceShield.Services.Analysis
                 return;
 
             _sourceFpsForSummary = fps;
+            _postProcessStartFrameIndex = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
             _frameTimings.Clear();
             _sceneCutStarts.Clear();
+            if (_postProcessStartFrameIndex > 0)
+                _sceneCutStarts.Add(_postProcessStartFrameIndex);
             if (_options.FilterProfile == FaceFilterProfile.Yolo)
                 _frameTimings.EnsureCapacity(Math.Max(0, totalFrames - Math.Max(0, startFrameIndex)));
 
@@ -1718,7 +1722,8 @@ namespace FaceShield.Services.Analysis
                 totalFrames,
                 _sourceFpsForSummary,
                 _frameTimings,
-                _sceneCutStarts);
+                _sceneCutStarts,
+                _postProcessStartFrameIndex);
 
             return postProcess.Apply(
                 videoPath,
