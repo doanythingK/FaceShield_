@@ -389,7 +389,8 @@ $sparseDecisionOutput = Invoke-ScriptStep "automask-sparse-scene-cut-guard" $aut
 Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "\[AutoMaskSparseSceneCutGuardVerify\]"
 Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "hardCutStops=True"
 Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "sameSceneStops=False"
-Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "nonYoloStops=False"
+Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "guardDisabledStops=False"
+Assert-Contains "automask-sparse-scene-cut-guard" $sparseDecisionOutput "strictThresholdStops=False"
 
 $sparseMaterializeOutput = Invoke-ScriptStep "automask-sparse-materialize-scene-cut" $autoMaskSparseMaterializeSceneCutVerify @()
 Assert-Contains "automask-sparse-materialize-scene-cut" $sparseMaterializeOutput "\[AutoMaskSparseMaterializeSceneCutVerify\]"
