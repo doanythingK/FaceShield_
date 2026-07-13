@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Media.Imaging;
+using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
 
@@ -8,6 +9,19 @@ namespace FaceShield.Services.Video
     // ✅ 마스크(알파>0) 영역에만 블러를 적용해 "프리뷰"용 비트맵을 생성
     public static class PreviewBlurProcessor
     {
+        [ThreadStatic]
+        private static MaskedVideoExporter? _previewExporter;
+        [ThreadStatic]
+        private static int _previewExporterGeneration;
+        private static int _rendererGeneration;
+
+        internal static void ReleaseCachedRenderer()
+        {
+            int generation = System.Threading.Interlocked.Increment(ref _rendererGeneration);
+            _previewExporter = null;
+            _previewExporterGeneration = generation;
+        }
+
         public static WriteableBitmap CreateBlurredFrame(WriteableBitmap src, int blurRadius)
         {
             if (blurRadius < 1) blurRadius = 1;
@@ -215,7 +229,6 @@ namespace FaceShield.Services.Video
             return outBmp;
         }
 
-        // blurRadius: 1~30 정도 권장
         public static WriteableBitmap CreateBlurPreview(
             WriteableBitmap src,
             WriteableBitmap mask,
@@ -234,197 +247,58 @@ namespace FaceShield.Services.Video
                 Avalonia.Platform.PixelFormat.Bgra8888,
                 Avalonia.Platform.AlphaFormat.Premul);
 
-            using var sfb = src.Lock();
-            using var mfb = mask.Lock();
-            using var ofb = outBmp.Lock();
+            CopyBitmap(src, outBmp);
 
-            unsafe
+            using (var framebuffer = outBmp.Lock())
             {
-                int w = size.Width;
-                int h = size.Height;
-
-                int sStride = sfb.RowBytes;
-                int mStride = mfb.RowBytes;
-                int oStride = ofb.RowBytes;
-
-                byte* sBase = (byte*)sfb.Address;
-                byte* mBase = (byte*)mfb.Address;
-                byte* oBase = (byte*)ofb.Address;
-
-                // 우선 원본 복사
-                for (int y = 0; y < h; y++)
+                unsafe
                 {
-                    Buffer.MemoryCopy(
-                        sBase + y * sStride,
-                        oBase + y * oStride,
-                        oStride,
-                        Math.Min(sStride, oStride));
-                }
+                    AVFrame frame = default;
+                    frame.width = size.Width;
+                    frame.height = size.Height;
+                    frame.format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
+                    frame.data[0] = (byte*)framebuffer.Address;
+                    frame.linesize[0] = framebuffer.RowBytes;
 
-                // 마스크 영역만 블러로 덮어쓰기
-                if (faces != null && faces.Count > 0)
-                {
-                    foreach (var face in faces)
-                    {
-                        int r = GetFaceBlurRadius(face, w, h, blurRadius);
-                        if (r <= 0)
-                            continue;
-
-                        var rect = GetPaddedRect(face, w, h);
-                        int xStart = Math.Max(0, (int)Math.Floor(rect.X));
-                        int yStart = Math.Max(0, (int)Math.Floor(rect.Y));
-                        int xEnd = Math.Min(w - 1, (int)Math.Ceiling(rect.Right) - 1);
-                        int yEnd = Math.Min(h - 1, (int)Math.Ceiling(rect.Bottom) - 1);
-
-                        for (int y = yStart; y <= yEnd; y++)
-                        {
-                            byte* mRow = mBase + y * mStride;
-                            byte* oRow = oBase + y * oStride;
-
-                            for (int x = xStart; x <= xEnd; x++)
-                            {
-                                byte a = mRow[x * 4 + 3];
-                                if (a == 0) continue;
-
-                                int x0 = Math.Max(0, x - r);
-                                int x1 = Math.Min(w - 1, x + r);
-                                int y0 = Math.Max(0, y - r);
-                                int y1 = Math.Min(h - 1, y + r);
-
-                                int count = 0;
-                                int sumB = 0, sumG = 0, sumR = 0;
-
-                                for (int yy = y0; yy <= y1; yy++)
-                                {
-                                    byte* sRow = sBase + yy * sStride;
-                                    for (int xx = x0; xx <= x1; xx++)
-                                    {
-                                        byte* p = sRow + xx * 4;
-                                        sumB += p[0];
-                                        sumG += p[1];
-                                        sumR += p[2];
-                                        count++;
-                                    }
-                                }
-
-                                if (count <= 0) continue;
-
-                                byte b = (byte)(sumB / count);
-                                byte g = (byte)(sumG / count);
-                                byte rC = (byte)(sumR / count);
-
-                                byte* outP = oRow + x * 4;
-                                if (a == 255)
-                                {
-                                    outP[0] = b;
-                                    outP[1] = g;
-                                    outP[2] = rC;
-                                    outP[3] = 255;
-                                }
-                                else
-                                {
-                                    int inv = 255 - a;
-                                    outP[0] = (byte)((b * a + outP[0] * inv + 127) / 255);
-                                    outP[1] = (byte)((g * a + outP[1] * inv + 127) / 255);
-                                    outP[2] = (byte)((rC * a + outP[2] * inv + 127) / 255);
-                                    outP[3] = 255;
-                                }
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    int r = blurRadius;
-                    for (int y = 0; y < h; y++)
-                    {
-                        byte* mRow = mBase + y * mStride;
-                        byte* oRow = oBase + y * oStride;
-
-                        for (int x = 0; x < w; x++)
-                        {
-                            // mask는 BGRA. 알파만 보면 됨.
-                            byte a = mRow[x * 4 + 3];
-                            if (a == 0) continue;
-
-                            int x0 = Math.Max(0, x - r);
-                            int x1 = Math.Min(w - 1, x + r);
-                            int y0 = Math.Max(0, y - r);
-                            int y1 = Math.Min(h - 1, y + r);
-
-                            int count = 0;
-                            int sumB = 0, sumG = 0, sumR = 0;
-
-                            for (int yy = y0; yy <= y1; yy++)
-                            {
-                                byte* sRow = sBase + yy * sStride;
-                                for (int xx = x0; xx <= x1; xx++)
-                                {
-                                    byte* p = sRow + xx * 4;
-                                    sumB += p[0];
-                                    sumG += p[1];
-                                    sumR += p[2];
-                                    count++;
-                                }
-                            }
-
-                            if (count <= 0) continue;
-
-                            byte b = (byte)(sumB / count);
-                            byte g = (byte)(sumG / count);
-                            byte rC = (byte)(sumR / count);
-
-                            byte* outP = oRow + x * 4;
-                            if (a == 255)
-                            {
-                                outP[0] = b;
-                                outP[1] = g;
-                                outP[2] = rC;
-                                outP[3] = 255;
-                            }
-                            else
-                            {
-                                int inv = 255 - a;
-                                outP[0] = (byte)((b * a + outP[0] * inv + 127) / 255);
-                                outP[1] = (byte)((g * a + outP[1] * inv + 127) / 255);
-                                outP[2] = (byte)((rC * a + outP[2] * inv + 127) / 255);
-                                outP[3] = 255;
-                            }
-                        }
-                    }
+                    var exporter = GetCachedRenderer();
+                    exporter.ApplyMaskAndBlur(&frame, mask, blurRadius, faces);
                 }
             }
 
             return outBmp;
         }
 
-        private static int GetFaceBlurRadius(Rect face, int frameW, int frameH, int baseRadius)
+        private static MaskedVideoExporter GetCachedRenderer()
         {
-            if (baseRadius <= 1)
-                return Math.Max(1, baseRadius);
+            int generation = System.Threading.Volatile.Read(ref _rendererGeneration);
+            if (_previewExporter == null || _previewExporterGeneration != generation)
+            {
+                _previewExporter = new MaskedVideoExporter();
+                _previewExporterGeneration = generation;
+            }
 
-            double area = Math.Max(1.0, face.Width * face.Height);
-            double frameArea = Math.Max(1.0, frameW * (double)frameH);
-            double percent = area / frameArea * 100.0;
-
-            double scale = percent <= 1.0 ? 0.4
-                : percent <= 3.0 ? 0.55
-                : percent <= 5.0 ? 0.7
-                : 1.0;
-
-            int r = (int)Math.Round(baseRadius * scale);
-            return Math.Clamp(r, 1, baseRadius);
+            return _previewExporter;
         }
 
-        private static Rect GetPaddedRect(Rect face, int width, int height)
+        private static void CopyBitmap(WriteableBitmap source, WriteableBitmap destination)
         {
-            double padX = Math.Max(6.0, face.Width * 0.15);
-            double padY = Math.Max(6.0, face.Height * 0.25);
-            double x = Math.Max(0, face.X - padX);
-            double y = Math.Max(0, face.Y - padY);
-            double right = Math.Min(width, face.X + face.Width + padX);
-            double bottom = Math.Min(height, face.Y + face.Height + padY);
-            return new Rect(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
+            using var sourceBuffer = source.Lock();
+            using var destinationBuffer = destination.Lock();
+
+            unsafe
+            {
+                int rowBytes = Math.Min(sourceBuffer.RowBytes, destinationBuffer.RowBytes);
+                byte* sourceBase = (byte*)sourceBuffer.Address;
+                byte* destinationBase = (byte*)destinationBuffer.Address;
+                for (int y = 0; y < source.PixelSize.Height; y++)
+                {
+                    Buffer.MemoryCopy(
+                        sourceBase + y * sourceBuffer.RowBytes,
+                        destinationBase + y * destinationBuffer.RowBytes,
+                        destinationBuffer.RowBytes,
+                        rowBytes);
+                }
+            }
         }
     }
 }

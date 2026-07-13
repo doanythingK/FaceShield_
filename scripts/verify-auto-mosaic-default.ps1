@@ -58,6 +58,7 @@ $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sp
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-reset.ps1"
+$blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -247,7 +248,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -281,6 +282,9 @@ Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "runtim
 $autoResumeOutput = Invoke-ScriptStep "auto-resume-mask-reset" $autoResumeMaskResetVerify @()
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "resetCases=5"
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "precision=True culture=True provider=True source=True sessions=True models=True backends=True riskIntent=True timelinePrompt=True providerPool=True snapshot=True json=True"
+
+$blurRenderOutput = Invoke-ScriptStep "blur-render-consistency" $blurRenderConsistencyVerify @()
+Assert-Contains "blur-render-consistency" $blurRenderOutput "radiusPolicy=true radiusMapHeight=true previewExportMatch=true overlapOrderIndependent=true stateless=true crossThreadCacheReset=true"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"

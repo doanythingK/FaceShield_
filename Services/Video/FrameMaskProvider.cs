@@ -186,8 +186,6 @@ namespace FaceShield.Services.Video
         if (mask.PixelSize.Width != size.Width || mask.PixelSize.Height != size.Height)
             throw new ArgumentException("Mask bitmap size does not match target size.", nameof(mask));
 
-        const double SoftEdgeRatio = 0.35;
-
         using var fb = mask.Lock();
 
         unsafe
@@ -205,17 +203,11 @@ namespace FaceShield.Services.Video
 
             foreach (var r in faces)
             {
-                double padX = Math.Max(6.0, r.Width * 0.15);
-                double padY = Math.Max(6.0, r.Height * 0.25);
-                double rx0 = r.X - padX;
-                double ry0 = r.Y - padY;
-                double rx1 = r.X + r.Width + padX;
-                double ry1 = r.Y + r.Height + padY;
-
-                int x0 = Math.Clamp((int)Math.Floor(rx0), 0, Math.Max(0, w - 1));
-                int y0 = Math.Clamp((int)Math.Floor(ry0), 0, Math.Max(0, h - 1));
-                int x1 = Math.Clamp((int)Math.Ceiling(rx1), 0, w);
-                int y1 = Math.Clamp((int)Math.Ceiling(ry1), 0, h);
+                Rect padded = FaceBlurGeometry.GetPaddedRect(r, w, h);
+                int x0 = Math.Clamp((int)Math.Floor(padded.X), 0, Math.Max(0, w - 1));
+                int y0 = Math.Clamp((int)Math.Floor(padded.Y), 0, Math.Max(0, h - 1));
+                int x1 = Math.Clamp((int)Math.Ceiling(padded.Right), 0, w);
+                int y1 = Math.Clamp((int)Math.Ceiling(padded.Bottom), 0, h);
 
                 double strength = 1.0;
 
@@ -225,11 +217,11 @@ namespace FaceShield.Services.Video
                 double ry = Math.Max(1.0, (y1 - y0) / 2.0);
                 double rx2 = rx * rx;
                 double ry2 = ry * ry;
-                double inner = 1.0 - SoftEdgeRatio;
+                double inner = 1.0 - FaceBlurGeometry.SoftEdgeRatio;
                 if (inner < 0.0)
                     inner = 0.0;
                 double inner2 = inner * inner;
-                bool softEdge = SoftEdgeRatio > 0.0 && inner2 < 0.999;
+                bool softEdge = FaceBlurGeometry.SoftEdgeRatio > 0.0 && inner2 < 0.999;
 
                 for (int y = y0; y < y1; y++)
                 {

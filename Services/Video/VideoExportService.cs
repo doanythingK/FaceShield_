@@ -212,7 +212,6 @@ public unsafe sealed class VideoExportService
         _bitmapMaskBlurFrames = 0;
         _nativeYuvBlurFrames = 0;
         _staticHdrConfigured = false;
-        _masked.ResetTemporalState();
         LastExportSummary = null;
         bool shouldRetryWithFullEncode = false;
         string? packetDropFallbackReason = null;

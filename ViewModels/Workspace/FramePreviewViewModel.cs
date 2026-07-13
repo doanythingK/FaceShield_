@@ -418,6 +418,7 @@ public partial class FramePreviewViewModel : ViewModelBase
     // WorkspaceViewModel에서 FramePreview 초기화 시 세션 주입
     public void InitializeSession(VideoSession session)
     {
+        PreviewBlurProcessor.ReleaseCachedRenderer();
         _session = session;
     }
     public void SetMaskProvider(IFrameMaskProvider maskProvider)

@@ -8,27 +8,15 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class MaskedVideoExporter
 {
-    private const double SoftEdgeRatio = 0.35;
-
     private byte[]? _temp;
     private byte[]? _blurred;
     private int[]? _integralB;
     private int[]? _integralG;
     private int[]? _integralR;
     private int[]? _integralA;
-    private byte[]? _prevMaskAlpha;
-    private int _prevMaskW;
-    private int _prevMaskH;
     private byte[]? _radiusMap;
     private byte[]? _nativeAlpha;
     private long[]? _nativeIntegral;
-
-    public void ResetTemporalState()
-    {
-        _prevMaskAlpha = null;
-        _prevMaskW = 0;
-        _prevMaskH = 0;
-    }
 
     public static bool CanApplyNativeYuv(AVFrame* frame)
     {
@@ -88,27 +76,14 @@ public unsafe sealed class MaskedVideoExporter
         if (paddedWidth <= 0 || paddedHeight <= 0)
             return false;
 
-        EnsureMaskHistory(width, height);
         int alphaWidth = rx1 - rx0;
         int alphaHeight = ry1 - ry0;
         byte[] alpha = EnsureNativeAlpha(alphaWidth * alphaHeight);
         void BuildAlphaRow(int y)
         {
-            int historyRow = y * width;
             int alphaRow = (y - ry0) * alphaWidth;
             for (int x = rx0; x < rx1; x++)
-            {
-                byte current = GetFaceAlpha(shapes, x, y);
-                int historyIndex = historyRow + x;
-                byte previous = _prevMaskAlpha![historyIndex];
-                byte smooth = current == 0
-                    ? (byte)(previous * 3 / 4)
-                    : previous == 0
-                        ? current
-                        : (byte)Math.Max(current, previous * 3 / 4);
-                _prevMaskAlpha[historyIndex] = smooth;
-                alpha[alphaRow + x - rx0] = smooth;
-            }
+                alpha[alphaRow + x - rx0] = GetFaceAlpha(shapes, x, y);
         }
         int alphaArea = alphaWidth * alphaHeight;
         int maxWorkers = Math.Max(1, Environment.ProcessorCount - 2);
@@ -130,11 +105,11 @@ public unsafe sealed class MaskedVideoExporter
         Array.Clear(radiusMap, 0, paddedWidth * paddedHeight);
         foreach (var face in faces)
         {
-            int faceRadius = GetFaceBlurRadius(face, width, height, radius);
+            int faceRadius = FaceBlurGeometry.GetRadius(face, width, height, radius);
             if (faceRadius <= 0)
                 continue;
 
-            Rect rect = GetPaddedRect(face, width, height);
+            Rect rect = FaceBlurGeometry.GetPaddedRect(face, width, height);
             int fx0 = Math.Max(px0, (int)Math.Floor(rect.X));
             int fy0 = Math.Max(py0, (int)Math.Floor(rect.Y));
             int fx1 = Math.Min(px1 - 1, (int)Math.Ceiling(rect.Right) - 1);
@@ -166,6 +141,7 @@ public unsafe sealed class MaskedVideoExporter
             alphaHeight,
             radiusMap,
             paddedWidth,
+            paddedHeight,
             radius);
 
         return true;
@@ -204,28 +180,15 @@ public unsafe sealed class MaskedVideoExporter
         if (paddedWidth <= 0 || paddedHeight <= 0)
             return false;
 
-        EnsureMaskHistory(width, height);
         int alphaWidth = rx1 - rx0;
         int alphaHeight = ry1 - ry0;
         byte[] alpha = EnsureNativeAlpha(alphaWidth * alphaHeight);
         for (int y = ry0; y < ry1; y++)
         {
             byte* maskRow = maskData + y * maskStride;
-            int historyRow = y * width;
             int alphaRow = (y - ry0) * alphaWidth;
             for (int x = rx0; x < rx1; x++)
-            {
-                byte current = maskRow[x * 4 + 3];
-                int historyIndex = historyRow + x;
-                byte previous = _prevMaskAlpha![historyIndex];
-                byte smooth = current == 0
-                    ? (byte)(previous * 3 / 4)
-                    : previous == 0
-                        ? current
-                        : (byte)Math.Max(current, previous * 3 / 4);
-                _prevMaskAlpha[historyIndex] = smooth;
-                alpha[alphaRow + x - rx0] = smooth;
-            }
+                alpha[alphaRow + x - rx0] = maskRow[x * 4 + 3];
         }
 
         byte[] radiusMap = EnsureRadiusMap(paddedWidth, paddedHeight);
@@ -245,6 +208,7 @@ public unsafe sealed class MaskedVideoExporter
             alphaHeight,
             radiusMap,
             paddedWidth,
+            paddedHeight,
             radius);
 
         return true;
@@ -271,8 +235,6 @@ public unsafe sealed class MaskedVideoExporter
         int stride = bgraFrame->linesize[0];
         byte* maskData = (byte*)fb.Address;
         int maskStride = fb.RowBytes;
-
-        EnsureMaskHistory(w, h);
 
         int r = Math.Max(1, blurRadius);
 
@@ -327,11 +289,11 @@ public unsafe sealed class MaskedVideoExporter
 
                 foreach (var face in faces)
                 {
-                    int faceRadius = GetFaceBlurRadius(face, w, h, r);
+                    int faceRadius = FaceBlurGeometry.GetRadius(face, w, h, r);
                     if (faceRadius <= 0)
                         continue;
 
-                    var rect = GetPaddedRect(face, w, h);
+                    var rect = FaceBlurGeometry.GetPaddedRect(face, w, h);
                     int fx0 = Math.Max(px0, (int)Math.Floor(rect.X));
                     int fy0 = Math.Max(py0, (int)Math.Floor(rect.Y));
                     int fx1 = Math.Min(px1 - 1, (int)Math.Ceiling(rect.Right) - 1);
@@ -366,17 +328,8 @@ public unsafe sealed class MaskedVideoExporter
 
                 for (int x = rx0; x < rx1; x++)
                 {
-                    int maskIndex = y * w + x;
                     byte alpha = maskRow[x * 4 + 3];
-                    byte prev = _prevMaskAlpha![maskIndex];
-                    byte smooth = alpha == 0
-                        ? (byte)(prev * 3 / 4)
-                        : prev == 0
-                            ? alpha
-                            : (byte)Math.Max(alpha, prev * 3 / 4);
-                    _prevMaskAlpha[maskIndex] = smooth;
-
-                    if (smooth == 0) continue;
+                    if (alpha == 0) continue;
 
                     byte* dst = srcRow + x * 4;
                     int localR = r;
@@ -414,7 +367,7 @@ public unsafe sealed class MaskedVideoExporter
                     byte blurR = (byte)(sumR / area);
                     byte blurA = (byte)(sumA / area);
 
-                    if (smooth == 255)
+                    if (alpha == 255)
                     {
                         dst[0] = blurB;
                         dst[1] = blurG;
@@ -423,10 +376,10 @@ public unsafe sealed class MaskedVideoExporter
                     }
                     else
                     {
-                        int inv = 255 - smooth;
-                        dst[0] = (byte)((blurB * smooth + dst[0] * inv + 127) / 255);
-                        dst[1] = (byte)((blurG * smooth + dst[1] * inv + 127) / 255);
-                        dst[2] = (byte)((blurR * smooth + dst[2] * inv + 127) / 255);
+                        int inv = 255 - alpha;
+                        dst[0] = (byte)((blurB * alpha + dst[0] * inv + 127) / 255);
+                        dst[1] = (byte)((blurG * alpha + dst[1] * inv + 127) / 255);
+                        dst[2] = (byte)((blurR * alpha + dst[2] * inv + 127) / 255);
                         dst[3] = 255;
                     }
                 }
@@ -461,8 +414,6 @@ public unsafe sealed class MaskedVideoExporter
 
         byte* data = bgraFrame->data[0];
         int stride = bgraFrame->linesize[0];
-
-        EnsureMaskHistory(w, h);
 
         int r = Math.Max(1, blurRadius);
         var (rx0, ry0, rx1, ry1) = GetFaceBounds(faces, w, h);
@@ -514,11 +465,11 @@ public unsafe sealed class MaskedVideoExporter
 
         foreach (var face in faces)
         {
-            int faceRadius = GetFaceBlurRadius(face, w, h, r);
+            int faceRadius = FaceBlurGeometry.GetRadius(face, w, h, r);
             if (faceRadius <= 0)
                 continue;
 
-            var rect = GetPaddedRect(face, w, h);
+            var rect = FaceBlurGeometry.GetPaddedRect(face, w, h);
             int fx0 = Math.Max(px0, (int)Math.Floor(rect.X));
             int fy0 = Math.Max(py0, (int)Math.Floor(rect.Y));
             int fx1 = Math.Min(px1 - 1, (int)Math.Ceiling(rect.Right) - 1);
@@ -547,21 +498,11 @@ public unsafe sealed class MaskedVideoExporter
         void ProcessRow(int y)
         {
             byte* srcRow = data + y * stride;
-            int mi = y * w;
 
             for (int x = rx0; x < rx1; x++)
             {
                 byte alpha = GetFaceAlpha(shapes, x, y);
-                int maskIndex = mi + x;
-                byte prev = _prevMaskAlpha![maskIndex];
-                byte smooth = alpha == 0
-                    ? (byte)(prev * 3 / 4)
-                    : prev == 0
-                        ? alpha
-                        : (byte)Math.Max(alpha, prev * 3 / 4);
-                _prevMaskAlpha[maskIndex] = smooth;
-
-                if (smooth == 0) continue;
+                if (alpha == 0) continue;
 
                 byte* dst = srcRow + x * 4;
                 int localR = r;
@@ -596,7 +537,7 @@ public unsafe sealed class MaskedVideoExporter
                 byte blurR = (byte)(sumR / area);
                 byte blurA = (byte)(sumA / area);
 
-                if (smooth == 255)
+                if (alpha == 255)
                 {
                     dst[0] = blurB;
                     dst[1] = blurG;
@@ -605,10 +546,10 @@ public unsafe sealed class MaskedVideoExporter
                 }
                 else
                 {
-                    int inv = 255 - smooth;
-                    dst[0] = (byte)((blurB * smooth + dst[0] * inv + 127) / 255);
-                    dst[1] = (byte)((blurG * smooth + dst[1] * inv + 127) / 255);
-                    dst[2] = (byte)((blurR * smooth + dst[2] * inv + 127) / 255);
+                    int inv = 255 - alpha;
+                    dst[0] = (byte)((blurB * alpha + dst[0] * inv + 127) / 255);
+                    dst[1] = (byte)((blurG * alpha + dst[1] * inv + 127) / 255);
+                    dst[2] = (byte)((blurR * alpha + dst[2] * inv + 127) / 255);
                     dst[3] = 255;
                 }
             }
@@ -638,7 +579,7 @@ public unsafe sealed class MaskedVideoExporter
         byte* data = bgraFrame->data[0];
         int stride = bgraFrame->linesize[0];
         int r = Math.Max(1, blurRadius);
-        int faceRadius = GetFaceBlurRadius(face, w, h, r);
+        int faceRadius = FaceBlurGeometry.GetRadius(face, w, h, r);
         if (faceRadius <= 0)
             return false;
 
@@ -693,21 +634,11 @@ public unsafe sealed class MaskedVideoExporter
         void ProcessRow(int y)
         {
             byte* srcRow = data + y * stride;
-            int mi = y * w;
 
             for (int x = rx0; x < rx1; x++)
             {
                 byte alpha = GetSingleFaceAlpha(shape, x, y);
-                int maskIndex = mi + x;
-                byte prev = _prevMaskAlpha![maskIndex];
-                byte smooth = alpha == 0
-                    ? (byte)(prev * 3 / 4)
-                    : prev == 0
-                        ? alpha
-                        : (byte)Math.Max(alpha, prev * 3 / 4);
-                _prevMaskAlpha[maskIndex] = smooth;
-
-                if (smooth == 0)
+                if (alpha == 0)
                     continue;
 
                 byte* dst = srcRow + x * 4;
@@ -737,7 +668,7 @@ public unsafe sealed class MaskedVideoExporter
                 byte blurR = (byte)(sumR / area);
                 byte blurA = (byte)(sumA / area);
 
-                if (smooth == 255)
+                if (alpha == 255)
                 {
                     dst[0] = blurB;
                     dst[1] = blurG;
@@ -746,10 +677,10 @@ public unsafe sealed class MaskedVideoExporter
                 }
                 else
                 {
-                    int inv = 255 - smooth;
-                    dst[0] = (byte)((blurB * smooth + dst[0] * inv + 127) / 255);
-                    dst[1] = (byte)((blurG * smooth + dst[1] * inv + 127) / 255);
-                    dst[2] = (byte)((blurR * smooth + dst[2] * inv + 127) / 255);
+                    int inv = 255 - alpha;
+                    dst[0] = (byte)((blurB * alpha + dst[0] * inv + 127) / 255);
+                    dst[1] = (byte)((blurG * alpha + dst[1] * inv + 127) / 255);
+                    dst[2] = (byte)((blurR * alpha + dst[2] * inv + 127) / 255);
                     dst[3] = 255;
                 }
             }
@@ -863,6 +794,7 @@ public unsafe sealed class MaskedVideoExporter
         int alphaHeight,
         byte[] radiusMap,
         int radiusMapWidth,
+        int radiusMapHeight,
         int baseRadius)
     {
         int width = frame->width;
@@ -893,6 +825,7 @@ public unsafe sealed class MaskedVideoExporter
             alphaHeight,
             radiusMap,
             radiusMapWidth,
+            radiusMapHeight,
             baseRadius,
             chroma: false);
 
@@ -933,6 +866,7 @@ public unsafe sealed class MaskedVideoExporter
                     alphaHeight,
                     radiusMap,
                     radiusMapWidth,
+                    radiusMapHeight,
                     baseRadius,
                     chroma: true,
                     chromaShiftX: layout.ChromaShiftX,
@@ -951,7 +885,7 @@ public unsafe sealed class MaskedVideoExporter
                 layout.BytesPerSample, componentStride, 0, layout.ValueShift,
                 chromaRx0, chromaRy0, chromaRx1, chromaRy1,
                 chromaPx0, chromaPy0, chromaPx1, chromaPy1,
-                alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, baseRadius,
+                alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, radiusMapHeight, baseRadius,
                 chroma: true, chromaShiftX: layout.ChromaShiftX, chromaShiftY: layout.ChromaShiftY,
                 lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
             ApplyNativePlane(
@@ -959,7 +893,7 @@ public unsafe sealed class MaskedVideoExporter
                 layout.BytesPerSample, componentStride, layout.BytesPerSample, layout.ValueShift,
                 chromaRx0, chromaRy0, chromaRx1, chromaRy1,
                 chromaPx0, chromaPy0, chromaPx1, chromaPy1,
-                alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, baseRadius,
+                alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, radiusMapHeight, baseRadius,
                 chroma: true, chromaShiftX: layout.ChromaShiftX, chromaShiftY: layout.ChromaShiftY,
                 lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
         }
@@ -987,6 +921,7 @@ public unsafe sealed class MaskedVideoExporter
         int alphaHeight,
         byte[] radiusMap,
         int radiusMapWidth,
+        int radiusMapHeight,
         int baseRadius,
         bool chroma,
         int chromaShiftX = 0,
@@ -1048,6 +983,7 @@ public unsafe sealed class MaskedVideoExporter
                     int lumaRadius = GetChromaRadius(
                         radiusMap,
                         radiusMapWidth,
+                        radiusMapHeight,
                         lumaPx0,
                         lumaPy0,
                         x,
@@ -1167,6 +1103,7 @@ public unsafe sealed class MaskedVideoExporter
     private static int GetChromaRadius(
         byte[] radiusMap,
         int radiusMapWidth,
+        int radiusMapHeight,
         int lumaPx0,
         int lumaPy0,
         int chromaX,
@@ -1180,7 +1117,6 @@ public unsafe sealed class MaskedVideoExporter
         int lumaY = chromaY << chromaShiftY;
         int sampleWidth = 1 << chromaShiftX;
         int sampleHeight = 1 << chromaShiftY;
-        int radiusMapHeight = radiusMapWidth == 0 ? 0 : radiusMap.Length / radiusMapWidth;
         for (int dy = 0; dy < sampleHeight; dy++)
         {
             int ry = lumaY + dy - lumaPy0;
@@ -1239,17 +1175,6 @@ public unsafe sealed class MaskedVideoExporter
         }
     }
 
-    private void EnsureMaskHistory(int width, int height)
-    {
-        int size = width * height;
-        if (_prevMaskAlpha == null || _prevMaskAlpha.Length < size || _prevMaskW != width || _prevMaskH != height)
-        {
-            _prevMaskAlpha = new byte[size];
-            _prevMaskW = width;
-            _prevMaskH = height;
-        }
-    }
-
     private byte[] EnsureRadiusMap(int width, int height)
     {
         int size = width * height;
@@ -1258,40 +1183,6 @@ public unsafe sealed class MaskedVideoExporter
             _radiusMap = new byte[size];
         }
         return _radiusMap;
-    }
-
-    private static int GetFaceBlurRadius(Rect face, int frameW, int frameH, int baseRadius)
-    {
-        if (baseRadius <= 1)
-            return Math.Max(1, baseRadius);
-
-        double area = Math.Max(1.0, face.Width * face.Height);
-        double frameArea = Math.Max(1.0, frameW * (double)frameH);
-        double percent = area / frameArea * 100.0;
-
-        double scale = percent switch
-        {
-            <= 0.25 => 0.4,
-            <= 1.0 => 0.4 + (percent - 0.25) / 0.75 * 0.15,
-            <= 1.5 => 0.55,
-            <= 3.0 => 0.55 + (percent - 1.5) / 1.5 * 0.15,
-            <= 5.0 => 0.7 + (percent - 3.0) / 2.0 * 0.3,
-            _ => 1.0
-        };
-
-        int r = (int)Math.Round(baseRadius * scale);
-        return Math.Clamp(r, 1, baseRadius);
-    }
-
-    private static Rect GetPaddedRect(Rect face, int width, int height)
-    {
-        double padX = Math.Max(6.0, face.Width * 0.15);
-        double padY = Math.Max(6.0, face.Height * 0.25);
-        double x = Math.Max(0, face.X - padX);
-        double y = Math.Max(0, face.Y - padY);
-        double right = Math.Min(width, face.X + face.Width + padX);
-        double bottom = Math.Min(height, face.Y + face.Height + padY);
-        return new Rect(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
     }
 
     private readonly record struct FaceMaskShape(
@@ -1308,12 +1199,12 @@ public unsafe sealed class MaskedVideoExporter
     private static FaceMaskShape[] BuildFaceMaskShapes(IReadOnlyList<Rect> faces, int width, int height)
     {
         var shapes = new List<FaceMaskShape>(faces.Count);
-        double inner = Math.Max(0.0, 1.0 - SoftEdgeRatio);
+        double inner = Math.Max(0.0, 1.0 - FaceBlurGeometry.SoftEdgeRatio);
         double inner2 = inner * inner;
 
         foreach (var face in faces)
         {
-            var r = GetPaddedRect(face, width, height);
+            var r = FaceBlurGeometry.GetPaddedRect(face, width, height);
             int x0 = Math.Clamp((int)Math.Floor(r.X), 0, Math.Max(0, width - 1));
             int y0 = Math.Clamp((int)Math.Floor(r.Y), 0, Math.Max(0, height - 1));
             int x1 = Math.Clamp((int)Math.Ceiling(r.Right), 0, width);
@@ -1356,7 +1247,7 @@ public unsafe sealed class MaskedVideoExporter
                 continue;
 
             byte alpha;
-            if (d2 <= shape.Inner2 || SoftEdgeRatio <= 0.0)
+            if (d2 <= shape.Inner2 || FaceBlurGeometry.SoftEdgeRatio <= 0.0)
             {
                 alpha = 255;
             }
@@ -1387,7 +1278,7 @@ public unsafe sealed class MaskedVideoExporter
         if (d2 > 1.0)
             return 0;
 
-        if (d2 <= shape.Inner2 || SoftEdgeRatio <= 0.0)
+        if (d2 <= shape.Inner2 || FaceBlurGeometry.SoftEdgeRatio <= 0.0)
             return 255;
 
         double t = (d2 - shape.Inner2) / (1.0 - shape.Inner2);
@@ -1408,7 +1299,7 @@ public unsafe sealed class MaskedVideoExporter
 
         foreach (var face in faces)
         {
-            var padded = GetPaddedRect(face, width, height);
+            var padded = FaceBlurGeometry.GetPaddedRect(face, width, height);
             int x0 = Math.Clamp((int)Math.Floor(padded.X), 0, width);
             int y0 = Math.Clamp((int)Math.Floor(padded.Y), 0, height);
             int x1 = Math.Clamp((int)Math.Ceiling(padded.Right), 0, width);
