@@ -7,6 +7,8 @@ param(
     [double]$DownscaleRatio = 1.0,
     [ValidateSet("FastNearest", "BalancedBilinear")]
     [string]$DownscaleQuality = "BalancedBilinear",
+    [ValidateSet("Legacy", "Raw", "Tracked", "Full")]
+    [string]$ProcessingMode = "Legacy",
     [switch]$OptimizedNoTracking,
     [switch]$OptimizedUseGpu,
     [switch]$OptimizedCpuOnly,
@@ -268,6 +270,9 @@ double yoloMinAspectRatio = args.Length > 86 ? double.Parse(args[86], System.Glo
 double yoloMaxAspectRatio = args.Length > 87 ? double.Parse(args[87], System.Globalization.CultureInfo.InvariantCulture) : 1.65;
 int yoloMaxInitialFillFrames = args.Length > 88 ? int.Parse(args[88], System.Globalization.CultureInfo.InvariantCulture) : 3;
 bool yoloRunAsBaseline = args.Length > 89 && bool.Parse(args[89]);
+var optimizedProcessingMode = args.Length > 90
+    ? Enum.Parse<AutoMaskProcessingMode>(args[90])
+    : AutoMaskProcessingMode.Legacy;
 
 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 Trace.AutoFlush = true;
@@ -370,7 +375,8 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     bool yoloUseAspectRatioFilter,
     double yoloMinAspectRatio,
     double yoloMaxAspectRatio,
-    bool yoloDebugDump)
+    bool yoloDebugDump,
+    AutoMaskProcessingMode processingMode)
 {
     string runId = $"smoke-{label}-{Guid.NewGuid():N}";
     Console.WriteLine($"[SmokeCase] start runId={runId}, label={label}, tracking={useTracking}, everyN={detectEvery}, downscale={downscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}, quality={downscaleQuality}, gpu={useGpu}, autoTune={useAutoTune}, parallel={parallelDetectorCount}, detectionThreshold={detectionThreshold:F3}, confidenceThreshold={confidenceThreshold:F3}, nmsThreshold={nmsThreshold:F3}");
@@ -501,6 +507,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     using var detector = factory.CreateDetector();
     var options = new AutoMaskOptions
     {
+        ProcessingMode = processingMode,
         DownscaleRatio = downscaleRatio,
         DownscaleQuality = downscaleQuality,
         UseTracking = useTracking,
@@ -2023,7 +2030,8 @@ if (!skipBaseline)
         yoloUseAspectRatioFilter: false,
         yoloMinAspectRatio,
         yoloMaxAspectRatio,
-        yoloDebugDump: false);
+        yoloDebugDump: false,
+        processingMode: AutoMaskProcessingMode.Legacy);
 }
 
 (string Label, FrameMaskProvider MaskProvider)? optimized = null;
@@ -2104,7 +2112,8 @@ if (!skipOptimized)
         yoloUseAspectRatioFilter,
         yoloMinAspectRatio,
         yoloMaxAspectRatio,
-        yoloDebugDump);
+        yoloDebugDump,
+        optimizedProcessingMode);
 }
 
 if (!baseline.HasValue && !optimized.HasValue)
@@ -2336,7 +2345,8 @@ $dotnetRunArgs = @(
     $yoloMinAspectRatioArg,
     $yoloMaxAspectRatioArg,
     $yoloMaxInitialFillFramesArg,
-    $yoloRunAsBaselineArg
+    $yoloRunAsBaselineArg,
+    $ProcessingMode
 )
 try {
     $previousErrorActionPreference = $ErrorActionPreference
