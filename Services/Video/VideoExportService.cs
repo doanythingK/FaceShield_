@@ -973,18 +973,10 @@ public unsafe sealed class VideoExportService
             encFrame->height = enc->height;
             Throw(ffmpeg.av_frame_get_buffer(encFrame, 32));
 
-            // ✅ sws context (정정)
-            swsDecToBgra = ffmpeg.sws_getContext(
-                dec->width, dec->height, dec->pix_fmt,
-                dec->width, dec->height, AVPixelFormat.AV_PIX_FMT_BGRA,
-                (int)SwsFlags.SWS_FAST_BILINEAR,
-                null, null, null);
-
-            swsBgraToEnc = ffmpeg.sws_getContext(
-                enc->width, enc->height, AVPixelFormat.AV_PIX_FMT_BGRA,
-                enc->width, enc->height, enc->pix_fmt,
-                (int)SwsFlags.SWS_FAST_BILINEAR,
-                null, null, null);
+            // Dynamic frame scaling reads matrix, range, and chroma location from each frame.
+            swsDecToBgra = CreateDynamicSwsContext("디코더-BGRA 변환");
+            swsBgraToEnc = CreateDynamicSwsContext("BGRA-인코더 변환");
+            swsDecToEnc = CreateDynamicSwsContext("디코더-인코더 변환");
 
             // ───────── main loop ─────────
             int encodeWindowStart = hybridEncodeWindow?.Start ?? 0;
@@ -2555,28 +2547,14 @@ public unsafe sealed class VideoExportService
             }
             else if (MaskedVideoExporter.CanApplyNativeYuv(encFrame))
             {
-                if (swsDecToEnc == null)
-                {
-                    swsDecToEnc = ffmpeg.sws_getContext(
-                        dec->width, dec->height, dec->pix_fmt,
-                        enc->width, enc->height, enc->pix_fmt,
-                        (int)SwsFlags.SWS_FAST_BILINEAR,
-                        null, null, null);
-                    if (swsDecToEnc == null)
-                        throw new InvalidOperationException("YUV 품질 보존 변환 컨텍스트를 만들 수 없습니다.");
-                }
-
                 var tNativeSws = Stopwatch.StartNew();
                 Throw(ffmpeg.av_frame_make_writable(encFrame));
-                Throw(ffmpeg.sws_scale(
-                    swsDecToEnc,
-                    frame->data,
-                    frame->linesize,
-                    0,
-                    frame->height,
-                    encFrame->data,
-                    encFrame->linesize));
                 CopyFrameEncodingProperties(frame, encFrame);
+                ScaleFramePreservingColor(
+                    swsDecToEnc,
+                    encFrame,
+                    frame,
+                    "YUV 품질 보존 변환");
                 tNativeSws.Stop();
                 swsToEncMs += tNativeSws.ElapsedMilliseconds;
                 nativeYuvFrame = encFrame;
@@ -2629,14 +2607,12 @@ public unsafe sealed class VideoExportService
         {
             var tBgra = Stopwatch.StartNew();
             Throw(ffmpeg.av_frame_make_writable(bgra));
-            Throw(ffmpeg.sws_scale(
+            SetBgraColorProperties(frame, bgra);
+            ScaleFramePreservingColor(
                 swsDecToBgra,
-                frame->data,
-                frame->linesize,
-                0,
-                frame->height,
-                bgra->data,
-                bgra->linesize));
+                bgra,
+                frame,
+                "BGRA 마스크 입력 변환");
             tBgra.Stop();
             swsToBgraMs += tBgra.ElapsedMilliseconds;
 
@@ -2663,15 +2639,12 @@ public unsafe sealed class VideoExportService
 
             var tEncSws = Stopwatch.StartNew();
             Throw(ffmpeg.av_frame_make_writable(encFrame));
-            Throw(ffmpeg.sws_scale(
-                swsBgraToEnc,
-                bgra->data,
-                bgra->linesize,
-                0,
-                bgra->height,
-                encFrame->data,
-                encFrame->linesize));
             CopyFrameEncodingProperties(frame, encFrame);
+            ScaleFramePreservingColor(
+                swsBgraToEnc,
+                encFrame,
+                bgra,
+                "BGRA 마스크 출력 변환");
             tEncSws.Stop();
             swsToEncMs += tEncSws.ElapsedMilliseconds;
 
@@ -2707,26 +2680,14 @@ public unsafe sealed class VideoExportService
 
             if (!direct)
             {
-                if (swsDecToEnc == null)
-                {
-                    swsDecToEnc = ffmpeg.sws_getContext(
-                        dec->width, dec->height, dec->pix_fmt,
-                        enc->width, enc->height, enc->pix_fmt,
-                        (int)SwsFlags.SWS_FAST_BILINEAR,
-                        null, null, null);
-                }
-
                 var tEncSws = Stopwatch.StartNew();
                 Throw(ffmpeg.av_frame_make_writable(encFrame));
-                Throw(ffmpeg.sws_scale(
-                    swsDecToEnc,
-                    frame->data,
-                    frame->linesize,
-                    0,
-                    frame->height,
-                    encFrame->data,
-                    encFrame->linesize));
                 CopyFrameEncodingProperties(frame, encFrame);
+                ScaleFramePreservingColor(
+                    swsDecToEnc,
+                    encFrame,
+                    frame,
+                    "인코더 픽셀 형식 변환");
                 tEncSws.Stop();
                 swsToEncMs += tEncSws.ElapsedMilliseconds;
 
@@ -4456,15 +4417,71 @@ public unsafe sealed class VideoExportService
         if (source == null || destination == null || source == destination)
             return;
 
-        while (destination->nb_side_data > 0 && destination->side_data != null)
-        {
-            AVFrameSideData* sideData = destination->side_data[0];
-            if (sideData == null)
-                break;
-            ffmpeg.av_frame_remove_side_data(destination, sideData->type);
-        }
+        ffmpeg.av_frame_side_data_free(
+            &destination->side_data,
+            &destination->nb_side_data);
         ffmpeg.av_dict_free(&destination->metadata);
         Throw(ffmpeg.av_frame_copy_props(destination, source));
+    }
+
+    private static unsafe SwsContext* CreateDynamicSwsContext(string stage)
+    {
+        SwsContext* context = ffmpeg.sws_alloc_context();
+        if (context == null)
+        {
+            throw new VideoExportIntegrityException(
+                $"{stage}용 색상 변환 컨텍스트를 만들 수 없습니다.");
+        }
+
+        int optionResult = ffmpeg.av_opt_set_int(
+            context,
+            "sws_flags",
+            (long)SwsFlags.SWS_FAST_BILINEAR,
+            0);
+        if (optionResult < 0)
+        {
+            ffmpeg.sws_freeContext(context);
+            throw new VideoExportIntegrityException(
+                $"{stage}의 색상 변환 옵션을 설정할 수 없습니다: " +
+                GetErrorMessage(optionResult));
+        }
+
+        return context;
+    }
+
+    private static unsafe void ScaleFramePreservingColor(
+        SwsContext* context,
+        AVFrame* destination,
+        AVFrame* source,
+        string stage)
+    {
+        if (context == null || destination == null || source == null)
+        {
+            throw new VideoExportIntegrityException(
+                $"{stage}에 필요한 프레임 또는 색상 변환 컨텍스트가 없습니다.");
+        }
+
+        int result = ffmpeg.sws_scale_frame(context, destination, source);
+        if (result < 0)
+        {
+            throw new VideoExportIntegrityException(
+                $"{stage} 중 원본 색 공간, 범위 또는 색차 위치를 보존할 수 없습니다: " +
+                GetErrorMessage(result));
+        }
+    }
+
+    private static unsafe void SetBgraColorProperties(AVFrame* source, AVFrame* bgra)
+    {
+        if (source == null || bgra == null)
+            return;
+
+        CopyFrameEncodingProperties(source, bgra);
+        bgra->color_range = AVColorRange.AVCOL_RANGE_JPEG;
+        bgra->color_primaries = source->color_primaries;
+        bgra->color_trc = source->color_trc;
+        bgra->colorspace = AVColorSpace.AVCOL_SPC_RGB;
+        bgra->chroma_location = AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED;
+        bgra->sample_aspect_ratio = source->sample_aspect_ratio;
     }
 
     private static void ThrowUnsupportedDynamicVideoMetadata(string metadataName)

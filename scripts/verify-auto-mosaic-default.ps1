@@ -60,6 +60,7 @@ $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask
 $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-reset.ps1"
 $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
+$swsFrameColorFidelityVerify = Join-Path $repo "scripts\verify-sws-frame-color-fidelity.ps1"
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
 $exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progress-completion.ps1"
 $videoFieldFidelityPolicyVerify = Join-Path $repo "scripts\verify-video-field-fidelity-policy.ps1"
@@ -254,7 +255,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $swsFrameColorFidelityVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -294,6 +295,9 @@ Assert-Contains "blur-render-consistency" $blurRenderOutput "radiusPolicy=true r
 
 $bgraIntegralOutput = Invoke-ScriptStep "bgra-integral-range" $bgraIntegralRangeVerify @()
 Assert-Contains "bgra-integral-range" $bgraIntegralOutput "storage=uint32 dci4kFull=2256076800 wrapCases=10000 maxWindow=81 checkedSize=true"
+
+$swsColorOutput = Invoke-ScriptStep "sws-frame-color-fidelity" $swsFrameColorFidelityVerify @()
+Assert-Contains "sws-frame-color-fidelity" $swsColorOutput "legacyCalls=0 dynamicContexts=3 metadataFirstConversions=4 framePropertiesReset=true nativeRoundTrip=true hdrSideDataReplacement=true"
 
 $tenBitEncoderOutput = Invoke-ScriptStep "ten-bit-encoder-fallback" $tenBitEncoderFallbackVerify @()
 Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx264,libx265 .*libx265TenBitOpen=true"
