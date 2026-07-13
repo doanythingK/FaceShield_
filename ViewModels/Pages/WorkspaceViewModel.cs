@@ -100,6 +100,7 @@ namespace FaceShield.ViewModels.Pages
             !_autoCompleted &&
             _autoResumeIndex > 0 &&
             !RequiresCompleteAutoTimeline(_autoOptions, _detectorFactoryOptions) &&
+            AutoMaskGenerator.CanResumeFromFrame(_autoOptions, _autoResumeIndex) &&
             IsAutoResumeSignatureCurrent(BuildAutoRunIntentSignature(
                 _autoOptions,
                 _detectorOptions,
@@ -1056,11 +1057,12 @@ namespace FaceShield.ViewModels.Pages
                 _autoExecutionSignature = executionSignature;
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
-                if (RequiresCompleteAutoTimeline(runOptions, detectorFactoryOptions) &&
+                if ((RequiresCompleteAutoTimeline(runOptions, detectorFactoryOptions) ||
+                     !AutoMaskGenerator.CanResumeFromFrame(runOptions, lastProcessed)) &&
                     lastProcessed > 0)
                 {
                     System.Diagnostics.Debug.WriteLine(
-                        $"[AutoMaskResumeReset] reason=yolo-risk-cascade-requires-complete-timeline resumeIndex={lastProcessed}");
+                        $"[AutoMaskResumeReset] reason=resume-requires-complete-timeline resumeIndex={lastProcessed}");
                     lastProcessed = 0;
                     _autoResumeIndex = 0;
                 }
@@ -1092,6 +1094,7 @@ namespace FaceShield.ViewModels.Pages
                     });
                 if (generator.LastRunSummary != null)
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceAuto] {generator.LastRunSummary.ToLogLine()}");
+                SynchronizeFrameListWithDecodedTimeline(generator.LastRunSummary);
 
                 if (token.IsCancellationRequested)
                 {
@@ -1219,6 +1222,25 @@ namespace FaceShield.ViewModels.Pages
 
             int summaryLastFrame = runSummary.StartFrameIndex + runSummary.ProcessedFrames - 1;
             return summaryLastFrame >= completionFrame;
+        }
+
+        private void SynchronizeFrameListWithDecodedTimeline(AutoMaskRunSummary? summary)
+        {
+            if (summary == null ||
+                !summary.ReachedDecoderEof ||
+                summary.DecodeCancelled ||
+                !string.Equals(summary.DecodeError, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            int previousTotalFrames = FrameList.TotalFrames;
+            FrameList.UpdateActualTotalFrames(summary.TotalFrames);
+            if (previousTotalFrames != FrameList.TotalFrames)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[AutoMaskTimelineAdjusted] reported={previousTotalFrames} actual={FrameList.TotalFrames}");
+            }
         }
 
         private static string? GetRequiredYoloCascadeFailure(
@@ -2231,8 +2253,8 @@ namespace FaceShield.ViewModels.Pages
             FaceDetectorFactoryOptions detectorFactoryOptions)
         {
             AutoMaskOptions effectiveOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
-            return effectiveOptions.EnableYoloRiskCascade &&
-                detectorFactoryOptions?.Backend == FaceDetectorBackend.YoloFaceOnnx;
+            _ = detectorFactoryOptions;
+            return AutoMaskGenerator.RequiresFullTimelineResume(effectiveOptions);
         }
 
         private static FaceDetectorFactoryOptions ResolveAutoRunDetectorFactoryOptions(

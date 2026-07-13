@@ -191,6 +191,28 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     public double FrameIndexToSeconds(int frameIndex)
         => frameIndex < 0 ? 0 : frameIndex / Fps;
 
+    public void UpdateActualTotalFrames(int actualTotalFrames)
+    {
+        int normalized = Math.Max(0, actualTotalFrames);
+        if (normalized == TotalFrames && Items.Count == normalized)
+            return;
+
+        int selected = SelectedFrameIndex;
+        Items = Enumerable
+            .Range(0, normalized)
+            .Select(i =>
+                new FrameItemViewModel(
+                    index: i,
+                    hasFace: true,
+                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
+            .ToArray();
+        TotalFrames = normalized;
+        SelectedFrameIndex = normalized > 0
+            ? Math.Clamp(selected, 0, normalized - 1)
+            : -1;
+        ClampView();
+    }
+
     private void ClampView()
     {
         if (SecondsPerScreen <= 0) return;

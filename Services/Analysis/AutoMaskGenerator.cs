@@ -136,17 +136,28 @@ namespace FaceShield.Services.Analysis
 
             var (fps, totalFrames, _) = ReadVideoInfo(videoPath);
 
-            if (fps <= 0 || totalFrames <= 0)
+            if (fps <= 0)
+                return;
+            if (ct.IsCancellationRequested)
                 return;
 
+            int requestedStartFrameIndex = Math.Max(0, startFrameIndex);
+            int effectiveStartFrameIndex = ResolveDecodeStartFrameIndex(requestedStartFrameIndex);
+            if (effectiveStartFrameIndex < requestedStartFrameIndex)
+            {
+                onFrameProcessed?.Invoke(effectiveStartFrameIndex);
+                int removed = _maskProvider.GetFaceMaskEntries().Count;
+                _maskProvider.ClearFaceMasks();
+                Debug.WriteLine(
+                    $"[AutoMaskResumeReset] reason=tracked-continuity-requires-full-timeline requestedStart={requestedStartFrameIndex} effectiveStart={effectiveStartFrameIndex} removedFaceMasks={removed}");
+            }
+
             _sourceFpsForSummary = fps;
-            _postProcessStartFrameIndex = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            _postProcessStartFrameIndex = effectiveStartFrameIndex;
             _frameTimings.Clear();
             _sceneCutStarts.Clear();
             if (_postProcessStartFrameIndex > 0)
                 _sceneCutStarts.Add(_postProcessStartFrameIndex);
-            if (_options.FilterProfile == FaceFilterProfile.Yolo)
-                _frameTimings.EnsureCapacity(Math.Max(0, totalFrames - Math.Max(0, startFrameIndex)));
 
             LastRunSummary = null;
 
@@ -179,7 +190,7 @@ namespace FaceShield.Services.Analysis
 
                                 if (detectors.Count > 1)
                                 {
-                                    GeneratePipelinedDetectAllParallel(videoPath, detectors, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                                    GeneratePipelinedDetectAllParallel(videoPath, detectors, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
                                     return;
                                 }
                             }
@@ -191,7 +202,7 @@ namespace FaceShield.Services.Analysis
                         }
 
                         Debug.WriteLine("[AutoMask] mode=pipe-single");
-                        GeneratePipelinedDetectAll(videoPath, bgraDetector, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                        GeneratePipelinedDetectAll(videoPath, bgraDetector, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
                         return;
                     }
 
@@ -209,7 +220,7 @@ namespace FaceShield.Services.Analysis
                                     break;
                             }
 
-                            GenerateSparsePipelinedTrackingParallel(videoPath, detectors, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                            GenerateSparsePipelinedTrackingParallel(videoPath, detectors, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
                             return;
                         }
                         finally
@@ -220,13 +231,91 @@ namespace FaceShield.Services.Analysis
                     }
 
                     Debug.WriteLine("[AutoMask] mode=sequential");
-                    GenerateSequential(videoPath, progress, ct, startFrameIndex, totalFrames, onFrameProcessed);
+                    GenerateSequential(videoPath, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
                 }, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 // 취소는 정상 흐름으로 처리 (디버그 예외 노이즈 방지)
             }
+
+            if (ShouldRestartAfterOutOfRangeResume(LastRunSummary, effectiveStartFrameIndex, ct))
+            {
+                onFrameProcessed?.Invoke(0);
+                int removed = _maskProvider.GetFaceMaskEntries().Count;
+                _maskProvider.ClearFaceMasks();
+                Debug.WriteLine(
+                    $"[AutoMaskResumeReset] reason=resume-start-beyond-decoder-eof requestedStart={requestedStartFrameIndex} effectiveStart={effectiveStartFrameIndex} removedFaceMasks={removed}");
+                await GenerateAsync(
+                    videoPath,
+                    progress,
+                    ct,
+                    startFrameIndex: 0,
+                    onFrameProcessed: onFrameProcessed);
+            }
+        }
+
+        private int ResolveDecodeStartFrameIndex(int requestedStartFrameIndex)
+        {
+            int start = Math.Max(0, requestedStartFrameIndex);
+            bool sparsePipelineAvailable = _options.UseTracking &&
+                _options.DetectEveryNFrames > 1 &&
+                _detector is IBgraFaceDetector &&
+                _detectorFactory != null &&
+                _options.ParallelDetectorCount >= 1;
+            bool requiresFullTimeline = start > 0 &&
+                (!CanResumeFromFrame(_options, start) ||
+                 (_options.UseTracking && !sparsePipelineAvailable));
+            return requiresFullTimeline ? 0 : start;
+        }
+
+        public static bool RequiresFullTimelineResume(AutoMaskOptions? options)
+        {
+            AutoMaskOptions effective = (options ?? new AutoMaskOptions()).ResolveProcessingMode();
+            bool legacyYoloMissRecovery =
+                effective.ProcessingMode == AutoMaskProcessingMode.Legacy &&
+                effective.FilterProfile == FaceFilterProfile.Yolo &&
+                effective.UseTracking &&
+                !effective.EnablePostProcessing;
+            return effective.UseTracking &&
+                (effective.DetectEveryNFrames <= 1 ||
+                 effective.EnablePostProcessing ||
+                 effective.EnableYoloGapFill ||
+                 effective.EnableYoloWeakIsolatedCleanup ||
+                 effective.EnableYoloSceneCutCarryCleanup ||
+                 effective.EnableYoloTemporalSmoothing ||
+                 effective.EnableYoloRiskCascade ||
+                 legacyYoloMissRecovery);
+        }
+
+        public static bool CanResumeFromFrame(AutoMaskOptions? options, int resumeFrameIndex)
+        {
+            int start = Math.Max(0, resumeFrameIndex);
+            if (start == 0)
+                return true;
+
+            AutoMaskOptions effective = (options ?? new AutoMaskOptions()).ResolveProcessingMode();
+            if (RequiresFullTimelineResume(effective))
+                return false;
+            if (!effective.UseTracking)
+                return true;
+
+            int interval = Math.Max(1, effective.DetectEveryNFrames);
+            return interval > 1 && start % interval == 0;
+        }
+
+        private static bool ShouldRestartAfterOutOfRangeResume(
+            AutoMaskRunSummary? summary,
+            int effectiveStartFrameIndex,
+            CancellationToken ct)
+        {
+            return effectiveStartFrameIndex > 0 &&
+                !ct.IsCancellationRequested &&
+                summary != null &&
+                summary.ReachedDecoderEof &&
+                !summary.DecodeCancelled &&
+                string.Equals(summary.DecodeError, "none", StringComparison.OrdinalIgnoreCase) &&
+                summary.DecodedFrames == 0;
         }
 
         private static bool TryAddCompatibleParallelDetector(
@@ -261,7 +350,7 @@ namespace FaceShield.Services.Analysis
             Action<int>? onFrameProcessed)
         {
             bool useRaw = _detector is IBgraFaceDetector;
-            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            int start = Math.Max(0, startFrameIndex);
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw, ct);
 
             IReadOnlyList<FaceDetectionResult>? lastFaces = null;
@@ -336,9 +425,6 @@ namespace FaceShield.Services.Analysis
                 readMs += tRead.ElapsedMilliseconds;
 
                 nextIndex = idx + 1;
-
-                if (idx >= totalFrames)
-                    break;
 
                 RecordFrameTiming(extractor, idx);
 
@@ -632,6 +718,8 @@ namespace FaceShield.Services.Analysis
 
             public CancellationToken Token => _pipelineCancellation.Token;
 
+            public bool HasFailure => Volatile.Read(ref _firstFailure) != null;
+
             public Task Start(Action action)
             {
                 return Task.Run(() => Execute(action));
@@ -739,7 +827,7 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            int start = Math.Max(0, startFrameIndex);
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
             var geometry = CreateDetectionGeometry(extractor.FrameSize);
@@ -805,7 +893,7 @@ namespace FaceShield.Services.Analysis
                                 out stride);
                             tDecode.Stop();
                             decodeMs += tDecode.ElapsedMilliseconds;
-                            if (!ok || idx >= totalFrames)
+                            if (!ok)
                                 break;
 
                             RecordFrameTiming(extractor, idx);
@@ -1137,7 +1225,7 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            int start = Math.Max(0, startFrameIndex);
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
             var geometry = CreateDetectionGeometry(extractor.FrameSize);
@@ -1202,7 +1290,7 @@ namespace FaceShield.Services.Analysis
                                 out stride);
                             tDecode.Stop();
                             Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
-                            if (!ok || idx >= totalFrames)
+                            if (!ok)
                                 break;
 
                             RecordFrameTiming(extractor, idx);
@@ -1435,7 +1523,7 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             Action<int>? onFrameProcessed)
         {
-            int start = Math.Clamp(startFrameIndex, 0, Math.Max(0, totalFrames - 1));
+            int start = Math.Max(0, startFrameIndex);
             using var extractor = CreateExtractorWithFallback(videoPath, start, useRaw: true, ct);
 
             var geometry = CreateDetectionGeometry(extractor.FrameSize);
@@ -1489,14 +1577,10 @@ namespace FaceShield.Services.Analysis
                             tSkip.Stop();
                             Interlocked.Add(ref decodeMs, tSkip.ElapsedMilliseconds);
 
-                            if (idx >= totalFrames)
-                                break;
-
                             RecordFrameTiming(extractor, idx);
 
                             nextIndex = idx + 1;
                             highestDecodedFrame = idx;
-                            onFrameProcessed?.Invoke(idx);
                             ReportProgress(progress, idx, totalFrames, progressState);
                             Interlocked.Increment(ref decoded);
                             continue;
@@ -1519,14 +1603,13 @@ namespace FaceShield.Services.Analysis
                                 out stride);
                             tDecode.Stop();
                             Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
-                            if (!ok || idx >= totalFrames)
+                            if (!ok)
                                 break;
 
                             RecordFrameTiming(extractor, idx);
 
                             nextIndex = idx + 1;
                             highestDecodedFrame = idx;
-                            onFrameProcessed?.Invoke(idx);
                             ReportProgress(progress, idx, totalFrames, progressState);
                             Interlocked.Increment(ref decoded);
 
@@ -1635,15 +1718,6 @@ namespace FaceShield.Services.Analysis
                                 Confidences = confidences,
                                 FrameSignature = frameSignature
                             };
-                            if (bounds.Length > 0 && !_maskProvider.HasEntry(item.Index))
-                            {
-                                _maskProvider.SetFaceRects(
-                                    item.Index,
-                                    bounds,
-                                    resultSize,
-                                    minConfidence,
-                                    confidences);
-                            }
                             int done = Interlocked.Increment(ref detected);
                             if (done % 20 == 0)
                             {
@@ -1661,11 +1735,23 @@ namespace FaceShield.Services.Analysis
 
             Task.WaitAll(consumers.Append(producer).ToArray());
             ReturnQueuedBuffers(queue, pool);
-            pipeline.ThrowIfFailedOrCanceled();
-
-            int materializeEndExclusive = ct.IsCancellationRequested
-                ? Math.Min(totalFrames, Math.Max(start, highestDecodedFrame) + 1)
-                : totalFrames;
+            int decodedEndExclusive = highestDecodedFrame >= start
+                ? highestDecodedFrame == int.MaxValue
+                    ? int.MaxValue
+                    : highestDecodedFrame + 1
+                : start;
+            bool completedAtDecoderEof =
+                !pipeline.HasFailure &&
+                !ct.IsCancellationRequested &&
+                extractor.SequentialReachedEndOfStream &&
+                !extractor.SequentialReadCancelled &&
+                string.IsNullOrWhiteSpace(extractor.SequentialDecodeError);
+            int resumeWatermark = completedAtDecoderEof
+                ? decodedEndExclusive - 1
+                : FindSparseResumeWatermark(results, start, decodedEndExclusive, interval);
+            int materializeEndExclusive = resumeWatermark >= start
+                ? resumeWatermark + 1
+                : start;
             var materialized = MaterializeSparseTrackingResults(results, start, materializeEndExclusive);
             foreach (var transition in materialized.SceneCutTransitions)
             {
@@ -1673,6 +1759,11 @@ namespace FaceShield.Services.Analysis
                     _sceneCutStarts.Add(frame);
             }
             int interpolated = materialized.Interpolated;
+
+            if (resumeWatermark >= start)
+                pipeline.Execute(() => onFrameProcessed?.Invoke(resumeWatermark));
+
+            pipeline.ThrowIfFailedOrCanceled();
 
             Debug.WriteLine(
                 $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, sparseSceneCuts={materialized.SceneCutStops}, sparseSceneCutPairs={FormatSparseSceneCutTransitions(materialized.SceneCutTransitions)}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
@@ -1702,6 +1793,43 @@ namespace FaceShield.Services.Analysis
             FinalizeRunAfterDecode(extractor, videoPath, totalFrames, progress, ct);
         }
 
+        private static int FindSparseResumeWatermark(
+            System.Collections.Concurrent.ConcurrentDictionary<int, DetectionResult> results,
+            int start,
+            int decodedEndExclusive,
+            int interval)
+        {
+            if (decodedEndExclusive <= start || !results.ContainsKey(start))
+                return -1;
+
+            int lastContiguousAnchor = start;
+            int lastPositiveAnchor = results.TryGetValue(start, out var startResult) &&
+                startResult.Bounds.Length > 0
+                    ? start
+                    : -1;
+            int current = start;
+            int detectInterval = Math.Max(1, interval);
+            while (true)
+            {
+                long nextLong = ((long)current / detectInterval + 1L) * detectInterval;
+                if (nextLong >= decodedEndExclusive || nextLong > int.MaxValue)
+                    break;
+
+                int next = (int)nextLong;
+                if (!results.ContainsKey(next))
+                    break;
+
+                lastContiguousAnchor = next;
+                if (results.TryGetValue(next, out var result) && result.Bounds.Length > 0)
+                    lastPositiveAnchor = next;
+                current = next;
+            }
+
+            return lastPositiveAnchor >= start
+                ? lastPositiveAnchor
+                : lastContiguousAnchor;
+        }
+
         private void FinalizeRunAfterDecode(
             FfFrameExtractor extractor,
             string videoPath,
@@ -1716,22 +1844,41 @@ namespace FaceShield.Services.Analysis
             string decodeError = string.IsNullOrWhiteSpace(extractor.SequentialDecodeError)
                 ? "none"
                 : extractor.SequentialDecodeError;
+            bool reachedDecoderEof = extractor.SequentialReachedEndOfStream;
+            int effectiveTotalFrames = ResolveEffectiveTotalFrames(
+                totalFrames,
+                LastRunSummary.StartFrameIndex,
+                LastRunSummary.DecodedFrames,
+                reachedDecoderEof,
+                decodeCancelled,
+                decodeError);
             LastRunSummary = LastRunSummary with
             {
-                ReachedDecoderEof = extractor.SequentialReachedEndOfStream,
+                TotalFrames = effectiveTotalFrames,
+                ReachedDecoderEof = reachedDecoderEof,
                 DecodeCancelled = decodeCancelled,
                 DecodeError = decodeError
             };
 
-            int expectedFrames = Math.Max(0, totalFrames - LastRunSummary.StartFrameIndex);
+            if (reachedDecoderEof && effectiveTotalFrames != totalFrames)
+            {
+                Debug.WriteLine(
+                    $"[AutoRunFrameCountAdjusted] runId={LastRunSummary.RunId ?? "n/a"}, reported={totalFrames}, actual={effectiveTotalFrames}, startFrame={LastRunSummary.StartFrameIndex}, decoded={LastRunSummary.DecodedFrames}");
+            }
+
+            int expectedFrames = Math.Max(0, effectiveTotalFrames - LastRunSummary.StartFrameIndex);
+            bool resumeStartBeyondEof = LastRunSummary.StartFrameIndex > 0 &&
+                LastRunSummary.DecodedFrames == 0 &&
+                LastRunSummary.ReachedDecoderEof;
             bool complete = LastRunSummary.ReachedDecoderEof &&
                 !LastRunSummary.DecodeCancelled &&
                 string.Equals(LastRunSummary.DecodeError, "none", StringComparison.OrdinalIgnoreCase) &&
+                !resumeStartBeyondEof &&
                 LastRunSummary.DecodedFrames >= expectedFrames;
             if (!complete)
             {
                 string incompleteLine =
-                    $"[AutoRunDecodeIncomplete] runId={LastRunSummary.RunId ?? "n/a"}, totalFrames={totalFrames}, startFrame={LastRunSummary.StartFrameIndex}, expected={expectedFrames}, decoded={LastRunSummary.DecodedFrames}, eof={LastRunSummary.ReachedDecoderEof.ToString().ToLowerInvariant()}, cancelled={LastRunSummary.DecodeCancelled.ToString().ToLowerInvariant()}, error={LastRunSummary.DecodeError}";
+                    $"[AutoRunDecodeIncomplete] runId={LastRunSummary.RunId ?? "n/a"}, totalFrames={effectiveTotalFrames}, reportedTotalFrames={totalFrames}, startFrame={LastRunSummary.StartFrameIndex}, expected={expectedFrames}, decoded={LastRunSummary.DecodedFrames}, eof={LastRunSummary.ReachedDecoderEof.ToString().ToLowerInvariant()}, cancelled={LastRunSummary.DecodeCancelled.ToString().ToLowerInvariant()}, error={LastRunSummary.DecodeError}";
                 Debug.WriteLine(incompleteLine);
                 RunMetricsLog.AppendRunLines(
                     LastRunSummary.RunId,
@@ -1741,8 +1888,30 @@ namespace FaceShield.Services.Analysis
             }
 
             ApplyPostProcessResultToRunSummary(
-                RunAutoPostProcessIfNeeded(videoPath, totalFrames, ct));
+                RunAutoPostProcessIfNeeded(videoPath, effectiveTotalFrames, ct));
             progress?.Report(100);
+        }
+
+        private static int ResolveEffectiveTotalFrames(
+            int reportedTotalFrames,
+            int startFrameIndex,
+            int decodedFrames,
+            bool reachedDecoderEof,
+            bool decodeCancelled,
+            string? decodeError)
+        {
+            bool cleanEof = reachedDecoderEof &&
+                !decodeCancelled &&
+                string.Equals(decodeError, "none", StringComparison.OrdinalIgnoreCase);
+            if (!cleanEof)
+                return Math.Max(0, reportedTotalFrames);
+            if (startFrameIndex > 0 && decodedFrames == 0)
+                return Math.Max(0, reportedTotalFrames);
+
+            long actualEndExclusive = (long)Math.Max(0, startFrameIndex) + Math.Max(0, decodedFrames);
+            return actualEndExclusive >= int.MaxValue
+                ? int.MaxValue
+                : (int)actualEndExclusive;
         }
 
         private AutoMaskPostProcessResult RunAutoPostProcessIfNeeded(string videoPath, int totalFrames, CancellationToken ct)
@@ -2088,6 +2257,16 @@ namespace FaceShield.Services.Analysis
                     continue;
                 if (!results.TryGetValue(key, out var current) || current.Bounds.Length == 0)
                     continue;
+
+                if (!_maskProvider.HasEntry(key))
+                {
+                    _maskProvider.SetFaceRects(
+                        key,
+                        current.Bounds,
+                        current.Size,
+                        current.MinConfidence,
+                        current.Confidences);
+                }
 
                 DetectionResult? nextPositive = FindNextPositiveResult(results, keys, i + 1, endExclusive, key, maxBridgeFrames);
                     bool canBridge = nextPositive != null &&

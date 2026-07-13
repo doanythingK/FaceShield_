@@ -8,6 +8,7 @@ $project = Join-Path $work "AutoResumeMaskResetHarness.csproj"
 $program = Join-Path $work "Program.cs"
 $providerPath = Join-Path $repo "Services\Video\FrameMaskProvider.cs"
 $workspacePath = Join-Path $repo "ViewModels\Pages\WorkspaceViewModel.cs"
+$frameListPath = Join-Path $repo "ViewModels\Workspace\FrameListViewModel.cs"
 $stateStorePath = Join-Path $repo "Services\Workspace\WorkspaceStateStore.cs"
 $yoloDetectorPath = Join-Path $repo "Services\FaceDetection\YoloFaceOnnxDetector.cs"
 $generatorPath = Join-Path $repo "Services\Analysis\AutoMaskGenerator.cs"
@@ -26,7 +27,7 @@ function Assert-Contains {
     Write-Host "[AutoResumeMaskResetVerify] pass $Name"
 }
 
-foreach ($requiredPath in @($providerPath, $workspacePath, $stateStorePath, $yoloDetectorPath, $generatorPath)) {
+foreach ($requiredPath in @($providerPath, $workspacePath, $frameListPath, $stateStorePath, $yoloDetectorPath, $generatorPath)) {
     if (-not (Test-Path $requiredPath)) {
         throw "Required source not found: $requiredPath"
     }
@@ -204,11 +205,28 @@ if (!riskIntent.Contains("secondaryGpu=False", StringComparison.Ordinal) ||
 {
     throw new InvalidOperationException("YOLO risk-cascade intent did not use the effective secondary detector options.");
 }
-if (!RequiresCompleteTimeline(riskOptions, riskFactory) ||
-    RequiresCompleteTimeline(autoOptions, preciseA) ||
-    RequiresCompleteTimeline(autoOptions, riskFactory))
+var sparseResumeOptions = new AutoMaskOptions
 {
-    throw new InvalidOperationException("Complete-timeline policy did not isolate YOLO risk-cascade runs.");
+    ProcessingMode = AutoMaskProcessingMode.Tracked,
+    DetectEveryNFrames = 5
+}.ResolveProcessingMode();
+var legacyYoloMissRecoveryOptions = new AutoMaskOptions
+{
+    ProcessingMode = AutoMaskProcessingMode.Legacy,
+    UseTracking = true,
+    DetectEveryNFrames = 5,
+    FilterProfile = FaceFilterProfile.Yolo
+};
+if (!RequiresCompleteTimeline(riskOptions, riskFactory) ||
+    !RequiresCompleteTimeline(autoOptions, preciseA) ||
+    !RequiresCompleteTimeline(autoOptions, riskFactory) ||
+    RequiresCompleteTimeline(sparseResumeOptions, preciseA) ||
+    !RequiresCompleteTimeline(legacyYoloMissRecoveryOptions, riskFactory) ||
+    !AutoMaskGenerator.CanResumeFromFrame(sparseResumeOptions, 5) ||
+    AutoMaskGenerator.CanResumeFromFrame(sparseResumeOptions, 7) ||
+    AutoMaskGenerator.CanResumeFromFrame(autoOptions, 5))
+{
+    throw new InvalidOperationException("Complete-timeline policy did not isolate sparse materialized-prefix resumes.");
 }
 
 CultureInfo originalCulture = CultureInfo.CurrentCulture;
@@ -346,6 +364,7 @@ Console.WriteLine(
 
     $provider = Get-Content -Raw -Path $providerPath
     $workspace = Get-Content -Raw -Path $workspacePath
+    $frameList = Get-Content -Raw -Path $frameListPath
     $stateStore = Get-Content -Raw -Path $stateStorePath
     $yoloDetector = Get-Content -Raw -Path $yoloDetectorPath
     $generator = Get-Content -Raw -Path $generatorPath
@@ -360,6 +379,9 @@ Console.WriteLine(
     Assert-Contains "workspace stores execution signature" $workspace "_autoExecutionSignature"
     Assert-Contains "workspace gates prompt by effective intent signature" $workspace "IsAutoResumeSignatureCurrent(BuildAutoRunIntentSignature"
     Assert-Contains "workspace hides resume prompt for full-timeline runs" $workspace "!RequiresCompleteAutoTimeline(_autoOptions, _detectorFactoryOptions)"
+    Assert-Contains "workspace hides unsafe cadence resumes" $workspace "AutoMaskGenerator.CanResumeFromFrame(_autoOptions, _autoResumeIndex)"
+    Assert-Contains "workspace synchronizes decoded timeline" $workspace "SynchronizeFrameListWithDecodedTimeline(generator.LastRunSummary);"
+    Assert-Contains "frame list accepts actual decoder total" $frameList "public void UpdateActualTotalFrames(int actualTotalFrames)"
     Assert-Contains "workspace checks run and execution before resume" $workspace "ResetStaleAutoResumeIfRunChanged(runSignature, executionSignature);"
     Assert-Contains "workspace signs actual provider" $workspace "GetDetectorExecutionProviderLabel(detector)"
     Assert-Contains "workspace signs scrfd options" $workspace "AppendScrfdSignature"
