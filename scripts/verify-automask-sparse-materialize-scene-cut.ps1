@@ -211,6 +211,7 @@ var faceOnnxGenerator = new AutoMaskGenerator(
     faceOnnxProvider,
     new AutoMaskOptions
     {
+        ProcessingMode = AutoMaskProcessingMode.Tracked,
         UseTracking = true,
         DetectEveryNFrames = 5,
         FilterProfile = FaceFilterProfile.FaceOnnx
@@ -220,12 +221,34 @@ object faceOnnxResults = CreateResults(
     CreateDetection(detectionType, 0, face, size, conf, dark),
     CreateDetection(detectionType, 5, Array.Empty<Rect>(), size, Array.Empty<float>(), bright));
 var faceOnnx = InvokeMaterialize(faceOnnxGenerator, faceOnnxResults);
-if (faceOnnx.interpolated != 4 || faceOnnx.sceneCutStops != 0)
-    throw new InvalidOperationException($"Expected FaceONNX profile to keep existing sparse materialization, got interpolated={faceOnnx.interpolated} sceneCutStops={faceOnnx.sceneCutStops}.");
-if (faceOnnx.sceneCutTransitions.Length != 0)
-    throw new InvalidOperationException($"Expected FaceONNX sceneCutTransitions to be empty, got {faceOnnx.sceneCutTransitions}.");
+if (faceOnnx.interpolated != 0 || faceOnnx.sceneCutStops != 1)
+    throw new InvalidOperationException($"Expected tracked FaceONNX to stop at the hard cut, got interpolated={faceOnnx.interpolated} sceneCutStops={faceOnnx.sceneCutStops}.");
+if (faceOnnx.sceneCutTransitions != "0->5")
+    throw new InvalidOperationException($"Expected tracked FaceONNX sceneCutTransitions=0->5, got {faceOnnx.sceneCutTransitions}.");
+AssertNoMaterializedFaces(faceOnnxProvider, 1, 5);
 
-Console.WriteLine("[AutoMaskSparseMaterializeSceneCutVerify] yoloHardCutInterpolated=0, yoloSceneCutStops=1, yoloSceneCutTransitions=0->5, cutBeforePositiveInterpolated=0, sameSceneInterpolated=4, farNextInterpolated=4, faceOnnxInterpolated=4");
+var legacyFaceOnnxProvider = new FrameMaskProvider();
+var legacyFaceOnnxGenerator = new AutoMaskGenerator(
+    new DummyDetector(),
+    legacyFaceOnnxProvider,
+    new AutoMaskOptions
+    {
+        ProcessingMode = AutoMaskProcessingMode.Legacy,
+        UseTracking = true,
+        DetectEveryNFrames = 5,
+        FilterProfile = FaceFilterProfile.FaceOnnx
+    });
+object legacyFaceOnnxResults = CreateResults(
+    detectionType,
+    CreateDetection(detectionType, 0, face, size, conf, Array.Empty<double>()),
+    CreateDetection(detectionType, 5, Array.Empty<Rect>(), size, Array.Empty<float>(), Array.Empty<double>()));
+var legacyFaceOnnx = InvokeMaterialize(legacyFaceOnnxGenerator, legacyFaceOnnxResults);
+if (legacyFaceOnnx.interpolated != 4 || legacyFaceOnnx.sceneCutStops != 0)
+    throw new InvalidOperationException($"Expected explicit Legacy FaceONNX to keep sparse materialization, got interpolated={legacyFaceOnnx.interpolated} sceneCutStops={legacyFaceOnnx.sceneCutStops}.");
+if (legacyFaceOnnx.sceneCutTransitions.Length != 0)
+    throw new InvalidOperationException($"Expected Legacy FaceONNX sceneCutTransitions to be empty, got {legacyFaceOnnx.sceneCutTransitions}.");
+
+Console.WriteLine("[AutoMaskSparseMaterializeSceneCutVerify] yoloHardCutInterpolated=0, yoloSceneCutStops=1, yoloSceneCutTransitions=0->5, cutBeforePositiveInterpolated=0, sameSceneInterpolated=4, farNextInterpolated=4, trackedFaceOnnxInterpolated=0, legacyFaceOnnxInterpolated=4");
 
 internal sealed class DummyDetector : IFaceDetector
 {
@@ -239,3 +262,6 @@ internal sealed class DummyDetector : IFaceDetector
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
