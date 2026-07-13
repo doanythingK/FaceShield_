@@ -494,6 +494,7 @@ $sourceVideos = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "co
 $outputVideos = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "video" })
 $sourceAudios = @($sourceProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
 $outputAudios = @($outputProbe.streams | Where-Object { (Get-PropertyText $_ "codec_type") -eq "audio" })
+$preservedStreamTypes = @("subtitle", "data", "attachment")
 $sourceChapters = @($sourceProbe.chapters)
 $outputChapters = @($outputProbe.chapters)
 
@@ -501,6 +502,32 @@ Add-Check "video-stream-count" ($sourceVideos.Count -eq $outputVideos.Count -and
     ([string]$sourceVideos.Count) ([string]$outputVideos.Count) "equal and at least one"
 Add-Check "audio-stream-count" ($sourceAudios.Count -eq $outputAudios.Count) `
     ([string]$sourceAudios.Count) ([string]$outputAudios.Count) "equal"
+foreach ($streamType in $preservedStreamTypes) {
+    $sourceTypedStreams = @($sourceProbe.streams | Where-Object {
+        (Get-PropertyText $_ "codec_type") -eq $streamType
+    })
+    $outputTypedStreams = @($outputProbe.streams | Where-Object {
+        (Get-PropertyText $_ "codec_type") -eq $streamType
+    })
+    Add-Check "$streamType-stream-count" ($sourceTypedStreams.Count -eq $outputTypedStreams.Count) `
+        ([string]$sourceTypedStreams.Count) ([string]$outputTypedStreams.Count) "equal"
+
+    $typedPairCount = [Math]::Min($sourceTypedStreams.Count, $outputTypedStreams.Count)
+    for ($i = 0; $i -lt $typedPairCount; $i++) {
+        $sourceCodec = Get-PropertyText $sourceTypedStreams[$i] "codec_name" "unknown"
+        $outputCodec = Get-PropertyText $outputTypedStreams[$i] "codec_name" "unknown"
+        Add-Check "$streamType[$i]-codec" ($sourceCodec -eq $outputCodec) `
+            $sourceCodec $outputCodec "equal (stream copy)"
+    }
+}
+
+$additionalVideoPairCount = [Math]::Min($sourceVideos.Count, $outputVideos.Count)
+for ($i = 1; $i -lt $additionalVideoPairCount; $i++) {
+    $sourceCodec = Get-PropertyText $sourceVideos[$i] "codec_name" "unknown"
+    $outputCodec = Get-PropertyText $outputVideos[$i] "codec_name" "unknown"
+    Add-Check "video[$i]-codec" ($sourceCodec -eq $outputCodec) `
+        $sourceCodec $outputCodec "equal (additional video stream copy)"
+}
 
 foreach ($tagName in @(
     "title", "artist", "album", "album_artist", "composer", "comment", "description",

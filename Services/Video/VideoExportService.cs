@@ -616,7 +616,7 @@ public unsafe sealed class VideoExportService
             bool audioCopy = false;
             bool audioReencode = false;
             long audioPts = 0;
-            var audioCopyStreams = new Dictionary<int, AudioCopyStreamState>();
+            var copiedStreams = new Dictionary<int, StreamCopyState>();
             if (inAudioStream != null)
             {
                 int supported = outFmt->oformat != null
@@ -635,9 +635,9 @@ public unsafe sealed class VideoExportService
                         outAudioStream->codecpar->codec_tag = 0;
                         outAudioStream->time_base = inAudioStream->time_base;
                         audioCopy = true;
-                        audioCopyStreams.Add(
+                        copiedStreams.Add(
                             audioStreamIndex,
-                            new AudioCopyStreamState(audioStreamIndex, inAudioStream, outAudioStream));
+                            new StreamCopyState(audioStreamIndex, inAudioStream, outAudioStream));
                     }
                 }
                 else if (!forceAudioTranscode)
@@ -690,9 +690,9 @@ public unsafe sealed class VideoExportService
                     extraOutputStream->codecpar->codec_tag = 0;
                     extraOutputStream->time_base = extraInputStream->time_base;
                     CopyStreamPresentationMetadata(extraInputStream, extraOutputStream);
-                    audioCopyStreams.Add(
+                    copiedStreams.Add(
                         extraAudioStreamIndex,
-                        new AudioCopyStreamState(extraAudioStreamIndex, extraInputStream, extraOutputStream));
+                        new StreamCopyState(extraAudioStreamIndex, extraInputStream, extraOutputStream));
                 }
 
                 if (audioStreamIndices.Count > 1)
@@ -852,6 +852,46 @@ public unsafe sealed class VideoExportService
             if (hybridCopyVideoFrameStep <= 0)
                 hybridCopyVideoFrameStep = encodedPacketFrameStep;
 
+            for (int inputStreamIndex = 0; inputStreamIndex < inFmt->nb_streams; inputStreamIndex++)
+            {
+                if (inputStreamIndex == videoStreamIndex || audioStreamIndices.Contains(inputStreamIndex))
+                    continue;
+
+                AVStream* auxiliaryInputStream = inFmt->streams[inputStreamIndex];
+                int supported = outFmt->oformat != null
+                    ? ffmpeg.avformat_query_codec(
+                        outFmt->oformat,
+                        auxiliaryInputStream->codecpar->codec_id,
+                        0)
+                    : 0;
+                if (supported <= 0)
+                {
+                    string mediaType = GetMediaTypeName(auxiliaryInputStream->codecpar->codec_type);
+                    string codec = GetCodecName(auxiliaryInputStream->codecpar->codec_id);
+                    throw new InvalidOperationException(
+                        $"출력 컨테이너에 {mediaType} 스트림 {inputStreamIndex + 1}의 " +
+                        $"원본 코덱({codec})을 보존할 수 없습니다.");
+                }
+
+                AVStream* auxiliaryOutputStream = ffmpeg.avformat_new_stream(outFmt, null);
+                if (auxiliaryOutputStream == null)
+                {
+                    string mediaType = GetMediaTypeName(auxiliaryInputStream->codecpar->codec_type);
+                    throw new InvalidOperationException(
+                        $"{mediaType} 스트림 {inputStreamIndex + 1}의 출력 스트림을 생성하지 못했습니다.");
+                }
+
+                Throw(ffmpeg.avcodec_parameters_copy(
+                    auxiliaryOutputStream->codecpar,
+                    auxiliaryInputStream->codecpar));
+                auxiliaryOutputStream->codecpar->codec_tag = 0;
+                auxiliaryOutputStream->time_base = auxiliaryInputStream->time_base;
+                CopyStreamPresentationMetadata(auxiliaryInputStream, auxiliaryOutputStream);
+                copiedStreams.Add(
+                    inputStreamIndex,
+                    new StreamCopyState(inputStreamIndex, auxiliaryInputStream, auxiliaryOutputStream));
+            }
+
             if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
                 Throw(ffmpeg.avio_open(&outFmt->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE));
 
@@ -919,19 +959,20 @@ public unsafe sealed class VideoExportService
 
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
-                if (audioCopyStreams.TryGetValue(pkt->stream_index, out AudioCopyStreamState? audioCopyState))
+                if (copiedStreams.TryGetValue(pkt->stream_index, out StreamCopyState? copyState))
                 {
                     ffmpeg.av_packet_rescale_ts(
                         pkt,
-                        audioCopyState.InputStream->time_base,
-                        audioCopyState.OutputStream->time_base);
+                        copyState.InputStream->time_base,
+                        copyState.OutputStream->time_base);
                     _ = NormalizeCopiedPacketTimestamps(
                         pkt,
-                        ref audioCopyState.LastPacketPts,
-                        ref audioCopyState.HasLastPacketPts,
-                        ref audioCopyState.LastPacketDts,
-                        ref audioCopyState.HasLastPacketDts);
-                    pkt->stream_index = audioCopyState.OutputStream->index;
+                        ref copyState.LastPacketPts,
+                        ref copyState.HasLastPacketPts,
+                        ref copyState.LastPacketDts,
+                        ref copyState.HasLastPacketDts);
+                    pkt->stream_index = copyState.OutputStream->index;
+                    pkt->pos = -1;
                     Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
                     ffmpeg.av_packet_unref(pkt);
                     continue;
@@ -1842,7 +1883,7 @@ public unsafe sealed class VideoExportService
         public int PacketTimestampAdjustments { get; set; }
     }
 
-    private sealed class AudioCopyStreamState
+    private sealed class StreamCopyState
     {
         public int InputStreamIndex { get; }
         public AVStream* InputStream { get; }
@@ -1852,7 +1893,7 @@ public unsafe sealed class VideoExportService
         public long LastPacketDts = -1;
         public bool HasLastPacketDts;
 
-        public AudioCopyStreamState(
+        public StreamCopyState(
             int inputStreamIndex,
             AVStream* inputStream,
             AVStream* outputStream)
@@ -4509,6 +4550,18 @@ public unsafe sealed class VideoExportService
             return codecId.ToString();
 
         return name;
+    }
+
+    private static string GetMediaTypeName(AVMediaType mediaType)
+    {
+        return mediaType switch
+        {
+            AVMediaType.AVMEDIA_TYPE_VIDEO => "추가 영상",
+            AVMediaType.AVMEDIA_TYPE_SUBTITLE => "자막",
+            AVMediaType.AVMEDIA_TYPE_DATA => "데이터",
+            AVMediaType.AVMEDIA_TYPE_ATTACHMENT => "첨부",
+            _ => "보조"
+        };
     }
 
     private static unsafe string GetOutputFormatName(AVFormatContext* outFmt)
