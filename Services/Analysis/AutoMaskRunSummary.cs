@@ -26,7 +26,7 @@ namespace FaceShield.Services.Analysis
         string? RunId,
         string? DetectorName)
     {
-        public AutoMaskProcessingMode ProcessingMode { get; init; } = AutoMaskProcessingMode.Legacy;
+        public AutoMaskProcessingMode ProcessingMode { get; init; } = AutoMaskProcessingMode.Tracked;
         public bool EnablePostProcessing { get; init; } = false;
         public bool EnableRoiPostProcess { get; init; } = false;
         public bool EnableYoloWeakIsolatedCleanup { get; init; } = false;

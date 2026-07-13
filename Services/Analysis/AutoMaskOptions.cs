@@ -30,9 +30,9 @@ namespace FaceShield.Services.Analysis
     public sealed class AutoMaskOptions
     {
         /// <summary>
-        /// 분석 단계의 명시 모드. 기본값 Legacy는 기존 동작을 변경하지 않습니다.
+        /// 분석 단계의 명시 모드. 기본값 Tracked는 고급 후처리 없이 짧은 검출 누락만 연결합니다.
         /// </summary>
-        public AutoMaskProcessingMode ProcessingMode { get; init; } = AutoMaskProcessingMode.Legacy;
+        public AutoMaskProcessingMode ProcessingMode { get; init; } = AutoMaskProcessingMode.Tracked;
 
         /// <summary>
         /// 1.0 = 원본 해상도, 0.5 = 가로/세로 절반

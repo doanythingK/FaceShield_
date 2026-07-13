@@ -40,10 +40,37 @@ var resolver = typeof(HomePageViewModel).GetMethod(
 
 AssertResolved("missing", 0, null, AutoMaskProcessingMode.Tracked);
 AssertResolved("v9-raw", 9, (int)AutoMaskProcessingMode.Raw, AutoMaskProcessingMode.Tracked);
-AssertResolved("v9-legacy", 9, (int)AutoMaskProcessingMode.Legacy, AutoMaskProcessingMode.Legacy);
+AssertResolved("v9-legacy", 9, (int)AutoMaskProcessingMode.Legacy, AutoMaskProcessingMode.Tracked);
 AssertResolved("v10-raw", 10, (int)AutoMaskProcessingMode.Raw, AutoMaskProcessingMode.Raw);
 AssertResolved("v10-tracked", 10, (int)AutoMaskProcessingMode.Tracked, AutoMaskProcessingMode.Tracked);
+AssertResolved("v10-legacy", 10, (int)AutoMaskProcessingMode.Legacy, AutoMaskProcessingMode.Legacy);
 AssertResolved("invalid", 10, 999, AutoMaskProcessingMode.Tracked);
+
+var defaultOptions = new AutoMaskOptions();
+if (defaultOptions.ProcessingMode != AutoMaskProcessingMode.Tracked)
+    throw new InvalidOperationException($"Default mode resolved to {defaultOptions.ProcessingMode}.");
+
+var resolvedDefault = defaultOptions.ResolveProcessingMode();
+if (!resolvedDefault.UseTracking ||
+    resolvedDefault.EnablePostProcessing ||
+    resolvedDefault.EnableRoiPostProcess ||
+    resolvedDefault.EnableYoloWeakIsolatedCleanup ||
+    resolvedDefault.EnableYoloGapFill ||
+    resolvedDefault.EnableYoloSceneCutCarryCleanup ||
+    resolvedDefault.EnableYoloTemporalSmoothing ||
+    resolvedDefault.EnableYoloRiskCascade ||
+    resolvedDefault.DetectEveryNFrames != 1)
+{
+    throw new InvalidOperationException("Tracked default invariants were not applied.");
+}
+
+var explicitLegacy = new AutoMaskOptions
+{
+    ProcessingMode = AutoMaskProcessingMode.Legacy,
+    EnablePostProcessing = true
+};
+if (!ReferenceEquals(explicitLegacy, explicitLegacy.ResolveProcessingMode()))
+    throw new InvalidOperationException("Explicit Legacy options were not preserved.");
 
 var missingState = JsonSerializer.Deserialize<AutoSettingsState>("{}")
     ?? throw new InvalidOperationException("Missing settings JSON did not deserialize.");
@@ -52,7 +79,8 @@ if (missingState.ProcessingMode != (int)AutoMaskProcessingMode.Tracked)
 
 Console.WriteLine(
     "[AutoProcessingModeMigrationVerify] PASS " +
-    "missing=Tracked v9Raw=Tracked v9Legacy=Legacy v10Raw=Raw invalid=Tracked jsonMissing=Tracked");
+    "missing=Tracked v9Raw=Tracked v9Legacy=Tracked v10Raw=Raw v10Legacy=Legacy " +
+    "invalid=Tracked jsonMissing=Tracked defaultInvariants=Tracked");
 
 void AssertResolved(
     string name,

@@ -1183,7 +1183,7 @@ namespace FaceShield.ViewModels.Pages
             int? savedValue)
         {
             int value = savedValue ?? (int)AutoMaskProcessingMode.Tracked;
-            if (settingsVersion < CurrentAutoSettingsVersion && value == (int)AutoMaskProcessingMode.Raw)
+            if (settingsVersion < CurrentAutoSettingsVersion && (value == (int)AutoMaskProcessingMode.Legacy || value == (int)AutoMaskProcessingMode.Raw))
                 value = (int)AutoMaskProcessingMode.Tracked;
 
             return Enum.IsDefined(typeof(AutoMaskProcessingMode), value)
