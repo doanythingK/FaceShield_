@@ -2657,22 +2657,24 @@ public unsafe sealed class VideoExportService
                 : frame->pts)
             : ffmpeg.AV_NOPTS_VALUE;
 
+        long normalizedPts;
         if (rawPts == ffmpeg.AV_NOPTS_VALUE)
         {
-            rawPts = hasLastPts
+            normalizedPts = hasLastPts
                 ? (lastPts + frameStep)
-                : Math.Max(0, fallbackFrameIndex * frameStep);
+                : fallbackFrameIndex * frameStep;
         }
-
-        if (rawPts < 0)
-            rawPts = 0;
-
-        long normalizedPts = rawPts;
-        if (sourceTimeBase.num > 0 && sourceTimeBase.den > 0 && targetTimeBase.num > 0 && targetTimeBase.den > 0)
-            normalizedPts = ffmpeg.av_rescale_q(rawPts, sourceTimeBase, targetTimeBase);
-
-        if (normalizedPts < 0)
-            normalizedPts = 0;
+        else
+        {
+            normalizedPts = rawPts;
+            if (sourceTimeBase.num > 0 &&
+                sourceTimeBase.den > 0 &&
+                targetTimeBase.num > 0 &&
+                targetTimeBase.den > 0)
+            {
+                normalizedPts = ffmpeg.av_rescale_q(rawPts, sourceTimeBase, targetTimeBase);
+            }
+        }
 
         if (!hasLastPts)
         {
