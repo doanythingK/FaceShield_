@@ -563,6 +563,12 @@ public unsafe sealed class VideoExportService
                 if (enc == null)
                     throw new InvalidOperationException($"대체 인코더 초기화 실패: {fallbackError}");
             }
+            else if (encoder != null && encoder->id != inputCodecId)
+            {
+                exportNotice =
+                    $"10비트 원본 품질과 내보내기 속도를 보존하기 위해 " +
+                    $"{GetEncoderName(encoder)} 하드웨어 인코더를 사용합니다.";
+            }
 
             AVStream* outAudioStream = null;
             string? audioNotice = null;
@@ -1638,7 +1644,7 @@ public unsafe sealed class VideoExportService
                 SourceBitDepth: GetPixelFormatBitDepth(dec->pix_fmt),
                 OutputBitDepth: GetPixelFormatBitDepth(enc->pix_fmt),
                 SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, dec),
-                TargetVideoBitrate: enc->bit_rate,
+                TargetVideoBitrate: ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
                 NativeYuvBlurFrames: _nativeYuvBlurFrames);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
@@ -3051,15 +3057,34 @@ public unsafe sealed class VideoExportService
             }
         }
 
+        bool allowTenBitHevcHardwareFallback =
+            !forceSoftwareEncoder &&
+            codecId == AVCodecID.AV_CODEC_ID_H264 &&
+            GetPixelFormatBitDepth(dec->pix_fmt) > 8;
         var attemptedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var candidateName in GetPreferredEncoderNames(codecId, forceSoftwareEncoder))
+        foreach (var candidateName in GetEncoderCandidateNames(
+                     codecId,
+                     forceSoftwareEncoder,
+                     allowTenBitHevcHardwareFallback))
         {
             if (string.IsNullOrWhiteSpace(candidateName) || !attemptedNames.Add(candidateName))
                 continue;
 
             AVCodec* candidate = ffmpeg.avcodec_find_encoder_by_name(candidateName);
-            if (candidate == null || candidate->id != codecId)
+            if (candidate == null ||
+                (candidate->id != codecId &&
+                 !(allowTenBitHevcHardwareFallback && candidate->id == AVCodecID.AV_CODEC_ID_HEVC)))
                 continue;
+
+            if (outFmt != null && outFmt->oformat != null &&
+                ffmpeg.avformat_query_codec(outFmt->oformat, candidate->id, 0) <= 0)
+            {
+                error = AppendEncoderError(
+                    error,
+                    candidateName,
+                    $"출력 컨테이너({GetOutputFormatName(outFmt)})가 코덱({GetCodecName(candidate->id)})을 지원하지 않습니다.");
+                continue;
+            }
 
             var ctx = TryOpenEncoderContext(candidate, inStream, dec, outFmt, out var openError, forceSafeEncoding);
             if (ctx != null)
@@ -3068,6 +3093,9 @@ public unsafe sealed class VideoExportService
                 return ctx;
             }
 
+            Debug.WriteLine(
+                $"[ExportEncoderCandidate] name={candidateName}, codec={GetCodecName(candidate->id)}, " +
+                $"opened=false, error={openError ?? "unknown"}");
             error = AppendEncoderError(error, candidateName, openError);
         }
 
@@ -3156,10 +3184,13 @@ public unsafe sealed class VideoExportService
             ctx->rc_buffer_size = ClampBitrate((long)targetBitrate * 4L);
         }
 
-        if (inStream->codecpar->profile != -99)
-            ctx->profile = inStream->codecpar->profile;
-        if (inStream->codecpar->level > 0)
-            ctx->level = inStream->codecpar->level;
+        if (encoder->id == inStream->codecpar->codec_id)
+        {
+            if (inStream->codecpar->profile != -99)
+                ctx->profile = inStream->codecpar->profile;
+            if (inStream->codecpar->level > 0)
+                ctx->level = inStream->codecpar->level;
+        }
 
         ctx->sample_aspect_ratio = inStream->sample_aspect_ratio;
         ctx->color_range = dec->color_range;
@@ -3254,6 +3285,43 @@ public unsafe sealed class VideoExportService
         }
 
         return Array.Empty<string>();
+    }
+
+    private static IReadOnlyList<string> GetEncoderCandidateNames(
+        AVCodecID codecId,
+        bool forceSoftwareOnly,
+        bool allowTenBitHevcHardwareFallback)
+    {
+        IReadOnlyList<string> primary = GetPreferredEncoderNames(codecId, forceSoftwareOnly);
+        if (!allowTenBitHevcHardwareFallback)
+            return primary;
+
+        var candidates = new List<string>(primary.Count + 4);
+        foreach (string name in primary)
+        {
+            if (!name.Contains("x264", StringComparison.OrdinalIgnoreCase) &&
+                !name.Contains("x265", StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add(name);
+            }
+        }
+
+        foreach (string name in GetPreferredEncoderNames(AVCodecID.AV_CODEC_ID_HEVC, forceSoftwareOnly: false))
+        {
+            if (!name.Contains("x265", StringComparison.OrdinalIgnoreCase))
+                candidates.Add(name);
+        }
+
+        foreach (string name in primary)
+        {
+            if (name.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("x265", StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add(name);
+            }
+        }
+
+        return candidates;
     }
 
     private static unsafe AVCodec* SelectFallbackEncoder(AVCodecID codecId, bool forceSoftwareOnly)
@@ -3400,7 +3468,7 @@ public unsafe sealed class VideoExportService
             TrySetEncoderOption(ctx, "preset", "p6");
             TrySetEncoderOption(ctx, "tune", "hq");
             TrySetEncoderOption(ctx, "rc", "vbr");
-            TrySetEncoderOption(ctx, "cq", isHevcFamily ? "14" : "12");
+            TrySetEncoderOption(ctx, "cq", "12");
             TrySetEncoderOption(ctx, "multipass", "qres");
             TrySetEncoderOption(ctx, "spatial_aq", "1");
             TrySetEncoderOption(ctx, "temporal_aq", "1");
@@ -3444,9 +3512,7 @@ public unsafe sealed class VideoExportService
         if (name.Contains("x265", StringComparison.OrdinalIgnoreCase))
             return forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
         if (name.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
-            return name.Contains("hevc", StringComparison.OrdinalIgnoreCase)
-                ? "p6-hq-vbr-cq14"
-                : "p6-hq-vbr-cq12";
+            return "p6-hq-vbr-cq12";
         if (name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase))
             return "quality-vbr-realtime-off";
         return forceSafeEncoding ? "quality-bounded-safe" : "quality-bounded";
@@ -3517,6 +3583,23 @@ public unsafe sealed class VideoExportService
         if (decoder != null && decoder->bit_rate > 0)
             return decoder->bit_rate;
         return 0;
+    }
+
+    private static unsafe long ResolveTargetVideoBitrateForSummary(
+        AVCodec* encoder,
+        AVStream* stream,
+        AVCodecContext* decoder,
+        AVCodecContext* encoderContext)
+    {
+        if (encoderContext != null && encoderContext->bit_rate > 0)
+            return encoderContext->bit_rate;
+        if (!IsHardwareEncoder(encoder))
+            return 0;
+
+        long sourceBitrate = ResolveSourceVideoBitrate(stream, decoder);
+        return sourceBitrate > 0
+            ? ClampBitrate(sourceBitrate * 3L / 2L)
+            : 0;
     }
 
     private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)
