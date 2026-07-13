@@ -32,7 +32,6 @@ namespace FaceShield.ViewModels.Pages
         private const int MaxBlurRadiusValue = 40;
         private const int DefaultAutoDetectEveryNFrames = 1;
         private const int CurrentAutoSettingsVersion = 10;
-        private const int BalancedDownscaleQualitySettingsVersion = 10;
         private const double DefaultYolo5FaceObjectnessThreshold = 0.12;
         private const double DefaultYolo5FaceConfidenceThreshold = 0.18;
         private const double DefaultYoloNmsThreshold = 0.45;
@@ -1116,8 +1115,7 @@ namespace FaceShield.ViewModels.Pages
                     DownscaleQuality = ResolveSavedYoloDownscaleQuality(
                         saved.Yolo5DownscaleQuality,
                         useLegacyActiveProfile ? saved.DownscaleQuality : null,
-                        defaults.DownscaleQuality,
-                        saved.SettingsVersion < BalancedDownscaleQualitySettingsVersion),
+                        defaults.DownscaleQuality),
                     AutoTrackingEnabled = saved.Yolo5AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
                     AutoDetectEveryNFrames = Math.Max(1, saved.Yolo5AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
                     ParallelSessionCount = Math.Max(1, saved.Yolo5ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
@@ -1140,8 +1138,7 @@ namespace FaceShield.ViewModels.Pages
                 DownscaleQuality = ResolveSavedYoloDownscaleQuality(
                     saved.YoloV8DownscaleQuality,
                     useLegacyActiveProfile ? saved.DownscaleQuality : null,
-                    defaults.DownscaleQuality,
-                    saved.SettingsVersion < BalancedDownscaleQualitySettingsVersion),
+                    defaults.DownscaleQuality),
                 AutoTrackingEnabled = saved.YoloV8AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
                 AutoDetectEveryNFrames = Math.Max(1, saved.YoloV8AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
                 ParallelSessionCount = Math.Max(1, saved.YoloV8ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
@@ -1157,25 +1154,19 @@ namespace FaceShield.ViewModels.Pages
         private static DownscaleQuality ResolveSavedYoloDownscaleQuality(
             int? savedValue,
             int? legacyValue,
-            DownscaleQuality defaultValue,
-            bool requiresQualityMigration)
+            DownscaleQuality defaultValue)
         {
             int value = savedValue ?? legacyValue ?? (int)defaultValue;
             return Enum.IsDefined(typeof(DownscaleQuality), value)
-                ? ResolveSavedDownscaleQuality(value, requiresQualityMigration)
+                ? (DownscaleQuality)value
                 : defaultValue;
         }
 
-        private static DownscaleQuality ResolveSavedDownscaleQuality(int savedValue, bool requiresQualityMigration)
+        private static DownscaleQuality ResolveSavedDownscaleQuality(int savedValue)
         {
-            if (!Enum.IsDefined(typeof(DownscaleQuality), savedValue))
-                return DownscaleQuality.BalancedBilinear;
-
-            var quality = (DownscaleQuality)savedValue;
-            // v9 이하는 0이 과거 기본값인지 명시적 선택인지 구분할 수 없어 품질 우선 기본값으로 한 번 승격합니다.
-            return requiresQualityMigration && quality == DownscaleQuality.FastNearest
-                ? DownscaleQuality.BalancedBilinear
-                : quality;
+            return Enum.IsDefined(typeof(DownscaleQuality), savedValue)
+                ? (DownscaleQuality)savedValue
+                : DownscaleQuality.BalancedBilinear;
         }
 
         private static AutoMaskProcessingMode ResolveSavedAutoProcessingMode(int? savedValue)
@@ -1194,7 +1185,6 @@ namespace FaceShield.ViewModels.Pages
 
             bool isLegacyAutoSettings = saved.SettingsVersion < 4;
             bool requiresSettingsUpgrade = saved.SettingsVersion < CurrentAutoSettingsVersion;
-            bool requiresQualityMigration = saved.SettingsVersion < BalancedDownscaleQualitySettingsVersion;
             var yoloType = YoloModelTypeOptions.FirstOrDefault(o => (int)o.ModelType == saved.YoloModelType);
             var selectedYoloModelType = yoloType?.ModelType ?? YoloFaceModelType.Yolo5Face;
 
@@ -1205,7 +1195,7 @@ namespace FaceShield.ViewModels.Pages
                 if (!isLegacyAutoSettings && downscale != null)
                     SelectedDownscaleOption = downscale;
 
-                var savedQuality = ResolveSavedDownscaleQuality(saved.DownscaleQuality, requiresQualityMigration);
+                var savedQuality = ResolveSavedDownscaleQuality(saved.DownscaleQuality);
                 var quality = DownscaleQualityOptions.FirstOrDefault(o => o.Quality == savedQuality);
                 if (quality != null)
                     SelectedDownscaleQualityOption = quality;

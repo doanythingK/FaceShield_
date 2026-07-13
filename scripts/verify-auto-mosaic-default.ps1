@@ -292,7 +292,8 @@ Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "resetCases=5"
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "precision=True culture=True provider=True source=True sessions=True models=True backends=True riskIntent=True timelinePrompt=True providerPool=True snapshot=True json=True"
 
 $processingModeMigrationOutput = Invoke-ScriptStep "auto-processing-mode-migration" $autoProcessingModeMigrationVerify @()
-Assert-Contains "auto-processing-mode-migration" $processingModeMigrationOutput "validModesPreserved=8 postprocessPreserved=7 upgradeReload=true isolatedNoUserStateAccess=true"
+Assert-Contains "auto-processing-mode-migration" $processingModeMigrationOutput "validModesPreserved=8 validQualitiesPreserved=4 postprocessPreserved=7"
+Assert-Contains "auto-processing-mode-migration" $processingModeMigrationOutput "upgradeRoundTrip=true modeSemantics=4 isolatedNoUserStateAccess=true"
 
 $blurRenderOutput = Invoke-ScriptStep "blur-render-consistency" $blurRenderConsistencyVerify @()
 Assert-Contains "blur-render-consistency" $blurRenderOutput "radiusPolicy=true radiusMapHeight=true previewExportMatch=true overlapOrderIndependent=true stateless=true crossThreadCacheReset=true"
