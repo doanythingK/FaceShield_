@@ -368,7 +368,6 @@ public unsafe sealed class VideoExportService
                         remuxCounts.InputVideoPackets <= 0 ||
                         remuxCounts.OutputVideoPackets <= 0 ||
                         remuxPacketCountMismatch > 0 ||
-                        remuxCounts.MissingVideoPacketTimestamps > 0 ||
                         remuxCounts.VideoPacketTimestampAdjustments > 0 ||
                         remuxCounts.OutputPacketPtsGapOutlierCount > 0;
                     LastExportSummary = new ExportRunSummary(
@@ -961,12 +960,15 @@ public unsafe sealed class VideoExportService
                         pkt,
                         copyState.InputStream->time_base,
                         copyState.OutputStream->time_base);
-                    _ = NormalizeCopiedPacketTimestamps(
-                        pkt,
-                        ref copyState.LastPacketPts,
-                        ref copyState.HasLastPacketPts,
-                        ref copyState.LastPacketDts,
-                        ref copyState.HasLastPacketDts);
+                    if (copyState.ShouldRepairMissingTimestamps)
+                    {
+                        _ = NormalizeCopiedPacketTimestamps(
+                            pkt,
+                            ref copyState.LastPacketPts,
+                            ref copyState.HasLastPacketPts,
+                            ref copyState.LastPacketDts,
+                            ref copyState.HasLastPacketDts);
+                    }
                     pkt->stream_index = copyState.OutputStream->index;
                     pkt->pos = -1;
                     Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
@@ -1884,6 +1886,7 @@ public unsafe sealed class VideoExportService
         public int InputStreamIndex { get; }
         public AVStream* InputStream { get; }
         public AVStream* OutputStream { get; }
+        public bool ShouldRepairMissingTimestamps { get; }
         public long LastPacketPts = -1;
         public bool HasLastPacketPts;
         public long LastPacketDts = -1;
@@ -1897,6 +1900,10 @@ public unsafe sealed class VideoExportService
             InputStreamIndex = inputStreamIndex;
             InputStream = inputStream;
             OutputStream = outputStream;
+            ShouldRepairMissingTimestamps =
+                inputStream != null &&
+                inputStream->codecpar != null &&
+                inputStream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO;
         }
     }
 
@@ -3184,8 +3191,6 @@ public unsafe sealed class VideoExportService
             AVPacket* pkt = ffmpeg.av_packet_alloc();
             if (pkt == null)
                 throw new InvalidOperationException("패킷 버퍼를 할당하지 못했습니다.");
-            long[] lastRemuxPacketPts = Array.Empty<long>();
-            bool[] hasLastRemuxPacketPts = Array.Empty<bool>();
             long[] lastRemuxPacketDts = Array.Empty<long>();
             bool[] hasLastRemuxPacketDts = Array.Empty<bool>();
             int inputVideoPackets = 0;
@@ -3219,8 +3224,6 @@ public unsafe sealed class VideoExportService
             }
 
             int streamTotal = Math.Max(0, streamCount);
-            lastRemuxPacketPts = new long[streamTotal];
-            hasLastRemuxPacketPts = new bool[streamTotal];
             lastRemuxPacketDts = new long[streamTotal];
             hasLastRemuxPacketDts = new bool[streamTotal];
 
@@ -3247,60 +3250,34 @@ public unsafe sealed class VideoExportService
                 AVStream* outStream = outFmt->streams[outIndex];
                 if (inIndex == videoStreamIndex)
                     inputVideoPackets++;
-                long normalizeStep = inStream->codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO
-                    ? GetVideoFrameStep(sourceFps, outStream->time_base)
-                    : 1;
                 bool isVideoPacket = inIndex == videoStreamIndex;
                 bool hasMissingVideoTimestamp = isVideoPacket &&
                     (pkt->pts == ffmpeg.AV_NOPTS_VALUE || pkt->dts == ffmpeg.AV_NOPTS_VALUE);
-                long previousVideoPacketDts = isVideoPacket
+                long previousVideoPacketDts = isVideoPacket && pkt->dts != ffmpeg.AV_NOPTS_VALUE
                     ? lastRemuxPacketDts[outIndex]
                     : 0;
-                bool hadPreviousVideoPacketDts = isVideoPacket && hasLastRemuxPacketDts[outIndex];
+                bool hadPreviousVideoPacketDts =
+                    isVideoPacket &&
+                    pkt->dts != ffmpeg.AV_NOPTS_VALUE &&
+                    hasLastRemuxPacketDts[outIndex];
                 ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
                 if (isVideoPacket)
                 {
                     if (hasMissingVideoTimestamp)
                         missingVideoPacketTimestamps++;
 
-                    bool requiresTimestampRepair = hasMissingVideoTimestamp ||
-                        (hadPreviousVideoPacketDts && pkt->dts <= previousVideoPacketDts);
-                    if (requiresTimestampRepair)
-                    {
-                        videoPacketTimestampAdjustments++;
-                        NormalizeCopiedPacketTimestamps(
-                            pkt,
-                            ref lastRemuxPacketPts[outIndex],
-                            ref hasLastRemuxPacketPts[outIndex],
-                            ref lastRemuxPacketDts[outIndex],
-                            ref hasLastRemuxPacketDts[outIndex],
-                            normalizeStep);
-                    }
-                    else
-                    {
-                        lastRemuxPacketPts[outIndex] = pkt->pts;
-                        hasLastRemuxPacketPts[outIndex] = true;
-                        lastRemuxPacketDts[outIndex] = pkt->dts;
-                        hasLastRemuxPacketDts[outIndex] = true;
-                    }
-
                     if (hadPreviousVideoPacketDts)
                     {
                         long timestampGap = Math.Abs(pkt->dts - previousVideoPacketDts);
                         if (timestampGap > maxOutputPacketPtsGap)
                             maxOutputPacketPtsGap = timestampGap;
-
                     }
-                }
-                else
-                {
-                    NormalizeCopiedPacketTimestamps(
-                        pkt,
-                        ref lastRemuxPacketPts[outIndex],
-                        ref hasLastRemuxPacketPts[outIndex],
-                        ref lastRemuxPacketDts[outIndex],
-                        ref hasLastRemuxPacketDts[outIndex],
-                        normalizeStep);
+
+                    if (pkt->dts != ffmpeg.AV_NOPTS_VALUE)
+                    {
+                        lastRemuxPacketDts[outIndex] = pkt->dts;
+                        hasLastRemuxPacketDts[outIndex] = true;
+                    }
                 }
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
