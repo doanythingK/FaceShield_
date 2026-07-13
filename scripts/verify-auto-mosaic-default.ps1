@@ -59,6 +59,7 @@ $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-autom
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
+$detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
 $yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
 $yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-followup-quality-evidence.ps1"
 $yoloProblemSpanRunnerVerify = Join-Path $repo "scripts\verify-yolo-problem-span-runner-state.ps1"
@@ -245,7 +246,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -286,6 +287,11 @@ $autoTunerSafetyOutput = Invoke-ScriptStep "detector-autotune-safety" $detectorA
 Assert-Contains "detector-autotune-safety" $autoTunerSafetyOutput "qualityCases=5"
 Assert-Contains "detector-autotune-safety" $autoTunerSafetyOutput "providerCases=4"
 Assert-Contains "detector-autotune-safety" $autoTunerSafetyOutput "fallback=True cancellation=True"
+
+$autoTunerOverheadOutput = Invoke-ScriptStep "detector-autotune-overhead" $detectorAutoTunerOverheadVerify @()
+Assert-Contains "detector-autotune-overhead" $autoTunerOverheadOutput "plans=4"
+Assert-Contains "detector-autotune-overhead" $autoTunerOverheadOutput "qualitySessionReuse=True"
+Assert-Contains "detector-autotune-overhead" $autoTunerOverheadOutput "warmupSampleLimit=True"
 
 $sceneCutOutput = Invoke-ScriptStep "face-track-scene-cut-guard" $faceTrackSceneCutGuardVerify @()
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "\[FaceTrackSceneCutGuardVerify\]"

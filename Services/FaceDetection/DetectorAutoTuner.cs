@@ -40,6 +40,10 @@ namespace FaceShield.Services.FaceDetection
             int Sessions,
             string Label);
 
+        private readonly record struct PerformanceProbePlan(
+            int WarmupSampleCount,
+            int Iterations);
+
         private static readonly ConcurrentDictionary<AutoTuneKey, AutoTuneResult> Cache = new();
 
         public static bool TryTune(
@@ -376,61 +380,93 @@ namespace FaceShield.Services.FaceDetection
             int bufferSize,
             ref int qualityStride)
         {
-            fixed (byte* src = qualityBuffer)
-            {
-                var initialFaces = DetectOnce(
-                    (IntPtr)src,
-                    qualityStride,
-                    targetWidth,
-                    targetHeight,
-                    detectorRatio,
-                    quality,
-                    cpuOptions);
-                if (initialFaces != null && initialFaces.Count > 0)
-                    return;
-            }
-
-            var pool = ArrayPool<byte>.Shared;
-            byte[] probe = pool.Rent(bufferSize);
+            FaceOnnxDetector qualityDetector;
             try
             {
-                for (int i = 0; i < QualityProbeFrameLimit; i++)
+                qualityDetector = new FaceOnnxDetector(cpuOptions);
+            }
+            catch
+            {
+                return;
+            }
+
+            using (qualityDetector)
+            {
+                fixed (byte* src = qualityBuffer)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!extractor.TryGetNextFrameRawToBuffer(
-                            cancellationToken,
-                            targetWidth,
-                            targetHeight,
-                            useBilinear,
-                            probe,
-                            out _,
-                            out int probeStride))
+                    var initialFaces = DetectOnce(
+                        qualityDetector,
+                        (IntPtr)src,
+                        qualityStride,
+                        targetWidth,
+                        targetHeight,
+                        detectorRatio,
+                        quality);
+                    if (initialFaces != null && initialFaces.Count > 0)
+                        return;
+                }
+
+                var pool = ArrayPool<byte>.Shared;
+                byte[] probe = pool.Rent(bufferSize);
+                try
+                {
+                    for (int i = 0; i < QualityProbeFrameLimit; i++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!extractor.TryGetNextFrameRawToBuffer(
+                                cancellationToken,
+                                targetWidth,
+                                targetHeight,
+                                useBilinear,
+                                probe,
+                                out _,
+                                out int probeStride))
+                        {
+                            return;
+                        }
+
+                        fixed (byte* src = probe)
+                        {
+                            var faces = DetectOnce(
+                                qualityDetector,
+                                (IntPtr)src,
+                                probeStride,
+                                targetWidth,
+                                targetHeight,
+                                detectorRatio,
+                                quality);
+                            if (faces == null || faces.Count == 0)
+                                continue;
+                        }
+
+                        Array.Copy(probe, 0, qualityBuffer, 0, bufferSize);
+                        qualityStride = probeStride;
                         return;
                     }
-
-                    fixed (byte* src = probe)
-                    {
-                        var faces = DetectOnce(
-                            (IntPtr)src,
-                            probeStride,
-                            targetWidth,
-                            targetHeight,
-                            detectorRatio,
-                            quality,
-                            cpuOptions);
-                        if (faces == null || faces.Count == 0)
-                            continue;
-                    }
-
-                    Array.Copy(probe, 0, qualityBuffer, 0, bufferSize);
-                    qualityStride = probeStride;
-                    return;
+                }
+                finally
+                {
+                    pool.Return(probe);
                 }
             }
-            finally
+        }
+
+        private static IReadOnlyList<FaceDetectionResult>? DetectOnce(
+            FaceOnnxDetector detector,
+            IntPtr data,
+            int stride,
+            int width,
+            int height,
+            double ratio,
+            DownscaleQuality quality)
+        {
+            try
             {
-                pool.Return(probe);
+                return detector.DetectFacesBgra(data, stride, width, height, ratio, quality);
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -459,7 +495,7 @@ namespace FaceShield.Services.FaceDetection
             {
                 using var detector = new FaceOnnxDetector(options);
                 providerLabel = detector.ExecutionProviderLabel;
-                return detector.DetectFacesBgra(data, stride, width, height, ratio, quality);
+                return DetectOnce(detector, data, stride, width, height, ratio, quality);
             }
             catch
             {
@@ -585,13 +621,21 @@ namespace FaceShield.Services.FaceDetection
 
             try
             {
+                PerformanceProbePlan probePlan = BuildPerformanceProbePlan(samples.Count, options.UseGpu);
                 foreach (var detector in detectors)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    DetectSamples(detector, samples, width, height, ratio, quality, cancellationToken);
+                    DetectSamples(
+                        detector,
+                        samples,
+                        probePlan.WarmupSampleCount,
+                        width,
+                        height,
+                        ratio,
+                        quality,
+                        cancellationToken);
                 }
 
-                int iterations = Math.Max(1, options.UseGpu ? 3 : 2);
                 var sw = Stopwatch.StartNew();
                 Parallel.For(
                     0,
@@ -600,16 +644,24 @@ namespace FaceShield.Services.FaceDetection
                     i =>
                     {
                         var detector = detectors[i];
-                        for (int k = 0; k < iterations; k++)
+                        for (int k = 0; k < probePlan.Iterations; k++)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
-                            DetectSamples(detector, samples, width, height, ratio, quality, cancellationToken);
+                            DetectSamples(
+                                detector,
+                                samples,
+                                samples.Count,
+                                width,
+                                height,
+                                ratio,
+                                quality,
+                                cancellationToken);
                         }
                     });
                 sw.Stop();
 
                 double seconds = Math.Max(0.0001, sw.Elapsed.TotalSeconds);
-                return (sessions * iterations * samples.Count) / seconds;
+                return (sessions * probePlan.Iterations * samples.Count) / seconds;
             }
             finally
             {
@@ -620,19 +672,27 @@ namespace FaceShield.Services.FaceDetection
         private static unsafe void DetectSamples(
             FaceOnnxDetector detector,
             IReadOnlyList<(byte[] Buffer, int Stride)> samples,
+            int sampleCount,
             int width,
             int height,
             double ratio,
             DownscaleQuality quality,
             CancellationToken cancellationToken)
         {
-            foreach (var sample in samples)
+            int count = Math.Min(samples.Count, Math.Max(0, sampleCount));
+            for (int i = 0; i < count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var sample = samples[i];
                 fixed (byte* src = sample.Buffer)
                     detector.DetectFacesBgra((IntPtr)src, sample.Stride, width, height, ratio, quality);
             }
         }
+
+        private static PerformanceProbePlan BuildPerformanceProbePlan(int availableSamples, bool useGpu)
+            => new(
+                WarmupSampleCount: availableSamples > 0 ? 1 : 0,
+                Iterations: useGpu ? 3 : 2);
 
         private static List<(FaceOnnxDetectorOptions Options, int Sessions, string Label)> BuildCandidates(
             FaceOnnxDetectorOptions baseOptions,
