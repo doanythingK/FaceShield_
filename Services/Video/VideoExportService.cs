@@ -12,6 +12,14 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
+    private sealed class VideoExportIntegrityException : InvalidOperationException
+    {
+        public VideoExportIntegrityException(string message)
+            : base(message)
+        {
+        }
+    }
+
     private const bool EnableHybridCopyWindow = false;
     private const int MinHybridCopyFrames = 240;
     private const double MinHybridCopyRatio = 0.05;
@@ -72,7 +80,8 @@ public unsafe sealed class VideoExportService
                     forceAudioTranscode: false,
                     forceH264Fallback: false);
             }
-            catch (InvalidOperationException ex) when (IsInvalidArgumentError(ex))
+            catch (InvalidOperationException ex) when (
+                ex is not VideoExportIntegrityException && IsInvalidArgumentError(ex))
             {
                 Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: Invalid argument 발생. {ex.Message}");
                 try
@@ -92,7 +101,8 @@ public unsafe sealed class VideoExportService
                         forceAudioTranscode: false,
                         forceH264Fallback: false);
                 }
-                catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
+                catch (InvalidOperationException nestedEx) when (
+                    nestedEx is not VideoExportIntegrityException && IsInvalidArgumentError(nestedEx))
                 {
                     Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
                     attemptCount++;
@@ -261,6 +271,9 @@ public unsafe sealed class VideoExportService
         int copiedVideoPacketCount = 0;
         int copiedSourceVideoPacketCount = 0;
         int encodedSourceVideoPacketCount = 0;
+        int submittedVideoFrameCount = 0;
+        var submittedEncodedFramePts = new HashSet<long>();
+        var emittedEncodedFramePts = new Dictionary<long, int>();
         int sampleSourceVideoPacketCount = 0;
         int sampleCopiedVideoPacketCount = 0;
         int sampleEncodedFrameCount = 0;
@@ -394,7 +407,7 @@ public unsafe sealed class VideoExportService
                         InputVideoPackets: remuxCounts.InputVideoPackets,
                         OutputVideoPackets: remuxCounts.OutputVideoPackets,
                         CopiedVideoPackets: remuxCounts.OutputVideoPackets,
-                        CopiedSourceVideoPackets: remuxCounts.OutputVideoPackets,
+                        CopiedSourceVideoPackets: remuxCounts.InputVideoPackets,
                         EncodedSourceVideoPackets: 0,
                         DroppedVideoPackets: Math.Max(0, remuxCounts.InputVideoPackets - remuxCounts.OutputVideoPackets),
                         OutputPacketPtsGapOutlierCount: remuxCounts.OutputPacketPtsGapOutlierCount,
@@ -1219,15 +1232,18 @@ public unsafe sealed class VideoExportService
                                 ref outputPacketPtsGapOutlierCount,
                                 ref maxOutputPacketPtsGap,
                                 encodedTimestampIntegrity,
-                            progress,
-                            ref lastReportedFrame,
-                            swTotal,
-                            cancellationToken,
-                            exportSampleWindowFrames,
-                            ref sampleEncodedFrameCount,
-                            ref sampleBlurredFrameCount,
-                            ref encodedWindowFrameCount,
-                            encodedPacketFrameStep);
+                                progress,
+                                ref lastReportedFrame,
+                                swTotal,
+                                cancellationToken,
+                                exportSampleWindowFrames,
+                                ref sampleEncodedFrameCount,
+                                ref sampleBlurredFrameCount,
+                                ref encodedWindowFrameCount,
+                                ref submittedVideoFrameCount,
+                                submittedEncodedFramePts,
+                                emittedEncodedFramePts,
+                                encodedPacketFrameStep);
 
                             flushedForHybridBoundary = true;
                         }
@@ -1323,6 +1339,9 @@ public unsafe sealed class VideoExportService
                             ref sampleEncodedFrameCount,
                             ref sampleBlurredFrameCount,
                             ref encodedWindowFrameCount,
+                            ref submittedVideoFrameCount,
+                            submittedEncodedFramePts,
+                            emittedEncodedFramePts,
                             encodedPacketFrameStep);
 
                         if (hasLastEncodedPacketPts)
@@ -1406,58 +1425,69 @@ public unsafe sealed class VideoExportService
                 encodedSourceVideoPacketCount++;
                 Throw(ffmpeg.avcodec_send_packet(dec, pkt));
                 ffmpeg.av_packet_unref(pkt);
-            while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
-            {
-                ProcessDecodedVideoFrame(
-                    frame,
-                    bgra,
-                    encFrame,
-                    dec,
-                    enc,
-                    swsDecToBgra,
-                    swsBgraToEnc,
-                    ref swsDecToEnc,
-                    inStream,
-                    outPkt,
-                    outStream,
-                    outFmt,
-                    blurRadius,
-                    blurRanges,
-                    ref blurRangeCursor,
-                    sourceFps,
-                    forceSafeEncoding,
-                    totalFrames,
-                    encodeWindowStart,
-                    encodeWindowEnd,
-                    ref frameIndex,
-                    ref lastResolvedFrameIndex,
-                    ref frameTimestampBase,
-                    ref hasFrameTimestampBase,
-                    ref swsToBgraMs,
-                    ref maskMs,
-                    ref swsToEncMs,
-                    encodeTimer,
-                    ref lastEncodedPts,
-                    ref hasLastEncodedPts,
-                    ref lastEncodedPacketPts,
-                    ref hasLastEncodedPacketPts,
-                    ref lastEncodedPacketDts,
-                    ref hasLastEncodedPacketDts,
-                    ref reusableFaceMask,
-                    ref outputVideoPacketCount,
-                    ref outputPacketPtsGapOutlierCount,
-                    ref maxOutputPacketPtsGap,
-                    encodedTimestampIntegrity,
-                    progress,
-                    ref lastReportedFrame,
-                    swTotal,
-                    cancellationToken,
-                    exportSampleWindowFrames,
-                    ref sampleEncodedFrameCount,
-                    ref sampleBlurredFrameCount,
-                    ref encodedWindowFrameCount,
-                    encodedPacketFrameStep);
+                int videoReceiveResult;
+                while ((videoReceiveResult = ffmpeg.avcodec_receive_frame(dec, frame)) == 0)
+                {
+                    ProcessDecodedVideoFrame(
+                        frame,
+                        bgra,
+                        encFrame,
+                        dec,
+                        enc,
+                        swsDecToBgra,
+                        swsBgraToEnc,
+                        ref swsDecToEnc,
+                        inStream,
+                        outPkt,
+                        outStream,
+                        outFmt,
+                        blurRadius,
+                        blurRanges,
+                        ref blurRangeCursor,
+                        sourceFps,
+                        forceSafeEncoding,
+                        totalFrames,
+                        encodeWindowStart,
+                        encodeWindowEnd,
+                        ref frameIndex,
+                        ref lastResolvedFrameIndex,
+                        ref frameTimestampBase,
+                        ref hasFrameTimestampBase,
+                        ref swsToBgraMs,
+                        ref maskMs,
+                        ref swsToEncMs,
+                        encodeTimer,
+                        ref lastEncodedPts,
+                        ref hasLastEncodedPts,
+                        ref lastEncodedPacketPts,
+                        ref hasLastEncodedPacketPts,
+                        ref lastEncodedPacketDts,
+                        ref hasLastEncodedPacketDts,
+                        ref reusableFaceMask,
+                        ref outputVideoPacketCount,
+                        ref outputPacketPtsGapOutlierCount,
+                        ref maxOutputPacketPtsGap,
+                        encodedTimestampIntegrity,
+                        progress,
+                        ref lastReportedFrame,
+                        swTotal,
+                        cancellationToken,
+                        exportSampleWindowFrames,
+                        ref sampleEncodedFrameCount,
+                        ref sampleBlurredFrameCount,
+                        ref encodedWindowFrameCount,
+                        ref submittedVideoFrameCount,
+                        submittedEncodedFramePts,
+                        emittedEncodedFramePts,
+                        encodedPacketFrameStep);
                     ffmpeg.av_frame_unref(frame);
+                }
+
+                int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
+                if (videoReceiveResult != tryAgain && videoReceiveResult != ffmpeg.AVERROR_EOF)
+                {
+                    throw new VideoExportIntegrityException(
+                        $"비디오 디코딩 중 오류가 발생했습니다: {GetErrorMessage(videoReceiveResult)}");
                 }
             }
 
@@ -1483,35 +1513,38 @@ public unsafe sealed class VideoExportService
                 totalFrames,
                 encodeWindowStart,
                 encodeWindowEnd,
-                            ref frameIndex,
-                            ref lastResolvedFrameIndex,
-                            ref frameTimestampBase,
-                            ref hasFrameTimestampBase,
-                            ref swsToBgraMs,
-                            ref maskMs,
-                            ref swsToEncMs,
+                ref frameIndex,
+                ref lastResolvedFrameIndex,
+                ref frameTimestampBase,
+                ref hasFrameTimestampBase,
+                ref swsToBgraMs,
+                ref maskMs,
+                ref swsToEncMs,
                 encodeTimer,
                 encoderFlushTimer,
                 ref lastEncodedPts,
                 ref hasLastEncodedPts,
-                    ref lastEncodedPacketPts,
-                    ref hasLastEncodedPacketPts,
-                    ref lastEncodedPacketDts,
-                    ref hasLastEncodedPacketDts,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
                 ref reusableFaceMask,
                 ref outputVideoPacketCount,
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
                 encodedTimestampIntegrity,
                 progress,
-                    ref lastReportedFrame,
-                    swTotal,
-                    cancellationToken,
-                    exportSampleWindowFrames,
-                    ref sampleEncodedFrameCount,
-                    ref sampleBlurredFrameCount,
-                    ref encodedWindowFrameCount,
-                    encodedPacketFrameStep);
+                ref lastReportedFrame,
+                swTotal,
+                cancellationToken,
+                exportSampleWindowFrames,
+                ref sampleEncodedFrameCount,
+                ref sampleBlurredFrameCount,
+                ref encodedWindowFrameCount,
+                ref submittedVideoFrameCount,
+                submittedEncodedFramePts,
+                emittedEncodedFramePts,
+                encodedPacketFrameStep);
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -1576,12 +1609,18 @@ public unsafe sealed class VideoExportService
             outputCloseTimer.Stop();
             int sampleWindowLimit = totalFrames > 0
                 ? Math.Min(exportSampleWindowFrames, totalFrames)
-                : 0;
-            int sampleWindowSourceFrames = Math.Max(0, Math.Min(sampleWindowLimit, sampleSourceVideoPacketCount));
-            int sampleWindowProducedFrames = sampleCopiedVideoPacketCount + sampleEncodedFrameCount;
-            int sampleWindowFrameShortfall = sampleWindowSourceFrames > 0
-                ? Math.Max(0, sampleWindowSourceFrames - sampleWindowProducedFrames)
-                : 0;
+                : exportSampleWindowFrames;
+            // Demux packet count is diagnostic only. Decoder preroll and discard packets do not
+            // necessarily produce frames, so final integrity uses submitted/emitted PTS coverage.
+            int sampleWindowSourceFrames = Math.Min(
+                sampleWindowLimit,
+                copiedSourceVideoPacketCount + submittedEncodedFramePts.Count);
+            int sampleWindowProducedFrames = Math.Min(
+                sampleWindowLimit,
+                copiedVideoPacketCount + emittedEncodedFramePts.Count);
+            int sampleWindowFrameShortfall = Math.Max(
+                0,
+                sampleWindowSourceFrames - sampleWindowProducedFrames);
             int expectedHybridWindowEncodedFrames = useHybridCopyWindow && encodeWindowEnd > encodeWindowStart
                 ? encodeWindowEnd - encodeWindowStart
                 : 0;
@@ -1592,28 +1631,36 @@ public unsafe sealed class VideoExportService
             int hybridEncodedWindowFrameLoss = useHybridCopyWindow
                 ? encodedWindowFrameShortfall
                 : 0;
-            int droppedVideoPackets = useHybridCopyWindow
-                ? hybridCopySourcePacketLoss + hybridEncodedWindowFrameLoss
-                : Math.Max(0, inputVideoPacketCount - outputVideoPacketCount);
-            int outputPacketCountMismatch = (int)Math.Min(
-                int.MaxValue,
-                Math.Abs((long)inputVideoPacketCount - outputVideoPacketCount));
-            int outputPacketDropCount = outputPacketCountMismatch;
-            if (inputVideoPacketCount <= 0 || outputVideoPacketCount <= 0)
+            var frameCoverage = EvaluateVideoFrameCoverage(
+                copiedSourceVideoPacketCount,
+                copiedVideoPacketCount,
+                submittedEncodedFramePts,
+                emittedEncodedFramePts);
+            int missingEncodedFrameCount = frameCoverage.MissingEncodedFrames;
+            int unexpectedEncodedFrameCount = frameCoverage.UnexpectedEncodedFrames;
+            int expectedOutputVideoFrames = frameCoverage.ExpectedOutputFrames;
+            int videoFrameCoverageMismatch = frameCoverage.MismatchCount;
+            int videoFrameDropCount = useHybridCopyWindow
+                ? Math.Max(frameCoverage.DropCount, hybridCopySourcePacketLoss + hybridEncodedWindowFrameLoss)
+                : frameCoverage.DropCount;
+            int outputPacketCountMismatch = frameCoverage.CopiedPacketMismatch;
+            int droppedVideoPackets = hybridCopySourcePacketLoss;
+            bool canRetryWithFullEncode = allowPacketDropRetry && useHybridCopyWindow;
+            if (expectedOutputVideoFrames <= 0 || outputVideoPacketCount <= 0)
             {
                 string invalidPacketCountReason =
-                    $"final-output-packet-count-invalid={inputVideoPacketCount}/{outputVideoPacketCount}";
+                    $"final-output-frame-coverage-invalid={expectedOutputVideoFrames}/{outputVideoPacketCount}";
                 packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
                     ? invalidPacketCountReason
                     : $"{packetDropFallbackReason}; {invalidPacketCountReason}";
 
-                if (allowPacketDropRetry)
+                if (canRetryWithFullEncode)
                 {
                     shouldRetryWithFullEncode = true;
                 }
                 else
                 {
-                    throw new InvalidOperationException(
+                    throw new VideoExportIntegrityException(
                         "Invalid argument: 최종 출력 비디오 패킷 수가 유효하지 않아 품질 보전을 위해 중단합니다.");
                 }
             }
@@ -1626,31 +1673,14 @@ public unsafe sealed class VideoExportService
                     ? timestampIntegrityReason
                     : $"{packetDropFallbackReason}; {timestampIntegrityReason}";
 
-                if (allowPacketDropRetry)
+                if (canRetryWithFullEncode)
                 {
                     shouldRetryWithFullEncode = true;
                 }
                 else
                 {
-                    throw new InvalidOperationException(
+                    throw new VideoExportIntegrityException(
                         "Invalid argument: 인코더 출력 타임스탬프 보정이 필요해 품질 보전을 위해 중단합니다.");
-                }
-            }
-            if (sampleWindowFrameShortfall > 0)
-            {
-                packetDropFallbackReason =
-                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                        ? $"sample-window-frame-loss={sampleWindowFrameShortfall} (source={sampleWindowSourceFrames}, copied={sampleCopiedVideoPacketCount}, encoded={sampleEncodedFrameCount})"
-                        : $"{packetDropFallbackReason}; sample-window-frame-loss={sampleWindowFrameShortfall} (source={sampleWindowSourceFrames}, copied={sampleCopiedVideoPacketCount}, encoded={sampleEncodedFrameCount})";
-
-                if (allowPacketDropRetry)
-                {
-                    shouldRetryWithFullEncode = true;
-                }
-                else
-                {
-                    throw new InvalidOperationException(
-                        "Invalid argument: 최종 샘플 구간 출력 프레임 손실이 감지되어 품질 보전을 위해 중단합니다.");
                 }
             }
             if (allowPacketDropRetry
@@ -1669,58 +1699,55 @@ public unsafe sealed class VideoExportService
             if (allowPacketDropRetry
                 && useHybridCopyWindow
                 && inputVideoPacketCount > 0
-                && outputPacketDropCount > 0)
+                && videoFrameDropCount > 0)
             {
                 shouldRetryWithFullEncode = true;
                 packetDropFallbackReason =
                     string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                        ? $"hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}"
-                        : $"{packetDropFallbackReason}; hybrid-output-packet-loss={outputPacketDropCount} / input={inputVideoPacketCount}";
+                        ? $"hybrid-output-frame-loss={videoFrameDropCount} / inputPackets={inputVideoPacketCount}"
+                        : $"{packetDropFallbackReason}; hybrid-output-frame-loss={videoFrameDropCount} / inputPackets={inputVideoPacketCount}";
             }
-            if (outputPacketDropCount > MaxAllowedOutputPacketLoss)
+            if (videoFrameCoverageMismatch > MaxAllowedOutputPacketLoss)
             {
                 string outputLossReason =
-                    $"final-output-packet-count-mismatch={inputVideoPacketCount}/{outputVideoPacketCount}";
+                    $"final-output-frame-coverage-mismatch=missing:{missingEncodedFrameCount},unexpected:{unexpectedEncodedFrameCount},copy:{copiedSourceVideoPacketCount}/{copiedVideoPacketCount}";
                 packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
                     ? outputLossReason
                     : $"{packetDropFallbackReason}; {outputLossReason}";
 
-                if (allowPacketDropRetry)
+                if (canRetryWithFullEncode)
                 {
                     shouldRetryWithFullEncode = true;
                 }
                 else
                 {
-                    throw new InvalidOperationException(
+                    throw new VideoExportIntegrityException(
                         "Invalid argument: 최종 출력 패킷 손실 감지로 품질 보전을 위해 중단합니다.");
                 }
             }
 
-            if (droppedVideoPackets > 0)
+            if (videoFrameDropCount > 0)
             {
                 if (useHybridCopyWindow)
                 {
                     Debug.WriteLine(
-                        $"[Export] packetDropHint copySource={copiedSourceVideoPacketCount}, copyOutput={copiedVideoPacketCount}, copyLoss={hybridCopySourcePacketLoss}, encodeWindow={encodeWindowStart}-{encodeWindowEnd}, encodedWindowFrames={encodedWindowFrameCount}, encodedShortfall={hybridEncodedWindowFrameLoss}, dropped={droppedVideoPackets}");
+                        $"[Export] frameDropHint copySource={copiedSourceVideoPacketCount}, copyOutput={copiedVideoPacketCount}, copyLoss={hybridCopySourcePacketLoss}, encodeWindow={encodeWindowStart}-{encodeWindowEnd}, encodedWindowFrames={encodedWindowFrameCount}, encodedShortfall={hybridEncodedWindowFrameLoss}, dropped={videoFrameDropCount}");
                 }
                 else
                 {
                     Debug.WriteLine(
-                        $"[Export] packetDropHint inputVideoPackets={inputVideoPacketCount}, outputVideoPackets={outputVideoPacketCount}, dropped={droppedVideoPackets}");
+                        $"[Export] frameCoverageHint submittedFrames={submittedVideoFrameCount}, outputVideoPackets={outputVideoPacketCount}, dropped={videoFrameDropCount}");
                 }
 
-                if (allowPacketDropRetry && useHybridCopyWindow && droppedVideoPackets > 0)
+                if (canRetryWithFullEncode)
                 {
                     shouldRetryWithFullEncode = true;
+                    string coverageReason =
+                        $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, droppedFrames={videoFrameDropCount}";
                     packetDropFallbackReason =
                         string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                            ? useHybridCopyWindow
-                                ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
-                                : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}"
-                            : $"{packetDropFallbackReason}; {(
-                                useHybridCopyWindow
-                                    ? $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, dropped={droppedVideoPackets}"
-                                    : $"input={inputVideoPacketCount}, output={outputVideoPacketCount}, dropped={droppedVideoPackets}")}";
+                            ? coverageReason
+                            : $"{packetDropFallbackReason}; {coverageReason}";
                 }
             }
             if (outputPacketPtsGapOutlierCount > 0)
@@ -1729,13 +1756,13 @@ public unsafe sealed class VideoExportService
                     string.IsNullOrWhiteSpace(packetDropFallbackReason)
                         ? $"output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}"
                         : $"{packetDropFallbackReason}; output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}";
-                if (allowPacketDropRetry)
+                if (canRetryWithFullEncode)
                 {
                     shouldRetryWithFullEncode = true;
                 }
                 else
                 {
-                    throw new InvalidOperationException(
+                    throw new VideoExportIntegrityException(
                         "Invalid argument: 최종 출력 PTS 간격 이상치가 남아 품질 보전을 위해 중단합니다.");
                 }
             }
@@ -1802,7 +1829,12 @@ public unsafe sealed class VideoExportService
                 TargetVideoBitrate: ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
                 NativeYuvBlurFrames: _nativeYuvBlurFrames,
                 EncoderFlushMs: encoderFlushTimer.ElapsedMilliseconds,
-                OutputCloseMs: outputCloseTimer.ElapsedMilliseconds);
+                OutputCloseMs: outputCloseTimer.ElapsedMilliseconds,
+                SubmittedVideoFrames: submittedVideoFrameCount,
+                VideoFrameCoverageMismatch: videoFrameCoverageMismatch,
+                MissingEncodedVideoFrames: missingEncodedFrameCount,
+                UnexpectedEncodedVideoFrames: unexpectedEncodedFrameCount,
+                VideoFrameDropCount: videoFrameDropCount);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, encoderFlushMs={encoderFlushTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
@@ -2102,10 +2134,12 @@ public unsafe sealed class VideoExportService
         ref int outputPacketPtsGapOutlierCount,
         ref long maxOutputPacketPtsGap,
         VideoPacketTimestampIntegrity timestampIntegrity,
+        Dictionary<long, int> emittedEncodedFramePts,
         long encodedPacketFrameStep)
     {
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
+            long encoderPacketPts = outPkt->pts;
             long previousPacketPts = lastPacketPts;
             bool hadPreviousPacketPts = hasLastPacketPts;
 
@@ -2162,9 +2196,65 @@ public unsafe sealed class VideoExportService
 
             outPkt->stream_index = outStream->index;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
+            if (encoderPacketPts != ffmpeg.AV_NOPTS_VALUE)
+            {
+                emittedEncodedFramePts.TryGetValue(encoderPacketPts, out int emittedCount);
+                emittedEncodedFramePts[encoderPacketPts] = emittedCount + 1;
+            }
             outputVideoPacketCount++;
             ffmpeg.av_packet_unref(outPkt);
         }
+    }
+
+    private static (
+        int ExpectedOutputFrames,
+        int MismatchCount,
+        int DropCount,
+        int MissingEncodedFrames,
+        int UnexpectedEncodedFrames,
+        int CopiedPacketMismatch) EvaluateVideoFrameCoverage(
+            int copiedSourcePacketCount,
+            int copiedOutputPacketCount,
+            IReadOnlySet<long> submittedEncodedFramePts,
+            IReadOnlyDictionary<long, int> emittedEncodedFramePts)
+    {
+        int missingEncodedFrames = 0;
+        foreach (long submittedPts in submittedEncodedFramePts)
+        {
+            if (!emittedEncodedFramePts.TryGetValue(submittedPts, out int emittedCount) ||
+                emittedCount <= 0)
+            {
+                missingEncodedFrames++;
+            }
+        }
+
+        int unexpectedEncodedFrames = 0;
+        foreach (var (emittedPts, emittedCount) in emittedEncodedFramePts)
+        {
+            if (emittedCount <= 0)
+                continue;
+
+            unexpectedEncodedFrames += submittedEncodedFramePts.Contains(emittedPts)
+                ? Math.Max(0, emittedCount - 1)
+                : emittedCount;
+        }
+
+        int copiedPacketMismatch = (int)Math.Min(
+            int.MaxValue,
+            Math.Abs((long)copiedSourcePacketCount - copiedOutputPacketCount));
+        int expectedOutputFrames = checked(copiedSourcePacketCount + submittedEncodedFramePts.Count);
+        int mismatchCount = checked(
+            copiedPacketMismatch + missingEncodedFrames + unexpectedEncodedFrames);
+        int dropCount = checked(
+            Math.Max(0, copiedSourcePacketCount - copiedOutputPacketCount) + missingEncodedFrames);
+
+        return (
+            expectedOutputFrames,
+            mismatchCount,
+            dropCount,
+            missingEncodedFrames,
+            unexpectedEncodedFrames,
+            copiedPacketMismatch);
     }
 
     private unsafe void ProcessDecodedVideoFrame(
@@ -2215,6 +2305,9 @@ public unsafe sealed class VideoExportService
         ref int sampleEncodedFrameCount,
         ref int sampleBlurredFrameCount,
         ref int encodedWindowFrameCount,
+        ref int submittedVideoFrameCount,
+        HashSet<long> submittedEncodedFramePts,
+        Dictionary<long, int> emittedEncodedFramePts,
         long encodedPacketFrameStep)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -2367,6 +2460,7 @@ public unsafe sealed class VideoExportService
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
+                emittedEncodedFramePts,
                 encodedPacketFrameStep);
             encodeTimer.Stop();
         }
@@ -2432,6 +2526,7 @@ public unsafe sealed class VideoExportService
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
+                emittedEncodedFramePts,
                 encodedPacketFrameStep);
             encodeTimer.Stop();
         }
@@ -2471,19 +2566,20 @@ public unsafe sealed class VideoExportService
                 encodeTimer.Start();
                 Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
                 DrainEncoderPackets(
-                enc,
-                outPkt,
-                outStream,
-                outFmt,
-                ref lastEncodedPacketPts,
-                ref hasLastEncodedPacketPts,
-                ref lastEncodedPacketDts,
-                ref hasLastEncodedPacketDts,
-                ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
-                timestampIntegrity,
-                encodedPacketFrameStep);
+                    enc,
+                    outPkt,
+                    outStream,
+                    outFmt,
+                    ref lastEncodedPacketPts,
+                    ref hasLastEncodedPacketPts,
+                    ref lastEncodedPacketDts,
+                    ref hasLastEncodedPacketDts,
+                    ref outputVideoPacketCount,
+                    ref outputPacketPtsGapOutlierCount,
+                    ref maxOutputPacketPtsGap,
+                    timestampIntegrity,
+                    emittedEncodedFramePts,
+                    encodedPacketFrameStep);
                 encodeTimer.Stop();
             }
             else
@@ -2492,22 +2588,29 @@ public unsafe sealed class VideoExportService
                 ApplyEncodingPts(frame, encodedPts);
                 Throw(ffmpeg.avcodec_send_frame(enc, frame));
                 DrainEncoderPackets(
-                enc,
-                outPkt,
-                outStream,
-                outFmt,
-                ref lastEncodedPacketPts,
-                ref hasLastEncodedPacketPts,
-                ref lastEncodedPacketDts,
-                ref hasLastEncodedPacketDts,
-                ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
-                timestampIntegrity,
-                encodedPacketFrameStep);
+                    enc,
+                    outPkt,
+                    outStream,
+                    outFmt,
+                    ref lastEncodedPacketPts,
+                    ref hasLastEncodedPacketPts,
+                    ref lastEncodedPacketDts,
+                    ref hasLastEncodedPacketDts,
+                    ref outputVideoPacketCount,
+                    ref outputPacketPtsGapOutlierCount,
+                    ref maxOutputPacketPtsGap,
+                    timestampIntegrity,
+                    emittedEncodedFramePts,
+                    encodedPacketFrameStep);
                 encodeTimer.Stop();
             }
         }
+        if (!submittedEncodedFramePts.Add(encodedPts))
+        {
+            throw new VideoExportIntegrityException(
+                $"Invalid argument: 중복 인코더 입력 PTS가 감지되었습니다 (pts={encodedPts}).");
+        }
+        submittedVideoFrameCount++;
         if (resolvedFrameIndex < sampleWindowFrames)
             sampleEncodedFrameCount++;
         if (frameWasBlurred && resolvedFrameIndex < sampleWindowFrames)
@@ -2571,6 +2674,9 @@ public unsafe sealed class VideoExportService
         ref int sampleEncodedFrameCount,
         ref int sampleBlurredFrameCount,
         ref int encodedWindowFrameCount,
+        ref int submittedVideoFrameCount,
+        HashSet<long> submittedEncodedFramePts,
+        Dictionary<long, int> emittedEncodedFramePts,
         long encodedPacketFrameStep)
     {
         if (videoFlushed)
@@ -2580,7 +2686,8 @@ public unsafe sealed class VideoExportService
         if (sendErr < 0 && sendErr != ffmpeg.AVERROR_EOF)
             Throw(sendErr);
 
-        while (ffmpeg.avcodec_receive_frame(dec, frame) == 0)
+        int videoReceiveResult;
+        while ((videoReceiveResult = ffmpeg.avcodec_receive_frame(dec, frame)) == 0)
         {
             ProcessDecodedVideoFrame(
                 frame,
@@ -2622,16 +2729,31 @@ public unsafe sealed class VideoExportService
                 ref outputPacketPtsGapOutlierCount,
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
-                    progress,
-                    ref lastReportedFrame,
-                    swTotal,
-                    cancellationToken,
-                    sampleWindowFrames,
-                    ref sampleEncodedFrameCount,
-                    ref sampleBlurredFrameCount,
-                    ref encodedWindowFrameCount,
-                    encodedPacketFrameStep);
+                progress,
+                ref lastReportedFrame,
+                swTotal,
+                cancellationToken,
+                sampleWindowFrames,
+                ref sampleEncodedFrameCount,
+                ref sampleBlurredFrameCount,
+                ref encodedWindowFrameCount,
+                ref submittedVideoFrameCount,
+                submittedEncodedFramePts,
+                emittedEncodedFramePts,
+                encodedPacketFrameStep);
             ffmpeg.av_frame_unref(frame);
+        }
+
+        if (videoReceiveResult != ffmpeg.AVERROR_EOF)
+        {
+            if (videoReceiveResult == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+            {
+                throw new VideoExportIntegrityException(
+                    "Invalid argument: 디코더가 종료 flush 후에도 추가 입력을 요청했습니다.");
+            }
+
+            throw new VideoExportIntegrityException(
+                $"비디오 디코더 flush 중 오류가 발생했습니다: {GetErrorMessage(videoReceiveResult)}");
         }
 
         encodeTimer.Start();
@@ -2639,20 +2761,21 @@ public unsafe sealed class VideoExportService
         int encErr = ffmpeg.avcodec_send_frame(enc, null);
         if (encErr < 0 && encErr != ffmpeg.AVERROR_EOF)
             Throw(encErr);
-            DrainEncoderPackets(
-                enc,
-                outPkt,
-                outStream,
-                outFmt,
-                ref lastEncodedPacketPts,
-                ref hasLastEncodedPacketPts,
-                ref lastEncodedPacketDts,
-                ref hasLastEncodedPacketDts,
-                ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
-                timestampIntegrity,
-                encodedPacketFrameStep);
+        DrainEncoderPackets(
+            enc,
+            outPkt,
+            outStream,
+            outFmt,
+            ref lastEncodedPacketPts,
+            ref hasLastEncodedPacketPts,
+            ref lastEncodedPacketDts,
+            ref hasLastEncodedPacketDts,
+            ref outputVideoPacketCount,
+            ref outputPacketPtsGapOutlierCount,
+            ref maxOutputPacketPtsGap,
+            timestampIntegrity,
+            emittedEncodedFramePts,
+            encodedPacketFrameStep);
         encoderFlushTimer.Stop();
         encodeTimer.Stop();
         videoFlushed = true;
