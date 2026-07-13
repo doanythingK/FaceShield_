@@ -31,6 +31,7 @@ public unsafe sealed class VideoExportService
     private int _directFaceBlurFrames;
     private int _bitmapMaskBlurFrames;
     private int _nativeYuvBlurFrames;
+    private bool _staticHdrConfigured;
 
     public ExportRunSummary? LastExportSummary { get; private set; }
 
@@ -200,6 +201,7 @@ public unsafe sealed class VideoExportService
         _directFaceBlurFrames = 0;
         _bitmapMaskBlurFrames = 0;
         _nativeYuvBlurFrames = 0;
+        _staticHdrConfigured = false;
         _masked.ResetTemporalState();
         LastExportSummary = null;
         bool shouldRetryWithFullEncode = false;
@@ -556,6 +558,7 @@ public unsafe sealed class VideoExportService
             VideoHdrMetadata? hdrMetadata = sourceMayCarryHdrMetadata
                 ? ProbeVideoHdrMetadata(inputPath)
                 : null;
+            _staticHdrConfigured = hdrMetadata?.HasStaticMetadata == true;
 
             // ───────── output ─────────
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
@@ -2221,6 +2224,15 @@ public unsafe sealed class VideoExportService
             FFmpegHdrMetadataGuard.FindUnsupportedMetadata(frame);
         if (unsupportedFrameMetadata != null)
             ThrowUnsupportedDynamicVideoMetadata(unsupportedFrameMetadata);
+
+        if (FFmpegHdrMetadataGuard.RequiresStaticHdrConfiguration(
+                frame,
+                _staticHdrConfigured))
+        {
+            throw new InvalidOperationException(
+                "정적 HDR 메타데이터를 인코더 초기화 전에 확인하지 못했습니다. " +
+                "품질 저하를 막기 위해 내보내기를 중단했습니다.");
+        }
 
         if (IsHardwareEncoder(enc->codec) &&
             FFmpegHdrMetadataGuard.HasStaticHdrMetadata(frame))

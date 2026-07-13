@@ -52,6 +52,13 @@ public static unsafe class FFmpegHdrMetadataGuard
              HasSideData(frame, AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL));
     }
 
+    public static bool RequiresStaticHdrConfiguration(
+        AVFrame* frame,
+        bool staticHdrConfigured)
+    {
+        return !staticHdrConfigured && HasStaticHdrMetadata(frame);
+    }
+
     private static string? GetUnsupportedPacketMetadataName(AVPacketSideDataType type)
     {
         return type switch

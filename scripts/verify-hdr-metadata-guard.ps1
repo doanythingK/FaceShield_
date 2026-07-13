@@ -63,6 +63,10 @@ unsafe
             throw new InvalidOperationException("Static HDR metadata was not detected.");
         if (FFmpegHdrMetadataGuard.FindUnsupportedMetadata(staticHdrFrame) != null)
             throw new InvalidOperationException("Static HDR metadata was incorrectly rejected.");
+        if (!FFmpegHdrMetadataGuard.RequiresStaticHdrConfiguration(staticHdrFrame, false))
+            throw new InvalidOperationException("Unconfigured static HDR metadata was not rejected.");
+        if (FFmpegHdrMetadataGuard.RequiresStaticHdrConfiguration(staticHdrFrame, true))
+            throw new InvalidOperationException("Configured static HDR metadata was incorrectly rejected.");
     }
     finally
     {
@@ -70,7 +74,7 @@ unsafe
     }
 }
 
-Console.WriteLine("[HdrMetadataGuardVerify] PASS cases=9");
+Console.WriteLine("[HdrMetadataGuardVerify] PASS cases=11");
 
 static unsafe void AssertPacketMetadata(AVPacketSideDataType type, string expected)
 {
