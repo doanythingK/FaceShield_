@@ -69,6 +69,26 @@ void AssertStats(string name, AutoMaskOptions options, bool expected)
 }
 
 var trackedFaceOnnx = new AutoMaskOptions().ResolveProcessingMode();
+var trackedYolo = new AutoMaskOptions
+{
+    ProcessingMode = AutoMaskProcessingMode.Tracked,
+    FilterProfile = FaceFilterProfile.Yolo
+}.ResolveProcessingMode();
+var rawYolo = new AutoMaskOptions
+{
+    ProcessingMode = AutoMaskProcessingMode.Raw,
+    FilterProfile = FaceFilterProfile.Yolo
+}.ResolveProcessingMode();
+var fullYolo = new AutoMaskOptions
+{
+    ProcessingMode = AutoMaskProcessingMode.Full,
+    FilterProfile = FaceFilterProfile.Yolo
+}.ResolveProcessingMode();
+var legacyYolo = new AutoMaskOptions
+{
+    ProcessingMode = AutoMaskProcessingMode.Legacy,
+    FilterProfile = FaceFilterProfile.Yolo
+};
 AssertStats("default tracked FaceONNX", trackedFaceOnnx, false);
 AssertStats(
     "legacy FaceONNX",
@@ -78,22 +98,10 @@ AssertStats(
     "full FaceONNX",
     new AutoMaskOptions { ProcessingMode = AutoMaskProcessingMode.Full }.ResolveProcessingMode(),
     true);
-AssertStats(
-    "tracked YOLO",
-    new AutoMaskOptions
-    {
-        ProcessingMode = AutoMaskProcessingMode.Tracked,
-        FilterProfile = FaceFilterProfile.Yolo
-    }.ResolveProcessingMode(),
-    true);
-AssertStats(
-    "full YOLO",
-    new AutoMaskOptions
-    {
-        ProcessingMode = AutoMaskProcessingMode.Full,
-        FilterProfile = FaceFilterProfile.Yolo
-    }.ResolveProcessingMode(),
-    false);
+AssertStats("tracked YOLO", trackedYolo, false);
+AssertStats("raw YOLO", rawYolo, false);
+AssertStats("full YOLO", fullYolo, false);
+AssertStats("legacy YOLO", legacyYolo, true);
 AssertStats(
     "tracked SCRFD",
     new AutoMaskOptions
@@ -120,6 +128,32 @@ foreach (string property in new[]
         throw new InvalidOperationException($"Geometry property changed: {property} expected={expected} actual={actual}.");
 }
 
+void AssertSettingsEqual(string name, object actual, object expected)
+{
+    foreach (string property in new[]
+    {
+        "MinFaceAreaRatio",
+        "MinSmallFaceAreaRatio",
+        "MinFaceAspectRatio",
+        "MaxFaceAspectRatio",
+        "SmallFaceConfidenceMin",
+        "UseStatsFilter"
+    })
+    {
+        object expectedValue = expected.GetType().GetProperty(property)!.GetValue(expected)!;
+        object actualValue = actual.GetType().GetProperty(property)!.GetValue(actual)!;
+        if (!Equals(expectedValue, actualValue))
+            throw new InvalidOperationException($"{name}: {property} expected={expectedValue}, actual={actualValue}.");
+    }
+}
+
+object yoloRecallSettings = GetBaseSettings(FaceFilterProfile.Yolo, false);
+object yoloPrecisionSettings = GetBaseSettings(FaceFilterProfile.Yolo, true);
+AssertSettingsEqual("tracked YOLO recall policy", GetRuntimeSettings(trackedYolo), yoloRecallSettings);
+AssertSettingsEqual("raw YOLO recall policy", GetRuntimeSettings(rawYolo), yoloRecallSettings);
+AssertSettingsEqual("full YOLO recall policy", GetRuntimeSettings(fullYolo), yoloRecallSettings);
+AssertSettingsEqual("legacy YOLO precision policy", GetRuntimeSettings(legacyYolo), yoloPrecisionSettings);
+
 void AssertCandidate(string name, Rect bounds, float confidence, string expected)
 {
     var face = new FaceDetectionResult { Bounds = bounds, Confidence = confidence };
@@ -132,6 +166,22 @@ void AssertCandidate(string name, Rect bounds, float confidence, string expected
 AssertCandidate("regular face", new Rect(32, 32, 32, 32), 0.79f, "Regular");
 AssertCandidate("invalid aspect", new Rect(100, 32, 40, 8), 0.99f, "Rejected");
 AssertCandidate("too small", new Rect(150, 32, 2, 2), 0.99f, "Rejected");
+
+string ClassifyWithSettings(Rect bounds, float confidence, object settings)
+{
+    var face = new FaceDetectionResult { Bounds = bounds, Confidence = confidence };
+    return classifyMethod.Invoke(null, [face, 320.0 * 180.0, settings])?.ToString()
+        ?? throw new InvalidOperationException("YOLO boundary classification was not returned.");
+}
+
+var boundarySmallFace = new Rect(200, 32, 4, 4);
+string trackedYoloBoundary = ClassifyWithSettings(boundarySmallFace, 0.55f, GetRuntimeSettings(trackedYolo));
+string legacyYoloBoundary = ClassifyWithSettings(boundarySmallFace, 0.55f, GetRuntimeSettings(legacyYolo));
+if (trackedYoloBoundary != "Small" || legacyYoloBoundary != "Rejected")
+{
+    throw new InvalidOperationException(
+        $"Expected tracked YOLO to retain the small boundary face while Legacy preserves precision filtering; tracked={trackedYoloBoundary}, legacy={legacyYoloBoundary}.");
+}
 
 unsafe (int Count, string Summary) RunPixelFilter(object settings)
 {
@@ -187,8 +237,8 @@ if (legacyPixels != (0, "regular=0, small=0, rejected=2, statsRejected=1"))
 var factoryOptions = FaceDetectorFactoryOptions.ForOnnx(new FaceOnnxDetectorOptions());
 string trackedSignature = (string)(signatureMethod.Invoke(null, [trackedFaceOnnx, factoryOptions])
     ?? throw new InvalidOperationException("Tracked signature was not returned."));
-if (!trackedSignature.StartsWith("v5|", StringComparison.Ordinal) || trackedSignature.StartsWith("v4|", StringComparison.Ordinal))
-    throw new InvalidOperationException($"Tracked signature did not invalidate v4: {trackedSignature}.");
+if (!trackedSignature.StartsWith("v6|", StringComparison.Ordinal) || trackedSignature.StartsWith("v5|", StringComparison.Ordinal))
+    throw new InvalidOperationException($"Tracked signature did not invalidate v5: {trackedSignature}.");
 
 string legacySignature = (string)(signatureMethod.Invoke(
     null,
@@ -197,7 +247,7 @@ string legacySignature = (string)(signatureMethod.Invoke(
 if (!legacySignature.StartsWith("v3|", StringComparison.Ordinal))
     throw new InvalidOperationException($"Legacy-compatible signature changed: {legacySignature}.");
 
-Console.WriteLine("[AutoMaskDefaultFilterStabilityVerify] PASS policies=6 geometry=3 pixelPolicies=2 signatures=v5/v3");
+Console.WriteLine("[AutoMaskDefaultFilterStabilityVerify] PASS policies=8 geometry=3 yoloBoundary=tracked-small/legacy-rejected pixelPolicies=2 signatures=v6/v3");
 '@ | Set-Content -Encoding UTF8 -Path $program
 
     dotnet run --project $project --configuration Debug
@@ -215,13 +265,16 @@ Console.WriteLine("[AutoMaskDefaultFilterStabilityVerify] PASS policies=6 geomet
     if ($source -notmatch "settings\.UseStatsFilter\s*&&\s*!PassesStatsBgra") {
         throw "Pixel stats gate is no longer controlled by the resolved filter policy."
     }
+    if ($source -notmatch "usePrecisionMode\s*=\s*options\.ProcessingMode\s*==\s*AutoMaskProcessingMode\.Legacy\s*&&\s*!options\.EnablePostProcessing") {
+        throw "Precision filtering is no longer isolated to Legacy compatibility mode."
+    }
 
     $workspace = Get-Content -Raw -Path (Join-Path $repo "ViewModels\Pages\WorkspaceViewModel.cs")
-    if ($workspace -notmatch 'useLegacyCompatibleSignature\s*\?\s*"v3"\s*:\s*"v5"') {
+    if ($workspace -notmatch 'useLegacyCompatibleSignature\s*\?\s*"v3"\s*:\s*"v6"') {
         throw "Auto-run signature was not advanced for the default filter policy change."
     }
 
-    Write-Host "[AutoMaskDefaultFilterStabilityVerify] PASS runtimePaths=7 resumeSignature=v5"
+    Write-Host "[AutoMaskDefaultFilterStabilityVerify] PASS runtimePaths=7 resumeSignature=v6"
 }
 finally {
     if (Test-Path $work) {

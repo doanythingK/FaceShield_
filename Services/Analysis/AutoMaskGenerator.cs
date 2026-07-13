@@ -3120,9 +3120,11 @@ namespace FaceShield.Services.Analysis
 
         private static FaceFilterSettings GetRuntimeFaceFilterSettings(AutoMaskOptions options)
         {
+            bool usePrecisionMode = options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
+                !options.EnablePostProcessing;
             FaceFilterSettings settings = GetFaceFilterSettings(
                 options.FilterProfile,
-                !options.EnablePostProcessing);
+                usePrecisionMode);
             bool disableFrameStats = options.FilterProfile == FaceFilterProfile.FaceOnnx &&
                 options.ProcessingMode == AutoMaskProcessingMode.Tracked &&
                 !options.EnablePostProcessing;

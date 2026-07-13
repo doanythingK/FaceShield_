@@ -283,11 +283,14 @@ Assert-Contains "track-postprocess-policy" $trackOutput "removedEdgeTail=1"
 Assert-Contains "track-postprocess-policy" $trackOutput "largeJumpFilled=False"
 Assert-Contains "track-postprocess-policy" $trackOutput "faceOnnxContinuity=True"
 Assert-Contains "track-postprocess-policy" $trackOutput "confirmedHold=True"
+Assert-Contains "track-postprocess-policy" $trackOutput "terminalHold=True"
+Assert-Contains "track-postprocess-policy" $trackOutput "terminalHoldFrames=7,8,9"
+Assert-Contains "track-postprocess-policy" $trackOutput "unconfirmedTail=False, cutTail=False, edgeTailHold=False"
 Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52,55,59,70,71,75,76,77,82,83,84,85,86,87,88,89,90,95,96,97,98,99"
 
 $defaultFilterOutput = Invoke-ScriptStep "automask-default-filter-stability" $autoMaskDefaultFilterStabilityVerify @()
-Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "policies=6 geometry=3 pixelPolicies=2"
-Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "runtimePaths=7 resumeSignature=v5"
+Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "policies=8 geometry=3 yoloBoundary=tracked-small/legacy-rejected pixelPolicies=2"
+Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "runtimePaths=7 resumeSignature=v6"
 
 $autoResumeOutput = Invoke-ScriptStep "auto-resume-mask-reset" $autoResumeMaskResetVerify @()
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "resetCases=5"

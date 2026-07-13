@@ -165,7 +165,7 @@ namespace FaceShield.Services.Analysis
                 {
                     MaxTrackGap = 9,
                     MaxFillGap = 4,
-                    MaxLostFillFrames = 0,
+                    MaxLostFillFrames = 3,
                     MaxInitialFillFrames = 0,
                     InitialFillRequiresInwardMotion = false,
                     MaxConfirmedTrackHoldFrames = 8,
@@ -182,7 +182,7 @@ namespace FaceShield.Services.Analysis
                     SparseTrackMaxConfidence = 0f,
                     EdgeTailMaxConfidence = 0f,
                     EdgeTailMinStableDetections = 3,
-                    EdgeLostFillMaxConfidence = 0f,
+                    EdgeLostFillMaxConfidence = 0.60f,
                     SmallTrackMaxAreaRatio = 0.00070,
                     MinTrackIou = 0.08,
                     MaxCenterShiftRatio = 0.55,

@@ -277,8 +277,77 @@ if (!confirmedHoldProvider.TryGetFaceMaskData(6, out var confirmedLongFill) ||
 if (confirmedLongFill.Faces.Any(face => face.X > 900))
     throw new InvalidOperationException("Expected an unconfirmed track to retain the four-frame fill limit.");
 
+var terminalHoldProvider = new FrameMaskProvider();
+terminalHoldProvider.SetFaceRects(4, new[] { new Rect(420, 240, 90, 96) }, size, 0.86f, new[] { 0.86f });
+terminalHoldProvider.SetFaceRects(5, new[] { new Rect(426, 244, 90, 96) }, size, 0.85f, new[] { 0.85f });
+terminalHoldProvider.SetFaceRects(6, new[] { new Rect(432, 248, 90, 96) }, size, 0.84f, new[] { 0.84f });
+var terminalHoldResult = new FaceTrackInterpolator().Apply(
+    terminalHoldProvider,
+    totalFrames: 11,
+    AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
+        FaceFilterProfile.FaceOnnx,
+        continuityOnly: true));
+
+var expectedTerminalHoldFrames = new[] { 7, 8, 9 };
+if (!terminalHoldResult.FilledLostFrameIndices.SequenceEqual(expectedTerminalHoldFrames))
+{
+    throw new InvalidOperationException(
+        $"Expected confirmed terminal miss hold frames {string.Join(",", expectedTerminalHoldFrames)}, got {string.Join(",", terminalHoldResult.FilledLostFrameIndices)}.");
+}
+
+foreach (int frame in expectedTerminalHoldFrames)
+{
+    if (!terminalHoldProvider.TryGetFaceMaskData(frame, out var heldTail) || heldTail.Faces.Count != 1)
+        throw new InvalidOperationException($"Expected confirmed terminal miss frame {frame} to remain masked.");
+}
+
+if (terminalHoldProvider.TryGetFaceMaskData(10, out var overHeldTail) && overHeldTail.Faces.Count > 0)
+    throw new InvalidOperationException("Expected terminal miss hold to stop after three frames.");
+
+var unconfirmedTerminalProvider = new FrameMaskProvider();
+unconfirmedTerminalProvider.SetFaceRects(4, new[] { new Rect(420, 240, 90, 96) }, size, 0.86f, new[] { 0.86f });
+unconfirmedTerminalProvider.SetFaceRects(5, new[] { new Rect(426, 244, 90, 96) }, size, 0.85f, new[] { 0.85f });
+new FaceTrackInterpolator().Apply(
+    unconfirmedTerminalProvider,
+    totalFrames: 9,
+    AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
+        FaceFilterProfile.FaceOnnx,
+        continuityOnly: true));
+
+if (unconfirmedTerminalProvider.TryGetFaceMaskData(6, out var unconfirmedTail) && unconfirmedTail.Faces.Count > 0)
+    throw new InvalidOperationException("Expected a two-detection track not to create a terminal hold.");
+
+var cutTerminalProvider = new FrameMaskProvider();
+cutTerminalProvider.SetFaceRects(4, new[] { new Rect(420, 240, 90, 96) }, size, 0.86f, new[] { 0.86f });
+cutTerminalProvider.SetFaceRects(5, new[] { new Rect(426, 244, 90, 96) }, size, 0.85f, new[] { 0.85f });
+cutTerminalProvider.SetFaceRects(6, new[] { new Rect(432, 248, 90, 96) }, size, 0.84f, new[] { 0.84f });
+new FaceTrackInterpolator().Apply(
+    cutTerminalProvider,
+    totalFrames: 10,
+    AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
+        FaceFilterProfile.FaceOnnx,
+        continuityOnly: true),
+    new HashSet<int> { 7 });
+
+if (cutTerminalProvider.TryGetFaceMaskData(7, out var cutTail) && cutTail.Faces.Count > 0)
+    throw new InvalidOperationException("Expected a scene cut to block the first terminal hold frame.");
+
+var edgeTerminalProvider = new FrameMaskProvider();
+edgeTerminalProvider.SetFaceRects(4, new[] { new Rect(0, 240, 90, 96) }, size, 0.86f, new[] { 0.86f });
+edgeTerminalProvider.SetFaceRects(5, new[] { new Rect(0, 244, 90, 96) }, size, 0.74f, new[] { 0.74f });
+edgeTerminalProvider.SetFaceRects(6, new[] { new Rect(0, 248, 90, 96) }, size, 0.55f, new[] { 0.55f });
+new FaceTrackInterpolator().Apply(
+    edgeTerminalProvider,
+    totalFrames: 10,
+    AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
+        FaceFilterProfile.FaceOnnx,
+        continuityOnly: true));
+
+if (edgeTerminalProvider.TryGetFaceMaskData(7, out var edgeTailHold) && edgeTailHold.Faces.Count > 0)
+    throw new InvalidOperationException("Expected a low-confidence edge detection not to create a terminal hold.");
+
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, terminalHold=True, terminalHoldFrames={string.Join(",", terminalHoldResult.FilledLostFrameIndices)}, unconfirmedTail=False, cutTail=False, edgeTailHold=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

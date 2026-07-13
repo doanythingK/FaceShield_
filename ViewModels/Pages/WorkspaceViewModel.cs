@@ -2177,7 +2177,7 @@ namespace FaceShield.ViewModels.Pages
 
             var parts = new List<string>
             {
-                useLegacyCompatibleSignature ? "v3" : "v5",
+                useLegacyCompatibleSignature ? "v3" : "v6",
                 $"backend={detectorFactoryOptions.Backend}",
                 $"profile={autoOptions.FilterProfile}",
                 $"downscale={FormatSignatureNumber(autoOptions.DownscaleRatio)}",
