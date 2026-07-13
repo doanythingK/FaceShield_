@@ -512,9 +512,12 @@ $qualityOutput = Invoke-Step "quality-gate-all-frame-parallel" @(
     "-ProcessingMode", "Legacy",
     "-ParallelDetectorCount", "2",
     "-MinAvgIou", "0.99",
-    "-MinBestIou", "0.99"
+    "-MinBestIou", "0.99",
+    "-AllowFrameMismatch"
 )
 Assert-Contains "quality-gate-all-frame-parallel" $qualityOutput "\[SmokeQualityGate\] passed=True"
+Assert-Contains "quality-gate-all-frame-parallel" $qualityOutput "onlyBaseline=0"
+Assert-Contains "quality-gate-all-frame-parallel" $qualityOutput "boxCountDiffFrames=0"
 Assert-Contains "quality-gate-all-frame-parallel" $qualityOutput "avgBestIou=1\.000"
 Assert-Contains "quality-gate-all-frame-parallel" $qualityOutput "minBestIou=1\.000"
 
