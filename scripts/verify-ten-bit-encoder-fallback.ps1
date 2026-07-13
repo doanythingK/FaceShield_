@@ -292,5 +292,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 }
 finally {
-    Remove-Item -Recurse -Force -Path $work -ErrorAction SilentlyContinue
+    if (Test-Path $work) {
+        Remove-Item -Recurse -Force -Path $work
+    }
+    if (Test-Path $work) {
+        throw "Ten-bit encoder fallback harness directory remained: $work"
+    }
 }

@@ -3823,16 +3823,16 @@ public unsafe sealed class VideoExportService
         if (ctx->time_base.num <= 0 || ctx->time_base.den <= 0)
             ctx->time_base = inStream->time_base;
 
-        int sourceBitrate = ClampBitrate(ResolveSourceVideoBitrate(inStream, dec));
-        int targetBitrate = sourceBitrate > 0
-            ? ClampBitrate((long)sourceBitrate * 3L / 2L)
-            : EstimateHighQualityBitrate(ctx->width, ctx->height, ctx->framerate);
-        targetBitrate = Math.Max(targetBitrate, 2_000_000);
+        long sourceBitrate = ResolveSourceVideoBitrate(inStream, dec);
+        int targetBitrate = ResolveHighQualityTargetBitrate(
+            sourceBitrate,
+            ctx->width,
+            ctx->height,
+            ctx->framerate,
+            encoder->id);
 
         string encoderName = GetEncoderName(encoder);
-        bool usesSoftwareConstantQuality =
-            encoderName.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
-            encoderName.Contains("x265", StringComparison.OrdinalIgnoreCase);
+        bool usesSoftwareConstantQuality = UsesSoftwareConstantQuality(encoderName);
         if (usesSoftwareConstantQuality)
         {
             ctx->bit_rate = 0;
@@ -3937,6 +3937,14 @@ public unsafe sealed class VideoExportService
                name.Contains("v4l2m2m", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool UsesSoftwareConstantQuality(string encoderName)
+    {
+        return encoderName.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
+               encoderName.Contains("x265", StringComparison.OrdinalIgnoreCase) ||
+               encoderName.Contains("svtav1", StringComparison.OrdinalIgnoreCase) ||
+               encoderName.Contains("aom-av1", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static unsafe AVFieldOrder ResolveSourceFieldOrder(
         AVStream* stream,
         AVCodecContext* decoder)
@@ -4002,6 +4010,8 @@ public unsafe sealed class VideoExportService
                 return new[] { "libx264" };
             if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
                 return new[] { "libx265" };
+            if (codecId == AVCodecID.AV_CODEC_ID_AV1)
+                return new[] { "libsvtav1", "libaom-av1" };
             return new[] { "libx264", "libx265" };
         }
 
@@ -4024,6 +4034,25 @@ public unsafe sealed class VideoExportService
             if (isWindows)
                 return new[] { "hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265" };
             return new[] { "hevc_nvenc", "hevc_vaapi", "libx265" };
+        }
+
+        if (codecId == AVCodecID.AV_CODEC_ID_AV1)
+        {
+            if (isMac)
+                return new[] { "libsvtav1", "libaom-av1" };
+            if (isWindows)
+            {
+                return new[]
+                {
+                    "av1_nvenc",
+                    "av1_qsv",
+                    "av1_amf",
+                    "libsvtav1",
+                    "libaom-av1"
+                };
+            }
+
+            return new[] { "av1_nvenc", "av1_qsv", "libsvtav1", "libaom-av1" };
         }
 
         return Array.Empty<string>();
@@ -4083,6 +4112,13 @@ public unsafe sealed class VideoExportService
                 return ffmpeg.avcodec_find_encoder_by_name("libx264");
             if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
                 return ffmpeg.avcodec_find_encoder_by_name("libx265");
+            if (codecId == AVCodecID.AV_CODEC_ID_AV1)
+            {
+                AVCodec* svtAv1 = ffmpeg.avcodec_find_encoder_by_name("libsvtav1");
+                return svtAv1 != null
+                    ? svtAv1
+                    : ffmpeg.avcodec_find_encoder_by_name("libaom-av1");
+            }
         }
 
         return ffmpeg.avcodec_find_encoder(codecId);
@@ -4121,6 +4157,25 @@ public unsafe sealed class VideoExportService
             baseFloor = (long)Math.Round(baseFloor * (fps / 30.0));
 
         return ClampBitrate(baseFloor);
+    }
+
+    private static int ResolveHighQualityTargetBitrate(
+        long sourceBitrate,
+        int width,
+        int height,
+        AVRational framerate,
+        AVCodecID codecId)
+    {
+        int resolutionFloor = EstimateHighQualityBitrate(width, height, framerate);
+        int boundedSourceBitrate = ClampBitrate(sourceBitrate);
+        int targetBitrate = boundedSourceBitrate > 0
+            ? ClampBitrate((long)boundedSourceBitrate * 3L / 2L)
+            : resolutionFloor;
+
+        if (codecId == AVCodecID.AV_CODEC_ID_AV1)
+            targetBitrate = Math.Max(targetBitrate, resolutionFloor);
+
+        return Math.Max(targetBitrate, 2_000_000);
     }
 
     private static int ClampBitrate(long value)
@@ -4202,6 +4257,8 @@ public unsafe sealed class VideoExportService
 
         bool isX264 = name.Contains("x264", StringComparison.OrdinalIgnoreCase);
         bool isX265 = name.Contains("x265", StringComparison.OrdinalIgnoreCase);
+        bool isSvtAv1 = name.Contains("svtav1", StringComparison.OrdinalIgnoreCase);
+        bool isAomAv1 = name.Contains("aom-av1", StringComparison.OrdinalIgnoreCase);
         bool isNvenc = name.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
         bool isQsv = name.Contains("qsv", StringComparison.OrdinalIgnoreCase);
         bool isAmf = name.Contains("amf", StringComparison.OrdinalIgnoreCase);
@@ -4238,6 +4295,22 @@ public unsafe sealed class VideoExportService
                 SetOption("crf", "16", required: true);
                 mode = forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
             }
+        }
+        else if (isSvtAv1)
+        {
+            SetOption("preset", "6", required: true);
+            SetOption("crf", "12", required: true);
+            SetOption("svtav1-params", "tune=0", required: true);
+            mode = forceSafeEncoding ? "crf12-preset6-vq-safe" : "crf12-preset6-vq";
+        }
+        else if (isAomAv1)
+        {
+            SetOption("usage", "good", required: true);
+            SetOption("cpu-used", "4", required: true);
+            SetOption("crf", "12", required: true);
+            SetOption("row-mt", "1", required: false);
+            SetOption("tune", "psnr", required: false);
+            mode = forceSafeEncoding ? "crf12-cpu4-good-safe" : "crf12-cpu4-good";
         }
         else if (isNvenc)
         {

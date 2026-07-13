@@ -64,6 +64,8 @@ $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consi
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
 $swsFrameColorFidelityVerify = Join-Path $repo "scripts\verify-sws-frame-color-fidelity.ps1"
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
+$encoderQualityOptionsVerify = Join-Path $repo "scripts\verify-encoder-quality-options.ps1"
+$av1EncoderPolicyVerify = Join-Path $repo "scripts\verify-av1-encoder-policy.ps1"
 $exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progress-completion.ps1"
 $videoFieldFidelityPolicyVerify = Join-Path $repo "scripts\verify-video-field-fidelity-policy.ps1"
 $encodedPresentationGapsVerify = Join-Path $repo "scripts\verify-encoded-presentation-gaps.ps1"
@@ -316,6 +318,12 @@ Assert-Contains "sws-frame-color-fidelity" $swsColorOutput "legacyCalls=0 dynami
 
 $tenBitEncoderOutput = Invoke-ScriptStep "ten-bit-encoder-fallback" $tenBitEncoderFallbackVerify @()
 Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx264,libx265 .*libx265TenBitOpen=true"
+
+$encoderQualityOutput = Invoke-ScriptStep "encoder-quality-options" $encoderQualityOptionsVerify @()
+Assert-Contains "encoder-quality-options" $encoderQualityOutput "av1Software=[1-9][0-9]*"
+
+$av1EncoderOutput = Invoke-ScriptStep "av1-encoder-policy" $av1EncoderPolicyVerify @()
+Assert-Contains "av1-encoder-policy" $av1EncoderOutput "software=libsvtav1,libaom-av1 .*bitDepths=8,10,12 .*bitrateFloor=true"
 
 $exportProgressOutput = Invoke-ScriptStep "export-progress-completion" $exportProgressCompletionVerify @()
 Assert-Contains "export-progress-completion" $exportProgressOutput "processingMax=99 committed=100 unknownTotal=100"
