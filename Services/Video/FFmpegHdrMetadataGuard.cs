@@ -41,6 +41,8 @@ public static unsafe class FFmpegHdrMetadataGuard
             return "HDR Vivid";
         if (HasSideData(frame, AVFrameSideDataType.AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT))
             return "HDR ambient viewing environment";
+        if (HasSideData(frame, AVFrameSideDataType.AV_FRAME_DATA_FILM_GRAIN_PARAMS))
+            return "AV1 film grain";
 
         return null;
     }

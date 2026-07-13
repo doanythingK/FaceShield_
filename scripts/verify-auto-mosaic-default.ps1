@@ -66,6 +66,8 @@ $swsFrameColorFidelityVerify = Join-Path $repo "scripts\verify-sws-frame-color-f
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
 $encoderQualityOptionsVerify = Join-Path $repo "scripts\verify-encoder-quality-options.ps1"
 $av1EncoderPolicyVerify = Join-Path $repo "scripts\verify-av1-encoder-policy.ps1"
+$hdrMetadataGuardVerify = Join-Path $repo "scripts\verify-hdr-metadata-guard.ps1"
+$av1HdrFilmGrainPolicyVerify = Join-Path $repo "scripts\verify-av1-hdr-film-grain-policy.ps1"
 $exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progress-completion.ps1"
 $videoFieldFidelityPolicyVerify = Join-Path $repo "scripts\verify-video-field-fidelity-policy.ps1"
 $encodedPresentationGapsVerify = Join-Path $repo "scripts\verify-encoded-presentation-gaps.ps1"
@@ -324,6 +326,19 @@ Assert-Contains "encoder-quality-options" $encoderQualityOutput "av1Software=[1-
 
 $av1EncoderOutput = Invoke-ScriptStep "av1-encoder-policy" $av1EncoderPolicyVerify @()
 Assert-Contains "av1-encoder-policy" $av1EncoderOutput "software=libsvtav1,libaom-av1 .*bitDepths=8,10,12 .*bitrateFloor=true"
+
+$hdrMetadataGuardOutput = Invoke-ScriptStep "hdr-metadata-guard" $hdrMetadataGuardVerify @()
+Assert-Contains "hdr-metadata-guard" $hdrMetadataGuardOutput "PASS cases=12"
+Assert-Contains "hdr-metadata-guard" $hdrMetadataGuardOutput "PASS svtHdrCompatibility=8"
+Assert-Contains "hdr-metadata-guard" $hdrMetadataGuardOutput "PASS h264RetryPolicy=standard:true,hdr:false"
+Assert-Contains "hdr-metadata-guard" $hdrMetadataGuardOutput "PASS no-mask-remux-before-reencode-guard"
+
+$av1HdrFilmGrainOutput = Invoke-ScriptStep "av1-hdr-film-grain-policy" $av1HdrFilmGrainPolicyVerify @()
+Assert-Contains "av1-hdr-film-grain-policy" $av1HdrFilmGrainOutput "codec=av1 frames=4 .*masteringFrames=4 contentLightFrames=4 .*filmGrainFrames=4"
+Assert-Contains "av1-hdr-film-grain-policy" $av1HdrFilmGrainOutput "serviceHdrExport=true .*encoder=libsvtav1 .*sourceBitDepth=10 outputBitDepth=10"
+Assert-Contains "av1-hdr-film-grain-policy" $av1HdrFilmGrainOutput "serviceFilmGrainRemux=true encoder=stream-copy quality=lossless-remux .*packets=4/4 frames=4/4 filmGrainFrames=4/4 stagedOutputs=0 codec=av1"
+Assert-Contains "av1-hdr-film-grain-policy" $av1HdrFilmGrainOutput "serviceFilmGrainFailClosed=true .*finalOutput=false stagedOutputs=0 outputCommitted=false"
+Assert-Contains "av1-hdr-film-grain-policy" $av1HdrFilmGrainOutput "productionSource=mainDecoderExport,probeDecoderExport,svtHdrPayload,filmGrainGuard"
 
 $exportProgressOutput = Invoke-ScriptStep "export-progress-completion" $exportProgressCompletionVerify @()
 Assert-Contains "export-progress-completion" $exportProgressOutput "processingMax=99 committed=100 unknownTotal=100"
