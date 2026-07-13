@@ -286,6 +286,7 @@ public unsafe sealed class VideoExportService
             // ───────── input ─────────
             Throw(ffmpeg.avformat_open_input(&inFmt, inputPath, null, null));
             Throw(ffmpeg.avformat_find_stream_info(inFmt, null));
+            EnsureContainerStructureSupported(inFmt);
 
             videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(inFmt);
             var audioStreamIndices = new List<int>();
@@ -961,6 +962,7 @@ public unsafe sealed class VideoExportService
 
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
+                EnsureContainerStructureSupported(inFmt);
                 if (copiedStreams.TryGetValue(pkt->stream_index, out StreamCopyState? copyState))
                 {
                     ffmpeg.av_packet_rescale_ts(
@@ -3257,6 +3259,7 @@ public unsafe sealed class VideoExportService
             int lastReportedFrame = -1;
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
+                EnsureContainerStructureSupported(inFmt);
                 if (cancellationToken.IsCancellationRequested)
                     throw new OperationCanceledException(cancellationToken);
 
@@ -4093,6 +4096,22 @@ public unsafe sealed class VideoExportService
         throw new InvalidOperationException(
             $"{metadataName} 영상 메타데이터는 현재 내보내기에서 원본 그대로 보존할 수 없습니다. " +
             "품질 저하를 막기 위해 내보내기를 중단했습니다.");
+    }
+
+    private static unsafe void EnsureContainerStructureSupported(AVFormatContext* format)
+    {
+        string? unsupportedStructureKey =
+            FFmpegContainerStructureGuard.FindUnsupportedStructure(format);
+        if (unsupportedStructureKey == null)
+            return;
+
+        string unsupportedStructure = unsupportedStructureKey == "programs"
+            ? "프로그램 단위 스트림 구성"
+            : "IAMF 등 스트림 그룹 구성";
+
+        throw new InvalidOperationException(
+            $"{unsupportedStructure}은 현재 내보내기에서 원본 그대로 보존할 수 없습니다. " +
+            "스트림 구성 유실을 막기 위해 내보내기를 중단했습니다.");
     }
 
     private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)
