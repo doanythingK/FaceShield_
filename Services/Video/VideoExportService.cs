@@ -1914,7 +1914,7 @@ public unsafe sealed class VideoExportService
 
         bool nativeYuvApplied = false;
         AVFrame* nativeYuvFrame = null;
-        if (mask == null && faceRects != null && faceRects.Count > 0)
+        if (mask != null || (faceRects != null && faceRects.Count > 0))
         {
             bool sourceMatchesEncoder =
                 frame->format == (int)enc->pix_fmt &&
@@ -1957,10 +1957,9 @@ public unsafe sealed class VideoExportService
             if (nativeYuvFrame != null)
             {
                 var tNativeMask = Stopwatch.StartNew();
-                nativeYuvApplied = _masked.TryApplyFaceRectsAndBlurNative(
-                    nativeYuvFrame,
-                    faceRects,
-                    blurRadius);
+                nativeYuvApplied = mask != null
+                    ? _masked.TryApplyMaskAndBlurNative(nativeYuvFrame, mask, blurRadius)
+                    : _masked.TryApplyFaceRectsAndBlurNative(nativeYuvFrame, faceRects!, blurRadius);
                 tNativeMask.Stop();
                 maskMs += tNativeMask.ElapsedMilliseconds;
             }
@@ -1968,7 +1967,10 @@ public unsafe sealed class VideoExportService
 
         if (nativeYuvApplied)
         {
-            _directFaceBlurFrames++;
+            if (mask != null)
+                _bitmapMaskBlurFrames++;
+            else
+                _directFaceBlurFrames++;
             _nativeYuvBlurFrames++;
             frameWasBlurred = true;
             ApplyEncodingPts(nativeYuvFrame, encodedPts);

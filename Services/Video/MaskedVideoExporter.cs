@@ -151,21 +151,8 @@ public unsafe sealed class MaskedVideoExporter
             }
         }
 
-        AVPixelFormat format = (AVPixelFormat)frame->format;
-        int bytesPerSample = format is AVPixelFormat.AV_PIX_FMT_YUV420P10LE or AVPixelFormat.AV_PIX_FMT_P010LE
-            ? 2
-            : 1;
-        int valueShift = format == AVPixelFormat.AV_PIX_FMT_P010LE ? 6 : 0;
-
-        ApplyNativePlane(
-            frame->data[0],
-            frame->linesize[0],
-            width,
-            height,
-            bytesPerSample,
-            bytesPerSample,
-            0,
-            valueShift,
+        ApplyNativeMaskPlanes(
+            frame,
             rx0,
             ry0,
             rx1,
@@ -179,72 +166,86 @@ public unsafe sealed class MaskedVideoExporter
             alphaHeight,
             radiusMap,
             paddedWidth,
-            radius,
-            chroma: false);
+            radius);
 
-        int chromaWidth = (width + 1) / 2;
-        int chromaHeight = (height + 1) / 2;
-        int chromaRx0 = rx0 / 2;
-        int chromaRy0 = ry0 / 2;
-        int chromaRx1 = (rx1 + 1) / 2;
-        int chromaRy1 = (ry1 + 1) / 2;
-        int chromaPx0 = px0 / 2;
-        int chromaPy0 = py0 / 2;
-        int chromaPx1 = (px1 + 1) / 2;
-        int chromaPy1 = (py1 + 1) / 2;
+        return true;
+    }
 
-        if (format is AVPixelFormat.AV_PIX_FMT_YUV420P or AVPixelFormat.AV_PIX_FMT_YUV420P10LE)
+    public bool TryApplyMaskAndBlurNative(
+        AVFrame* frame,
+        WriteableBitmap mask,
+        int blurRadius)
+    {
+        if (!CanApplyNativeYuv(frame) || mask == null || blurRadius <= 0)
+            return false;
+
+        int width = frame->width;
+        int height = frame->height;
+        if (mask.PixelSize.Width != width || mask.PixelSize.Height != height)
+            return false;
+
+        using var framebuffer = mask.Lock();
+        if (framebuffer.Address == IntPtr.Zero || framebuffer.RowBytes < width * 4)
+            return false;
+
+        byte* maskData = (byte*)framebuffer.Address;
+        int maskStride = framebuffer.RowBytes;
+        var (rx0, ry0, rx1, ry1) = GetMaskBounds(maskData, maskStride, width, height);
+        if (rx1 <= rx0 || ry1 <= ry0)
+            return false;
+
+        int radius = Math.Max(1, blurRadius);
+        int px0 = Math.Max(0, rx0 - radius);
+        int py0 = Math.Max(0, ry0 - radius);
+        int px1 = Math.Min(width, rx1 + radius);
+        int py1 = Math.Min(height, ry1 + radius);
+        int paddedWidth = px1 - px0;
+        int paddedHeight = py1 - py0;
+        if (paddedWidth <= 0 || paddedHeight <= 0)
+            return false;
+
+        EnsureMaskHistory(width, height);
+        int alphaWidth = rx1 - rx0;
+        int alphaHeight = ry1 - ry0;
+        byte[] alpha = EnsureNativeAlpha(alphaWidth * alphaHeight);
+        for (int y = ry0; y < ry1; y++)
         {
-            for (int plane = 1; plane <= 2; plane++)
+            byte* maskRow = maskData + y * maskStride;
+            int historyRow = y * width;
+            int alphaRow = (y - ry0) * alphaWidth;
+            for (int x = rx0; x < rx1; x++)
             {
-                ApplyNativePlane(
-                    frame->data[(uint)plane],
-                    frame->linesize[(uint)plane],
-                    chromaWidth,
-                    chromaHeight,
-                    bytesPerSample,
-                    bytesPerSample,
-                    0,
-                    0,
-                    chromaRx0,
-                    chromaRy0,
-                    chromaRx1,
-                    chromaRy1,
-                    chromaPx0,
-                    chromaPy0,
-                    chromaPx1,
-                    chromaPy1,
-                    alpha,
-                    alphaWidth,
-                    alphaHeight,
-                    radiusMap,
-                    paddedWidth,
-                    radius,
-                    chroma: true,
-                    lumaRx0: rx0,
-                    lumaRy0: ry0,
-                    lumaPx0: px0,
-                    lumaPy0: py0);
+                byte current = maskRow[x * 4 + 3];
+                int historyIndex = historyRow + x;
+                byte previous = _prevMaskAlpha![historyIndex];
+                byte smooth = current == 0
+                    ? (byte)(previous * 3 / 4)
+                    : previous == 0
+                        ? current
+                        : (byte)Math.Max(current, previous * 3 / 4);
+                _prevMaskAlpha[historyIndex] = smooth;
+                alpha[alphaRow + x - rx0] = smooth;
             }
         }
-        else
-        {
-            int componentStride = bytesPerSample * 2;
-            ApplyNativePlane(
-                frame->data[1], frame->linesize[1], chromaWidth, chromaHeight,
-                bytesPerSample, componentStride, 0, valueShift,
-                chromaRx0, chromaRy0, chromaRx1, chromaRy1,
-                chromaPx0, chromaPy0, chromaPx1, chromaPy1,
-                alpha, alphaWidth, alphaHeight, radiusMap, paddedWidth, radius,
-                chroma: true, lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
-            ApplyNativePlane(
-                frame->data[1], frame->linesize[1], chromaWidth, chromaHeight,
-                bytesPerSample, componentStride, bytesPerSample, valueShift,
-                chromaRx0, chromaRy0, chromaRx1, chromaRy1,
-                chromaPx0, chromaPy0, chromaPx1, chromaPy1,
-                alpha, alphaWidth, alphaHeight, radiusMap, paddedWidth, radius,
-                chroma: true, lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
-        }
+
+        byte[] radiusMap = EnsureRadiusMap(paddedWidth, paddedHeight);
+        Array.Clear(radiusMap, 0, paddedWidth * paddedHeight);
+        ApplyNativeMaskPlanes(
+            frame,
+            rx0,
+            ry0,
+            rx1,
+            ry1,
+            px0,
+            py0,
+            px1,
+            py1,
+            alpha,
+            alphaWidth,
+            alphaHeight,
+            radiusMap,
+            paddedWidth,
+            radius);
 
         return true;
     }
@@ -268,7 +269,8 @@ public unsafe sealed class MaskedVideoExporter
 
         byte* data = bgraFrame->data[0];          // BGRA
         int stride = bgraFrame->linesize[0];
-        uint* m = (uint*)fb.Address;
+        byte* maskData = (byte*)fb.Address;
+        int maskStride = fb.RowBytes;
 
         EnsureMaskHistory(w, h);
 
@@ -279,7 +281,7 @@ public unsafe sealed class MaskedVideoExporter
         {
             var (rx0, ry0, rx1, ry1) = faces != null && faces.Count > 0
                 ? GetFaceBounds(faces, w, h)
-                : GetMaskBounds(m, w, h);
+                : GetMaskBounds(maskData, maskStride, w, h);
             if (rx1 <= rx0 || ry1 <= ry0)
                 return;
 
@@ -360,12 +362,12 @@ public unsafe sealed class MaskedVideoExporter
             void ProcessRow(int y)
             {
                 byte* srcRow = data + y * stride;
-                int mi = y * w;
+                byte* maskRow = maskData + y * maskStride;
 
                 for (int x = rx0; x < rx1; x++)
                 {
-                    int maskIndex = mi + x;
-                    byte alpha = (byte)(m[maskIndex] >> 24);
+                    int maskIndex = y * w + x;
+                    byte alpha = maskRow[x * 4 + 3];
                     byte prev = _prevMaskAlpha![maskIndex];
                     byte smooth = alpha == 0
                         ? (byte)(prev * 3 / 4)
@@ -802,6 +804,121 @@ public unsafe sealed class MaskedVideoExporter
         return _nativeIntegral;
     }
 
+    private void ApplyNativeMaskPlanes(
+        AVFrame* frame,
+        int rx0,
+        int ry0,
+        int rx1,
+        int ry1,
+        int px0,
+        int py0,
+        int px1,
+        int py1,
+        byte[] alpha,
+        int alphaWidth,
+        int alphaHeight,
+        byte[] radiusMap,
+        int radiusMapWidth,
+        int baseRadius)
+    {
+        int width = frame->width;
+        int height = frame->height;
+        AVPixelFormat format = (AVPixelFormat)frame->format;
+        int bytesPerSample = format is AVPixelFormat.AV_PIX_FMT_YUV420P10LE or AVPixelFormat.AV_PIX_FMT_P010LE
+            ? 2
+            : 1;
+        int valueShift = format == AVPixelFormat.AV_PIX_FMT_P010LE ? 6 : 0;
+
+        ApplyNativePlane(
+            frame->data[0],
+            frame->linesize[0],
+            width,
+            height,
+            bytesPerSample,
+            bytesPerSample,
+            0,
+            valueShift,
+            rx0,
+            ry0,
+            rx1,
+            ry1,
+            px0,
+            py0,
+            px1,
+            py1,
+            alpha,
+            alphaWidth,
+            alphaHeight,
+            radiusMap,
+            radiusMapWidth,
+            baseRadius,
+            chroma: false);
+
+        int chromaWidth = (width + 1) / 2;
+        int chromaHeight = (height + 1) / 2;
+        int chromaRx0 = rx0 / 2;
+        int chromaRy0 = ry0 / 2;
+        int chromaRx1 = (rx1 + 1) / 2;
+        int chromaRy1 = (ry1 + 1) / 2;
+        int chromaPx0 = px0 / 2;
+        int chromaPy0 = py0 / 2;
+        int chromaPx1 = (px1 + 1) / 2;
+        int chromaPy1 = (py1 + 1) / 2;
+
+        if (format is AVPixelFormat.AV_PIX_FMT_YUV420P or AVPixelFormat.AV_PIX_FMT_YUV420P10LE)
+        {
+            for (int plane = 1; plane <= 2; plane++)
+            {
+                ApplyNativePlane(
+                    frame->data[(uint)plane],
+                    frame->linesize[(uint)plane],
+                    chromaWidth,
+                    chromaHeight,
+                    bytesPerSample,
+                    bytesPerSample,
+                    0,
+                    0,
+                    chromaRx0,
+                    chromaRy0,
+                    chromaRx1,
+                    chromaRy1,
+                    chromaPx0,
+                    chromaPy0,
+                    chromaPx1,
+                    chromaPy1,
+                    alpha,
+                    alphaWidth,
+                    alphaHeight,
+                    radiusMap,
+                    radiusMapWidth,
+                    baseRadius,
+                    chroma: true,
+                    lumaRx0: rx0,
+                    lumaRy0: ry0,
+                    lumaPx0: px0,
+                    lumaPy0: py0);
+            }
+        }
+        else
+        {
+            int componentStride = bytesPerSample * 2;
+            ApplyNativePlane(
+                frame->data[1], frame->linesize[1], chromaWidth, chromaHeight,
+                bytesPerSample, componentStride, 0, valueShift,
+                chromaRx0, chromaRy0, chromaRx1, chromaRy1,
+                chromaPx0, chromaPy0, chromaPx1, chromaPy1,
+                alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, baseRadius,
+                chroma: true, lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
+            ApplyNativePlane(
+                frame->data[1], frame->linesize[1], chromaWidth, chromaHeight,
+                bytesPerSample, componentStride, bytesPerSample, valueShift,
+                chromaRx0, chromaRy0, chromaRx1, chromaRy1,
+                chromaPx0, chromaPy0, chromaPx1, chromaPy1,
+                alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, baseRadius,
+                chroma: true, lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
+        }
+    }
+
     private void ApplyNativePlane(
         byte* data,
         int stride,
@@ -1233,15 +1350,19 @@ public unsafe sealed class MaskedVideoExporter
         return (minX, minY, maxX, maxY);
     }
 
-    private static (int x0, int y0, int x1, int y1) GetMaskBounds(uint* mask, int w, int h)
+    private static (int x0, int y0, int x1, int y1) GetMaskBounds(
+        byte* mask,
+        int stride,
+        int w,
+        int h)
     {
         int minX = w, minY = h, maxX = -1, maxY = -1;
         for (int y = 0; y < h; y++)
         {
-            int row = y * w;
+            byte* row = mask + y * stride;
             for (int x = 0; x < w; x++)
             {
-                if (((mask[row + x] >> 24) & 0xFF) == 0)
+                if (row[x * 4 + 3] == 0)
                     continue;
                 if (x < minX) minX = x;
                 if (y < minY) minY = y;
