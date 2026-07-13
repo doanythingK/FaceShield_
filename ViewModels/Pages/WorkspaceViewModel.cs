@@ -283,9 +283,7 @@ namespace FaceShield.ViewModels.Pages
                     $"reason={cascadeFailure}");
             }
 
-            string output = System.IO.Path.Combine(
-                System.IO.Path.GetDirectoryName(input)!,
-                System.IO.Path.GetFileNameWithoutExtension(input) + "_blur.mp4");
+            string output = BuildDefaultExportPath(input);
 
             string? resolvedOutput = await ResolveExportOutputPathAsync(output);
             if (string.IsNullOrWhiteSpace(resolvedOutput))
@@ -861,6 +859,21 @@ namespace FaceShield.ViewModels.Pages
             }
 
             return outputPath;
+        }
+
+        private static string BuildDefaultExportPath(string inputPath)
+        {
+            string extension = Path.GetExtension(inputPath);
+            string normalizedExtension = extension.ToLowerInvariant();
+            if (normalizedExtension is not (
+                ".mp4" or ".mov" or ".mkv" or ".avi" or ".wmv" or ".webm"))
+            {
+                extension = ".mp4";
+            }
+
+            string directory = Path.GetDirectoryName(inputPath) ?? string.Empty;
+            string baseName = Path.GetFileNameWithoutExtension(inputPath);
+            return Path.Combine(directory, $"{baseName}_blur{extension}");
         }
 
         private IFaceDetectorFactory CreateFaceDetectorFactory()
