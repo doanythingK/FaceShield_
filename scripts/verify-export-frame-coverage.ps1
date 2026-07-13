@@ -32,6 +32,14 @@ var method = typeof(VideoExportService).GetMethod(
     "EvaluateVideoFrameCoverage",
     BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("EvaluateVideoFrameCoverage was not found.");
+var retryMethod = typeof(VideoExportService).GetMethod(
+    "ShouldRetryWithSafeEncoding",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("ShouldRetryWithSafeEncoding was not found.");
+Type integrityExceptionType = typeof(VideoExportService).GetNestedType(
+    "VideoExportIntegrityException",
+    BindingFlags.NonPublic)
+    ?? throw new InvalidOperationException("VideoExportIntegrityException was not found.");
 
 AssertCoverage(
     "matching encoded frames",
@@ -105,7 +113,35 @@ AssertCoverage(
     emittedPts: [],
     expected: [0, 0, 0, 0, 0, 0]);
 
-Console.WriteLine("[ExportFrameCoverageVerify] PASS cases=9");
+var integrityException = (InvalidOperationException)(Activator.CreateInstance(
+    integrityExceptionType,
+    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+    binder: null,
+    args: new object?[] { "Invalid argument: deterministic integrity failure" },
+    culture: null)
+    ?? throw new InvalidOperationException("VideoExportIntegrityException could not be created."));
+AssertRetryPolicy("integrity failure", integrityException, expected: false);
+AssertRetryPolicy(
+    "ordinary invalid argument",
+    new InvalidOperationException("Invalid argument: encoder rejected options"),
+    expected: true);
+AssertRetryPolicy(
+    "unrelated operation failure",
+    new InvalidOperationException("decoder reached an invalid state"),
+    expected: false);
+
+Console.WriteLine("[ExportFrameCoverageVerify] PASS cases=9 retryCases=3");
+
+void AssertRetryPolicy(string name, InvalidOperationException exception, bool expected)
+{
+    bool actual = (bool)(retryMethod.Invoke(null, [exception])
+        ?? throw new InvalidOperationException($"{name}: retry policy returned null."));
+    if (actual != expected)
+    {
+        throw new InvalidOperationException(
+            $"{name}: expected retry={expected}, got retry={actual}.");
+    }
+}
 
 void AssertCoverage(
     string name,
@@ -166,8 +202,9 @@ if (-not $exportSource.Contains($hybridRetryPattern)) {
     throw "Only a hybrid attempt may retry as a full encode."
 }
 
-if (-not $exportSource.Contains('ex is not VideoExportIntegrityException')) {
-    throw "Deterministic decode and timeline integrity failures must not enter encoder fallback."
+if (-not $exportSource.Contains(
+    'ShouldRetryWithSafeEncoding(nestedEx) && IsInvalidArgumentError(nestedEx)')) {
+    throw "The H.264 fallback must use the integrity-aware retry policy."
 }
 
 Write-Host "[ExportFrameCoverageVerify] PASS packet-frame-accounting-guards"

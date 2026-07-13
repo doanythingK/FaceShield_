@@ -123,7 +123,7 @@ public unsafe sealed class VideoExportService
                         forceH264Fallback: false);
                 }
                 catch (InvalidOperationException nestedEx) when (
-                    nestedEx is not VideoExportIntegrityException && IsInvalidArgumentError(nestedEx))
+                    ShouldRetryWithSafeEncoding(nestedEx) && IsInvalidArgumentError(nestedEx))
                 {
                     Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
                     attemptCount++;
