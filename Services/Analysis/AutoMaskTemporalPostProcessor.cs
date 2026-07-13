@@ -157,53 +157,53 @@ namespace FaceShield.Services.Analysis
             bool missRecoveryOnly = false,
             bool continuityOnly = false)
         {
+            if (continuityOnly)
+            {
+                return new FaceTrackPostProcessOptions
+                {
+                    MaxTrackGap = 5,
+                    MaxFillGap = 4,
+                    MaxLostFillFrames = 0,
+                    MaxInitialFillFrames = 0,
+                    InitialFillRequiresInwardMotion = false,
+                    MaxConfirmedTrackHoldFrames = 4,
+                    AllowSmallTrackLostFill = false,
+                    WeakConfidence = 0.18f,
+                    StrongConfidence = 0.50f,
+                    SyntheticFillConfidenceMax = YoloSyntheticFillConfidenceMax,
+                    DropShortTrackMaxDetections = 0,
+                    DropShortSmallTrackMaxDetections = 0,
+                    ShortTrackMaxConfidence = 0f,
+                    DropSparseTrackMaxDetections = 0,
+                    DropSparseTrackMinSpanFrames = 8,
+                    DropSparseTrackMaxDensity = 0f,
+                    SparseTrackMaxConfidence = 0f,
+                    EdgeTailMaxConfidence = 0f,
+                    EdgeTailMinStableDetections = 3,
+                    EdgeLostFillMaxConfidence = 0f,
+                    SmallTrackMaxAreaRatio = 0.00070,
+                    MinTrackIou = 0.08,
+                    MaxCenterShiftRatio = 0.55,
+                    MaxConfirmedTrackBridgeCenterShiftRatio = 0.90,
+                    MaxAreaChangeRatio = 4.0,
+                    DuplicateIou = TemporalDuplicateIouMin,
+                    UnstableTailMaxConfidence = 0f,
+                    UnstableTailMinStableDetections = 3,
+                    UnstableTailMinIou = 0.45,
+                    UnstableTailMaxAreaChangeRatio = 1.8,
+                    LowerFrameTrackMaxConfidence = 0f,
+                    LowerFrameTrackMinCenterYRatio = 0.58,
+                    LowerFrameTrackMinAreaRatio = 0.015,
+                    LowerFrameTrackMaxAreaRatio = 0.045,
+                    MinTrackMatchScore = 0.35,
+                    MinCenterContinuity = 0.30,
+                    EdgePartialFaceMarginRatio = 0.06,
+                    ConfirmedTrackMinDetections = 3
+                };
+            }
+
             if (profile == FaceFilterProfile.Yolo)
             {
-                if (continuityOnly)
-                {
-                    return new FaceTrackPostProcessOptions
-                    {
-                        MaxTrackGap = 5,
-                        MaxFillGap = 4,
-                        MaxLostFillFrames = 0,
-                        MaxInitialFillFrames = 0,
-                        InitialFillRequiresInwardMotion = false,
-                        MaxConfirmedTrackHoldFrames = 4,
-                        AllowSmallTrackLostFill = false,
-                        WeakConfidence = 0.18f,
-                        StrongConfidence = 0.50f,
-                        SyntheticFillConfidenceMax = YoloSyntheticFillConfidenceMax,
-                        DropShortTrackMaxDetections = 0,
-                        DropShortSmallTrackMaxDetections = 0,
-                        ShortTrackMaxConfidence = 0f,
-                        DropSparseTrackMaxDetections = 0,
-                        DropSparseTrackMinSpanFrames = 8,
-                        DropSparseTrackMaxDensity = 0f,
-                        SparseTrackMaxConfidence = 0f,
-                        EdgeTailMaxConfidence = 0f,
-                        EdgeTailMinStableDetections = 3,
-                        EdgeLostFillMaxConfidence = 0f,
-                        SmallTrackMaxAreaRatio = 0.00070,
-                        MinTrackIou = 0.08,
-                        MaxCenterShiftRatio = 0.55,
-                        MaxConfirmedTrackBridgeCenterShiftRatio = 0.90,
-                        MaxAreaChangeRatio = 4.0,
-                        DuplicateIou = TemporalDuplicateIouMin,
-                        UnstableTailMaxConfidence = 0f,
-                        UnstableTailMinStableDetections = 3,
-                        UnstableTailMinIou = 0.45,
-                        UnstableTailMaxAreaChangeRatio = 1.8,
-                        LowerFrameTrackMaxConfidence = 0f,
-                        LowerFrameTrackMinCenterYRatio = 0.58,
-                        LowerFrameTrackMinAreaRatio = 0.015,
-                        LowerFrameTrackMaxAreaRatio = 0.045,
-                        MinTrackMatchScore = 0.35,
-                        MinCenterContinuity = 0.30,
-                        EdgePartialFaceMarginRatio = 0.06,
-                        ConfirmedTrackMinDetections = 3
-                    };
-                }
-
                 if (missRecoveryOnly)
                 {
                     return new FaceTrackPostProcessOptions

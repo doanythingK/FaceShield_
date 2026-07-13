@@ -274,9 +274,10 @@ namespace FaceShield.Services.Analysis
             var progressState = new ProgressState();
             double[]? previousSceneSignature = null;
             bool forceDetectAfterSceneCut = false;
-            bool collectSceneCutBoundaries = _options.FilterProfile == FaceFilterProfile.Yolo &&
-                _options.UseTracking &&
-                _options.ProcessingMode != AutoMaskProcessingMode.Raw;
+            bool collectSceneCutBoundaries = _options.UseTracking &&
+                _options.ProcessingMode != AutoMaskProcessingMode.Raw &&
+                (_options.FilterProfile == FaceFilterProfile.Yolo ||
+                 _options.ProcessingMode != AutoMaskProcessingMode.Legacy);
             while (!ct.IsCancellationRequested)
             {
                 bool shouldDetect = _options.DetectEveryNFrames <= 1
@@ -285,10 +286,7 @@ namespace FaceShield.Services.Analysis
                     || lastFaces == null;
                 forceDetectAfterSceneCut = false;
 
-                bool resetLegacyTrackingAtSceneCut = collectSceneCutBoundaries &&
-                    _options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
-                    !_options.EnablePostProcessing &&
-                    lastFaces != null;
+                bool resetTrackingAtSceneCut = collectSceneCutBoundaries && lastFaces != null;
                 bool requireFrame = shouldDetect || collectSceneCutBoundaries;
 
                 int idx;
@@ -364,15 +362,19 @@ namespace FaceShield.Services.Analysis
                         ComputeSignatureDifference(currentSceneSignature, previousSceneSignature) >= OffModeSceneCutSignatureDiffThreshold)
                     {
                         _sceneCutStarts.Add(idx);
-                        if (resetLegacyTrackingAtSceneCut)
+                        if (resetTrackingAtSceneCut)
                         {
                             shouldDetect = true;
                             forceDetectAfterSceneCut = true;
                             lastFaces = null;
-                            offModeSceneCutResetPairs++;
+                            if (_options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
+                                !_options.EnablePostProcessing)
+                            {
+                                offModeSceneCutResetPairs++;
+                            }
                         }
                         Debug.WriteLine(
-                            $"[AutoMask] scene-cut boundary idx={idx} legacyReset={resetLegacyTrackingAtSceneCut.ToString().ToLowerInvariant()} preservedMasks=true diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} phase=sequential");
+                            $"[AutoMask] scene-cut boundary idx={idx} trackingReset={resetTrackingAtSceneCut.ToString().ToLowerInvariant()} preservedMasks=true diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} phase=sequential");
                     }
 
                     previousSceneSignature = currentSceneSignature;
@@ -661,9 +663,10 @@ namespace FaceShield.Services.Analysis
             int offModeSceneCutResetAfterWindowFrameCount = 0;
             int offModeSceneCutResetRemovedBeforeFrameCount = 0;
             int offModeSceneCutResetRemovedAfterFrameCount = 0;
-            bool collectSceneCutBoundaries = _options.FilterProfile == FaceFilterProfile.Yolo &&
-                _options.UseTracking &&
-                _options.ProcessingMode != AutoMaskProcessingMode.Raw;
+            bool collectSceneCutBoundaries = _options.UseTracking &&
+                _options.ProcessingMode != AutoMaskProcessingMode.Raw &&
+                (_options.FilterProfile == FaceFilterProfile.Yolo ||
+                 _options.ProcessingMode != AutoMaskProcessingMode.Legacy);
             bool applyOffModeSceneCutReset = collectSceneCutBoundaries &&
                 _options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
                 !_options.EnablePostProcessing;
@@ -1071,9 +1074,10 @@ namespace FaceShield.Services.Analysis
             int offModeSceneCutResetAfterWindowFrameCount = 0;
             int offModeSceneCutResetRemovedBeforeFrameCount = 0;
             int offModeSceneCutResetRemovedAfterFrameCount = 0;
-            bool collectSceneCutBoundaries = _options.FilterProfile == FaceFilterProfile.Yolo &&
-                _options.UseTracking &&
-                _options.ProcessingMode != AutoMaskProcessingMode.Raw;
+            bool collectSceneCutBoundaries = _options.UseTracking &&
+                _options.ProcessingMode != AutoMaskProcessingMode.Raw &&
+                (_options.FilterProfile == FaceFilterProfile.Yolo ||
+                 _options.ProcessingMode != AutoMaskProcessingMode.Legacy);
             bool applyOffModeSceneCutReset = collectSceneCutBoundaries &&
                 _options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
                 !_options.EnablePostProcessing;
@@ -1614,7 +1618,10 @@ namespace FaceShield.Services.Analysis
                 : totalFrames;
             var materialized = MaterializeSparseTrackingResults(results, start, materializeEndExclusive);
             foreach (var transition in materialized.SceneCutTransitions)
-                _sceneCutStarts.Add(transition.NextFrameIndex);
+            {
+                for (int frame = transition.SourceFrameIndex + 1; frame <= transition.NextFrameIndex; frame++)
+                    _sceneCutStarts.Add(frame);
+            }
             int interpolated = materialized.Interpolated;
 
             Debug.WriteLine(
@@ -2017,7 +2024,8 @@ namespace FaceShield.Services.Analysis
             int sceneCutStops = 0;
             var sceneCutTransitions = new List<SparseSceneCutTransition>();
             int maxBridgeFrames = Math.Max(1, _options.DetectEveryNFrames * 2);
-            bool guardSceneCuts = _options.FilterProfile == FaceFilterProfile.Yolo;
+            bool guardSceneCuts = _options.UseTracking &&
+                _options.ProcessingMode != AutoMaskProcessingMode.Raw;
             double sceneCutThreshold = (_options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnablePostProcessing)
                 ? OffModeSparseSceneCutDifferenceThreshold
                 : SparseSceneCutDifferenceThreshold;

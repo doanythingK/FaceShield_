@@ -108,8 +108,7 @@ namespace FaceShield.Services.Analysis
                 _options.FilterProfile == FaceFilterProfile.Yolo &&
                 !_options.EnablePostProcessing &&
                 _options.UseTracking;
-            bool runYoloTrackedContinuity = _options.FilterProfile == FaceFilterProfile.Yolo &&
-                _options.UseTracking &&
+            bool runTrackedContinuity = _options.UseTracking &&
                 _options.ProcessingMode == AutoMaskProcessingMode.Tracked &&
                 !_options.EnablePostProcessing &&
                 _options.DetectEveryNFrames <= 1;
@@ -124,15 +123,18 @@ namespace FaceShield.Services.Analysis
                 enableSceneCutCleanup ||
                 enableTemporalSmoothing;
             bool runYoloTrackPost = runYoloMissRecovery ||
-                runYoloTrackedContinuity ||
+                (_options.FilterProfile == FaceFilterProfile.Yolo && runTrackedContinuity) ||
                 (runYoloPostProcess &&
                  (enableSceneCutCleanup ||
                   enableTemporalSmoothing ||
                   enableRoiPostProcess ||
                   enableWeakIsolationCleanup ||
                   enableGapFill));
+            bool runTrackPost = runTrackedContinuity || (_options.FilterProfile == FaceFilterProfile.Yolo
+                ? runYoloTrackPost
+                : _options.UseTracking && enablePostProcessing);
             Debug.WriteLine(
-                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} processingMode={_options.ProcessingMode} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} trackedContinuity={runYoloTrackedContinuity} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} offModeGapFillWindow={OffModeGapFillWindowFrames} offModeGapFillMaxGap={OffModeGapFillMaxGapFrames} offModeGapFillMinAnchor={OffModeGapFillMinAnchorConfidence:0.###} offModeGapFillSupportedAnchorMin={OffModeGapFillSupportedAnchorMinConfidence:0.###} runTrackPost={runYoloTrackPost} runMissRecovery={runYoloMissRecovery}");
+                $"[AutoMaskPostProcess] start runId={runId} profile={_options.FilterProfile} processingMode={_options.ProcessingMode} totalFrames={_totalFrames} tracking={_options.UseTracking} everyN={_options.DetectEveryNFrames} post={enablePostProcessing} roi={enableRoiPostProcess} weakIso={enableWeakIsolationCleanup} gapFill={enableGapFill} scene={enableSceneCutCleanup} smooth={enableTemporalSmoothing} trackedContinuity={runTrackedContinuity} offModeGapFill={enableYoloOffModeGapFill} offModeWeakIso={enableYoloOffModeWeakIsolationCleanup} offModeGapFillWindow={OffModeGapFillWindowFrames} offModeGapFillMaxGap={OffModeGapFillMaxGapFrames} offModeGapFillMinAnchor={OffModeGapFillMinAnchorConfidence:0.###} offModeGapFillSupportedAnchorMin={OffModeGapFillSupportedAnchorMinConfidence:0.###} runTrackPost={runTrackPost} runMissRecovery={runYoloMissRecovery}");
             if (_options.FilterProfile == FaceFilterProfile.Yolo && enablePostProcessing && !hasAnyYoloPostModule)
             {
                 Debug.WriteLine(
@@ -151,7 +153,7 @@ namespace FaceShield.Services.Analysis
             else if (_options.FilterProfile == FaceFilterProfile.Yolo &&
                 !_options.EnablePostProcessing &&
                 _options.UseTracking &&
-                !runYoloTrackedContinuity)
+                !runTrackedContinuity)
             {
                 if (!_options.EnableYoloGapFill)
                 {
@@ -171,12 +173,7 @@ namespace FaceShield.Services.Analysis
             }
 
             var temporalPostProcessor = new AutoMaskTemporalPostProcessor();
-            bool runTrackPost = _options.FilterProfile == FaceFilterProfile.Yolo
-                ? runYoloTrackPost
-                : _options.UseTracking && enablePostProcessing;
-            bool useTrackingForTemporalFixes = _options.FilterProfile == FaceFilterProfile.Yolo
-                ? runYoloTrackPost
-                : _options.UseTracking && enablePostProcessing;
+            bool useTrackingForTemporalFixes = runTrackPost;
             var swTrack = Stopwatch.StartNew();
             var trackPost = runTrackPost
                 ? temporalPostProcessor.ApplyTemporalFixes(
@@ -185,12 +182,12 @@ namespace FaceShield.Services.Analysis
                     _options.FilterProfile,
                     useTrackingForTemporalFixes,
                     missRecoveryOnly: runYoloMissRecovery,
-                    continuityOnly: runYoloTrackedContinuity,
+                    continuityOnly: runTrackedContinuity,
                     blockedSceneCutStarts: _sceneCutStarts)
                 : FaceTrackPostProcessResult.Empty;
             swTrack.Stop();
             Debug.WriteLine(
-                $"[AutoMaskPostProcessTiming] runId={runId} phase=track-post run={runTrackPost} continuity={runYoloTrackedContinuity} elapsedMs={swTrack.ElapsedMilliseconds} trackCount={trackPost.TrackCount} fillGap={trackPost.FilledGapFaces} fillLost={trackPost.FilledLostFaces} fillInitial={trackPost.FilledInitialFaces}");
+                $"[AutoMaskPostProcessTiming] runId={runId} phase=track-post run={runTrackPost} continuity={runTrackedContinuity} elapsedMs={swTrack.ElapsedMilliseconds} trackCount={trackPost.TrackCount} fillGap={trackPost.FilledGapFaces} fillLost={trackPost.FilledLostFaces} fillInitial={trackPost.FilledInitialFaces}");
             int finalMissRecoveryFillCount = trackPost.FilledGapFaces + trackPost.FilledLostFaces + trackPost.FilledInitialFaces;
             var finalMissRecoveryFillFrameIndices = new HashSet<int>();
             AddFrameIndices(finalMissRecoveryFillFrameIndices, trackPost.FilledGapFacesInfo);
@@ -1111,7 +1108,54 @@ namespace FaceShield.Services.Analysis
             string finalSceneCutPostGapFillPairSourceBreakdown = "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0")
         {
             if (_options.FilterProfile != FaceFilterProfile.Yolo)
-                return AutoMaskPostProcessFinalSummary.Empty;
+            {
+                var genericEntries = _maskProvider.GetFaceMaskEntries()
+                    .Where(static x => x.Value.Faces.Count > 0)
+                    .OrderBy(static x => x.Key)
+                    .ToArray();
+                int genericRows = genericEntries.Sum(static x => x.Value.Faces.Count);
+                int genericShortGaps = 0;
+                for (int i = 1; i < genericEntries.Length; i++)
+                {
+                    int gap = genericEntries[i].Key - genericEntries[i - 1].Key - 1;
+                    if (gap > 0 && gap <= FinalMaskShortGapMaxFrames)
+                        genericShortGaps++;
+                }
+
+                int genericPerFaceShortGaps = FindPerFaceShortGapRanges(genericEntries).Count;
+                var genericReviewReasons = new List<string>();
+                if (genericShortGaps > 0)
+                    genericReviewReasons.Add("short-gap");
+                if (genericPerFaceShortGaps > 0)
+                    genericReviewReasons.Add("per-face-short-gap");
+                string genericReviewReason = FormatTextList(genericReviewReasons);
+                string genericEvidenceLogLine =
+                    $"[FinalMaskSummary] profile={_options.FilterProfile} frames={genericEntries.Length} rows={genericRows} shortGaps={genericShortGaps} perFaceShortGaps={genericPerFaceShortGaps} reviewRequired={(genericReviewReasons.Count > 0).ToString().ToLowerInvariant()} reviewReasons={genericReviewReason} finalMissRecovery={finalMissRecoveryFillCount}";
+                Debug.WriteLine(genericEvidenceLogLine);
+
+                return AutoMaskPostProcessFinalSummary.Empty with
+                {
+                    FinalFrameCount = genericEntries.Length,
+                    FinalRowCount = genericRows,
+                    FinalShortGapCount = genericShortGaps,
+                    FinalPerFaceShortGapCount = genericPerFaceShortGaps,
+                    FinalReviewRequired = genericReviewReasons.Count > 0,
+                    FinalReviewReasons = genericReviewReason,
+                    FinalMissRecoveryFillCount = finalMissRecoveryFillCount,
+                    FinalFalsePositiveSuppressedCount = finalFalsePositiveSuppressedCount,
+                    FinalOffModeWeakCleanupCount = finalOffModeWeakCleanupCount,
+                    FinalGapFillRecoveredCount = finalGapFillRecoveredCount,
+                    SampleWindowFrames = _totalFrames,
+                    SampleFrameCount = genericEntries.Length,
+                    SampleRowCount = genericRows,
+                    SampleShortGapCount = genericShortGaps,
+                    SamplePerFaceShortGapCount = genericPerFaceShortGaps,
+                    SampleReviewRequired = genericReviewReasons.Count > 0,
+                    SampleReviewReasons = genericReviewReason,
+                    SampleMissRecoveryFillCount = finalMissRecoveryFillCount,
+                    EvidenceLogLine = genericEvidenceLogLine
+                };
+            }
 
             var protectedSceneCarryFrames = protectedSceneCarryFrameIndices?
                 .Distinct()
