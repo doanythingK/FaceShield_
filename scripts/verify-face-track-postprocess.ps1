@@ -245,8 +245,40 @@ if (resumeProvider.TryGetFaceMaskData(5, out var resumeBoundaryFill) && resumeBo
 if (!resumeProvider.TryGetFaceMaskData(7, out var postResumeFill) || postResumeFill.Faces.Count != 1)
     throw new InvalidOperationException("Expected resume processing to fill gaps with post-resume anchors.");
 
+var confirmedHoldProvider = new FrameMaskProvider();
+confirmedHoldProvider.SetFaceRects(0, new[] { new Rect(200, 200, 100, 100) }, size, 0.86f, new[] { 0.86f });
+confirmedHoldProvider.SetFaceRects(1, new[] { new Rect(204, 202, 100, 100) }, size, 0.85f, new[] { 0.85f });
+confirmedHoldProvider.SetFaceRects(2, new[] { new Rect(208, 204, 100, 100) }, size, 0.84f, new[] { 0.84f });
+confirmedHoldProvider.SetFaceRects(10, new[] { new Rect(240, 220, 100, 100) }, size, 0.83f, new[] { 0.83f });
+confirmedHoldProvider.SetFaceRects(0, new[]
+{
+    new Rect(200, 200, 100, 100),
+    new Rect(1200, 500, 90, 90)
+}, size, 0.80f, new[] { 0.86f, 0.80f });
+confirmedHoldProvider.SetFaceRects(8, new[]
+{
+    new Rect(232, 216, 100, 100),
+    new Rect(1232, 516, 90, 90)
+}, size, 0.79f, new[] { 0.82f, 0.79f });
+
+new FaceTrackInterpolator().Apply(
+    confirmedHoldProvider,
+    totalFrames: 12,
+    AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
+        FaceFilterProfile.FaceOnnx,
+        continuityOnly: true));
+
+if (!confirmedHoldProvider.TryGetFaceMaskData(6, out var confirmedLongFill) ||
+    !confirmedLongFill.Faces.Any(face => face.X < 600))
+{
+    throw new InvalidOperationException("Expected a confirmed track to bridge an eight-frame detection hold.");
+}
+
+if (confirmedLongFill.Faces.Any(face => face.X > 900))
+    throw new InvalidOperationException("Expected an unconfirmed track to retain the four-frame fill limit.");
+
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

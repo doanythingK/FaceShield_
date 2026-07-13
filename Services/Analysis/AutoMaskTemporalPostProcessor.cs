@@ -163,12 +163,12 @@ namespace FaceShield.Services.Analysis
             {
                 return new FaceTrackPostProcessOptions
                 {
-                    MaxTrackGap = 5,
+                    MaxTrackGap = 9,
                     MaxFillGap = 4,
                     MaxLostFillFrames = 0,
                     MaxInitialFillFrames = 0,
                     InitialFillRequiresInwardMotion = false,
-                    MaxConfirmedTrackHoldFrames = 4,
+                    MaxConfirmedTrackHoldFrames = 8,
                     AllowSmallTrackLostFill = false,
                     WeakConfidence = 0.18f,
                     StrongConfidence = 0.50f,
