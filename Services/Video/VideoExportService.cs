@@ -274,6 +274,7 @@ public unsafe sealed class VideoExportService
         int submittedVideoFrameCount = 0;
         var submittedEncodedFramePts = new HashSet<long>();
         var emittedEncodedFramePts = new Dictionary<long, int>();
+        var appliedBlurFrameIndices = new HashSet<int>();
         int sampleSourceVideoPacketCount = 0;
         int sampleCopiedVideoPacketCount = 0;
         int sampleEncodedFrameCount = 0;
@@ -291,8 +292,6 @@ public unsafe sealed class VideoExportService
         long hybridCopyVideoFrameStep = 1;
         long packetTimestampBase = 0;
         bool hasPacketTimestampBase = false;
-        long frameTimestampBase = 0;
-        bool hasFrameTimestampBase = false;
         int packetFrameIndexReliabilityFailureCount = 0;
         var swTotal = Stopwatch.StartNew();
 
@@ -365,7 +364,7 @@ public unsafe sealed class VideoExportService
 
             if (_maskProvider is FrameMaskProvider frameMaskProvider)
             {
-                blurFrameSet = BuildBlurFrameSet(frameMaskProvider, totalFrames);
+                blurFrameSet = BuildBlurFrameSet(frameMaskProvider);
                 if (blurFrameSet.Count == 0)
                 {
                     progress?.Report(new ExportProgress(0, totalFrames, "블러 대상이 없어 원본 스트림을 고속 복사합니다..."));
@@ -972,7 +971,6 @@ public unsafe sealed class VideoExportService
             }
 
             int packetFrameFallback = 0;
-            int lastResolvedFrameIndex = -1;
             int lastReportedFrame = -1;
             bool videoFlushed = false;
 
@@ -1206,6 +1204,8 @@ public unsafe sealed class VideoExportService
                                 outFmt,
                                 blurRadius,
                                 blurRanges,
+                                blurFrameSet,
+                                appliedBlurFrameIndices,
                                 ref blurRangeCursor,
                                 sourceFps,
                                 forceSafeEncoding,
@@ -1213,9 +1213,6 @@ public unsafe sealed class VideoExportService
                                 encodeWindowStart,
                                 encodeWindowEnd,
                                 ref frameIndex,
-                                ref lastResolvedFrameIndex,
-                                ref frameTimestampBase,
-                                ref hasFrameTimestampBase,
                                 ref swsToBgraMs,
                                 ref maskMs,
                                 ref swsToEncMs,
@@ -1305,6 +1302,8 @@ public unsafe sealed class VideoExportService
                             outFmt,
                             blurRadius,
                             blurRanges,
+                            blurFrameSet,
+                            appliedBlurFrameIndices,
                             ref blurRangeCursor,
                             sourceFps,
                             forceSafeEncoding,
@@ -1312,9 +1311,6 @@ public unsafe sealed class VideoExportService
                             encodeWindowStart,
                             encodeWindowEnd,
                             ref frameIndex,
-                            ref lastResolvedFrameIndex,
-                            ref frameTimestampBase,
-                            ref hasFrameTimestampBase,
                             ref swsToBgraMs,
                             ref maskMs,
                             ref swsToEncMs,
@@ -1443,6 +1439,8 @@ public unsafe sealed class VideoExportService
                         outFmt,
                         blurRadius,
                         blurRanges,
+                        blurFrameSet,
+                        appliedBlurFrameIndices,
                         ref blurRangeCursor,
                         sourceFps,
                         forceSafeEncoding,
@@ -1450,9 +1448,6 @@ public unsafe sealed class VideoExportService
                         encodeWindowStart,
                         encodeWindowEnd,
                         ref frameIndex,
-                        ref lastResolvedFrameIndex,
-                        ref frameTimestampBase,
-                        ref hasFrameTimestampBase,
                         ref swsToBgraMs,
                         ref maskMs,
                         ref swsToEncMs,
@@ -1507,6 +1502,8 @@ public unsafe sealed class VideoExportService
                 outFmt,
                 blurRadius,
                 blurRanges,
+                blurFrameSet,
+                appliedBlurFrameIndices,
                 ref blurRangeCursor,
                 sourceFps,
                 forceSafeEncoding,
@@ -1514,9 +1511,6 @@ public unsafe sealed class VideoExportService
                 encodeWindowStart,
                 encodeWindowEnd,
                 ref frameIndex,
-                ref lastResolvedFrameIndex,
-                ref frameTimestampBase,
-                ref hasFrameTimestampBase,
                 ref swsToBgraMs,
                 ref maskMs,
                 ref swsToEncMs,
@@ -1545,6 +1539,17 @@ public unsafe sealed class VideoExportService
                 submittedEncodedFramePts,
                 emittedEncodedFramePts,
                 encodedPacketFrameStep);
+
+            int[] missingBlurFrameIndices = GetMissingExpectedFrameIndices(
+                blurFrameSet,
+                appliedBlurFrameIndices);
+            if (missingBlurFrameIndices.Length > 0)
+            {
+                string sample = string.Join(",", missingBlurFrameIndices.AsSpan(0, Math.Min(8, missingBlurFrameIndices.Length)).ToArray());
+                throw new VideoExportIntegrityException(
+                    $"자동 모자이크 적용 누락이 감지되었습니다 " +
+                    $"(missing={missingBlurFrameIndices.Length}, frames={sample}).");
+            }
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
@@ -1834,7 +1839,9 @@ public unsafe sealed class VideoExportService
                 VideoFrameCoverageMismatch: videoFrameCoverageMismatch,
                 MissingEncodedVideoFrames: missingEncodedFrameCount,
                 UnexpectedEncodedVideoFrames: unexpectedEncodedFrameCount,
-                VideoFrameDropCount: videoFrameDropCount);
+                VideoFrameDropCount: videoFrameDropCount,
+                ExpectedBlurFrames: blurFrameSet?.Count ?? 0,
+                AppliedBlurFrames: appliedBlurFrameIndices.Count);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, encoderFlushMs={encoderFlushTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
@@ -2272,6 +2279,8 @@ public unsafe sealed class VideoExportService
         AVFormatContext* outFmt,
         int blurRadius,
         List<(int Start, int EndExclusive)>? blurRanges,
+        HashSet<int>? expectedBlurFrameIndices,
+        HashSet<int> appliedBlurFrameIndices,
         ref int blurRangeCursor,
         double sourceFps,
         bool forceSafeEncoding,
@@ -2279,9 +2288,6 @@ public unsafe sealed class VideoExportService
         int encodeWindowStart,
         int encodeWindowEnd,
         ref int frameIndex,
-        ref int lastResolvedFrameIndex,
-        ref long frameTimestampBase,
-        ref bool hasFrameTimestampBase,
         ref long swsToBgraMs,
         ref long maskMs,
         ref long swsToEncMs,
@@ -2335,50 +2341,41 @@ public unsafe sealed class VideoExportService
                 "내보내기를 중단합니다.");
         }
 
-        int fallbackIndex = Math.Max(frameIndex, lastResolvedFrameIndex + 1);
-        int resolvedFrameIndex = ResolveFrameIndexFromFrame(
-            frame,
-            inStream->time_base,
-            sourceFps,
-            fallbackIndex,
-            totalFrames,
-            ref frameTimestampBase,
-            ref hasFrameTimestampBase);
-        if (resolvedFrameIndex < fallbackIndex)
-            resolvedFrameIndex = fallbackIndex;
-        lastResolvedFrameIndex = resolvedFrameIndex;
-        if (resolvedFrameIndex >= encodeWindowStart && resolvedFrameIndex < encodeWindowEnd)
+        // Analysis and preview masks are keyed by sequential decoded-frame ordinal.
+        // Presentation timestamps remain independent and are preserved by ResolveEncodePts.
+        int decodedFrameOrdinal = frameIndex;
+        if (decodedFrameOrdinal >= encodeWindowStart && decodedFrameOrdinal < encodeWindowEnd)
             encodedWindowFrameCount++;
-        frameIndex = resolvedFrameIndex + 1;
 
         long encodedPts = ResolveEncodePts(
             frame,
             inStream->time_base,
             enc->time_base,
-            resolvedFrameIndex,
+            decodedFrameOrdinal,
             sourceFps,
             ref lastEncodedPts,
             ref hasLastEncodedPts);
 
         WriteableBitmap? mask = null;
         IReadOnlyList<Rect>? faceRects = null;
-        bool mightHaveMask = blurRanges == null || IsFrameInBlurRanges(resolvedFrameIndex, blurRanges, ref blurRangeCursor);
+        bool mightHaveMask = blurRanges == null ||
+            IsFrameInBlurRanges(decodedFrameOrdinal, blurRanges, ref blurRangeCursor);
         bool frameWasBlurred = false;
 
         if (mightHaveMask && _maskProvider is FrameMaskProvider provider)
         {
-            if (provider.TryGetStoredMask(resolvedFrameIndex, out var stored))
+            if (provider.TryGetStoredMask(decodedFrameOrdinal, out var stored))
             {
                 mask = stored;
             }
-            else if (provider.TryGetFaceMaskData(resolvedFrameIndex, out var faces))
+            else if (provider.TryGetFaceMaskData(decodedFrameOrdinal, out var faces))
             {
                 faceRects = faces.Faces;
             }
         }
         else if (mightHaveMask)
         {
-            mask = _maskProvider.GetFinalMask(resolvedFrameIndex);
+            mask = _maskProvider.GetFinalMask(decodedFrameOrdinal);
         }
 
         bool nativeYuvApplied = false;
@@ -2480,20 +2477,25 @@ public unsafe sealed class VideoExportService
             swsToBgraMs += tBgra.ElapsedMilliseconds;
 
             var tMask = Stopwatch.StartNew();
+            bool bgraBlurApplied;
             if (mask != null)
             {
-                _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
+                bgraBlurApplied = _masked.ApplyMaskAndBlur(bgra, mask, blurRadius, faceRects);
                 _bitmapMaskBlurFrames++;
-                frameWasBlurred = true;
             }
             else
             {
-                _masked.ApplyFaceRectsAndBlur(bgra, faceRects!, blurRadius);
+                bgraBlurApplied = _masked.ApplyFaceRectsAndBlur(bgra, faceRects!, blurRadius);
                 _directFaceBlurFrames++;
-                frameWasBlurred = true;
             }
             tMask.Stop();
             maskMs += tMask.ElapsedMilliseconds;
+            if (!bgraBlurApplied)
+            {
+                throw new VideoExportIntegrityException(
+                    $"프레임 {decodedFrameOrdinal}의 자동 모자이크를 BGRA 경로에 적용할 수 없습니다.");
+            }
+            frameWasBlurred = true;
 
             var tEncSws = Stopwatch.StartNew();
             Throw(ffmpeg.av_frame_make_writable(encFrame));
@@ -2611,16 +2613,19 @@ public unsafe sealed class VideoExportService
                 $"Invalid argument: 중복 인코더 입력 PTS가 감지되었습니다 (pts={encodedPts}).");
         }
         submittedVideoFrameCount++;
-        if (resolvedFrameIndex < sampleWindowFrames)
+        frameIndex = decodedFrameOrdinal + 1;
+        if (frameWasBlurred && expectedBlurFrameIndices?.Contains(decodedFrameOrdinal) == true)
+            appliedBlurFrameIndices.Add(decodedFrameOrdinal);
+        if (decodedFrameOrdinal < sampleWindowFrames)
             sampleEncodedFrameCount++;
-        if (frameWasBlurred && resolvedFrameIndex < sampleWindowFrames)
+        if (frameWasBlurred && decodedFrameOrdinal < sampleWindowFrames)
             sampleBlurredFrameCount++;
 
-        ReportVideoProgress(progress, totalFrames, ref lastReportedFrame, resolvedFrameIndex);
-        if (resolvedFrameIndex % 60 == 0)
+        ReportVideoProgress(progress, totalFrames, ref lastReportedFrame, decodedFrameOrdinal);
+        if (decodedFrameOrdinal % 60 == 0)
         {
             Debug.WriteLine(
-                $"[Export] frames={resolvedFrameIndex}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[Export] frames={decodedFrameOrdinal}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
         }
     }
 
@@ -2640,6 +2645,8 @@ public unsafe sealed class VideoExportService
         AVFormatContext* outFmt,
         int blurRadius,
         List<(int Start, int EndExclusive)>? blurRanges,
+        HashSet<int>? expectedBlurFrameIndices,
+        HashSet<int> appliedBlurFrameIndices,
         ref int blurRangeCursor,
         double sourceFps,
         bool forceSafeEncoding,
@@ -2647,9 +2654,6 @@ public unsafe sealed class VideoExportService
         int encodeWindowStart,
         int encodeWindowEnd,
         ref int frameIndex,
-        ref int lastResolvedFrameIndex,
-        ref long frameTimestampBase,
-        ref bool hasFrameTimestampBase,
         ref long swsToBgraMs,
         ref long maskMs,
         ref long swsToEncMs,
@@ -2704,6 +2708,8 @@ public unsafe sealed class VideoExportService
                 outFmt,
                 blurRadius,
                 blurRanges,
+                expectedBlurFrameIndices,
+                appliedBlurFrameIndices,
                 ref blurRangeCursor,
                 sourceFps,
                 forceSafeEncoding,
@@ -2711,9 +2717,6 @@ public unsafe sealed class VideoExportService
                 encodeWindowStart,
                 encodeWindowEnd,
                 ref frameIndex,
-                ref lastResolvedFrameIndex,
-                ref frameTimestampBase,
-                ref hasFrameTimestampBase,
                 ref swsToBgraMs,
                 ref maskMs,
                 ref swsToEncMs,
@@ -2781,7 +2784,7 @@ public unsafe sealed class VideoExportService
         videoFlushed = true;
     }
 
-    private static HashSet<int> BuildBlurFrameSet(FrameMaskProvider provider, int totalFrames)
+    private static HashSet<int> BuildBlurFrameSet(FrameMaskProvider provider)
     {
         var result = new HashSet<int>();
         if (provider == null || !provider.HasAnyMaskEntries())
@@ -2790,22 +2793,42 @@ public unsafe sealed class VideoExportService
         foreach (int index in provider.GetStoredMaskFrameIndices())
         {
             if (index < 0)
-                continue;
-            if (totalFrames > 0 && index >= totalFrames)
-                continue;
+            {
+                throw new VideoExportIntegrityException(
+                    $"음수 프레임 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
+            }
             result.Add(index);
         }
 
         foreach (int index in provider.GetFaceMaskFrameIndices())
         {
             if (index < 0)
-                continue;
-            if (totalFrames > 0 && index >= totalFrames)
-                continue;
+            {
+                throw new VideoExportIntegrityException(
+                    $"음수 얼굴 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
+            }
             result.Add(index);
         }
 
         return result;
+    }
+
+    private static int[] GetMissingExpectedFrameIndices(
+        IReadOnlySet<int>? expectedFrameIndices,
+        IReadOnlySet<int> appliedFrameIndices)
+    {
+        if (expectedFrameIndices == null || expectedFrameIndices.Count == 0)
+            return Array.Empty<int>();
+
+        var missing = new List<int>();
+        foreach (int frameIndex in expectedFrameIndices)
+        {
+            if (!appliedFrameIndices.Contains(frameIndex))
+                missing.Add(frameIndex);
+        }
+
+        missing.Sort();
+        return missing.ToArray();
     }
 
     private static List<(int Start, int EndExclusive)> BuildBlurFrameRanges(HashSet<int> blurFrameSet)
@@ -3251,56 +3274,6 @@ public unsafe sealed class VideoExportService
         long ts = packet->dts != ffmpeg.AV_NOPTS_VALUE
             ? packet->dts
             : packet->pts;
-        if (ts == ffmpeg.AV_NOPTS_VALUE)
-            return fallback;
-
-        long normalizedTs = hasTimestampBase
-            ? ts - timestampBase
-            : ts;
-
-        if (!hasTimestampBase)
-        {
-            timestampBase = ts;
-            hasTimestampBase = true;
-            normalizedTs = 0;
-        }
-
-        double seconds = normalizedTs * ffmpeg.av_q2d(timeBase);
-        if (double.IsNaN(seconds) || double.IsInfinity(seconds))
-            return fallback;
-
-        int index = (int)Math.Floor(seconds * sourceFps);
-        if (index < 0)
-            index = 0;
-        if (totalFrames > 0 && index >= totalFrames)
-            index = Math.Max(0, totalFrames - 1);
-        return index;
-    }
-
-    private static int ResolveFrameIndexFromFrame(
-        AVFrame* frame,
-        AVRational timeBase,
-        double sourceFps,
-        int fallback,
-        int totalFrames,
-        ref long timestampBase,
-        ref bool hasTimestampBase)
-    {
-        if (frame == null || sourceFps <= 0.0)
-        {
-            if (totalFrames > 0)
-                return Math.Clamp(fallback, 0, totalFrames - 1);
-            return Math.Max(0, fallback);
-        }
-
-        if (totalFrames > 0)
-            fallback = Math.Clamp(fallback, 0, totalFrames - 1);
-        else if (fallback < 0)
-            fallback = 0;
-
-        long ts = frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
-            ? frame->best_effort_timestamp
-            : frame->pts;
         if (ts == ffmpeg.AV_NOPTS_VALUE)
             return fallback;
 

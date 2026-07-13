@@ -250,20 +250,20 @@ public unsafe sealed class MaskedVideoExporter
         return true;
     }
 
-    public void ApplyMaskAndBlur(
+    public bool ApplyMaskAndBlur(
         AVFrame* bgraFrame,
         WriteableBitmap mask,
         int blurRadius,
         IReadOnlyList<Rect>? faces = null)
     {
         if (bgraFrame == null) throw new ArgumentNullException(nameof(bgraFrame));
-        if (blurRadius <= 0) return;
+        if (blurRadius <= 0) return false;
 
         int w = bgraFrame->width;
         int h = bgraFrame->height;
 
-        if (w <= 0 || h <= 0) return;
-        if (mask.PixelSize.Width != w || mask.PixelSize.Height != h) return;
+        if (w <= 0 || h <= 0) return false;
+        if (mask.PixelSize.Width != w || mask.PixelSize.Height != h) return false;
 
         using var fb = mask.Lock();
 
@@ -283,7 +283,7 @@ public unsafe sealed class MaskedVideoExporter
                 ? GetFaceBounds(faces, w, h)
                 : GetMaskBounds(maskData, maskStride, w, h);
             if (rx1 <= rx0 || ry1 <= ry0)
-                return;
+                return false;
 
             int px0 = Math.Max(0, rx0 - r);
             int py0 = Math.Max(0, ry0 - r);
@@ -442,20 +442,22 @@ public unsafe sealed class MaskedVideoExporter
                     ProcessRow(y);
             }
         }
+
+        return true;
     }
 
-    public void ApplyFaceRectsAndBlur(
+    public bool ApplyFaceRectsAndBlur(
         AVFrame* bgraFrame,
         IReadOnlyList<Rect> faces,
         int blurRadius)
     {
         if (bgraFrame == null) throw new ArgumentNullException(nameof(bgraFrame));
-        if (faces == null || faces.Count == 0) return;
-        if (blurRadius <= 0) return;
+        if (faces == null || faces.Count == 0) return false;
+        if (blurRadius <= 0) return false;
 
         int w = bgraFrame->width;
         int h = bgraFrame->height;
-        if (w <= 0 || h <= 0) return;
+        if (w <= 0 || h <= 0) return false;
 
         byte* data = bgraFrame->data[0];
         int stride = bgraFrame->linesize[0];
@@ -465,7 +467,7 @@ public unsafe sealed class MaskedVideoExporter
         int r = Math.Max(1, blurRadius);
         var (rx0, ry0, rx1, ry1) = GetFaceBounds(faces, w, h);
         if (rx1 <= rx0 || ry1 <= ry0)
-            return;
+            return false;
 
         int px0 = Math.Max(0, rx0 - r);
         int py0 = Math.Max(0, ry0 - r);
@@ -476,13 +478,10 @@ public unsafe sealed class MaskedVideoExporter
 
         var shapes = BuildFaceMaskShapes(faces, w, h);
         if (shapes.Length == 0)
-            return;
+            return false;
 
         if (shapes.Length == 1)
-        {
-            ApplySingleFaceRectAndBlur(bgraFrame, faces[0], shapes[0], blurRadius);
-            return;
-        }
+            return ApplySingleFaceRectAndBlur(bgraFrame, faces[0], shapes[0], blurRadius);
 
         EnsureIntegralBuffers(pw, ph);
         byte[] radiusMap = EnsureRadiusMap(pw, ph);
@@ -624,9 +623,11 @@ public unsafe sealed class MaskedVideoExporter
             for (int y = ry0; y < ry1; y++)
                 ProcessRow(y);
         }
+
+        return true;
     }
 
-    private void ApplySingleFaceRectAndBlur(
+    private bool ApplySingleFaceRectAndBlur(
         AVFrame* bgraFrame,
         Rect face,
         FaceMaskShape shape,
@@ -639,14 +640,14 @@ public unsafe sealed class MaskedVideoExporter
         int r = Math.Max(1, blurRadius);
         int faceRadius = GetFaceBlurRadius(face, w, h, r);
         if (faceRadius <= 0)
-            return;
+            return false;
 
         int rx0 = shape.X0;
         int ry0 = shape.Y0;
         int rx1 = shape.X1;
         int ry1 = shape.Y1;
         if (rx1 <= rx0 || ry1 <= ry0)
-            return;
+            return false;
 
         int px0 = Math.Max(0, rx0 - faceRadius);
         int py0 = Math.Max(0, ry0 - faceRadius);
@@ -763,6 +764,8 @@ public unsafe sealed class MaskedVideoExporter
             for (int y = ry0; y < ry1; y++)
                 ProcessRow(y);
         }
+
+        return true;
     }
 
     private void EnsureBuffers(int stride, int height, int scaledSize)
