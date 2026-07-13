@@ -61,6 +61,7 @@ $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-re
 $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
+$exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progress-completion.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -293,6 +294,9 @@ Assert-Contains "bgra-integral-range" $bgraIntegralOutput "storage=uint32 dci4kF
 
 $tenBitEncoderOutput = Invoke-ScriptStep "ten-bit-encoder-fallback" $tenBitEncoderFallbackVerify @()
 Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx264,libx265 .*libx265TenBitOpen=true"
+
+$exportProgressOutput = Invoke-ScriptStep "export-progress-completion" $exportProgressCompletionVerify @()
+Assert-Contains "export-progress-completion" $exportProgressOutput "processingMax=99 committed=100 unknownTotal=100"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"

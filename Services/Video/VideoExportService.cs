@@ -148,6 +148,16 @@ public unsafe sealed class VideoExportService
             if (LastExportSummary == null)
                 throw new InvalidOperationException("검증된 내보내기 요약이 생성되지 않았습니다.");
 
+            int completedFrames = Math.Max(
+                1,
+                LastExportSummary.SubmittedVideoFrames > 0
+                    ? LastExportSummary.SubmittedVideoFrames
+                    : LastExportSummary.Frames);
+            progress?.Report(new ExportProgress(
+                completedFrames,
+                completedFrames,
+                "출력 파일을 적용하는 중..."));
+
             var outputCommitTimer = Stopwatch.StartNew();
             string commitMode;
             if (File.Exists(finalOutputPath))
@@ -183,6 +193,9 @@ public unsafe sealed class VideoExportService
                 LastExportSummary.RunId,
                 committedLine,
                 LastExportSummary.ToLogLine());
+            progress?.Report(ExportProgress.Completed(
+                completedFrames,
+                "내보내기가 완료되었습니다."));
         }
         finally
         {
@@ -1504,6 +1517,10 @@ public unsafe sealed class VideoExportService
                 }
             }
 
+            progress?.Report(new ExportProgress(
+                totalFrames,
+                totalFrames,
+                "인코더 버퍼를 마무리하는 중..."));
             FlushVideoPipeline(
                 ref videoFlushed,
                 dec,
@@ -1625,6 +1642,10 @@ public unsafe sealed class VideoExportService
                     }
             }
 
+            progress?.Report(new ExportProgress(
+                totalFrames,
+                totalFrames,
+                "출력 파일을 마무리하는 중..."));
             Throw(ffmpeg.av_write_trailer(outFmt));
             outputCloseTimer.Start();
             CloseOutputOrThrow(outFmt);
@@ -3535,11 +3556,14 @@ public unsafe sealed class VideoExportService
 
             maxOutputPacketPtsGap = GetMaxSortedPresentationGap(outputVideoPts);
 
+            progress?.Report(new ExportProgress(
+                totalFrames,
+                totalFrames,
+                "원본 스트림 복사와 파일 검증을 마무리하는 중..."));
             Throw(ffmpeg.av_write_trailer(outFmt));
             outputCloseTimer.Start();
             CloseOutputOrThrow(outFmt);
             outputCloseTimer.Stop();
-            progress?.Report(new ExportProgress(totalFrames, totalFrames, "블러 대상이 없어 무손실 고속 복사로 완료했습니다."));
         }
         finally
         {
