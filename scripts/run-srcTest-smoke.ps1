@@ -579,6 +579,13 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
     {
         Console.WriteLine($"[Smoke] no auto summary label={label}");
     }
+    if (dumpDetections)
+        DumpDetections($"{label}-raw", maskProvider);
+    if (dumpDetections && skipExport)
+    {
+        Console.WriteLine($"[Smoke] label={label}, export=skipped");
+        return (label, maskProvider);
+    }
     const float yoloSceneCutDirectCarryMaxConfidence = 0.98f;
     const float yoloSceneCutDirectCarryMinSourceConfidence = 0.58f;
     const float yoloSceneCutPostCutCarryMaxConfidence = 0.78f;
@@ -2331,76 +2338,9 @@ $dotnetRunArgs = @(
     $yoloMaxInitialFillFramesArg,
     $yoloRunAsBaselineArg
 )
-$knownSkipExportVulkanWarningPattern = 'does not match the type of the provided device context\.'
-
-function Resolve-SkipExportHarmlessExit
-{
-    param(
-        [int]$ExitCode,
-        [bool]$SkipExportMode,
-        [string[]]$OutputLines
-    )
-
-    if ($ExitCode -eq 0 -or -not $SkipExportMode) {
-        return $false
-    }
-
-    $onlyKnownMessages = $true
-    $hasKnownVulkanWarning = $false
-    $hasSkipExportMarker = $false
-    $harmlessLinePatterns = @(
-        'does not match the type of the provided device context\.',
-        'Invalid setup for format vulkan'
-    )
-
-    foreach ($line in $OutputLines) {
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
-        }
-
-        $trimmedLine = $line.Trim()
-
-        if ($trimmedLine -match '^\[Smoke\] label=.*export=skipped$') {
-            $hasSkipExportMarker = $true
-            continue
-        }
-
-        if ($harmlessLinePatterns | Where-Object { $trimmedLine -match $_ }) {
-            $hasKnownVulkanWarning = $true
-            continue
-        }
-
-        if (
-            $trimmedLine -match '^(?i)\+ CategoryInfo:' -or
-            $trimmedLine -match '^(?i)\+ FullyQualifiedErrorId:' -or
-            $trimmedLine -match '^(?i)\+ ScriptStackTrace:' -or
-            $trimmedLine -match '^(?i)\+ FullyQualifiedErrorId$' -or
-            $trimmedLine -match '^\s+at '
-        ) {
-            continue
-        }
-
-        if (
-            $trimmedLine -match '^(?i)error' -or
-            $trimmedLine -match '^(?i)\[ERR\]' -or
-            $trimmedLine -match '(?i)\bexception\b' -or
-            $trimmedLine -match '(?i)\bfatal\b'
-        ) {
-            if ($trimmedLine -match '^(?i)dotnet\.exe\s*:') {
-                if ($harmlessLinePatterns | Where-Object { $trimmedLine -match $_ }) {
-                    $hasKnownVulkanWarning = $true
-                    continue
-                }
-            }
-            $onlyKnownMessages = $false
-            break
-        }
-    }
-
-    return $hasKnownVulkanWarning -and $onlyKnownMessages -and $hasSkipExportMarker
-}
-
 try {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     if (-not [string]::IsNullOrWhiteSpace($LogFile)) {
         $logDir = Split-Path -Path $LogFile -Parent
         if (-not [string]::IsNullOrWhiteSpace($logDir) -and -not (Test-Path $logDir)) {
@@ -2440,16 +2380,12 @@ try {
     }
 }
 finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     if (-not $KeepHarness.IsPresent -and (Test-Path $harness)) {
         Remove-Item -Recurse -Force -Path $harness -ErrorAction SilentlyContinue
     }
 }
 
 if ($runExitCode -ne 0) {
-    if (Resolve-SkipExportHarmlessExit -ExitCode $runExitCode -SkipExportMode $SkipExport.IsPresent -OutputLines $runOutputLines) {
-        Write-Warning "SkipExport 모드에서 알려진 하드웨어 가속 경고만 감지되어 종료 코드를 정상 처리합니다."
-        exit 0
-    }
-
     exit $runExitCode
 }
