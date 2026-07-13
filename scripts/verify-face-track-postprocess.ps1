@@ -24,6 +24,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @'
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using FaceShield.Services.Analysis;
@@ -179,8 +180,28 @@ for (int frame = 92; frame <= 94; frame++)
 if (result.BlockedInitialFillTracks != 1)
     throw new InvalidOperationException($"Expected one outward edge-start track to be blocked from initial backfill; got {result.BlockedInitialFillTracks}.");
 
+var sceneGuardProvider = new FrameMaskProvider();
+sceneGuardProvider.SetFaceRects(10, new[] { new Rect(100, 100, 80, 80) }, size, 0.82f, new[] { 0.82f });
+sceneGuardProvider.SetFaceRects(12, new[] { new Rect(110, 104, 82, 80) }, size, 0.81f, new[] { 0.81f });
+sceneGuardProvider.SetFaceRects(20, new[] { new Rect(900, 300, 70, 70) }, size, 0.84f, new[] { 0.84f });
+sceneGuardProvider.SetFaceRects(22, new[] { new Rect(908, 304, 70, 70) }, size, 0.83f, new[] { 0.83f });
+
+new FaceTrackInterpolator().Apply(
+    sceneGuardProvider,
+    totalFrames: 24,
+    AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
+        FaceFilterProfile.Yolo,
+        continuityOnly: true),
+    new HashSet<int> { 21 });
+
+if (!sceneGuardProvider.TryGetFaceMaskData(11, out var sameSceneFill) || sameSceneFill.Faces.Count != 1)
+    throw new InvalidOperationException("Expected a same-scene one-frame detection gap to be filled.");
+
+if (sceneGuardProvider.TryGetFaceMaskData(21, out var crossCutFill) && crossCutFill.Faces.Count > 0)
+    throw new InvalidOperationException("Expected a scene-cut boundary to block synthetic gap filling.");
+
 Console.WriteLine(
-    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
+    $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
 
 dotnet run --project $project

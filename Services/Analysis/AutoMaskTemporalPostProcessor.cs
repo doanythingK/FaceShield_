@@ -29,7 +29,8 @@ namespace FaceShield.Services.Analysis
             FaceFilterProfile profile,
             bool useTracking,
             bool missRecoveryOnly = false,
-            bool continuityOnly = false)
+            bool continuityOnly = false,
+            IReadOnlySet<int>? blockedSceneCutStarts = null)
         {
             if (!useTracking)
                 return FaceTrackPostProcessResult.Empty;
@@ -37,7 +38,8 @@ namespace FaceShield.Services.Analysis
             var result = new FaceTrackInterpolator().Apply(
                 maskProvider,
                 totalFrames,
-                BuildTrackPostProcessOptions(profile, missRecoveryOnly, continuityOnly));
+                BuildTrackPostProcessOptions(profile, missRecoveryOnly, continuityOnly),
+                blockedSceneCutStarts);
 
             if (result.FilledGapFaces > 0 ||
                 result.FilledLostFaces > 0 ||

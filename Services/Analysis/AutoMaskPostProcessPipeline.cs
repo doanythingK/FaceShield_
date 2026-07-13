@@ -56,19 +56,22 @@ namespace FaceShield.Services.Analysis
         private readonly int _totalFrames;
         private readonly double _sourceFps;
         private readonly IReadOnlyDictionary<int, FrameTimingSample> _frameTimings;
+        private readonly IReadOnlySet<int> _sceneCutStarts;
 
         public AutoMaskPostProcessPipeline(
             FrameMaskProvider maskProvider,
             AutoMaskOptions options,
             int totalFrames,
             double sourceFps,
-            IReadOnlyDictionary<int, FrameTimingSample>? frameTimings = null)
+            IReadOnlyDictionary<int, FrameTimingSample>? frameTimings = null,
+            IReadOnlySet<int>? sceneCutStarts = null)
         {
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _totalFrames = totalFrames;
             _sourceFps = sourceFps;
             _frameTimings = frameTimings ?? new Dictionary<int, FrameTimingSample>();
+            _sceneCutStarts = sceneCutStarts ?? new HashSet<int>();
         }
 
         public AutoMaskPostProcessResult Apply(
@@ -182,7 +185,8 @@ namespace FaceShield.Services.Analysis
                     _options.FilterProfile,
                     useTrackingForTemporalFixes,
                     missRecoveryOnly: runYoloMissRecovery,
-                    continuityOnly: runYoloTrackedContinuity)
+                    continuityOnly: runYoloTrackedContinuity,
+                    blockedSceneCutStarts: _sceneCutStarts)
                 : FaceTrackPostProcessResult.Empty;
             swTrack.Stop();
             Debug.WriteLine(

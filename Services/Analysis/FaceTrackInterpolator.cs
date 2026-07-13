@@ -11,7 +11,8 @@ namespace FaceShield.Services.Analysis
         public FaceTrackPostProcessResult Apply(
             FrameMaskProvider maskProvider,
             int totalFrames,
-            FaceTrackPostProcessOptions? options = null)
+            FaceTrackPostProcessOptions? options = null,
+            IReadOnlySet<int>? blockedSceneCutStarts = null)
         {
             options ??= new FaceTrackPostProcessOptions();
             if (totalFrames < 3)
@@ -64,9 +65,9 @@ namespace FaceShield.Services.Analysis
             int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int removedSparseFaces = RemoveSparseLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
             int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
-            int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces);
-            int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces);
-            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces, out int blockedInitialFillTracks);
+            int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces, blockedSceneCutStarts);
+            int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces, blockedSceneCutStarts);
+            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces, blockedSceneCutStarts, out int blockedInitialFillTracks);
             int rewrittenFrames = RewriteMaskProvider(maskProvider, facesByFrame, confByFrame, sizeByFrame, hasStoredMask);
 
             return new FaceTrackPostProcessResult(
@@ -418,7 +419,8 @@ namespace FaceShield.Services.Analysis
             bool[] hasStoredMask,
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
-            ICollection<FaceTrackFilledFace> gapFilledFaces)
+            ICollection<FaceTrackFilledFace> gapFilledFaces,
+            IReadOnlySet<int>? blockedSceneCutStarts)
         {
             int filled = 0;
             foreach (var track in tracks)
@@ -440,6 +442,9 @@ namespace FaceShield.Services.Analysis
                         maxFillGap = Math.Max(maxFillGap, options.MaxConfirmedTrackHoldFrames);
 
                     if (gap > maxFillGap)
+                        continue;
+
+                    if (CrossesSceneCut(previous.FrameIndex, next.FrameIndex, blockedSceneCutStarts))
                         continue;
 
                     if (!CanBridge(previous.Bounds, next.Bounds, gap, options))
@@ -491,6 +496,7 @@ namespace FaceShield.Services.Analysis
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
             ICollection<FaceTrackFilledFace> initialFilledFaces,
+            IReadOnlySet<int>? blockedSceneCutStarts,
             out int blockedInitialFillTracks)
         {
             blockedInitialFillTracks = 0;
@@ -533,6 +539,8 @@ namespace FaceShield.Services.Analysis
                 {
                     int frameIndex = first.FrameIndex - offset;
                     if (frameIndex < 0)
+                        break;
+                    if (CrossesSceneCut(frameIndex, first.FrameIndex, blockedSceneCutStarts))
                         break;
                     if (hasStoredMask[frameIndex])
                         continue;
@@ -634,7 +642,8 @@ namespace FaceShield.Services.Analysis
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
             ICollection<int> lostFillFrameIndices,
-            ICollection<FaceTrackFilledFace> lostFilledFaces)
+            ICollection<FaceTrackFilledFace> lostFilledFaces,
+            IReadOnlySet<int>? blockedSceneCutStarts)
         {
             if (options.MaxLostFillFrames <= 0)
                 return 0;
@@ -674,6 +683,8 @@ namespace FaceShield.Services.Analysis
                     int frameIndex = lastFrame + offset;
                     if (frameIndex >= facesByFrame.Length)
                         break;
+                    if (CrossesSceneCut(lastFrame, frameIndex, blockedSceneCutStarts))
+                        break;
                     if (hasStoredMask[frameIndex])
                         continue;
 
@@ -709,6 +720,25 @@ namespace FaceShield.Services.Analysis
             }
 
             return filled;
+        }
+
+        private static bool CrossesSceneCut(
+            int firstFrame,
+            int secondFrame,
+            IReadOnlySet<int>? blockedSceneCutStarts)
+        {
+            if (blockedSceneCutStarts == null || blockedSceneCutStarts.Count == 0)
+                return false;
+
+            int start = Math.Min(firstFrame, secondFrame) + 1;
+            int end = Math.Max(firstFrame, secondFrame);
+            for (int frame = start; frame <= end; frame++)
+            {
+                if (blockedSceneCutStarts.Contains(frame))
+                    return true;
+            }
+
+            return false;
         }
 
         private static float ClampSyntheticFillConfidence(float sourceConfidence, FaceTrackPostProcessOptions options)
