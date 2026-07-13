@@ -244,6 +244,7 @@ public unsafe sealed class VideoExportService
         long swsToEncMs = 0;
         var encodeTimer = new Stopwatch();
         var encoderFlushTimer = new Stopwatch();
+        var outputCloseTimer = new Stopwatch();
         long lastAudioEncPacketPts = -1;
         bool hasLastAudioEncPacketPts = false;
         long lastAudioEncPacketDts = -1;
@@ -420,7 +421,8 @@ public unsafe sealed class VideoExportService
                         SourceBitDepth: GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
                         OutputBitDepth: GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
                         SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, null),
-                        TargetVideoBitrate: ResolveSourceVideoBitrate(inStream, null));
+                        TargetVideoBitrate: ResolveSourceVideoBitrate(inStream, null),
+                        OutputCloseMs: remuxCounts.OutputCloseMs);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
                     if (remuxPacketIntegrityInvalid)
@@ -1517,6 +1519,9 @@ public unsafe sealed class VideoExportService
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
+            outputCloseTimer.Start();
+            CloseOutputOrThrow(outFmt);
+            outputCloseTimer.Stop();
             int sampleWindowLimit = totalFrames > 0
                 ? Math.Min(exportSampleWindowFrames, totalFrames)
                 : 0;
@@ -1745,7 +1750,8 @@ public unsafe sealed class VideoExportService
                 SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, dec),
                 TargetVideoBitrate: ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
                 NativeYuvBlurFrames: _nativeYuvBlurFrames,
-                EncoderFlushMs: encoderFlushTimer.ElapsedMilliseconds);
+                EncoderFlushMs: encoderFlushTimer.ElapsedMilliseconds,
+                OutputCloseMs: outputCloseTimer.ElapsedMilliseconds);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, encoderFlushMs={encoderFlushTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
@@ -1783,8 +1789,8 @@ public unsafe sealed class VideoExportService
 
             if (outFmt != null)
             {
-                if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
-                    ffmpeg.avio_closep(&outFmt->pb);
+                if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0 && outFmt->pb != null)
+                    _ = ffmpeg.avio_closep(&outFmt->pb);
                 ffmpeg.avformat_free_context(outFmt);
             }
 
@@ -3139,7 +3145,8 @@ public unsafe sealed class VideoExportService
         int MissingVideoPacketTimestamps,
         int VideoPacketTimestampAdjustments,
         int OutputPacketPtsGapOutlierCount,
-        long MaxOutputPacketPtsGap) ExportByRemuxCopy(
+        long MaxOutputPacketPtsGap,
+        long OutputCloseMs) ExportByRemuxCopy(
         AVFormatContext* inFmt,
         string outputPath,
         int videoStreamIndex,
@@ -3165,6 +3172,7 @@ public unsafe sealed class VideoExportService
             int videoPacketTimestampAdjustments = 0;
             int outputPacketPtsGapOutlierCount = 0;
             long maxOutputPacketPtsGap = 0;
+            var outputCloseTimer = new Stopwatch();
 
         try
         {
@@ -3299,6 +3307,9 @@ public unsafe sealed class VideoExportService
             }
 
             Throw(ffmpeg.av_write_trailer(outFmt));
+            outputCloseTimer.Start();
+            CloseOutputOrThrow(outFmt);
+            outputCloseTimer.Stop();
             progress?.Report(new ExportProgress(totalFrames, totalFrames, "블러 대상이 없어 무손실 고속 복사로 완료했습니다."));
         }
         finally
@@ -3307,8 +3318,8 @@ public unsafe sealed class VideoExportService
 
             if (outFmt != null)
             {
-                if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
-                    ffmpeg.avio_closep(&outFmt->pb);
+                if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0 && outFmt->pb != null)
+                    _ = ffmpeg.avio_closep(&outFmt->pb);
                 ffmpeg.avformat_free_context(outFmt);
             }
         }
@@ -3319,7 +3330,21 @@ public unsafe sealed class VideoExportService
             missingVideoPacketTimestamps,
             videoPacketTimestampAdjustments,
             outputPacketPtsGapOutlierCount,
-            maxOutputPacketPtsGap);
+            maxOutputPacketPtsGap,
+            outputCloseTimer.ElapsedMilliseconds);
+    }
+
+    private static unsafe void CloseOutputOrThrow(AVFormatContext* format)
+    {
+        if (format == null ||
+            format->oformat == null ||
+            (format->oformat->flags & ffmpeg.AVFMT_NOFILE) != 0 ||
+            format->pb == null)
+        {
+            return;
+        }
+
+        Throw(ffmpeg.avio_closep(&format->pb));
     }
 
     private static unsafe bool IsPixFmtSupported(AVCodec* encoder, AVPixelFormat fmt)
