@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -604,6 +605,93 @@ namespace FaceShield.Services.Analysis
             public int LastPercent = -1;
         }
 
+        private sealed class PipelineExecutionScope : IDisposable
+        {
+            private readonly CancellationToken _callerToken;
+            private readonly CancellationTokenSource _pipelineCancellation;
+            private ExceptionDispatchInfo? _firstFailure;
+
+            public PipelineExecutionScope(CancellationToken callerToken)
+            {
+                _callerToken = callerToken;
+                _pipelineCancellation = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+            }
+
+            public CancellationToken Token => _pipelineCancellation.Token;
+
+            public Task Start(Action action)
+            {
+                return Task.Run(() => Execute(action));
+            }
+
+            public void Execute(Action action)
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Capture(ex);
+                }
+            }
+
+            public void Capture(Exception exception)
+            {
+                if (exception is OperationCanceledException &&
+                    (_callerToken.IsCancellationRequested ||
+                     (_pipelineCancellation.IsCancellationRequested &&
+                      Volatile.Read(ref _firstFailure) != null)))
+                {
+                    return;
+                }
+
+                CaptureFailure(exception);
+            }
+
+            public void ThrowIfFailedOrCanceled()
+            {
+                ExceptionDispatchInfo? failure = Volatile.Read(ref _firstFailure);
+                if (failure != null)
+                    failure.Throw();
+
+                _callerToken.ThrowIfCancellationRequested();
+            }
+
+            public void Dispose()
+            {
+                _pipelineCancellation.Dispose();
+            }
+
+            private void CaptureFailure(Exception exception)
+            {
+                var captured = ExceptionDispatchInfo.Capture(exception);
+                if (Interlocked.CompareExchange(ref _firstFailure, captured, null) != null)
+                    return;
+
+                try
+                {
+                    _pipelineCancellation.Cancel();
+                }
+                catch (Exception cancellationException)
+                {
+                    Debug.WriteLine(
+                        $"[AutoMaskPipeline] cancellation callback failed: {cancellationException.Message}");
+                }
+            }
+        }
+
+        private static void ReturnQueuedBuffers(
+            System.Collections.Concurrent.BlockingCollection<BgraBuffer> queue,
+            System.Buffers.ArrayPool<byte> pool)
+        {
+            while (queue.TryTake(out BgraBuffer? item))
+            {
+                if (item.Data.Length > 0)
+                    pool.Return(item.Data);
+            }
+        }
+
         private readonly record struct DetectionGeometry(
             PixelSize FullSize,
             bool UseProxy,
@@ -674,13 +762,16 @@ namespace FaceShield.Services.Analysis
             bool applyOffModeSceneCutReset = collectSceneCutBoundaries &&
                 _options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
                 !_options.EnablePostProcessing;
+            using var pipeline = new PipelineExecutionScope(ct);
+            CancellationToken pipelineToken = pipeline.Token;
 
-            var producer = Task.Run(() =>
+            var producer = pipeline.Start(() =>
             {
                 try
                 {
-                    while (!ct.IsCancellationRequested)
+                    while (true)
                     {
+                        pipelineToken.ThrowIfCancellationRequested();
                         var tDecode = Stopwatch.StartNew();
                         int targetW = useProxy ? proxyWidth : fullSize.Width;
                         int targetH = useProxy ? proxyHeight : fullSize.Height;
@@ -688,45 +779,36 @@ namespace FaceShield.Services.Analysis
                         int idx;
                         int size = targetW * 4 * targetH;
                         var buffer = pool.Rent(size);
-
-                        bool ok = extractor.TryGetNextFrameRawToBuffer(
-                            ct,
-                            targetW,
-                            targetH,
-                            useBilinear,
-                            buffer,
-                            out idx,
-                            out stride);
-                        tDecode.Stop();
-                        decodeMs += tDecode.ElapsedMilliseconds;
-                        if (!ok)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        if (idx >= totalFrames)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        RecordFrameTiming(extractor, idx);
-
-                        double[] sceneSignature = Array.Empty<double>();
-                        if (collectSceneCutBoundaries)
-                        {
-                            unsafe
-                            {
-                                fixed (byte* src = buffer)
-                                {
-                                    sceneSignature = ComputeFrameSignature(src, stride, targetW, targetH);
-                                }
-                            }
-                        }
-
+                        bool queued = false;
                         try
                         {
+                            bool ok = extractor.TryGetNextFrameRawToBuffer(
+                                pipelineToken,
+                                targetW,
+                                targetH,
+                                useBilinear,
+                                buffer,
+                                out idx,
+                                out stride);
+                            tDecode.Stop();
+                            decodeMs += tDecode.ElapsedMilliseconds;
+                            if (!ok || idx >= totalFrames)
+                                break;
+
+                            RecordFrameTiming(extractor, idx);
+
+                            double[] sceneSignature = Array.Empty<double>();
+                            if (collectSceneCutBoundaries)
+                            {
+                                unsafe
+                                {
+                                    fixed (byte* src = buffer)
+                                    {
+                                        sceneSignature = ComputeFrameSignature(src, stride, targetW, targetH);
+                                    }
+                                }
+                            }
+
                             queue.Add(new BgraBuffer
                             {
                                 Index = idx,
@@ -735,12 +817,13 @@ namespace FaceShield.Services.Analysis
                                 Width = targetW,
                                 Height = targetH,
                                 SceneSignature = sceneSignature
-                            }, ct);
+                            }, pipelineToken);
+                            queued = true;
                         }
-                        catch (OperationCanceledException)
+                        finally
                         {
-                            pool.Return(buffer);
-                            break;
+                            if (!queued)
+                                pool.Return(buffer);
                         }
                     }
                 }
@@ -748,17 +831,14 @@ namespace FaceShield.Services.Analysis
                 {
                     queue.CompleteAdding();
                 }
-            }, ct);
+            });
 
-            var writer = Task.Run(() =>
+            var writer = pipeline.Start(() =>
             {
                 double[]? previousSceneSignature = null;
 
-                foreach (var result in results.GetConsumingEnumerable())
+                foreach (var result in results.GetConsumingEnumerable(pipelineToken))
                 {
-                    if (ct.IsCancellationRequested)
-                        break;
-
                     if (collectSceneCutBoundaries &&
                         previousSceneSignature != null &&
                         result.FrameSignature.Length > 0 &&
@@ -798,17 +878,15 @@ namespace FaceShield.Services.Analysis
                             $"[AutoMaskPipe] frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
                     }
                 }
-            }, ct);
+            });
 
             try
             {
-                foreach (var item in queue.GetConsumingEnumerable())
+                foreach (var item in queue.GetConsumingEnumerable(pipelineToken))
                 {
-                    if (ct.IsCancellationRequested)
-                        break;
-
                     try
                     {
+                        pipelineToken.ThrowIfCancellationRequested();
                         Rect[] bounds = Array.Empty<Rect>();
                         float[] confidences = Array.Empty<float>();
                         PixelSize resultSize = useProxy ? fullSize : new PixelSize(item.Width, item.Height);
@@ -868,22 +946,15 @@ namespace FaceShield.Services.Analysis
                             }
                         }
 
-                            try
-                            {
-                                results.Add(new DetectionResult
-                                {
-                                    Index = item.Index,
-                                    Bounds = bounds,
-                                    Size = resultSize,
-                                    MinConfidence = minConfidence,
-                                    Confidences = confidences,
-                                    FrameSignature = item.SceneSignature
-                                }, ct);
-                            }
-                            catch (OperationCanceledException)
-                            {
-                            break;
-                        }
+                        results.Add(new DetectionResult
+                        {
+                            Index = item.Index,
+                            Bounds = bounds,
+                            Size = resultSize,
+                            MinConfidence = minConfidence,
+                            Confidences = confidences,
+                            FrameSignature = item.SceneSignature
+                        }, pipelineToken);
                     }
                     finally
                     {
@@ -891,12 +962,17 @@ namespace FaceShield.Services.Analysis
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                pipeline.Capture(ex);
+            }
             finally
             {
                 results.CompleteAdding();
-                try { producer.Wait(); } catch { }
-                try { writer.Wait(); } catch { }
+                Task.WaitAll(producer, writer);
+                ReturnQueuedBuffers(queue, pool);
             }
+            pipeline.ThrowIfFailedOrCanceled();
 
             Debug.WriteLine(
                 $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, roi={BuildDetectionSummary(roiStats, filterStats)}");
@@ -1085,13 +1161,16 @@ namespace FaceShield.Services.Analysis
             bool applyOffModeSceneCutReset = collectSceneCutBoundaries &&
                 _options.ProcessingMode == AutoMaskProcessingMode.Legacy &&
                 !_options.EnablePostProcessing;
+            using var pipeline = new PipelineExecutionScope(ct);
+            CancellationToken pipelineToken = pipeline.Token;
 
-            var producer = Task.Run(() =>
+            var producer = pipeline.Start(() =>
             {
                 try
                 {
-                    while (!ct.IsCancellationRequested)
+                    while (true)
                     {
+                        pipelineToken.ThrowIfCancellationRequested();
                         var tDecode = Stopwatch.StartNew();
                         int targetW = useProxy ? proxyWidth : fullSize.Width;
                         int targetH = useProxy ? proxyHeight : fullSize.Height;
@@ -1099,45 +1178,36 @@ namespace FaceShield.Services.Analysis
                         int idx;
                         int size = targetW * 4 * targetH;
                         var buffer = pool.Rent(size);
-
-                        bool ok = extractor.TryGetNextFrameRawToBuffer(
-                            ct,
-                            targetW,
-                            targetH,
-                            useBilinear,
-                            buffer,
-                            out idx,
-                            out stride);
-                        tDecode.Stop();
-                        Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
-                        if (!ok)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        if (idx >= totalFrames)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        RecordFrameTiming(extractor, idx);
-
-                        double[] sceneSignature = Array.Empty<double>();
-                        if (collectSceneCutBoundaries)
-                        {
-                            unsafe
-                            {
-                                fixed (byte* src = buffer)
-                                {
-                                    sceneSignature = ComputeFrameSignature(src, stride, targetW, targetH);
-                                }
-                            }
-                        }
-
+                        bool queued = false;
                         try
                         {
+                            bool ok = extractor.TryGetNextFrameRawToBuffer(
+                                pipelineToken,
+                                targetW,
+                                targetH,
+                                useBilinear,
+                                buffer,
+                                out idx,
+                                out stride);
+                            tDecode.Stop();
+                            Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
+                            if (!ok || idx >= totalFrames)
+                                break;
+
+                            RecordFrameTiming(extractor, idx);
+
+                            double[] sceneSignature = Array.Empty<double>();
+                            if (collectSceneCutBoundaries)
+                            {
+                                unsafe
+                                {
+                                    fixed (byte* src = buffer)
+                                    {
+                                        sceneSignature = ComputeFrameSignature(src, stride, targetW, targetH);
+                                    }
+                                }
+                            }
+
                             queue.Add(new BgraBuffer
                             {
                                 Index = idx,
@@ -1146,12 +1216,13 @@ namespace FaceShield.Services.Analysis
                                 Width = targetW,
                                 Height = targetH,
                                 SceneSignature = sceneSignature
-                            }, ct);
+                            }, pipelineToken);
+                            queued = true;
                         }
-                        catch (OperationCanceledException)
+                        finally
                         {
-                            pool.Return(buffer);
-                            break;
+                            if (!queued)
+                                pool.Return(buffer);
                         }
                     }
                 }
@@ -1159,20 +1230,18 @@ namespace FaceShield.Services.Analysis
                 {
                     queue.CompleteAdding();
                 }
-            }, ct);
+            });
 
             var consumers = new List<Task>(detectors.Count);
             foreach (var detector in detectors)
             {
-                consumers.Add(Task.Run(() =>
+                consumers.Add(pipeline.Start(() =>
                 {
-                    foreach (var item in queue.GetConsumingEnumerable())
+                    foreach (var item in queue.GetConsumingEnumerable(pipelineToken))
                     {
-                        if (ct.IsCancellationRequested)
-                            break;
-
                         try
                         {
+                            pipelineToken.ThrowIfCancellationRequested();
                             Rect[] bounds = Array.Empty<Rect>();
                             float[] confidences = Array.Empty<float>();
                             PixelSize resultSize = useProxy ? fullSize : new PixelSize(item.Width, item.Height);
@@ -1229,8 +1298,6 @@ namespace FaceShield.Services.Analysis
                                 }
                             }
 
-                            try
-                            {
                             results.Add(new DetectionResult
                             {
                                 Index = item.Index,
@@ -1239,32 +1306,24 @@ namespace FaceShield.Services.Analysis
                                 MinConfidence = minConfidence,
                                 Confidences = confidences,
                                 FrameSignature = item.SceneSignature
-                            }, ct);
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                break;
-                            }
+                            }, pipelineToken);
                         }
                         finally
                         {
                             pool.Return(item.Data);
                         }
                     }
-                }, ct));
+                }));
             }
 
-            var writer = Task.Run(() =>
+            var writer = pipeline.Start(() =>
             {
                 var orderedResults = new Dictionary<int, DetectionResult>();
                 int nextFrameToWrite = start;
                 double[]? previousSceneSignature = null;
 
-                foreach (var result in results.GetConsumingEnumerable())
+                foreach (var result in results.GetConsumingEnumerable(pipelineToken))
                 {
-                    if (ct.IsCancellationRequested)
-                        break;
-
                     orderedResults[result.Index] = result;
 
                     while (orderedResults.TryGetValue(nextFrameToWrite, out var orderedResult))
@@ -1312,22 +1371,13 @@ namespace FaceShield.Services.Analysis
                         nextFrameToWrite++;
                     }
                 }
-            }, ct);
+            });
 
-            try
-            {
-                Task.WaitAll(consumers.ToArray());
-            }
-            catch
-            {
-                // ignore cancellation
-            }
-            finally
-            {
-                results.CompleteAdding();
-                try { producer.Wait(); } catch { }
-                try { writer.Wait(); } catch { }
-            }
+            Task.WaitAll(consumers.ToArray());
+            results.CompleteAdding();
+            Task.WaitAll(producer, writer);
+            ReturnQueuedBuffers(queue, pool);
+            pipeline.ThrowIfFailedOrCanceled();
 
             Debug.WriteLine(
                 $"[AutoMaskPipe] done frames={processed}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
@@ -1399,14 +1449,17 @@ namespace FaceShield.Services.Analysis
             var swTotal = Stopwatch.StartNew();
             var progressState = new ProgressState();
             var filterStats = new FaceFilterStats();
+            using var pipeline = new PipelineExecutionScope(ct);
+            CancellationToken pipelineToken = pipeline.Token;
 
-            var producer = Task.Run(() =>
+            var producer = pipeline.Start(() =>
             {
                 int nextIndex = start;
                 try
                 {
-                    while (!ct.IsCancellationRequested)
+                    while (true)
                     {
+                        pipelineToken.ThrowIfCancellationRequested();
                         bool shouldDetect = nextIndex == start || nextIndex % interval == 0;
                         int idx;
                         if (!shouldDetect)
@@ -1414,12 +1467,12 @@ namespace FaceShield.Services.Analysis
                             var tSkip = Stopwatch.StartNew();
                             if (useProxy)
                             {
-                                if (!extractor.TryGetNextFrameRawScaled(ct, requireBgra: false, targetW, targetH, useBilinear, out _, out idx))
+                                if (!extractor.TryGetNextFrameRawScaled(pipelineToken, requireBgra: false, targetW, targetH, useBilinear, out _, out idx))
                                     break;
                             }
                             else
                             {
-                                if (!extractor.TryGetNextFrameRaw(ct, requireBgra: false, out _, out idx))
+                                if (!extractor.TryGetNextFrameRaw(pipelineToken, requireBgra: false, out _, out idx))
                                     break;
                             }
                             tSkip.Stop();
@@ -1441,45 +1494,34 @@ namespace FaceShield.Services.Analysis
                         int stride;
                         int size = targetW * 4 * targetH;
                         byte[] buffer = pool.Rent(size);
-                        var tDecode = Stopwatch.StartNew();
-                        bool ok = extractor.TryGetNextFrameRawToBuffer(
-                            ct,
-                            targetW,
-                            targetH,
-                            useBilinear,
-                            buffer,
-                            out idx,
-                            out stride);
-                        tDecode.Stop();
-                        Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
-                        if (!ok)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        if (idx >= totalFrames)
-                        {
-                            pool.Return(buffer);
-                            break;
-                        }
-
-                        RecordFrameTiming(extractor, idx);
-
-                        nextIndex = idx + 1;
-                        highestDecodedFrame = idx;
-                        onFrameProcessed?.Invoke(idx);
-                        ReportProgress(progress, idx, totalFrames, progressState);
-                        Interlocked.Increment(ref decoded);
-
-                        if (_maskProvider.HasEntry(idx))
-                        {
-                            pool.Return(buffer);
-                            continue;
-                        }
-
+                        bool queued = false;
                         try
                         {
+                            var tDecode = Stopwatch.StartNew();
+                            bool ok = extractor.TryGetNextFrameRawToBuffer(
+                                pipelineToken,
+                                targetW,
+                                targetH,
+                                useBilinear,
+                                buffer,
+                                out idx,
+                                out stride);
+                            tDecode.Stop();
+                            Interlocked.Add(ref decodeMs, tDecode.ElapsedMilliseconds);
+                            if (!ok || idx >= totalFrames)
+                                break;
+
+                            RecordFrameTiming(extractor, idx);
+
+                            nextIndex = idx + 1;
+                            highestDecodedFrame = idx;
+                            onFrameProcessed?.Invoke(idx);
+                            ReportProgress(progress, idx, totalFrames, progressState);
+                            Interlocked.Increment(ref decoded);
+
+                            if (_maskProvider.HasEntry(idx))
+                                continue;
+
                             queue.Add(new BgraBuffer
                             {
                                 Index = idx,
@@ -1487,12 +1529,13 @@ namespace FaceShield.Services.Analysis
                                 Stride = stride,
                                 Width = targetW,
                                 Height = targetH
-                            }, ct);
+                            }, pipelineToken);
+                            queued = true;
                         }
-                        catch (OperationCanceledException)
+                        finally
                         {
-                            pool.Return(buffer);
-                            break;
+                            if (!queued)
+                                pool.Return(buffer);
                         }
                     }
                 }
@@ -1500,20 +1543,18 @@ namespace FaceShield.Services.Analysis
                 {
                     queue.CompleteAdding();
                 }
-            }, ct);
+            });
 
             var consumers = new List<Task>(detectors.Count);
             foreach (var detector in detectors)
             {
-                consumers.Add(Task.Run(() =>
+                consumers.Add(pipeline.Start(() =>
                 {
-                    foreach (var item in queue.GetConsumingEnumerable())
+                    foreach (var item in queue.GetConsumingEnumerable(pipelineToken))
                     {
-                        if (ct.IsCancellationRequested)
-                            break;
-
                         try
                         {
+                            pipelineToken.ThrowIfCancellationRequested();
                             Rect[] bounds = Array.Empty<Rect>();
                             float[] confidences = Array.Empty<float>();
                             float? minConfidence = null;
@@ -1604,18 +1645,12 @@ namespace FaceShield.Services.Analysis
                             pool.Return(item.Data);
                         }
                     }
-                }, ct));
+                }));
             }
 
-            try
-            {
-                producer.Wait();
-                Task.WaitAll(consumers.ToArray());
-            }
-            catch
-            {
-                // cancellation is handled by the caller
-            }
+            Task.WaitAll(consumers.Append(producer).ToArray());
+            ReturnQueuedBuffers(queue, pool);
+            pipeline.ThrowIfFailedOrCanceled();
 
             int materializeEndExclusive = ct.IsCancellationRequested
                 ? Math.Min(totalFrames, Math.Max(start, highestDecodedFrame) + 1)
