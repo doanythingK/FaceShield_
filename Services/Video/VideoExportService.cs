@@ -583,7 +583,8 @@ public unsafe sealed class VideoExportService
                 {
                     outAudioStream = ffmpeg.avformat_new_stream(outFmt, null);
                     if (outAudioStream == null)
-                        audioNotice = "오디오 스트림을 생성하지 못해 소리를 포함하지 않습니다.";
+                        throw new InvalidOperationException(
+                            "오디오 출력 스트림을 생성하지 못해 원본 소리를 보존할 수 없습니다.");
                     else
                     {
                         Throw(ffmpeg.avcodec_parameters_copy(outAudioStream->codecpar, inAudioStream->codecpar));
@@ -604,7 +605,8 @@ public unsafe sealed class VideoExportService
                     }
                     else
                     {
-                        audioNotice = $"오디오 변환 초기화 실패: {audioError}. 소리를 포함하지 않습니다.";
+                        throw new InvalidOperationException(
+                            $"오디오 변환 초기화 실패로 원본 소리를 보존할 수 없습니다: {audioError}");
                     }
                 }
             }
