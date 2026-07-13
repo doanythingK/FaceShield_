@@ -28,6 +28,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @'
 using FaceShield.Services.Video;
+using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -37,6 +38,10 @@ var method = typeof(VideoExportService).GetMethod(
     "EvaluateEncodedPresentationGaps",
     BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("EvaluateEncodedPresentationGaps was not found.");
+var durationMethod = typeof(VideoExportService).GetMethod(
+    "ResolveEncodedPacketDuration",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("ResolveEncodedPacketDuration was not found.");
 
 AssertGaps(
     "CFR B-frame packet order",
@@ -124,8 +129,9 @@ AssertGaps(
     expectedMaxGap: 0);
 
 AssertRejectNoPts();
+AssertPacketDurations();
 
-Console.WriteLine("[EncodedPresentationGapsVerify] PASS cases=14");
+Console.WriteLine("[EncodedPresentationGapsVerify] PASS gapCases=14 durationPolicies=7");
 
 if (args.Length is 2 or 3)
 {
@@ -211,6 +217,82 @@ void AssertRejectNoPts()
     }
 }
 
+void AssertPacketDurations()
+{
+    AssertDurationSequence(
+        "CFR reordered packets",
+        submitted: new() { [0] = 512, [512] = 512, [1024] = 512, [1536] = 512 },
+        packetPts: [0, 1024, 512, 1536],
+        packetDurations: [0, 0, 0, 0],
+        expected: [512, 512, 512, 512]);
+    AssertDurationSequence(
+        "VFR presentation gap",
+        submitted: new() { [0] = 100, [100] = 100, [1000] = 100, [1100] = 100 },
+        packetPts: [0, 1000, 100, 1100],
+        packetDurations: [0, 0, 0, 0],
+        expected: [100, 100, 100, 100]);
+    AssertDurationSequence(
+        "VFR reordered packets",
+        submitted: new() { [0] = 40, [40] = 160, [200] = 80, [280] = 250 },
+        packetPts: [0, 200, 40, 280],
+        packetDurations: [0, 0, 0, 0],
+        expected: [40, 80, 160, 250]);
+
+    AssertDuration("positive encoder duration", 33, 40, new() { [40] = 160 }, 33, 0);
+    AssertDuration("unknown submitted duration", 0, 40, new() { [40] = 0 }, 0, 0);
+    AssertDuration("missing submitted PTS", 0, 40, new() { [80] = 160 }, 0, 1);
+    AssertDuration("missing packet PTS", 0, ffmpeg.AV_NOPTS_VALUE, new() { [40] = 160 }, 0, 1);
+
+    long muxDuration = ffmpeg.av_rescale_q(
+        1,
+        new AVRational { num = 1, den = 30 },
+        new AVRational { num = 1, den = 15360 });
+    if (muxDuration != 512)
+        throw new InvalidOperationException($"Duration rescale mismatch: expected=512, actual={muxDuration}.");
+}
+
+void AssertDurationSequence(
+    string name,
+    Dictionary<long, long> submitted,
+    long[] packetPts,
+    long[] packetDurations,
+    long[] expected)
+{
+    if (packetPts.Length != packetDurations.Length || packetPts.Length != expected.Length)
+        throw new ArgumentException($"{name}: sequence lengths differ.");
+
+    for (int i = 0; i < packetPts.Length; i++)
+    {
+        AssertDuration(
+            $"{name}[{i}]",
+            packetDurations[i],
+            packetPts[i],
+            submitted,
+            expected[i],
+            packetPts.Length - i - 1);
+    }
+}
+
+void AssertDuration(
+    string name,
+    long packetDuration,
+    long packetPts,
+    Dictionary<long, long> submitted,
+    long expectedDuration,
+    int expectedRemaining)
+{
+    long actual = (long)(durationMethod.Invoke(
+        null,
+        [packetDuration, packetPts, submitted])
+        ?? throw new InvalidOperationException($"{name}: invocation returned null."));
+    if (actual != expectedDuration || submitted.Count != expectedRemaining)
+    {
+        throw new InvalidOperationException(
+            $"{name}: expected duration/remaining {expectedDuration}/{expectedRemaining}, " +
+            $"got {actual}/{submitted.Count}.");
+    }
+}
+
 static Dictionary<long, int> CountPts(IEnumerable<long> values)
 {
     var counts = new Dictionary<long, int>();
@@ -261,6 +343,12 @@ if (-not $source.Contains("maxOutputPacketPtsGap = GetMaxSortedPresentationGap(o
 }
 if ($source.Contains("outPkt->duration <= 0")) {
     throw "Unknown packet duration must not be synthesized from average FPS."
+}
+if (-not $source.Contains("submittedEncodedFrameDurations.Remove(")) {
+    throw "Encoded packet duration recovery must consume the exact submitted PTS mapping."
+}
+if ($source.Contains(": GetVideoFrameStep(sourceFps, targetTimeBase);")) {
+    throw "Unknown frame duration must remain unknown instead of using average FPS."
 }
 
 Write-Host "[EncodedPresentationGapsVerify] PASS integration-guards"

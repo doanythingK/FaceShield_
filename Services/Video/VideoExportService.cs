@@ -306,6 +306,7 @@ public unsafe sealed class VideoExportService
         int encodedSourceVideoPacketCount = 0;
         int submittedVideoFrameCount = 0;
         var submittedEncodedFramePts = new HashSet<long>();
+        var submittedEncodedFrameDurations = new Dictionary<long, long>();
         var emittedEncodedFramePts = new Dictionary<long, int>();
         var emittedEncodedMuxPts = new List<long>();
         var appliedBlurFrameIndices = new HashSet<int>();
@@ -1274,6 +1275,7 @@ public unsafe sealed class VideoExportService
                                 ref encodedWindowFrameCount,
                                 ref submittedVideoFrameCount,
                                 submittedEncodedFramePts,
+                                submittedEncodedFrameDurations,
                                 emittedEncodedFramePts,
                                 emittedEncodedMuxPts,
                                 encodedPacketFrameStep);
@@ -1371,6 +1373,7 @@ public unsafe sealed class VideoExportService
                             ref encodedWindowFrameCount,
                             ref submittedVideoFrameCount,
                             submittedEncodedFramePts,
+                            submittedEncodedFrameDurations,
                             emittedEncodedFramePts,
                             emittedEncodedMuxPts,
                             encodedPacketFrameStep);
@@ -1506,6 +1509,7 @@ public unsafe sealed class VideoExportService
                         ref encodedWindowFrameCount,
                         ref submittedVideoFrameCount,
                         submittedEncodedFramePts,
+                        submittedEncodedFrameDurations,
                         emittedEncodedFramePts,
                         emittedEncodedMuxPts,
                         encodedPacketFrameStep);
@@ -1573,6 +1577,7 @@ public unsafe sealed class VideoExportService
                 ref encodedWindowFrameCount,
                 ref submittedVideoFrameCount,
                 submittedEncodedFramePts,
+                submittedEncodedFrameDurations,
                 emittedEncodedFramePts,
                 emittedEncodedMuxPts,
                 encodedPacketFrameStep);
@@ -2187,6 +2192,7 @@ public unsafe sealed class VideoExportService
         ref bool hasLastPacketDts,
         ref int outputVideoPacketCount,
         VideoPacketTimestampIntegrity timestampIntegrity,
+        Dictionary<long, long> submittedEncodedFrameDurations,
         Dictionary<long, int> emittedEncodedFramePts,
         List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
@@ -2202,6 +2208,16 @@ public unsafe sealed class VideoExportService
             ThrowVideoEncoderError(receiveResult, enc, "패킷 수신");
 
             long encoderPacketPts = outPkt->pts;
+            outPkt->duration = ResolveEncodedPacketDuration(
+                outPkt->duration,
+                encoderPacketPts,
+                submittedEncodedFrameDurations);
+            if (outPkt->duration < 0)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid argument: 음수 인코더 패킷 길이는 내보낼 수 없습니다 " +
+                    $"(duration={outPkt->duration}).");
+            }
 
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
             bool hasMissingTimestamp =
@@ -2243,13 +2259,6 @@ public unsafe sealed class VideoExportService
                 hasLastPacketPts = true;
                 lastPacketDts = outPkt->dts;
                 hasLastPacketDts = true;
-            }
-
-            if (outPkt->duration < 0)
-            {
-                throw new InvalidOperationException(
-                    $"Invalid argument: 음수 인코더 패킷 길이는 내보낼 수 없습니다 " +
-                    $"(duration={outPkt->duration}).");
             }
 
             outPkt->stream_index = outStream->index;
@@ -2444,6 +2453,7 @@ public unsafe sealed class VideoExportService
         ref int encodedWindowFrameCount,
         ref int submittedVideoFrameCount,
         HashSet<long> submittedEncodedFramePts,
+        Dictionary<long, long> submittedEncodedFrameDurations,
         Dictionary<long, int> emittedEncodedFramePts,
         List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
@@ -2496,6 +2506,16 @@ public unsafe sealed class VideoExportService
             sourceFps,
             ref lastEncodedPts,
             ref hasLastEncodedPts);
+        long encodedDuration = ResolveEncodeDuration(
+            frame,
+            inStream->time_base,
+            enc->time_base);
+        if (!submittedEncodedFramePts.Add(encodedPts) ||
+            !submittedEncodedFrameDurations.TryAdd(encodedPts, encodedDuration))
+        {
+            throw new VideoExportIntegrityException(
+                $"Invalid argument: 중복 인코더 입력 PTS가 감지되었습니다 (pts={encodedPts}).");
+        }
 
         WriteableBitmap? mask = null;
         IReadOnlyList<Rect>? faceRects = null;
@@ -2581,7 +2601,7 @@ public unsafe sealed class VideoExportService
                 _directFaceBlurFrames++;
             _nativeYuvBlurFrames++;
             frameWasBlurred = true;
-            ApplyEncodingPts(nativeYuvFrame, encodedPts);
+            ApplyEncodingTiming(nativeYuvFrame, encodedPts, encodedDuration);
 
             encodeTimer.Start();
             ThrowVideoEncoderError(
@@ -2599,6 +2619,7 @@ public unsafe sealed class VideoExportService
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
                 timestampIntegrity,
+                submittedEncodedFrameDurations,
                 emittedEncodedFramePts,
                 emittedEncodedMuxPts,
                 encodedPacketFrameStep);
@@ -2654,7 +2675,7 @@ public unsafe sealed class VideoExportService
             tEncSws.Stop();
             swsToEncMs += tEncSws.ElapsedMilliseconds;
 
-            ApplyEncodingPts(encFrame, encodedPts);
+            ApplyEncodingTiming(encFrame, encodedPts, encodedDuration);
 
             encodeTimer.Start();
             ThrowVideoEncoderError(
@@ -2672,6 +2693,7 @@ public unsafe sealed class VideoExportService
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
                 timestampIntegrity,
+                submittedEncodedFrameDurations,
                 emittedEncodedFramePts,
                 emittedEncodedMuxPts,
                 encodedPacketFrameStep);
@@ -2708,7 +2730,7 @@ public unsafe sealed class VideoExportService
                 tEncSws.Stop();
                 swsToEncMs += tEncSws.ElapsedMilliseconds;
 
-                ApplyEncodingPts(encFrame, encodedPts);
+                ApplyEncodingTiming(encFrame, encodedPts, encodedDuration);
 
                 encodeTimer.Start();
                 ThrowVideoEncoderError(
@@ -2726,6 +2748,7 @@ public unsafe sealed class VideoExportService
                     ref hasLastEncodedPacketDts,
                     ref outputVideoPacketCount,
                     timestampIntegrity,
+                    submittedEncodedFrameDurations,
                     emittedEncodedFramePts,
                     emittedEncodedMuxPts,
                     encodedPacketFrameStep);
@@ -2734,7 +2757,7 @@ public unsafe sealed class VideoExportService
             else
             {
                 encodeTimer.Start();
-                ApplyEncodingPts(frame, encodedPts);
+                ApplyEncodingTiming(frame, encodedPts, encodedDuration);
                 ThrowVideoEncoderError(
                     ffmpeg.avcodec_send_frame(enc, frame),
                     enc,
@@ -2750,16 +2773,12 @@ public unsafe sealed class VideoExportService
                     ref hasLastEncodedPacketDts,
                     ref outputVideoPacketCount,
                     timestampIntegrity,
+                    submittedEncodedFrameDurations,
                     emittedEncodedFramePts,
                     emittedEncodedMuxPts,
                     encodedPacketFrameStep);
                 encodeTimer.Stop();
             }
-        }
-        if (!submittedEncodedFramePts.Add(encodedPts))
-        {
-            throw new VideoExportIntegrityException(
-                $"Invalid argument: 중복 인코더 입력 PTS가 감지되었습니다 (pts={encodedPts}).");
         }
         submittedVideoFrameCount++;
         frameIndex = decodedFrameOrdinal + 1;
@@ -2827,6 +2846,7 @@ public unsafe sealed class VideoExportService
         ref int encodedWindowFrameCount,
         ref int submittedVideoFrameCount,
         HashSet<long> submittedEncodedFramePts,
+        Dictionary<long, long> submittedEncodedFrameDurations,
         Dictionary<long, int> emittedEncodedFramePts,
         List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
@@ -2888,6 +2908,7 @@ public unsafe sealed class VideoExportService
                 ref encodedWindowFrameCount,
                 ref submittedVideoFrameCount,
                 submittedEncodedFramePts,
+                submittedEncodedFrameDurations,
                 emittedEncodedFramePts,
                 emittedEncodedMuxPts,
                 encodedPacketFrameStep);
@@ -2922,6 +2943,7 @@ public unsafe sealed class VideoExportService
             ref hasLastEncodedPacketDts,
             ref outputVideoPacketCount,
             timestampIntegrity,
+            submittedEncodedFrameDurations,
             emittedEncodedFramePts,
             emittedEncodedMuxPts,
             encodedPacketFrameStep);
@@ -3387,13 +3409,50 @@ public unsafe sealed class VideoExportService
             expectedFrameStep);
     }
 
-    private static unsafe void ApplyEncodingPts(AVFrame* frame, long pts)
+    private static unsafe long ResolveEncodeDuration(
+        AVFrame* frame,
+        AVRational sourceTimeBase,
+        AVRational targetTimeBase)
+    {
+        long duration = frame == null ? 0 : frame->duration;
+        if (duration <= 0 ||
+            sourceTimeBase.num <= 0 ||
+            sourceTimeBase.den <= 0 ||
+            targetTimeBase.num <= 0 ||
+            targetTimeBase.den <= 0)
+            return 0;
+
+        return Math.Max(
+            0,
+            ffmpeg.av_rescale_q(duration, sourceTimeBase, targetTimeBase));
+    }
+
+    private static long ResolveEncodedPacketDuration(
+        long packetDuration,
+        long encoderPacketPts,
+        Dictionary<long, long> submittedEncodedFrameDurations)
+    {
+        if (encoderPacketPts == ffmpeg.AV_NOPTS_VALUE ||
+            !submittedEncodedFrameDurations.Remove(
+                encoderPacketPts,
+                out long submittedDuration))
+        {
+            return packetDuration;
+        }
+
+        return packetDuration == 0 && submittedDuration > 0
+            ? submittedDuration
+            : packetDuration;
+    }
+
+    private static unsafe void ApplyEncodingTiming(AVFrame* frame, long pts, long duration)
     {
         if (frame == null)
             return;
 
         frame->pts = pts;
         frame->pkt_dts = ffmpeg.AV_NOPTS_VALUE;
+        frame->duration = Math.Max(0, duration);
     }
 
     private static int ResolveFrameIndexFromPacket(
@@ -3840,6 +3899,7 @@ public unsafe sealed class VideoExportService
         ctx->color_trc = dec->color_trc;
         ctx->colorspace = dec->colorspace;
         ctx->chroma_sample_location = ResolveSourceChromaLocation(inStream, dec);
+        ctx->flags |= ffmpeg.AV_CODEC_FLAG_FRAME_DURATION;
 
         if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
             ctx->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;

@@ -36,6 +36,8 @@ using FaceShield;
 using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 
 unsafe
@@ -137,7 +139,9 @@ unsafe
             summary.HybridCopyAttempted ||
             summary.HybridCopyUsed)
             throw new InvalidOperationException($"Unexpected native bitmap summary: {summary.ToLogLine()}");
+        AssertVideoPacketTimingPreserved(args[0], args[1]);
         Console.WriteLine($"[NativeBitmapMaskE2E] PASS {summary.ToLogLine()}");
+        Console.WriteLine("[NativeBitmapMaskE2E] PASS packetTimingPreserved=true");
     }
 
     void Verify(
@@ -265,6 +269,84 @@ unsafe
             if (vPlane != null)
                 NativeMemory.Free(vPlane);
         }
+    }
+
+    static void AssertVideoPacketTimingPreserved(string sourcePath, string outputPath)
+    {
+        var source = ReadVideoPacketTiming(sourcePath);
+        var output = ReadVideoPacketTiming(outputPath);
+        if (source.Count == 0 || output.Count != source.Count)
+        {
+            throw new InvalidOperationException(
+                $"Video packet timing count changed: source={source.Count}, output={output.Count}.");
+        }
+
+        source.Sort(static (left, right) => left.PtsUs.CompareTo(right.PtsUs));
+        output.Sort(static (left, right) => left.PtsUs.CompareTo(right.PtsUs));
+        for (int i = 0; i < source.Count; i++)
+        {
+            var sourcePacket = source[i];
+            var outputPacket = output[i];
+            if (Math.Abs(sourcePacket.PtsUs - outputPacket.PtsUs) > 1 ||
+                (sourcePacket.DurationUs > 0 &&
+                 Math.Abs(sourcePacket.DurationUs - outputPacket.DurationUs) > 1))
+            {
+                throw new InvalidOperationException(
+                    $"Video packet timing changed at presentation index {i}: " +
+                    $"{sourcePacket.PtsUs}/{sourcePacket.DurationUs} -> " +
+                    $"{outputPacket.PtsUs}/{outputPacket.DurationUs} microseconds.");
+            }
+        }
+    }
+
+    static List<(long PtsUs, long DurationUs)> ReadVideoPacketTiming(string path)
+    {
+        AVFormatContext* format = null;
+        AVPacket* packet = ffmpeg.av_packet_alloc();
+        if (packet == null)
+            throw new InvalidOperationException("Unable to allocate a packet timing probe.");
+
+        var result = new List<(long PtsUs, long DurationUs)>();
+        try
+        {
+            Check(ffmpeg.avformat_open_input(&format, Path.GetFullPath(path), null, null));
+            Check(ffmpeg.avformat_find_stream_info(format, null));
+            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(format);
+            if (videoStreamIndex < 0)
+                throw new InvalidOperationException("Packet timing probe found no primary video stream.");
+
+            AVRational timeBase = format->streams[videoStreamIndex]->time_base;
+            AVRational microseconds = new() { num = 1, den = ffmpeg.AV_TIME_BASE };
+            while (ffmpeg.av_read_frame(format, packet) >= 0)
+            {
+                if (packet->stream_index == videoStreamIndex)
+                {
+                    if (packet->pts == ffmpeg.AV_NOPTS_VALUE)
+                        throw new InvalidOperationException("Packet timing probe found a missing video PTS.");
+                    if (packet->duration < 0)
+                        throw new InvalidOperationException("Packet timing probe found a negative video duration.");
+
+                    result.Add((
+                        ffmpeg.av_rescale_q(packet->pts, timeBase, microseconds),
+                        ffmpeg.av_rescale_q(packet->duration, timeBase, microseconds)));
+                }
+                ffmpeg.av_packet_unref(packet);
+            }
+        }
+        finally
+        {
+            ffmpeg.av_packet_free(&packet);
+            if (format != null)
+                ffmpeg.avformat_close_input(&format);
+        }
+
+        return result;
+    }
+
+    static void Check(int result)
+    {
+        if (result < 0)
+            throw new InvalidOperationException($"Packet timing probe failed with FFmpeg error {result}.");
     }
 
     static int ReadSample(byte* sample, int bytesPerSample, int valueShift) =>

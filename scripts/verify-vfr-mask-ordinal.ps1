@@ -72,6 +72,41 @@ function Get-FramePts {
     })
 }
 
+function Get-PacketTiming {
+    param(
+        [string]$Tool,
+        [string]$Path
+    )
+
+    $output = & $Tool @(
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_packets",
+        "-show_entries", "packet=pts_time,duration_time",
+        "-of", "json",
+        $Path
+    ) 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "ffprobe packet timing query failed: $($output | Out-String)"
+    }
+
+    $json = ($output -join "`n") | ConvertFrom-Json
+    return @($json.packets | ForEach-Object {
+        $ptsText = [string]$_.pts_time
+        $durationText = [string]$_.duration_time
+        if ([string]::IsNullOrWhiteSpace($ptsText) -or
+            [string]::IsNullOrWhiteSpace($durationText) -or
+            $durationText -eq "N/A") {
+            throw "Packet timing is incomplete: pts=$ptsText duration=$durationText"
+        }
+
+        [pscustomobject]@{
+            Pts = [double]::Parse($ptsText, [Globalization.CultureInfo]::InvariantCulture)
+            Duration = [double]::Parse($durationText, [Globalization.CultureInfo]::InvariantCulture)
+        }
+    })
+}
+
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @"
@@ -209,6 +244,25 @@ if (-not [string]::IsNullOrWhiteSpace($source)) {
     }
 
     Write-Host "[VfrMaskOrdinalVerify] PASS pts=0,0.1,1.0,1.1"
+
+    $sourcePacketTiming = @(Get-PacketTiming $ffprobe $source | Sort-Object Pts)
+    $outputPacketTiming = @(Get-PacketTiming $ffprobe $output | Sort-Object Pts)
+    if ($sourcePacketTiming.Count -ne 4 -or
+        $outputPacketTiming.Count -ne $sourcePacketTiming.Count) {
+        throw "Expected four VFR packet timings in both source and output."
+    }
+    for ($i = 0; $i -lt $sourcePacketTiming.Count; $i++) {
+        $sourcePacket = $sourcePacketTiming[$i]
+        $outputPacket = $outputPacketTiming[$i]
+        if ([Math]::Abs($sourcePacket.Pts - $outputPacket.Pts) -gt 0.000001 -or
+            [Math]::Abs($sourcePacket.Duration - $outputPacket.Duration) -gt 0.000001) {
+            throw "Packet timing changed at sorted index ${i}: " +
+                "$($sourcePacket.Pts)/$($sourcePacket.Duration) -> " +
+                "$($outputPacket.Pts)/$($outputPacket.Duration)."
+        }
+    }
+
+    Write-Host "[VfrMaskOrdinalVerify] PASS packet-timing=0/0.1,0.1/0.1,1.0/0.1,1.1/0.1"
 
     $missingOutput = Join-Path $work "missing-mask-output.mkv"
     Remove-Item -Force -ErrorAction SilentlyContinue $missingOutput

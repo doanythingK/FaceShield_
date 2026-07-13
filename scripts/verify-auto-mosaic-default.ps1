@@ -63,6 +63,8 @@ $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.p
 $tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
 $exportProgressCompletionVerify = Join-Path $repo "scripts\verify-export-progress-completion.ps1"
 $videoFieldFidelityPolicyVerify = Join-Path $repo "scripts\verify-video-field-fidelity-policy.ps1"
+$encodedPresentationGapsVerify = Join-Path $repo "scripts\verify-encoded-presentation-gaps.ps1"
+$vfrMaskOrdinalVerify = Join-Path $repo "scripts\verify-vfr-mask-ordinal.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -252,7 +254,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -301,6 +303,12 @@ Assert-Contains "export-progress-completion" $exportProgressOutput "processingMa
 
 $videoFieldOutput = Invoke-ScriptStep "video-field-fidelity-policy" $videoFieldFidelityPolicyVerify @()
 Assert-Contains "video-field-fidelity-policy" $videoFieldOutput "fieldOrders=6 .*interlacedFailClosed=true nonLeftChromaSoftware=true"
+
+$encodedPresentationOutput = Invoke-ScriptStep "encoded-presentation-gaps" $encodedPresentationGapsVerify @()
+Assert-Contains "encoded-presentation-gaps" $encodedPresentationOutput "gapCases=14 durationPolicies=7"
+
+$vfrMaskOrdinalOutput = Invoke-ScriptStep "vfr-mask-ordinal" $vfrMaskOrdinalVerify @()
+Assert-Contains "vfr-mask-ordinal" $vfrMaskOrdinalOutput "coverage-cases=3"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"
