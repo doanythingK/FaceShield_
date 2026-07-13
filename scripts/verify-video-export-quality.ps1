@@ -113,6 +113,43 @@ function Invoke-ProbeJson {
     return $text | ConvertFrom-Json
 }
 
+function Get-StreamPacketSignature {
+    param(
+        [string]$Tool,
+        [string]$Path,
+        [string]$StreamSpecifier
+    )
+
+    $output = & $Tool @(
+        "-v", "error",
+        "-select_streams", $StreamSpecifier,
+        "-show_packets",
+        "-show_data_hash", "sha256",
+        "-show_entries", "packet=pts_time,dts_time,duration_time,size,data_hash,flags",
+        "-of", "compact=p=0:nk=0",
+        $Path
+    ) 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "ffprobe packet query failed: $($output | Out-String)"
+    }
+
+    $packetLines = @($output | ForEach-Object { [string]$_ })
+    $text = $packetLines -join "`n"
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text))
+        $hash = [BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+
+    return [pscustomobject]@{
+        count = $packetLines.Count
+        value = $hash
+    }
+}
+
 function Get-PropertyText {
     param(
         [object]$Object,
@@ -254,6 +291,58 @@ function Add-Check {
     Write-Host "[ExportQualityGate] $status $Name source=$Source output=$Output requirement=$Requirement"
 }
 
+function Add-CopiedStreamChecks {
+    param(
+        [string]$Prefix,
+        [object]$SourceStream,
+        [object]$OutputStream,
+        [string]$SourcePath,
+        [string]$OutputPath,
+        [string]$ProbeTool
+    )
+
+    $sourceCodec = Get-PropertyText $SourceStream "codec_name" "unknown"
+    $outputCodec = Get-PropertyText $OutputStream "codec_name" "unknown"
+    Add-Check "$Prefix-codec" ($sourceCodec -eq $outputCodec) `
+        $sourceCodec $outputCodec "equal (stream copy)"
+
+    foreach ($name in @(
+        "default", "dub", "original", "comment", "lyrics", "karaoke", "forced",
+        "hearing_impaired", "visual_impaired", "clean_effects", "attached_pic",
+        "timed_thumbnails", "non_diegetic", "captions", "descriptions", "metadata",
+        "dependent", "still_image")) {
+        $sourceValue = Get-PropertyText $SourceStream.disposition $name "0"
+        $outputValue = Get-PropertyText $OutputStream.disposition $name "0"
+        Add-Check "$Prefix-disposition-$($name.Replace('_', '-'))" `
+            ($sourceValue -eq $outputValue) $sourceValue $outputValue "equal"
+    }
+
+    foreach ($name in @("language", "title", "filename", "mimetype")) {
+        $sourceValue = Get-PropertyText $SourceStream.tags $name ""
+        $outputValue = Get-PropertyText $OutputStream.tags $name ""
+        Add-Check "$Prefix-tag-$name" `
+            ([string]::IsNullOrWhiteSpace($sourceValue) -or $sourceValue -eq $outputValue) `
+            $sourceValue $outputValue "preserve when present"
+    }
+
+    $sourceExtradataHash = Get-PropertyText $SourceStream "extradata_hash" ""
+    $outputExtradataHash = Get-PropertyText $OutputStream "extradata_hash" ""
+    $mustMatchExtradata =
+        -not [string]::IsNullOrWhiteSpace($sourceExtradataHash) -and $sourceCodec -ne "mov_text"
+    Add-Check "$Prefix-extradata-hash" `
+        (-not $mustMatchExtradata -or $sourceExtradataHash -eq $outputExtradataHash) `
+        $sourceExtradataHash $outputExtradataHash "equal when source is known; mov_text muxer headers may differ"
+
+    $sourceIndex = Get-PropertyText $SourceStream "index" "-1"
+    $outputIndex = Get-PropertyText $OutputStream "index" "-1"
+    $sourcePackets = Get-StreamPacketSignature $ProbeTool $SourcePath $sourceIndex
+    $outputPackets = Get-StreamPacketSignature $ProbeTool $OutputPath $outputIndex
+    Add-Check "$Prefix-packet-count" ($sourcePackets.count -eq $outputPackets.count) `
+        ([string]$sourcePackets.count) ([string]$outputPackets.count) "equal"
+    Add-Check "$Prefix-packet-timeline-payload" ($sourcePackets.value -eq $outputPackets.value) `
+        $sourcePackets.value $outputPackets.value "PTS/DTS/duration/size/payload hash/flags equal"
+}
+
 function Get-MediaProbe {
     param(
         [string]$Tool,
@@ -264,6 +353,7 @@ function Get-MediaProbe {
         "-v", "error",
         "-count_frames",
         "-show_streams",
+        "-show_data_hash", "sha256",
         "-show_chapters",
         "-show_format",
         "-of", "json",
@@ -551,19 +641,25 @@ foreach ($streamType in $preservedStreamTypes) {
 
     $typedPairCount = [Math]::Min($sourceTypedStreams.Count, $outputTypedStreams.Count)
     for ($i = 0; $i -lt $typedPairCount; $i++) {
-        $sourceCodec = Get-PropertyText $sourceTypedStreams[$i] "codec_name" "unknown"
-        $outputCodec = Get-PropertyText $outputTypedStreams[$i] "codec_name" "unknown"
-        Add-Check "$streamType[$i]-codec" ($sourceCodec -eq $outputCodec) `
-            $sourceCodec $outputCodec "equal (stream copy)"
+        Add-CopiedStreamChecks `
+            -Prefix "$streamType[$i]" `
+            -SourceStream $sourceTypedStreams[$i] `
+            -OutputStream $outputTypedStreams[$i] `
+            -SourcePath $source `
+            -OutputPath $output `
+            -ProbeTool $ffprobe
     }
 }
 
 $additionalVideoPairCount = [Math]::Min($sourceAdditionalVideos.Count, $outputAdditionalVideos.Count)
 for ($i = 0; $i -lt $additionalVideoPairCount; $i++) {
-    $sourceCodec = Get-PropertyText $sourceAdditionalVideos[$i] "codec_name" "unknown"
-    $outputCodec = Get-PropertyText $outputAdditionalVideos[$i] "codec_name" "unknown"
-    Add-Check "additional-video[$i]-codec" ($sourceCodec -eq $outputCodec) `
-        $sourceCodec $outputCodec "equal (additional video stream copy)"
+    Add-CopiedStreamChecks `
+        -Prefix "additional-video[$i]" `
+        -SourceStream $sourceAdditionalVideos[$i] `
+        -OutputStream $outputAdditionalVideos[$i] `
+        -SourcePath $source `
+        -OutputPath $output `
+        -ProbeTool $ffprobe
 }
 
 foreach ($tagName in @(
