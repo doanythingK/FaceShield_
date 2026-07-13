@@ -546,7 +546,7 @@ static async Task<(string Label, FrameMaskProvider MaskProvider)> RunCaseAsync(
                     : string.Empty;
         string signature = string.Join("|", new[]
         {
-            "v4",
+            "v5",
             $"backend={backend}",
             $"profile={options.FilterProfile}",
             $"downscale={downscaleRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}",

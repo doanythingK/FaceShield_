@@ -56,6 +56,7 @@ $faceTrackSceneCutGuardVerify = Join-Path $repo "scripts\verify-face-track-scene
 $yoloTemporalSmoothingCutBoundaryVerify = Join-Path $repo "scripts\verify-yolo-temporal-smoothing-cut-boundary.ps1"
 $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sparse-scene-cut-guard.ps1"
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
+$autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
 $yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-followup-quality-evidence.ps1"
 $yoloProblemSpanRunnerVerify = Join-Path $repo "scripts\verify-yolo-problem-span-runner-state.ps1"
@@ -223,7 +224,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -241,12 +242,18 @@ $trackOutput = Invoke-ScriptStep "track-postprocess-policy" $trackPostprocessVer
 Assert-Contains "track-postprocess-policy" $trackOutput "\[FaceTrackPostVerify\]"
 Assert-Contains "track-postprocess-policy" $trackOutput "gapFrames=11"
 Assert-Contains "track-postprocess-policy" $trackOutput "initialFilled=3"
-Assert-Contains "track-postprocess-policy" $trackOutput "lostFrames=33,34,35,88,89"
+Assert-Contains "track-postprocess-policy" $trackOutput "lostFrames=33,34,35,88,89,90,98,99"
 Assert-Contains "track-postprocess-policy" $trackOutput "removedSparse=3"
 Assert-Contains "track-postprocess-policy" $trackOutput "removedUnstableTail=1"
 Assert-Contains "track-postprocess-policy" $trackOutput "removedEdgeTail=1"
 Assert-Contains "track-postprocess-policy" $trackOutput "largeJumpFilled=False"
-Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52,55,59,70,71,75,76,77,82,83,84,85,86,87,88,89"
+Assert-Contains "track-postprocess-policy" $trackOutput "faceOnnxContinuity=True"
+Assert-Contains "track-postprocess-policy" $trackOutput "confirmedHold=True"
+Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,25,30,31,32,33,34,35,50,51,52,55,59,70,71,75,76,77,82,83,84,85,86,87,88,89,90,95,96,97,98,99"
+
+$defaultFilterOutput = Invoke-ScriptStep "automask-default-filter-stability" $autoMaskDefaultFilterStabilityVerify @()
+Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "policies=6 geometry=3 pixelPolicies=2"
+Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "runtimePaths=7 resumeSignature=v5"
 
 $sceneCutOutput = Invoke-ScriptStep "face-track-scene-cut-guard" $faceTrackSceneCutGuardVerify @()
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "\[FaceTrackSceneCutGuardVerify\]"

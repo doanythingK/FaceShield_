@@ -102,6 +102,7 @@ namespace FaceShield.Services.Analysis
         private readonly IFaceDetector _detector;
         private readonly FrameMaskProvider _maskProvider;
         private readonly AutoMaskOptions _options;
+        private readonly FaceFilterSettings _faceFilterSettings;
         private readonly IFaceDetectorFactory? _detectorFactory;
         private readonly Dictionary<int, FrameTimingSample> _frameTimings = new();
         private readonly HashSet<int> _sceneCutStarts = new();
@@ -119,6 +120,7 @@ namespace FaceShield.Services.Analysis
             _detector = detector ?? throw new ArgumentNullException(nameof(detector));
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
             _options = (options ?? new AutoMaskOptions()).ResolveProcessingMode();
+            _faceFilterSettings = GetRuntimeFaceFilterSettings(_options);
             _detectorFactory = detectorFactory;
         }
 
@@ -466,7 +468,7 @@ namespace FaceShield.Services.Analysis
                                     bgra.Height,
                                     scaleX,
                                     scaleY,
-                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                    _faceFilterSettings,
                                     filterStats);
                             }
                         }
@@ -485,13 +487,13 @@ namespace FaceShield.Services.Analysis
                                     frame.PixelSize.Height,
                                     1.0,
                                     1.0,
-                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                    _faceFilterSettings,
                                     filterStats);
                             }
                         }
                         else
                         {
-                            faces = FilterFacesByArea(faces, fullSize, GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing), filterStats);
+                            faces = FilterFacesByArea(faces, fullSize, _faceFilterSettings, filterStats);
                         }
 
                         WriteDetectionDiagnostics(idx, rawFaceCount, faces, fullSize);
@@ -932,7 +934,7 @@ namespace FaceShield.Services.Analysis
                                                 item.Height,
                                                 useProxy ? scaleX : 1.0,
                                                 useProxy ? scaleY : 1.0,
-                                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                                _faceFilterSettings,
                                                 filterStats);
                                         }
                                         WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
@@ -1055,7 +1057,7 @@ namespace FaceShield.Services.Analysis
                                     frame.PixelSize.Height,
                                     1.0,
                                     1.0,
-                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing));
+                                    _faceFilterSettings);
                             }
                         }
                         WriteDetectionDiagnostics(frameIndex, rawFaceCount, faces, frame.PixelSize);
@@ -1285,7 +1287,7 @@ namespace FaceShield.Services.Analysis
                                                     item.Height,
                                                     useProxy ? scaleX : 1.0,
                                                     useProxy ? scaleY : 1.0,
-                                                    GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                                    _faceFilterSettings,
                                                     filterStats);
                                             }
                                             WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
@@ -1603,7 +1605,7 @@ namespace FaceShield.Services.Analysis
                                                 item.Height,
                                                 useProxy ? scaleX : 1.0,
                                                 useProxy ? scaleY : 1.0,
-                                                GetFaceFilterSettings(_options.FilterProfile, !_options.EnablePostProcessing),
+                                                _faceFilterSettings,
                                                 filterStats);
                                         }
                                         WriteDetectionDiagnostics(item.Index, rawFaceCount, faces, resultSize);
@@ -2917,6 +2919,19 @@ namespace FaceShield.Services.Analysis
                 return FaceCandidateKind.Small;
 
             return FaceCandidateKind.Rejected;
+        }
+
+        private static FaceFilterSettings GetRuntimeFaceFilterSettings(AutoMaskOptions options)
+        {
+            FaceFilterSettings settings = GetFaceFilterSettings(
+                options.FilterProfile,
+                !options.EnablePostProcessing);
+            bool disableFrameStats = options.FilterProfile == FaceFilterProfile.FaceOnnx &&
+                options.ProcessingMode == AutoMaskProcessingMode.Tracked &&
+                !options.EnablePostProcessing;
+            return disableFrameStats
+                ? settings with { UseStatsFilter = false }
+                : settings;
         }
 
         private static FaceFilterSettings GetFaceFilterSettings(
