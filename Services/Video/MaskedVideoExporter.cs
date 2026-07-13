@@ -1075,10 +1075,15 @@ public unsafe sealed class MaskedVideoExporter
         double frameArea = Math.Max(1.0, frameW * (double)frameH);
         double percent = area / frameArea * 100.0;
 
-        double scale = percent <= 1.0 ? 0.4
-            : percent <= 3.0 ? 0.55
-            : percent <= 5.0 ? 0.7
-            : 1.0;
+        double scale = percent switch
+        {
+            <= 0.25 => 0.4,
+            <= 1.0 => 0.4 + (percent - 0.25) / 0.75 * 0.15,
+            <= 1.5 => 0.55,
+            <= 3.0 => 0.55 + (percent - 1.5) / 1.5 * 0.15,
+            <= 5.0 => 0.7 + (percent - 3.0) / 2.0 * 0.3,
+            _ => 1.0
+        };
 
         int r = (int)Math.Round(baseRadius * scale);
         return Math.Clamp(r, 1, baseRadius);
