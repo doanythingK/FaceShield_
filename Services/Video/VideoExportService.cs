@@ -4055,7 +4055,7 @@ public unsafe sealed class VideoExportService
         output->r_frame_rate = source->r_frame_rate;
         output->sample_aspect_ratio = source->sample_aspect_ratio;
         output->disposition = source->disposition;
-        ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0);
+        Throw(ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0));
         CopyCodecPresentationSideData(source->codecpar, output->codecpar);
     }
 
@@ -4066,10 +4066,12 @@ public unsafe sealed class VideoExportService
         if (source == null || output == null)
             return;
 
-        ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0);
+        Throw(ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0));
         int chapterCount = checked((int)source->nb_chapters);
         if (chapterCount <= 0)
             return;
+        if (source->chapters == null)
+            throw new InvalidOperationException("원본 챕터 목록 정보가 없습니다.");
 
         output->chapters = (AVChapter**)ffmpeg.av_calloc(
             (ulong)chapterCount,
@@ -4091,9 +4093,9 @@ public unsafe sealed class VideoExportService
             outputChapter->time_base = sourceChapter->time_base;
             outputChapter->start = sourceChapter->start;
             outputChapter->end = sourceChapter->end;
-            ffmpeg.av_dict_copy(&outputChapter->metadata, sourceChapter->metadata, 0);
             output->chapters[i] = outputChapter;
             output->nb_chapters++;
+            Throw(ffmpeg.av_dict_copy(&outputChapter->metadata, sourceChapter->metadata, 0));
         }
     }
 
