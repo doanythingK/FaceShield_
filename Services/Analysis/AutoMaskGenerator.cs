@@ -423,9 +423,7 @@ namespace FaceShield.Services.Analysis
                             useProxy,
                             _options.DownscaleRatio,
                             _options.DownscaleQuality,
-                            _options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnableYoloPrimaryRoiShortcut
-                                ? null
-                                : lastFaces,
+                            ShouldUsePrimaryRoiShortcut(_options) ? lastFaces : null,
                             fullSize,
                             scaleX,
                             scaleY,
@@ -910,9 +908,7 @@ namespace FaceShield.Services.Analysis
                                         useProxy,
                                         _options.DownscaleRatio,
                                         _options.DownscaleQuality,
-                                        _options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnableYoloPrimaryRoiShortcut
-                                            ? null
-                                            : lastFaces,
+                                        ShouldUsePrimaryRoiShortcut(_options) ? lastFaces : null,
                                         fullSize,
                                         scaleX,
                                         scaleY,
@@ -2450,6 +2446,15 @@ namespace FaceShield.Services.Analysis
             for (int i = 0; i < values.Count; i++)
                 min = Math.Min(min, values[i]);
             return min == float.MaxValue ? null : min;
+        }
+
+        private static bool ShouldUsePrimaryRoiShortcut(AutoMaskOptions options)
+        {
+            if (options.ProcessingMode != AutoMaskProcessingMode.Legacy)
+                return false;
+
+            return options.FilterProfile != FaceFilterProfile.Yolo ||
+                options.EnableYoloPrimaryRoiShortcut;
         }
 
         private static IReadOnlyList<FaceDetectionResult> DetectFacesBgraSmart(

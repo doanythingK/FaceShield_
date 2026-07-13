@@ -57,6 +57,7 @@ $yoloTemporalSmoothingCutBoundaryVerify = Join-Path $repo "scripts\verify-yolo-t
 $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sparse-scene-cut-guard.ps1"
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
+$detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $yoloQualityReviewChecklistVerify = Join-Path $repo "scripts\verify-yolo-quality-review-checklist.ps1"
 $yoloFollowupQualityEvidenceVerify = Join-Path $repo "scripts\verify-yolo-followup-quality-evidence.ps1"
 $yoloProblemSpanRunnerVerify = Join-Path $repo "scripts\verify-yolo-problem-span-runner-state.ps1"
@@ -119,6 +120,25 @@ function Assert-Contains([string]$Name, [string]$Text, [string]$Pattern) {
     if ($Text -notmatch $Pattern) {
         throw "$Name did not contain expected pattern: $Pattern"
     }
+}
+
+function Assert-AutoTuneModeMatchesSessions(
+    [string]$Name,
+    [string]$Text,
+    [int]$MaxSessions
+) {
+    $match = [regex]::Match($Text, '\[SmokeTune\][^\r\n]*sessions=(\d+)')
+    if (-not $match.Success) {
+        throw "$Name did not report the selected session count"
+    }
+
+    $sessions = [int]$match.Groups[1].Value
+    if ($sessions -lt 1 -or $sessions -gt $MaxSessions) {
+        throw "$Name selected sessions=$sessions outside 1..$MaxSessions"
+    }
+
+    $expectedMode = if ($sessions -eq 1) { "pipe-single" } else { "pipe-parallel" }
+    Assert-Contains $Name $Text "\[AutoRunSummary\].*mode=$expectedMode"
 }
 
 if ($RequireYoloComplete) {
@@ -224,7 +244,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $detectorAutoTunerSessionRangeVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -254,6 +274,12 @@ Assert-Contains "track-postprocess-policy" $trackOutput "filledFrames=10,11,12,2
 $defaultFilterOutput = Invoke-ScriptStep "automask-default-filter-stability" $autoMaskDefaultFilterStabilityVerify @()
 Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "policies=6 geometry=3 pixelPolicies=2"
 Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "runtimePaths=7 resumeSignature=v5"
+
+$autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
+Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"
+Assert-Contains "detector-autotune-session-range" $autoTunerOutput "gpuSessions=1,2,3,4"
+Assert-Contains "detector-autotune-session-range" $autoTunerOutput "roiPolicies=6"
+Assert-Contains "detector-autotune-session-range" $autoTunerOutput "fullFramePaths=2"
 
 $sceneCutOutput = Invoke-ScriptStep "face-track-scene-cut-guard" $faceTrackSceneCutGuardVerify @()
 Assert-Contains "face-track-scene-cut-guard" $sceneCutOutput "\[FaceTrackSceneCutGuardVerify\]"
@@ -512,7 +538,7 @@ $shortTuneOutput = Invoke-Step "default-autotune-provider-short" @(
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[SmokeTune\].*tuned="
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "detector=FaceOnnxDetector/(CPU|GPU:DirectML)"
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[AutoRunSummary\].*tracking=True.*post=False.*processingMode=Tracked"
-Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "mode=pipe-parallel"
+Assert-AutoTuneModeMatchesSessions "default-autotune-provider-short" $shortTuneOutput 2
 Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "detects=150"
 Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "interpolated=0"
 
@@ -530,7 +556,7 @@ if ($RunLongAutoTune) {
     )
     Assert-Contains "default-autotune-provider-long" $longTuneOutput "\[SmokeTune\].*tuned="
     Assert-Contains "default-autotune-provider-long" $longTuneOutput "detector=FaceOnnxDetector/(CPU|GPU:DirectML)"
-    Assert-Contains "default-autotune-gpu-long" $longTuneOutput "mode=pipe-parallel"
+    Assert-AutoTuneModeMatchesSessions "default-autotune-provider-long" $longTuneOutput 2
     Assert-Contains "default-autotune-gpu-long" $longTuneOutput "detects=899"
     Assert-Contains "default-autotune-gpu-long" $longTuneOutput "interpolated=0"
 }

@@ -530,7 +530,7 @@ namespace FaceShield.Services.FaceDetection
             int cores = Math.Max(1, Environment.ProcessorCount);
             var candidates = new List<(FaceOnnxDetectorOptions, int, string)>();
             int requestedSessions = Math.Max(1, maxSessions);
-            for (int sessions = requestedSessions; sessions <= requestedSessions; sessions++)
+            for (int sessions = 1; sessions <= requestedSessions; sessions++)
             {
                 var defaultCpuOptions = CloneOptions(
                     baseOptions,
