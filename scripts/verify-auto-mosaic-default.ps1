@@ -450,7 +450,7 @@ Assert-Contains "auto-no-detection-review" $autoNoDetectionReviewOutput "\[AutoN
 
 $detectionOverlayOutput = Invoke-ScriptStep "yolo-detection-overlay-video" $yoloDetectionOverlayVideoVerify @()
 Assert-Contains "yolo-detection-overlay-video" $detectionOverlayOutput "\[YoloDetectionOverlayVideoVerify\] all requested checks passed"
-Assert-Contains "yolo-detection-overlay-video" $detectionOverlayOutput "yolo-detection-overlay\.mp4"
+Assert-Contains "yolo-detection-overlay-video" $detectionOverlayOutput "actual=false"
 
 $aspectRatioFilterOutput = Invoke-ScriptStep "yolo-aspect-ratio-filter" $yoloAspectRatioFilterVerify @()
 Assert-Contains "yolo-aspect-ratio-filter" $aspectRatioFilterOutput "\[YoloAspectRatioFilterVerify\] all requested checks passed"

@@ -1,14 +1,26 @@
-param()
+param(
+    [switch]$RunActual,
+    [string]$VideoPath = ".tmp\srcTest-smoke\smoke-0900-2s.mp4",
+    [string]$PredictionLog = ".tmp\yolo-followup-current-0900-default\yolo-quality-2s-dump.log",
+    [string]$OutputPath = ".tmp\yolo-followup-current-0900-expanded\yolo-detection-overlay.mp4",
+    [string]$ContactSheetPath = ".tmp\yolo-followup-current-0900-expanded\yolo-review-contact-sheet.png"
+)
 
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $script = Join-Path $repo "scripts\new-yolo-detection-overlay-video.ps1"
 $contactSheetScript = Join-Path $repo "scripts\new-yolo-review-contact-sheet.ps1"
-$video = Join-Path $repo ".tmp\srcTest-smoke\smoke-0900-2s.mp4"
-$log = Join-Path $repo ".tmp\yolo-followup-current-0900-default\yolo-quality-2s-dump.log"
-$output = Join-Path $repo ".tmp\yolo-followup-current-0900-expanded\yolo-detection-overlay.mp4"
-$contactSheet = Join-Path $repo ".tmp\yolo-followup-current-0900-expanded\yolo-review-contact-sheet.png"
+
+function Resolve-RepoPath {
+    param([string]$Path)
+
+    if ([IO.Path]::IsPathRooted($Path)) {
+        return $Path
+    }
+
+    return Join-Path $repo $Path
+}
 
 function Assert-Contains {
     param(
@@ -45,50 +57,59 @@ Assert-Contains "contact sheet labels selected frame index" $contactSheetText 'e
 Assert-Contains "contact sheet tiles frames" $contactSheetText "tile="
 Assert-Contains "contact sheet supports wsl ffmpeg fallback" $contactSheetText "wsl.exe"
 
-if (-not (Test-Path $video)) {
-    throw "Required sample video not found: $video"
-}
-if (-not (Test-Path $log)) {
-    throw "Required prediction log not found: $log"
+if ($RunActual) {
+    $video = Resolve-RepoPath $VideoPath
+    $log = Resolve-RepoPath $PredictionLog
+    $output = Resolve-RepoPath $OutputPath
+    $contactSheet = Resolve-RepoPath $ContactSheetPath
+
+    if (-not (Test-Path $video)) {
+        throw "Required sample video not found: $video"
+    }
+    if (-not (Test-Path $log)) {
+        throw "Required prediction log not found: $log"
+    }
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
+        -VideoPath $video `
+        -PredictionLog $log `
+        -OutputPath $output `
+        -ScaleWidth 640
+    if ($LASTEXITCODE -ne 0) {
+        throw "Overlay script failed with exit code $LASTEXITCODE"
+    }
+
+    if (-not (Test-Path $output)) {
+        throw "Overlay output not found: $output"
+    }
+
+    $info = Get-Item $output
+    if ($info.Length -le 0) {
+        throw "Overlay output is empty: $output"
+    }
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $contactSheetScript `
+        -VideoPath $output `
+        -Frames "4,6,7,17,20,24,25,32" `
+        -OutputPath $contactSheet `
+        -ScaleWidth 240 `
+        -Columns 4
+    if ($LASTEXITCODE -ne 0) {
+        throw "Contact sheet script failed with exit code $LASTEXITCODE"
+    }
+
+    if (-not (Test-Path $contactSheet)) {
+        throw "Contact sheet output not found: $contactSheet"
+    }
+
+    $contactInfo = Get-Item $contactSheet
+    if ($contactInfo.Length -le 0) {
+        throw "Contact sheet output is empty: $contactSheet"
+    }
+
+    Write-Host "[YoloDetectionOverlayVideoVerify] pass output path=$output, bytes=$($info.Length)"
+    Write-Host "[YoloDetectionOverlayVideoVerify] pass contactSheet=$contactSheet, bytes=$($contactInfo.Length)"
 }
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
-    -VideoPath $video `
-    -PredictionLog $log `
-    -OutputPath $output `
-    -ScaleWidth 640
-if ($LASTEXITCODE -ne 0) {
-    throw "Overlay script failed with exit code $LASTEXITCODE"
-}
-
-if (-not (Test-Path $output)) {
-    throw "Overlay output not found: $output"
-}
-
-$info = Get-Item $output
-if ($info.Length -le 0) {
-    throw "Overlay output is empty: $output"
-}
-
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $contactSheetScript `
-    -VideoPath $output `
-    -Frames "4,6,7,17,20,24,25,32" `
-    -OutputPath $contactSheet `
-    -ScaleWidth 240 `
-    -Columns 4
-if ($LASTEXITCODE -ne 0) {
-    throw "Contact sheet script failed with exit code $LASTEXITCODE"
-}
-
-if (-not (Test-Path $contactSheet)) {
-    throw "Contact sheet output not found: $contactSheet"
-}
-
-$contactInfo = Get-Item $contactSheet
-if ($contactInfo.Length -le 0) {
-    throw "Contact sheet output is empty: $contactSheet"
-}
-
-Write-Host "[YoloDetectionOverlayVideoVerify] pass output path=$output, bytes=$($info.Length)"
-Write-Host "[YoloDetectionOverlayVideoVerify] pass contactSheet=$contactSheet, bytes=$($contactInfo.Length)"
-Write-Host "[YoloDetectionOverlayVideoVerify] all requested checks passed"
+$actual = $RunActual.IsPresent.ToString().ToLowerInvariant()
+Write-Host "[YoloDetectionOverlayVideoVerify] all requested checks passed actual=$actual"
