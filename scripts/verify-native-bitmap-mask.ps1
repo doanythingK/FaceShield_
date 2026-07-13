@@ -129,6 +129,7 @@ unsafe
         if (summary.BitmapMaskFrames != 1 ||
             summary.NativeYuvBlurFrames != 1 ||
             summary.SwsToBgraMs != 0 ||
+            summary.EncodeMs < summary.EncoderFlushMs ||
             summary.HybridCopyAttempted ||
             summary.HybridCopyUsed)
             throw new InvalidOperationException($"Unexpected native bitmap summary: {summary.ToLogLine()}");

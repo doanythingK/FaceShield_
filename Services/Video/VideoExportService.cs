@@ -227,7 +227,8 @@ public unsafe sealed class VideoExportService
         long swsToBgraMs = 0;
         long maskMs = 0;
         long swsToEncMs = 0;
-        long encodeMs = 0;
+        var encodeTimer = new Stopwatch();
+        var encoderFlushTimer = new Stopwatch();
         long lastAudioEncPacketPts = -1;
         bool hasLastAudioEncPacketPts = false;
         long lastAudioEncPacketDts = -1;
@@ -1136,7 +1137,8 @@ public unsafe sealed class VideoExportService
                                 ref swsToBgraMs,
                                 ref maskMs,
                                 ref swsToEncMs,
-                                ref encodeMs,
+                                encodeTimer,
+                                encoderFlushTimer,
                                 ref lastEncodedPts,
                                 ref hasLastEncodedPts,
                                 ref lastEncodedPacketPts,
@@ -1231,7 +1233,8 @@ public unsafe sealed class VideoExportService
                             ref swsToBgraMs,
                             ref maskMs,
                             ref swsToEncMs,
-                            ref encodeMs,
+                            encodeTimer,
+                            encoderFlushTimer,
                             ref lastEncodedPts,
                             ref hasLastEncodedPts,
                             ref lastEncodedPacketPts,
@@ -1364,7 +1367,7 @@ public unsafe sealed class VideoExportService
                     ref swsToBgraMs,
                     ref maskMs,
                     ref swsToEncMs,
-                    ref encodeMs,
+                    encodeTimer,
                     ref lastEncodedPts,
                     ref hasLastEncodedPts,
                     ref lastEncodedPacketPts,
@@ -1418,7 +1421,8 @@ public unsafe sealed class VideoExportService
                             ref swsToBgraMs,
                             ref maskMs,
                             ref swsToEncMs,
-                ref encodeMs,
+                encodeTimer,
+                encoderFlushTimer,
                 ref lastEncodedPts,
                 ref hasLastEncodedPts,
                     ref lastEncodedPacketPts,
@@ -1674,7 +1678,7 @@ public unsafe sealed class VideoExportService
                 swsToBgraMs,
                 maskMs,
                 swsToEncMs,
-                encodeMs,
+                encodeTimer.ElapsedMilliseconds,
                 swTotal.ElapsedMilliseconds,
                 runId,
                 exportMode,
@@ -1725,9 +1729,10 @@ public unsafe sealed class VideoExportService
                 OutputBitDepth: GetPixelFormatBitDepth(enc->pix_fmt),
                 SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, dec),
                 TargetVideoBitrate: ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
-                NativeYuvBlurFrames: _nativeYuvBlurFrames);
+                NativeYuvBlurFrames: _nativeYuvBlurFrames,
+                EncoderFlushMs: encoderFlushTimer.ElapsedMilliseconds);
             Debug.WriteLine(
-                $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, encoderFlushMs={encoderFlushTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
                 $"[Export] sampleWindow={(sampleWindowLimit > 0 ? $"0-{sampleWindowLimit - 1}" : "none")} sourcePackets={sampleSourceVideoPacketCount} copiedPackets={sampleCopiedVideoPacketCount} encodedFrames={sampleEncodedFrameCount} blurredFrames={sampleBlurredFrameCount} sampleShortfall={sampleWindowFrameShortfall}");
             Debug.WriteLine(LastExportSummary.ToLogLine());
@@ -2111,7 +2116,7 @@ public unsafe sealed class VideoExportService
         ref long swsToBgraMs,
         ref long maskMs,
         ref long swsToEncMs,
-        ref long encodeMs,
+        Stopwatch encodeTimer,
         ref long lastEncodedPts,
         ref bool hasLastEncodedPts,
         ref long lastEncodedPacketPts,
@@ -2253,7 +2258,7 @@ public unsafe sealed class VideoExportService
             frameWasBlurred = true;
             ApplyEncodingPts(nativeYuvFrame, encodedPts);
 
-            var tEncode = Stopwatch.StartNew();
+            encodeTimer.Start();
             Throw(ffmpeg.avcodec_send_frame(enc, nativeYuvFrame));
             DrainEncoderPackets(
                 enc,
@@ -2269,8 +2274,7 @@ public unsafe sealed class VideoExportService
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 encodedPacketFrameStep);
-            tEncode.Stop();
-            encodeMs += tEncode.ElapsedMilliseconds;
+            encodeTimer.Stop();
         }
         else if (mask != null || (faceRects != null && faceRects.Count > 0))
         {
@@ -2319,7 +2323,7 @@ public unsafe sealed class VideoExportService
 
             ApplyEncodingPts(encFrame, encodedPts);
 
-            var tEncode = Stopwatch.StartNew();
+            encodeTimer.Start();
             Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
             DrainEncoderPackets(
                 enc,
@@ -2335,8 +2339,7 @@ public unsafe sealed class VideoExportService
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 encodedPacketFrameStep);
-            tEncode.Stop();
-            encodeMs += tEncode.ElapsedMilliseconds;
+            encodeTimer.Stop();
         }
         else
         {
@@ -2371,7 +2374,7 @@ public unsafe sealed class VideoExportService
 
                 ApplyEncodingPts(encFrame, encodedPts);
 
-                var tEncode = Stopwatch.StartNew();
+                encodeTimer.Start();
                 Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
                 DrainEncoderPackets(
                 enc,
@@ -2387,12 +2390,11 @@ public unsafe sealed class VideoExportService
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 encodedPacketFrameStep);
-                tEncode.Stop();
-                encodeMs += tEncode.ElapsedMilliseconds;
+                encodeTimer.Stop();
             }
             else
             {
-                var tEncode = Stopwatch.StartNew();
+                encodeTimer.Start();
                 ApplyEncodingPts(frame, encodedPts);
                 Throw(ffmpeg.avcodec_send_frame(enc, frame));
                 DrainEncoderPackets(
@@ -2409,8 +2411,7 @@ public unsafe sealed class VideoExportService
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 encodedPacketFrameStep);
-                tEncode.Stop();
-                encodeMs += tEncode.ElapsedMilliseconds;
+                encodeTimer.Stop();
             }
         }
         if (resolvedFrameIndex < sampleWindowFrames)
@@ -2422,7 +2423,7 @@ public unsafe sealed class VideoExportService
         if (resolvedFrameIndex % 60 == 0)
         {
             Debug.WriteLine(
-                $"[Export] frames={resolvedFrameIndex}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
+                $"[Export] frames={resolvedFrameIndex}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeTimer.ElapsedMilliseconds}, totalMs={swTotal.ElapsedMilliseconds}");
         }
     }
 
@@ -2455,7 +2456,8 @@ public unsafe sealed class VideoExportService
         ref long swsToBgraMs,
         ref long maskMs,
         ref long swsToEncMs,
-        ref long encodeMs,
+        Stopwatch encodeTimer,
+        Stopwatch encoderFlushTimer,
         ref long lastEncodedPts,
         ref bool hasLastEncodedPts,
         ref long lastEncodedPacketPts,
@@ -2514,7 +2516,7 @@ public unsafe sealed class VideoExportService
                 ref swsToBgraMs,
                 ref maskMs,
                 ref swsToEncMs,
-                ref encodeMs,
+                encodeTimer,
                 ref lastEncodedPts,
                 ref hasLastEncodedPts,
                 ref lastEncodedPacketPts,
@@ -2538,6 +2540,8 @@ public unsafe sealed class VideoExportService
             ffmpeg.av_frame_unref(frame);
         }
 
+        encodeTimer.Start();
+        encoderFlushTimer.Start();
         int encErr = ffmpeg.avcodec_send_frame(enc, null);
         if (encErr < 0 && encErr != ffmpeg.AVERROR_EOF)
             Throw(encErr);
@@ -2555,6 +2559,8 @@ public unsafe sealed class VideoExportService
                 ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 encodedPacketFrameStep);
+        encoderFlushTimer.Stop();
+        encodeTimer.Stop();
         videoFlushed = true;
     }
 
