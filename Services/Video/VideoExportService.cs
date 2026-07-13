@@ -30,6 +30,7 @@ public unsafe sealed class VideoExportService
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
     private int _bitmapMaskBlurFrames;
+    private int _nativeYuvBlurFrames;
 
     public ExportRunSummary? LastExportSummary { get; private set; }
 
@@ -83,7 +84,7 @@ public unsafe sealed class VideoExportService
                         forceSoftwareEncoder: true,
                         allowHybridCopy: false,
                         forceSafeEncoding: true,
-                        forceAudioTranscode: true,
+                        forceAudioTranscode: false,
                         forceH264Fallback: false);
                 }
                 catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
@@ -100,7 +101,7 @@ public unsafe sealed class VideoExportService
                         forceSoftwareEncoder: true,
                         allowHybridCopy: false,
                         forceSafeEncoding: true,
-                        forceAudioTranscode: true,
+                        forceAudioTranscode: false,
                         forceH264Fallback: true);
                 }
             }
@@ -183,6 +184,8 @@ public unsafe sealed class VideoExportService
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
         _directFaceBlurFrames = 0;
         _bitmapMaskBlurFrames = 0;
+        _nativeYuvBlurFrames = 0;
+        _masked.ResetTemporalState();
         LastExportSummary = null;
         bool shouldRetryWithFullEncode = false;
         string? packetDropFallbackReason = null;
@@ -397,7 +400,15 @@ public unsafe sealed class VideoExportService
                         ForceH264Fallback: forceH264Fallback,
                         OutputPacketCountMismatch: remuxPacketCountMismatch,
                         MissingVideoPacketTimestampCount: remuxCounts.MissingVideoPacketTimestamps,
-                        VideoPacketTimestampAdjustmentCount: remuxCounts.VideoPacketTimestampAdjustments);
+                        VideoPacketTimestampAdjustmentCount: remuxCounts.VideoPacketTimestampAdjustments,
+                        EncoderName: "stream-copy",
+                        EncoderQualityMode: "lossless-remux",
+                        SourcePixelFormat: GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
+                        OutputPixelFormat: GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
+                        SourceBitDepth: GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
+                        OutputBitDepth: GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
+                        SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, null),
+                        TargetVideoBitrate: ResolveSourceVideoBitrate(inStream, null));
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
                     if (remuxPacketIntegrityInvalid)
@@ -598,6 +609,9 @@ public unsafe sealed class VideoExportService
                 audioNotice = "입력 영상에 오디오 스트림이 없습니다.";
             }
 
+            if (inAudioStream != null && outAudioStream != null)
+                CopyStreamPresentationMetadata(inAudioStream, outAudioStream);
+
             if (progress != null)
             {
                 string status = !string.IsNullOrWhiteSpace(exportNotice)
@@ -718,6 +732,7 @@ public unsafe sealed class VideoExportService
                 Throw(ffmpeg.avcodec_parameters_from_context(outStream->codecpar, enc));
                 outStream->time_base = enc->time_base;
             }
+            CopyStreamPresentationMetadata(inStream, outStream);
             encodedPacketFrameStep = GetVideoFrameStep(sourceFps, outStream->time_base);
             if (useHybridCopyWindow
                 && Math.Abs(encodedPacketFrameStep - hybridCopyVideoFrameStep) > MaxHybridFrameStepTolerance)
@@ -1615,7 +1630,16 @@ public unsafe sealed class VideoExportService
                 SampleWindowFrameShortfall: sampleWindowFrameShortfall,
                 OutputPacketCountMismatch: outputPacketCountMismatch,
                 MissingVideoPacketTimestampCount: encodedTimestampIntegrity.MissingPacketTimestamps,
-                VideoPacketTimestampAdjustmentCount: encodedTimestampIntegrity.PacketTimestampAdjustments);
+                VideoPacketTimestampAdjustmentCount: encodedTimestampIntegrity.PacketTimestampAdjustments,
+                EncoderName: GetEncoderName(encoder),
+                EncoderQualityMode: GetEncoderQualityMode(encoder, forceSafeEncoding),
+                SourcePixelFormat: GetPixelFormatName(dec->pix_fmt),
+                OutputPixelFormat: GetPixelFormatName(enc->pix_fmt),
+                SourceBitDepth: GetPixelFormatBitDepth(dec->pix_fmt),
+                OutputBitDepth: GetPixelFormatBitDepth(enc->pix_fmt),
+                SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, dec),
+                TargetVideoBitrate: enc->bit_rate,
+                NativeYuvBlurFrames: _nativeYuvBlurFrames);
             Debug.WriteLine(
                 $"[Export] done frames={frameIndex}, bitmapMaskFrames={_bitmapMaskBlurFrames}, directFaceFrames={_directFaceBlurFrames}, swsToBgraMs={swsToBgraMs}, maskMs={maskMs}, swsToEncMs={swsToEncMs}, encodeMs={encodeMs}, totalMs={swTotal.ElapsedMilliseconds}");
             Debug.WriteLine(
@@ -1882,9 +1906,90 @@ public unsafe sealed class VideoExportService
             mask = _maskProvider.GetFinalMask(resolvedFrameIndex);
         }
 
-        if (mask != null || (faceRects != null && faceRects.Count > 0))
+        bool nativeYuvApplied = false;
+        AVFrame* nativeYuvFrame = null;
+        if (mask == null && faceRects != null && faceRects.Count > 0)
+        {
+            bool sourceMatchesEncoder =
+                frame->format == (int)enc->pix_fmt &&
+                frame->width == enc->width &&
+                frame->height == enc->height;
+
+            if (sourceMatchesEncoder && MaskedVideoExporter.CanApplyNativeYuv(frame))
+            {
+                Throw(ffmpeg.av_frame_make_writable(frame));
+                nativeYuvFrame = frame;
+            }
+            else if (MaskedVideoExporter.CanApplyNativeYuv(encFrame))
+            {
+                if (swsDecToEnc == null)
+                {
+                    swsDecToEnc = ffmpeg.sws_getContext(
+                        dec->width, dec->height, dec->pix_fmt,
+                        enc->width, enc->height, enc->pix_fmt,
+                        (int)SwsFlags.SWS_FAST_BILINEAR,
+                        null, null, null);
+                    if (swsDecToEnc == null)
+                        throw new InvalidOperationException("YUV 품질 보존 변환 컨텍스트를 만들 수 없습니다.");
+                }
+
+                var tNativeSws = Stopwatch.StartNew();
+                Throw(ffmpeg.av_frame_make_writable(encFrame));
+                Throw(ffmpeg.sws_scale(
+                    swsDecToEnc,
+                    frame->data,
+                    frame->linesize,
+                    0,
+                    frame->height,
+                    encFrame->data,
+                    encFrame->linesize));
+                tNativeSws.Stop();
+                swsToEncMs += tNativeSws.ElapsedMilliseconds;
+                nativeYuvFrame = encFrame;
+            }
+
+            if (nativeYuvFrame != null)
+            {
+                var tNativeMask = Stopwatch.StartNew();
+                nativeYuvApplied = _masked.TryApplyFaceRectsAndBlurNative(
+                    nativeYuvFrame,
+                    faceRects,
+                    blurRadius);
+                tNativeMask.Stop();
+                maskMs += tNativeMask.ElapsedMilliseconds;
+            }
+        }
+
+        if (nativeYuvApplied)
+        {
+            _directFaceBlurFrames++;
+            _nativeYuvBlurFrames++;
+            frameWasBlurred = true;
+            ApplyEncodingPts(nativeYuvFrame, encodedPts);
+
+            var tEncode = Stopwatch.StartNew();
+            Throw(ffmpeg.avcodec_send_frame(enc, nativeYuvFrame));
+            DrainEncoderPackets(
+                enc,
+                outPkt,
+                outStream,
+                outFmt,
+                ref lastEncodedPacketPts,
+                ref hasLastEncodedPacketPts,
+                ref lastEncodedPacketDts,
+                ref hasLastEncodedPacketDts,
+                ref outputVideoPacketCount,
+                ref outputPacketPtsGapOutlierCount,
+                ref maxOutputPacketPtsGap,
+                timestampIntegrity,
+                encodedPacketFrameStep);
+            tEncode.Stop();
+            encodeMs += tEncode.ElapsedMilliseconds;
+        }
+        else if (mask != null || (faceRects != null && faceRects.Count > 0))
         {
             var tBgra = Stopwatch.StartNew();
+            Throw(ffmpeg.av_frame_make_writable(bgra));
             Throw(ffmpeg.sws_scale(
                 swsDecToBgra,
                 frame->data,
@@ -1913,6 +2018,7 @@ public unsafe sealed class VideoExportService
             maskMs += tMask.ElapsedMilliseconds;
 
             var tEncSws = Stopwatch.StartNew();
+            Throw(ffmpeg.av_frame_make_writable(encFrame));
             Throw(ffmpeg.sws_scale(
                 swsBgraToEnc,
                 bgra->data,
@@ -1947,8 +2053,7 @@ public unsafe sealed class VideoExportService
         }
         else
         {
-            bool direct = !forceSafeEncoding
-                && frame->format == (int)enc->pix_fmt
+            bool direct = frame->format == (int)enc->pix_fmt
                 && frame->width == enc->width
                 && frame->height == enc->height;
 
@@ -1964,6 +2069,7 @@ public unsafe sealed class VideoExportService
                 }
 
                 var tEncSws = Stopwatch.StartNew();
+                Throw(ffmpeg.av_frame_make_writable(encFrame));
                 Throw(ffmpeg.sws_scale(
                     swsDecToEnc,
                     frame->data,
@@ -2766,6 +2872,7 @@ public unsafe sealed class VideoExportService
                 Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));
                 outStream->codecpar->codec_tag = 0;
                 outStream->time_base = inStream->time_base;
+                CopyStreamPresentationMetadata(inStream, outStream);
                 streamMap[i] = outStream->index;
             }
 
@@ -3026,19 +3133,28 @@ public unsafe sealed class VideoExportService
         if (ctx->time_base.num <= 0 || ctx->time_base.den <= 0)
             ctx->time_base = inStream->time_base;
 
-        int sourceBitrate = 0;
-        if (inStream->codecpar->bit_rate > 0)
-            sourceBitrate = ClampBitrate(inStream->codecpar->bit_rate);
-        else if (dec->bit_rate > 0)
-            sourceBitrate = ClampBitrate(dec->bit_rate);
-
+        int sourceBitrate = ClampBitrate(ResolveSourceVideoBitrate(inStream, dec));
         int targetBitrate = sourceBitrate > 0
-            ? ClampBitrate((long)sourceBitrate * 11L / 10L)
+            ? ClampBitrate((long)sourceBitrate * 3L / 2L)
             : EstimateHighQualityBitrate(ctx->width, ctx->height, ctx->framerate);
         targetBitrate = Math.Max(targetBitrate, 2_000_000);
-        ctx->bit_rate = targetBitrate;
-        ctx->rc_max_rate = targetBitrate;
-        ctx->rc_buffer_size = ClampBitrate((long)targetBitrate * 2L);
+
+        string encoderName = GetEncoderName(encoder);
+        bool usesSoftwareConstantQuality =
+            encoderName.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
+            encoderName.Contains("x265", StringComparison.OrdinalIgnoreCase);
+        if (usesSoftwareConstantQuality)
+        {
+            ctx->bit_rate = 0;
+            ctx->rc_max_rate = 0;
+            ctx->rc_buffer_size = 0;
+        }
+        else
+        {
+            ctx->bit_rate = targetBitrate;
+            ctx->rc_max_rate = ClampBitrate((long)targetBitrate * 2L);
+            ctx->rc_buffer_size = ClampBitrate((long)targetBitrate * 4L);
+        }
 
         if (inStream->codecpar->profile != -99)
             ctx->profile = inStream->codecpar->profile;
@@ -3055,23 +3171,25 @@ public unsafe sealed class VideoExportService
         if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
             ctx->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
 
-        if (forceSafeEncoding)
-            ctx->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
         if (!IsPixFmtSupported(encoder, ctx->pix_fmt))
             ctx->pix_fmt = PickPreferredPixelFormat(encoder, ctx->pix_fmt);
+
+        string? pixelFormatLoss = GetPixelFormatLossReason(dec->pix_fmt, ctx->pix_fmt);
+        if (!string.IsNullOrWhiteSpace(pixelFormatLoss))
+        {
+            error = $"원본 픽셀 품질을 보존할 수 없습니다: {pixelFormatLoss}";
+            ffmpeg.avcodec_free_context(&ctx);
+            return null;
+        }
 
         if (forceSafeEncoding)
         {
             ctx->max_b_frames = 0;
             ctx->gop_size = 60;
-            ctx->thread_count = 1;
         }
-        else
-        {
-            ctx->thread_count = IsHardwareEncoder(encoder)
-                ? 0
-                : Math.Max(1, Environment.ProcessorCount - 2);
-        }
+        ctx->thread_count = IsHardwareEncoder(encoder)
+            ? 0
+            : Math.Max(1, Environment.ProcessorCount - 2);
 
         ApplyHighQualityEncoderOptions(ctx, encoder, forceSafeEncoding);
 
@@ -3206,19 +3324,25 @@ public unsafe sealed class VideoExportService
         }
 
         AVPixelFormat first = AVPixelFormat.AV_PIX_FMT_NONE;
-        bool hasYuv420 = false;
         for (AVPixelFormat* p = encoder->pix_fmts; *p != AVPixelFormat.AV_PIX_FMT_NONE; p++)
         {
             if (first == AVPixelFormat.AV_PIX_FMT_NONE)
                 first = *p;
             if (*p == preferred)
                 return preferred;
-            if (*p == AVPixelFormat.AV_PIX_FMT_YUV420P)
-                hasYuv420 = true;
         }
 
-        if (hasYuv420)
-            return AVPixelFormat.AV_PIX_FMT_YUV420P;
+        if (preferred != AVPixelFormat.AV_PIX_FMT_NONE)
+        {
+            int loss = 0;
+            AVPixelFormat best = ffmpeg.avcodec_find_best_pix_fmt_of_list(
+                encoder->pix_fmts,
+                preferred,
+                0,
+                &loss);
+            if (best != AVPixelFormat.AV_PIX_FMT_NONE)
+                return best;
+        }
 
         if (first != AVPixelFormat.AV_PIX_FMT_NONE)
             return first;
@@ -3240,29 +3364,26 @@ public unsafe sealed class VideoExportService
         bool isH264Family = name.Contains("h264", StringComparison.OrdinalIgnoreCase);
         bool isHevcFamily = name.Contains("hevc", StringComparison.OrdinalIgnoreCase) ||
                             name.Contains("h265", StringComparison.OrdinalIgnoreCase);
+        bool isNvenc = name.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
 
         if (forceSafeEncoding)
         {
             if (isX264)
             {
                 TrySetEncoderOption(ctx, "preset", "fast");
-                TrySetEncoderOption(ctx, "crf", "18");
+                TrySetEncoderOption(ctx, "crf", "14");
             }
             else if (isX265)
             {
                 TrySetEncoderOption(ctx, "preset", "fast");
-                TrySetEncoderOption(ctx, "crf", "20");
-            }
-            else if (isH264Family || isHevcFamily)
-            {
-                TrySetEncoderOption(ctx, "profile", "main");
+                TrySetEncoderOption(ctx, "crf", "16");
             }
             return;
         }
 
         if (isX264)
         {
-            TrySetEncoderOption(ctx, "preset", "faster");
+            TrySetEncoderOption(ctx, "preset", "fast");
             TrySetEncoderOption(ctx, "crf", "14");
             return;
         }
@@ -3274,22 +3395,140 @@ public unsafe sealed class VideoExportService
             return;
         }
 
+        if (isNvenc)
+        {
+            TrySetEncoderOption(ctx, "preset", "p6");
+            TrySetEncoderOption(ctx, "tune", "hq");
+            TrySetEncoderOption(ctx, "rc", "vbr");
+            TrySetEncoderOption(ctx, "cq", isHevcFamily ? "14" : "12");
+            TrySetEncoderOption(ctx, "multipass", "qres");
+            TrySetEncoderOption(ctx, "spatial_aq", "1");
+            TrySetEncoderOption(ctx, "temporal_aq", "1");
+            TrySetEncoderOption(ctx, "rc-lookahead", "20");
+            return;
+        }
+
         if (isH264Family || isHevcFamily)
         {
-            TrySetEncoderOption(ctx, "qmin", "10");
-            TrySetEncoderOption(ctx, "qmax", "28");
+            TrySetEncoderOption(ctx, "qmin", "8");
+            TrySetEncoderOption(ctx, "qmax", "20");
         }
 
         if (name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase))
-            TrySetEncoderOption(ctx, "realtime", "true");
+            TrySetEncoderOption(ctx, "realtime", "false");
     }
 
-    private static unsafe void TrySetEncoderOption(AVCodecContext* ctx, string key, string value)
+    private static unsafe bool TrySetEncoderOption(AVCodecContext* ctx, string key, string value)
     {
         if (ctx == null || ctx->priv_data == null)
+            return false;
+
+        int result = ffmpeg.av_opt_set(ctx->priv_data, key, value, 0);
+        if (result < 0)
+            Debug.WriteLine($"[ExportEncoderOption] key={key}, value={value}, applied=false, error={GetErrorMessage(result)}");
+        return result >= 0;
+    }
+
+    private static unsafe string GetEncoderName(AVCodec* encoder)
+    {
+        if (encoder == null || encoder->name == null)
+            return "unknown";
+        return Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? "unknown";
+    }
+
+    private static unsafe string GetEncoderQualityMode(AVCodec* encoder, bool forceSafeEncoding)
+    {
+        string name = GetEncoderName(encoder);
+        if (name.Contains("x264", StringComparison.OrdinalIgnoreCase))
+            return forceSafeEncoding ? "crf14-fast-safe" : "crf14-fast";
+        if (name.Contains("x265", StringComparison.OrdinalIgnoreCase))
+            return forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
+        if (name.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
+            return name.Contains("hevc", StringComparison.OrdinalIgnoreCase)
+                ? "p6-hq-vbr-cq14"
+                : "p6-hq-vbr-cq12";
+        if (name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase))
+            return "quality-vbr-realtime-off";
+        return forceSafeEncoding ? "quality-bounded-safe" : "quality-bounded";
+    }
+
+    private static unsafe string GetPixelFormatName(AVPixelFormat pixelFormat)
+    {
+        if (pixelFormat == AVPixelFormat.AV_PIX_FMT_NONE)
+            return "unknown";
+        string? name = ffmpeg.av_get_pix_fmt_name(pixelFormat);
+        return string.IsNullOrWhiteSpace(name) ? pixelFormat.ToString() : name;
+    }
+
+    private static unsafe int GetPixelFormatBitDepth(AVPixelFormat pixelFormat)
+    {
+        if (pixelFormat == AVPixelFormat.AV_PIX_FMT_NONE)
+            return 0;
+        AVPixFmtDescriptor* descriptor = ffmpeg.av_pix_fmt_desc_get(pixelFormat);
+        return descriptor == null || descriptor->nb_components == 0
+            ? 0
+            : descriptor->comp[0].depth;
+    }
+
+    private static unsafe string? GetPixelFormatLossReason(
+        AVPixelFormat sourcePixelFormat,
+        AVPixelFormat outputPixelFormat)
+    {
+        if (sourcePixelFormat == AVPixelFormat.AV_PIX_FMT_NONE ||
+            outputPixelFormat == AVPixelFormat.AV_PIX_FMT_NONE)
+        {
+            return null;
+        }
+
+        AVPixFmtDescriptor* source = ffmpeg.av_pix_fmt_desc_get(sourcePixelFormat);
+        AVPixFmtDescriptor* output = ffmpeg.av_pix_fmt_desc_get(outputPixelFormat);
+        if (source == null || output == null)
+            return null;
+
+        int sourceBitDepth = source->nb_components == 0 ? 0 : source->comp[0].depth;
+        int outputBitDepth = output->nb_components == 0 ? 0 : output->comp[0].depth;
+        if (sourceBitDepth > 0 && outputBitDepth > 0 && outputBitDepth < sourceBitDepth)
+        {
+            return $"비트 심도 하락 {GetPixelFormatName(sourcePixelFormat)}({sourceBitDepth}) -> " +
+                   $"{GetPixelFormatName(outputPixelFormat)}({outputBitDepth})";
+        }
+
+        if (output->nb_components < source->nb_components)
+        {
+            return $"색상 성분 감소 {GetPixelFormatName(sourcePixelFormat)}({source->nb_components}) -> " +
+                   $"{GetPixelFormatName(outputPixelFormat)}({output->nb_components})";
+        }
+
+        if (source->nb_components >= 3 && output->nb_components >= 3 &&
+            (output->log2_chroma_w > source->log2_chroma_w ||
+             output->log2_chroma_h > source->log2_chroma_h))
+        {
+            return $"색차 해상도 하락 {GetPixelFormatName(sourcePixelFormat)} -> " +
+                   GetPixelFormatName(outputPixelFormat);
+        }
+
+        return null;
+    }
+
+    private static unsafe long ResolveSourceVideoBitrate(AVStream* stream, AVCodecContext* decoder)
+    {
+        if (stream != null && stream->codecpar != null && stream->codecpar->bit_rate > 0)
+            return stream->codecpar->bit_rate;
+        if (decoder != null && decoder->bit_rate > 0)
+            return decoder->bit_rate;
+        return 0;
+    }
+
+    private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)
+    {
+        if (source == null || output == null)
             return;
 
-        ffmpeg.av_opt_set(ctx->priv_data, key, value, 0);
+        output->avg_frame_rate = source->avg_frame_rate;
+        output->r_frame_rate = source->r_frame_rate;
+        output->sample_aspect_ratio = source->sample_aspect_ratio;
+        output->disposition = source->disposition;
+        ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0);
     }
 
     private static unsafe bool TryInitAudioTranscode(
