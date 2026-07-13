@@ -607,8 +607,9 @@ Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[SmokeTune\
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "detector=FaceOnnxDetector/(CPU|GPU:DirectML)"
 Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[AutoRunSummary\].*tracking=True.*post=False.*processingMode=Tracked"
 Assert-AutoTuneModeMatchesSessions "default-autotune-provider-short" $shortTuneOutput 2
-Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "detects=150"
-Assert-Contains "default-autotune-gpu-short" $shortTuneOutput "interpolated=0"
+Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[AutoRunFrameCountAdjusted\].*reported=150, actual=148.*decoded=148"
+Assert-Contains "default-autotune-provider-short" $shortTuneOutput "\[AutoRunSummary\].*totalFrames=148.*processed=148.*decoded=148.*decodeEof=true.*detects=148"
+Assert-Contains "default-autotune-provider-short" $shortTuneOutput "interpolated=0"
 
 if ($RunLongAutoTune) {
     if (-not (Test-Path (Join-Path $repo $LongAutoTuneClip))) {
