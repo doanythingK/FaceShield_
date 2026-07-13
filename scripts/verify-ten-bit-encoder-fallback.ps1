@@ -36,6 +36,10 @@ MethodInfo getCandidates = typeof(VideoExportService).GetMethod(
     "GetEncoderCandidateNames",
     BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("GetEncoderCandidateNames was not found.");
+MethodInfo shouldRetry = typeof(VideoExportService).GetMethod(
+    "ShouldRetryWithSafeEncoding",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("ShouldRetryWithSafeEncoding was not found.");
 
 string[] softwarePrimary = InvokeCandidates(
     AVCodecID.AV_CODEC_ID_H264,
@@ -75,11 +79,13 @@ string[] guardedHevc = InvokeCandidates(
     allowTenBitHevcFallback: true);
 AssertSequence("HEVC guard", guardedHevc, "libx265");
 
-VerifyLibx265TenBitOpen();
+VerifyRetryPolicy();
+int encodedPackets = VerifyLibx265TenBitEncode();
 
 Console.WriteLine(
     $"[TenBitEncoderFallbackVerify] PASS software={string.Join(",", softwareTenBit)} " +
-    $"normal={string.Join(",", normalTenBit)} libx265TenBitOpen=true");
+    $"normal={string.Join(",", normalTenBit)} libx265TenBitOpen=true " +
+    $"encodedPackets={encodedPackets} retryPolicy=true");
 
 string[] InvokeCandidates(
     AVCodecID codecId,
@@ -103,7 +109,49 @@ static void AssertSequence(string name, string[] actual, params string[] expecte
     }
 }
 
-static unsafe void VerifyLibx265TenBitOpen()
+void VerifyRetryPolicy()
+{
+    Type encoderExceptionType = typeof(VideoExportService).GetNestedType(
+        "VideoEncoderException",
+        BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("VideoEncoderException was not found.");
+    ConstructorInfo encoderExceptionConstructor = encoderExceptionType.GetConstructors(
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Single();
+    Type integrityExceptionType = typeof(VideoExportService).GetNestedType(
+        "VideoExportIntegrityException",
+        BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("VideoExportIntegrityException was not found.");
+
+    var hardwareIoError = (InvalidOperationException)encoderExceptionConstructor.Invoke(
+        ["hardware I/O error", -5, "packet receive", "h264_nvenc", true]);
+    var softwareIoError = (InvalidOperationException)encoderExceptionConstructor.Invoke(
+        ["software I/O error", -5, "packet receive", "libx264", false]);
+    var integrityError = (InvalidOperationException)Activator.CreateInstance(
+        integrityExceptionType,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null,
+        args: ["Invalid argument: integrity"],
+        culture: null)!;
+
+    AssertRetry("hardware encoder error", hardwareIoError, expected: true);
+    AssertRetry("software encoder error", softwareIoError, expected: false);
+    AssertRetry(
+        "legacy invalid argument",
+        new InvalidOperationException("Invalid argument"),
+        expected: true);
+    AssertRetry("generic I/O error", new InvalidOperationException("I/O error"), expected: false);
+    AssertRetry("integrity error", integrityError, expected: false);
+}
+
+void AssertRetry(string name, InvalidOperationException exception, bool expected)
+{
+    bool actual = (bool)(shouldRetry.Invoke(null, [exception])
+        ?? throw new InvalidOperationException("Retry policy did not return a value."));
+    if (actual != expected)
+        throw new InvalidOperationException($"{name} retry mismatch: expected={expected}, actual={actual}.");
+}
+
+static unsafe int VerifyLibx265TenBitEncode()
 {
     FFmpegBootstrap.Initialize();
     AVCodec* encoder = ffmpeg.avcodec_find_encoder_by_name("libx265");
@@ -114,6 +162,8 @@ static unsafe void VerifyLibx265TenBitOpen()
     if (context == null)
         throw new InvalidOperationException("Unable to allocate the libx265 encoder context.");
 
+    AVFrame* frame = null;
+    AVPacket* packet = null;
     try
     {
         context->width = 64;
@@ -132,10 +182,91 @@ static unsafe void VerifyLibx265TenBitOpen()
             throw new InvalidOperationException(
                 $"libx265 rejected yuv420p10le: {GetError(openResult)}");
         }
+
+        frame = ffmpeg.av_frame_alloc();
+        packet = ffmpeg.av_packet_alloc();
+        if (frame == null || packet == null)
+            throw new InvalidOperationException("Unable to allocate a 10-bit encode frame or packet.");
+
+        frame->format = (int)context->pix_fmt;
+        frame->width = context->width;
+        frame->height = context->height;
+        int bufferResult = ffmpeg.av_frame_get_buffer(frame, 32);
+        if (bufferResult < 0)
+            throw new InvalidOperationException($"Unable to allocate a 10-bit frame: {GetError(bufferResult)}");
+
+        int packetCount = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            int writableResult = ffmpeg.av_frame_make_writable(frame);
+            if (writableResult < 0)
+                throw new InvalidOperationException($"10-bit frame is not writable: {GetError(writableResult)}");
+            FillFrame(frame, i);
+            frame->pts = i;
+
+            int sendResult = ffmpeg.avcodec_send_frame(context, frame);
+            if (sendResult < 0)
+                throw new InvalidOperationException($"libx265 frame send failed: {GetError(sendResult)}");
+            packetCount += DrainPackets(context, packet);
+        }
+
+        int flushResult = ffmpeg.avcodec_send_frame(context, null);
+        if (flushResult < 0 && flushResult != ffmpeg.AVERROR_EOF)
+            throw new InvalidOperationException($"libx265 flush failed: {GetError(flushResult)}");
+        packetCount += DrainPackets(context, packet);
+        if (packetCount < 1)
+            throw new InvalidOperationException("libx265 did not emit a packet for three 10-bit frames.");
+        return packetCount;
     }
     finally
     {
+        if (packet != null)
+            ffmpeg.av_packet_free(&packet);
+        if (frame != null)
+            ffmpeg.av_frame_free(&frame);
         ffmpeg.avcodec_free_context(&context);
+    }
+}
+
+static unsafe void FillFrame(AVFrame* frame, int frameIndex)
+{
+    ushort luma = (ushort)(64 + frameIndex * 32);
+    for (int y = 0; y < frame->height; y++)
+    {
+        new Span<ushort>(frame->data[0] + y * frame->linesize[0], frame->width).Fill(luma);
+    }
+
+    for (int plane = 1; plane <= 2; plane++)
+    {
+        for (int y = 0; y < frame->height / 2; y++)
+        {
+            new Span<ushort>(
+                frame->data[(uint)plane] + y * frame->linesize[(uint)plane],
+                frame->width / 2)
+                .Fill((ushort)512);
+        }
+    }
+}
+
+static unsafe int DrainPackets(AVCodecContext* context, AVPacket* packet)
+{
+    int packetCount = 0;
+    while (true)
+    {
+        int receiveResult = ffmpeg.avcodec_receive_packet(context, packet);
+        if (receiveResult == 0)
+        {
+            packetCount++;
+            ffmpeg.av_packet_unref(packet);
+            continue;
+        }
+        if (receiveResult == ffmpeg.AVERROR(ffmpeg.EAGAIN) ||
+            receiveResult == ffmpeg.AVERROR_EOF)
+        {
+            return packetCount;
+        }
+
+        throw new InvalidOperationException($"libx265 packet receive failed: {GetError(receiveResult)}");
     }
 }
 

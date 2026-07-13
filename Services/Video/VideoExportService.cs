@@ -20,6 +20,28 @@ public unsafe sealed class VideoExportService
         }
     }
 
+    private sealed class VideoEncoderException : InvalidOperationException
+    {
+        public VideoEncoderException(
+            string message,
+            int errorCode,
+            string operation,
+            string encoderName,
+            bool isHardwareEncoder)
+            : base(message)
+        {
+            ErrorCode = errorCode;
+            Operation = operation;
+            EncoderName = encoderName;
+            IsHardwareEncoder = isHardwareEncoder;
+        }
+
+        public int ErrorCode { get; }
+        public string Operation { get; }
+        public string EncoderName { get; }
+        public bool IsHardwareEncoder { get; }
+    }
+
     private const bool EnableHybridCopyWindow = false;
     private const int MinHybridCopyFrames = 240;
     private const double MinHybridCopyRatio = 0.05;
@@ -80,10 +102,9 @@ public unsafe sealed class VideoExportService
                     forceAudioTranscode: false,
                     forceH264Fallback: false);
             }
-            catch (InvalidOperationException ex) when (
-                ex is not VideoExportIntegrityException && IsInvalidArgumentError(ex))
+            catch (InvalidOperationException ex) when (ShouldRetryWithSafeEncoding(ex))
             {
-                Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: Invalid argument 발생. {ex.Message}");
+                Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: {ex.Message}");
                 try
                 {
                     attemptCount++;
@@ -2146,8 +2167,16 @@ public unsafe sealed class VideoExportService
         List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
     {
-        while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
+        while (true)
         {
+            int receiveResult = ffmpeg.avcodec_receive_packet(enc, outPkt);
+            if (receiveResult == ffmpeg.AVERROR(ffmpeg.EAGAIN) ||
+                receiveResult == ffmpeg.AVERROR_EOF)
+            {
+                return;
+            }
+            ThrowVideoEncoderError(receiveResult, enc, "패킷 수신");
+
             long encoderPacketPts = outPkt->pts;
 
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
@@ -2522,7 +2551,10 @@ public unsafe sealed class VideoExportService
             ApplyEncodingPts(nativeYuvFrame, encodedPts);
 
             encodeTimer.Start();
-            Throw(ffmpeg.avcodec_send_frame(enc, nativeYuvFrame));
+            ThrowVideoEncoderError(
+                ffmpeg.avcodec_send_frame(enc, nativeYuvFrame),
+                enc,
+                "프레임 전송");
             DrainEncoderPackets(
                 enc,
                 outPkt,
@@ -2592,7 +2624,10 @@ public unsafe sealed class VideoExportService
             ApplyEncodingPts(encFrame, encodedPts);
 
             encodeTimer.Start();
-            Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
+            ThrowVideoEncoderError(
+                ffmpeg.avcodec_send_frame(enc, encFrame),
+                enc,
+                "프레임 전송");
             DrainEncoderPackets(
                 enc,
                 outPkt,
@@ -2643,7 +2678,10 @@ public unsafe sealed class VideoExportService
                 ApplyEncodingPts(encFrame, encodedPts);
 
                 encodeTimer.Start();
-                Throw(ffmpeg.avcodec_send_frame(enc, encFrame));
+                ThrowVideoEncoderError(
+                    ffmpeg.avcodec_send_frame(enc, encFrame),
+                    enc,
+                    "프레임 전송");
                 DrainEncoderPackets(
                     enc,
                     outPkt,
@@ -2664,7 +2702,10 @@ public unsafe sealed class VideoExportService
             {
                 encodeTimer.Start();
                 ApplyEncodingPts(frame, encodedPts);
-                Throw(ffmpeg.avcodec_send_frame(enc, frame));
+                ThrowVideoEncoderError(
+                    ffmpeg.avcodec_send_frame(enc, frame),
+                    enc,
+                    "프레임 전송");
                 DrainEncoderPackets(
                     enc,
                     outPkt,
@@ -2836,7 +2877,7 @@ public unsafe sealed class VideoExportService
         encoderFlushTimer.Start();
         int encErr = ffmpeg.avcodec_send_frame(enc, null);
         if (encErr < 0 && encErr != ffmpeg.AVERROR_EOF)
-            Throw(encErr);
+            ThrowVideoEncoderError(encErr, enc, "종료 프레임 전송");
         DrainEncoderPackets(
             enc,
             outPkt,
@@ -4806,6 +4847,35 @@ public unsafe sealed class VideoExportService
             return false;
 
         return ex.Message.Contains("Invalid argument", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldRetryWithSafeEncoding(InvalidOperationException ex)
+    {
+        if (ex is VideoExportIntegrityException)
+            return false;
+
+        return ex is VideoEncoderException { IsHardwareEncoder: true } ||
+               IsInvalidArgumentError(ex);
+    }
+
+    private static unsafe void ThrowVideoEncoderError(
+        int errorCode,
+        AVCodecContext* context,
+        string operation)
+    {
+        if (errorCode >= 0)
+            return;
+
+        AVCodec* encoder = context == null ? null : context->codec;
+        string encoderName = GetEncoderName(encoder);
+        bool isHardwareEncoder = IsHardwareEncoder(encoder);
+        string detail = GetErrorMessage(errorCode);
+        throw new VideoEncoderException(
+            $"비디오 인코더({encoderName}) {operation} 실패: {detail}",
+            errorCode,
+            operation,
+            encoderName,
+            isHardwareEncoder);
     }
 
     private static void Throw(int err)
