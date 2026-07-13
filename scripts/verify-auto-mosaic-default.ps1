@@ -58,6 +58,7 @@ $autoMaskSparseSceneCutGuardVerify = Join-Path $repo "scripts\verify-automask-sp
 $autoMaskSparseMaterializeSceneCutVerify = Join-Path $repo "scripts\verify-automask-sparse-materialize-scene-cut.ps1"
 $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask-default-filter-stability.ps1"
 $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-reset.ps1"
+$autoProcessingModeMigrationVerify = Join-Path $repo "scripts\verify-auto-processing-mode-migration.ps1"
 $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
 $swsFrameColorFidelityVerify = Join-Path $repo "scripts\verify-sws-frame-color-fidelity.ps1"
@@ -255,7 +256,7 @@ if ($RunYoloFullGtReviewedCandidateState -and -not (Test-Path $yoloFullGtReviewe
     throw "YOLO full GT reviewed candidate state verifier not found: $yoloFullGtReviewedCandidateStateVerify"
 }
 
-foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $swsFrameColorFidelityVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
+foreach ($requiredVerifier in @($faceTrackSceneCutGuardVerify, $yoloTemporalSmoothingCutBoundaryVerify, $autoMaskSparseSceneCutGuardVerify, $autoMaskSparseMaterializeSceneCutVerify, $autoMaskDefaultFilterStabilityVerify, $autoResumeMaskResetVerify, $autoProcessingModeMigrationVerify, $blurRenderConsistencyVerify, $bgraIntegralRangeVerify, $swsFrameColorFidelityVerify, $encodedPresentationGapsVerify, $vfrMaskOrdinalVerify, $detectorAutoTunerSessionRangeVerify, $detectorAutoTunerSafetyVerify, $detectorAutoTunerOverheadVerify, $autoNoDetectionReviewVerify, $yoloDetectionOverlayVideoVerify, $yoloAspectRatioFilterVerify, $yoloFinalMaskCleanupVerify)) {
     if (-not (Test-Path $requiredVerifier)) {
         throw "Required verifier not found: $requiredVerifier"
     }
@@ -289,6 +290,9 @@ Assert-Contains "automask-default-filter-stability" $defaultFilterOutput "runtim
 $autoResumeOutput = Invoke-ScriptStep "auto-resume-mask-reset" $autoResumeMaskResetVerify @()
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "resetCases=5"
 Assert-Contains "auto-resume-mask-reset" $autoResumeOutput "precision=True culture=True provider=True source=True sessions=True models=True backends=True riskIntent=True timelinePrompt=True providerPool=True snapshot=True json=True"
+
+$processingModeMigrationOutput = Invoke-ScriptStep "auto-processing-mode-migration" $autoProcessingModeMigrationVerify @()
+Assert-Contains "auto-processing-mode-migration" $processingModeMigrationOutput "validModesPreserved=8 postprocessPreserved=7 upgradeReload=true isolatedNoUserStateAccess=true"
 
 $blurRenderOutput = Invoke-ScriptStep "blur-render-consistency" $blurRenderConsistencyVerify @()
 Assert-Contains "blur-render-consistency" $blurRenderOutput "radiusPolicy=true radiusMapHeight=true previewExportMatch=true overlapOrderIndependent=true stateless=true crossThreadCacheReset=true"

@@ -1178,14 +1178,9 @@ namespace FaceShield.ViewModels.Pages
                 : quality;
         }
 
-        private static AutoMaskProcessingMode ResolveSavedAutoProcessingMode(
-            int settingsVersion,
-            int? savedValue)
+        private static AutoMaskProcessingMode ResolveSavedAutoProcessingMode(int? savedValue)
         {
             int value = savedValue ?? (int)AutoMaskProcessingMode.Tracked;
-            if (settingsVersion < CurrentAutoSettingsVersion && (value == (int)AutoMaskProcessingMode.Legacy || value == (int)AutoMaskProcessingMode.Raw))
-                value = (int)AutoMaskProcessingMode.Tracked;
-
             return Enum.IsDefined(typeof(AutoMaskProcessingMode), value)
                 ? (AutoMaskProcessingMode)value
                 : AutoMaskProcessingMode.Tracked;
@@ -1241,19 +1236,17 @@ namespace FaceShield.ViewModels.Pages
                 var backend = AutoDetectorBackendOptions.FirstOrDefault(o => (int)o.Backend == saved.DetectorBackend);
                 if (backend != null)
                     SelectedAutoDetectorBackendOption = backend;
-                var savedProcessingMode = ResolveSavedAutoProcessingMode(
-                    saved.SettingsVersion,
-                    saved.ProcessingMode);
+                var savedProcessingMode = ResolveSavedAutoProcessingMode(saved.ProcessingMode);
                 SelectedAutoProcessingModeOption = AutoProcessingModeOptions.FirstOrDefault(
                     o => o.Mode == savedProcessingMode) ?? AutoProcessingModeOptions[0];
 
-                EnablePostProcessing = requiresSettingsUpgrade ? false : saved.EnablePostProcessing;
-                EnableRoiPostProcess = requiresSettingsUpgrade ? false : saved.EnableRoiPostProcess;
-                EnableYoloWeakIsolatedCleanup = requiresSettingsUpgrade ? false : saved.EnableYoloWeakIsolatedCleanup;
-                EnableYoloGapFill = requiresSettingsUpgrade ? false : saved.EnableYoloGapFill;
-                EnableYoloSceneCutCarryCleanup = requiresSettingsUpgrade ? false : saved.EnableYoloSceneCutCarryCleanup;
-                EnableYoloTemporalSmoothing = requiresSettingsUpgrade ? false : saved.EnableYoloTemporalSmoothing;
-                EnableYoloRiskCascade = requiresSettingsUpgrade ? false : saved.EnableYoloRiskCascade;
+                EnablePostProcessing = saved.EnablePostProcessing;
+                EnableRoiPostProcess = saved.EnableRoiPostProcess;
+                EnableYoloWeakIsolatedCleanup = saved.EnableYoloWeakIsolatedCleanup;
+                EnableYoloGapFill = saved.EnableYoloGapFill;
+                EnableYoloSceneCutCarryCleanup = saved.EnableYoloSceneCutCarryCleanup;
+                EnableYoloTemporalSmoothing = saved.EnableYoloTemporalSmoothing;
+                EnableYoloRiskCascade = saved.EnableYoloRiskCascade;
 
                 _yoloV8Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType);
                 _yolo5Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType);
