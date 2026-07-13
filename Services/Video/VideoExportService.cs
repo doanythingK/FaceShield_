@@ -48,12 +48,15 @@ public unsafe sealed class VideoExportService
         string? runId = null,
         bool allowHybridCopy = false)
     {
+        var endToEndTimer = Stopwatch.StartNew();
+        int attemptCount = 0;
         string finalOutputPath = Path.GetFullPath(outputPath);
         string stagedOutputPath = BuildStagedOutputPath(finalOutputPath);
         try
         {
             try
             {
+                attemptCount++;
                 ExportInternal(
                     inputPath,
                     stagedOutputPath,
@@ -73,6 +76,7 @@ public unsafe sealed class VideoExportService
                 Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: Invalid argument 발생. {ex.Message}");
                 try
                 {
+                    attemptCount++;
                     ExportInternal(
                         inputPath,
                         stagedOutputPath,
@@ -90,6 +94,7 @@ public unsafe sealed class VideoExportService
                 catch (InvalidOperationException nestedEx) when (IsInvalidArgumentError(nestedEx))
                 {
                     Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
+                    attemptCount++;
                     ExportInternal(
                         inputPath,
                         stagedOutputPath,
@@ -111,6 +116,7 @@ public unsafe sealed class VideoExportService
             if (LastExportSummary == null)
                 throw new InvalidOperationException("검증된 내보내기 요약이 생성되지 않았습니다.");
 
+            var outputCommitTimer = Stopwatch.StartNew();
             string commitMode;
             if (File.Exists(finalOutputPath))
             {
@@ -127,7 +133,16 @@ public unsafe sealed class VideoExportService
                 commitMode = "move";
             }
 
-            LastExportSummary = LastExportSummary with { OutputCommitted = true };
+            outputCommitTimer.Stop();
+            endToEndTimer.Stop();
+            LastExportSummary = LastExportSummary with
+            {
+                OutputCommitted = true,
+                FinalAttemptMs = LastExportSummary.TotalMs,
+                OutputCommitMs = outputCommitTimer.ElapsedMilliseconds,
+                AttemptCount = attemptCount,
+                TotalMs = endToEndTimer.ElapsedMilliseconds
+            };
             string committedLine =
                 $"[ExportCommitted] runId={LastExportSummary.RunId ?? "n/a"}, mode={commitMode}";
             Debug.WriteLine(committedLine);
