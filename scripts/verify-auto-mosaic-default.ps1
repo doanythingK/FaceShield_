@@ -60,6 +60,7 @@ $autoMaskDefaultFilterStabilityVerify = Join-Path $repo "scripts\verify-automask
 $autoResumeMaskResetVerify = Join-Path $repo "scripts\verify-auto-resume-mask-reset.ps1"
 $blurRenderConsistencyVerify = Join-Path $repo "scripts\verify-blur-render-consistency.ps1"
 $bgraIntegralRangeVerify = Join-Path $repo "scripts\verify-bgra-integral-range.ps1"
+$tenBitEncoderFallbackVerify = Join-Path $repo "scripts\verify-ten-bit-encoder-fallback.ps1"
 $detectorAutoTunerSessionRangeVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-session-range.ps1"
 $detectorAutoTunerSafetyVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-safety.ps1"
 $detectorAutoTunerOverheadVerify = Join-Path $repo "scripts\verify-detector-auto-tuner-overhead.ps1"
@@ -289,6 +290,9 @@ Assert-Contains "blur-render-consistency" $blurRenderOutput "radiusPolicy=true r
 
 $bgraIntegralOutput = Invoke-ScriptStep "bgra-integral-range" $bgraIntegralRangeVerify @()
 Assert-Contains "bgra-integral-range" $bgraIntegralOutput "storage=uint32 dci4kFull=2256076800 wrapCases=10000 maxWindow=81 checkedSize=true"
+
+$tenBitEncoderOutput = Invoke-ScriptStep "ten-bit-encoder-fallback" $tenBitEncoderFallbackVerify @()
+Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx264,libx265 .*libx265TenBitOpen=true"
 
 $autoTunerOutput = Invoke-ScriptStep "detector-autotune-session-range" $detectorAutoTunerSessionRangeVerify @()
 Assert-Contains "detector-autotune-session-range" $autoTunerOutput "cpuSessions=1,2,3,4"

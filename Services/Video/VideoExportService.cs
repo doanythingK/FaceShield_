@@ -625,8 +625,8 @@ public unsafe sealed class VideoExportService
             else if (encoder != null && encoder->id != inputCodecId)
             {
                 exportNotice =
-                    $"10비트 원본 품질과 내보내기 속도를 보존하기 위해 " +
-                    $"{GetEncoderName(encoder)} 하드웨어 인코더를 사용합니다.";
+                    $"10비트 원본 품질을 보존하기 위해 " +
+                    $"{GetEncoderName(encoder)} 인코더를 사용합니다.";
             }
 
             AVStream* outAudioStream = null;
@@ -3578,15 +3578,14 @@ public unsafe sealed class VideoExportService
             }
         }
 
-        bool allowTenBitHevcHardwareFallback =
-            !forceSoftwareEncoder &&
+        bool allowTenBitHevcFallback =
             codecId == AVCodecID.AV_CODEC_ID_H264 &&
             GetPixelFormatBitDepth(dec->pix_fmt) > 8;
         var attemptedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidateName in GetEncoderCandidateNames(
                      codecId,
                      forceSoftwareEncoder,
-                     allowTenBitHevcHardwareFallback))
+                     allowTenBitHevcFallback))
         {
             if (string.IsNullOrWhiteSpace(candidateName) || !attemptedNames.Add(candidateName))
                 continue;
@@ -3594,7 +3593,7 @@ public unsafe sealed class VideoExportService
             AVCodec* candidate = ffmpeg.avcodec_find_encoder_by_name(candidateName);
             if (candidate == null ||
                 (candidate->id != codecId &&
-                 !(allowTenBitHevcHardwareFallback && candidate->id == AVCodecID.AV_CODEC_ID_HEVC)))
+                 !(allowTenBitHevcFallback && candidate->id == AVCodecID.AV_CODEC_ID_HEVC)))
                 continue;
 
             if (hdrMetadata?.HasStaticMetadata == true && IsHardwareEncoder(candidate))
@@ -3867,13 +3866,16 @@ public unsafe sealed class VideoExportService
     private static IReadOnlyList<string> GetEncoderCandidateNames(
         AVCodecID codecId,
         bool forceSoftwareOnly,
-        bool allowTenBitHevcHardwareFallback)
+        bool allowTenBitHevcFallback)
     {
         IReadOnlyList<string> primary = GetPreferredEncoderNames(codecId, forceSoftwareOnly);
-        if (!allowTenBitHevcHardwareFallback)
+        if (!allowTenBitHevcFallback || codecId != AVCodecID.AV_CODEC_ID_H264)
             return primary;
 
-        var candidates = new List<string>(primary.Count + 4);
+        IReadOnlyList<string> hevcFallback = GetPreferredEncoderNames(
+            AVCodecID.AV_CODEC_ID_HEVC,
+            forceSoftwareOnly);
+        var candidates = new List<string>(primary.Count + hevcFallback.Count);
         foreach (string name in primary)
         {
             if (!name.Contains("x264", StringComparison.OrdinalIgnoreCase) &&
@@ -3883,7 +3885,7 @@ public unsafe sealed class VideoExportService
             }
         }
 
-        foreach (string name in GetPreferredEncoderNames(AVCodecID.AV_CODEC_ID_HEVC, forceSoftwareOnly: false))
+        foreach (string name in hevcFallback)
         {
             if (!name.Contains("x265", StringComparison.OrdinalIgnoreCase))
                 candidates.Add(name);
@@ -3896,6 +3898,12 @@ public unsafe sealed class VideoExportService
             {
                 candidates.Add(name);
             }
+        }
+
+        foreach (string name in hevcFallback)
+        {
+            if (name.Contains("x265", StringComparison.OrdinalIgnoreCase))
+                candidates.Add(name);
         }
 
         return candidates;
