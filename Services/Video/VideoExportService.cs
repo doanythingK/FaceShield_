@@ -274,6 +274,7 @@ public unsafe sealed class VideoExportService
         int submittedVideoFrameCount = 0;
         var submittedEncodedFramePts = new HashSet<long>();
         var emittedEncodedFramePts = new Dictionary<long, int>();
+        var emittedEncodedMuxPts = new List<long>();
         var appliedBlurFrameIndices = new HashSet<int>();
         int sampleSourceVideoPacketCount = 0;
         int sampleCopiedVideoPacketCount = 0;
@@ -1226,8 +1227,6 @@ public unsafe sealed class VideoExportService
                                 ref hasLastEncodedPacketDts,
                                 ref reusableFaceMask,
                                 ref outputVideoPacketCount,
-                                ref outputPacketPtsGapOutlierCount,
-                                ref maxOutputPacketPtsGap,
                                 encodedTimestampIntegrity,
                                 progress,
                                 ref lastReportedFrame,
@@ -1240,6 +1239,7 @@ public unsafe sealed class VideoExportService
                                 ref submittedVideoFrameCount,
                                 submittedEncodedFramePts,
                                 emittedEncodedFramePts,
+                                emittedEncodedMuxPts,
                                 encodedPacketFrameStep);
 
                             flushedForHybridBoundary = true;
@@ -1324,8 +1324,6 @@ public unsafe sealed class VideoExportService
                             ref hasLastEncodedPacketDts,
                             ref reusableFaceMask,
                             ref outputVideoPacketCount,
-                            ref outputPacketPtsGapOutlierCount,
-                            ref maxOutputPacketPtsGap,
                             encodedTimestampIntegrity,
                             progress,
                             ref lastReportedFrame,
@@ -1338,6 +1336,7 @@ public unsafe sealed class VideoExportService
                             ref submittedVideoFrameCount,
                             submittedEncodedFramePts,
                             emittedEncodedFramePts,
+                            emittedEncodedMuxPts,
                             encodedPacketFrameStep);
 
                         if (hasLastEncodedPacketPts)
@@ -1460,8 +1459,6 @@ public unsafe sealed class VideoExportService
                         ref hasLastEncodedPacketDts,
                         ref reusableFaceMask,
                         ref outputVideoPacketCount,
-                        ref outputPacketPtsGapOutlierCount,
-                        ref maxOutputPacketPtsGap,
                         encodedTimestampIntegrity,
                         progress,
                         ref lastReportedFrame,
@@ -1474,6 +1471,7 @@ public unsafe sealed class VideoExportService
                         ref submittedVideoFrameCount,
                         submittedEncodedFramePts,
                         emittedEncodedFramePts,
+                        emittedEncodedMuxPts,
                         encodedPacketFrameStep);
                     ffmpeg.av_frame_unref(frame);
                 }
@@ -1524,8 +1522,6 @@ public unsafe sealed class VideoExportService
                 ref hasLastEncodedPacketDts,
                 ref reusableFaceMask,
                 ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
                 encodedTimestampIntegrity,
                 progress,
                 ref lastReportedFrame,
@@ -1538,6 +1534,7 @@ public unsafe sealed class VideoExportService
                 ref submittedVideoFrameCount,
                 submittedEncodedFramePts,
                 emittedEncodedFramePts,
+                emittedEncodedMuxPts,
                 encodedPacketFrameStep);
 
             int[] missingBlurFrameIndices = GetMissingExpectedFrameIndices(
@@ -1641,6 +1638,12 @@ public unsafe sealed class VideoExportService
                 copiedVideoPacketCount,
                 submittedEncodedFramePts,
                 emittedEncodedFramePts);
+            var presentationGapIntegrity = EvaluateEncodedPresentationGaps(
+                submittedEncodedFramePts,
+                emittedEncodedFramePts,
+                emittedEncodedMuxPts);
+            outputPacketPtsGapOutlierCount = presentationGapIntegrity.OutlierCount;
+            maxOutputPacketPtsGap = presentationGapIntegrity.MaxOutputGap;
             int missingEncodedFrameCount = frameCoverage.MissingEncodedFrames;
             int unexpectedEncodedFrameCount = frameCoverage.UnexpectedEncodedFrames;
             int expectedOutputVideoFrames = frameCoverage.ExpectedOutputFrames;
@@ -1715,7 +1718,8 @@ public unsafe sealed class VideoExportService
             if (videoFrameCoverageMismatch > MaxAllowedOutputPacketLoss)
             {
                 string outputLossReason =
-                    $"final-output-frame-coverage-mismatch=missing:{missingEncodedFrameCount},unexpected:{unexpectedEncodedFrameCount},copy:{copiedSourceVideoPacketCount}/{copiedVideoPacketCount}";
+                    $"final-output-frame-coverage-mismatch=missing:{missingEncodedFrameCount},unexpected:{unexpectedEncodedFrameCount},copy:{copiedSourceVideoPacketCount}/{copiedVideoPacketCount}," +
+                    $"ptsGapOutliers:{outputPacketPtsGapOutlierCount},maxPtsGap:{maxOutputPacketPtsGap}";
                 packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
                     ? outputLossReason
                     : $"{packetDropFallbackReason}; {outputLossReason}";
@@ -2138,17 +2142,14 @@ public unsafe sealed class VideoExportService
         ref long lastPacketDts,
         ref bool hasLastPacketDts,
         ref int outputVideoPacketCount,
-        ref int outputPacketPtsGapOutlierCount,
-        ref long maxOutputPacketPtsGap,
         VideoPacketTimestampIntegrity timestampIntegrity,
         Dictionary<long, int> emittedEncodedFramePts,
+        List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
     {
         while (ffmpeg.avcodec_receive_packet(enc, outPkt) == 0)
         {
             long encoderPacketPts = outPkt->pts;
-            long previousPacketPts = lastPacketPts;
-            bool hadPreviousPacketPts = hasLastPacketPts;
 
             ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
             bool hasMissingTimestamp =
@@ -2186,28 +2187,29 @@ public unsafe sealed class VideoExportService
                         $"(pts={outPkt->pts}, dts={outPkt->dts}, previousDts={lastPacketDts}).");
                 }
 
-                if (outPkt->duration <= 0)
-                    outPkt->duration = Math.Max(1, encodedPacketFrameStep);
                 lastPacketPts = outPkt->pts;
                 hasLastPacketPts = true;
                 lastPacketDts = outPkt->dts;
                 hasLastPacketDts = true;
             }
 
-            if (hadPreviousPacketPts)
+            if (outPkt->duration < 0)
             {
-                long gap = Math.Abs(outPkt->pts - previousPacketPts);
-                if (gap > 0 && gap > maxOutputPacketPtsGap)
-                    maxOutputPacketPtsGap = gap;
+                throw new InvalidOperationException(
+                    $"Invalid argument: 음수 인코더 패킷 길이는 내보낼 수 없습니다 " +
+                    $"(duration={outPkt->duration}).");
             }
 
             outPkt->stream_index = outStream->index;
+            long muxPacketPts = outPkt->pts;
             Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
             if (encoderPacketPts != ffmpeg.AV_NOPTS_VALUE)
             {
                 emittedEncodedFramePts.TryGetValue(encoderPacketPts, out int emittedCount);
                 emittedEncodedFramePts[encoderPacketPts] = emittedCount + 1;
             }
+            if (muxPacketPts != ffmpeg.AV_NOPTS_VALUE)
+                emittedEncodedMuxPts.Add(muxPacketPts);
             outputVideoPacketCount++;
             ffmpeg.av_packet_unref(outPkt);
         }
@@ -2264,6 +2266,85 @@ public unsafe sealed class VideoExportService
             copiedPacketMismatch);
     }
 
+    private static (int OutlierCount, long MaxOutputGap) EvaluateEncodedPresentationGaps(
+        IReadOnlySet<long> submittedEncodedFramePts,
+        IReadOnlyDictionary<long, int> emittedEncodedFramePts,
+        IReadOnlyCollection<long> emittedEncodedMuxPts)
+    {
+        var submitted = new List<long>(submittedEncodedFramePts.Count);
+        foreach (long pts in submittedEncodedFramePts)
+        {
+            if (pts == ffmpeg.AV_NOPTS_VALUE)
+                throw new ArgumentException("Submitted PTS contains AV_NOPTS_VALUE.");
+            submitted.Add(pts);
+        }
+        submitted.Sort();
+
+        int emittedCount = 0;
+        foreach (int count in emittedEncodedFramePts.Values)
+        {
+            if (count > 0)
+                emittedCount = checked(emittedCount + count);
+        }
+
+        var emitted = new List<long>(emittedCount);
+        foreach (var (pts, count) in emittedEncodedFramePts)
+        {
+            if (count > 0 && pts == ffmpeg.AV_NOPTS_VALUE)
+                throw new ArgumentException("Emitted PTS contains AV_NOPTS_VALUE.");
+            for (int i = 0; i < count; i++)
+                emitted.Add(pts);
+        }
+        emitted.Sort();
+
+        int submittedGapCount = Math.Max(0, submitted.Count - 1);
+        int emittedGapCount = Math.Max(0, emitted.Count - 1);
+        int commonGapCount = Math.Min(submittedGapCount, emittedGapCount);
+        int outlierCount = Math.Abs(submittedGapCount - emittedGapCount);
+
+        for (int i = 1; i <= commonGapCount; i++)
+        {
+            ulong submittedGap = GetSortedPresentationGap(submitted[i - 1], submitted[i]);
+            ulong emittedGap = GetSortedPresentationGap(emitted[i - 1], emitted[i]);
+            if (submittedGap != emittedGap)
+                outlierCount++;
+        }
+
+        return (outlierCount, GetMaxSortedPresentationGap(emittedEncodedMuxPts));
+    }
+
+    private static long GetMaxSortedPresentationGap(IReadOnlyCollection<long> presentationPts)
+    {
+        var sorted = new List<long>(presentationPts.Count);
+        foreach (long pts in presentationPts)
+        {
+            if (pts == ffmpeg.AV_NOPTS_VALUE)
+                throw new ArgumentException("Presentation PTS contains AV_NOPTS_VALUE.");
+            sorted.Add(pts);
+        }
+        if (sorted.Count < 2)
+            return 0;
+        sorted.Sort();
+
+        ulong maxGap = 0;
+        for (int i = 1; i < sorted.Count; i++)
+        {
+            ulong gap = GetSortedPresentationGap(sorted[i - 1], sorted[i]);
+            if (gap > maxGap)
+                maxGap = gap;
+        }
+
+        return maxGap > long.MaxValue ? long.MaxValue : (long)maxGap;
+    }
+
+    private static ulong GetSortedPresentationGap(long previousPts, long currentPts)
+    {
+        if (currentPts < previousPts)
+            throw new ArgumentOutOfRangeException(nameof(currentPts));
+
+        return unchecked((ulong)currentPts - (ulong)previousPts);
+    }
+
     private unsafe void ProcessDecodedVideoFrame(
         AVFrame* frame,
         AVFrame* bgra,
@@ -2300,8 +2381,6 @@ public unsafe sealed class VideoExportService
         ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
         ref int outputVideoPacketCount,
-        ref int outputPacketPtsGapOutlierCount,
-        ref long maxOutputPacketPtsGap,
         VideoPacketTimestampIntegrity timestampIntegrity,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
@@ -2314,6 +2393,7 @@ public unsafe sealed class VideoExportService
         ref int submittedVideoFrameCount,
         HashSet<long> submittedEncodedFramePts,
         Dictionary<long, int> emittedEncodedFramePts,
+        List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -2454,10 +2534,9 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 emittedEncodedFramePts,
+                emittedEncodedMuxPts,
                 encodedPacketFrameStep);
             encodeTimer.Stop();
         }
@@ -2525,10 +2604,9 @@ public unsafe sealed class VideoExportService
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
                 ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 emittedEncodedFramePts,
+                emittedEncodedMuxPts,
                 encodedPacketFrameStep);
             encodeTimer.Stop();
         }
@@ -2577,10 +2655,9 @@ public unsafe sealed class VideoExportService
                     ref lastEncodedPacketDts,
                     ref hasLastEncodedPacketDts,
                     ref outputVideoPacketCount,
-                    ref outputPacketPtsGapOutlierCount,
-                    ref maxOutputPacketPtsGap,
                     timestampIntegrity,
                     emittedEncodedFramePts,
+                    emittedEncodedMuxPts,
                     encodedPacketFrameStep);
                 encodeTimer.Stop();
             }
@@ -2599,10 +2676,9 @@ public unsafe sealed class VideoExportService
                     ref lastEncodedPacketDts,
                     ref hasLastEncodedPacketDts,
                     ref outputVideoPacketCount,
-                    ref outputPacketPtsGapOutlierCount,
-                    ref maxOutputPacketPtsGap,
                     timestampIntegrity,
                     emittedEncodedFramePts,
+                    emittedEncodedMuxPts,
                     encodedPacketFrameStep);
                 encodeTimer.Stop();
             }
@@ -2667,8 +2743,6 @@ public unsafe sealed class VideoExportService
         ref bool hasLastEncodedPacketDts,
         ref WriteableBitmap? reusableFaceMask,
         ref int outputVideoPacketCount,
-        ref int outputPacketPtsGapOutlierCount,
-        ref long maxOutputPacketPtsGap,
         VideoPacketTimestampIntegrity timestampIntegrity,
         IProgress<ExportProgress>? progress,
         ref int lastReportedFrame,
@@ -2681,6 +2755,7 @@ public unsafe sealed class VideoExportService
         ref int submittedVideoFrameCount,
         HashSet<long> submittedEncodedFramePts,
         Dictionary<long, int> emittedEncodedFramePts,
+        List<long> emittedEncodedMuxPts,
         long encodedPacketFrameStep)
     {
         if (videoFlushed)
@@ -2729,8 +2804,6 @@ public unsafe sealed class VideoExportService
                 ref hasLastEncodedPacketDts,
                 ref reusableFaceMask,
                 ref outputVideoPacketCount,
-                ref outputPacketPtsGapOutlierCount,
-                ref maxOutputPacketPtsGap,
                 timestampIntegrity,
                 progress,
                 ref lastReportedFrame,
@@ -2743,6 +2816,7 @@ public unsafe sealed class VideoExportService
                 ref submittedVideoFrameCount,
                 submittedEncodedFramePts,
                 emittedEncodedFramePts,
+                emittedEncodedMuxPts,
                 encodedPacketFrameStep);
             ffmpeg.av_frame_unref(frame);
         }
@@ -2774,10 +2848,9 @@ public unsafe sealed class VideoExportService
             ref lastEncodedPacketDts,
             ref hasLastEncodedPacketDts,
             ref outputVideoPacketCount,
-            ref outputPacketPtsGapOutlierCount,
-            ref maxOutputPacketPtsGap,
             timestampIntegrity,
             emittedEncodedFramePts,
+            emittedEncodedMuxPts,
             encodedPacketFrameStep);
         encoderFlushTimer.Stop();
         encodeTimer.Stop();
@@ -3323,8 +3396,7 @@ public unsafe sealed class VideoExportService
             AVPacket* pkt = ffmpeg.av_packet_alloc();
             if (pkt == null)
                 throw new InvalidOperationException("패킷 버퍼를 할당하지 못했습니다.");
-            long[] lastRemuxPacketDts = Array.Empty<long>();
-            bool[] hasLastRemuxPacketDts = Array.Empty<bool>();
+            var outputVideoPts = new List<long>();
             int inputVideoPackets = 0;
             int outputVideoPackets = 0;
             int missingVideoPacketTimestamps = 0;
@@ -3355,10 +3427,6 @@ public unsafe sealed class VideoExportService
                 streamMap[i] = outStream->index;
             }
 
-            int streamTotal = Math.Max(0, streamCount);
-            lastRemuxPacketDts = new long[streamTotal];
-            hasLastRemuxPacketDts = new bool[streamTotal];
-
             if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
                 Throw(ffmpeg.avio_open(&outFmt->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE));
 
@@ -3386,41 +3454,27 @@ public unsafe sealed class VideoExportService
                 bool isVideoPacket = inIndex == videoStreamIndex;
                 bool hasMissingVideoTimestamp = isVideoPacket &&
                     (pkt->pts == ffmpeg.AV_NOPTS_VALUE || pkt->dts == ffmpeg.AV_NOPTS_VALUE);
-                long previousVideoPacketDts = isVideoPacket && pkt->dts != ffmpeg.AV_NOPTS_VALUE
-                    ? lastRemuxPacketDts[outIndex]
-                    : 0;
-                bool hadPreviousVideoPacketDts =
-                    isVideoPacket &&
-                    pkt->dts != ffmpeg.AV_NOPTS_VALUE &&
-                    hasLastRemuxPacketDts[outIndex];
                 ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
                 if (isVideoPacket)
                 {
                     if (hasMissingVideoTimestamp)
                         missingVideoPacketTimestamps++;
-
-                    if (hadPreviousVideoPacketDts)
-                    {
-                        long timestampGap = Math.Abs(pkt->dts - previousVideoPacketDts);
-                        if (timestampGap > maxOutputPacketPtsGap)
-                            maxOutputPacketPtsGap = timestampGap;
-                    }
-
-                    if (pkt->dts != ffmpeg.AV_NOPTS_VALUE)
-                    {
-                        lastRemuxPacketDts[outIndex] = pkt->dts;
-                        hasLastRemuxPacketDts[outIndex] = true;
-                    }
                 }
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
+                long muxVideoPts = isVideoPacket ? pkt->pts : ffmpeg.AV_NOPTS_VALUE;
+                long muxVideoDts = isVideoPacket ? pkt->dts : ffmpeg.AV_NOPTS_VALUE;
                 Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
                 if (inIndex == videoStreamIndex)
+                {
                     outputVideoPackets++;
+                    if (muxVideoPts != ffmpeg.AV_NOPTS_VALUE)
+                        outputVideoPts.Add(muxVideoPts);
+                }
 
                 if (progress != null && inIndex == videoStreamIndex && totalFrames > 0 && sourceFps > 0.0)
                 {
-                    long ts = pkt->pts != ffmpeg.AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+                    long ts = muxVideoPts != ffmpeg.AV_NOPTS_VALUE ? muxVideoPts : muxVideoDts;
                     if (ts != ffmpeg.AV_NOPTS_VALUE)
                     {
                         double seconds = ts * ffmpeg.av_q2d(outStream->time_base);
@@ -3438,6 +3492,8 @@ public unsafe sealed class VideoExportService
 
                 ffmpeg.av_packet_unref(pkt);
             }
+
+            maxOutputPacketPtsGap = GetMaxSortedPresentationGap(outputVideoPts);
 
             Throw(ffmpeg.av_write_trailer(outFmt));
             outputCloseTimer.Start();
