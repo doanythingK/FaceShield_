@@ -99,9 +99,13 @@ unsafe
         var provider = new FrameMaskProvider();
         provider.SetMask(10, videoMask);
         var service = new VideoExportService(provider);
-        service.Export(args[0], args[1], 28, runId: "native-bitmap-e2e", allowHybridCopy: false);
+        service.Export(args[0], args[1], 28, runId: "native-bitmap-e2e");
         var summary = service.LastExportSummary ?? throw new InvalidOperationException("Missing export summary.");
-        if (summary.BitmapMaskFrames != 1 || summary.NativeYuvBlurFrames != 1 || summary.SwsToBgraMs != 0)
+        if (summary.BitmapMaskFrames != 1 ||
+            summary.NativeYuvBlurFrames != 1 ||
+            summary.SwsToBgraMs != 0 ||
+            summary.HybridCopyAttempted ||
+            summary.HybridCopyUsed)
             throw new InvalidOperationException($"Unexpected native bitmap summary: {summary.ToLogLine()}");
         Console.WriteLine($"[NativeBitmapMaskE2E] PASS {summary.ToLogLine()}");
     }

@@ -12,7 +12,7 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    private const bool EnableHybridCopyWindow = true;
+    private const bool EnableHybridCopyWindow = false;
     private const int MinHybridCopyFrames = 240;
     private const double MinHybridCopyRatio = 0.05;
     private const int MinHybridCopySideFrames = 24;
@@ -46,7 +46,7 @@ public unsafe sealed class VideoExportService
         IProgress<ExportProgress>? progress = null,
         System.Threading.CancellationToken cancellationToken = default,
         string? runId = null,
-        bool allowHybridCopy = true)
+        bool allowHybridCopy = false)
     {
         string finalOutputPath = Path.GetFullPath(outputPath);
         string stagedOutputPath = BuildStagedOutputPath(finalOutputPath);
@@ -263,8 +263,6 @@ public unsafe sealed class VideoExportService
         long hybridCopyVideoFrameStep = 1;
         long packetTimestampBase = 0;
         bool hasPacketTimestampBase = false;
-        long keyframeTimestampBase = 0;
-        bool hasKeyframeTimestampBase = false;
         long frameTimestampBase = 0;
         bool hasFrameTimestampBase = false;
         int packetFrameIndexReliabilityFailureCount = 0;
@@ -641,7 +639,7 @@ public unsafe sealed class VideoExportService
                     : $"{hybridCopyFallbackReason}; {audioReason}";
             }
 
-            if (dec != null && dec->has_b_frames > 0)
+            if (allowHybridCopyCurrent && dec != null && dec->has_b_frames > 0)
             {
                 if (hybridCopyAttempted)
                 {
@@ -669,7 +667,7 @@ public unsafe sealed class VideoExportService
                 (hybridEncodeWindow.Value.Start > 0 ||
                  hybridEncodeWindow.Value.EndExclusive < totalFrames);
 
-            if (dec != null && dec->has_b_frames > 0)
+            if (allowHybridCopyCurrent && dec != null && dec->has_b_frames > 0)
             {
                 useHybridCopyWindow = false;
             }

@@ -70,7 +70,8 @@ namespace FaceShield.ViewModels.Pages
         private string? _autoExportGateFailure;
         private AutoMaskRunSummary? _lastCompletedAutoRunSummary;
         private bool _autoExportHybridPolicyAvailable;
-        private bool _autoExportAllowHybridCopy = true;
+        private const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";
+        private bool _autoExportAllowHybridCopy;
         private string? _autoExportHybridDisableReasons;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
@@ -321,21 +322,9 @@ namespace FaceShield.ViewModels.Pages
                 _exportCts = cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : new CancellationTokenSource();
-                (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy;
-                if (effectiveAutoRunSummary != null)
-                {
-                    hybridPolicy = EvaluateAutoExportHybridPolicy(effectiveAutoRunSummary);
-                }
-                else if (_autoExportHybridPolicyAvailable)
-                {
-                    hybridPolicy = (
-                        _autoExportAllowHybridCopy,
-                        ParseAutoExportHybridDisableReasons(_autoExportHybridDisableReasons));
-                }
-                else
-                {
-                    hybridPolicy = (true, Array.Empty<string>());
-                }
+                (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy = (
+                    false,
+                    new[] { HybridCopyDisabledReason });
                 System.Diagnostics.Debug.WriteLine(
                     $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(effectiveAutoRunSummary?.RunId ?? "n/a")}, persistedPolicy={(_autoExportHybridPolicyAvailable && effectiveAutoRunSummary == null).ToString().ToLowerInvariant()}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
                 RunMetricsLog.AppendRunLines(
@@ -1236,8 +1225,8 @@ namespace FaceShield.ViewModels.Pages
             _autoExportGateFailure = "auto-run-incomplete";
             _lastCompletedAutoRunSummary = null;
             _autoExportHybridPolicyAvailable = false;
-            _autoExportAllowHybridCopy = true;
-            _autoExportHybridDisableReasons = null;
+            _autoExportAllowHybridCopy = false;
+            _autoExportHybridDisableReasons = HybridCopyDisabledReason;
         }
 
         private void CompleteAutoExportGate(
@@ -1246,18 +1235,8 @@ namespace FaceShield.ViewModels.Pages
         {
             _lastCompletedAutoRunSummary = summary;
             _autoExportHybridPolicyAvailable = true;
-            if (summary == null)
-            {
-                _autoExportAllowHybridCopy = false;
-                _autoExportHybridDisableReasons = "auto-run-summary-missing";
-            }
-            else
-            {
-                var hybridPolicy = EvaluateAutoExportHybridPolicy(summary);
-                _autoExportAllowHybridCopy = hybridPolicy.allowHybridCopy;
-                _autoExportHybridDisableReasons =
-                    SerializeAutoExportHybridDisableReasons(hybridPolicy.disableReasons);
-            }
+            _autoExportAllowHybridCopy = false;
+            _autoExportHybridDisableReasons = HybridCopyDisabledReason;
 
             string? failure = summary == null
                 ? "auto-run-summary-missing"
@@ -2039,8 +2018,8 @@ namespace FaceShield.ViewModels.Pages
             _autoExportGateFailure = snapshot.AutoExportGateFailure;
             _lastCompletedAutoRunSummary = null;
             _autoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable;
-            _autoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy;
-            _autoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons;
+            _autoExportAllowHybridCopy = false;
+            _autoExportHybridDisableReasons = HybridCopyDisabledReason;
 
             bool legacyIncompleteRun =
                 !_autoExportGateRequired &&
