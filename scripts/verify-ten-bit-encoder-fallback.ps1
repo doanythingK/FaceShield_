@@ -7,6 +7,7 @@ $work = Join-Path $repo ".tmp\ten-bit-encoder-fallback"
 $project = Join-Path $work "TenBitEncoderFallbackHarness.csproj"
 $program = Join-Path $work "Program.cs"
 
+try {
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @"
@@ -285,7 +286,11 @@ static unsafe string GetError(int result)
 }
 '@ | Set-Content -Encoding UTF8 -Path $program
 
-dotnet run --project $project --configuration Debug
+& dotnet run --project $project --configuration Debug
 if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    throw "Ten-bit encoder fallback verifier failed with exit code $LASTEXITCODE."
+}
+}
+finally {
+    Remove-Item -Recurse -Force -Path $work -ErrorAction SilentlyContinue
 }

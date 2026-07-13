@@ -7,6 +7,7 @@ $work = Join-Path $repo ".tmp\encoder-quality-options"
 $project = Join-Path $work "EncoderQualityOptionsHarness.csproj"
 $program = Join-Path $work "Program.cs"
 
+try {
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 @"
@@ -132,7 +133,11 @@ sealed record EncoderCase(
     IReadOnlyList<(string Key, string Value)>? Optional = null);
 '@ | Set-Content -Encoding UTF8 $program
 
-dotnet run --project $project --configuration Debug
+& dotnet run --project $project --configuration Debug
 if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    throw "Encoder quality options verifier failed with exit code $LASTEXITCODE."
+}
+}
+finally {
+    Remove-Item -Recurse -Force -Path $work -ErrorAction SilentlyContinue
 }
