@@ -520,9 +520,9 @@ namespace FaceShield.ViewModels.Pages
                     : (WorkspaceLoadingMessage ?? "로딩 중...");
         public bool IsTrackingOptionsEnabled => AutoTrackingEnabled;
         public bool IsLegacyProcessingMode =>
-            (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Legacy) == AutoMaskProcessingMode.Legacy;
+            (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Tracked) == AutoMaskProcessingMode.Legacy;
         public bool IsTrackingIntervalVisible =>
-            (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Legacy) != AutoMaskProcessingMode.Raw;
+            (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Tracked) != AutoMaskProcessingMode.Raw;
         public bool IsTrackingIntervalEnabled => !IsLegacyProcessingMode || AutoTrackingEnabled;
         public bool IsYoloCascadeOptionVisible => IsYoloDetectorSelected &&
             (SelectedAutoProcessingModeOption?.Mode is AutoMaskProcessingMode.Legacy or AutoMaskProcessingMode.Full);
@@ -531,7 +531,7 @@ namespace FaceShield.ViewModels.Pages
                 ? AutoDetectEveryNFrames <= 1
                 : true);
         public string EffectiveProcessingModeDescription =>
-            (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Legacy) switch
+            (SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Tracked) switch
             {
                 AutoMaskProcessingMode.Raw => "매 프레임 검출만 수행하며 추적·보간·후처리를 적용하지 않습니다.",
                 AutoMaskProcessingMode.Tracked => "짧은 검출 누락만 연결하며 전체 후처리는 사용하지 않습니다.",
@@ -1178,6 +1178,19 @@ namespace FaceShield.ViewModels.Pages
                 : quality;
         }
 
+        private static AutoMaskProcessingMode ResolveSavedAutoProcessingMode(
+            int settingsVersion,
+            int? savedValue)
+        {
+            int value = savedValue ?? (int)AutoMaskProcessingMode.Tracked;
+            if (settingsVersion < CurrentAutoSettingsVersion && value == (int)AutoMaskProcessingMode.Raw)
+                value = (int)AutoMaskProcessingMode.Tracked;
+
+            return Enum.IsDefined(typeof(AutoMaskProcessingMode), value)
+                ? (AutoMaskProcessingMode)value
+                : AutoMaskProcessingMode.Tracked;
+        }
+
         private void ApplySavedAutoSettings()
         {
             var saved = _stateStore.GetAutoSettings();
@@ -1228,12 +1241,11 @@ namespace FaceShield.ViewModels.Pages
                 var backend = AutoDetectorBackendOptions.FirstOrDefault(o => (int)o.Backend == saved.DetectorBackend);
                 if (backend != null)
                     SelectedAutoDetectorBackendOption = backend;
-                int savedProcessingMode = saved.ProcessingMode;
-                if (requiresSettingsUpgrade && savedProcessingMode == (int)AutoMaskProcessingMode.Raw)
-                    savedProcessingMode = (int)AutoMaskProcessingMode.Tracked;
-                var processingMode = AutoProcessingModeOptions.FirstOrDefault(o => (int)o.Mode == savedProcessingMode);
-                if (processingMode != null)
-                    SelectedAutoProcessingModeOption = processingMode;
+                var savedProcessingMode = ResolveSavedAutoProcessingMode(
+                    saved.SettingsVersion,
+                    saved.ProcessingMode);
+                SelectedAutoProcessingModeOption = AutoProcessingModeOptions.FirstOrDefault(
+                    o => o.Mode == savedProcessingMode) ?? AutoProcessingModeOptions[0];
 
                 EnablePostProcessing = requiresSettingsUpgrade ? false : saved.EnablePostProcessing;
                 EnableRoiPostProcess = requiresSettingsUpgrade ? false : saved.EnableRoiPostProcess;
@@ -1293,7 +1305,7 @@ namespace FaceShield.ViewModels.Pages
                 NmsThreshold = AutoNmsThreshold,
                 BlurRadius = BlurRadius,
                 DetectorBackend = (int)(SelectedAutoDetectorBackendOption?.Backend ?? FaceDetectorBackend.FaceOnnx),
-                ProcessingMode = (int)(SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Legacy),
+                ProcessingMode = (int)(SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Tracked),
                 YoloModelType = (int)activeYoloModelType,
                 YoloModelPath = activeYoloProfile.ModelPath,
                 YoloObjectnessThreshold = activeYoloProfile.ObjectnessThreshold,
@@ -2017,7 +2029,7 @@ namespace FaceShield.ViewModels.Pages
         private AutoMaskOptions BuildAutoOptions()
         {
             double ratio = SelectedDownscaleOption?.Ratio ?? 1.0;
-            var processingMode = SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Legacy;
+            var processingMode = SelectedAutoProcessingModeOption?.Mode ?? AutoMaskProcessingMode.Tracked;
             bool useTracking = processingMode switch
             {
                 AutoMaskProcessingMode.Raw => false,
