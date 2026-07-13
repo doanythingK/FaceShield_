@@ -35,29 +35,29 @@ public unsafe sealed class MaskedVideoExporter
         if (frame == null || frame->width <= 0 || frame->height <= 0)
             return false;
 
+        AVPixelFormat format = (AVPixelFormat)frame->format;
+        if (!TryGetNativeYuvLayout(format, out var layout))
+            return false;
+
         int width = frame->width;
         int height = frame->height;
-        int chromaWidth = (width + 1) / 2;
-        int chromaHeight = (height + 1) / 2;
-        AVPixelFormat format = (AVPixelFormat)frame->format;
-        return format switch
+        int chromaWidth = DivideRoundUp(width, layout.ChromaShiftX);
+        int chromaHeight = DivideRoundUp(height, layout.ChromaShiftY);
+        if (!IsValidPlane(frame->data[0], frame->linesize[0], width * layout.BytesPerSample, height))
+            return false;
+
+        if (layout.InterleavedChroma)
         {
-            AVPixelFormat.AV_PIX_FMT_YUV420P =>
-                IsValidPlane(frame->data[0], frame->linesize[0], width, height) &&
-                IsValidPlane(frame->data[1], frame->linesize[1], chromaWidth, chromaHeight) &&
-                IsValidPlane(frame->data[2], frame->linesize[2], chromaWidth, chromaHeight),
-            AVPixelFormat.AV_PIX_FMT_YUV420P10LE =>
-                IsValidPlane(frame->data[0], frame->linesize[0], width * 2, height) &&
-                IsValidPlane(frame->data[1], frame->linesize[1], chromaWidth * 2, chromaHeight) &&
-                IsValidPlane(frame->data[2], frame->linesize[2], chromaWidth * 2, chromaHeight),
-            AVPixelFormat.AV_PIX_FMT_NV12 =>
-                IsValidPlane(frame->data[0], frame->linesize[0], width, height) &&
-                IsValidPlane(frame->data[1], frame->linesize[1], chromaWidth * 2, chromaHeight),
-            AVPixelFormat.AV_PIX_FMT_P010LE =>
-                IsValidPlane(frame->data[0], frame->linesize[0], width * 2, height) &&
-                IsValidPlane(frame->data[1], frame->linesize[1], chromaWidth * 4, chromaHeight),
-            _ => false
-        };
+            return IsValidPlane(
+                frame->data[1],
+                frame->linesize[1],
+                chromaWidth * layout.BytesPerSample * 2,
+                chromaHeight);
+        }
+
+        int chromaRowBytes = chromaWidth * layout.BytesPerSample;
+        return IsValidPlane(frame->data[1], frame->linesize[1], chromaRowBytes, chromaHeight) &&
+               IsValidPlane(frame->data[2], frame->linesize[2], chromaRowBytes, chromaHeight);
     }
 
     public bool TryApplyFaceRectsAndBlurNative(
@@ -780,6 +780,47 @@ public unsafe sealed class MaskedVideoExporter
         return data != null && height > 0 && stride >= requiredRowBytes;
     }
 
+    private static int DivideRoundUp(int value, int shift)
+    {
+        int divisor = 1 << shift;
+        return (value + divisor - 1) >> shift;
+    }
+
+    private static bool TryGetNativeYuvLayout(AVPixelFormat format, out NativeYuvLayout layout)
+    {
+        layout = format switch
+        {
+            AVPixelFormat.AV_PIX_FMT_YUV420P => new(1, 0, 1, 1, false),
+            AVPixelFormat.AV_PIX_FMT_YUV422P => new(1, 0, 1, 0, false),
+            AVPixelFormat.AV_PIX_FMT_YUV444P => new(1, 0, 0, 0, false),
+
+            AVPixelFormat.AV_PIX_FMT_YUV420P9LE or
+            AVPixelFormat.AV_PIX_FMT_YUV420P10LE or
+            AVPixelFormat.AV_PIX_FMT_YUV420P12LE or
+            AVPixelFormat.AV_PIX_FMT_YUV420P14LE or
+            AVPixelFormat.AV_PIX_FMT_YUV420P16LE => new(2, 0, 1, 1, false),
+
+            AVPixelFormat.AV_PIX_FMT_YUV422P9LE or
+            AVPixelFormat.AV_PIX_FMT_YUV422P10LE or
+            AVPixelFormat.AV_PIX_FMT_YUV422P12LE or
+            AVPixelFormat.AV_PIX_FMT_YUV422P14LE or
+            AVPixelFormat.AV_PIX_FMT_YUV422P16LE => new(2, 0, 1, 0, false),
+
+            AVPixelFormat.AV_PIX_FMT_YUV444P9LE or
+            AVPixelFormat.AV_PIX_FMT_YUV444P10LE or
+            AVPixelFormat.AV_PIX_FMT_YUV444P12LE or
+            AVPixelFormat.AV_PIX_FMT_YUV444P14LE or
+            AVPixelFormat.AV_PIX_FMT_YUV444P16LE => new(2, 0, 0, 0, false),
+
+            AVPixelFormat.AV_PIX_FMT_NV12 => new(1, 0, 1, 1, true),
+            AVPixelFormat.AV_PIX_FMT_P010LE => new(2, 6, 1, 1, true),
+            AVPixelFormat.AV_PIX_FMT_P012LE => new(2, 4, 1, 1, true),
+            AVPixelFormat.AV_PIX_FMT_P016LE => new(2, 0, 1, 1, true),
+            _ => default
+        };
+        return layout.BytesPerSample != 0;
+    }
+
     private byte[] EnsureNativeAlpha(int size)
     {
         if (_nativeAlpha == null || _nativeAlpha.Length < size)
@@ -824,20 +865,18 @@ public unsafe sealed class MaskedVideoExporter
         int width = frame->width;
         int height = frame->height;
         AVPixelFormat format = (AVPixelFormat)frame->format;
-        int bytesPerSample = format is AVPixelFormat.AV_PIX_FMT_YUV420P10LE or AVPixelFormat.AV_PIX_FMT_P010LE
-            ? 2
-            : 1;
-        int valueShift = format == AVPixelFormat.AV_PIX_FMT_P010LE ? 6 : 0;
+        if (!TryGetNativeYuvLayout(format, out var layout))
+            return;
 
         ApplyNativePlane(
             frame->data[0],
             frame->linesize[0],
             width,
             height,
-            bytesPerSample,
-            bytesPerSample,
+            layout.BytesPerSample,
+            layout.BytesPerSample,
             0,
-            valueShift,
+            layout.ValueShift,
             rx0,
             ry0,
             rx1,
@@ -854,18 +893,18 @@ public unsafe sealed class MaskedVideoExporter
             baseRadius,
             chroma: false);
 
-        int chromaWidth = (width + 1) / 2;
-        int chromaHeight = (height + 1) / 2;
-        int chromaRx0 = rx0 / 2;
-        int chromaRy0 = ry0 / 2;
-        int chromaRx1 = (rx1 + 1) / 2;
-        int chromaRy1 = (ry1 + 1) / 2;
-        int chromaPx0 = px0 / 2;
-        int chromaPy0 = py0 / 2;
-        int chromaPx1 = (px1 + 1) / 2;
-        int chromaPy1 = (py1 + 1) / 2;
+        int chromaWidth = DivideRoundUp(width, layout.ChromaShiftX);
+        int chromaHeight = DivideRoundUp(height, layout.ChromaShiftY);
+        int chromaRx0 = rx0 >> layout.ChromaShiftX;
+        int chromaRy0 = ry0 >> layout.ChromaShiftY;
+        int chromaRx1 = DivideRoundUp(rx1, layout.ChromaShiftX);
+        int chromaRy1 = DivideRoundUp(ry1, layout.ChromaShiftY);
+        int chromaPx0 = px0 >> layout.ChromaShiftX;
+        int chromaPy0 = py0 >> layout.ChromaShiftY;
+        int chromaPx1 = DivideRoundUp(px1, layout.ChromaShiftX);
+        int chromaPy1 = DivideRoundUp(py1, layout.ChromaShiftY);
 
-        if (format is AVPixelFormat.AV_PIX_FMT_YUV420P or AVPixelFormat.AV_PIX_FMT_YUV420P10LE)
+        if (!layout.InterleavedChroma)
         {
             for (int plane = 1; plane <= 2; plane++)
             {
@@ -874,10 +913,10 @@ public unsafe sealed class MaskedVideoExporter
                     frame->linesize[(uint)plane],
                     chromaWidth,
                     chromaHeight,
-                    bytesPerSample,
-                    bytesPerSample,
+                    layout.BytesPerSample,
+                    layout.BytesPerSample,
                     0,
-                    0,
+                    layout.ValueShift,
                     chromaRx0,
                     chromaRy0,
                     chromaRx1,
@@ -893,6 +932,8 @@ public unsafe sealed class MaskedVideoExporter
                     radiusMapWidth,
                     baseRadius,
                     chroma: true,
+                    chromaShiftX: layout.ChromaShiftX,
+                    chromaShiftY: layout.ChromaShiftY,
                     lumaRx0: rx0,
                     lumaRy0: ry0,
                     lumaPx0: px0,
@@ -901,21 +942,23 @@ public unsafe sealed class MaskedVideoExporter
         }
         else
         {
-            int componentStride = bytesPerSample * 2;
+            int componentStride = layout.BytesPerSample * 2;
             ApplyNativePlane(
                 frame->data[1], frame->linesize[1], chromaWidth, chromaHeight,
-                bytesPerSample, componentStride, 0, valueShift,
+                layout.BytesPerSample, componentStride, 0, layout.ValueShift,
                 chromaRx0, chromaRy0, chromaRx1, chromaRy1,
                 chromaPx0, chromaPy0, chromaPx1, chromaPy1,
                 alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, baseRadius,
-                chroma: true, lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
+                chroma: true, chromaShiftX: layout.ChromaShiftX, chromaShiftY: layout.ChromaShiftY,
+                lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
             ApplyNativePlane(
                 frame->data[1], frame->linesize[1], chromaWidth, chromaHeight,
-                bytesPerSample, componentStride, bytesPerSample, valueShift,
+                layout.BytesPerSample, componentStride, layout.BytesPerSample, layout.ValueShift,
                 chromaRx0, chromaRy0, chromaRx1, chromaRy1,
                 chromaPx0, chromaPy0, chromaPx1, chromaPy1,
                 alpha, alphaWidth, alphaHeight, radiusMap, radiusMapWidth, baseRadius,
-                chroma: true, lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
+                chroma: true, chromaShiftX: layout.ChromaShiftX, chromaShiftY: layout.ChromaShiftY,
+                lumaRx0: rx0, lumaRy0: ry0, lumaPx0: px0, lumaPy0: py0);
         }
     }
 
@@ -943,6 +986,8 @@ public unsafe sealed class MaskedVideoExporter
         int radiusMapWidth,
         int baseRadius,
         bool chroma,
+        int chromaShiftX = 0,
+        int chromaShiftY = 0,
         int lumaRx0 = 0,
         int lumaRy0 = 0,
         int lumaPx0 = 0,
@@ -983,10 +1028,20 @@ public unsafe sealed class MaskedVideoExporter
             for (int x = rx0; x < rx1; x++)
             {
                 byte smooth;
-                int localRadius;
+                int localRadiusX;
+                int localRadiusY;
                 if (chroma)
                 {
-                    smooth = GetChromaAlpha(alpha, alphaWidth, alphaHeight, lumaRx0, lumaRy0, x, y);
+                    smooth = GetChromaAlpha(
+                        alpha,
+                        alphaWidth,
+                        alphaHeight,
+                        lumaRx0,
+                        lumaRy0,
+                        x,
+                        y,
+                        chromaShiftX,
+                        chromaShiftY);
                     int lumaRadius = GetChromaRadius(
                         radiusMap,
                         radiusMapWidth,
@@ -994,15 +1049,19 @@ public unsafe sealed class MaskedVideoExporter
                         lumaPy0,
                         x,
                         y,
-                        baseRadius);
-                    localRadius = Math.Max(1, (lumaRadius + 1) / 2);
+                        baseRadius,
+                        chromaShiftX,
+                        chromaShiftY);
+                    localRadiusX = Math.Max(1, DivideRoundUp(lumaRadius, chromaShiftX));
+                    localRadiusY = Math.Max(1, DivideRoundUp(lumaRadius, chromaShiftY));
                 }
                 else
                 {
                     smooth = alpha[(y - ry0) * alphaWidth + x - rx0];
                     int radiusIndex = (y - py0) * radiusMapWidth + x - px0;
                     int mappedRadius = radiusMap[radiusIndex];
-                    localRadius = mappedRadius > 0 ? mappedRadius : baseRadius;
+                    localRadiusX = mappedRadius > 0 ? mappedRadius : baseRadius;
+                    localRadiusY = localRadiusX;
                 }
 
                 if (smooth == 0)
@@ -1011,10 +1070,10 @@ public unsafe sealed class MaskedVideoExporter
                     continue;
                 }
 
-                int x0 = Math.Max(px0, x - localRadius);
-                int x1 = Math.Min(px1 - 1, x + localRadius);
-                int y0 = Math.Max(py0, y - localRadius);
-                int y1 = Math.Min(py1 - 1, y + localRadius);
+                int x0 = Math.Max(px0, x - localRadiusX);
+                int x1 = Math.Min(px1 - 1, x + localRadiusX);
+                int y0 = Math.Max(py0, y - localRadiusY);
+                int y1 = Math.Min(py1 - 1, y + localRadiusY);
                 int ix0 = x0 - px0;
                 int ix1 = x1 - px0;
                 int iy0 = y0 - py0;
@@ -1075,17 +1134,21 @@ public unsafe sealed class MaskedVideoExporter
         int lumaRx0,
         int lumaRy0,
         int chromaX,
-        int chromaY)
+        int chromaY,
+        int chromaShiftX,
+        int chromaShiftY)
     {
         byte best = 0;
-        int lumaX = chromaX * 2;
-        int lumaY = chromaY * 2;
-        for (int dy = 0; dy < 2; dy++)
+        int lumaX = chromaX << chromaShiftX;
+        int lumaY = chromaY << chromaShiftY;
+        int sampleWidth = 1 << chromaShiftX;
+        int sampleHeight = 1 << chromaShiftY;
+        for (int dy = 0; dy < sampleHeight; dy++)
         {
             int ay = lumaY + dy - lumaRy0;
             if (ay < 0 || ay >= alphaHeight)
                 continue;
-            for (int dx = 0; dx < 2; dx++)
+            for (int dx = 0; dx < sampleWidth; dx++)
             {
                 int ax = lumaX + dx - lumaRx0;
                 if (ax < 0 || ax >= alphaWidth)
@@ -1105,18 +1168,22 @@ public unsafe sealed class MaskedVideoExporter
         int lumaPy0,
         int chromaX,
         int chromaY,
-        int baseRadius)
+        int baseRadius,
+        int chromaShiftX,
+        int chromaShiftY)
     {
         int best = 0;
-        int lumaX = chromaX * 2;
-        int lumaY = chromaY * 2;
+        int lumaX = chromaX << chromaShiftX;
+        int lumaY = chromaY << chromaShiftY;
+        int sampleWidth = 1 << chromaShiftX;
+        int sampleHeight = 1 << chromaShiftY;
         int radiusMapHeight = radiusMapWidth == 0 ? 0 : radiusMap.Length / radiusMapWidth;
-        for (int dy = 0; dy < 2; dy++)
+        for (int dy = 0; dy < sampleHeight; dy++)
         {
             int ry = lumaY + dy - lumaPy0;
             if (ry < 0 || ry >= radiusMapHeight)
                 continue;
-            for (int dx = 0; dx < 2; dx++)
+            for (int dx = 0; dx < sampleWidth; dx++)
             {
                 int rx = lumaX + dx - lumaPx0;
                 if (rx < 0 || rx >= radiusMapWidth)
@@ -1128,6 +1195,13 @@ public unsafe sealed class MaskedVideoExporter
         }
         return best > 0 ? best : baseRadius;
     }
+
+    private readonly record struct NativeYuvLayout(
+        int BytesPerSample,
+        int ValueShift,
+        int ChromaShiftX,
+        int ChromaShiftY,
+        bool InterleavedChroma);
 
     private void EnsureIntegralBuffers(int width, int height)
     {

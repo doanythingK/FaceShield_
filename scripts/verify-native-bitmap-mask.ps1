@@ -42,8 +42,8 @@ unsafe
 {
     AppBuilder.Configure<App>().UsePlatformDetect().SetupWithoutStarting();
 
-    const int width = 32;
-    const int height = 24;
+    const int width = 33;
+    const int height = 25;
     using var mask = new WriteableBitmap(
         new PixelSize(width, height),
         new Vector(96, 96),
@@ -64,9 +64,34 @@ unsafe
 
     if (args.Length == 0)
     {
-        Verify(AVPixelFormat.AV_PIX_FMT_YUV420P10LE, p010: false);
-        Verify(AVPixelFormat.AV_PIX_FMT_P010LE, p010: true);
-        Console.WriteLine("[NativeBitmapMaskVerify] PASS formats=yuv420p10le,p010le outsideBitExact=true maskedChanged=true");
+        var formats = new (AVPixelFormat Format, int Bits, int ShiftX, int ShiftY, bool Interleaved, int ValueShift)[]
+        {
+            (AVPixelFormat.AV_PIX_FMT_YUV420P, 8, 1, 1, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV422P, 8, 1, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV444P, 8, 0, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV420P9LE, 9, 1, 1, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV420P10LE, 10, 1, 1, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV420P12LE, 12, 1, 1, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV420P14LE, 14, 1, 1, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV420P16LE, 16, 1, 1, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV422P9LE, 9, 1, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV422P10LE, 10, 1, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV422P12LE, 12, 1, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV422P14LE, 14, 1, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV422P16LE, 16, 1, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV444P9LE, 9, 0, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV444P10LE, 10, 0, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV444P12LE, 12, 0, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV444P14LE, 14, 0, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_YUV444P16LE, 16, 0, 0, false, 0),
+            (AVPixelFormat.AV_PIX_FMT_NV12, 8, 1, 1, true, 0),
+            (AVPixelFormat.AV_PIX_FMT_P010LE, 10, 1, 1, true, 6),
+            (AVPixelFormat.AV_PIX_FMT_P012LE, 12, 1, 1, true, 4),
+            (AVPixelFormat.AV_PIX_FMT_P016LE, 16, 1, 1, true, 0)
+        };
+        foreach (var item in formats)
+            Verify(item.Format, item.Bits, item.ShiftX, item.ShiftY, item.Interleaved, item.ValueShift);
+        Console.WriteLine($"[NativeBitmapMaskVerify] PASS formats={formats.Length} outsideBitExact=true maskedYuvChanged=true oddDimensions=true");
     }
 
     if (args.Length >= 4)
@@ -110,41 +135,58 @@ unsafe
         Console.WriteLine($"[NativeBitmapMaskE2E] PASS {summary.ToLogLine()}");
     }
 
-    void Verify(AVPixelFormat format, bool p010)
+    void Verify(
+        AVPixelFormat format,
+        int bits,
+        int chromaShiftX,
+        int chromaShiftY,
+        bool interleaved,
+        int valueShift)
     {
-        int chromaWidth = width / 2;
-        int chromaHeight = height / 2;
+        int bytesPerSample = bits > 8 ? 2 : 1;
+        int chromaWidth = (width + (1 << chromaShiftX) - 1) >> chromaShiftX;
+        int chromaHeight = (height + (1 << chromaShiftY) - 1) >> chromaShiftY;
         int ySamples = width * height;
         int chromaSamples = chromaWidth * chromaHeight;
-        ushort* yPlane = (ushort*)NativeMemory.Alloc((nuint)(ySamples * sizeof(ushort)));
-        ushort* uPlane = (ushort*)NativeMemory.Alloc((nuint)(chromaSamples * (p010 ? 2 : 1) * sizeof(ushort)));
-        ushort* vPlane = p010 ? null : (ushort*)NativeMemory.Alloc((nuint)(chromaSamples * sizeof(ushort)));
-        ushort* originalY = (ushort*)NativeMemory.Alloc((nuint)(ySamples * sizeof(ushort)));
+        byte* yPlane = (byte*)NativeMemory.Alloc((nuint)(ySamples * bytesPerSample));
+        byte* uPlane = (byte*)NativeMemory.Alloc((nuint)(chromaSamples * bytesPerSample * (interleaved ? 2 : 1)));
+        byte* vPlane = interleaved ? null : (byte*)NativeMemory.Alloc((nuint)(chromaSamples * bytesPerSample));
+        var originalY = new ushort[ySamples];
+        var originalU = new ushort[chromaSamples];
+        var originalV = new ushort[chromaSamples];
         try
         {
+            int maxValue = bits == 16 ? ushort.MaxValue : (1 << bits) - 1;
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    int value = 80 + ((x * 17 + y * 29) % 850);
-                    ushort stored = (ushort)(p010 ? value << 6 : value);
-                    yPlane[y * width + x] = stored;
-                    originalY[y * width + x] = stored;
+                    int value = 16 + ((x * x * 17 + y * y * 29 + x * y * 7) % Math.Max(1, maxValue - 16));
+                    int index = y * width + x;
+                    WriteSample(yPlane + index * bytesPerSample, bytesPerSample, valueShift, value);
+                    originalY[index] = (ushort)value;
                 }
             }
-            for (int i = 0; i < chromaSamples; i++)
+            for (int y = 0; y < chromaHeight; y++)
             {
-                int u = 100 + (i * 13 % 800);
-                int v = 120 + (i * 19 % 780);
-                if (p010)
+                for (int x = 0; x < chromaWidth; x++)
                 {
-                    uPlane[i * 2] = (ushort)(u << 6);
-                    uPlane[i * 2 + 1] = (ushort)(v << 6);
-                }
-                else
-                {
-                    uPlane[i] = (ushort)u;
-                    vPlane![i] = (ushort)v;
+                    int index = y * chromaWidth + x;
+                    int u = 16 + ((x * x * 13 + y * y * 23 + x * y * 5) % Math.Max(1, maxValue - 16));
+                    int v = 16 + ((x * x * 19 + y * y * 31 + x * y * 11) % Math.Max(1, maxValue - 16));
+                    if (interleaved)
+                    {
+                        byte* sample = uPlane + index * bytesPerSample * 2;
+                        WriteSample(sample, bytesPerSample, valueShift, u);
+                        WriteSample(sample + bytesPerSample, bytesPerSample, valueShift, v);
+                    }
+                    else
+                    {
+                        WriteSample(uPlane + index * bytesPerSample, bytesPerSample, valueShift, u);
+                        WriteSample(vPlane + index * bytesPerSample, bytesPerSample, valueShift, v);
+                    }
+                    originalU[index] = (ushort)u;
+                    originalV[index] = (ushort)v;
                 }
             }
 
@@ -152,16 +194,18 @@ unsafe
             frame.width = width;
             frame.height = height;
             frame.format = (int)format;
-            frame.data[0] = (byte*)yPlane;
-            frame.linesize[0] = width * 2;
-            frame.data[1] = (byte*)uPlane;
-            frame.linesize[1] = p010 ? chromaWidth * 4 : chromaWidth * 2;
-            if (!p010)
+            frame.data[0] = yPlane;
+            frame.linesize[0] = width * bytesPerSample;
+            frame.data[1] = uPlane;
+            frame.linesize[1] = chromaWidth * bytesPerSample * (interleaved ? 2 : 1);
+            if (!interleaved)
             {
-                frame.data[2] = (byte*)vPlane;
-                frame.linesize[2] = chromaWidth * 2;
+                frame.data[2] = vPlane;
+                frame.linesize[2] = chromaWidth * bytesPerSample;
             }
 
+            if (!MaskedVideoExporter.CanApplyNativeYuv(&frame))
+                throw new InvalidOperationException($"Native layout was rejected for {format}.");
             var exporter = new MaskedVideoExporter();
             if (!exporter.TryApplyMaskAndBlurNative(&frame, mask, blurRadius: 4))
                 throw new InvalidOperationException($"Native mask was not applied for {format}.");
@@ -173,14 +217,41 @@ unsafe
                 {
                     int index = y * width + x;
                     bool inside = x >= 10 && x < 22 && y >= 8 && y < 16;
-                    if (!inside && yPlane[index] != originalY[index])
+                    int actual = ReadSample(yPlane + index * bytesPerSample, bytesPerSample, valueShift);
+                    if (!inside && actual != originalY[index])
                         throw new InvalidOperationException($"Unmasked luma changed for {format} at {x},{y}.");
-                    if (inside && yPlane[index] != originalY[index])
+                    if (inside && actual != originalY[index])
                         changedInside++;
                 }
             }
             if (changedInside == 0)
                 throw new InvalidOperationException($"Masked luma did not change for {format}.");
+
+            int chromaX0 = 10 >> chromaShiftX;
+            int chromaY0 = 8 >> chromaShiftY;
+            int chromaX1 = (22 + (1 << chromaShiftX) - 1) >> chromaShiftX;
+            int chromaY1 = (16 + (1 << chromaShiftY) - 1) >> chromaShiftY;
+            int changedChroma = 0;
+            for (int y = 0; y < chromaHeight; y++)
+            {
+                for (int x = 0; x < chromaWidth; x++)
+                {
+                    int index = y * chromaWidth + x;
+                    byte* uSample = uPlane + index * bytesPerSample * (interleaved ? 2 : 1);
+                    byte* vSample = interleaved
+                        ? uSample + bytesPerSample
+                        : vPlane + index * bytesPerSample;
+                    int actualU = ReadSample(uSample, bytesPerSample, valueShift);
+                    int actualV = ReadSample(vSample, bytesPerSample, valueShift);
+                    bool inside = x >= chromaX0 && x < chromaX1 && y >= chromaY0 && y < chromaY1;
+                    if (!inside && (actualU != originalU[index] || actualV != originalV[index]))
+                        throw new InvalidOperationException($"Unmasked chroma changed for {format} at {x},{y}.");
+                    if (inside && (actualU != originalU[index] || actualV != originalV[index]))
+                        changedChroma++;
+                }
+            }
+            if (changedChroma == 0)
+                throw new InvalidOperationException($"Masked chroma did not change for {format}.");
         }
         finally
         {
@@ -188,8 +259,18 @@ unsafe
             NativeMemory.Free(uPlane);
             if (vPlane != null)
                 NativeMemory.Free(vPlane);
-            NativeMemory.Free(originalY);
         }
+    }
+
+    static int ReadSample(byte* sample, int bytesPerSample, int valueShift) =>
+        bytesPerSample == 1 ? sample[0] : (*(ushort*)sample) >> valueShift;
+
+    static void WriteSample(byte* sample, int bytesPerSample, int valueShift, int value)
+    {
+        if (bytesPerSample == 1)
+            sample[0] = (byte)value;
+        else
+            *(ushort*)sample = (ushort)(value << valueShift);
     }
 }
 '@ | Set-Content -Encoding UTF8 $program
