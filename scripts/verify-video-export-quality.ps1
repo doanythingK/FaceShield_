@@ -405,6 +405,32 @@ function Test-KnownMetadata {
         $Value -notin @("unknown", "unspecified", "reserved", "N/A")
 }
 
+function Get-VideoRotation {
+    param([object]$Video)
+
+    foreach ($sideData in @($Video.side_data_list)) {
+        $rotationText = Get-PropertyText $sideData "rotation" ""
+        if (-not [string]::IsNullOrWhiteSpace($rotationText)) {
+            $rotation = Convert-ToDouble $rotationText
+            if (-not [double]::IsNaN($rotation)) {
+                return [Math]::Round($rotation, 6)
+            }
+        }
+    }
+
+    if ($null -ne $Video.tags) {
+        $tagRotation = Get-PropertyText $Video.tags "rotate" ""
+        if (-not [string]::IsNullOrWhiteSpace($tagRotation)) {
+            $rotation = Convert-ToDouble $tagRotation
+            if (-not [double]::IsNaN($rotation)) {
+                return [Math]::Round($rotation, 6)
+            }
+        }
+    }
+
+    return 0.0
+}
+
 $source = Resolve-RepoPath $SourcePath
 $output = Resolve-RepoPath $OutputPath
 $ffprobe = Resolve-Tool $FfprobePath "ffprobe"
@@ -450,6 +476,11 @@ $sarPassed = if ([double]::IsNaN($sourceSar)) {
 }
 Add-Check "sample-aspect-ratio" $sarPassed $sourceSarText $outputSarText `
     "equal; an unspecified source SAR may become explicit 1:1"
+
+$sourceRotation = Get-VideoRotation $sourceVideo
+$outputRotation = Get-VideoRotation $outputVideo
+Add-Check "video-display-rotation" ([Math]::Abs($sourceRotation - $outputRotation) -le 0.000001) `
+    (Format-Number $sourceRotation) (Format-Number $outputRotation) "equal"
 
 $sourceFps = Get-FrameRate $sourceVideo
 $outputFps = Get-FrameRate $outputVideo

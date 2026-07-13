@@ -2021,6 +2021,7 @@ public unsafe sealed class VideoExportService
                     frame->height,
                     encFrame->data,
                     encFrame->linesize));
+                CopyFrameEncodingProperties(frame, encFrame);
                 tNativeSws.Stop();
                 swsToEncMs += tNativeSws.ElapsedMilliseconds;
                 nativeYuvFrame = encFrame;
@@ -2107,6 +2108,7 @@ public unsafe sealed class VideoExportService
                 bgra->height,
                 encFrame->data,
                 encFrame->linesize));
+            CopyFrameEncodingProperties(frame, encFrame);
             tEncSws.Stop();
             swsToEncMs += tEncSws.ElapsedMilliseconds;
 
@@ -2158,6 +2160,7 @@ public unsafe sealed class VideoExportService
                     frame->height,
                     encFrame->data,
                     encFrame->linesize));
+                CopyFrameEncodingProperties(frame, encFrame);
                 tEncSws.Stop();
                 swsToEncMs += tEncSws.ElapsedMilliseconds;
 
@@ -3680,6 +3683,22 @@ public unsafe sealed class VideoExportService
             : 0;
     }
 
+    private static unsafe void CopyFrameEncodingProperties(AVFrame* source, AVFrame* destination)
+    {
+        if (source == null || destination == null || source == destination)
+            return;
+
+        while (destination->nb_side_data > 0 && destination->side_data != null)
+        {
+            AVFrameSideData* sideData = destination->side_data[0];
+            if (sideData == null)
+                break;
+            ffmpeg.av_frame_remove_side_data(destination, sideData->type);
+        }
+        ffmpeg.av_dict_free(&destination->metadata);
+        Throw(ffmpeg.av_frame_copy_props(destination, source));
+    }
+
     private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)
     {
         if (source == null || output == null)
@@ -3690,6 +3709,68 @@ public unsafe sealed class VideoExportService
         output->sample_aspect_ratio = source->sample_aspect_ratio;
         output->disposition = source->disposition;
         ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0);
+        CopyCodecPresentationSideData(source->codecpar, output->codecpar);
+    }
+
+    private static unsafe void CopyCodecPresentationSideData(
+        AVCodecParameters* source,
+        AVCodecParameters* output)
+    {
+        if (source == null ||
+            output == null ||
+            source->coded_side_data == null ||
+            source->nb_coded_side_data <= 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < source->nb_coded_side_data; i++)
+        {
+            AVPacketSideData* sourceSideData = source->coded_side_data + i;
+            if (sourceSideData == null ||
+                sourceSideData->data == null ||
+                sourceSideData->size == 0 ||
+                !IsPresentationSideData(sourceSideData->type))
+            {
+                continue;
+            }
+
+            ffmpeg.av_packet_side_data_remove(
+                output->coded_side_data,
+                &output->nb_coded_side_data,
+                sourceSideData->type);
+            ulong sourceSize = (ulong)sourceSideData->size;
+            AVPacketSideData* outputSideData = ffmpeg.av_packet_side_data_new(
+                &output->coded_side_data,
+                &output->nb_coded_side_data,
+                sourceSideData->type,
+                sourceSize,
+                0);
+            if (outputSideData == null || outputSideData->data == null)
+            {
+                throw new InvalidOperationException(
+                    $"스트림 부가정보({sourceSideData->type})를 복사할 수 없습니다.");
+            }
+
+            Buffer.MemoryCopy(
+                sourceSideData->data,
+                outputSideData->data,
+                checked((long)sourceSize),
+                checked((long)sourceSize));
+        }
+    }
+
+    private static bool IsPresentationSideData(AVPacketSideDataType type)
+    {
+        return type is
+            AVPacketSideDataType.AV_PKT_DATA_DISPLAYMATRIX or
+            AVPacketSideDataType.AV_PKT_DATA_STEREO3D or
+            AVPacketSideDataType.AV_PKT_DATA_MASTERING_DISPLAY_METADATA or
+            AVPacketSideDataType.AV_PKT_DATA_SPHERICAL or
+            AVPacketSideDataType.AV_PKT_DATA_CONTENT_LIGHT_LEVEL or
+            AVPacketSideDataType.AV_PKT_DATA_ICC_PROFILE or
+            AVPacketSideDataType.AV_PKT_DATA_DYNAMIC_HDR10_PLUS or
+            AVPacketSideDataType.AV_PKT_DATA_AMBIENT_VIEWING_ENVIRONMENT;
     }
 
     private static unsafe bool TryInitAudioTranscode(
