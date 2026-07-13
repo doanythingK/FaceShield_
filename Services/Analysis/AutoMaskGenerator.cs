@@ -361,34 +361,9 @@ namespace FaceShield.Services.Analysis
                         shouldDetect = true;
                         forceDetectAfterSceneCut = true;
                         lastFaces = null;
-
-                        int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
-                        int clearStart = Math.Max(0, idx - OffModeSceneCutCarryClearFrames);
-                        int clearEnd = Math.Min(totalFrames, idx + clearRadius + OffModeSceneCutCarryClearFrames + 1);
-                            int clearBeforeStart = clearStart;
-                            int clearBeforeEnd = Math.Min(totalFrames, idx);
-                            int clearAfterStart = idx;
-                            int clearAfterEnd = clearEnd;
-                            int removedBefore = 0;
-                            int removedAfter = 0;
-                            int clearBeforeFrameCount = Math.Max(0, clearBeforeEnd - clearBeforeStart);
-                            int clearAfterFrameCount = Math.Max(0, clearAfterEnd - clearAfterStart);
-                            if (clearBeforeFrameCount > 0)
-                            {
-                                removedBefore = _maskProvider.RemoveFaceMasksRange(clearBeforeStart, clearBeforeEnd);
-                                offModeSceneCutResetRemovedBeforeFrameCount += removedBefore;
-                                offModeSceneCutResetBeforeWindowFrameCount += clearBeforeFrameCount;
-                            }
-                            if (clearAfterFrameCount > 0)
-                            {
-                                removedAfter = _maskProvider.RemoveFaceMasksRange(clearAfterStart, clearAfterEnd);
-                                offModeSceneCutResetRemovedAfterFrameCount += removedAfter;
-                                offModeSceneCutResetAfterWindowFrameCount += clearAfterFrameCount;
-                            }
-                            offModeSceneCutResetPairs++;
-                            offModeSceneCutResetRemovedFrameCount += removedBefore + removedAfter;
-                            Debug.WriteLine(
-                                $"[AutoMask] scene-cut reset idx={idx} clearFrom={clearStart} clearTo={clearEnd} removed={removedBefore + removedAfter} removedBefore={removedBefore} removedAfter={removedAfter} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off");
+                        offModeSceneCutResetPairs++;
+                        Debug.WriteLine(
+                            $"[AutoMask] scene-cut tracking reset idx={idx} preservedMasks=true diff={ComputeSignatureDifference(currentSceneSignature, previousSceneSignature):0.###} phase=off");
                     }
 
                     previousSceneSignature = currentSceneSignature;
@@ -760,17 +735,12 @@ namespace FaceShield.Services.Analysis
             var writer = Task.Run(() =>
             {
                 double[]? previousSceneSignature = null;
-                int sceneCutClearUntilExclusive = int.MinValue;
-                int lastSceneCutFrame = -1;
 
                 foreach (var result in results.GetConsumingEnumerable())
                 {
                     if (ct.IsCancellationRequested)
                         break;
 
-                    bool isSceneCut = false;
-                    int clearStart = 0;
-                    int clearEnd = 0;
                     if (applyOffModeSceneCutReset &&
                         previousSceneSignature != null &&
                         result.FrameSignature.Length > 0 &&
@@ -779,36 +749,9 @@ namespace FaceShield.Services.Analysis
                         double diff = ComputeSignatureDifference(result.FrameSignature, previousSceneSignature);
                         if (diff >= OffModeSceneCutSignatureDiffThreshold)
                         {
-                            isSceneCut = true;
-                            int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
-                            clearStart = Math.Max(0, result.Index - OffModeSceneCutCarryClearFrames);
-                            clearEnd = Math.Min(totalFrames, result.Index + clearRadius + OffModeSceneCutCarryClearFrames + 1);
-                            int clearBeforeStart = clearStart;
-                            int clearBeforeEnd = Math.Min(totalFrames, result.Index);
-                            int clearAfterStart = result.Index;
-                            int clearAfterEnd = clearEnd;
-                            int removedBefore = 0;
-                            int removedAfter = 0;
-                            int clearBeforeFrameCount = Math.Max(0, clearBeforeEnd - clearBeforeStart);
-                            int clearAfterFrameCount = Math.Max(0, clearAfterEnd - clearAfterStart);
-                            if (clearBeforeFrameCount > 0)
-                            {
-                                removedBefore = _maskProvider.RemoveFaceMasksRange(clearBeforeStart, clearBeforeEnd);
-                                offModeSceneCutResetRemovedBeforeFrameCount += removedBefore;
-                                offModeSceneCutResetBeforeWindowFrameCount += clearBeforeFrameCount;
-                            }
-                            if (clearAfterFrameCount > 0)
-                            {
-                                removedAfter = _maskProvider.RemoveFaceMasksRange(clearAfterStart, clearAfterEnd);
-                                offModeSceneCutResetRemovedAfterFrameCount += removedAfter;
-                                offModeSceneCutResetAfterWindowFrameCount += clearAfterFrameCount;
-                            }
                             offModeSceneCutResetPairs++;
-                            offModeSceneCutResetRemovedFrameCount += removedBefore + removedAfter;
-                            sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
-                            lastSceneCutFrame = result.Index;
                             Debug.WriteLine(
-                                $"[AutoMask] scene-cut reset idx={result.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removedBefore + removedAfter} removedBefore={removedBefore} removedAfter={removedAfter} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe");
+                                $"[AutoMask] scene-cut detected idx={result.Index} preservedMasks=true diff={diff:0.###} phase=off-pipe");
                         }
                     }
 
@@ -817,10 +760,7 @@ namespace FaceShield.Services.Analysis
 
                     onFrameProcessed?.Invoke(result.Index);
 
-                    bool shouldWrite = !(!isSceneCut
-                        && result.Index > lastSceneCutFrame
-                        && result.Index < sceneCutClearUntilExclusive);
-                    if (shouldWrite && result.Bounds.Length > 0)
+                    if (result.Bounds.Length > 0)
                     {
                         _maskProvider.SetFaceRects(
                             result.Index,
@@ -1296,8 +1236,6 @@ namespace FaceShield.Services.Analysis
                 var orderedResults = new Dictionary<int, DetectionResult>();
                 int nextFrameToWrite = start;
                 double[]? previousSceneSignature = null;
-                int sceneCutClearUntilExclusive = int.MinValue;
-                int lastSceneCutFrame = -1;
 
                 foreach (var result in results.GetConsumingEnumerable())
                 {
@@ -1310,9 +1248,6 @@ namespace FaceShield.Services.Analysis
                     {
                         orderedResults.Remove(nextFrameToWrite);
 
-                        bool isSceneCut = false;
-                        int clearStart = 0;
-                        int clearEnd = 0;
                         if (applyOffModeSceneCutReset &&
                             previousSceneSignature != null &&
                             orderedResult.FrameSignature.Length > 0 &&
@@ -1321,36 +1256,9 @@ namespace FaceShield.Services.Analysis
                             double diff = ComputeSignatureDifference(orderedResult.FrameSignature, previousSceneSignature);
                             if (diff >= OffModeSceneCutSignatureDiffThreshold)
                             {
-                                isSceneCut = true;
-                                int clearRadius = Math.Max(0, _options.DetectEveryNFrames);
-                                clearStart = Math.Max(0, orderedResult.Index - OffModeSceneCutCarryClearFrames);
-                                clearEnd = Math.Min(totalFrames, orderedResult.Index + clearRadius + OffModeSceneCutCarryClearFrames + 1);
-                            int clearBeforeStart = clearStart;
-                            int clearBeforeEnd = Math.Min(totalFrames, orderedResult.Index);
-                            int clearAfterStart = orderedResult.Index;
-                            int clearAfterEnd = clearEnd;
-                            int removedBefore = 0;
-                            int removedAfter = 0;
-                            int clearBeforeFrameCount = Math.Max(0, clearBeforeEnd - clearBeforeStart);
-                            int clearAfterFrameCount = Math.Max(0, clearAfterEnd - clearAfterStart);
-                            if (clearBeforeFrameCount > 0)
-                            {
-                                removedBefore = _maskProvider.RemoveFaceMasksRange(clearBeforeStart, clearBeforeEnd);
-                                offModeSceneCutResetRemovedBeforeFrameCount += removedBefore;
-                                offModeSceneCutResetBeforeWindowFrameCount += clearBeforeFrameCount;
-                            }
-                            if (clearAfterFrameCount > 0)
-                            {
-                                removedAfter = _maskProvider.RemoveFaceMasksRange(clearAfterStart, clearAfterEnd);
-                                offModeSceneCutResetRemovedAfterFrameCount += removedAfter;
-                                offModeSceneCutResetAfterWindowFrameCount += clearAfterFrameCount;
-                            }
-                            offModeSceneCutResetPairs++;
-                            offModeSceneCutResetRemovedFrameCount += removedBefore + removedAfter;
-                            sceneCutClearUntilExclusive = Math.Max(sceneCutClearUntilExclusive, clearEnd);
-                            lastSceneCutFrame = orderedResult.Index;
-                            Debug.WriteLine(
-                                $"[AutoMask] scene-cut reset idx={orderedResult.Index} clearFrom={clearStart} clearTo={clearEnd} removed={removedBefore + removedAfter} removedBefore={removedBefore} removedAfter={removedAfter} clearRadius={clearRadius} offModeRadius={OffModeSceneCutCarryClearFrames} diff={diff:0.###} rebuildBefore={clearBeforeStart}:{clearBeforeEnd} rebuildAfter={clearAfterStart}:{clearAfterEnd} phase=off-pipe-parallel");
+                                offModeSceneCutResetPairs++;
+                                Debug.WriteLine(
+                                    $"[AutoMask] scene-cut detected idx={orderedResult.Index} preservedMasks=true diff={diff:0.###} phase=off-pipe-parallel");
                             }
                         }
 
@@ -1358,20 +1266,14 @@ namespace FaceShield.Services.Analysis
                             previousSceneSignature = orderedResult.FrameSignature;
 
                         onFrameProcessed?.Invoke(orderedResult.Index);
-                        bool shouldWrite = !(!isSceneCut
-                            && orderedResult.Index > lastSceneCutFrame
-                            && orderedResult.Index < sceneCutClearUntilExclusive);
-                        if (shouldWrite)
+                        if (orderedResult.Bounds.Length > 0)
                         {
-                            if (orderedResult.Bounds.Length > 0)
-                            {
-                                _maskProvider.SetFaceRects(
-                                    orderedResult.Index,
-                                    orderedResult.Bounds,
-                                    orderedResult.Size,
-                                    orderedResult.MinConfidence,
-                                    orderedResult.Confidences);
-                            }
+                            _maskProvider.SetFaceRects(
+                                orderedResult.Index,
+                                orderedResult.Bounds,
+                                orderedResult.Size,
+                                orderedResult.MinConfidence,
+                                orderedResult.Confidences);
                         }
 
                         ReportProgress(progress, orderedResult.Index, totalFrames, progressState);
