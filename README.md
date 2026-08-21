@@ -41,5 +41,21 @@ macOS는 서명되지 않은 앱을 차단할 수 있습니다. 아래 절차로
 실행 중 오류 로그를 확인하려면:
 - `macos-run-log.command`를 더블클릭해 실행하면 `macos-run.log`에 로그가 저장됩니다.
 
+YOLO 자동 모자이크를 macOS에서 사용하려면 앱을 실행한 뒤 홈 화면에서 `YOLO Face ONNX`를 선택하고 모델을 다운로드하거나 `.onnx` 파일을 지정하면 됩니다. 모델 추론은 macOS에서도 동일한 ONNX 경로를 사용하며, CoreML은 선택적으로 켤 수 있고 초기화에 실패하면 CPU로 자동 전환됩니다.
+
+배포 대상을 직접 만들 때는 Mac 아키텍처에 맞는 FFmpeg 라이브러리를 먼저 준비합니다.
+
+```bash
+# Apple Silicon
+brew install ffmpeg libomp srt
+bash scripts/prepare-ffmpeg-osx.sh osx-arm64
+dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true
+
+# Intel Mac
+brew install ffmpeg libomp srt
+bash scripts/prepare-ffmpeg-osx.sh osx-x64
+dotnet publish FaceShield.csproj -c Release -r osx-x64 --self-contained true
+```
+
 ## 향후 기능 메모
 - 유튜버용 등록 인물 제외, 자동 완료 후 많이 등장한 사람별 블러 선택 기능은 `FUTURE_FEATURE_ROADMAP.md`에 정리되어 있습니다.

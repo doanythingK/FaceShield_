@@ -2,7 +2,27 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out_dir="$root_dir/FFmpeg/osx-arm64"
+runtime_id="${1:-}"
+if [[ -z "$runtime_id" ]]; then
+  case "$(uname -m)" in
+    arm64|aarch64) runtime_id="osx-arm64" ;;
+    x86_64|amd64) runtime_id="osx-x64" ;;
+    *)
+      echo "Unsupported macOS architecture: $(uname -m)"
+      exit 1
+      ;;
+  esac
+fi
+
+case "$runtime_id" in
+  osx-arm64|osx-x64) ;;
+  *)
+    echo "Usage: $0 [osx-arm64|osx-x64]"
+    exit 1
+    ;;
+esac
+
+out_dir="$root_dir/FFmpeg/$runtime_id"
 
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew is required. Install it first: https://brew.sh/"

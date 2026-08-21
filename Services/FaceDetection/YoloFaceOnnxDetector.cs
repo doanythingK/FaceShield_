@@ -52,6 +52,11 @@ namespace FaceShield.Services.FaceDetection
             if (!File.Exists(_options.ModelPath))
                 throw new FileNotFoundException("YOLO face ONNX model was not found.", _options.ModelPath);
 
+            // FaceONNX와 달리 YOLO는 별도 factory 경로에서 생성되므로 macOS의
+            // bundled ONNX Runtime/libomp 의존성을 동일하게 사전 검증한다.
+            if (OperatingSystem.IsMacOS())
+                FaceOnnxDetector.EnsureRuntimeAvailable();
+
             using var sessionOptions = CreateSessionOptions();
             string? gpuProvider = null;
             bool shouldTryGpu = _options.UseGpu &&

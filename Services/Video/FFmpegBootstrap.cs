@@ -155,7 +155,11 @@ namespace FaceShield.Services.Video
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 return "win-x64";
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                return "osx-arm64";
+            {
+                return RuntimeInformation.ProcessArchitecture == Architecture.X64
+                    ? "osx-x64"
+                    : "osx-arm64";
+            }
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 return "linux-x64";
             return null;

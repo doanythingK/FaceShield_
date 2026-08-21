@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
 
     <!-- ✅ 지원할 런타임 목록 (실제 선택은 publish/run 시점에 -r 로 지정) -->
-    <RuntimeIdentifiers>win-x64;osx-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>win-x64;osx-arm64;osx-x64</RuntimeIdentifiers>
     <RuntimeIdentifier Condition="'$(OS)' == 'Windows_NT'">win-x64</RuntimeIdentifier>
 
     <PublishTrimmed>false</PublishTrimmed>
@@ -38,7 +38,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(PublishDir)' != '' and '$(RuntimeIdentifier)' == 'osx-arm64'">
+  <PropertyGroup Condition="'$(PublishDir)' != '' and ('$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64')">
     <PublishSingleFile>false</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
@@ -72,9 +72,9 @@
     <PackageReference Include="FaceONNX" Version="4.1.1.3" />
     <PackageReference Include="FaceONNX.Addons" Version="4.1.1.3" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
-    <!-- macOS/기타: CPU/CoreML용. Windows에서 osx-arm64 cross-publish 할 때도 이 패키지를 사용한다. -->
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' or ('$(RuntimeIdentifier)' != 'win-x64' and '$(OS)' != 'Windows_NT')" />
-    <!-- Windows: DirectML 빌드 사용. osx-arm64 cross-publish에는 포함하지 않는다. -->
+    <!-- macOS/기타: CPU/CoreML용. Windows에서 macOS RID로 cross-publish 할 때도 이 패키지를 사용한다. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64' or ('$(RuntimeIdentifier)' != 'win-x64' and '$(OS)' != 'Windows_NT')" />
+    <!-- Windows: DirectML 빌드 사용. macOS cross-publish에는 포함하지 않는다. -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" Condition="'$(RuntimeIdentifier)' == 'win-x64' or ('$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT')" />
     <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.4" Condition="'$(RuntimeIdentifier)' == 'win-x64' or ('$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT')" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.9" Condition="'$(Configuration)' == 'Debug'" />
@@ -154,15 +154,15 @@
     </None>
   </ItemGroup>
 
-  <!-- 🔹 macOS 배포: osx-arm64 publish 시 FFmpeg dylib 포함 -->
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
-    <None Include="FFmpeg\osx-arm64\*.dylib" Link="%(Filename)%(Extension)">
+  <!-- 🔹 macOS 배포: Apple Silicon/Intel 모두 동일한 FFmpeg·ONNX 경로 사용 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64'">
+    <None Include="FFmpeg\$(RuntimeIdentifier)\*.dylib" Link="%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
 
     <!-- Avalonia native dylib (macOS) -->
-    <None Include="$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\osx-arm64\native\libAvaloniaNative.dylib" Condition="Exists('$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\osx-arm64\native\libAvaloniaNative.dylib')" Link="libAvalonia.Native.OSX.dylib">
+    <None Include="$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\$(RuntimeIdentifier)\native\libAvaloniaNative.dylib" Condition="Exists('$(NuGetPackageRoot)avalonia.native\11.3.9\runtimes\$(RuntimeIdentifier)\native\libAvaloniaNative.dylib')" Link="libAvalonia.Native.OSX.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
@@ -172,15 +172,15 @@
     </None>
 
     <!-- ONNX Runtime 네이티브 라이브러리 포함 -->
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime.dylib')" Link="libonnxruntime.dylib">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\$(RuntimeIdentifier)\native\libonnxruntime.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\$(RuntimeIdentifier)\native\libonnxruntime.dylib')" Link="libonnxruntime.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_shared.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_shared.dylib')" Link="libonnxruntime_providers_shared.dylib">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\$(RuntimeIdentifier)\native\libonnxruntime_providers_shared.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\$(RuntimeIdentifier)\native\libonnxruntime_providers_shared.dylib')" Link="libonnxruntime_providers_shared.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\osx-arm64\native\libonnxruntime_providers_coreml.dylib')" Link="libonnxruntime_providers_coreml.dylib">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\$(RuntimeIdentifier)\native\libonnxruntime_providers_coreml.dylib" Condition="Exists('$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.23.2\runtimes\$(RuntimeIdentifier)\native\libonnxruntime_providers_coreml.dylib')" Link="libonnxruntime_providers_coreml.dylib">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
@@ -196,12 +196,12 @@
     </None>
   </ItemGroup>
 
-  <Target Name="RemoveWindowsOnnxRuntimeFromOsxPublish" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
+  <Target Name="RemoveWindowsOnnxRuntimeFromOsxPublish" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64'">
     <Delete Files="$(PublishDir)onnxruntime.dll;$(PublishDir)onnxruntime_providers_shared.dll" />
   </Target>
 
-  <Target Name="WarnWhenLibompIsMissingFromOsxPublish" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' and !Exists('$(PublishDir)libomp.dylib')">
-    <Warning Text="libomp.dylib was not bundled in the osx-arm64 publish output. Install libomp on the target Mac with 'brew install libomp' or build on a Mac with Homebrew libomp available so it can be copied." />
+  <Target Name="WarnWhenLibompIsMissingFromOsxPublish" AfterTargets="Publish" Condition="('$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64') and !Exists('$(PublishDir)libomp.dylib')">
+    <Warning Text="libomp.dylib was not bundled in the macOS publish output. Install libomp on the target Mac with 'brew install libomp' or build on a Mac with Homebrew libomp available so it can be copied." />
   </Target>
 
 </Project>

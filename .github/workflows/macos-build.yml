@@ -9,7 +9,14 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            rid: osx-arm64
+          - runner: macos-15-intel
+            rid: osx-x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,17 +39,17 @@ jobs:
         run: brew install ffmpeg libomp srt
 
       - name: Prepare FFmpeg dylibs
-        run: bash scripts/prepare-ffmpeg-osx.sh
+        run: bash scripts/prepare-ffmpeg-osx.sh "${{ matrix.rid }}"
 
       - name: Restore
         run: dotnet restore
 
       - name: Publish macOS app (self-contained)
-        run: dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true
+        run: dotnet publish FaceShield.csproj -c Release -r "${{ matrix.rid }}" --self-contained true
 
       - name: Verify FFmpeg dylib dependencies (otool)
         run: |
-          FFMPEG_DIR="FFmpeg/osx-arm64"
+          FFMPEG_DIR="FFmpeg/${{ matrix.rid }}"
           if [ -d "$FFMPEG_DIR" ]; then
             for lib in "$FFMPEG_DIR"/libavformat.dylib "$FFMPEG_DIR"/libavcodec.dylib "$FFMPEG_DIR"/libavutil.dylib; do
               if [ -f "$lib" ]; then
@@ -76,7 +83,7 @@ jobs:
       - name: Prepare .app bundle
         run: |
           APP_NAME="FaceShield"
-          OUT_DIR="bin/Release/net8.0/osx-arm64/publish"
+          OUT_DIR="bin/Release/net8.0/${{ matrix.rid }}/publish"
           APP_PATH="$OUT_DIR/$APP_NAME.app"
 
           if [ ! -d "$APP_PATH" ]; then
@@ -118,9 +125,9 @@ jobs:
 
       - name: Collect dylibs into app bundle
         run: |
-          APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
+          APP_PATH="bin/Release/net8.0/${{ matrix.rid }}/publish/FaceShield.app"
           if [ -d "$APP_PATH" ]; then
-            bash scripts/collect-macos-dylibs.sh "$APP_PATH"
+            bash scripts/collect-macos-dylibs.sh "$APP_PATH" "${{ matrix.rid }}"
           else
             echo "App bundle not found at $APP_PATH"
             exit 1
@@ -128,7 +135,7 @@ jobs:
 
       - name: Ad-hoc codesign (test)
         run: |
-          APP_PATH="bin/Release/net8.0/osx-arm64/publish/FaceShield.app"
+          APP_PATH="bin/Release/net8.0/${{ matrix.rid }}/publish/FaceShield.app"
           if [ -d "$APP_PATH" ]; then
             codesign --force --deep --sign - "$APP_PATH"
           else
@@ -138,7 +145,7 @@ jobs:
 
       - name: Package zip
         run: |
-          OUT_DIR="bin/Release/net8.0/osx-arm64/publish"
+          OUT_DIR="bin/Release/net8.0/${{ matrix.rid }}/publish"
           APP_PATH="$OUT_DIR/FaceShield.app"
           if [ -d "$APP_PATH" ]; then
             if [ -f "macos-sign-local.command" ]; then
@@ -151,7 +158,7 @@ jobs:
             fi
             SHORT_SHA="${GITHUB_SHA::7}"
             BUILD_VER="${GITHUB_RUN_NUMBER}"
-            ZIP_NAME="FaceShield-osx-arm64-v${BUILD_VER}-${SHORT_SHA}.zip"
+            ZIP_NAME="FaceShield-${{ matrix.rid }}-v${BUILD_VER}-${SHORT_SHA}.zip"
             (cd "$OUT_DIR" && zip -r "$ZIP_NAME" "FaceShield.app" "macos-sign-local.command" "macos-run-log.command")
           else
             echo "App bundle not found at $APP_PATH"
@@ -161,6 +168,8 @@ jobs:
       - name: Cleanup old artifacts
         if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/github-script@v7
+        env:
+          RUNTIME_ID: ${{ matrix.rid }}
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -170,7 +179,7 @@ jobs:
             );
             const keep = 1;
             const targets = artifacts
-              .filter(artifact => artifact.name.startsWith("FaceShield-"))
+              .filter(artifact => artifact.name === `FaceShield-${process.env.RUNTIME_ID}`)
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             for (const artifact of targets.slice(keep)) {
               core.info(`Deleting artifact ${artifact.name} (${artifact.id})`);
@@ -185,7 +194,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v4
         with:
-          name: FaceShield-osx-arm64
+          name: FaceShield-${{ matrix.rid }}
           path: |
-            bin/Release/net8.0/osx-arm64/publish/FaceShield-osx-arm64-v*-*.zip
+            bin/Release/net8.0/${{ matrix.rid }}/publish/FaceShield-${{ matrix.rid }}-v*-*.zip
           retention-days: 1

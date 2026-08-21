@@ -3,12 +3,32 @@ set -euo pipefail
 
 app_path="${1:-}"
 if [[ -z "$app_path" || ! -d "$app_path" ]]; then
-  echo "Usage: $0 /path/to/FaceShield.app"
+  echo "Usage: $0 /path/to/FaceShield.app [osx-arm64|osx-x64]"
   exit 1
 fi
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 publish_dir="$(cd "$(dirname "$app_path")" && pwd)"
+runtime_id="${2:-}"
+if [[ -z "$runtime_id" ]]; then
+  case "$(uname -m)" in
+    arm64|aarch64) runtime_id="osx-arm64" ;;
+    x86_64|amd64) runtime_id="osx-x64" ;;
+    *)
+      echo "Unsupported macOS architecture: $(uname -m)"
+      exit 1
+      ;;
+  esac
+fi
+
+case "$runtime_id" in
+  osx-arm64|osx-x64) ;;
+  *)
+    echo "Unsupported macOS runtime identifier: $runtime_id"
+    exit 1
+    ;;
+esac
+
 frameworks_dir="$app_path/Contents/Frameworks"
 macos_dir="$app_path/Contents/MacOS"
 
@@ -26,8 +46,8 @@ copy_if_exists() {
 }
 
 # Copy FFmpeg dylibs tracked in the repo (if present).
-if [[ -d "$root_dir/FFmpeg/osx-arm64" ]]; then
-  for lib in "$root_dir/FFmpeg/osx-arm64"/*.dylib; do
+if [[ -d "$root_dir/FFmpeg/$runtime_id" ]]; then
+  for lib in "$root_dir/FFmpeg/$runtime_id"/*.dylib; do
     [[ -f "$lib" ]] || continue
     copy_if_exists "$lib"
   done
@@ -69,7 +89,7 @@ resolve_dep_source() {
   fi
   local nuget_root="${NUGET_PACKAGES:-$HOME/.nuget/packages}"
   if [[ -d "$nuget_root" ]]; then
-    candidate="$(find "$nuget_root" -path "*/runtimes/osx-arm64/native/$name" -print -quit 2>/dev/null || true)"
+    candidate="$(find "$nuget_root" -path "*/runtimes/$runtime_id/native/$name" -print -quit 2>/dev/null || true)"
     if [[ -n "$candidate" && -f "$candidate" ]]; then
       echo "$candidate"
       return 0

@@ -860,18 +860,20 @@ namespace FaceShield.Services.FaceDetection
 
             string baseDir = AppContext.BaseDirectory;
 
-            EnsureNativeLibrary(
-                "ONNX Runtime(libonnxruntime.dylib)",
-                Path.Combine(baseDir, "libonnxruntime.dylib"),
-                Path.Combine(baseDir, "libonnxruntime.1.23.2.dylib"),
-                "libonnxruntime.dylib");
-
+            // ONNX Runtime의 macOS binary가 OpenMP를 의존할 수 있으므로
+            // libomp를 먼저 로드해 dylib 의존성 탐색 순서를 안정화한다.
             EnsureNativeLibrary(
                 "OpenMP(libomp.dylib)",
                 Path.Combine(baseDir, "libomp.dylib"),
                 "/opt/homebrew/opt/libomp/lib/libomp.dylib",
                 "/usr/local/opt/libomp/lib/libomp.dylib",
                 "libomp.dylib");
+
+            EnsureNativeLibrary(
+                "ONNX Runtime(libonnxruntime.dylib)",
+                Path.Combine(baseDir, "libonnxruntime.dylib"),
+                Path.Combine(baseDir, "libonnxruntime.1.23.2.dylib"),
+                "libonnxruntime.dylib");
         }
 
         private static void EnsureNativeLibrary(string label, params string[] candidates)

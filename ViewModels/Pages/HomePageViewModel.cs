@@ -2278,10 +2278,16 @@ namespace FaceShield.ViewModels.Pages
                     throw new FileNotFoundException("YOLO ONNX 모델 파일을 찾지 못했습니다.", yoloModelPath);
                 if (string.IsNullOrWhiteSpace(AutoYoloModelPath))
                     AutoYoloModelPath = yoloModelPath;
+
+                // YOLO는 FaceONNX와 별도 생성 경로를 사용하므로, macOS native ONNX
+                // runtime/libomp 검사를 여기서도 수행해 시작 시 원인을 명확히 표시한다.
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                    FaceOnnxDetector.EnsureRuntimeAvailable();
                 return;
             }
 
-            FaceOnnxDetector.EnsureRuntimeAvailable();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                FaceOnnxDetector.EnsureRuntimeAvailable();
         }
 
         private WorkspaceViewModel GetOrCreateWorkspace(
