@@ -352,4 +352,5 @@ pwsh -File scripts/verify-native-publish.ps1 -RuntimeIdentifier osx-arm64
 - YOLO_GUI_SMOKE_CHECKLIST.md: YOLO GUI 수동 smoke 절차
 - YOLO_PROBLEM_SPAN_VERIFICATION.md: 문제 구간 검증 기준
 - AUTO_MOSAIC_QUALITY_SPEED_PLAN.md: 자동 모자이크 품질·속도 설계 기록
+- YOLO_LOW_CONFIDENCE_ROI_CASCADE_PLAN.md: YOLO 저신뢰도 후보 좌표 ROI 보조 검증 설계안
 - FUTURE_FEATURE_ROADMAP.md: 예정 기능
