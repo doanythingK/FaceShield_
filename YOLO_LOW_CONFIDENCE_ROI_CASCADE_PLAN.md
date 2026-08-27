@@ -1,12 +1,13 @@
-# YOLO 저신뢰도 ROI 보조 검증 설계안
+# YOLO 저신뢰도 ROI·추적 영역 제외 검출 설계안
 
 ## 문서 목적
 
-YOLO의 빠른 전체 프레임 검출은 유지하면서, 얼굴일 확률이 낮거나 검출 조건이 불리한 후보 좌표만 강한 보조 검출기로 재검증한다.
+YOLO 검출의 매 프레임 처리 cadence는 유지하면서, 확정 추적 중인 얼굴 영역은 검출 타일에서 제외하고 얼굴일 확률이 낮거나 검출 조건이 불리한 후보 좌표만 강한 보조 검출기로 재검증한다.
 
 핵심 목표는 다음과 같다.
 
 - 전체 프레임을 보조 모델로 다시 검출하지 않는다.
+- 기존 얼굴을 추적해 해당 영역의 YOLO 타일 호출을 생략하고, 나머지 영역에서는 신규 얼굴 검출을 계속한다.
 - 이미 디코딩한 프레임 버퍼에서 후보 좌표 주변 ROI만 사용한다.
 - 보조 모델이 확인한 후보만 교체하거나 복구한다.
 - 보조 검증 때문에 YOLO의 정상적인 얼굴이 제거되거나 새로운 오탐이 추가되지 않게 한다.
@@ -48,12 +49,87 @@ YOLO의 빠른 전체 프레임 검출은 유지하면서, 얼굴일 확률이 �
 
 이 코드를 YOLO의 원시 저신뢰도 후보 검증에도 재사용하는 방향이 적절하다.
 
+## 매 프레임 추적 영역 제외 검출 전략
+
+### 전략의 정의
+
+이 전략은 검출 주기를 줄이는 방식이 아니다. **YOLO 검출은 매 프레임 유지하되, 이미 확인되어 추적 중인 얼굴 영역을 새 얼굴 검출 대상에서 제외하고 나머지 영역만 검출**한다.
+
+```text
+동일 프레임 BGRA 버퍼
+       ↓
+기존 얼굴 track 위치·크기 갱신
+       ↓
+추적 얼굴 영역을 exclusion 영역으로 확장
+       ↓
+exclusion 영역으로 완전히 덮인 검출 타일은 skip
+       ↓
+나머지 타일에서 YOLO 실행
+       ↓
+새 얼굴 후보 및 기존 track 보정
+       ↓
+추적 얼굴은 예측 좌표로 매 프레임 블러
+```
+
+이 방식의 목적은 기존 얼굴을 다시 찾는 비용을 줄이면서도, 추적 영역 바깥으로 들어오는 신규 얼굴은 같은 프레임에서 발견하는 것이다. 따라서 `DetectEveryNFrames`를 늘려 검출 자체를 건너뛰는 방식과 구분한다.
+
+### 실제 속도 감소가 발생하는 조건
+
+얼굴 영역을 이미지에 검은색으로 칠하거나, 전체 프레임을 그대로 YOLO에 넣은 뒤 기존 박스와 겹치는 결과만 버리는 방식은 ONNX 추론량을 줄이지 않는다. 현재 YOLO detector는 모델 입력 텐서를 고정 크기로 만들고, 한 번의 `RunRegion`마다 동일한 입력 추론을 수행한다.
+
+실제 속도 감소가 발생하려면 다음 중 하나가 필요하다.
+
+- 타일 단위로 프레임을 나누고, 추적 얼굴로 완전히 덮인 타일의 `RunRegion` 호출을 생략한다.
+- 모델이 가변 입력 크기를 지원하도록 변경하고, exclusion 이후 남은 영역을 더 작은 입력으로 실행한다.
+- 검출 모델 내부에서 영역별 early-exit 또는 부분 feature 계산을 지원한다.
+
+현재 코드에 가장 안전하게 맞는 방식은 첫 번째인 **추적 영역 기반 타일 skip**이다. 고정 입력 크기의 작은 ROI를 여러 개 만들어 각각 실행하면 ROI 수만큼 고정 비용이 추가되어 오히려 느려질 수 있다. 따라서 ROI 개수와 타일 호출 수를 항상 함께 제한한다.
+
+`IBgraFaceDetector.DetectFacesBgra`는 하나의 사각형 포인터와 stride를 받는 API이므로, 얼굴 영역에 구멍이 있는 복잡한 exclusion 모양을 한 번에 전달할 수 없다. 타일 또는 최소 개수의 겹치는 사각형으로 분할해야 한다. 타일 일부가 얼굴과 겹치면 해당 타일은 기본적으로 skip하지 않고, 얼굴이 경계에서 잘리지 않도록 overlap을 유지한다.
+
+### 추적 및 exclusion 정책
+
+- 첫 검출 결과는 즉시 블러할 수 있지만, 2~3회 연속 geometry가 맞는 얼굴만 `ConfirmedTrack`으로 승격한다.
+- `ConfirmedTrack`만 exclusion 대상에 넣는다. 단일 저신뢰도 후보를 제외하면 오탐 영역이 검출 사각지대가 될 수 있다.
+- 추적기는 위치뿐 아니라 박스 크기 변화도 제한적으로 갱신한다. 첫 검출 크기를 영구 고정하지 않는다.
+- exclusion 영역에는 추적 오차를 감안한 여유를 둔다. 여유가 지나치게 크면 신규 얼굴 검출 영역과 실제 블러 영역이 함께 줄어들 수 있으므로 영상별로 조정한다.
+- 추적 confidence, 이동량, 면적 변화, 가장자리 접근도가 위험 기준을 넘으면 해당 얼굴의 exclusion을 해제하고 즉시 ROI 또는 전체 검출을 허용한다.
+- 5~10프레임은 검출 주기가 아니라 안정성·복구 판단을 위한 최대 구간으로 취급한다. 추적 confidence가 유지되는 동안만 제외를 지속하고, 추적을 잃은 뒤 5~10프레임을 무조건 블러로 유지하지 않는다.
+
+### 반드시 필요한 복구 경로
+
+추적 중인 얼굴 영역을 제외하면 해당 영역에 새 얼굴이 들어오는 경우를 같은 프레임의 신규 검출로는 발견할 수 없다. 따라서 다음 상황에서는 exclusion을 일시적으로 해제한다.
+
+- 기존 얼굴이 사라졌거나 추적 confidence가 낮아진 경우
+- 장면 전환·큰 화면 변화가 감지된 경우
+- 얼굴이 화면 가장자리로 이동하거나 빠르게 크기가 변한 경우
+- 두 얼굴의 박스가 가까워져 track 매칭이 불안정한 경우
+- 일정 시간마다 수행하는 누락 감시용 recovery scan
+- 현재 프레임에 유효한 track이 하나도 없는 경우
+
+복구 시에는 해당 track ROI를 먼저 검사하고, 결과가 불충분하면 전체 프레임 검출로 승격한다. global scan을 완전히 제거하지 않는 이유는 exclusion 영역 안으로 들어오는 신규 얼굴과 좌표가 전혀 없는 얼굴을 보완하기 위해서다.
+
+### 현재 코드와의 구현 차이
+
+현재 `DetectFacesBgraSmart`의 primary ROI shortcut은 이전 얼굴 주변 ROI에 집중하는 경로이며, 추적 얼굴 바깥쪽을 검출하는 exclusion scheduler는 아니다. `FaceTrackRoiRefiner`도 후처리 후보를 다시 확인하는 기능이므로, 이번 전략은 `GeneratePipelinedDetectAll*`의 같은 프레임 hot path에 별도로 들어가야 한다.
+
+구현 시에는 다음 상태를 별도로 보관한다.
+
+- `trackId`, 마지막 확인 박스, 예측 박스, 위치·크기 변화량
+- 안정 검출 횟수, 연속 miss 횟수, 마지막 ROI/global 확인 프레임
+- `verified`, `predicted`, `roi-refined` 결과 구분
+- exclusion에 포함된 타일과 skip 사유
+
+온라인 추적 결과를 `FrameMaskProvider`에 기록한 뒤 기존 temporal 후처리가 같은 구간을 다시 보간하면 좌표가 이중 보정될 수 있다. 따라서 synthetic 좌표의 출처를 기록하거나, 이미 검증된 track 구간의 중복 gap-fill을 제한해야 한다.
+
 ## 목표 처리 흐름
 
 ```text
 프레임 1회 디코드
       ↓
-YOLO 전체 프레임 검출
+기존 track 갱신 및 exclusion 타일 계산
+      ↓
+exclusion으로 덮이지 않은 타일만 YOLO 검출
       ↓
 원시 후보 중 위험 후보만 선택
       ↓
@@ -65,10 +141,14 @@ ROI 결과를 전체 좌표로 복원
       ↓
 원본 후보와 매칭되는 결과만 교체·복구
       ↓
+추적 얼굴 predicted mask와 신규 검출 결과 병합
+      ↓
 최종 마스크 저장 및 기존 temporal 후처리
 ```
 
 프레임을 모아서 나중에 처리하지 않는다. 검출 worker가 동일 프레임 버퍼를 보유하고 있는 동안 ROI 보조 검증까지 끝낸 뒤 결과를 전달하고 버퍼를 반환한다.
+
+추적 영역 제외 검출도 동일한 버퍼에서 수행한다. 타일을 skip한 프레임이라도 디코드·블러·인코드는 계속 모든 프레임에 대해 수행하며, 줄어드는 비용은 실제로 생략한 YOLO `RunRegion` 호출과 그 전처리 비용이다.
 
 ## 후보 선택 정책
 
@@ -208,9 +288,10 @@ DetectFacesBgraSmart
 새 방식의 대략적인 비용은 다음과 같이 본다.
 
 ```text
-새 분석 시간 ≈ YOLO 전체 검출 시간
+새 분석 시간 ≈ 추적 영역 제외 후 남은 YOLO 타일 검출 시간
              + ROI 개수 × 보조 ROI 검출 시간
              + ROI crop·병합·매칭 비용
+             + 매 프레임 추적·exclusion 계산 비용
 ```
 
 현재 위험 프레임 전체 재검증과 비교해 다음 조건일 때 유리하다.
@@ -220,6 +301,16 @@ DetectFacesBgraSmart
 ```
 
 보조 모델 입력 크기가 고정이면 ROI 면적이 작아져도 추론 비용이 크게 줄지 않을 수 있다. 따라서 ROI 개수 제한, ROI 병합, 이미 디코딩된 버퍼 재사용이 필수다.
+
+추적 영역 제외 전략은 다음 조건에서만 검출 시간을 줄인다.
+
+- 전체 프레임을 마스킹한 뒤 한 번의 고정 크기 YOLO 추론을 계속 실행하는 경우에는 개선이 없다.
+- 추적 얼굴로 완전히 덮인 타일의 `RunRegion` 호출을 실제로 생략해야 한다.
+- 일부만 덮인 타일을 모두 분할하면 호출 수가 늘어날 수 있으므로, 분할 후 호출 수가 원래보다 적을 때만 적용한다.
+- 얼굴이 작아 어느 타일도 완전히 덮지 못하는 영상에서는 속도 향상이 제한적일 수 있다.
+- `UseTiling`에서 full-frame 호출을 함께 유지하면 skip 효과가 상쇄될 수 있으므로 full-frame·tile 호출 정책을 분리해서 측정한다.
+
+따라서 성능은 얼굴 박스의 면적만으로 추정하지 않고, 프레임별 `RunRegion` 호출 수와 실제 `inferMs`를 기준으로 비교한다. 추적·타일 계산·ROI 병합 비용까지 포함한 `analysisTotalMs`가 감소해야 최종 속도 개선으로 인정한다.
 
 ## 로그 추가 항목
 
@@ -236,6 +327,17 @@ DetectFacesBgraSmart
 - `roiFallbackGlobalFrames`
 - `roiSkippedByBudget`
 - 보조 모델 실행 provider
+- `trackActiveCount`
+- `trackConfirmedCount`
+- `trackPredictedFrameCount`
+- `trackLostFrameCount`
+- `trackRoiVerifyCount`
+- `trackGlobalFallbackCount`
+- `excludedTileCount`
+- `detectorTileCallCount`
+- `detectorTileSkipCount`
+- `detectorTilePartialKeepCount`
+- `detectorCoverageBuildMs`
 
 기존 로그와 함께 다음을 비교한다.
 
@@ -252,6 +354,14 @@ DetectFacesBgraSmart
 - `sampleMissRecovery`
 - `droppedVideoPackets`
 
+추적 영역 제외 전략만의 비교 항목도 추가한다.
+
+- 동일 프레임의 baseline YOLO 호출 수 대비 `detectorTileCallCount`
+- `detectorTileSkipCount`와 실제 `inferMs` 감소량
+- `trackLostFrameCount`, `trackGlobalFallbackCount`
+- 추적 박스와 재검출 박스의 IoU·중심 이동·면적 변화
+- 신규 얼굴이 exclusion 영역에 진입한 뒤 발견되기까지의 지연 프레임
+
 ## 품질 게이트
 
 YOLO 기존 baseline과 비교할 때 다음 조건을 적용한다.
@@ -264,6 +374,8 @@ YOLO 기존 baseline과 비교할 때 다음 조건을 적용한다.
 - 마지막 프레임 포함 전체 구간 처리
 - 장면 전환 carry 잔상 증가 없음
 - 대표 검토 프레임의 얼굴 누락 증가 없음
+- 추적 얼굴의 박스 drift·identity swap 증가 없음
+- exclusion 영역으로 인해 신규 얼굴 검출 지연이 허용 범위를 넘지 않음
 
 ### 채택 조건
 
@@ -272,21 +384,25 @@ YOLO 기존 baseline과 비교할 때 다음 조건을 적용한다.
 - `sampleShortGaps`, `samplePerFaceShortGaps`가 악화되지 않는다.
 - ROI 보조 비용을 포함한 `analysisTotalMs`가 허용 범위 안이다.
 - ROI 보조가 없는 YOLO baseline보다 품질 또는 속도 중 하나가 명확히 개선된다.
+- skip한 타일 수만큼 실제 detector region 호출과 `inferMs`가 감소한다.
+- tracking·exclusion 계산 비용을 포함한 전체 분석 시간이 악화되지 않는다.
 
 `onlyBaseline`·`onlyOptimized`·IoU 차이는 후보 차이를 찾는 신호로 사용하고, 실제 누락·오탐 판정은 대표 프레임 검토 또는 별도 GT로 확정한다.
 
 ## 단계별 구현 순서
 
 1. 원시 YOLO 후보와 필터 후 후보를 구분하는 임시 후보 구조 추가
-2. 후보 위험도 판정과 ROI padding·clamp·병합 유틸리티 추가
-3. 현재 `FaceTrackRoiRefiner`의 BGRA ROI 호출·좌표 복원 로직 재사용
-4. `GeneratePipelinedDetectAll*` 검출 hot path에 ROI 보조 검증 연결
-5. 기존 후보 교체·제거·새 후보 추가 정책 구현
-6. 좌표 없는 누락용 global scan과 ROI 검증 경로 분리
-7. worker별 session 또는 semaphore 방식의 동시성 검증
-8. ROI별 로그와 품질 gate 추가
-9. 짧은 문제 구간 → 30초 sample → 6분 사본 순서로 실행 검증
-10. `dotnet build FaceShield.sln` 및 실제 export 무결성 검증 후 채택 여부 결정
+2. 얼굴별 온라인 track 상태와 `verified/predicted/roi-refined` provenance 추가
+3. 추적 박스의 padding·clamp 및 타일 coverage 계산 유틸리티 추가
+4. `UseTiling` 검출 경로에 완전 exclusion 타일 skip과 partial tile 보존 규칙 연결
+5. 현재 `FaceTrackRoiRefiner`의 BGRA ROI 호출·좌표 복원 로직을 hot path용으로 분리·재사용
+6. `GeneratePipelinedDetectAll*`에서 추적 결과, 신규 YOLO 후보, 저신뢰도 ROI 결과를 병합
+7. 추적 confidence 저하·scene-cut·신규 track·주기적 recovery scan의 exclusion 해제 정책 구현
+8. 기존 후보 교체·제거·새 후보 추가 정책과 track one-to-one 매칭 구현
+9. worker별 session 또는 semaphore 방식의 동시성 검증
+10. 타일 skip·추적·ROI별 로그와 품질 gate 추가
+11. 짧은 문제 구간 → 30초 sample → 6분 사본 순서로 실행 검증
+12. `dotnet build FaceShield.sln` 및 실제 export 무결성 검증 후 채택 여부 결정
 
 ## 채택 전 금지 사항
 
@@ -294,11 +410,21 @@ YOLO 기존 baseline과 비교할 때 다음 조건을 적용한다.
 - 낮은 confidence 후보를 보조 결과 없이 즉시 삭제
 - ROI 결과와 원본 후보의 geometry 확인 없이 새 얼굴 추가
 - 한 프레임의 ROI 수 제한 없이 보조 모델 호출
+- 전체 프레임 고정 입력에 얼굴 영역만 마스킹하고 속도 개선으로 판정
+- partial tile을 무리하게 분할해 detector 호출 수가 증가하는 변경
+- 추적 confidence가 낮은 얼굴을 계속 exclusion해 신규 얼굴 검출을 막는 변경
 - `detectMs`만 보고 속도 개선으로 판정
 - global scan을 제거해 좌표 없는 얼굴 누락 경로를 없애는 변경
 
 ## 최종 방향
 
-YOLO 전체 검출을 유지하고, **좌표가 있는 불확실 후보만 FaceONNX ROI로 재검증**하는 것이 1차 구현 방향이다. 좌표가 없는 누락은 기존 tracking·주기적 global scan으로 보완한다.
+YOLO 검출은 매 프레임 유지하되, **확정 추적 중인 얼굴로 완전히 덮인 타일은 검출에서 제외하고 나머지 타일에서 신규 얼굴을 찾는 방식**을 추가한다. 좌표가 있는 불확실 후보는 FaceONNX ROI로 재검증하고, 추적이 불안정하거나 좌표가 없는 누락은 제한적인 ROI·global recovery scan으로 보완한다.
 
-이 구조가 통과하면 전체 프레임을 다시 읽는 현재 위험 프레임 cascade의 비용을 줄이면서, 작은 얼굴·가장자리 얼굴·일시적인 저신뢰도 후보의 품질을 보완할 수 있다. 실제 성능 향상과 품질 향상은 위 게이트를 동일 영상으로 통과한 뒤에만 확정한다.
+1차 구현의 우선순위는 다음과 같다.
+
+1. 고정 입력 전체 프레임 마스킹이 아닌 타일 호출 skip으로 실제 YOLO 연산량을 줄인다.
+2. 추적 얼굴은 매 프레임 블러하되, 첫 박스 크기 고정이 아니라 위치·크기 변화와 confidence를 갱신한다.
+3. scene-cut·edge·occlusion·face crossing·신규 얼굴 진입 시 exclusion을 해제한다.
+4. 기존 ROI cascade와 tracking postprocess의 중복 보정을 막기 위해 provenance와 경계 상태를 분리한다.
+
+이 구조가 통과하면 기존 얼굴 재검출 비용과 전체 프레임 위험 cascade 비용을 동시에 줄이면서, 작은 얼굴·가장자리 얼굴·일시적인 저신뢰도 후보의 품질을 보완할 수 있다. 실제 성능 향상과 품질 향상은 동일 영상에서 타일 호출 수, `inferMs`, `analysisTotalMs`, 누락·오탐·프레임 연속성 게이트를 모두 통과한 뒤에만 확정한다.
