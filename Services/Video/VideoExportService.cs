@@ -330,7 +330,7 @@ public unsafe sealed class VideoExportService
             // ───────── input ─────────
             Throw(ffmpeg.avformat_open_input(&inFmt, inputPath, null, null));
             Throw(ffmpeg.avformat_find_stream_info(inFmt, null));
-            EnsureContainerStructureSupported(inFmt);
+            VideoPresentationMetadataPolicy.EnsureContainerStructureSupported(inFmt);
 
             videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(inFmt);
             var audioStreamIndices = new List<int>();
@@ -618,7 +618,7 @@ public unsafe sealed class VideoExportService
 
             // ───────── output ─────────
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
-            CopyFormatPresentationMetadata(inFmt, outFmt);
+            VideoPresentationMetadataPolicy.CopyFormatPresentationMetadata(inFmt, outFmt);
 
             AVCodec* encoder;
             AVCodecID inputCodecId = inStream->codecpar->codec_id;
@@ -768,7 +768,7 @@ public unsafe sealed class VideoExportService
                     Throw(ffmpeg.avcodec_parameters_copy(extraOutputStream->codecpar, extraInputStream->codecpar));
                     extraOutputStream->codecpar->codec_tag = 0;
                     extraOutputStream->time_base = extraInputStream->time_base;
-                    CopyStreamPresentationMetadata(extraInputStream, extraOutputStream);
+                    VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(extraInputStream, extraOutputStream);
                     copiedStreams.Add(
                         extraAudioStreamIndex,
                         new StreamCopyState(extraAudioStreamIndex, extraInputStream, extraOutputStream));
@@ -788,7 +788,7 @@ public unsafe sealed class VideoExportService
             }
 
             if (inAudioStream != null && outAudioStream != null)
-                CopyStreamPresentationMetadata(inAudioStream, outAudioStream);
+                VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(inAudioStream, outAudioStream);
 
             if (progress != null)
             {
@@ -910,7 +910,7 @@ public unsafe sealed class VideoExportService
                 Throw(ffmpeg.avcodec_parameters_from_context(outStream->codecpar, enc));
                 outStream->time_base = enc->time_base;
             }
-            CopyStreamPresentationMetadata(inStream, outStream);
+            VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(inStream, outStream);
             encodedPacketFrameStep = VideoExportTimingPolicy.GetVideoFrameStep(sourceFps, outStream->time_base);
             if (useHybridCopyWindow
                 && Math.Abs(encodedPacketFrameStep - hybridCopyVideoFrameStep) > MaxHybridFrameStepTolerance)
@@ -965,7 +965,7 @@ public unsafe sealed class VideoExportService
                     auxiliaryInputStream->codecpar));
                 auxiliaryOutputStream->codecpar->codec_tag = 0;
                 auxiliaryOutputStream->time_base = auxiliaryInputStream->time_base;
-                CopyStreamPresentationMetadata(auxiliaryInputStream, auxiliaryOutputStream);
+                VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(auxiliaryInputStream, auxiliaryOutputStream);
                 copiedStreams.Add(
                     inputStreamIndex,
                     new StreamCopyState(inputStreamIndex, auxiliaryInputStream, auxiliaryOutputStream));
@@ -1029,7 +1029,7 @@ public unsafe sealed class VideoExportService
 
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
-                EnsureContainerStructureSupported(inFmt);
+                VideoPresentationMetadataPolicy.EnsureContainerStructureSupported(inFmt);
                 if (copiedStreams.TryGetValue(pkt->stream_index, out StreamCopyState? copyState))
                 {
                     ffmpeg.av_packet_rescale_ts(
@@ -2948,7 +2948,7 @@ public unsafe sealed class VideoExportService
         try
         {
             Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
-            CopyFormatPresentationMetadata(inFmt, outFmt);
+            VideoPresentationMetadataPolicy.CopyFormatPresentationMetadata(inFmt, outFmt);
 
             int streamCount = (int)inFmt->nb_streams;
             var streamMap = new int[streamCount];
@@ -2963,7 +2963,7 @@ public unsafe sealed class VideoExportService
                 Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));
                 outStream->codecpar->codec_tag = 0;
                 outStream->time_base = inStream->time_base;
-                CopyStreamPresentationMetadata(inStream, outStream);
+                VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(inStream, outStream);
                 streamMap[i] = outStream->index;
             }
 
@@ -2975,7 +2975,7 @@ public unsafe sealed class VideoExportService
             int lastReportedFrame = -1;
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
-                EnsureContainerStructureSupported(inFmt);
+                VideoPresentationMetadataPolicy.EnsureContainerStructureSupported(inFmt);
                 if (cancellationToken.IsCancellationRequested)
                     throw new OperationCanceledException(cancellationToken);
 
@@ -3604,136 +3604,6 @@ public unsafe sealed class VideoExportService
         throw new InvalidOperationException(
             $"{metadataName} 영상 메타데이터는 현재 내보내기에서 원본 그대로 보존할 수 없습니다. " +
             "품질 저하를 막기 위해 내보내기를 중단했습니다.");
-    }
-
-    private static unsafe void EnsureContainerStructureSupported(AVFormatContext* format)
-    {
-        string? unsupportedStructureKey =
-            FFmpegContainerStructureGuard.FindUnsupportedStructure(format);
-        if (unsupportedStructureKey == null)
-            return;
-
-        string unsupportedStructure = unsupportedStructureKey == "programs"
-            ? "프로그램 단위 스트림 구성"
-            : "IAMF 등 스트림 그룹 구성";
-
-        throw new InvalidOperationException(
-            $"{unsupportedStructure}은 현재 내보내기에서 원본 그대로 보존할 수 없습니다. " +
-            "스트림 구성 유실을 막기 위해 내보내기를 중단했습니다.");
-    }
-
-    private static unsafe void CopyStreamPresentationMetadata(AVStream* source, AVStream* output)
-    {
-        if (source == null || output == null)
-            return;
-
-        output->avg_frame_rate = source->avg_frame_rate;
-        output->r_frame_rate = source->r_frame_rate;
-        output->sample_aspect_ratio = source->sample_aspect_ratio;
-        output->disposition = source->disposition;
-        Throw(ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0));
-        CopyCodecPresentationSideData(source->codecpar, output->codecpar);
-    }
-
-    private static unsafe void CopyFormatPresentationMetadata(
-        AVFormatContext* source,
-        AVFormatContext* output)
-    {
-        if (source == null || output == null)
-            return;
-
-        Throw(ffmpeg.av_dict_copy(&output->metadata, source->metadata, 0));
-        int chapterCount = checked((int)source->nb_chapters);
-        if (chapterCount <= 0)
-            return;
-        if (source->chapters == null)
-            throw new InvalidOperationException("원본 챕터 목록 정보가 없습니다.");
-
-        output->chapters = (AVChapter**)ffmpeg.av_calloc(
-            (ulong)chapterCount,
-            (ulong)sizeof(AVChapter*));
-        if (output->chapters == null)
-            throw new InvalidOperationException("챕터 목록 메모리를 할당할 수 없습니다.");
-
-        for (int i = 0; i < chapterCount; i++)
-        {
-            AVChapter* sourceChapter = source->chapters[i];
-            if (sourceChapter == null)
-                throw new InvalidOperationException($"원본 챕터 {i + 1} 정보가 없습니다.");
-
-            AVChapter* outputChapter = (AVChapter*)ffmpeg.av_mallocz((ulong)sizeof(AVChapter));
-            if (outputChapter == null)
-                throw new InvalidOperationException($"챕터 {i + 1} 메모리를 할당할 수 없습니다.");
-
-            outputChapter->id = sourceChapter->id;
-            outputChapter->time_base = sourceChapter->time_base;
-            outputChapter->start = sourceChapter->start;
-            outputChapter->end = sourceChapter->end;
-            output->chapters[i] = outputChapter;
-            output->nb_chapters++;
-            Throw(ffmpeg.av_dict_copy(&outputChapter->metadata, sourceChapter->metadata, 0));
-        }
-    }
-
-    private static unsafe void CopyCodecPresentationSideData(
-        AVCodecParameters* source,
-        AVCodecParameters* output)
-    {
-        if (source == null ||
-            output == null ||
-            source->coded_side_data == null ||
-            source->nb_coded_side_data <= 0)
-        {
-            return;
-        }
-
-        for (int i = 0; i < source->nb_coded_side_data; i++)
-        {
-            AVPacketSideData* sourceSideData = source->coded_side_data + i;
-            if (sourceSideData == null ||
-                sourceSideData->data == null ||
-                sourceSideData->size == 0 ||
-                !IsPresentationSideData(sourceSideData->type))
-            {
-                continue;
-            }
-
-            ffmpeg.av_packet_side_data_remove(
-                output->coded_side_data,
-                &output->nb_coded_side_data,
-                sourceSideData->type);
-            ulong sourceSize = (ulong)sourceSideData->size;
-            AVPacketSideData* outputSideData = ffmpeg.av_packet_side_data_new(
-                &output->coded_side_data,
-                &output->nb_coded_side_data,
-                sourceSideData->type,
-                sourceSize,
-                0);
-            if (outputSideData == null || outputSideData->data == null)
-            {
-                throw new InvalidOperationException(
-                    $"스트림 부가정보({sourceSideData->type})를 복사할 수 없습니다.");
-            }
-
-            Buffer.MemoryCopy(
-                sourceSideData->data,
-                outputSideData->data,
-                checked((long)sourceSize),
-                checked((long)sourceSize));
-        }
-    }
-
-    private static bool IsPresentationSideData(AVPacketSideDataType type)
-    {
-        return type is
-            AVPacketSideDataType.AV_PKT_DATA_DISPLAYMATRIX or
-            AVPacketSideDataType.AV_PKT_DATA_STEREO3D or
-            AVPacketSideDataType.AV_PKT_DATA_MASTERING_DISPLAY_METADATA or
-            AVPacketSideDataType.AV_PKT_DATA_SPHERICAL or
-            AVPacketSideDataType.AV_PKT_DATA_CONTENT_LIGHT_LEVEL or
-            AVPacketSideDataType.AV_PKT_DATA_ICC_PROFILE or
-            AVPacketSideDataType.AV_PKT_DATA_DYNAMIC_HDR10_PLUS or
-            AVPacketSideDataType.AV_PKT_DATA_AMBIENT_VIEWING_ENVIRONMENT;
     }
 
     private static unsafe bool TryInitAudioTranscode(
