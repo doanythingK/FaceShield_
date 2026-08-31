@@ -118,6 +118,15 @@ internal static class AutoRunSignaturePolicy
         return BuildRunSignature(effectiveAutoOptions, effectiveFactoryOptions);
     }
 
+    internal static bool RequiresCompleteTimeline(
+        AutoMaskOptions autoOptions,
+        FaceDetectorFactoryOptions detectorFactoryOptions)
+    {
+        AutoMaskOptions effectiveOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
+        _ = detectorFactoryOptions;
+        return AutoMaskGenerator.RequiresFullTimelineResume(effectiveOptions);
+    }
+
     internal static FaceDetectorFactoryOptions ResolveDetectorFactoryOptions(
         AutoMaskOptions autoOptions,
         FaceOnnxDetectorOptions detectorOptions,
