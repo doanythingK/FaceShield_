@@ -18,8 +18,6 @@ using System.Globalization;
 using System.IO;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -1043,7 +1041,7 @@ namespace FaceShield.ViewModels.Pages
                 }.ResolveProcessingMode();
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
                 using IFaceDetector detector = detectorFactory.CreateDetector();
-                string sourceEvidenceId = BuildSourceEvidenceId(FrameList.VideoPath);
+                string sourceEvidenceId = AutoRunSignaturePolicy.BuildSourceEvidenceId(FrameList.VideoPath);
                 string executionSignature = AutoRunSignaturePolicy.BuildExecutionSignature(
                     runOptions,
                     detectorFactoryOptions,
@@ -2155,20 +2153,6 @@ namespace FaceShield.ViewModels.Pages
             _maskProvider.Dispose();
         }
 
-        private static string BuildSourceEvidenceId(string path)
-        {
-            try
-            {
-                var file = new FileInfo(Path.GetFullPath(path));
-                string identity = $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
-                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-                return Convert.ToHexString(hash.AsSpan(0, 12)).ToLowerInvariant();
-            }
-            catch
-            {
-                return "unavailable";
-            }
-        }
 
     }
 }
