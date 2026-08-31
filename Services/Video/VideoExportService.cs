@@ -456,12 +456,12 @@ public unsafe sealed class VideoExportService
                         VideoPacketTimestampAdjustmentCount: remuxCounts.VideoPacketTimestampAdjustments,
                         EncoderName: "stream-copy",
                         EncoderQualityMode: "lossless-remux",
-                        SourcePixelFormat: GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
-                        OutputPixelFormat: GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
-                        SourceBitDepth: GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
-                        OutputBitDepth: GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
-                        SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, null),
-                        TargetVideoBitrate: ResolveSourceVideoBitrate(inStream, null),
+                        SourcePixelFormat: VideoExportFidelityPolicy.GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
+                        OutputPixelFormat: VideoExportFidelityPolicy.GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
+                        SourceBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
+                        OutputBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
+                        SourceVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null),
+                        TargetVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null),
                         OutputCloseMs: remuxCounts.OutputCloseMs);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
@@ -597,7 +597,7 @@ public unsafe sealed class VideoExportService
                 AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67;
             bool sourceMayCarryHdrMetadata =
                 sourceUsesHdrTransfer ||
-                GetPixelFormatBitDepth(dec->pix_fmt) > 8 ||
+                VideoExportFidelityPolicy.GetPixelFormatBitDepth(dec->pix_fmt) > 8 ||
                 inStream->codecpar->codec_id is
                     AVCodecID.AV_CODEC_ID_HEVC or
                     AVCodecID.AV_CODEC_ID_AV1;
@@ -608,7 +608,7 @@ public unsafe sealed class VideoExportService
             _staticHdrConfigured = hdrMetadata?.HasStaticMetadata == true;
             bool sourceIsRgbH264 =
                 inStream->codecpar->codec_id == AVCodecID.AV_CODEC_ID_H264 &&
-                IsRgbPixelFormat(ResolveSourcePixelFormat(inStream, dec));
+                VideoExportFidelityPolicy.IsRgbPixelFormat(VideoExportFidelityPolicy.ResolveSourcePixelFormat(inStream, dec));
             if (sourceIsRgbH264 && hdrMetadata?.HasStaticMetadata == true)
             {
                 throw new VideoExportIntegrityException(
@@ -1894,12 +1894,12 @@ public unsafe sealed class VideoExportService
                 EncoderQualityMode: encoderQualityConfiguration.Mode,
                 EncoderOptionsApplied: encoderQualityConfiguration.AppliedOptions,
                 EncoderOptionFailures: encoderQualityConfiguration.FailedOptions,
-                SourcePixelFormat: GetPixelFormatName(dec->pix_fmt),
-                OutputPixelFormat: GetPixelFormatName(enc->pix_fmt),
-                SourceBitDepth: GetPixelFormatBitDepth(dec->pix_fmt),
-                OutputBitDepth: GetPixelFormatBitDepth(enc->pix_fmt),
-                SourceVideoBitrate: ResolveSourceVideoBitrate(inStream, dec),
-                TargetVideoBitrate: ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
+                SourcePixelFormat: VideoExportFidelityPolicy.GetPixelFormatName(dec->pix_fmt),
+                OutputPixelFormat: VideoExportFidelityPolicy.GetPixelFormatName(enc->pix_fmt),
+                SourceBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth(dec->pix_fmt),
+                OutputBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth(enc->pix_fmt),
+                SourceVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, dec),
+                TargetVideoBitrate: VideoExportFidelityPolicy.ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
                 NativeYuvBlurFrames: _nativeYuvBlurFrames,
                 EncoderFlushMs: encoderFlushTimer.ElapsedMilliseconds,
                 OutputCloseMs: outputCloseTimer.ElapsedMilliseconds,
@@ -3471,108 +3471,6 @@ public unsafe sealed class VideoExportService
         Throw(ffmpeg.avio_closep(&format->pb));
     }
 
-    private static unsafe bool IsPixFmtSupported(AVCodec* encoder, AVPixelFormat fmt)
-    {
-#pragma warning disable CS0618 // AVCodec.pix_fmts obsolete in ffmpeg headers
-        if (encoder == null || encoder->pix_fmts == null)
-            return true;
-
-        for (AVPixelFormat* p = encoder->pix_fmts; *p != AVPixelFormat.AV_PIX_FMT_NONE; p++)
-        {
-            if (*p == fmt)
-                return true;
-        }
-
-        return false;
-#pragma warning restore CS0618
-    }
-
-    private static unsafe AVPixelFormat ResolveSourcePixelFormat(
-        AVStream* stream,
-        AVCodecContext* decoder)
-    {
-        if (decoder != null && decoder->pix_fmt != AVPixelFormat.AV_PIX_FMT_NONE)
-            return decoder->pix_fmt;
-        if (stream != null && stream->codecpar != null && stream->codecpar->format != -1)
-            return (AVPixelFormat)stream->codecpar->format;
-        return AVPixelFormat.AV_PIX_FMT_NONE;
-    }
-
-    private static unsafe bool IsRgbPixelFormat(AVPixelFormat pixelFormat)
-    {
-        AVPixFmtDescriptor* descriptor = ffmpeg.av_pix_fmt_desc_get(pixelFormat);
-        return descriptor != null &&
-            (descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
-    }
-
-    private static unsafe bool CanEncodeLosslessX264Rgb(
-        AVPixelFormat sourcePixelFormat,
-        AVColorRange sourceColorRange,
-        AVColorSpace sourceColorSpace,
-        out string? error)
-    {
-        error = null;
-        AVPixFmtDescriptor* descriptor = ffmpeg.av_pix_fmt_desc_get(sourcePixelFormat);
-        if (descriptor == null)
-        {
-            error = $"원본 픽셀 형식({GetPixelFormatName(sourcePixelFormat)}) 정보를 확인할 수 없습니다.";
-            return false;
-        }
-        if ((descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) == 0)
-        {
-            error = $"원본 픽셀 형식({GetPixelFormatName(sourcePixelFormat)})이 RGB가 아닙니다.";
-            return false;
-        }
-        if ((descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0)
-        {
-            error = $"알파 채널이 있는 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 H.264에 보존할 수 없습니다.";
-            return false;
-        }
-        if (descriptor->nb_components != 3)
-        {
-            error =
-                $"RGB 색상 성분 수({descriptor->nb_components})를 H.264에서 정확히 보존할 수 없습니다.";
-            return false;
-        }
-        if (descriptor->log2_chroma_w != 0 || descriptor->log2_chroma_h != 0)
-        {
-            error =
-                $"서브샘플링된 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 " +
-                "libx264rgb에서 정확히 보존할 수 없습니다.";
-            return false;
-        }
-        for (int component = 0; component < descriptor->nb_components; component++)
-        {
-            if (descriptor->comp[(uint)component].depth != 8)
-            {
-                error =
-                    $"8비트가 아닌 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 " +
-                    "libx264rgb에서 원본 정밀도를 보존할 수 없습니다.";
-                return false;
-            }
-        }
-        if (sourceColorRange is not
-            AVColorRange.AVCOL_RANGE_UNSPECIFIED and not
-            AVColorRange.AVCOL_RANGE_JPEG)
-        {
-            error =
-                $"지원하지 않는 RGB 범위 태그({sourceColorRange})는 " +
-                "libx264rgb full-range 경로에서 정확히 보존할 수 없습니다.";
-            return false;
-        }
-        if (sourceColorSpace is not
-            AVColorSpace.AVCOL_SPC_UNSPECIFIED and not
-            AVColorSpace.AVCOL_SPC_RGB)
-        {
-            error =
-                $"RGB가 아닌 matrix 태그({sourceColorSpace})가 지정된 RGB 영상은 " +
-                "색상 해석을 바꾸지 않고 보존할 수 없습니다.";
-            return false;
-        }
-
-        return true;
-    }
-
     private static unsafe AVCodecContext* TryCreateEncoderContext(
         AVCodecID codecId,
         AVStream* inStream,
@@ -3600,12 +3498,12 @@ public unsafe sealed class VideoExportService
             }
         }
 
-        AVPixelFormat sourcePixelFormat = ResolveSourcePixelFormat(inStream, dec);
+        AVPixelFormat sourcePixelFormat = VideoExportFidelityPolicy.ResolveSourcePixelFormat(inStream, dec);
         bool requiresLosslessRgbH264 =
             codecId == AVCodecID.AV_CODEC_ID_H264 &&
-            IsRgbPixelFormat(sourcePixelFormat);
+            VideoExportFidelityPolicy.IsRgbPixelFormat(sourcePixelFormat);
         if (requiresLosslessRgbH264 &&
-            !CanEncodeLosslessX264Rgb(
+            !VideoExportFidelityPolicy.CanEncodeLosslessX264Rgb(
                 sourcePixelFormat,
                 dec->color_range,
                 dec->colorspace,
@@ -3619,7 +3517,7 @@ public unsafe sealed class VideoExportService
         bool allowTenBitHevcFallback =
             codecId == AVCodecID.AV_CODEC_ID_H264 &&
             !requiresLosslessRgbH264 &&
-            GetPixelFormatBitDepth(dec->pix_fmt) > 8;
+            VideoExportFidelityPolicy.GetPixelFormatBitDepth(dec->pix_fmt) > 8;
         var attemptedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string> candidateNames = requiresLosslessRgbH264
             ? new[] { "libx264rgb" }
@@ -3760,13 +3658,13 @@ public unsafe sealed class VideoExportService
             encoderName,
             "libx264rgb",
             StringComparison.OrdinalIgnoreCase);
-        AVPixelFormat sourcePixelFormat = ResolveSourcePixelFormat(inStream, dec);
+        AVPixelFormat sourcePixelFormat = VideoExportFidelityPolicy.ResolveSourcePixelFormat(inStream, dec);
         ctx->width = dec->width;
         ctx->height = dec->height;
         ctx->pix_fmt = sourcePixelFormat;
         if (isLosslessX264Rgb)
         {
-            if (!CanEncodeLosslessX264Rgb(
+            if (!VideoExportFidelityPolicy.CanEncodeLosslessX264Rgb(
                     sourcePixelFormat,
                     dec->color_range,
                     dec->colorspace,
@@ -3776,7 +3674,7 @@ public unsafe sealed class VideoExportService
                 ffmpeg.avcodec_free_context(&ctx);
                 return null;
             }
-            if (!IsPixFmtSupported(encoder, AVPixelFormat.AV_PIX_FMT_BGR24))
+            if (!VideoExportFidelityPolicy.IsPixFmtSupported(encoder, AVPixelFormat.AV_PIX_FMT_BGR24))
             {
                 error = "libx264rgb가 검증된 BGR24 입력 형식을 지원하지 않습니다.";
                 ffmpeg.avcodec_free_context(&ctx);
@@ -3799,8 +3697,8 @@ public unsafe sealed class VideoExportService
         if (ctx->time_base.num <= 0 || ctx->time_base.den <= 0)
             ctx->time_base = inStream->time_base;
 
-        long sourceBitrate = ResolveSourceVideoBitrate(inStream, dec);
-        int targetBitrate = ResolveHighQualityTargetBitrate(
+        long sourceBitrate = VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, dec);
+        int targetBitrate = VideoExportFidelityPolicy.ResolveHighQualityTargetBitrate(
             sourceBitrate,
             ctx->width,
             ctx->height,
@@ -3817,8 +3715,8 @@ public unsafe sealed class VideoExportService
         else
         {
             ctx->bit_rate = targetBitrate;
-            ctx->rc_max_rate = ClampBitrate((long)targetBitrate * 2L);
-            ctx->rc_buffer_size = ClampBitrate((long)targetBitrate * 4L);
+            ctx->rc_max_rate = VideoExportFidelityPolicy.ClampBitrate((long)targetBitrate * 2L);
+            ctx->rc_buffer_size = VideoExportFidelityPolicy.ClampBitrate((long)targetBitrate * 4L);
         }
 
         if (encoder->id == inStream->codecpar->codec_id)
@@ -3846,10 +3744,10 @@ public unsafe sealed class VideoExportService
         if ((outFmt->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
             ctx->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
 
-        if (!IsPixFmtSupported(encoder, ctx->pix_fmt))
-            ctx->pix_fmt = PickPreferredPixelFormat(encoder, ctx->pix_fmt);
+        if (!VideoExportFidelityPolicy.IsPixFmtSupported(encoder, ctx->pix_fmt))
+            ctx->pix_fmt = VideoExportFidelityPolicy.PickPreferredPixelFormat(encoder, ctx->pix_fmt);
 
-        string? pixelFormatLoss = GetPixelFormatLossReason(sourcePixelFormat, ctx->pix_fmt);
+        string? pixelFormatLoss = VideoExportFidelityPolicy.GetPixelFormatLossReason(sourcePixelFormat, ctx->pix_fmt);
         if (!string.IsNullOrWhiteSpace(pixelFormatLoss))
         {
             error = $"원본 픽셀 품질을 보존할 수 없습니다: {pixelFormatLoss}";
@@ -4075,178 +3973,11 @@ public unsafe sealed class VideoExportService
         return AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED;
     }
 
-    private static int EstimateHighQualityBitrate(int width, int height, AVRational framerate)
-    {
-        long baseFloor;
-        long pixels = Math.Max(1L, (long)width * height);
-        if (pixels <= 1280L * 720L)
-            baseFloor = 6_000_000;
-        else if (pixels <= 1920L * 1080L)
-            baseFloor = 10_000_000;
-        else if (pixels <= 2560L * 1440L)
-            baseFloor = 16_000_000;
-        else if (pixels <= 3840L * 2160L)
-            baseFloor = 28_000_000;
-        else
-            baseFloor = 40_000_000;
-
-        double fps = framerate.den != 0 ? ffmpeg.av_q2d(framerate) : 0.0;
-        if (fps <= 0.0)
-            fps = 30.0;
-        if (fps > 30.0)
-            baseFloor = (long)Math.Round(baseFloor * (fps / 30.0));
-
-        return ClampBitrate(baseFloor);
-    }
-
-    private static int ResolveHighQualityTargetBitrate(
-        long sourceBitrate,
-        int width,
-        int height,
-        AVRational framerate,
-        AVCodecID codecId)
-    {
-        int resolutionFloor = EstimateHighQualityBitrate(width, height, framerate);
-        int boundedSourceBitrate = ClampBitrate(sourceBitrate);
-        int targetBitrate = boundedSourceBitrate > 0
-            ? ClampBitrate((long)boundedSourceBitrate * 3L / 2L)
-            : resolutionFloor;
-
-        if (codecId == AVCodecID.AV_CODEC_ID_AV1)
-            targetBitrate = Math.Max(targetBitrate, resolutionFloor);
-
-        return Math.Max(targetBitrate, 2_000_000);
-    }
-
-    private static int ClampBitrate(long value)
-    {
-        if (value <= 0)
-            return 0;
-        if (value > int.MaxValue)
-            return int.MaxValue;
-        return (int)value;
-    }
-
-    private static unsafe AVPixelFormat PickPreferredPixelFormat(AVCodec* encoder, AVPixelFormat preferred)
-    {
-#pragma warning disable CS0618 // AVCodec.pix_fmts obsolete in ffmpeg headers
-        if (encoder == null || encoder->pix_fmts == null)
-        {
-            if (preferred != AVPixelFormat.AV_PIX_FMT_NONE)
-                return preferred;
-            return AVPixelFormat.AV_PIX_FMT_YUV420P;
-        }
-
-        AVPixelFormat first = AVPixelFormat.AV_PIX_FMT_NONE;
-        for (AVPixelFormat* p = encoder->pix_fmts; *p != AVPixelFormat.AV_PIX_FMT_NONE; p++)
-        {
-            if (first == AVPixelFormat.AV_PIX_FMT_NONE)
-                first = *p;
-            if (*p == preferred)
-                return preferred;
-        }
-
-        if (preferred != AVPixelFormat.AV_PIX_FMT_NONE)
-        {
-            int loss = 0;
-            AVPixelFormat best = ffmpeg.avcodec_find_best_pix_fmt_of_list(
-                encoder->pix_fmts,
-                preferred,
-                0,
-                &loss);
-            if (best != AVPixelFormat.AV_PIX_FMT_NONE)
-                return best;
-        }
-
-        if (first != AVPixelFormat.AV_PIX_FMT_NONE)
-            return first;
-        return AVPixelFormat.AV_PIX_FMT_YUV420P;
-#pragma warning restore CS0618
-    }
-
     private static unsafe string GetEncoderName(AVCodec* encoder)
     {
         if (encoder == null || encoder->name == null)
             return "unknown";
         return Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? "unknown";
-    }
-
-    private static unsafe string GetPixelFormatName(AVPixelFormat pixelFormat)
-    {
-        if (pixelFormat == AVPixelFormat.AV_PIX_FMT_NONE)
-            return "unknown";
-        string? name = ffmpeg.av_get_pix_fmt_name(pixelFormat);
-        return string.IsNullOrWhiteSpace(name) ? pixelFormat.ToString() : name;
-    }
-
-    private static unsafe int GetPixelFormatBitDepth(AVPixelFormat pixelFormat)
-    {
-        if (pixelFormat == AVPixelFormat.AV_PIX_FMT_NONE)
-            return 0;
-        AVPixFmtDescriptor* descriptor = ffmpeg.av_pix_fmt_desc_get(pixelFormat);
-        return descriptor == null || descriptor->nb_components == 0
-            ? 0
-            : descriptor->comp[0].depth;
-    }
-
-    private static unsafe string? GetPixelFormatLossReason(
-        AVPixelFormat sourcePixelFormat,
-        AVPixelFormat outputPixelFormat)
-    {
-        if (sourcePixelFormat == AVPixelFormat.AV_PIX_FMT_NONE ||
-            outputPixelFormat == AVPixelFormat.AV_PIX_FMT_NONE)
-        {
-            return null;
-        }
-
-        AVPixFmtDescriptor* source = ffmpeg.av_pix_fmt_desc_get(sourcePixelFormat);
-        AVPixFmtDescriptor* output = ffmpeg.av_pix_fmt_desc_get(outputPixelFormat);
-        if (source == null || output == null)
-            return null;
-
-        bool sourceIsRgb = (source->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
-        bool outputIsRgb = (output->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
-        if (sourceIsRgb != outputIsRgb)
-        {
-            return $"색상 모델 변경 {GetPixelFormatName(sourcePixelFormat)} -> " +
-                   GetPixelFormatName(outputPixelFormat);
-        }
-
-        bool sourceHasAlpha = (source->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0;
-        bool outputHasAlpha = (output->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0;
-        if (sourceHasAlpha && !outputHasAlpha)
-        {
-            return $"알파 채널 유실 {GetPixelFormatName(sourcePixelFormat)} -> " +
-                   GetPixelFormatName(outputPixelFormat);
-        }
-
-        int comparableComponents = Math.Min(source->nb_components, output->nb_components);
-        for (int component = 0; component < comparableComponents; component++)
-        {
-            int sourceBitDepth = source->comp[(uint)component].depth;
-            int outputBitDepth = output->comp[(uint)component].depth;
-            if (sourceBitDepth > 0 && outputBitDepth > 0 && outputBitDepth < sourceBitDepth)
-            {
-                return $"비트 심도 하락 {GetPixelFormatName(sourcePixelFormat)}({sourceBitDepth}) -> " +
-                       $"{GetPixelFormatName(outputPixelFormat)}({outputBitDepth})";
-            }
-        }
-
-        if (output->nb_components < source->nb_components)
-        {
-            return $"색상 성분 감소 {GetPixelFormatName(sourcePixelFormat)}({source->nb_components}) -> " +
-                   $"{GetPixelFormatName(outputPixelFormat)}({output->nb_components})";
-        }
-
-        if (source->nb_components >= 3 && output->nb_components >= 3 &&
-            (output->log2_chroma_w > source->log2_chroma_w ||
-             output->log2_chroma_h > source->log2_chroma_h))
-        {
-            return $"색차 해상도 하락 {GetPixelFormatName(sourcePixelFormat)} -> " +
-                   GetPixelFormatName(outputPixelFormat);
-        }
-
-        return null;
     }
 
     private unsafe void ValidateDecodedFramePixelFidelity(
@@ -4267,7 +3998,7 @@ public unsafe sealed class VideoExportService
         }
 
         AVPixelFormat framePixelFormat = (AVPixelFormat)frame->format;
-        string? pixelFormatLoss = GetPixelFormatLossReason(
+        string? pixelFormatLoss = VideoExportFidelityPolicy.GetPixelFormatLossReason(
             framePixelFormat,
             encoderContext->pix_fmt);
         if (!string.IsNullOrWhiteSpace(pixelFormatLoss))
@@ -4279,7 +4010,7 @@ public unsafe sealed class VideoExportService
         if (!_losslessX264RgbConfigured)
             return;
 
-        if (!CanEncodeLosslessX264Rgb(
+        if (!VideoExportFidelityPolicy.CanEncodeLosslessX264Rgb(
                 framePixelFormat,
                 frame->color_range,
                 frame->colorspace,
@@ -4301,32 +4032,6 @@ public unsafe sealed class VideoExportService
             throw new VideoExportIntegrityException(
                 $"영상 도중 RGB transfer characteristic이 변경됐습니다({frame->color_trc}).");
         }
-    }
-
-    private static unsafe long ResolveSourceVideoBitrate(AVStream* stream, AVCodecContext* decoder)
-    {
-        if (stream != null && stream->codecpar != null && stream->codecpar->bit_rate > 0)
-            return stream->codecpar->bit_rate;
-        if (decoder != null && decoder->bit_rate > 0)
-            return decoder->bit_rate;
-        return 0;
-    }
-
-    private static unsafe long ResolveTargetVideoBitrateForSummary(
-        AVCodec* encoder,
-        AVStream* stream,
-        AVCodecContext* decoder,
-        AVCodecContext* encoderContext)
-    {
-        if (encoderContext != null && encoderContext->bit_rate > 0)
-            return encoderContext->bit_rate;
-        if (!VideoEncoderSelectionPolicy.IsHardwareEncoder(encoder))
-            return 0;
-
-        long sourceBitrate = ResolveSourceVideoBitrate(stream, decoder);
-        return sourceBitrate > 0
-            ? ClampBitrate(sourceBitrate * 3L / 2L)
-            : 0;
     }
 
     private static unsafe void CopyFrameEncodingProperties(AVFrame* source, AVFrame* destination)
