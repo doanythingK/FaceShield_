@@ -837,7 +837,7 @@ public unsafe sealed class VideoExportService
                 enc != null &&
                 encoder != null &&
                 enc->codec_id == inStream->codecpar->codec_id &&
-                !IsHardwareEncoder(encoder) &&
+                !VideoEncoderSelectionPolicy.IsHardwareEncoder(encoder) &&
                 (hybridEncodeWindow.Value.Start > 0 ||
                  hybridEncodeWindow.Value.EndExclusive < totalFrames);
 
@@ -2771,7 +2771,7 @@ public unsafe sealed class VideoExportService
         }
         ValidateFrameStaticHdrMetadata(frame);
 
-        if (IsHardwareEncoder(enc->codec) &&
+        if (VideoEncoderSelectionPolicy.IsHardwareEncoder(enc->codec) &&
             FFmpegHdrMetadataGuard.HasStaticHdrMetadata(frame))
         {
             throw new InvalidOperationException(
@@ -3633,7 +3633,7 @@ public unsafe sealed class VideoExportService
         var attemptedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string> candidateNames = requiresLosslessRgbH264
             ? new[] { "libx264rgb" }
-            : GetEncoderCandidateNames(
+            : VideoEncoderSelectionPolicy.GetCandidateNames(
                 codecId,
                 forceSoftwareEncoder,
                 allowTenBitHevcFallback);
@@ -3648,9 +3648,9 @@ public unsafe sealed class VideoExportService
                  !(allowTenBitHevcFallback && candidate->id == AVCodecID.AV_CODEC_ID_HEVC)))
                 continue;
 
-            if (hdrMetadata?.HasStaticMetadata == true && IsHardwareEncoder(candidate))
+            if (hdrMetadata?.HasStaticMetadata == true && VideoEncoderSelectionPolicy.IsHardwareEncoder(candidate))
             {
-                error = AppendEncoderError(
+                error = VideoEncoderSelectionPolicy.AppendError(
                     error,
                     candidateName,
                     "HDR mastering/CLL 메타데이터 전달이 검증되지 않은 하드웨어 인코더입니다.");
@@ -3658,10 +3658,10 @@ public unsafe sealed class VideoExportService
             }
 
             AVChromaLocation sourceChromaLocation = ResolveSourceChromaLocation(inStream, dec);
-            if (RequiresSoftwareEncoderForChromaLocation(sourceChromaLocation) &&
-                IsHardwareEncoder(candidate))
+            if (VideoEncoderSelectionPolicy.RequiresSoftwareEncoderForChromaLocation(sourceChromaLocation) &&
+                VideoEncoderSelectionPolicy.IsHardwareEncoder(candidate))
             {
-                error = AppendEncoderError(
+                error = VideoEncoderSelectionPolicy.AppendError(
                     error,
                     candidateName,
                     $"원본 chroma 위치({sourceChromaLocation}) 보존이 검증되지 않은 하드웨어 인코더입니다.");
@@ -3671,7 +3671,7 @@ public unsafe sealed class VideoExportService
             if (outFmt != null && outFmt->oformat != null &&
                 ffmpeg.avformat_query_codec(outFmt->oformat, candidate->id, 0) <= 0)
             {
-                error = AppendEncoderError(
+                error = VideoEncoderSelectionPolicy.AppendError(
                     error,
                     candidateName,
                     $"출력 컨테이너({GetOutputFormatName(outFmt)})가 코덱({GetCodecName(candidate->id)})을 지원하지 않습니다.");
@@ -3697,7 +3697,7 @@ public unsafe sealed class VideoExportService
             Debug.WriteLine(
                 $"[ExportEncoderCandidate] name={candidateName}, codec={GetCodecName(candidate->id)}, " +
                 $"opened=false, error={openError ?? "unknown"}");
-            error = AppendEncoderError(error, candidateName, openError);
+            error = VideoEncoderSelectionPolicy.AppendError(error, candidateName, openError);
         }
 
         if (requiresLosslessRgbH264)
@@ -3707,12 +3707,12 @@ public unsafe sealed class VideoExportService
                 $"인코더 초기화 실패: {error ?? "libx264rgb를 찾을 수 없습니다."}");
         }
 
-        AVCodec* fallback = SelectFallbackEncoder(
+        AVCodec* fallback = VideoEncoderSelectionPolicy.SelectFallbackEncoder(
             codecId,
             forceSoftwareEncoder || hdrMetadata?.HasStaticMetadata == true);
         if (fallback == null)
         {
-            error = AppendEncoderError(
+            error = VideoEncoderSelectionPolicy.AppendError(
                 error,
                 GetCodecName(codecId),
                 $"인코더를 찾을 수 없습니다(코덱: {GetCodecName(codecId)}). FFmpeg 빌드에 해당 인코더가 포함되어 있지 않을 수 있습니다.");
@@ -3740,7 +3740,7 @@ public unsafe sealed class VideoExportService
                 return ctx;
             }
 
-            error = AppendEncoderError(error, fallbackName, fallbackError);
+            error = VideoEncoderSelectionPolicy.AppendError(error, fallbackName, fallbackError);
         }
 
         return null;
@@ -3817,7 +3817,7 @@ public unsafe sealed class VideoExportService
             ctx->framerate,
             encoder->id);
 
-        bool usesSoftwareConstantQuality = UsesSoftwareConstantQuality(encoderName);
+        bool usesSoftwareConstantQuality = VideoEncoderSelectionPolicy.UsesSoftwareConstantQuality(encoderName);
         if (usesSoftwareConstantQuality)
         {
             ctx->bit_rate = 0;
@@ -3872,7 +3872,7 @@ public unsafe sealed class VideoExportService
             ctx->max_b_frames = 0;
             ctx->gop_size = 60;
         }
-        ctx->thread_count = IsHardwareEncoder(encoder)
+        ctx->thread_count = VideoEncoderSelectionPolicy.IsHardwareEncoder(encoder)
             ? 0
             : Math.Max(1, Environment.ProcessorCount - 2);
 
@@ -4035,31 +4035,6 @@ public unsafe sealed class VideoExportService
         return encodedValue >= 0 && (ulong)encodedValue <= maxEncodedValue;
     }
 
-    private static bool IsHardwareEncoder(AVCodec* encoder)
-    {
-        if (encoder == null || encoder->name == null)
-            return false;
-
-        string name = Marshal.PtrToStringAnsi((IntPtr)encoder->name) ?? string.Empty;
-        if (name.Length == 0)
-            return false;
-
-        return name.Contains("videotoolbox", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("nvenc", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("qsv", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("amf", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("vaapi", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("v4l2m2m", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool UsesSoftwareConstantQuality(string encoderName)
-    {
-        return encoderName.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
-               encoderName.Contains("x265", StringComparison.OrdinalIgnoreCase) ||
-               encoderName.Contains("svtav1", StringComparison.OrdinalIgnoreCase) ||
-               encoderName.Contains("aom-av1", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static unsafe AVFieldOrder ResolveSourceFieldOrder(
         AVStream* stream,
         AVCodecContext* decoder)
@@ -4107,147 +4082,6 @@ public unsafe sealed class VideoExportService
             return stream->codecpar->chroma_location;
         }
         return AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED;
-    }
-
-    private static bool RequiresSoftwareEncoderForChromaLocation(
-        AVChromaLocation chromaLocation)
-    {
-        return chromaLocation is not
-            AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED and not
-            AVChromaLocation.AVCHROMA_LOC_LEFT;
-    }
-
-    private static IReadOnlyList<string> GetPreferredEncoderNames(AVCodecID codecId, bool forceSoftwareOnly)
-    {
-        if (forceSoftwareOnly)
-        {
-            if (codecId == AVCodecID.AV_CODEC_ID_H264)
-                return new[] { "libx264" };
-            if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
-                return new[] { "libx265" };
-            if (codecId == AVCodecID.AV_CODEC_ID_AV1)
-                return new[] { "libsvtav1", "libaom-av1" };
-            return new[] { "libx264", "libx265" };
-        }
-
-        bool isMac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
-        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-
-        if (codecId == AVCodecID.AV_CODEC_ID_H264)
-        {
-            if (isMac)
-                return new[] { "h264_videotoolbox", "libx264" };
-            if (isWindows)
-                return new[] { "h264_nvenc", "h264_qsv", "h264_amf", "libx264" };
-            return new[] { "h264_nvenc", "h264_vaapi", "libx264" };
-        }
-
-        if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
-        {
-            if (isMac)
-                return new[] { "hevc_videotoolbox", "libx265" };
-            if (isWindows)
-                return new[] { "hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265" };
-            return new[] { "hevc_nvenc", "hevc_vaapi", "libx265" };
-        }
-
-        if (codecId == AVCodecID.AV_CODEC_ID_AV1)
-        {
-            if (isMac)
-                return new[] { "libsvtav1", "libaom-av1" };
-            if (isWindows)
-            {
-                return new[]
-                {
-                    "av1_nvenc",
-                    "av1_qsv",
-                    "av1_amf",
-                    "libsvtav1",
-                    "libaom-av1"
-                };
-            }
-
-            return new[] { "av1_nvenc", "av1_qsv", "libsvtav1", "libaom-av1" };
-        }
-
-        return Array.Empty<string>();
-    }
-
-    private static IReadOnlyList<string> GetEncoderCandidateNames(
-        AVCodecID codecId,
-        bool forceSoftwareOnly,
-        bool allowTenBitHevcFallback)
-    {
-        IReadOnlyList<string> primary = GetPreferredEncoderNames(codecId, forceSoftwareOnly);
-        if (!allowTenBitHevcFallback || codecId != AVCodecID.AV_CODEC_ID_H264)
-            return primary;
-
-        IReadOnlyList<string> hevcFallback = GetPreferredEncoderNames(
-            AVCodecID.AV_CODEC_ID_HEVC,
-            forceSoftwareOnly);
-        var candidates = new List<string>(primary.Count + hevcFallback.Count);
-        foreach (string name in primary)
-        {
-            if (!name.Contains("x264", StringComparison.OrdinalIgnoreCase) &&
-                !name.Contains("x265", StringComparison.OrdinalIgnoreCase))
-            {
-                candidates.Add(name);
-            }
-        }
-
-        foreach (string name in hevcFallback)
-        {
-            if (!name.Contains("x265", StringComparison.OrdinalIgnoreCase))
-                candidates.Add(name);
-        }
-
-        foreach (string name in primary)
-        {
-            if (name.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("x265", StringComparison.OrdinalIgnoreCase))
-            {
-                candidates.Add(name);
-            }
-        }
-
-        foreach (string name in hevcFallback)
-        {
-            if (name.Contains("x265", StringComparison.OrdinalIgnoreCase))
-                candidates.Add(name);
-        }
-
-        return candidates;
-    }
-
-    private static unsafe AVCodec* SelectFallbackEncoder(AVCodecID codecId, bool forceSoftwareOnly)
-    {
-        if (forceSoftwareOnly)
-        {
-            if (codecId == AVCodecID.AV_CODEC_ID_H264)
-                return ffmpeg.avcodec_find_encoder_by_name("libx264");
-            if (codecId == AVCodecID.AV_CODEC_ID_HEVC)
-                return ffmpeg.avcodec_find_encoder_by_name("libx265");
-            if (codecId == AVCodecID.AV_CODEC_ID_AV1)
-            {
-                AVCodec* svtAv1 = ffmpeg.avcodec_find_encoder_by_name("libsvtav1");
-                return svtAv1 != null
-                    ? svtAv1
-                    : ffmpeg.avcodec_find_encoder_by_name("libaom-av1");
-            }
-        }
-
-        return ffmpeg.avcodec_find_encoder(codecId);
-    }
-
-    private static string AppendEncoderError(string? existing, string encoderName, string? detail)
-    {
-        string part = string.IsNullOrWhiteSpace(detail)
-            ? $"{encoderName}: 초기화 실패"
-            : $"{encoderName}: {detail}";
-
-        if (string.IsNullOrWhiteSpace(existing))
-            return part;
-        return $"{existing} | {part}";
     }
 
     private static int EstimateHighQualityBitrate(int width, int height, AVRational framerate)
@@ -4674,7 +4508,7 @@ public unsafe sealed class VideoExportService
     {
         if (encoderContext != null && encoderContext->bit_rate > 0)
             return encoderContext->bit_rate;
-        if (!IsHardwareEncoder(encoder))
+        if (!VideoEncoderSelectionPolicy.IsHardwareEncoder(encoder))
             return 0;
 
         long sourceBitrate = ResolveSourceVideoBitrate(stream, decoder);
@@ -5327,7 +5161,7 @@ public unsafe sealed class VideoExportService
 
         AVCodec* encoder = context == null ? null : context->codec;
         string encoderName = GetEncoderName(encoder);
-        bool isHardwareEncoder = IsHardwareEncoder(encoder);
+        bool isHardwareEncoder = VideoEncoderSelectionPolicy.IsHardwareEncoder(encoder);
         string detail = GetErrorMessage(errorCode);
         throw new VideoEncoderException(
             $"비디오 인코더({encoderName}) {operation} 실패: {detail}",
