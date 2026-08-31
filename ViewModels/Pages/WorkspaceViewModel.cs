@@ -100,7 +100,7 @@ namespace FaceShield.ViewModels.Pages
             Mode == WorkspaceMode.Auto &&
             !_autoCompleted &&
             _autoResumeIndex > 0 &&
-            !RequiresCompleteAutoTimeline(_autoOptions, _detectorFactoryOptions) &&
+            !AutoRunSignaturePolicy.RequiresCompleteTimeline(_autoOptions, _detectorFactoryOptions) &&
             AutoMaskGenerator.CanResumeFromFrame(_autoOptions, _autoResumeIndex) &&
             IsAutoResumeSignatureCurrent(AutoRunSignaturePolicy.BuildIntentSignature(
                 _autoOptions,
@@ -1058,7 +1058,7 @@ namespace FaceShield.ViewModels.Pages
                 _autoExecutionSignature = executionSignature;
                 _autoCompleted = false;
                 int lastProcessed = Math.Max(0, _autoResumeIndex);
-                if ((RequiresCompleteAutoTimeline(runOptions, detectorFactoryOptions) ||
+                if ((AutoRunSignaturePolicy.RequiresCompleteTimeline(runOptions, detectorFactoryOptions) ||
                      !AutoMaskGenerator.CanResumeFromFrame(runOptions, lastProcessed)) &&
                     lastProcessed > 0)
                 {
