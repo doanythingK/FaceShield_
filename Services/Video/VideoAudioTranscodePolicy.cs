@@ -365,6 +365,88 @@ internal static unsafe class VideoAudioTranscodePolicy
         }
     }
 
+    internal static void FlushAudioTranscode(
+        AVCodecContext* audioDec,
+        AVCodecContext* audioEnc,
+        AVStream* outAudioStream,
+        AVFormatContext* outFmt,
+        SwrContext* swr,
+        AVAudioFifo* audioFifo,
+        AVFrame* audioFrame,
+        AVFrame* audioConvFrame,
+        AVFrame* audioEncFrame,
+        AVPacket* audioPkt,
+        ref long audioPts,
+        ref long lastPacketPts,
+        ref bool hasLastPacketPts,
+        ref long lastPacketDts,
+        ref bool hasLastPacketDts)
+    {
+        int flushErr = ffmpeg.avcodec_send_packet(audioDec, null);
+        if (flushErr < 0)
+            Throw(flushErr);
+
+        while (ffmpeg.avcodec_receive_frame(audioDec, audioFrame) == 0)
+        {
+            ConvertAndQueueAudioFrame(
+                audioFrame,
+                audioDec,
+                audioEnc,
+                swr,
+                audioFifo,
+                audioConvFrame);
+            DrainAudioFifo(
+                audioFifo,
+                audioEnc,
+                outAudioStream,
+                outFmt,
+                audioPkt,
+                audioEncFrame,
+                ref audioPts,
+                ref lastPacketPts,
+                ref hasLastPacketPts,
+                ref lastPacketDts,
+                ref hasLastPacketDts,
+                flush: false);
+            ffmpeg.av_frame_unref(audioFrame);
+        }
+
+        DrainAudioFifo(
+            audioFifo,
+            audioEnc,
+            outAudioStream,
+            outFmt,
+            audioPkt,
+            audioEncFrame,
+            ref audioPts,
+            ref lastPacketPts,
+            ref hasLastPacketPts,
+            ref lastPacketDts,
+            ref hasLastPacketDts,
+            flush: true);
+
+        int sendFinalErr = ffmpeg.avcodec_send_frame(audioEnc, null);
+        if (sendFinalErr < 0)
+            Throw(sendFinalErr);
+
+        while (ffmpeg.avcodec_receive_packet(audioEnc, audioPkt) == 0)
+        {
+            audioPkt->stream_index = outAudioStream->index;
+            ffmpeg.av_packet_rescale_ts(
+                audioPkt,
+                audioEnc->time_base,
+                outAudioStream->time_base);
+            VideoExportTimingPolicy.NormalizeEncodedPacketTimestamps(
+                audioPkt,
+                ref lastPacketPts,
+                ref hasLastPacketPts,
+                ref lastPacketDts,
+                ref hasLastPacketDts);
+            Throw(ffmpeg.av_interleaved_write_frame(outFmt, audioPkt));
+            ffmpeg.av_packet_unref(audioPkt);
+        }
+    }
+
     private static AVSampleFormat GetSampleFmt(
         AVCodec* encoder,
         AVSampleFormat preferred)

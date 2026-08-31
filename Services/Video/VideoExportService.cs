@@ -1588,59 +1588,22 @@ public unsafe sealed class VideoExportService
 
             if (audioReencode && audioDec != null && audioEnc != null && swr != null && audioFifo != null)
             {
-                int flushErr = ffmpeg.avcodec_send_packet(audioDec, null);
-                if (flushErr < 0)
-                    Throw(flushErr);
-
-                while (ffmpeg.avcodec_receive_frame(audioDec, audioFrame) == 0)
-                {
-                    VideoAudioTranscodePolicy.ConvertAndQueueAudioFrame(audioFrame, audioDec, audioEnc, swr, audioFifo, audioConvFrame);
-                    VideoAudioTranscodePolicy.DrainAudioFifo(
-                        audioFifo,
-                        audioEnc,
-                        outAudioStream,
-                        outFmt,
-                        audioPkt,
-                        audioEncFrame,
-                        ref audioPts,
-                        ref lastAudioEncPacketPts,
-                        ref hasLastAudioEncPacketPts,
-                        ref lastAudioEncPacketDts,
-                        ref hasLastAudioEncPacketDts,
-                        flush: false);
-                    ffmpeg.av_frame_unref(audioFrame);
-                }
-
-                VideoAudioTranscodePolicy.DrainAudioFifo(
-                    audioFifo,
+                VideoAudioTranscodePolicy.FlushAudioTranscode(
+                    audioDec,
                     audioEnc,
                     outAudioStream,
                     outFmt,
-                    audioPkt,
+                    swr,
+                    audioFifo,
+                    audioFrame,
+                    audioConvFrame,
                     audioEncFrame,
+                    audioPkt,
                     ref audioPts,
                     ref lastAudioEncPacketPts,
                     ref hasLastAudioEncPacketPts,
                     ref lastAudioEncPacketDts,
-                    ref hasLastAudioEncPacketDts,
-                    flush: true);
-
-                int sendFinalErr = ffmpeg.avcodec_send_frame(audioEnc, null);
-                if (sendFinalErr < 0)
-                    Throw(sendFinalErr);
-                    while (ffmpeg.avcodec_receive_packet(audioEnc, audioPkt) == 0)
-                    {
-                        audioPkt->stream_index = outAudioStream->index;
-                        ffmpeg.av_packet_rescale_ts(audioPkt, audioEnc->time_base, outAudioStream->time_base);
-                        VideoExportTimingPolicy.NormalizeEncodedPacketTimestamps(
-                            audioPkt,
-                            ref lastAudioEncPacketPts,
-                            ref hasLastAudioEncPacketPts,
-                            ref lastAudioEncPacketDts,
-                            ref hasLastAudioEncPacketDts);
-                        Throw(ffmpeg.av_interleaved_write_frame(outFmt, audioPkt));
-                        ffmpeg.av_packet_unref(audioPkt);
-                    }
+                    ref hasLastAudioEncPacketDts);
             }
 
             progress?.Report(new ExportProgress(
