@@ -74,7 +74,14 @@ namespace FaceShield.ViewModels
 
         public void PersistAppState()
         {
-            _home.PersistAllWorkspaces();
+            try
+            {
+                _home.PersistAllWorkspaces();
+            }
+            finally
+            {
+                _home.DisposeAllWorkspaces();
+            }
         }
     }
 }
