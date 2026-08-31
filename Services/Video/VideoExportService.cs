@@ -12,41 +12,6 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    private sealed class VideoEncoderException : InvalidOperationException
-    {
-        public VideoEncoderException(
-            string message,
-            int errorCode,
-            string operation,
-            string encoderName,
-            bool isHardwareEncoder)
-            : base(message)
-        {
-            ErrorCode = errorCode;
-            Operation = operation;
-            EncoderName = encoderName;
-            IsHardwareEncoder = isHardwareEncoder;
-        }
-
-        public int ErrorCode { get; }
-        public string Operation { get; }
-        public string EncoderName { get; }
-        public bool IsHardwareEncoder { get; }
-    }
-
-    private const bool EnableHybridCopyWindow = false;
-    private const int MinHybridCopyFrames = 240;
-    private const double MinHybridCopyRatio = 0.05;
-    private const int MinHybridCopySideFrames = 24;
-    private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
-    private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
-    private const int MaxHybridFrameGapBeforeFallback = 32;
-    private const double MaxEstimatedFrameCountSkewRatio = 1.25;
-    private const int MaxEstimatedFrameCountSkewAbsolute = 1200;
-    private const long MaxHybridFrameStepTolerance = 1;
-    private const long MaxHybridCopyPtsJitterDivisor = 10;
-    private const int MaxHybridPacketFrameIndexUnreliableSequence = 4;
-    private const int ExportSampleWindowSeconds = 30;
     private const int MaxAllowedOutputPacketLoss = 0;
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
@@ -96,7 +61,7 @@ public unsafe sealed class VideoExportService
                     forceAudioTranscode: false,
                     forceH264Fallback: false);
             }
-            catch (InvalidOperationException ex) when (ShouldRetryWithSafeEncoding(ex))
+            catch (InvalidOperationException ex) when (VideoExportRetryPolicy.ShouldRetryWithSafeEncoding(ex))
             {
                 Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: {ex.Message}");
                 try
@@ -117,7 +82,7 @@ public unsafe sealed class VideoExportService
                         forceH264Fallback: false);
                 }
                 catch (InvalidOperationException nestedEx) when (
-                    ShouldRetryWithH264Fallback(nestedEx))
+                    VideoExportRetryPolicy.ShouldRetryWithH264Fallback(nestedEx, _staticHdrConfigured))
                 {
                     Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
                     attemptCount++;
@@ -3577,30 +3542,6 @@ public unsafe sealed class VideoExportService
         byte* buf = stackalloc byte[1024];
         ffmpeg.av_strerror(err, buf, 1024);
         return System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buf, 1024)).TrimEnd('\0');
-    }
-
-    private static bool IsInvalidArgumentError(Exception ex)
-    {
-        if (ex is not InvalidOperationException)
-            return false;
-
-        return ex.Message.Contains("Invalid argument", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool ShouldRetryWithSafeEncoding(InvalidOperationException ex)
-    {
-        if (ex is VideoExportIntegrityException)
-            return false;
-
-        return ex is VideoEncoderException { IsHardwareEncoder: true } ||
-               IsInvalidArgumentError(ex);
-    }
-
-    private bool ShouldRetryWithH264Fallback(InvalidOperationException ex)
-    {
-        return !_staticHdrConfigured &&
-               ShouldRetryWithSafeEncoding(ex) &&
-               IsInvalidArgumentError(ex);
     }
 
     private static unsafe void ThrowVideoEncoderError(
