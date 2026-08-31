@@ -1,4 +1,3 @@
-using Avalonia.Media.Imaging;
 using FaceShield.Services.Diagnostics;
 using FFmpeg.AutoGen;
 using System;
@@ -225,7 +224,6 @@ public unsafe sealed class VideoExportService
         int frameIndex = 0;
         int totalFrames = 0;
         double sourceFps = 0.0;
-        WriteableBitmap? reusableFaceMask = null;
         long lastEncodedPts = -1;
         bool hasLastEncodedPts = false;
         long lastEncodedPacketPts = -1;
@@ -1222,7 +1220,6 @@ public unsafe sealed class VideoExportService
                                 appliedBlurFrameIndices,
                                 ref blurRangeCursor,
                                 sourceFps,
-                                forceSafeEncoding,
                                 totalFrames,
                                 encodeWindowStart,
                                 encodeWindowEnd,
@@ -1238,7 +1235,6 @@ public unsafe sealed class VideoExportService
                                 ref hasLastEncodedPacketPts,
                                 ref lastEncodedPacketDts,
                                 ref hasLastEncodedPacketDts,
-                                ref reusableFaceMask,
                                 ref outputVideoPacketCount,
                                 encodedTimestampIntegrity,
                                 progress,
@@ -1328,7 +1324,6 @@ public unsafe sealed class VideoExportService
                             appliedBlurFrameIndices,
                             ref blurRangeCursor,
                             sourceFps,
-                            forceSafeEncoding,
                             totalFrames,
                             encodeWindowStart,
                             encodeWindowEnd,
@@ -1344,7 +1339,6 @@ public unsafe sealed class VideoExportService
                             ref hasLastEncodedPacketPts,
                             ref lastEncodedPacketDts,
                             ref hasLastEncodedPacketDts,
-                            ref reusableFaceMask,
                             ref outputVideoPacketCount,
                             encodedTimestampIntegrity,
                             progress,
@@ -1458,7 +1452,6 @@ public unsafe sealed class VideoExportService
                         frame,
                         bgra,
                         encFrame,
-                        dec,
                         enc,
                         swsDecToBgra,
                         swsBgraToEnc,
@@ -1473,7 +1466,6 @@ public unsafe sealed class VideoExportService
                         appliedBlurFrameIndices,
                         ref blurRangeCursor,
                         sourceFps,
-                        forceSafeEncoding,
                         totalFrames,
                         encodeWindowStart,
                         encodeWindowEnd,
@@ -1488,7 +1480,6 @@ public unsafe sealed class VideoExportService
                         ref hasLastEncodedPacketPts,
                         ref lastEncodedPacketDts,
                         ref hasLastEncodedPacketDts,
-                        ref reusableFaceMask,
                         ref outputVideoPacketCount,
                         encodedTimestampIntegrity,
                         progress,
@@ -1548,7 +1539,6 @@ public unsafe sealed class VideoExportService
                 appliedBlurFrameIndices,
                 ref blurRangeCursor,
                 sourceFps,
-                forceSafeEncoding,
                 totalFrames,
                 encodeWindowStart,
                 encodeWindowEnd,
@@ -1564,7 +1554,6 @@ public unsafe sealed class VideoExportService
                 ref hasLastEncodedPacketPts,
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
-                ref reusableFaceMask,
                 ref outputVideoPacketCount,
                 encodedTimestampIntegrity,
                 progress,
@@ -1891,7 +1880,6 @@ public unsafe sealed class VideoExportService
             ffmpeg.avcodec_free_context(&audioEnc);
             if (swr != null) ffmpeg.swr_free(&swr);
             if (audioFifo != null) ffmpeg.av_audio_fifo_free(audioFifo);
-            reusableFaceMask?.Dispose();
 
             if (outFmt != null)
             {

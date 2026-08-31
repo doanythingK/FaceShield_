@@ -9,25 +9,6 @@ namespace FaceShield.Services.Video;
 
 internal static unsafe class VideoFrameProcessingPolicy
 {
-    private static void ValidateFrameStaticHdrMetadata(
-        AVFrame* frame,
-        VideoHdrMetadata? configuredHdrMetadata)
-    {
-        if (frame == null)
-            return;
-
-        VideoHdrMetadataPolicy.ValidateFrameStaticHdrPayload(
-            frame,
-            AVFrameSideDataType.AV_FRAME_DATA_MASTERING_DISPLAY_METADATA,
-            configuredHdrMetadata?.MasteringDisplayPayload,
-            "mastering display");
-        VideoHdrMetadataPolicy.ValidateFrameStaticHdrPayload(
-            frame,
-            AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL,
-            configuredHdrMetadata?.ContentLightPayload,
-            "content light");
-    }
-
     internal static void ProcessDecodedVideoFrame(
         IFrameMaskProvider maskProvider,
         MaskedVideoExporter masked,
@@ -40,7 +21,6 @@ internal static unsafe class VideoFrameProcessingPolicy
         AVFrame* frame,
         AVFrame* bgra,
         AVFrame* encFrame,
-        AVCodecContext* dec,
         AVCodecContext* enc,
         SwsContext* swsDecToBgra,
         SwsContext* swsBgraToEnc,
@@ -55,7 +35,6 @@ internal static unsafe class VideoFrameProcessingPolicy
         HashSet<int> appliedBlurFrameIndices,
         ref int blurRangeCursor,
         double sourceFps,
-        bool forceSafeEncoding,
         int totalFrames,
         int encodeWindowStart,
         int encodeWindowEnd,
@@ -70,7 +49,6 @@ internal static unsafe class VideoFrameProcessingPolicy
         ref bool hasLastEncodedPacketPts,
         ref long lastEncodedPacketDts,
         ref bool hasLastEncodedPacketDts,
-        ref WriteableBitmap? reusableFaceMask,
         ref int outputVideoPacketCount,
         VideoPacketTimestampIntegrity timestampIntegrity,
         IProgress<ExportProgress>? progress,
@@ -114,7 +92,7 @@ internal static unsafe class VideoFrameProcessingPolicy
                 "정적 HDR 메타데이터를 인코더 초기화 전에 확인하지 못했습니다. " +
                 "품질 저하를 막기 위해 내보내기를 중단했습니다.");
         }
-        ValidateFrameStaticHdrMetadata(frame, configuredHdrMetadata);
+        VideoHdrMetadataPolicy.ValidateFrameStaticHdrMetadata(frame, configuredHdrMetadata);
 
         if (VideoEncoderSelectionPolicy.IsHardwareEncoder(enc->codec) &&
             FFmpegHdrMetadataGuard.HasStaticHdrMetadata(frame))
@@ -426,7 +404,6 @@ internal static unsafe class VideoFrameProcessingPolicy
         HashSet<int> appliedBlurFrameIndices,
         ref int blurRangeCursor,
         double sourceFps,
-        bool forceSafeEncoding,
         int totalFrames,
         int encodeWindowStart,
         int encodeWindowEnd,
@@ -442,7 +419,6 @@ internal static unsafe class VideoFrameProcessingPolicy
         ref bool hasLastEncodedPacketPts,
         ref long lastEncodedPacketDts,
         ref bool hasLastEncodedPacketDts,
-        ref WriteableBitmap? reusableFaceMask,
         ref int outputVideoPacketCount,
         VideoPacketTimestampIntegrity timestampIntegrity,
         IProgress<ExportProgress>? progress,
@@ -482,7 +458,6 @@ internal static unsafe class VideoFrameProcessingPolicy
                 frame,
                 bgra,
                 encFrame,
-                dec,
                 enc,
                 swsDecToBgra,
                 swsBgraToEnc,
@@ -497,7 +472,6 @@ internal static unsafe class VideoFrameProcessingPolicy
                 appliedBlurFrameIndices,
                 ref blurRangeCursor,
                 sourceFps,
-                forceSafeEncoding,
                 totalFrames,
                 encodeWindowStart,
                 encodeWindowEnd,
@@ -512,7 +486,6 @@ internal static unsafe class VideoFrameProcessingPolicy
                 ref hasLastEncodedPacketPts,
                 ref lastEncodedPacketDts,
                 ref hasLastEncodedPacketDts,
-                ref reusableFaceMask,
                 ref outputVideoPacketCount,
                 timestampIntegrity,
                 progress,

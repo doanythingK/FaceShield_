@@ -258,16 +258,12 @@ internal static unsafe class VideoExportCopyPolicy
                                 0,
                                 totalFrames);
 
-                        if (currentFrame - lastReportedFrame >= 15 ||
-                            currentFrame >= totalFrames)
-                        {
-                            progress.Report(
-                                new ExportProgress(
-                                    currentFrame,
-                                    totalFrames,
-                                    "원본 스트림 복사 중..."));
-                            lastReportedFrame = currentFrame;
-                        }
+                        VideoExportProgressPolicy.ReportCopyProgress(
+                            progress,
+                            totalFrames,
+                            ref lastReportedFrame,
+                            currentFrame,
+                            "원본 스트림 복사 중...");
                     }
                 }
 

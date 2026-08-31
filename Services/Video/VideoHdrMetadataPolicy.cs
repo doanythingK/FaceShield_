@@ -538,5 +538,24 @@ internal static unsafe class VideoHdrMetadataPolicy
 
         long encodedValue = scaledNumerator / value.den;
         return encodedValue >= 0 && (ulong)encodedValue <= maxEncodedValue;
+    }    internal static void ValidateFrameStaticHdrMetadata(
+        AVFrame* frame,
+        VideoHdrMetadata? configuredHdrMetadata)
+    {
+        if (frame == null)
+            return;
+
+        ValidateFrameStaticHdrPayload(
+            frame,
+            AVFrameSideDataType.AV_FRAME_DATA_MASTERING_DISPLAY_METADATA,
+            configuredHdrMetadata?.MasteringDisplayPayload,
+            "mastering display");
+        ValidateFrameStaticHdrPayload(
+            frame,
+            AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL,
+            configuredHdrMetadata?.ContentLightPayload,
+            "content light");
     }
+
+
 }

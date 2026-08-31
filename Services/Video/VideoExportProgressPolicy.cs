@@ -46,4 +46,25 @@ internal static class VideoExportProgressPolicy
 
         return Math.Max(1, resolved);
     }
+    internal static void ReportCopyProgress(
+        IProgress<ExportProgress>? progress,
+        int totalFrames,
+        ref int lastReportedFrame,
+        int currentFrame,
+        string status)
+    {
+        if (progress == null || totalFrames <= 0)
+            return;
+
+        int bounded = Math.Clamp(currentFrame, 0, totalFrames);
+        if (bounded - lastReportedFrame < ProgressFrameInterval &&
+            bounded < totalFrames)
+        {
+            return;
+        }
+
+        progress.Report(new ExportProgress(bounded, totalFrames, status));
+        lastReportedFrame = bounded;
+    }
+
 }
