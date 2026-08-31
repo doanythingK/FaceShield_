@@ -66,8 +66,8 @@ namespace FaceShield.ViewModels.Pages
         private bool _isApplyingAutoSettings;
         private bool _isApplyingYoloProfile;
         private YoloFaceModelType _activeYoloModelType = YoloFaceModelType.Yolo5Face;
-        private YoloProfileState _yoloV8Profile = YoloProfileState.CreateDefault(YoloFaceModelType.YoloV8Face);
-        private YoloProfileState _yolo5Profile = YoloProfileState.CreateDefault(YoloFaceModelType.Yolo5Face);
+        private YoloProfileState _yoloV8Profile = CreateDefaultYoloProfile(YoloFaceModelType.YoloV8Face);
+        private YoloProfileState _yolo5Profile = CreateDefaultYoloProfile(YoloFaceModelType.Yolo5Face);
 
         [ObservableProperty]
         private string? selectedVideoPath;
@@ -238,47 +238,6 @@ namespace FaceShield.ViewModels.Pages
             new YoloModelTypeOption("YOLOv8-Face", YoloFaceModelType.YoloV8Face),
             new YoloModelTypeOption("YOLO5Face", YoloFaceModelType.Yolo5Face)
         };
-
-        private sealed class YoloProfileState
-        {
-            public string? ModelPath { get; init; }
-            public double ObjectnessThreshold { get; init; }
-            public double ConfidenceThreshold { get; init; }
-            public double NmsThreshold { get; init; }
-            public int InputSize { get; init; }
-            public bool UseTiling { get; init; }
-            public bool TileOnly { get; init; }
-            public int TileColumns { get; init; }
-            public int TileRows { get; init; }
-            public double TileOverlapRatio { get; init; }
-            public double DownscaleRatio { get; init; }
-            public DownscaleQuality DownscaleQuality { get; init; }
-            public bool AutoTrackingEnabled { get; init; }
-            public int AutoDetectEveryNFrames { get; init; }
-            public int ParallelSessionCount { get; init; }
-
-            public static YoloProfileState CreateDefault(YoloFaceModelType modelType)
-            {
-                return new YoloProfileState
-                {
-                    ModelPath = ResolveDefaultYoloModelPath(modelType),
-                    ObjectnessThreshold = modelType == YoloFaceModelType.Yolo5Face ? DefaultYolo5FaceObjectnessThreshold : 0.25,
-                    ConfidenceThreshold = modelType == YoloFaceModelType.Yolo5Face ? DefaultYolo5FaceConfidenceThreshold : 0.35,
-                    NmsThreshold = DefaultYoloNmsThreshold,
-                    InputSize = 640,
-                    UseTiling = false,
-                    TileOnly = false,
-                    TileColumns = 2,
-                    TileRows = 2,
-                    TileOverlapRatio = 0.15,
-                    DownscaleRatio = 1.0,
-                    DownscaleQuality = DownscaleQuality.BalancedBilinear,
-                    AutoTrackingEnabled = true,
-                    AutoDetectEveryNFrames = DefaultAutoDetectEveryNFrames,
-                    ParallelSessionCount = 2
-                };
-            }
-        }
 
         [ObservableProperty]
         private YoloModelTypeOption? selectedYoloModelTypeOption;
@@ -867,6 +826,18 @@ namespace FaceShield.ViewModels.Pages
             RequestAutoRestartForDetectorFactoryOptions("YOLO 모델 종류 변경 감지 · 재시작 준비 중...");
         }
 
+        private static YoloProfileState CreateDefaultYoloProfile(
+            YoloFaceModelType modelType)
+        {
+            return YoloProfilePersistencePolicy.CreateDefault(
+                modelType,
+                ResolveDefaultYoloModelPath(modelType),
+                DefaultAutoDetectEveryNFrames,
+                DefaultYolo5FaceObjectnessThreshold,
+                DefaultYolo5FaceConfidenceThreshold,
+                DefaultYoloNmsThreshold);
+        }
+
         private YoloProfileState GetYoloProfile(YoloFaceModelType modelType)
         {
             return modelType == YoloFaceModelType.Yolo5Face
@@ -1071,80 +1042,6 @@ namespace FaceShield.ViewModels.Pages
             _autoCts?.Cancel();
         }
 
-        private static YoloProfileState ReadSavedYoloProfile(
-            AutoSettingsState saved,
-            YoloFaceModelType modelType,
-            YoloFaceModelType selectedModelType)
-        {
-            var defaults = YoloProfileState.CreateDefault(modelType);
-            bool useLegacyActiveProfile = selectedModelType == modelType;
-            string? legacyModelPath = useLegacyActiveProfile ? NormalizeYoloModelPath(saved.YoloModelPath) : null;
-
-            if (modelType == YoloFaceModelType.Yolo5Face)
-            {
-                return new YoloProfileState
-                {
-                    ModelPath = NormalizeYoloModelPath(saved.Yolo5ModelPath) ?? legacyModelPath ?? defaults.ModelPath,
-                    ObjectnessThreshold = saved.Yolo5ObjectnessThreshold ?? (useLegacyActiveProfile ? saved.YoloObjectnessThreshold : null) ?? defaults.ObjectnessThreshold,
-                    ConfidenceThreshold = saved.Yolo5ConfidenceThreshold ?? (useLegacyActiveProfile ? saved.YoloConfidenceThreshold : null) ?? defaults.ConfidenceThreshold,
-                    NmsThreshold = saved.Yolo5NmsThreshold ?? (useLegacyActiveProfile ? saved.YoloNmsThreshold : null) ?? defaults.NmsThreshold,
-                    InputSize = Math.Clamp(saved.Yolo5InputSize ?? (useLegacyActiveProfile ? saved.YoloInputSize : null) ?? defaults.InputSize, 64, 2048),
-                    UseTiling = saved.Yolo5UseTiling ?? (useLegacyActiveProfile ? (bool?)saved.YoloUseTiling : null) ?? defaults.UseTiling,
-                    TileOnly = saved.Yolo5TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
-                    TileColumns = Math.Clamp(saved.Yolo5TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
-                    TileRows = Math.Clamp(saved.Yolo5TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
-                    TileOverlapRatio = Math.Clamp(saved.Yolo5TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45),
-                    DownscaleRatio = ResolveSavedYoloDownscaleRatio(saved.Yolo5DownscaleRatio, useLegacyActiveProfile ? saved.DownscaleRatio : null, defaults.DownscaleRatio),
-                    DownscaleQuality = ResolveSavedYoloDownscaleQuality(
-                        saved.Yolo5DownscaleQuality,
-                        useLegacyActiveProfile ? saved.DownscaleQuality : null,
-                        defaults.DownscaleQuality),
-                    AutoTrackingEnabled = saved.Yolo5AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
-                    AutoDetectEveryNFrames = Math.Max(1, saved.Yolo5AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
-                    ParallelSessionCount = Math.Max(1, saved.Yolo5ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
-                };
-            }
-
-            return new YoloProfileState
-            {
-                ModelPath = NormalizeYoloModelPath(saved.YoloV8ModelPath) ?? legacyModelPath ?? defaults.ModelPath,
-                ObjectnessThreshold = saved.YoloV8ObjectnessThreshold ?? (useLegacyActiveProfile ? saved.YoloObjectnessThreshold : null) ?? defaults.ObjectnessThreshold,
-                ConfidenceThreshold = saved.YoloV8ConfidenceThreshold ?? (useLegacyActiveProfile ? saved.YoloConfidenceThreshold : null) ?? defaults.ConfidenceThreshold,
-                NmsThreshold = saved.YoloV8NmsThreshold ?? (useLegacyActiveProfile ? saved.YoloNmsThreshold : null) ?? defaults.NmsThreshold,
-                InputSize = Math.Clamp(saved.YoloV8InputSize ?? (useLegacyActiveProfile ? saved.YoloInputSize : null) ?? defaults.InputSize, 64, 2048),
-                UseTiling = saved.YoloV8UseTiling ?? (useLegacyActiveProfile ? (bool?)saved.YoloUseTiling : null) ?? defaults.UseTiling,
-                TileOnly = saved.YoloV8TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
-                TileColumns = Math.Clamp(saved.YoloV8TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
-                TileRows = Math.Clamp(saved.YoloV8TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
-                TileOverlapRatio = Math.Clamp(saved.YoloV8TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45),
-                DownscaleRatio = ResolveSavedYoloDownscaleRatio(saved.YoloV8DownscaleRatio, useLegacyActiveProfile ? saved.DownscaleRatio : null, defaults.DownscaleRatio),
-                DownscaleQuality = ResolveSavedYoloDownscaleQuality(
-                    saved.YoloV8DownscaleQuality,
-                    useLegacyActiveProfile ? saved.DownscaleQuality : null,
-                    defaults.DownscaleQuality),
-                AutoTrackingEnabled = saved.YoloV8AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
-                AutoDetectEveryNFrames = Math.Max(1, saved.YoloV8AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
-                ParallelSessionCount = Math.Max(1, saved.YoloV8ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
-            };
-        }
-
-        private static double ResolveSavedYoloDownscaleRatio(double? savedValue, double? legacyValue, double defaultValue)
-        {
-            double value = savedValue ?? legacyValue ?? defaultValue;
-            return value is 1.0 or 0.75 or 0.5 or 0.33 ? value : defaultValue;
-        }
-
-        private static DownscaleQuality ResolveSavedYoloDownscaleQuality(
-            int? savedValue,
-            int? legacyValue,
-            DownscaleQuality defaultValue)
-        {
-            int value = savedValue ?? legacyValue ?? (int)defaultValue;
-            return Enum.IsDefined(typeof(DownscaleQuality), value)
-                ? (DownscaleQuality)value
-                : defaultValue;
-        }
-
         private static DownscaleQuality ResolveSavedDownscaleQuality(int savedValue)
         {
             return Enum.IsDefined(typeof(DownscaleQuality), savedValue)
@@ -1221,8 +1118,8 @@ namespace FaceShield.ViewModels.Pages
                 EnableYoloTemporalSmoothing = saved.EnableYoloTemporalSmoothing;
                 EnableYoloRiskCascade = saved.EnableYoloRiskCascade;
 
-                _yoloV8Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType);
-                _yolo5Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType);
+                _yoloV8Profile = YoloProfilePersistencePolicy.ReadSavedProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType, CreateDefaultYoloProfile(YoloFaceModelType.YoloV8Face));
+                _yolo5Profile = YoloProfilePersistencePolicy.ReadSavedProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType, CreateDefaultYoloProfile(YoloFaceModelType.Yolo5Face));
                 if (yoloType != null)
                     SelectedYoloModelTypeOption = yoloType;
                 _activeYoloModelType = selectedYoloModelType;
