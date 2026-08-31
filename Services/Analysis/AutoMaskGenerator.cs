@@ -39,8 +39,6 @@ namespace FaceShield.Services.Analysis
         private const int MinStatsSamples = 16;
         private const double SparseSceneCutDifferenceThreshold = 0.32;
         private const double OffModeSparseSceneCutDifferenceThreshold = 0.18;
-        private const int SparseSceneCutSignatureColumns = 24;
-        private const int SparseSceneCutSignatureRows = 14;
         private const double OffModeSceneCutSignatureDiffThreshold = 0.24;
         private const int OffModeSceneCutCarryClearFrames = 2;
 
@@ -2481,26 +2479,7 @@ namespace FaceShield.Services.Analysis
             int stride,
             int width,
             int height)
-        {
-            if (basePtr == null || width <= 0 || height <= 0 || stride <= 0)
-                return Array.Empty<double>();
-
-            var signature = new double[SparseSceneCutSignatureColumns * SparseSceneCutSignatureRows];
-            int index = 0;
-            for (int sy = 0; sy < SparseSceneCutSignatureRows; sy++)
-            {
-                int y = Math.Clamp((int)Math.Round((sy + 0.5) * height / SparseSceneCutSignatureRows), 0, height - 1);
-                byte* row = basePtr + y * stride;
-                for (int sx = 0; sx < SparseSceneCutSignatureColumns; sx++)
-                {
-                    int x = Math.Clamp((int)Math.Round((sx + 0.5) * width / SparseSceneCutSignatureColumns), 0, width - 1);
-                    byte* pixel = row + x * 4;
-                    signature[index++] = ((77 * pixel[2]) + (150 * pixel[1]) + (29 * pixel[0])) / (255.0 * 256.0);
-                }
-            }
-
-            return signature;
-        }
+            => SparseSceneSignature.Compute(basePtr, stride, width, height);
 
         private static double ComputeSignatureDifference(
             IReadOnlyList<double> current,
