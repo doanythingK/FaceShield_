@@ -38,37 +38,46 @@ public sealed class VideoSession : IDisposable
             throw;
         }
 
-        var map = new Dictionary<int, WriteableBitmap>();
-        int totalFrames = GetTotalFrames(videoPath);
-
-        if (totalFrames <= 0)
-            totalFrames = 300; // 방어용 최소값
-
-        int totalThumbs = (int)Math.Ceiling(totalFrames / (double)Math.Max(1, thumbStep));
-        int preloadLimit = Math.Clamp(eagerThumbnailCount, 0, totalThumbs);
-        int done = 0;
-
-        for (int i = 0; i < totalFrames && done < preloadLimit; i += thumbStep)
+        try
         {
-            var bmp = _thumbsProvider.GetThumbnail(i);
-            if (bmp != null)
-                map[i] = bmp;
-
-            done++;
-            if (progress != null)
+            var map = new Dictionary<int, WriteableBitmap>();
+            int totalFrames = GetTotalFrames(videoPath);
+    
+            if (totalFrames <= 0)
+                totalFrames = 300; // 방어용 최소값
+    
+            int totalThumbs = (int)Math.Ceiling(totalFrames / (double)Math.Max(1, thumbStep));
+            int preloadLimit = Math.Clamp(eagerThumbnailCount, 0, totalThumbs);
+            int done = 0;
+    
+            for (int i = 0; i < totalFrames && done < preloadLimit; i += thumbStep)
             {
-                int percent = (int)Math.Round(done * 100.0 / Math.Max(1, preloadLimit));
-                if (percent > 100) percent = 100;
-                progress.Report(percent);
+                var bmp = _thumbsProvider.GetThumbnail(i);
+                if (bmp != null)
+                    map[i] = bmp;
+    
+                done++;
+                if (progress != null)
+                {
+                    int percent = (int)Math.Round(done * 100.0 / Math.Max(1, preloadLimit));
+                    if (percent > 100) percent = 100;
+                    progress.Report(percent);
+                }
             }
+    
+            progress?.Report(100);
+    
+            ThumbnailCache = new ThumbnailCache(map, thumbStep);
+    
+            // 3) UX 컨트롤러 (드래그 중/멈췄을 때 분리)
+            Timeline = new TimelineController(ThumbnailCache, ExactProvider, _thumbsProvider);
         }
-
-        progress?.Report(100);
-
-        ThumbnailCache = new ThumbnailCache(map, thumbStep);
-
-        // 3) UX 컨트롤러 (드래그 중/멈췄을 때 분리)
-        Timeline = new TimelineController(ThumbnailCache, ExactProvider, _thumbsProvider);
+        catch
+        {
+            _thumbsProvider.Dispose();
+            ExactProvider.Dispose();
+            throw;
+        }
     }
 
     public void Dispose()
