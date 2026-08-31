@@ -2383,7 +2383,18 @@ namespace FaceShield.ViewModels.Pages
             }
 
             foreach (var key in keys)
-                _workspaceCache.Remove(key);
+            {
+                if (_workspaceCache.Remove(key, out var workspace))
+                    workspace.Dispose();
+            }
+        }
+
+        public void DisposeAllWorkspaces()
+        {
+            foreach (var workspace in _workspaceCache.Values.Distinct())
+                workspace.Dispose();
+
+            _workspaceCache.Clear();
         }
 
     }
