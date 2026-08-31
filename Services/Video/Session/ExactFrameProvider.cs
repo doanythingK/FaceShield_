@@ -24,7 +24,7 @@ public sealed class ExactFrameProvider : IDisposable
 
         try
         {
-            await _decodeGate.WaitAsync(ct);
+            await _decodeGate.WaitAsync(ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -40,7 +40,7 @@ public sealed class ExactFrameProvider : IDisposable
             if (_disposed || ct.IsCancellationRequested)
                 return null;
 
-            var frame = await Task.Run(() => _extractor.GetFrameByIndex(frameIndex, ct));
+            var frame = await Task.Run(() => _extractor.GetFrameByIndex(frameIndex, ct)).ConfigureAwait(false);
             if (ct.IsCancellationRequested)
             {
                 frame?.Dispose();
