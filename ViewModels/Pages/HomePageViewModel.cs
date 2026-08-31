@@ -10,13 +10,13 @@ using FaceShield.Services.Analysis;
 using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
 using FaceShield.Services.Workspace;
+using FaceShield.Services.Models;
 using FaceShield.Views.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,7 +44,6 @@ namespace FaceShield.ViewModels.Pages
             "yolov8m-face-lindevs.onnx",
             "yolov8l-face-lindevs.onnx"
         ];
-        private static readonly HttpClient YoloModelDownloadHttpClient = new();
         private static readonly bool DefaultAutoUseGpu =
             RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -239,22 +238,6 @@ namespace FaceShield.ViewModels.Pages
             new YoloModelTypeOption("YOLOv8-Face", YoloFaceModelType.YoloV8Face),
             new YoloModelTypeOption("YOLO5Face", YoloFaceModelType.Yolo5Face)
         };
-
-        private sealed class YoloModelDownloadInfo
-        {
-            public string FileName { get; }
-            public string DownloadUrl { get; }
-            public string SourceLabel { get; }
-            public string LicenseLabel { get; }
-
-            public YoloModelDownloadInfo(string fileName, string downloadUrl, string sourceLabel, string licenseLabel)
-            {
-                FileName = fileName;
-                DownloadUrl = downloadUrl;
-                SourceLabel = sourceLabel;
-                LicenseLabel = licenseLabel;
-            }
-        }
 
         private sealed class YoloProfileState
         {
@@ -1506,12 +1489,10 @@ namespace FaceShield.ViewModels.Pages
         private async Task DownloadYoloModelAsync()
         {
             var modelType = SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.Yolo5Face;
-            var downloadInfo = GetYoloModelDownloadInfo(modelType);
-            var downloadDirectory = GetYoloModelDownloadDirectory();
-            Directory.CreateDirectory(downloadDirectory);
+            var downloadInfo = YoloModelDownloadService.GetInfo(modelType);
+            string destinationPath = YoloModelDownloadService.GetDestinationPath(modelType);
 
-            var destinationPath = Path.Combine(downloadDirectory, downloadInfo.FileName);
-            if (File.Exists(destinationPath) && new FileInfo(destinationPath).Length > 0)
+            if (YoloModelDownloadService.IsDownloaded(modelType))
             {
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
@@ -1519,61 +1500,24 @@ namespace FaceShield.ViewModels.Pages
                 return;
             }
 
-            var tempPath = destinationPath + ".download";
             IsYoloModelDownloading = true;
             YoloModelDownloadProgress = 0;
             YoloModelDownloadStatus = $"다운로드 시작: {downloadInfo.SourceLabel} ({downloadInfo.LicenseLabel})";
 
             try
             {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-
-                using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
-                request.Headers.UserAgent.ParseAdd("FaceShield/1.0");
-                using var response = await YoloModelDownloadHttpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
+                var progress = new Progress<int>(value => YoloModelDownloadProgress = value);
+                destinationPath = await YoloModelDownloadService.DownloadAsync(
+                    modelType,
+                    progress,
                     CancellationToken.None);
-                response.EnsureSuccessStatusCode();
 
-                var totalBytes = response.Content.Headers.ContentLength;
-                await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
-                await using var destination = new FileStream(
-                    tempPath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None,
-                    bufferSize: 1024 * 128,
-                    useAsync: true);
-
-                var buffer = new byte[1024 * 128];
-                long readBytes = 0;
-                while (true)
-                {
-                    int read = await source.ReadAsync(buffer, CancellationToken.None);
-                    if (read <= 0)
-                        break;
-
-                    await destination.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
-                    readBytes += read;
-                    if (totalBytes.HasValue && totalBytes.Value > 0)
-                        YoloModelDownloadProgress = Math.Clamp((int)Math.Round(readBytes * 100.0 / totalBytes.Value), 0, 99);
-                }
-
-                await destination.FlushAsync(CancellationToken.None);
-                destination.Close();
-
-                File.Move(tempPath, destinationPath, overwrite: true);
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
                 YoloModelDownloadStatus = $"다운로드 완료: {downloadInfo.FileName}";
             }
             catch (Exception ex)
             {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-
                 YoloModelDownloadStatus = $"다운로드 실패: {ex.Message}";
             }
             finally
@@ -2108,7 +2052,7 @@ namespace FaceShield.ViewModels.Pages
         private static IEnumerable<string> EnumerateDefaultYoloModelDirectories()
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var downloadDirectory = GetYoloModelDownloadDirectory();
+            var downloadDirectory = YoloModelDownloadService.GetDownloadDirectory();
             if (seen.Add(downloadDirectory))
                 yield return downloadDirectory;
 
@@ -2124,34 +2068,6 @@ namespace FaceShield.ViewModels.Pages
                     current = Directory.GetParent(current)?.FullName;
                 }
             }
-        }
-
-        private static string GetYoloModelDownloadDirectory()
-        {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var root = string.IsNullOrWhiteSpace(localAppData)
-                ? Path.Combine(Path.GetTempPath(), "FaceShield")
-                : Path.Combine(localAppData, "FaceShield");
-
-            return Path.Combine(root, "Models", "Yolo");
-        }
-
-        private static YoloModelDownloadInfo GetYoloModelDownloadInfo(YoloFaceModelType modelType)
-        {
-            if (modelType == YoloFaceModelType.Yolo5Face)
-            {
-                return new YoloModelDownloadInfo(
-                    "YoloV5Face.onnx",
-                    "https://huggingface.co/hayashiLin/deepfacelivemodels/resolve/main/YoloV5Face.onnx?download=true",
-                    "Hugging Face hayashiLin/deepfacelivemodels",
-                    "GPL-3.0 표시");
-            }
-
-            return new YoloModelDownloadInfo(
-                "yolov8n-face-lindevs.onnx",
-                "https://github.com/lindevs/yolov8-face/releases/download/1.0.1/yolov8n-face-lindevs.onnx",
-                "GitHub lindevs/yolov8-face 1.0.1",
-                "MIT 표시 + YOLOv8 upstream license caveat");
         }
 
         private static string? NormalizeYoloModelPath(string? modelPath)
