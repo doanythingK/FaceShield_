@@ -10,19 +10,6 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    private const bool EnableHybridCopyWindow = false;
-    private const int MinHybridCopyFrames = 240;
-    private const double MinHybridCopyRatio = 0.05;
-    private const int MinHybridCopySideFrames = 24;
-    private const int MaxHybridCopyTimestampFixBeforeFallback = 0;
-    private const int MaxHybridCopyModeTransitionsBeforeFallback = 2;
-    private const int MaxHybridFrameGapBeforeFallback = 32;
-    private const double MaxEstimatedFrameCountSkewRatio = 1.25;
-    private const int MaxEstimatedFrameCountSkewAbsolute = 1200;
-    private const long MaxHybridFrameStepTolerance = 1;
-    private const long MaxHybridCopyPtsJitterDivisor = 10;
-    private const int MaxHybridPacketFrameIndexUnreliableSequence = 4;
-    private const int MaxAllowedOutputPacketLoss = 0;
     private readonly IFrameMaskProvider _maskProvider;
     private readonly MaskedVideoExporter _masked = new();
     private int _directFaceBlurFrames;
@@ -66,7 +53,7 @@ public unsafe sealed class VideoExportService
                     runId,
                     exportMode: "primary",
                     forceSoftwareEncoder: false,
-                    allowHybridCopy: allowHybridCopy && EnableHybridCopyWindow,
+                    allowHybridCopy: allowHybridCopy && VideoHybridCopyPolicy.EnableHybridCopyWindow,
                     forceSafeEncoding: false,
                     forceAudioTranscode: false,
                     forceH264Fallback: false);
@@ -332,17 +319,6 @@ public unsafe sealed class VideoExportService
             int hybridWindowEndFrame = -1;
             int hybridModeTransitionCount = 0;
             int hybridModeTimestampSyncCount = 0;
-            if (allowHybridCopyCurrent &&
-                (inStream->time_base.den <= 0 ||
-                 inStream->time_base.num <= 0 ||
-                 sourceFps <= 0.0))
-            {
-                allowHybridCopyCurrent = false;
-                hybridCopyAttempted = true;
-                hybridCopyFallbackReason =
-                    $"하이브리드 사용 보류(타임스탬프 기준 불안정): sourceFps={sourceFps:0.###}, timeBase={inStream->time_base.num}/{inStream->time_base.den}";
-            }
-
             if (_maskProvider is FrameMaskProvider frameMaskProvider)
             {
                 blurFrameSet = VideoExportFrameRangePolicy.BuildBlurFrameSet(frameMaskProvider);
@@ -429,104 +405,24 @@ public unsafe sealed class VideoExportService
                 }
 
                 blurRanges = VideoExportFrameRangePolicy.BuildBlurFrameRanges(blurFrameSet);
-                bool canCopyOutsideBlurWindow =
-                    allowHybridCopyCurrent &&
-                    blurRanges.Count > 0 &&
-                    sourceFps > 0.0 &&
-                    totalFrames > 0 &&
-                    (blurRanges[0].Start > 0 || blurRanges[^1].EndExclusive < totalFrames);
-                if (canCopyOutsideBlurWindow)
-                {
-                    var keyframes = VideoExportCopyPolicy.CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
-                    hybridCandidateKeyframes = keyframes;
-                    if (keyframes.Count < 2)
-                    {
-                        canCopyOutsideBlurWindow = false;
-                        allowHybridCopyCurrent = false;
-                        hybridCopyAttempted = true;
-                        string keyframeInsufficientReason =
-                            $"키프레임 후보가 불충분해 하이브리드 비활성 (keyframes={keyframes.Count}, reported={totalFrames}, estimated={estimatedTotalFrames})";
-                        hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
-                            ? keyframeInsufficientReason
-                            : $"{hybridCopyFallbackReason}; {keyframeInsufficientReason}";
-                    }
-
-                    if (estimatedTotalFrames > 0)
-                    {
-                        int frameCountSkew = estimatedTotalFrames - totalFrames;
-                        int absFrameCountSkew = Math.Abs(frameCountSkew);
-                        bool disableHybridForUnstableFrameCount =
-                            absFrameCountSkew > MaxEstimatedFrameCountSkewAbsolute
-                            || estimatedTotalFrames > (int)(totalFrames * MaxEstimatedFrameCountSkewRatio)
-                            || estimatedTotalFrames < (int)(totalFrames / MaxEstimatedFrameCountSkewRatio);
-
-                        if (disableHybridForUnstableFrameCount && canCopyOutsideBlurWindow)
-                        {
-                            canCopyOutsideBlurWindow = false;
-                            allowHybridCopyCurrent = false;
-                            hybridCopyAttempted = true;
-                            string unstableFrameCountReason =
-                                $"키프레임 기반 총 프레임 추정치 불일치로 하이브리드 비활성 (estimated={estimatedTotalFrames}, reported={totalFrames}, delta={frameCountSkew})";
-                            hybridCopyFallbackReason = string.IsNullOrWhiteSpace(hybridCopyFallbackReason)
-                                ? unstableFrameCountReason
-                                : $"{hybridCopyFallbackReason}; {unstableFrameCountReason}";
-                        }
-                        else if (estimatedTotalFrames > totalFrames && canCopyOutsideBlurWindow)
-                        {
-                            Debug.WriteLine(
-                                $"[Export] detected frame count expansion from keyframe scan: meta={totalFrames}, estimated={estimatedTotalFrames}");
-                            totalFrames = estimatedTotalFrames;
-                        }
-                    }
-                    blurRanges = VideoExportFrameRangePolicy.AlignRangesToKeyframes(blurRanges, keyframes, totalFrames);
-                    if (blurRanges.Count == 0)
-                    {
-                        canCopyOutsideBlurWindow = false;
-                        hybridCopyFallbackReason = "키프레임 정렬 후 블러 구간이 비어 하이브리드 후보가 사라짐";
-                    }
-                    else
-                    {
-                        int encodeStart = blurRanges[0].Start;
-                        int encodeEnd = blurRanges[blurRanges.Count - 1].EndExclusive;
-                        int copiedFrames = totalFrames - (encodeEnd - encodeStart);
-                        int leadingCopyFrames = encodeStart;
-                        int trailingCopyFrames = totalFrames - encodeEnd;
-                        int minExpectedCopyFrames = Math.Max(
-                            MinHybridCopyFrames,
-                            (int)Math.Ceiling(totalFrames * MinHybridCopyRatio));
-                        if (copiedFrames < minExpectedCopyFrames)
-                        {
-                            canCopyOutsideBlurWindow = false;
-                            hybridCopyFallbackReason =
-                                $"하이브리드 복사 구간 이득이 미미함(복사구간={copiedFrames}, 총={totalFrames}, 임계치={minExpectedCopyFrames})";
-                        }
-                        else if (encodeStart == 0 || encodeEnd == totalFrames)
-                        {
-                            canCopyOutsideBlurWindow = false;
-                            hybridCopyFallbackReason =
-                                $"하이브리드 구간이 영상 끝단에 붙어 있어 한쪽 재인코드 경계로만 동작합니다(start={encodeStart}, end={encodeEnd}, total={totalFrames})";
-                        }
-                        else if ((encodeStart > 0 && leadingCopyFrames < MinHybridCopySideFrames) ||
-                                 (encodeEnd < totalFrames && trailingCopyFrames < MinHybridCopySideFrames))
-                        {
-                            canCopyOutsideBlurWindow = false;
-                            hybridCopyFallbackReason =
-                                $"복사 쪽 경계 보강 필요(leading={leadingCopyFrames}, trailing={trailingCopyFrames}, 최소={MinHybridCopySideFrames})";
-                        }
-                        else if (encodeStart > 0 || encodeEnd < totalFrames)
-                        {
-                            hybridEncodeWindow = (encodeStart, encodeEnd);
-                            hybridWindowStartFrame = encodeStart;
-                            hybridWindowEndFrame = encodeEnd;
-                            hybridCopyAttempted = true;
-                        }
-                        else
-                        {
-                            hybridCopyFallbackReason = null;
-                        }
-                    }
-                }
             }
+
+            var hybridPlan = VideoHybridCopyPolicy.BuildPlan(
+                inputPath,
+                sourceFps,
+                totalFrames,
+                inStream->time_base,
+                allowHybridCopyCurrent,
+                blurRanges);
+            allowHybridCopyCurrent = hybridPlan.AllowHybridCopy;
+            totalFrames = hybridPlan.TotalFrames;
+            blurRanges = hybridPlan.BlurRanges;
+            hybridEncodeWindow = hybridPlan.EncodeWindow;
+            hybridCandidateKeyframes = hybridPlan.CandidateKeyframes;
+            hybridCopyAttempted = hybridPlan.Attempted;
+            hybridCopyFallbackReason = hybridPlan.FallbackReason;
+            hybridWindowStartFrame = hybridPlan.WindowStartFrame;
+            hybridWindowEndFrame = hybridPlan.WindowEndFrame;
 
             int exportSampleWindowFrames = VideoExportProgressPolicy.ResolveExportSampleWindowFrames(sourceFps, totalFrames);
 
@@ -829,7 +725,7 @@ public unsafe sealed class VideoExportService
                     : VideoExportTimingPolicy.GetVideoFrameStep(sourceFps, enc->time_base))
                 : 1;
             if (useHybridCopyWindow && predictedHybridCopyFrameStep > 0 && sourceEncodedFrameStep > 0
-                && Math.Abs(sourceEncodedFrameStep - predictedHybridCopyFrameStep) > MaxHybridFrameStepTolerance)
+                && Math.Abs(sourceEncodedFrameStep - predictedHybridCopyFrameStep) > VideoHybridCopyPolicy.MaxHybridFrameStepTolerance)
             {
                 useHybridCopyWindow = false;
                 hybridCopyAttempted = true;
@@ -864,7 +760,7 @@ public unsafe sealed class VideoExportService
             VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(inStream, outStream);
             encodedPacketFrameStep = VideoExportTimingPolicy.GetVideoFrameStep(sourceFps, outStream->time_base);
             if (useHybridCopyWindow
-                && Math.Abs(encodedPacketFrameStep - hybridCopyVideoFrameStep) > MaxHybridFrameStepTolerance)
+                && Math.Abs(encodedPacketFrameStep - hybridCopyVideoFrameStep) > VideoHybridCopyPolicy.MaxHybridFrameStepTolerance)
             {
                 useHybridCopyWindow = false;
                 hybridCopyAttempted = true;
@@ -1064,7 +960,7 @@ public unsafe sealed class VideoExportService
                 else
                 {
                     packetFrameIndexReliabilityFailureCount++;
-                    if (useHybridCopyWindow && packetFrameIndexReliabilityFailureCount >= MaxHybridPacketFrameIndexUnreliableSequence)
+                    if (useHybridCopyWindow && packetFrameIndexReliabilityFailureCount >= VideoHybridCopyPolicy.MaxHybridPacketFrameIndexUnreliableSequence)
                     {
                         shouldRetryWithFullEncode = true;
                         packetDropFallbackReason =
@@ -1125,7 +1021,7 @@ public unsafe sealed class VideoExportService
                     }
 
                     if (hasLastPacketFrameForHybrid &&
-                        packetFrameIndex - lastPacketFrameIndexForHybrid > MaxHybridFrameGapBeforeFallback)
+                        packetFrameIndex - lastPacketFrameIndexForHybrid > VideoHybridCopyPolicy.MaxHybridFrameGapBeforeFallback)
                     {
                         shouldRetryWithFullEncode = true;
                         packetDropFallbackReason =
@@ -1144,7 +1040,7 @@ public unsafe sealed class VideoExportService
                 if (useHybridCopyWindow && packetInEncodeWindow != wasLastPacketEncoded)
                 {
                     hybridModeTransitionCount++;
-                    if (hybridModeTransitionCount > MaxHybridCopyModeTransitionsBeforeFallback)
+                    if (hybridModeTransitionCount > VideoHybridCopyPolicy.MaxHybridCopyModeTransitionsBeforeFallback)
                     {
                         shouldRetryWithFullEncode = true;
                         packetDropFallbackReason = $"hybrid-transition-unstable={hybridModeTransitionCount}, frame={packetFrameIndex}";
@@ -1392,7 +1288,7 @@ public unsafe sealed class VideoExportService
                     {
                         long copyGap = Math.Abs(pkt->pts - previousPacketPts);
                         long expectedGap = Math.Max(1, hybridCopyVideoFrameStep);
-                        long copyGapJitterTolerance = Math.Max(1, expectedGap / MaxHybridCopyPtsJitterDivisor);
+                        long copyGapJitterTolerance = Math.Max(1, expectedGap / VideoHybridCopyPolicy.MaxHybridCopyPtsJitterDivisor);
                         long copyGapThreshold = expectedGap + copyGapJitterTolerance;
                         if (copyGap > copyGapThreshold)
                         {
@@ -1410,7 +1306,7 @@ public unsafe sealed class VideoExportService
                     if (timestampAdjusted)
                     {
                         copyTimestampFixCount++;
-                        if (copyTimestampFixCount > MaxHybridCopyTimestampFixBeforeFallback)
+                        if (copyTimestampFixCount > VideoHybridCopyPolicy.MaxHybridCopyTimestampFixBeforeFallback)
                         {
                             packetDropFallbackReason = $"copy-ts-fix={copyTimestampFixCount}, frame={packetFrameIndex}";
                             throw new InvalidOperationException(
@@ -1610,176 +1506,45 @@ public unsafe sealed class VideoExportService
             outputCloseTimer.Start();
             VideoExportCopyPolicy.CloseOutputOrThrow(outFmt);
             outputCloseTimer.Stop();
-            int sampleWindowLimit = totalFrames > 0
-                ? Math.Min(exportSampleWindowFrames, totalFrames)
-                : exportSampleWindowFrames;
-            // Demux packet count is diagnostic only. Decoder preroll and discard packets do not
-            // necessarily produce frames, so final integrity uses submitted/emitted PTS coverage.
-            int sampleWindowSourceFrames = Math.Min(
-                sampleWindowLimit,
-                copiedSourceVideoPacketCount + submittedEncodedFramePts.Count);
-            int sampleWindowProducedFrames = Math.Min(
-                sampleWindowLimit,
-                copiedVideoPacketCount + emittedEncodedFramePts.Count);
-            int sampleWindowFrameShortfall = Math.Max(
-                0,
-                sampleWindowSourceFrames - sampleWindowProducedFrames);
-            int expectedHybridWindowEncodedFrames = useHybridCopyWindow && encodeWindowEnd > encodeWindowStart
-                ? encodeWindowEnd - encodeWindowStart
-                : 0;
-            int encodedWindowFrameShortfall = Math.Max(0, expectedHybridWindowEncodedFrames - encodedWindowFrameCount);
-            int hybridCopySourcePacketLoss = useHybridCopyWindow
-                ? Math.Max(0, copiedSourceVideoPacketCount - copiedVideoPacketCount)
-                : 0;
-            int hybridEncodedWindowFrameLoss = useHybridCopyWindow
-                ? encodedWindowFrameShortfall
-                : 0;
-            var frameCoverage = VideoExportPacketPolicy.EvaluateVideoFrameCoverage(
+            var finalIntegrity = VideoExportIntegrityPolicy.Evaluate(
+                totalFrames,
+                exportSampleWindowFrames,
                 copiedSourceVideoPacketCount,
                 copiedVideoPacketCount,
                 submittedEncodedFramePts,
-                emittedEncodedFramePts);
-            var presentationGapIntegrity = VideoExportTimingPolicy.EvaluateEncodedPresentationGaps(
-                submittedEncodedFramePts,
                 emittedEncodedFramePts,
-                emittedEncodedMuxPts);
-            outputPacketPtsGapOutlierCount = presentationGapIntegrity.OutlierCount;
-            maxOutputPacketPtsGap = presentationGapIntegrity.MaxOutputGap;
-            int missingEncodedFrameCount = frameCoverage.MissingEncodedFrames;
-            int unexpectedEncodedFrameCount = frameCoverage.UnexpectedEncodedFrames;
-            int expectedOutputVideoFrames = frameCoverage.ExpectedOutputFrames;
-            int videoFrameCoverageMismatch = frameCoverage.MismatchCount;
-            int videoFrameDropCount = useHybridCopyWindow
-                ? Math.Max(frameCoverage.DropCount, hybridCopySourcePacketLoss + hybridEncodedWindowFrameLoss)
-                : frameCoverage.DropCount;
-            int outputPacketCountMismatch = frameCoverage.CopiedPacketMismatch;
-            int droppedVideoPackets = hybridCopySourcePacketLoss;
-            bool canRetryWithFullEncode = allowPacketDropRetry && useHybridCopyWindow;
-            if (expectedOutputVideoFrames <= 0 || outputVideoPacketCount <= 0)
-            {
-                string invalidPacketCountReason =
-                    $"final-output-frame-coverage-invalid={expectedOutputVideoFrames}/{outputVideoPacketCount}";
-                packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                    ? invalidPacketCountReason
-                    : $"{packetDropFallbackReason}; {invalidPacketCountReason}";
-
-                if (canRetryWithFullEncode)
-                {
-                    shouldRetryWithFullEncode = true;
-                }
-                else
-                {
-                    throw new VideoExportIntegrityException(
-                        "Invalid argument: 최종 출력 비디오 패킷 수가 유효하지 않아 품질 보전을 위해 중단합니다.");
-                }
-            }
-            if (encodedTimestampIntegrity.MissingPacketTimestamps > 0 ||
-                encodedTimestampIntegrity.PacketTimestampAdjustments > 0)
-            {
-                string timestampIntegrityReason =
-                    $"encoded-packet-timestamps missing={encodedTimestampIntegrity.MissingPacketTimestamps}, adjustments={encodedTimestampIntegrity.PacketTimestampAdjustments}";
-                packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                    ? timestampIntegrityReason
-                    : $"{packetDropFallbackReason}; {timestampIntegrityReason}";
-
-                if (canRetryWithFullEncode)
-                {
-                    shouldRetryWithFullEncode = true;
-                }
-                else
-                {
-                    throw new VideoExportIntegrityException(
-                        "Invalid argument: 인코더 출력 타임스탬프 보정이 필요해 품질 보전을 위해 중단합니다.");
-                }
-            }
-            if (allowPacketDropRetry
-                && useHybridCopyWindow
-                && expectedHybridWindowEncodedFrames > 0)
-            {
-                if (encodedWindowFrameShortfall > 0)
-                {
-                    shouldRetryWithFullEncode = true;
-                    packetDropFallbackReason =
-                        string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                            ? $"encode-window-frame-loss={encodedWindowFrameShortfall} (expected={expectedHybridWindowEncodedFrames}, produced={encodedWindowFrameCount})"
-                            : $"{packetDropFallbackReason}; encode-window-frame-loss={encodedWindowFrameShortfall} (expected={expectedHybridWindowEncodedFrames}, produced={encodedWindowFrameCount})";
-                }
-            }
-            if (allowPacketDropRetry
-                && useHybridCopyWindow
-                && inputVideoPacketCount > 0
-                && videoFrameDropCount > 0)
-            {
-                shouldRetryWithFullEncode = true;
-                packetDropFallbackReason =
-                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                        ? $"hybrid-output-frame-loss={videoFrameDropCount} / inputPackets={inputVideoPacketCount}"
-                        : $"{packetDropFallbackReason}; hybrid-output-frame-loss={videoFrameDropCount} / inputPackets={inputVideoPacketCount}";
-            }
-            if (videoFrameCoverageMismatch > MaxAllowedOutputPacketLoss)
-            {
-                string outputLossReason =
-                    $"final-output-frame-coverage-mismatch=missing:{missingEncodedFrameCount},unexpected:{unexpectedEncodedFrameCount},copy:{copiedSourceVideoPacketCount}/{copiedVideoPacketCount}," +
-                    $"ptsGapOutliers:{outputPacketPtsGapOutlierCount},maxPtsGap:{maxOutputPacketPtsGap}";
-                packetDropFallbackReason = string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                    ? outputLossReason
-                    : $"{packetDropFallbackReason}; {outputLossReason}";
-
-                if (canRetryWithFullEncode)
-                {
-                    shouldRetryWithFullEncode = true;
-                }
-                else
-                {
-                    throw new VideoExportIntegrityException(
-                        "Invalid argument: 최종 출력 패킷 손실 감지로 품질 보전을 위해 중단합니다.");
-                }
-            }
-
-            if (videoFrameDropCount > 0)
-            {
-                if (useHybridCopyWindow)
-                {
-                    Debug.WriteLine(
-                        $"[Export] frameDropHint copySource={copiedSourceVideoPacketCount}, copyOutput={copiedVideoPacketCount}, copyLoss={hybridCopySourcePacketLoss}, encodeWindow={encodeWindowStart}-{encodeWindowEnd}, encodedWindowFrames={encodedWindowFrameCount}, encodedShortfall={hybridEncodedWindowFrameLoss}, dropped={videoFrameDropCount}");
-                }
-                else
-                {
-                    Debug.WriteLine(
-                        $"[Export] frameCoverageHint submittedFrames={submittedVideoFrameCount}, outputVideoPackets={outputVideoPacketCount}, dropped={videoFrameDropCount}");
-                }
-
-                if (canRetryWithFullEncode)
-                {
-                    shouldRetryWithFullEncode = true;
-                    string coverageReason =
-                        $"copy-source={copiedSourceVideoPacketCount}, copy-output={copiedVideoPacketCount}, droppedFrames={videoFrameDropCount}";
-                    packetDropFallbackReason =
-                        string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                            ? coverageReason
-                            : $"{packetDropFallbackReason}; {coverageReason}";
-                }
-            }
-            if (outputPacketPtsGapOutlierCount > 0)
-            {
-                packetDropFallbackReason =
-                    string.IsNullOrWhiteSpace(packetDropFallbackReason)
-                        ? $"output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}"
-                        : $"{packetDropFallbackReason}; output-pts-gap-outlier-count={outputPacketPtsGapOutlierCount}, maxGap={maxOutputPacketPtsGap}";
-                if (canRetryWithFullEncode)
-                {
-                    shouldRetryWithFullEncode = true;
-                }
-                else
-                {
-                    throw new VideoExportIntegrityException(
-                        "Invalid argument: 최종 출력 PTS 간격 이상치가 남아 품질 보전을 위해 중단합니다.");
-                }
-            }
-            if (copyGapOutlierCount > 0 && !shouldRetryWithFullEncode)
-                Debug.WriteLine($"[Export] hybrid copy source PTS gap observed count={copyGapOutlierCount}, maxGap={maxCopyGap}");
-            int droppedVideoPacketsForSummary = Math.Max(0, droppedVideoPackets);
-            string? packetLossFallbackReason = shouldRetryWithFullEncode ? $"fallback-full-encode={packetDropFallbackReason}" : null;
+                emittedEncodedMuxPts,
+                useHybridCopyWindow,
+                encodeWindowStart,
+                encodeWindowEnd,
+                encodedWindowFrameCount,
+                outputVideoPacketCount,
+                encodedTimestampIntegrity,
+                allowPacketDropRetry,
+                inputVideoPacketCount,
+                submittedVideoFrameCount,
+                copyGapOutlierCount,
+                maxCopyGap,
+                packetDropFallbackReason);
+            shouldRetryWithFullEncode = finalIntegrity.ShouldRetryWithFullEncode;
+            packetDropFallbackReason = finalIntegrity.PacketDropFallbackReason;
+            int sampleWindowLimit = finalIntegrity.SampleWindowLimit;
+            int sampleWindowSourceFrames = finalIntegrity.SampleWindowSourceFrames;
+            int sampleWindowProducedFrames = finalIntegrity.SampleWindowProducedFrames;
+            int sampleWindowFrameShortfall = finalIntegrity.SampleWindowFrameShortfall;
+            int expectedHybridWindowEncodedFrames = finalIntegrity.ExpectedHybridWindowEncodedFrames;
+            int encodedWindowFrameShortfall = finalIntegrity.EncodedWindowFrameShortfall;
+            int outputPacketPtsGapOutlierCountFinal = finalIntegrity.OutputPacketPtsGapOutlierCount;
+            long maxOutputPacketPtsGapFinal = finalIntegrity.MaxOutputPacketPtsGap;
+            int missingEncodedFrameCount = finalIntegrity.MissingEncodedFrameCount;
+            int unexpectedEncodedFrameCount = finalIntegrity.UnexpectedEncodedFrameCount;
+            int videoFrameCoverageMismatch = finalIntegrity.VideoFrameCoverageMismatch;
+            int videoFrameDropCount = finalIntegrity.VideoFrameDropCount;
+            int outputPacketCountMismatch = finalIntegrity.OutputPacketCountMismatch;
+            int droppedVideoPacketsForSummary = finalIntegrity.DroppedVideoPacketsForSummary;
+            string? packetLossFallbackReason = finalIntegrity.PacketLossFallbackReason;
+            outputPacketPtsGapOutlierCount = outputPacketPtsGapOutlierCountFinal;
+            maxOutputPacketPtsGap = maxOutputPacketPtsGapFinal;
             LastExportSummary = new ExportRunSummary(
                 frameIndex,
                 _bitmapMaskBlurFrames,
