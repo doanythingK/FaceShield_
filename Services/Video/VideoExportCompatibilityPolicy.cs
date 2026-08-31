@@ -1,4 +1,5 @@
 using FFmpeg.AutoGen;
+using System;
 
 namespace FaceShield.Services.Video;
 
