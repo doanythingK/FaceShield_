@@ -7,11 +7,13 @@ using System;
 
 namespace FaceShield.Services.Video.Session;
 
-public sealed class VideoSession
+public sealed class VideoSession : IDisposable
 {
     public readonly ThumbnailCache ThumbnailCache;
     public readonly ExactFrameProvider ExactProvider;
     public readonly TimelineController Timeline;
+    private readonly TimelineThumbnailProvider _thumbsProvider;
+    private bool _disposed;
 
     public VideoSession(
         string videoPath,
@@ -26,7 +28,15 @@ public sealed class VideoSession
         ExactProvider = new ExactFrameProvider(extractor);
 
         // 2) 썸네일 캐시 생성
-        var thumbsProvider = new TimelineThumbnailProvider(videoPath, thumbWidth, thumbHeight);
+        try
+        {
+            _thumbsProvider = new TimelineThumbnailProvider(videoPath, thumbWidth, thumbHeight);
+        }
+        catch
+        {
+            ExactProvider.Dispose();
+            throw;
+        }
 
         var map = new Dictionary<int, WriteableBitmap>();
         int totalFrames = GetTotalFrames(videoPath);
@@ -40,7 +50,7 @@ public sealed class VideoSession
 
         for (int i = 0; i < totalFrames && done < preloadLimit; i += thumbStep)
         {
-            var bmp = thumbsProvider.GetThumbnail(i);
+            var bmp = _thumbsProvider.GetThumbnail(i);
             if (bmp != null)
                 map[i] = bmp;
 
@@ -58,7 +68,17 @@ public sealed class VideoSession
         ThumbnailCache = new ThumbnailCache(map, thumbStep);
 
         // 3) UX 컨트롤러 (드래그 중/멈췄을 때 분리)
-        Timeline = new TimelineController(ThumbnailCache, ExactProvider, thumbsProvider);
+        Timeline = new TimelineController(ThumbnailCache, ExactProvider, _thumbsProvider);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        ExactProvider.Dispose();
+        _thumbsProvider.Dispose();
     }
 
     /// <summary>
