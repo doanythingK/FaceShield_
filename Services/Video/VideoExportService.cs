@@ -12,14 +12,6 @@ namespace FaceShield.Services.Video;
 
 public unsafe sealed class VideoExportService
 {
-    private sealed class VideoExportIntegrityException : InvalidOperationException
-    {
-        public VideoExportIntegrityException(string message)
-            : base(message)
-        {
-        }
-    }
-
     private sealed class VideoEncoderException : InvalidOperationException
     {
         public VideoEncoderException(
