@@ -91,6 +91,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (ReferenceEquals(_previewBitmap, value))
         {
             _ownsPreviewBitmap = ownsBitmap;
+            OnPropertyChanged(nameof(PreviewBitmap));
             return;
         }
 
