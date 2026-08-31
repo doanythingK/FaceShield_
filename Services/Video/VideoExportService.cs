@@ -997,9 +997,9 @@ public unsafe sealed class VideoExportService
             Throw(ffmpeg.av_frame_get_buffer(encFrame, 32));
 
             // Dynamic frame scaling reads matrix, range, and chroma location from each frame.
-            swsDecToBgra = CreateDynamicSwsContext("디코더-BGRA 변환");
-            swsBgraToEnc = CreateDynamicSwsContext("BGRA-인코더 변환");
-            swsDecToEnc = CreateDynamicSwsContext("디코더-인코더 변환");
+            swsDecToBgra = VideoFrameColorPolicy.CreateDynamicSwsContext("디코더-BGRA 변환");
+            swsBgraToEnc = VideoFrameColorPolicy.CreateDynamicSwsContext("BGRA-인코더 변환");
+            swsDecToEnc = VideoFrameColorPolicy.CreateDynamicSwsContext("디코더-인코더 변환");
 
             // ───────── main loop ─────────
             int encodeWindowStart = hybridEncodeWindow?.Start ?? 0;
@@ -2442,8 +2442,8 @@ public unsafe sealed class VideoExportService
             {
                 var tNativeSws = Stopwatch.StartNew();
                 Throw(ffmpeg.av_frame_make_writable(encFrame));
-                CopyFrameEncodingProperties(frame, encFrame);
-                ScaleFramePreservingColor(
+                VideoFrameColorPolicy.CopyFrameEncodingProperties(frame, encFrame);
+                VideoFrameColorPolicy.ScaleFramePreservingColor(
                     swsDecToEnc,
                     encFrame,
                     frame,
@@ -2500,8 +2500,8 @@ public unsafe sealed class VideoExportService
         {
             var tBgra = Stopwatch.StartNew();
             Throw(ffmpeg.av_frame_make_writable(bgra));
-            SetBgraColorProperties(frame, bgra);
-            ScaleFramePreservingColor(
+            VideoFrameColorPolicy.SetBgraColorProperties(frame, bgra);
+            VideoFrameColorPolicy.ScaleFramePreservingColor(
                 swsDecToBgra,
                 bgra,
                 frame,
@@ -2532,8 +2532,8 @@ public unsafe sealed class VideoExportService
 
             var tEncSws = Stopwatch.StartNew();
             Throw(ffmpeg.av_frame_make_writable(encFrame));
-            CopyFrameEncodingProperties(frame, encFrame);
-            ScaleFramePreservingColor(
+            VideoFrameColorPolicy.CopyFrameEncodingProperties(frame, encFrame);
+            VideoFrameColorPolicy.ScaleFramePreservingColor(
                 swsBgraToEnc,
                 encFrame,
                 bgra,
@@ -2575,8 +2575,8 @@ public unsafe sealed class VideoExportService
             {
                 var tEncSws = Stopwatch.StartNew();
                 Throw(ffmpeg.av_frame_make_writable(encFrame));
-                CopyFrameEncodingProperties(frame, encFrame);
-                ScaleFramePreservingColor(
+                VideoFrameColorPolicy.CopyFrameEncodingProperties(frame, encFrame);
+                VideoFrameColorPolicy.ScaleFramePreservingColor(
                     swsDecToEnc,
                     encFrame,
                     frame,
@@ -3525,78 +3525,6 @@ public unsafe sealed class VideoExportService
             throw new VideoExportIntegrityException(
                 $"영상 도중 RGB transfer characteristic이 변경됐습니다({frame->color_trc}).");
         }
-    }
-
-    private static unsafe void CopyFrameEncodingProperties(AVFrame* source, AVFrame* destination)
-    {
-        if (source == null || destination == null || source == destination)
-            return;
-
-        ffmpeg.av_frame_side_data_free(
-            &destination->side_data,
-            &destination->nb_side_data);
-        ffmpeg.av_dict_free(&destination->metadata);
-        Throw(ffmpeg.av_frame_copy_props(destination, source));
-    }
-
-    private static unsafe SwsContext* CreateDynamicSwsContext(string stage)
-    {
-        SwsContext* context = ffmpeg.sws_alloc_context();
-        if (context == null)
-        {
-            throw new VideoExportIntegrityException(
-                $"{stage}용 색상 변환 컨텍스트를 만들 수 없습니다.");
-        }
-
-        int optionResult = ffmpeg.av_opt_set_int(
-            context,
-            "sws_flags",
-            (long)SwsFlags.SWS_FAST_BILINEAR,
-            0);
-        if (optionResult < 0)
-        {
-            ffmpeg.sws_freeContext(context);
-            throw new VideoExportIntegrityException(
-                $"{stage}의 색상 변환 옵션을 설정할 수 없습니다: " +
-                GetErrorMessage(optionResult));
-        }
-
-        return context;
-    }
-
-    private static unsafe void ScaleFramePreservingColor(
-        SwsContext* context,
-        AVFrame* destination,
-        AVFrame* source,
-        string stage)
-    {
-        if (context == null || destination == null || source == null)
-        {
-            throw new VideoExportIntegrityException(
-                $"{stage}에 필요한 프레임 또는 색상 변환 컨텍스트가 없습니다.");
-        }
-
-        int result = ffmpeg.sws_scale_frame(context, destination, source);
-        if (result < 0)
-        {
-            throw new VideoExportIntegrityException(
-                $"{stage} 중 원본 색 공간, 범위 또는 색차 위치를 보존할 수 없습니다: " +
-                GetErrorMessage(result));
-        }
-    }
-
-    private static unsafe void SetBgraColorProperties(AVFrame* source, AVFrame* bgra)
-    {
-        if (source == null || bgra == null)
-            return;
-
-        CopyFrameEncodingProperties(source, bgra);
-        bgra->color_range = AVColorRange.AVCOL_RANGE_JPEG;
-        bgra->color_primaries = source->color_primaries;
-        bgra->color_trc = source->color_trc;
-        bgra->colorspace = AVColorSpace.AVCOL_SPC_RGB;
-        bgra->chroma_location = AVChromaLocation.AVCHROMA_LOC_UNSPECIFIED;
-        bgra->sample_aspect_ratio = source->sample_aspect_ratio;
     }
 
     private static void ThrowUnsupportedDynamicVideoMetadata(string metadataName)
