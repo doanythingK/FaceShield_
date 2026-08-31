@@ -1,0 +1,48 @@
+name: Hardening Quality Gate
+
+on:
+  push:
+    branches:
+      - "hardening/**"
+  pull_request:
+    branches:
+      - "feature/yolo-quality-speed-pipeline"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore FaceShield.csproj -r win-x64
+
+      - name: Build
+        run: dotnet build FaceShield.csproj -c Release -r win-x64 --no-restore -p:ContinuousIntegrationBuild=true
+
+  build-macos:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore FaceShield.csproj -r osx-arm64
+
+      - name: Build
+        run: dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
