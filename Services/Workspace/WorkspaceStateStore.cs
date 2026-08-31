@@ -18,6 +18,7 @@ namespace FaceShield.Services.Workspace
     {
         private readonly string _rootDir;
         private readonly string _stateFile;
+        private readonly string _stateBackupFile;
         private AppState _state;
 
         public WorkspaceStateStore()
@@ -26,6 +27,7 @@ namespace FaceShield.Services.Workspace
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "FaceShield");
             _stateFile = Path.Combine(_rootDir, "state.json");
+            _stateBackupFile = Path.Combine(_rootDir, "state.json.bak");
             _state = LoadState();
         }
 
@@ -90,7 +92,7 @@ namespace FaceShield.Services.Workspace
             if (state == null)
                 return false;
 
-            string dir = GetWorkspaceDir(videoPath, mode);
+            string dir = GetWorkspaceDir(videoPath, mode, state.StorageGeneration);
             maskProvider.Clear();
 
             foreach (var faceState in state.FaceMasks ?? new List<FaceMaskState>())
@@ -157,72 +159,108 @@ namespace FaceShield.Services.Workspace
             if (snapshot == null)
                 return;
 
-            string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode);
+            string generation = Guid.NewGuid().ToString("N");
+            string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode, generation);
+            WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
+                string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
+
             if (Directory.Exists(dir))
                 Directory.Delete(dir, recursive: true);
             Directory.CreateDirectory(dir);
 
-            var entries = maskProvider.GetMaskEntries();
-            var indices = new List<int>(entries.Count);
-            var indexSet = new HashSet<int>();
-
-            foreach (var entry in entries)
+            try
             {
-                indices.Add(entry.Key);
-                indexSet.Add(entry.Key);
-                string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
-                SaveMask(filePath, entry.Value);
-            }
+                var entries = maskProvider.GetMaskEntries();
+                var indices = new List<int>(entries.Count);
+                var indexSet = new HashSet<int>();
 
-            var faceMasks = maskProvider.GetFaceMaskEntries()
-                .Where(entry => !indexSet.Contains(entry.Key))
-                .OrderBy(entry => entry.Key)
-                .Select(entry => new FaceMaskState
+                foreach (var entry in entries)
                 {
-                    FrameIndex = entry.Key,
-                    Width = entry.Value.Size.Width,
-                    Height = entry.Value.Size.Height,
-                    MinConfidence = entry.Value.MinConfidence,
-                    Faces = entry.Value.Faces
-                        .Select(r => new RectState
-                        {
-                            X = r.X,
-                            Y = r.Y,
-                            Width = r.Width,
-                            Height = r.Height
-                        })
-                        .ToList(),
-                    Confidences = entry.Value.Confidences.ToList()
-                })
-                .ToList();
+                    indices.Add(entry.Key);
+                    indexSet.Add(entry.Key);
+                    string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
+                    SaveMask(filePath, entry.Value);
+                }
 
-            _state.Workspaces.RemoveAll(w =>
-                string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
+                var faceMasks = maskProvider.GetFaceMaskEntries()
+                    .Where(entry => !indexSet.Contains(entry.Key))
+                    .OrderBy(entry => entry.Key)
+                    .Select(entry => new FaceMaskState
+                    {
+                        FrameIndex = entry.Key,
+                        Width = entry.Value.Size.Width,
+                        Height = entry.Value.Size.Height,
+                        MinConfidence = entry.Value.MinConfidence,
+                        Faces = entry.Value.Faces
+                            .Select(r => new RectState
+                            {
+                                X = r.X,
+                                Y = r.Y,
+                                Width = r.Width,
+                                Height = r.Height
+                            })
+                            .ToList(),
+                        Confidences = entry.Value.Confidences.ToList()
+                    })
+                    .ToList();
 
-            _state.Workspaces.Add(new WorkspaceState
+                var newState = new WorkspaceState
+                {
+                    VideoPath = snapshot.VideoPath,
+                    Mode = snapshot.Mode.ToString(),
+                    StorageGeneration = generation,
+                    SelectedFrameIndex = snapshot.SelectedFrameIndex,
+                    ViewStartSeconds = snapshot.ViewStartSeconds,
+                    SecondsPerScreen = snapshot.SecondsPerScreen,
+                    LastOpened = snapshot.LastOpened,
+                    MaskIndices = indices,
+                    FaceMasks = faceMasks,
+                    AutoResumeIndex = snapshot.AutoResumeIndex,
+                    AutoCompleted = snapshot.AutoCompleted,
+                    AutoRunSignature = snapshot.AutoRunSignature,
+                    AutoExecutionSignature = snapshot.AutoExecutionSignature,
+                    AutoExportGateRequired = snapshot.AutoExportGateRequired,
+                    AutoExportGatePassed = snapshot.AutoExportGatePassed,
+                    AutoExportGateFailure = snapshot.AutoExportGateFailure,
+                    AutoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable,
+                    AutoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy,
+                    AutoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons
+                };
+
+                _state.Workspaces.RemoveAll(w =>
+                    string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
+                _state.Workspaces.Add(newState);
+
+                try
+                {
+                    SaveState();
+                }
+                catch
+                {
+                    _state.Workspaces.Remove(newState);
+                    if (previousState != null)
+                        _state.Workspaces.Add(previousState);
+                    throw;
+                }
+
+                CleanupUnreferencedWorkspaceDirectories(snapshot.VideoPath, snapshot.Mode);
+            }
+            catch
             {
-                VideoPath = snapshot.VideoPath,
-                Mode = snapshot.Mode.ToString(),
-                SelectedFrameIndex = snapshot.SelectedFrameIndex,
-                ViewStartSeconds = snapshot.ViewStartSeconds,
-                SecondsPerScreen = snapshot.SecondsPerScreen,
-                LastOpened = snapshot.LastOpened,
-                MaskIndices = indices,
-                FaceMasks = faceMasks,
-                AutoResumeIndex = snapshot.AutoResumeIndex,
-                AutoCompleted = snapshot.AutoCompleted,
-                AutoRunSignature = snapshot.AutoRunSignature,
-                AutoExecutionSignature = snapshot.AutoExecutionSignature,
-                AutoExportGateRequired = snapshot.AutoExportGateRequired,
-                AutoExportGatePassed = snapshot.AutoExportGatePassed,
-                AutoExportGateFailure = snapshot.AutoExportGateFailure,
-                AutoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable,
-                AutoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy,
-                AutoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons
-            });
+                try
+                {
+                    if (Directory.Exists(dir))
+                        Directory.Delete(dir, recursive: true);
+                }
+                catch
+                {
+                    // Keep the failed generation for diagnostics if cleanup itself fails.
+                }
 
-            SaveState();
+                throw;
+            }
         }
 
         private string GetWorkspaceBaseDir(string videoPath)
@@ -231,9 +269,15 @@ namespace FaceShield.Services.Workspace
             return Path.Combine(_rootDir, "workspaces", hash);
         }
 
-        private string GetWorkspaceDir(string videoPath, WorkspaceMode mode)
+        private string GetWorkspaceDir(
+            string videoPath,
+            WorkspaceMode mode,
+            string? storageGeneration = null)
         {
-            return Path.Combine(GetWorkspaceBaseDir(videoPath), mode.ToString());
+            string directoryName = string.IsNullOrWhiteSpace(storageGeneration)
+                ? mode.ToString()
+                : $"{mode}-{storageGeneration}";
+            return Path.Combine(GetWorkspaceBaseDir(videoPath), directoryName);
         }
 
         private static void SaveMask(string path, WriteableBitmap mask)
@@ -281,29 +325,160 @@ namespace FaceShield.Services.Workspace
 
         private AppState LoadState()
         {
+            var primary = TryLoadStateFile(_stateFile);
+            if (primary != null)
+                return primary;
+
+            var backup = TryLoadStateFile(_stateBackupFile);
+            if (backup != null)
+            {
+                TryRestoreStateBackup();
+                return backup;
+            }
+
+            return new AppState();
+        }
+
+        private static AppState? TryLoadStateFile(string path)
+        {
             try
             {
-                if (!File.Exists(_stateFile))
-                    return new AppState();
+                if (!File.Exists(path))
+                    return null;
 
-                var json = File.ReadAllText(_stateFile);
-                var state = JsonSerializer.Deserialize<AppState>(json);
-                return state ?? new AppState();
+                string json = File.ReadAllText(path);
+                return JsonSerializer.Deserialize<AppState>(json);
             }
             catch
             {
-                return new AppState();
+                return null;
+            }
+        }
+
+        private void TryRestoreStateBackup()
+        {
+            if (!File.Exists(_stateBackupFile))
+                return;
+
+            string tempPath = _stateFile + ".restore";
+            try
+            {
+                Directory.CreateDirectory(_rootDir);
+                File.Copy(_stateBackupFile, tempPath, overwrite: true);
+                File.Move(tempPath, _stateFile, overwrite: true);
+            }
+            catch
+            {
+                // The in-memory backup state is still usable for this process.
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                    // ignore restore cleanup failures
+                }
             }
         }
 
         private void SaveState()
         {
             Directory.CreateDirectory(_rootDir);
-            var json = JsonSerializer.Serialize(_state, new JsonSerializerOptions
+            string json = JsonSerializer.Serialize(_state, new JsonSerializerOptions
             {
                 WriteIndented = true
             });
-            File.WriteAllText(_stateFile, json);
+
+            string tempPath = _stateFile + ".tmp";
+            try
+            {
+                using (var stream = new FileStream(
+                    tempPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 16 * 1024,
+                    options: FileOptions.WriteThrough))
+                using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+                {
+                    writer.Write(json);
+                    writer.Flush();
+                    stream.Flush(flushToDisk: true);
+                }
+
+                if (File.Exists(_stateFile))
+                    File.Copy(_stateFile, _stateBackupFile, overwrite: true);
+
+                File.Move(tempPath, _stateFile, overwrite: true);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                    // ignore temp cleanup failures
+                }
+            }
+        }
+
+        private void CleanupUnreferencedWorkspaceDirectories(string videoPath, WorkspaceMode mode)
+        {
+            try
+            {
+                string baseDir = GetWorkspaceBaseDir(videoPath);
+                if (!Directory.Exists(baseDir))
+                    return;
+
+                var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                void AddReferencedDirectories(AppState? appState)
+                {
+                    if (appState == null)
+                        return;
+
+                    foreach (var workspace in appState.Workspaces)
+                    {
+                        if (!string.Equals(workspace.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase) ||
+                            !string.Equals(workspace.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        keep.Add(Path.GetFullPath(GetWorkspaceDir(
+                            videoPath,
+                            mode,
+                            workspace.StorageGeneration)));
+                    }
+                }
+
+                AddReferencedDirectories(_state);
+                AddReferencedDirectories(TryLoadStateFile(_stateBackupFile));
+
+                foreach (string candidate in Directory.EnumerateDirectories(baseDir, $"{mode}-*"))
+                {
+                    if (!keep.Contains(Path.GetFullPath(candidate)))
+                        Directory.Delete(candidate, recursive: true);
+                }
+
+                string legacyDir = GetWorkspaceDir(videoPath, mode);
+                if (Directory.Exists(legacyDir) &&
+                    !keep.Contains(Path.GetFullPath(legacyDir)))
+                {
+                    Directory.Delete(legacyDir, recursive: true);
+                }
+            }
+            catch
+            {
+                // Cleanup is best-effort; never invalidate a successful save.
+            }
         }
 
         private static string HashPath(string value)
@@ -331,6 +506,7 @@ namespace FaceShield.Services.Workspace
         {
             public string VideoPath { get; set; } = string.Empty;
             public string Mode { get; set; } = string.Empty;
+            public string? StorageGeneration { get; set; }
             public int SelectedFrameIndex { get; set; }
             public double ViewStartSeconds { get; set; }
             public double SecondsPerScreen { get; set; }
