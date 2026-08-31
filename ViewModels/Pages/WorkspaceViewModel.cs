@@ -268,7 +268,7 @@ namespace FaceShield.ViewModels.Pages
             string cascadeError = "n/a";
             if (autoRunOptions != null)
             {
-                cascadeFailure = GetRequiredYoloCascadeFailure(autoRunOptions, autoRunSummary);
+                cascadeFailure = WorkspaceExportGatePolicy.GetRequiredYoloCascadeFailure(autoRunOptions, autoRunSummary);
                 cascadeError = autoRunSummary?.YoloCascadeError ?? "summary-missing";
             }
             if (cascadeFailure == null && _autoExportGateRequired && !_autoExportGatePassed)
@@ -1065,7 +1065,8 @@ namespace FaceShield.ViewModels.Pages
                     lastProcessed = 0;
                     _autoResumeIndex = 0;
                 }
-                BeginAutoExportGate();
+                ApplyAutoExportGateState(
+                WorkspaceExportGatePolicy.Begin(HybridCopyDisabledReason));
                 ResetAutoFaceMasksForRun(lastProcessed);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
@@ -1114,7 +1115,11 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
-                CompleteAutoExportGate(runOptions, generator.LastRunSummary);
+                ApplyAutoExportGateState(
+                    WorkspaceExportGatePolicy.Complete(
+                        runOptions,
+                        generator.LastRunSummary,
+                        HybridCopyDisabledReason));
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
                 if (!exportAfter)
@@ -1128,7 +1133,7 @@ namespace FaceShield.ViewModels.Pages
 
                 if (exportAfter)
                 {
-                    string? cascadeFailure = GetRequiredYoloCascadeFailure(
+                    string? cascadeFailure = WorkspaceExportGatePolicy.GetRequiredYoloCascadeFailure(
                         runOptions,
                         generator.LastRunSummary);
                     if (cascadeFailure != null)
@@ -1242,60 +1247,16 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private static string? GetRequiredYoloCascadeFailure(
-            AutoMaskOptions options,
-            AutoMaskRunSummary? summary)
+        private void ApplyAutoExportGateState(
+            WorkspaceAutoExportGateState state)
         {
-            if (!options.EnableYoloRiskCascade || options.FilterProfile != FaceFilterProfile.Yolo)
-                return null;
-            if (summary == null)
-                return "yolo-risk-cascade-summary-missing";
-            if (!summary.YoloRiskCascadeEnabled)
-                return "yolo-risk-cascade-not-executed";
-            if (summary.YoloTimelineFrameCount <= 0 ||
-                summary.YoloPtsTimingFrameCount != summary.YoloTimelineFrameCount ||
-                summary.YoloUnalignedTimelineFrameCount != 0)
-            {
-                return "yolo-risk-cascade-incomplete-pts-coverage";
-            }
-            if (summary.YoloUnalignedRiskFrameCount != 0)
-                return "yolo-risk-cascade-unaligned-risk-frames";
-            if (!string.Equals(summary.YoloCascadeError, "none", StringComparison.OrdinalIgnoreCase))
-                return "yolo-risk-cascade-error";
-            if (summary.YoloSecondaryAttemptCount + summary.YoloProtectedStoredMaskFrameCount !=
-                summary.YoloRiskFrameCount)
-            {
-                return "yolo-risk-cascade-incomplete-coverage";
-            }
-
-            return null;
-        }
-
-        private void BeginAutoExportGate()
-        {
-            _autoExportGateRequired = true;
-            _autoExportGatePassed = false;
-            _autoExportGateFailure = "auto-run-incomplete";
-            _lastCompletedAutoRunSummary = null;
-            _autoExportHybridPolicyAvailable = false;
-            _autoExportAllowHybridCopy = false;
-            _autoExportHybridDisableReasons = HybridCopyDisabledReason;
-        }
-
-        private void CompleteAutoExportGate(
-            AutoMaskOptions options,
-            AutoMaskRunSummary? summary)
-        {
-            _lastCompletedAutoRunSummary = summary;
-            _autoExportHybridPolicyAvailable = true;
-            _autoExportAllowHybridCopy = false;
-            _autoExportHybridDisableReasons = HybridCopyDisabledReason;
-
-            string? failure = summary == null
-                ? "auto-run-summary-missing"
-                : GetRequiredYoloCascadeFailure(options, summary);
-            _autoExportGatePassed = failure == null;
-            _autoExportGateFailure = failure;
+            _autoExportGateRequired = state.Required;
+            _autoExportGatePassed = state.Passed;
+            _autoExportGateFailure = state.Failure;
+            _lastCompletedAutoRunSummary = state.CompletedRunSummary;
+            _autoExportHybridPolicyAvailable = state.HybridPolicyAvailable;
+            _autoExportAllowHybridCopy = state.AllowHybridCopy;
+            _autoExportHybridDisableReasons = state.HybridDisableReasons;
         }
 
         private void ResetAutoFaceMasksForRun(int startFrameIndex)
@@ -2068,33 +2029,10 @@ namespace FaceShield.ViewModels.Pages
             _autoCompleted = snapshot.AutoCompleted;
             _autoRunSignature = snapshot.AutoRunSignature;
             _autoExecutionSignature = snapshot.AutoExecutionSignature;
-            _autoExportGateRequired = snapshot.AutoExportGateRequired;
-            _autoExportGatePassed = snapshot.AutoExportGatePassed;
-            _autoExportGateFailure = snapshot.AutoExportGateFailure;
-            _lastCompletedAutoRunSummary = null;
-            _autoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable;
-            _autoExportAllowHybridCopy = false;
-            _autoExportHybridDisableReasons = HybridCopyDisabledReason;
-
-            bool legacyIncompleteRun =
-                !_autoExportGateRequired &&
-                !_autoExportGatePassed &&
-                _autoResumeIndex > 0 &&
-                !_autoCompleted;
-            bool legacyYoloCascadeEvidenceMissing =
-                !_autoExportGateRequired &&
-                !_autoExportGatePassed &&
-                !string.IsNullOrWhiteSpace(_autoRunSignature) &&
-                _autoRunSignature.Contains("profile=Yolo", StringComparison.OrdinalIgnoreCase) &&
-                _autoRunSignature.Contains("riskCascade=True", StringComparison.OrdinalIgnoreCase);
-            if (legacyIncompleteRun || legacyYoloCascadeEvidenceMissing)
-            {
-                _autoExportGateRequired = true;
-                _autoExportGatePassed = false;
-                _autoExportGateFailure = legacyIncompleteRun
-                    ? "legacy-auto-run-incomplete"
-                    : "legacy-cascade-evidence-missing";
-            }
+            ApplyAutoExportGateState(
+                WorkspaceExportGatePolicy.Restore(
+                    snapshot,
+                    HybridCopyDisabledReason));
 
             double secondsPerScreen = snapshot.SecondsPerScreen;
             if (secondsPerScreen <= 0)
