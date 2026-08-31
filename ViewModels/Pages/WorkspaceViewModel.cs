@@ -102,7 +102,7 @@ namespace FaceShield.ViewModels.Pages
             _autoResumeIndex > 0 &&
             !RequiresCompleteAutoTimeline(_autoOptions, _detectorFactoryOptions) &&
             AutoMaskGenerator.CanResumeFromFrame(_autoOptions, _autoResumeIndex) &&
-            IsAutoResumeSignatureCurrent(BuildAutoRunIntentSignature(
+            IsAutoResumeSignatureCurrent(AutoRunSignaturePolicy.BuildIntentSignature(
                 _autoOptions,
                 _detectorOptions,
                 _detectorFactoryOptions));
@@ -962,13 +962,13 @@ namespace FaceShield.ViewModels.Pages
 
                 var detectorOptions = _detectorOptions;
                 var effectiveAutoOptions = _autoOptions.ResolveProcessingMode();
-                var detectorFactoryOptions = ResolveAutoRunDetectorFactoryOptions(
+                var detectorFactoryOptions = AutoRunSignaturePolicy.ResolveDetectorFactoryOptions(
                     effectiveAutoOptions,
                     detectorOptions,
                     _detectorFactoryOptions,
                     out FaceOnnxDetectorOptions? yoloSecondaryOptions);
 
-                string runSignature = BuildAutoRunSignature(effectiveAutoOptions, detectorFactoryOptions);
+                string runSignature = AutoRunSignaturePolicy.BuildRunSignature(effectiveAutoOptions, detectorFactoryOptions);
 
                 int tunedSessions = Math.Max(1, effectiveAutoOptions.ParallelDetectorCount);
                 if (_detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
@@ -1044,14 +1044,14 @@ namespace FaceShield.ViewModels.Pages
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 string sourceEvidenceId = BuildSourceEvidenceId(FrameList.VideoPath);
-                string executionSignature = BuildAutoExecutionSignature(
+                string executionSignature = AutoRunSignaturePolicy.BuildExecutionSignature(
                     runOptions,
                     detectorFactoryOptions,
-                    GetDetectorExecutionProviderLabel(detector),
+                    AutoRunSignaturePolicy.GetExecutionProviderLabel(detector),
                     sourceEvidenceId);
                 RunMetricsLog.AppendRunLines(
                     runId,
-                    $"[AutoRunConfig] runId={runId}, sourceId={sourceEvidenceId}, totalFrames={FrameList.TotalFrames}, signature={BuildAutoRunEvidenceSignature(runOptions, detectorFactoryOptions)}, executionSignature={executionSignature}");
+                    $"[AutoRunConfig] runId={runId}, sourceId={sourceEvidenceId}, totalFrames={FrameList.TotalFrames}, signature={AutoRunSignaturePolicy.BuildEvidenceSignature(runOptions, detectorFactoryOptions)}, executionSignature={executionSignature}");
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
                 ResetStaleAutoResumeIfRunChanged(runSignature, executionSignature);
                 _autoRunSignature = runSignature;
@@ -2123,7 +2123,7 @@ namespace FaceShield.ViewModels.Pages
             string currentRunSignature,
             string currentExecutionSignature)
         {
-            string? reason = GetAutoResumeResetReason(
+            string? reason = AutoRunSignaturePolicy.GetResumeResetReason(
                 _autoResumeIndex,
                 _autoRunSignature,
                 currentRunSignature,
@@ -2136,366 +2136,6 @@ namespace FaceShield.ViewModels.Pages
                 $"[AutoMaskResumeReset] reason={reason} resumeIndex={_autoResumeIndex}");
             _autoResumeIndex = 0;
             _autoCompleted = false;
-        }
-
-        private static string? GetAutoResumeResetReason(
-            int resumeIndex,
-            string? storedRunSignature,
-            string currentRunSignature,
-            string? storedExecutionSignature,
-            string currentExecutionSignature)
-        {
-            if (resumeIndex <= 0)
-                return null;
-            if (string.IsNullOrWhiteSpace(storedRunSignature) ||
-                !string.Equals(storedRunSignature, currentRunSignature, StringComparison.Ordinal))
-            {
-                return "settings-changed";
-            }
-            if (string.IsNullOrWhiteSpace(storedExecutionSignature) ||
-                string.IsNullOrWhiteSpace(currentExecutionSignature))
-            {
-                return "execution-signature-missing";
-            }
-            if (!string.Equals(storedExecutionSignature, currentExecutionSignature, StringComparison.Ordinal))
-            {
-                return "execution-changed";
-            }
-
-            return null;
-        }
-
-        private static string BuildAutoRunSignature(
-            AutoMaskOptions autoOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions)
-        {
-            autoOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
-            detectorFactoryOptions ??= FaceDetectorFactoryOptions.ForOnnx(new FaceOnnxDetectorOptions());
-            bool useLegacyCompatibleSignature =
-                autoOptions.ProcessingMode == AutoMaskProcessingMode.Legacy &&
-                !autoOptions.EnableYoloRiskCascade &&
-                autoOptions.EnableYoloPrimaryRoiShortcut;
-
-            var parts = new List<string>
-            {
-                useLegacyCompatibleSignature ? "v3" : "v6",
-                $"backend={detectorFactoryOptions.Backend}",
-                $"profile={autoOptions.FilterProfile}",
-                $"downscale={FormatSignatureNumber(autoOptions.DownscaleRatio)}",
-                $"quality={autoOptions.DownscaleQuality}",
-                $"post={autoOptions.EnablePostProcessing}",
-                $"roi={autoOptions.EnableRoiPostProcess}",
-                $"iso={autoOptions.EnableYoloWeakIsolatedCleanup}",
-                $"gap={autoOptions.EnableYoloGapFill}",
-                $"scene={autoOptions.EnableYoloSceneCutCarryCleanup}",
-                $"smooth={autoOptions.EnableYoloTemporalSmoothing}"
-            };
-            if (!useLegacyCompatibleSignature)
-            {
-                parts.Add($"processingMode={autoOptions.ProcessingMode}");
-                parts.Add($"riskCascade={autoOptions.EnableYoloRiskCascade}");
-                parts.Add($"strongInterval={FormatSignatureNumber(autoOptions.YoloStrongFullScanIntervalSeconds)}");
-                parts.Add($"riskConfidence={FormatSignatureNumber(autoOptions.YoloRiskLowConfidenceThreshold)}");
-                parts.Add($"riskArea={FormatSignatureNumber(autoOptions.YoloRiskSmallFaceAreaRatio)}");
-                parts.Add($"riskEdge={FormatSignatureNumber(autoOptions.YoloRiskEdgeMarginRatio)}");
-                parts.Add($"riskGap={autoOptions.YoloRiskMaxTrackGapFrames}");
-                parts.Add($"strongConfirm={autoOptions.YoloStrongConfirmationFrames}");
-                parts.Add($"primaryRoi={autoOptions.EnableYoloPrimaryRoiShortcut}");
-            }
-
-            parts.AddRange(new[]
-            {
-                $"tracking={autoOptions.UseTracking}",
-                $"everyN={autoOptions.DetectEveryNFrames}",
-                $"parallel={autoOptions.ParallelDetectorCount}",
-                $"dump={autoOptions.DumpDetectionDiagnostics}"
-            });
-
-            switch (detectorFactoryOptions.Backend)
-            {
-                case FaceDetectorBackend.YoloFaceOnnx:
-                    AppendYoloSignature(parts, detectorFactoryOptions.YoloFaceOnnxOptions);
-                    if (autoOptions.EnableYoloRiskCascade)
-                        AppendSecondaryFaceOnnxSignature(parts, detectorFactoryOptions.FaceOnnxOptions);
-                    break;
-                case FaceDetectorBackend.FaceOnnx:
-                    AppendFaceOnnxSignature(parts, detectorFactoryOptions.FaceOnnxOptions);
-                    break;
-                case FaceDetectorBackend.ScrfdOnnx:
-                    AppendScrfdSignature(parts, detectorFactoryOptions.ScrfdOnnxOptions);
-                    break;
-                case FaceDetectorBackend.YuNetOnnx:
-                    AppendYuNetSignature(parts, detectorFactoryOptions.YuNetOnnxOptions);
-                    break;
-                default:
-                    parts.Add($"detector={detectorFactoryOptions.Backend}");
-                    break;
-            }
-
-            return string.Join("|", parts);
-        }
-
-        private static string BuildAutoRunIntentSignature(
-            AutoMaskOptions autoOptions,
-            FaceOnnxDetectorOptions detectorOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions)
-        {
-            AutoMaskOptions effectiveAutoOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
-            FaceDetectorFactoryOptions effectiveFactoryOptions = ResolveAutoRunDetectorFactoryOptions(
-                effectiveAutoOptions,
-                detectorOptions,
-                detectorFactoryOptions,
-                out _);
-            return BuildAutoRunSignature(effectiveAutoOptions, effectiveFactoryOptions);
-        }
-
-        private static bool RequiresCompleteAutoTimeline(
-            AutoMaskOptions autoOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions)
-        {
-            AutoMaskOptions effectiveOptions = (autoOptions ?? new AutoMaskOptions()).ResolveProcessingMode();
-            _ = detectorFactoryOptions;
-            return AutoMaskGenerator.RequiresFullTimelineResume(effectiveOptions);
-        }
-
-        private static FaceDetectorFactoryOptions ResolveAutoRunDetectorFactoryOptions(
-            AutoMaskOptions autoOptions,
-            FaceOnnxDetectorOptions detectorOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions,
-            out FaceOnnxDetectorOptions? yoloSecondaryOptions)
-        {
-            detectorOptions ??= new FaceOnnxDetectorOptions();
-            detectorFactoryOptions ??= FaceDetectorFactoryOptions.ForOnnx(detectorOptions);
-            yoloSecondaryOptions = null;
-            if (detectorFactoryOptions.Backend != FaceDetectorBackend.YoloFaceOnnx ||
-                !autoOptions.EnableYoloRiskCascade)
-            {
-                return detectorFactoryOptions;
-            }
-
-            yoloSecondaryOptions = CreateYoloSecondaryDetectorOptions(detectorOptions);
-            return detectorFactoryOptions.WithFaceOnnxOptions(yoloSecondaryOptions);
-        }
-
-        private static void AppendFaceOnnxSignature(List<string> parts, FaceOnnxDetectorOptions? options)
-        {
-            options ??= new FaceOnnxDetectorOptions();
-            parts.Add($"ort={options.UseOrtOptimization}");
-            parts.Add($"gpu={options.UseGpu}");
-            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
-            parts.Add($"preprocess={options.EnablePreprocessParallelism?.ToString() ?? "null"}");
-            parts.Add($"autoTune={options.AllowAutoTune?.ToString() ?? "null"}");
-            parts.Add($"autoGpu={options.AllowAutoGpu?.ToString() ?? "null"}");
-            parts.Add($"detect={FormatSignatureNumber(options.DetectionThreshold)}");
-            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
-            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
-        }
-
-        private static void AppendSecondaryFaceOnnxSignature(List<string> parts, FaceOnnxDetectorOptions? options)
-        {
-            options ??= new FaceOnnxDetectorOptions();
-            parts.Add($"secondaryOrt={options.UseOrtOptimization}");
-            parts.Add($"secondaryGpu={options.UseGpu}");
-            parts.Add($"secondaryIntra={options.IntraOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"secondaryInter={options.InterOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"secondaryParallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
-            parts.Add($"secondaryPreprocess={options.EnablePreprocessParallelism?.ToString() ?? "null"}");
-            parts.Add($"secondaryAutoTune={options.AllowAutoTune?.ToString() ?? "null"}");
-            parts.Add($"secondaryAutoGpu={options.AllowAutoGpu?.ToString() ?? "null"}");
-            parts.Add($"secondaryDetect={FormatSignatureNumber(options.DetectionThreshold)}");
-            parts.Add($"secondaryConf={FormatSignatureNumber(options.ConfidenceThreshold)}");
-            parts.Add($"secondaryNms={FormatSignatureNumber(options.NmsThreshold)}");
-        }
-
-        private static FaceOnnxDetectorOptions CreateYoloSecondaryDetectorOptions(
-            FaceOnnxDetectorOptions? configured)
-        {
-            configured ??= new FaceOnnxDetectorOptions();
-            return new FaceOnnxDetectorOptions
-            {
-                UseOrtOptimization = configured.UseOrtOptimization,
-                UseGpu = false,
-                IntraOpNumThreads = configured.IntraOpNumThreads,
-                InterOpNumThreads = configured.InterOpNumThreads,
-                UseParallelExecution = false,
-                DetectionThreshold = null,
-                ConfidenceThreshold = null,
-                NmsThreshold = null,
-                EnablePreprocessParallelism = configured.EnablePreprocessParallelism,
-                AllowAutoTune = false,
-                AllowAutoGpu = false
-            };
-        }
-
-        private static void AppendYoloSignature(List<string> parts, YoloFaceOnnxDetectorOptions? options)
-        {
-            if (options == null)
-            {
-                parts.Add("yolo=null");
-                return;
-            }
-
-            parts.Add($"model={NormalizeSignaturePath(options.ModelPath)}");
-            parts.Add($"type={options.ModelType}");
-            parts.Add($"ort={options.UseOrtOptimization}");
-            parts.Add($"gpu={options.UseGpu}");
-            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
-            if (options.EnableCoreMl)
-                parts.Add("coreMl=True");
-            parts.Add($"input={options.InputWidth?.ToString() ?? "null"}x{options.InputHeight?.ToString() ?? "null"}");
-            parts.Add($"obj={FormatSignatureNumber(options.ObjectnessThreshold)}");
-            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
-            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
-            parts.Add($"max={options.MaxDetections}");
-            parts.Add($"tiling={options.UseTiling}");
-            parts.Add($"tileOnly={!options.IncludeFullFrameWhenTiling}");
-            parts.Add($"tiles={options.TileColumns}x{options.TileRows}");
-            parts.Add($"tileOverlap={FormatSignatureNumber(options.TileOverlapRatio)}");
-            parts.Add($"letterbox={options.UseLetterboxResize}");
-            parts.Add($"centerPad={options.CenterLetterboxPadding}");
-            parts.Add($"padValue={FormatSignatureNumber(options.LetterboxPaddingValue)}");
-            parts.Add($"rgb={options.UseRgbInput}");
-            parts.Add($"inputScale={FormatSignatureNumber(options.InputScale)}");
-            parts.Add($"lowPos={options.UseLowConfidencePositionFilter}:{FormatSignatureNumber(options.LowConfidencePositionMaxConfidence)}:{FormatSignatureNumber(options.LowConfidencePositionMinCenterYRatio)}");
-            parts.Add($"small={options.UseSmallAreaFilter}:{FormatSignatureNumber(options.SmallAreaMaxAreaRatio)}");
-            parts.Add($"aspect={options.UseAspectRatioFilter}:{FormatSignatureNumber(options.MinAspectRatio)}:{FormatSignatureNumber(options.MaxAspectRatio)}");
-            parts.Add($"topSmall={options.UseTopSmallLowConfidenceFilter}:{FormatSignatureNumber(options.TopSmallLowConfidenceMaxConfidence)}:{FormatSignatureNumber(options.TopSmallLowConfidenceMaxCenterYRatio)}:{FormatSignatureNumber(options.TopSmallLowConfidenceMaxAreaRatio)}");
-            parts.Add($"largeScale={FormatSignatureNumber(options.LargeBoxWidthScale)}:{FormatSignatureNumber(options.LargeBoxHeightScale)}:{FormatSignatureNumber(options.LargeBoxMinAreaRatio)}");
-            parts.Add($"landmark={options.UseYolo5LandmarkBoxRefine}:{FormatSignatureNumber(options.Yolo5LandmarkBoxMinAreaRatio)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxWidthScale)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxHeightScale)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxCenterYOffsetRatio)}:{FormatSignatureNumber(options.Yolo5LandmarkBoxMinOriginalIou)}");
-        }
-
-        private static void AppendScrfdSignature(List<string> parts, ScrfdOnnxDetectorOptions? options)
-        {
-            if (options == null)
-            {
-                parts.Add("scrfd=null");
-                return;
-            }
-
-            parts.Add($"model={NormalizeSignaturePath(options.ModelPath)}");
-            parts.Add($"ort={options.UseOrtOptimization}");
-            parts.Add($"gpu={options.UseGpu}");
-            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
-            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
-            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
-            parts.Add($"input={options.InputWidth?.ToString() ?? "null"}x{options.InputHeight?.ToString() ?? "null"}");
-            parts.Add($"normalize={FormatSignatureNumber(options.InputMean)}:{FormatSignatureNumber(options.InputStd)}");
-            parts.Add($"bboxStride={options.MultiplyBboxByStride}");
-            parts.Add($"anchorOffset={FormatSignatureNumber(options.AnchorCenterOffset)}");
-            parts.Add($"letterbox={options.UseLetterboxResize}");
-            parts.Add($"centerPad={options.CenterLetterboxPadding}");
-            parts.Add($"padValue={FormatSignatureNumber(options.LetterboxPaddingValue)}");
-            parts.Add($"rgb={options.UseRgbInput}");
-        }
-
-        private static void AppendYuNetSignature(List<string> parts, YuNetOnnxDetectorOptions? options)
-        {
-            if (options == null)
-            {
-                parts.Add("yunet=null");
-                return;
-            }
-
-            parts.Add($"model={NormalizeSignaturePath(options.ModelPath)}");
-            parts.Add($"ort={options.UseOrtOptimization}");
-            parts.Add($"intra={options.IntraOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"inter={options.InterOpNumThreads?.ToString() ?? "null"}");
-            parts.Add($"parallelExec={options.UseParallelExecution?.ToString() ?? "null"}");
-            parts.Add($"conf={FormatSignatureNumber(options.ConfidenceThreshold)}");
-            parts.Add($"nms={FormatSignatureNumber(options.NmsThreshold)}");
-            parts.Add($"topK={options.TopK}");
-            parts.Add($"tiling={options.UseTiling}");
-            parts.Add($"tileOnly={!options.IncludeFullFrameWhenTiling}");
-            parts.Add($"tiles={options.TileColumns}x{options.TileRows}");
-            parts.Add($"tileOverlap={FormatSignatureNumber(options.TileOverlapRatio)}");
-        }
-
-        private static string FormatSignatureNumber(double value)
-            => value.ToString("R", CultureInfo.InvariantCulture);
-
-        private static string FormatSignatureNumber(float value)
-            => value.ToString("R", CultureInfo.InvariantCulture);
-
-        private static string FormatSignatureNumber(float? value)
-            => value?.ToString("R", CultureInfo.InvariantCulture) ?? "null";
-
-        private static string NormalizeSignaturePath(string? path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                return "null";
-
-            try
-            {
-                return Path.GetFullPath(path).Trim();
-            }
-            catch
-            {
-                return path.Trim();
-            }
-        }
-
-        private static string BuildAutoRunEvidenceSignature(
-            AutoMaskOptions autoOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions)
-        {
-            string signature = BuildAutoRunSignature(autoOptions, detectorFactoryOptions);
-            string? modelPath = GetDetectorModelPath(detectorFactoryOptions);
-            if (string.IsNullOrWhiteSpace(modelPath))
-                return signature;
-
-            string normalizedPath = NormalizeSignaturePath(modelPath);
-            string modelIdentity;
-            try
-            {
-                var modelFile = new FileInfo(normalizedPath);
-                modelIdentity = $"{modelFile.Name}:{modelFile.Length}:{modelFile.LastWriteTimeUtc.Ticks}";
-            }
-            catch
-            {
-                modelIdentity = Path.GetFileName(modelPath);
-            }
-            return signature.Replace(
-                $"model={normalizedPath}",
-                $"model={modelIdentity}",
-                StringComparison.Ordinal);
-        }
-
-        private static string? GetDetectorModelPath(FaceDetectorFactoryOptions options)
-        {
-            return options.Backend switch
-            {
-                FaceDetectorBackend.YoloFaceOnnx => options.YoloFaceOnnxOptions?.ModelPath,
-                FaceDetectorBackend.ScrfdOnnx => options.ScrfdOnnxOptions?.ModelPath,
-                FaceDetectorBackend.YuNetOnnx => options.YuNetOnnxOptions?.ModelPath,
-                _ => null
-            };
-        }
-
-        private static string BuildAutoExecutionSignature(
-            AutoMaskOptions autoOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions,
-            string executionProviderLabel,
-            string sourceEvidenceId)
-        {
-            string provider = NormalizeExecutionProviderLabel(executionProviderLabel);
-            string source = string.IsNullOrWhiteSpace(sourceEvidenceId)
-                ? "unavailable"
-                : sourceEvidenceId.Trim();
-            return $"exec-v1|{BuildAutoRunEvidenceSignature(autoOptions, detectorFactoryOptions)}|provider={provider}|source={source}";
-        }
-
-        private static string NormalizeExecutionProviderLabel(string? label)
-            => DetectorExecutionProviderIdentity.NormalizeLabel(label);
-
-        private static string GetDetectorExecutionProviderLabel(IFaceDetector detector)
-        {
-            return DetectorExecutionProviderIdentity.GetCanonicalLabel(detector);
         }
 
         public void Dispose()
