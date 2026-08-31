@@ -30,6 +30,10 @@ public sealed class ExactFrameProvider : IDisposable
         {
             return null;
         }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
 
         try
         {
