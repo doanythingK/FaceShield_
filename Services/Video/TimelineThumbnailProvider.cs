@@ -31,7 +31,15 @@ namespace FaceShield.Services.Video
             _thumbWidth = thumbWidth;
             _thumbHeight = thumbHeight;
 
-            Open();
+            try
+            {
+                Open();
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
         }
 
         private void Open()
