@@ -352,7 +352,7 @@ public unsafe sealed class VideoExportService
                 if (blurFrameSet.Count == 0)
                 {
                     progress?.Report(new ExportProgress(0, totalFrames, "블러 대상이 없어 원본 스트림을 고속 복사합니다..."));
-                    var remuxCounts = ExportByRemuxCopy(
+                    var remuxCounts = VideoExportCopyPolicy.ExportByRemuxCopy(
                         inFmt,
                         outputPath,
                         videoStreamIndex,
@@ -440,7 +440,7 @@ public unsafe sealed class VideoExportService
                     (blurRanges[0].Start > 0 || blurRanges[^1].EndExclusive < totalFrames);
                 if (canCopyOutsideBlurWindow)
                 {
-                    var keyframes = CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
+                    var keyframes = VideoExportCopyPolicy.CollectKeyframeFrameIndices(inputPath, sourceFps, totalFrames, out var estimatedTotalFrames);
                     hybridCandidateKeyframes = keyframes;
                     if (keyframes.Count < 2)
                     {
@@ -556,7 +556,7 @@ public unsafe sealed class VideoExportService
                     AVCodecID.AV_CODEC_ID_HEVC or
                     AVCodecID.AV_CODEC_ID_AV1;
             VideoHdrMetadata? hdrMetadata = sourceMayCarryHdrMetadata
-                ? ProbeVideoHdrMetadata(inputPath)
+                ? VideoHdrProbePolicy.ProbeVideoHdrMetadata(inputPath)
                 : null;
             _configuredHdrMetadata = hdrMetadata;
             _staticHdrConfigured = hdrMetadata?.HasStaticMetadata == true;
@@ -1588,7 +1588,7 @@ public unsafe sealed class VideoExportService
                 "출력 파일을 마무리하는 중..."));
             VideoExportFfmpegDiagnostics.Throw(ffmpeg.av_write_trailer(outFmt));
             outputCloseTimer.Start();
-            CloseOutputOrThrow(outFmt);
+            VideoExportCopyPolicy.CloseOutputOrThrow(outFmt);
             outputCloseTimer.Stop();
             int sampleWindowLimit = totalFrames > 0
                 ? Math.Min(exportSampleWindowFrames, totalFrames)
@@ -1614,7 +1614,7 @@ public unsafe sealed class VideoExportService
             int hybridEncodedWindowFrameLoss = useHybridCopyWindow
                 ? encodedWindowFrameShortfall
                 : 0;
-            var frameCoverage = EvaluateVideoFrameCoverage(
+            var frameCoverage = VideoExportPacketPolicy.EvaluateVideoFrameCoverage(
                 copiedSourceVideoPacketCount,
                 copiedVideoPacketCount,
                 submittedEncodedFramePts,
@@ -1892,107 +1892,6 @@ public unsafe sealed class VideoExportService
         }
     }
 
-    private static unsafe VideoHdrMetadata? ProbeVideoHdrMetadata(string inputPath)
-    {
-        const int MaxProbeFrames = 16;
-        AVFormatContext* format = null;
-        AVCodecContext* decoderContext = null;
-        AVPacket* packet = ffmpeg.av_packet_alloc();
-        AVFrame* decodedFrame = ffmpeg.av_frame_alloc();
-        if (packet == null || decodedFrame == null)
-        {
-            ffmpeg.av_packet_free(&packet);
-            ffmpeg.av_frame_free(&decodedFrame);
-            throw new InvalidOperationException("HDR 메타데이터 확인용 프레임을 할당할 수 없습니다.");
-        }
-
-        try
-        {
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avformat_open_input(&format, inputPath, null, null));
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avformat_find_stream_info(format, null));
-
-            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(format);
-            if (videoStreamIndex < 0)
-                return null;
-
-            AVCodecParameters* parameters = format->streams[videoStreamIndex]->codecpar;
-            AVCodec* decoder = ffmpeg.avcodec_find_decoder(parameters->codec_id);
-            if (decoder == null)
-                throw new InvalidOperationException("HDR 메타데이터 확인용 비디오 디코더를 찾을 수 없습니다.");
-
-            decoderContext = ffmpeg.avcodec_alloc_context3(decoder);
-            if (decoderContext == null)
-                throw new InvalidOperationException("HDR 메타데이터 확인용 디코더를 만들 수 없습니다.");
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avcodec_parameters_to_context(decoderContext, parameters));
-            VideoHdrMetadataPolicy.ConfigureDecoderSideDataExport(decoderContext, parameters->codec_id);
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avcodec_open2(decoderContext, decoder, null));
-
-            int decodedFrames = 0;
-            bool reachedProbeLimit = false;
-            VideoHdrMetadata? accumulatedMetadata = null;
-            while (!reachedProbeLimit && ffmpeg.av_read_frame(format, packet) >= 0)
-            {
-                if (packet->stream_index != videoStreamIndex)
-                {
-                    ffmpeg.av_packet_unref(packet);
-                    continue;
-                }
-
-                int sendError = ffmpeg.avcodec_send_packet(decoderContext, packet);
-                ffmpeg.av_packet_unref(packet);
-                if (sendError < 0)
-                    continue;
-
-                while (ffmpeg.avcodec_receive_frame(decoderContext, decodedFrame) == 0)
-                {
-                    decodedFrames++;
-                    string? unsupportedMetadata =
-                        FFmpegHdrMetadataGuard.FindUnsupportedMetadata(decodedFrame);
-                    if (unsupportedMetadata != null)
-                        VideoExportCompatibilityPolicy.ThrowUnsupportedDynamicVideoMetadata(unsupportedMetadata);
-                    accumulatedMetadata = VideoHdrMetadataPolicy.MergeVideoHdrMetadata(
-                        accumulatedMetadata,
-                        VideoHdrMetadataPolicy.ReadVideoHdrMetadata(decodedFrame));
-                    ffmpeg.av_frame_unref(decodedFrame);
-                    if (decodedFrames >= MaxProbeFrames)
-                    {
-                        reachedProbeLimit = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!reachedProbeLimit)
-            {
-                _ = ffmpeg.avcodec_send_packet(decoderContext, null);
-                while (ffmpeg.avcodec_receive_frame(decoderContext, decodedFrame) == 0)
-                {
-                    decodedFrames++;
-                    string? unsupportedMetadata =
-                        FFmpegHdrMetadataGuard.FindUnsupportedMetadata(decodedFrame);
-                    if (unsupportedMetadata != null)
-                        VideoExportCompatibilityPolicy.ThrowUnsupportedDynamicVideoMetadata(unsupportedMetadata);
-                    accumulatedMetadata = VideoHdrMetadataPolicy.MergeVideoHdrMetadata(
-                        accumulatedMetadata,
-                        VideoHdrMetadataPolicy.ReadVideoHdrMetadata(decodedFrame));
-                    ffmpeg.av_frame_unref(decodedFrame);
-                    if (decodedFrames >= MaxProbeFrames)
-                        break;
-                }
-            }
-
-            return accumulatedMetadata;
-        }
-        finally
-        {
-            ffmpeg.av_frame_free(&decodedFrame);
-            ffmpeg.av_packet_free(&packet);
-            ffmpeg.avcodec_free_context(&decoderContext);
-            if (format != null)
-                ffmpeg.avformat_close_input(&format);
-        }
-    }
-
     private unsafe void ValidateFrameStaticHdrMetadata(AVFrame* frame)
     {
         if (frame == null)
@@ -2008,152 +1907,6 @@ public unsafe sealed class VideoExportService
             AVFrameSideDataType.AV_FRAME_DATA_CONTENT_LIGHT_LEVEL,
             _configuredHdrMetadata?.ContentLightPayload,
             "content light");
-    }
-
-    private static unsafe void DrainEncoderPackets(
-        AVCodecContext* enc,
-        AVPacket* outPkt,
-        AVStream* outStream,
-        AVFormatContext* outFmt,
-        ref long lastPacketPts,
-        ref bool hasLastPacketPts,
-        ref long lastPacketDts,
-        ref bool hasLastPacketDts,
-        ref int outputVideoPacketCount,
-        VideoPacketTimestampIntegrity timestampIntegrity,
-        Dictionary<long, long> submittedEncodedFrameDurations,
-        Dictionary<long, int> emittedEncodedFramePts,
-        List<long> emittedEncodedMuxPts,
-        long encodedPacketFrameStep)
-    {
-        while (true)
-        {
-            int receiveResult = ffmpeg.avcodec_receive_packet(enc, outPkt);
-            if (receiveResult == ffmpeg.AVERROR(ffmpeg.EAGAIN) ||
-                receiveResult == ffmpeg.AVERROR_EOF)
-            {
-                return;
-            }
-            VideoExportFfmpegDiagnostics.ThrowVideoEncoderError(receiveResult, enc, "패킷 수신");
-
-            long encoderPacketPts = outPkt->pts;
-            outPkt->duration = VideoExportTimingPolicy.ResolveEncodedPacketDuration(
-                outPkt->duration,
-                encoderPacketPts,
-                submittedEncodedFrameDurations);
-            if (outPkt->duration < 0)
-            {
-                throw new InvalidOperationException(
-                    $"Invalid argument: 음수 인코더 패킷 길이는 내보낼 수 없습니다 " +
-                    $"(duration={outPkt->duration}).");
-            }
-
-            ffmpeg.av_packet_rescale_ts(outPkt, enc->time_base, outStream->time_base);
-            bool hasMissingTimestamp =
-                outPkt->pts == ffmpeg.AV_NOPTS_VALUE ||
-                outPkt->dts == ffmpeg.AV_NOPTS_VALUE;
-            if (hasMissingTimestamp)
-            {
-                timestampIntegrity.MissingPacketTimestamps++;
-                long originalPts = outPkt->pts;
-                long originalDts = outPkt->dts;
-                _ = VideoExportTimingPolicy.NormalizeEncodedPacketTimestamps(
-                    outPkt,
-                    ref lastPacketPts,
-                    ref hasLastPacketPts,
-                    ref lastPacketDts,
-                    ref hasLastPacketDts,
-                    encodedPacketFrameStep);
-                if (outPkt->pts != originalPts || outPkt->dts != originalDts)
-                    timestampIntegrity.PacketTimestampAdjustments++;
-            }
-            else
-            {
-                // B-frame encoders emit packets in decode order. Their PTS can move backward and
-                // initial DTS values can be negative; both are required for correct presentation.
-                bool allowsEqualDts = outFmt->oformat != null &&
-                    (outFmt->oformat->flags & ffmpeg.AVFMT_TS_NONSTRICT) != 0;
-                bool invalidDtsOrder = hasLastPacketDts &&
-                    (allowsEqualDts
-                        ? outPkt->dts < lastPacketDts
-                        : outPkt->dts <= lastPacketDts);
-                if (outPkt->pts < outPkt->dts || invalidDtsOrder)
-                {
-                    throw new InvalidOperationException(
-                        $"Invalid argument: 인코더 출력 패킷 순서가 유효하지 않습니다 " +
-                        $"(pts={outPkt->pts}, dts={outPkt->dts}, previousDts={lastPacketDts}).");
-                }
-
-                lastPacketPts = outPkt->pts;
-                hasLastPacketPts = true;
-                lastPacketDts = outPkt->dts;
-                hasLastPacketDts = true;
-            }
-
-            outPkt->stream_index = outStream->index;
-            long muxPacketPts = outPkt->pts;
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.av_interleaved_write_frame(outFmt, outPkt));
-            if (encoderPacketPts != ffmpeg.AV_NOPTS_VALUE)
-            {
-                emittedEncodedFramePts.TryGetValue(encoderPacketPts, out int emittedCount);
-                emittedEncodedFramePts[encoderPacketPts] = emittedCount + 1;
-            }
-            if (muxPacketPts != ffmpeg.AV_NOPTS_VALUE)
-                emittedEncodedMuxPts.Add(muxPacketPts);
-            outputVideoPacketCount++;
-            ffmpeg.av_packet_unref(outPkt);
-        }
-    }
-
-    private static (
-        int ExpectedOutputFrames,
-        int MismatchCount,
-        int DropCount,
-        int MissingEncodedFrames,
-        int UnexpectedEncodedFrames,
-        int CopiedPacketMismatch) EvaluateVideoFrameCoverage(
-            int copiedSourcePacketCount,
-            int copiedOutputPacketCount,
-            IReadOnlySet<long> submittedEncodedFramePts,
-            IReadOnlyDictionary<long, int> emittedEncodedFramePts)
-    {
-        int missingEncodedFrames = 0;
-        foreach (long submittedPts in submittedEncodedFramePts)
-        {
-            if (!emittedEncodedFramePts.TryGetValue(submittedPts, out int emittedCount) ||
-                emittedCount <= 0)
-            {
-                missingEncodedFrames++;
-            }
-        }
-
-        int unexpectedEncodedFrames = 0;
-        foreach (var (emittedPts, emittedCount) in emittedEncodedFramePts)
-        {
-            if (emittedCount <= 0)
-                continue;
-
-            unexpectedEncodedFrames += submittedEncodedFramePts.Contains(emittedPts)
-                ? Math.Max(0, emittedCount - 1)
-                : emittedCount;
-        }
-
-        int copiedPacketMismatch = (int)Math.Min(
-            int.MaxValue,
-            Math.Abs((long)copiedSourcePacketCount - copiedOutputPacketCount));
-        int expectedOutputFrames = checked(copiedSourcePacketCount + submittedEncodedFramePts.Count);
-        int mismatchCount = checked(
-            copiedPacketMismatch + missingEncodedFrames + unexpectedEncodedFrames);
-        int dropCount = checked(
-            Math.Max(0, copiedSourcePacketCount - copiedOutputPacketCount) + missingEncodedFrames);
-
-        return (
-            expectedOutputFrames,
-            mismatchCount,
-            dropCount,
-            missingEncodedFrames,
-            unexpectedEncodedFrames,
-            copiedPacketMismatch);
     }
 
     private unsafe void ProcessDecodedVideoFrame(
@@ -2346,7 +2099,7 @@ public unsafe sealed class VideoExportService
                 ffmpeg.avcodec_send_frame(enc, nativeYuvFrame),
                 enc,
                 "프레임 전송");
-            DrainEncoderPackets(
+            VideoExportPacketPolicy.DrainEncoderPackets(
                 enc,
                 outPkt,
                 outStream,
@@ -2415,7 +2168,7 @@ public unsafe sealed class VideoExportService
                 ffmpeg.avcodec_send_frame(enc, encFrame),
                 enc,
                 "프레임 전송");
-            DrainEncoderPackets(
+            VideoExportPacketPolicy.DrainEncoderPackets(
                 enc,
                 outPkt,
                 outStream,
@@ -2458,7 +2211,7 @@ public unsafe sealed class VideoExportService
                     ffmpeg.avcodec_send_frame(enc, encFrame),
                     enc,
                     "프레임 전송");
-                DrainEncoderPackets(
+                VideoExportPacketPolicy.DrainEncoderPackets(
                     enc,
                     outPkt,
                     outStream,
@@ -2483,7 +2236,7 @@ public unsafe sealed class VideoExportService
                     ffmpeg.avcodec_send_frame(enc, frame),
                     enc,
                     "프레임 전송");
-                DrainEncoderPackets(
+                VideoExportPacketPolicy.DrainEncoderPackets(
                     enc,
                     outPkt,
                     outStream,
@@ -2653,7 +2406,7 @@ public unsafe sealed class VideoExportService
         int encErr = ffmpeg.avcodec_send_frame(enc, null);
         if (encErr < 0 && encErr != ffmpeg.AVERROR_EOF)
             VideoExportFfmpegDiagnostics.ThrowVideoEncoderError(encErr, enc, "종료 프레임 전송");
-        DrainEncoderPackets(
+        VideoExportPacketPolicy.DrainEncoderPackets(
             enc,
             outPkt,
             outStream,
@@ -2671,261 +2424,6 @@ public unsafe sealed class VideoExportService
         encoderFlushTimer.Stop();
         encodeTimer.Stop();
         videoFlushed = true;
-    }
-
-    private static unsafe List<int> CollectKeyframeFrameIndices(
-        string inputPath,
-        double sourceFps,
-        int totalFramesHint,
-        out int estimatedTotalFrames)
-    {
-        var keyframes = new List<int>();
-        estimatedTotalFrames = 0;
-        if (string.IsNullOrWhiteSpace(inputPath))
-            return keyframes;
-
-        AVFormatContext* inFmt = null;
-        AVPacket* pkt = ffmpeg.av_packet_alloc();
-        if (pkt == null)
-            return keyframes;
-        long keyframeTimestampBase = 0;
-        bool hasKeyframeTimestampBase = false;
-
-        try
-        {
-            if (ffmpeg.avformat_open_input(&inFmt, inputPath, null, null) < 0)
-                return keyframes;
-            if (ffmpeg.avformat_find_stream_info(inFmt, null) < 0)
-                return keyframes;
-
-            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(inFmt);
-            if (videoStreamIndex < 0)
-                return keyframes;
-
-            AVStream* stream = inFmt->streams[videoStreamIndex];
-            int estimatedTotalFrameCount = Math.Max(0, totalFramesHint);
-            int fallbackFrameIndex = 0;
-            while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
-            {
-                if (pkt->stream_index != videoStreamIndex)
-                {
-                    ffmpeg.av_packet_unref(pkt);
-                    continue;
-                }
-
-                int resolvedFrameIndex = VideoExportTimingPolicy.ResolveFrameIndexFromPacket(
-                    pkt,
-                    stream->time_base,
-                    sourceFps,
-                    fallbackFrameIndex,
-                    estimatedTotalFrameCount,
-                    ref keyframeTimestampBase,
-                    ref hasKeyframeTimestampBase);
-                if (resolvedFrameIndex < fallbackFrameIndex)
-                    resolvedFrameIndex = fallbackFrameIndex;
-
-                if ((pkt->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0)
-                    keyframes.Add(resolvedFrameIndex);
-
-                fallbackFrameIndex = Math.Max(fallbackFrameIndex, resolvedFrameIndex + 1);
-                if (fallbackFrameIndex > estimatedTotalFrames)
-                    estimatedTotalFrames = fallbackFrameIndex;
-
-                ffmpeg.av_packet_unref(pkt);
-            }
-        }
-        catch
-        {
-            // 키프레임 스캔 실패 시 일반 경로로 폴백
-        }
-        finally
-        {
-            ffmpeg.av_packet_free(&pkt);
-            if (inFmt != null)
-                ffmpeg.avformat_close_input(&inFmt);
-        }
-
-        if (keyframes.Count == 0)
-            return keyframes;
-
-        keyframes.Sort();
-        var distinct = new List<int>(keyframes.Count);
-        int prev = int.MinValue;
-        foreach (int index in keyframes)
-        {
-            if (index == prev)
-                continue;
-            distinct.Add(index);
-            prev = index;
-        }
-
-        return distinct;
-    }
-
-    private static unsafe (
-        int InputVideoPackets,
-        int OutputVideoPackets,
-        int MissingVideoPacketTimestamps,
-        int VideoPacketTimestampAdjustments,
-        int OutputPacketPtsGapOutlierCount,
-        long MaxOutputPacketPtsGap,
-        long OutputCloseMs) ExportByRemuxCopy(
-        AVFormatContext* inFmt,
-        string outputPath,
-        int videoStreamIndex,
-        int totalFrames,
-        double sourceFps,
-        IProgress<ExportProgress>? progress,
-        System.Threading.CancellationToken cancellationToken)
-    {
-        if (inFmt == null)
-            throw new ArgumentNullException(nameof(inFmt));
-
-            AVFormatContext* outFmt = null;
-            AVPacket* pkt = ffmpeg.av_packet_alloc();
-            if (pkt == null)
-                throw new InvalidOperationException("패킷 버퍼를 할당하지 못했습니다.");
-            var outputVideoPts = new List<long>();
-            int inputVideoPackets = 0;
-            int outputVideoPackets = 0;
-            int missingVideoPacketTimestamps = 0;
-            int videoPacketTimestampAdjustments = 0;
-            int outputPacketPtsGapOutlierCount = 0;
-            long maxOutputPacketPtsGap = 0;
-            var outputCloseTimer = new Stopwatch();
-
-        try
-        {
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avformat_alloc_output_context2(&outFmt, null, null, outputPath));
-            VideoPresentationMetadataPolicy.CopyFormatPresentationMetadata(inFmt, outFmt);
-
-            int streamCount = (int)inFmt->nb_streams;
-            var streamMap = new int[streamCount];
-            for (int i = 0; i < streamCount; i++)
-            {
-                streamMap[i] = -1;
-                AVStream* inStream = inFmt->streams[i];
-                AVStream* outStream = ffmpeg.avformat_new_stream(outFmt, null);
-                if (outStream == null)
-                    throw new InvalidOperationException("출력 스트림을 생성하지 못했습니다.");
-
-                VideoExportFfmpegDiagnostics.Throw(ffmpeg.avcodec_parameters_copy(outStream->codecpar, inStream->codecpar));
-                outStream->codecpar->codec_tag = 0;
-                outStream->time_base = inStream->time_base;
-                VideoPresentationMetadataPolicy.CopyStreamPresentationMetadata(inStream, outStream);
-                streamMap[i] = outStream->index;
-            }
-
-            if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0)
-                VideoExportFfmpegDiagnostics.Throw(ffmpeg.avio_open(&outFmt->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE));
-
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avformat_write_header(outFmt, null));
-
-            int lastReportedFrame = -1;
-            while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
-            {
-                VideoPresentationMetadataPolicy.EnsureContainerStructureSupported(inFmt);
-                if (cancellationToken.IsCancellationRequested)
-                    throw new OperationCanceledException(cancellationToken);
-
-                int inIndex = pkt->stream_index;
-                if (inIndex < 0 || inIndex >= streamMap.Length || streamMap[inIndex] < 0)
-                {
-                    ffmpeg.av_packet_unref(pkt);
-                    continue;
-                }
-
-                AVStream* inStream = inFmt->streams[inIndex];
-                int outIndex = streamMap[inIndex];
-                AVStream* outStream = outFmt->streams[outIndex];
-                if (inIndex == videoStreamIndex)
-                    inputVideoPackets++;
-                bool isVideoPacket = inIndex == videoStreamIndex;
-                bool hasMissingVideoTimestamp = isVideoPacket &&
-                    (pkt->pts == ffmpeg.AV_NOPTS_VALUE || pkt->dts == ffmpeg.AV_NOPTS_VALUE);
-                ffmpeg.av_packet_rescale_ts(pkt, inStream->time_base, outStream->time_base);
-                if (isVideoPacket)
-                {
-                    if (hasMissingVideoTimestamp)
-                        missingVideoPacketTimestamps++;
-                }
-                pkt->stream_index = outStream->index;
-                pkt->pos = -1;
-                long muxVideoPts = isVideoPacket ? pkt->pts : ffmpeg.AV_NOPTS_VALUE;
-                long muxVideoDts = isVideoPacket ? pkt->dts : ffmpeg.AV_NOPTS_VALUE;
-                VideoExportFfmpegDiagnostics.Throw(ffmpeg.av_interleaved_write_frame(outFmt, pkt));
-                if (inIndex == videoStreamIndex)
-                {
-                    outputVideoPackets++;
-                    if (muxVideoPts != ffmpeg.AV_NOPTS_VALUE)
-                        outputVideoPts.Add(muxVideoPts);
-                }
-
-                if (progress != null && inIndex == videoStreamIndex && totalFrames > 0 && sourceFps > 0.0)
-                {
-                    long ts = muxVideoPts != ffmpeg.AV_NOPTS_VALUE ? muxVideoPts : muxVideoDts;
-                    if (ts != ffmpeg.AV_NOPTS_VALUE)
-                    {
-                        double seconds = ts * ffmpeg.av_q2d(outStream->time_base);
-                        int currentFrame = (int)Math.Round(seconds * sourceFps);
-                        if (currentFrame < 0) currentFrame = 0;
-                        if (currentFrame > totalFrames) currentFrame = totalFrames;
-
-                        if (currentFrame - lastReportedFrame >= 15 || currentFrame >= totalFrames)
-                        {
-                            progress.Report(new ExportProgress(currentFrame, totalFrames, "원본 스트림 복사 중..."));
-                            lastReportedFrame = currentFrame;
-                        }
-                    }
-                }
-
-                ffmpeg.av_packet_unref(pkt);
-            }
-
-            maxOutputPacketPtsGap = VideoExportTimingPolicy.GetMaxSortedPresentationGap(outputVideoPts);
-
-            progress?.Report(new ExportProgress(
-                totalFrames,
-                totalFrames,
-                "원본 스트림 복사와 파일 검증을 마무리하는 중..."));
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.av_write_trailer(outFmt));
-            outputCloseTimer.Start();
-            CloseOutputOrThrow(outFmt);
-            outputCloseTimer.Stop();
-        }
-        finally
-        {
-            ffmpeg.av_packet_free(&pkt);
-
-            if (outFmt != null)
-            {
-                if ((outFmt->oformat->flags & ffmpeg.AVFMT_NOFILE) == 0 && outFmt->pb != null)
-                    _ = ffmpeg.avio_closep(&outFmt->pb);
-                ffmpeg.avformat_free_context(outFmt);
-            }
-        }
-
-        return (
-            inputVideoPackets,
-            outputVideoPackets,
-            missingVideoPacketTimestamps,
-            videoPacketTimestampAdjustments,
-            outputPacketPtsGapOutlierCount,
-            maxOutputPacketPtsGap,
-            outputCloseTimer.ElapsedMilliseconds);
-    }
-
-    private static unsafe void CloseOutputOrThrow(AVFormatContext* format)
-    {
-        if (format == null ||
-            format->oformat == null ||
-            (format->oformat->flags & ffmpeg.AVFMT_NOFILE) != 0 ||
-            format->pb == null)
-        {
-            return;
-        }
-
-        VideoExportFfmpegDiagnostics.Throw(ffmpeg.avio_closep(&format->pb));
     }
 
     private static unsafe AVCodecContext* TryCreateEncoderContext(
