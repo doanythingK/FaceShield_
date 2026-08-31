@@ -588,7 +588,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         PersistCurrentMask();
         Interlocked.Increment(ref _changeStamp);
 
-        _playbackCts?.Cancel();
+        if (_playbackCts != null)
+        {
+            try { _playbackCts.Cancel(); }
+            catch { }
+            _playbackCts.Dispose();
+        }
         _playbackCts = new CancellationTokenSource();
 
         _isPlaying = true;
@@ -622,6 +627,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         {
             try { _playbackCts.Cancel(); }
             catch { }
+            _playbackCts.Dispose();
             _playbackCts = null;
         }
     }
@@ -842,11 +848,18 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         var exact = await _session.Timeline.GetExactNowAsync(index);
-        if (exact == null || stamp != _changeStamp)
+        if (exact != null && stamp != _changeStamp)
+        {
+            exact.Dispose();
+            return;
+        }
+
+        if (exact == null)
         {
             await Task.Delay(120);
             if (stamp != _changeStamp)
                 return;
+
             exact = await _session.Timeline.GetExactNowAsync(index);
         }
 
