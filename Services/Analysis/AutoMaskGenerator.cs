@@ -37,9 +37,6 @@ namespace FaceShield.Services.Analysis
         private const double OffModeYoloMaxFaceAspectRatio = 2.25;
         private const int StatsSampleStep = 5;
         private const int MinStatsSamples = 16;
-        private const double SparseTrackIouMin = 0.12;
-        private const double SparseTrackMaxCenterShiftRatio = 1.2;
-        private const double SparseTrackMaxAreaChangeRatio = 4.0;
         private const double SparseSceneCutDifferenceThreshold = 0.32;
         private const double OffModeSparseSceneCutDifferenceThreshold = 0.18;
         private const int SparseSceneCutSignatureColumns = 24;
@@ -2435,49 +2432,10 @@ namespace FaceShield.Services.Analysis
         }
 
         private static int FindBestSparseMatch(Rect source, IReadOnlyList<Rect> candidates, bool[] used)
-        {
-            int bestIndex = -1;
-            double bestScore = 0.0;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                if (i < used.Length && used[i])
-                    continue;
-
-                var candidate = candidates[i];
-                if (!IsReasonableSparseTrack(source, candidate))
-                    continue;
-
-                double iou = IoU(source, candidate);
-                double score = iou > 0.0
-                    ? iou
-                    : 0.01 / Math.Max(0.01, GetCenterDistanceRatio(source, candidate));
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIndex = i;
-                }
-            }
-
-            return bestIndex;
-        }
+            => SparseTrackingMath.FindBestMatch(source, candidates, used);
 
         private static bool IsReasonableSparseTrack(Rect current, Rect next)
-        {
-            if (current.Width <= 0 || current.Height <= 0 || next.Width <= 0 || next.Height <= 0)
-                return false;
-
-            double area = Math.Max(1.0, current.Width * current.Height);
-            double nextArea = Math.Max(1.0, next.Width * next.Height);
-            double areaRatio = area / nextArea;
-            if (areaRatio > SparseTrackMaxAreaChangeRatio || areaRatio < 1.0 / SparseTrackMaxAreaChangeRatio)
-                return false;
-
-            double iou = IoU(current, next);
-            if (iou >= SparseTrackIouMin)
-                return true;
-
-            return GetCenterDistanceRatio(current, next) <= SparseTrackMaxCenterShiftRatio;
-        }
+            => SparseTrackingMath.IsReasonableTrack(current, next);
 
         private static bool IsSparseSceneCut(
             DetectionResult current,
@@ -2547,69 +2505,16 @@ namespace FaceShield.Services.Analysis
         private static double ComputeSignatureDifference(
             IReadOnlyList<double> current,
             IReadOnlyList<double> next)
-        {
-            int count = Math.Min(current.Count, next.Count);
-            if (count == 0)
-                return 0.0;
-
-            double total = 0.0;
-            for (int i = 0; i < count; i++)
-                total += Math.Abs(current[i] - next[i]);
-
-            return total / count;
-        }
+            => SparseTrackingMath.SignatureDifference(current, next);
 
         private static double GetCenterDistanceRatio(Rect a, Rect b)
-        {
-            double ax = a.X + a.Width * 0.5;
-            double ay = a.Y + a.Height * 0.5;
-            double bx = b.X + b.Width * 0.5;
-            double by = b.Y + b.Height * 0.5;
-            double dx = ax - bx;
-            double dy = ay - by;
-            double distance = Math.Sqrt(dx * dx + dy * dy);
-            double maxDim = Math.Max(1.0, Math.Max(Math.Max(a.Width, a.Height), Math.Max(b.Width, b.Height)));
-            return distance / maxDim;
-        }
+            => SparseTrackingMath.CenterDistanceRatio(a, b);
 
         private static double IoU(Rect a, Rect b)
-        {
-            double ax1 = a.X;
-            double ay1 = a.Y;
-            double ax2 = a.X + a.Width;
-            double ay2 = a.Y + a.Height;
-
-            double bx1 = b.X;
-            double by1 = b.Y;
-            double bx2 = b.X + b.Width;
-            double by2 = b.Y + b.Height;
-
-            double ix1 = Math.Max(ax1, bx1);
-            double iy1 = Math.Max(ay1, by1);
-            double ix2 = Math.Min(ax2, bx2);
-            double iy2 = Math.Min(ay2, by2);
-
-            double iw = Math.Max(0.0, ix2 - ix1);
-            double ih = Math.Max(0.0, iy2 - iy1);
-            double inter = iw * ih;
-            if (inter <= 0.0)
-                return 0.0;
-
-            double union = a.Width * a.Height + b.Width * b.Height - inter;
-            if (union <= 0.0)
-                return 0.0;
-            return inter / union;
-        }
+            => SparseTrackingMath.IoU(a, b);
 
         private static Rect LerpRect(Rect from, Rect to, double t)
-        {
-            double keep = 1.0 - t;
-            return new Rect(
-                from.X * keep + to.X * t,
-                from.Y * keep + to.Y * t,
-                Math.Max(0.0, from.Width * keep + to.Width * t),
-                Math.Max(0.0, from.Height * keep + to.Height * t));
-        }
+            => SparseTrackingMath.LerpRect(from, to, t);
 
         private static float LerpConfidence(
             IReadOnlyList<float> from,
@@ -2617,28 +2522,10 @@ namespace FaceShield.Services.Analysis
             int fromIndex,
             int toIndex,
             double t)
-        {
-            double keep = 1.0 - t;
-            return (float)(GetConfidence(from, fromIndex) * keep + GetConfidence(to, toIndex) * t);
-        }
-
-        private static float GetConfidence(IReadOnlyList<float> values, int index)
-        {
-            if (index < 0 || index >= values.Count)
-                return 1.0f;
-            return values[index];
-        }
+            => SparseTrackingMath.LerpConfidence(from, to, fromIndex, toIndex, t);
 
         private static float? GetMinConfidence(IReadOnlyList<float> values)
-        {
-            if (values.Count == 0)
-                return null;
-
-            float min = float.MaxValue;
-            for (int i = 0; i < values.Count; i++)
-                min = Math.Min(min, values[i]);
-            return min == float.MaxValue ? null : min;
-        }
+            => SparseTrackingMath.MinConfidence(values);
 
         private static bool ShouldUsePrimaryRoiShortcut(AutoMaskOptions options)
         {
