@@ -7,13 +7,22 @@ using System.Linq;
 
 namespace FaceShield.Services.Video
 {
-    public sealed class FrameMaskProvider : IFrameMaskProvider
+    public sealed class FrameMaskProvider : IFrameMaskProvider, IDisposable
 {
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
 
     public void SetMask(int frameIndex, WriteableBitmap mask)
     {
+        if (mask == null)
+            throw new ArgumentNullException(nameof(mask));
+
+        if (_masks.TryRemove(frameIndex, out var previous) &&
+            !ReferenceEquals(previous, mask))
+        {
+            previous.Dispose();
+        }
+
         _masks[frameIndex] = mask;
         _faceMasks.TryRemove(frameIndex, out _);
     }
@@ -25,7 +34,7 @@ namespace FaceShield.Services.Video
         float? minConfidence = null,
         IReadOnlyList<float>? confidences = null)
     {
-        _masks.TryRemove(frameIndex, out _);
+        RemoveStoredMask(frameIndex);
 
         if (faces == null || faces.Count == 0 || size.Width <= 0 || size.Height <= 0)
         {
@@ -45,7 +54,7 @@ namespace FaceShield.Services.Video
         float? minConfidence = null,
         IReadOnlyList<float>? confidences = null)
     {
-        _masks.TryRemove(frameIndex, out _);
+        RemoveStoredMask(frameIndex);
 
         if (faces == null || faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
         {
@@ -107,8 +116,11 @@ namespace FaceShield.Services.Video
         {
             if (_faceMasks.TryRemove(frameIndex, out _))
                 removedFaceMasks++;
-            if (_masks.TryRemove(frameIndex, out _))
+            if (_masks.TryRemove(frameIndex, out var storedMask))
+            {
+                storedMask.Dispose();
                 removedStoredMasks++;
+            }
         }
 
         return removedFaceMasks + removedStoredMasks;
@@ -136,8 +148,21 @@ namespace FaceShield.Services.Video
 
     public void Clear()
     {
-        _masks.Clear();
+        foreach (int frameIndex in _masks.Keys)
+            RemoveStoredMask(frameIndex);
+
         _faceMasks.Clear();
+    }
+
+    public void Dispose()
+    {
+        Clear();
+    }
+
+    private void RemoveStoredMask(int frameIndex)
+    {
+        if (_masks.TryRemove(frameIndex, out var mask))
+            mask.Dispose();
     }
 
     public readonly record struct FaceMaskData(
