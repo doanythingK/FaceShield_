@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Workspace;
 
-public partial class FramePreviewViewModel : ViewModelBase
+public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 {
     private readonly ToolPanelViewModel _toolPanel;
     private IFrameMaskProvider? _maskProvider;
@@ -46,14 +46,26 @@ public partial class FramePreviewViewModel : ViewModelBase
     private int _dirtyY1;
     private IReadOnlyList<Rect> _detectionRects = Array.Empty<Rect>();
     private bool _showDetectionOverlay;
+    private bool _ownsPreviewBitmap;
+    private bool _disposed;
 
     public WriteableBitmap? FrameBitmap
     {
         get => _frameBitmap;
         private set
         {
+            if (ReferenceEquals(_frameBitmap, value))
+                return;
+
+            var previous = _frameBitmap;
             _frameBitmap = value;
             OnPropertyChanged(nameof(FrameBitmap));
+
+            if (previous != null &&
+                !ReferenceEquals(previous, _previewBitmap))
+            {
+                previous.Dispose();
+            }
         }
     }
 
@@ -62,19 +74,56 @@ public partial class FramePreviewViewModel : ViewModelBase
         get => _maskBitmap;
         private set
         {
+            if (ReferenceEquals(_maskBitmap, value))
+                return;
+
+            var previous = _maskBitmap;
             _maskBitmap = value;
             OnPropertyChanged(nameof(MaskBitmap));
+            previous?.Dispose();
         }
     }
 
-    public WriteableBitmap? PreviewBitmap
+    public WriteableBitmap? PreviewBitmap => _previewBitmap;
+
+    private void SetPreviewBitmap(WriteableBitmap? value, bool ownsBitmap)
     {
-        get => _previewBitmap;
-        private set
+        if (ReferenceEquals(_previewBitmap, value))
         {
-            _previewBitmap = value;
-            OnPropertyChanged(nameof(PreviewBitmap));
+            _ownsPreviewBitmap = ownsBitmap;
+            return;
         }
+
+        var previous = _previewBitmap;
+        bool disposePrevious = _ownsPreviewBitmap &&
+            previous != null &&
+            !ReferenceEquals(previous, _frameBitmap) &&
+            !ReferenceEquals(previous, _maskBitmap) &&
+            !ReferenceEquals(previous, _blurredFrame);
+
+        _previewBitmap = value;
+        _ownsPreviewBitmap = ownsBitmap;
+        OnPropertyChanged(nameof(PreviewBitmap));
+
+        if (disposePrevious)
+            previous!.Dispose();
+    }
+
+    private void ResetBlurredFrame()
+    {
+        var previous = _blurredFrame;
+        _blurredFrame = null;
+        _blurredSource = null;
+        _blurredRadius = 0;
+        previous?.Dispose();
+    }
+
+    private void PrepareFrameReplacement()
+    {
+        if (ReferenceEquals(_previewBitmap, _frameBitmap))
+            SetPreviewBitmap(null, ownsBitmap: false);
+
+        ResetBlurredFrame();
     }
 
     public EditMode CurrentMode => _toolPanel.CurrentMode;
@@ -138,8 +187,7 @@ public partial class FramePreviewViewModel : ViewModelBase
             else if (e.PropertyName == nameof(ToolPanelViewModel.BlurRadius))
             {
                 PreviewBlurRadius = _toolPanel.BlurRadius;
-                _blurredFrame = null;
-                _blurredSource = null;
+                ResetBlurredFrame();
                 RefreshPreview(force: true);
             }
         };
@@ -305,16 +353,19 @@ public partial class FramePreviewViewModel : ViewModelBase
                     Math.Max(0, _dirtyY1 - _dirtyY0 + 1));
             }
 
-            PreviewBitmap = PreviewBlurProcessor.ComposeMaskedPreview(
+            var preview = PreviewBlurProcessor.ComposeMaskedPreview(
                 _frameBitmap,
                 _blurredFrame!,
                 _maskBitmap,
-                PreviewBitmap,
+                _ownsPreviewBitmap ? _previewBitmap : null,
                 dirtyRect);
+            SetPreviewBitmap(preview, ownsBitmap: true);
         }
         else
         {
-            PreviewBitmap = PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius, faces);
+            SetPreviewBitmap(
+                PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius, faces),
+                ownsBitmap: true);
         }
 
         _hasDirtyRegion = false;
@@ -329,6 +380,7 @@ public partial class FramePreviewViewModel : ViewModelBase
             _blurredRadius != PreviewBlurRadius ||
             !ReferenceEquals(_blurredSource, _frameBitmap))
         {
+            ResetBlurredFrame();
             _blurredFrame = PreviewBlurProcessor.CreateBlurredFrame(_frameBitmap, PreviewBlurRadius);
             _blurredRadius = PreviewBlurRadius;
             _blurredSource = _frameBitmap;
@@ -418,7 +470,11 @@ public partial class FramePreviewViewModel : ViewModelBase
     // WorkspaceViewModel에서 FramePreview 초기화 시 세션 주입
     public void InitializeSession(VideoSession session)
     {
+        if (session == null)
+            throw new ArgumentNullException(nameof(session));
+
         PreviewBlurProcessor.ReleaseCachedRenderer();
+        _session?.Dispose();
         _session = session;
     }
     public void SetMaskProvider(IFrameMaskProvider maskProvider)
@@ -458,7 +514,7 @@ public partial class FramePreviewViewModel : ViewModelBase
         {
             var low = _session.Timeline.OnFrameChanging(index);
             if (low != null && stamp == _changeStamp)
-                PreviewBitmap = low;
+                SetPreviewBitmap(low, ownsBitmap: false);
         }
         catch
         {
@@ -468,12 +524,14 @@ public partial class FramePreviewViewModel : ViewModelBase
         // 1-1) 선택 프레임과 동일한 저화질 썸네일 (정확도 우선)
         var exactThumb = await _session.Timeline.OnFrameChangingExactAsync(index);
         if (exactThumb != null && stamp == _changeStamp)
-            PreviewBitmap = exactThumb;
+            SetPreviewBitmap(exactThumb, ownsBitmap: false);
 
         // 2) 고화질 프레임
         var exact = await _session.Timeline.OnFrameChangedAsync(index);
         if (exact == null || stamp != _changeStamp)
         {
+            if (exact != null)
+                exact.Dispose();
             if (!_isPlaying && stamp == _changeStamp)
                 await TryLoadExactFallbackAsync(index, stamp);
             Debug.WriteLine($"[FramePreview] exact frame not available (frame={index}, stamp={stamp}).");
@@ -592,25 +650,38 @@ public partial class FramePreviewViewModel : ViewModelBase
                 while (!ct.IsCancellationRequested &&
                        extractor.TryGetNextFrame(ct, out var frame, out int frameIndex))
                 {
-                    if (frame == null || frameIndex < startFrameIndex)
+                    if (frame == null)
                         continue;
+                    if (frameIndex < startFrameIndex)
+                    {
+                        frame.Dispose();
+                        continue;
+                    }
 
                     if (totalFrames > 0 && frameIndex >= totalFrames)
+                    {
+                        frame.Dispose();
                         break;
+                    }
 
                     double targetMs = Math.Max(0, frameIndex - startFrameIndex) * frameMs;
                     double delayMs = targetMs - clock.Elapsed.TotalMilliseconds;
                     if (delayMs > 1)
                         await Task.Delay(TimeSpan.FromMilliseconds(delayMs), ct);
 
+                    bool frameAccepted = false;
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         if (ct.IsCancellationRequested || runId != _playbackRunId || !_isPlaying)
                             return;
 
                         ApplyPlaybackFrame(frame, frameIndex);
+                        frameAccepted = true;
                         onFrameAdvanced(frameIndex);
                     });
+
+                    if (!frameAccepted)
+                        frame.Dispose();
 
                     if (totalFrames > 0 && frameIndex >= totalFrames - 1)
                     {
@@ -651,36 +722,21 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
 
         if (expectedStamp.HasValue && expectedStamp.Value != _changeStamp)
+        {
+            exact.Dispose();
             return;
+        }
 
         _currentFrameIndex = index;
+        PrepareFrameReplacement();
         FrameBitmap = exact;
-        _blurredFrame = null;
-        _blurredSource = null;
 
-        // 🔹 2-1) 자동/최종 마스크가 이미 있는지 provider에서 먼저 조회
-        WriteableBitmap? providerMask = null;
-        if (_maskProvider != null)
-        {
-            providerMask = _maskProvider.GetFinalMask(index);
-        }
-
-        if (providerMask != null &&
-            providerMask.PixelSize.Width == exact.PixelSize.Width &&
-            providerMask.PixelSize.Height == exact.PixelSize.Height)
-        {
-            // provider 마스크를 직접 수정하면 안 되니 복제해서 사용
-            MaskBitmap = CloneBitmap(providerMask);
-            _maskUndo.Clear();
-            _maskDirty = false;
-        }
-        else
-        {
-            // 없으면 프레임별로 새 빈 마스크 생성
-            MaskBitmap = CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
-            _maskUndo.Clear();
-            _maskDirty = false;
-        }
+        // 🔹 2-1) 저장 마스크는 복제하고, 얼굴 rect는 바로 편집용 마스크로 렌더링합니다.
+        // FrameMaskProvider.GetFinalMask()의 임시 full-resolution bitmap 생성을 피합니다.
+        MaskBitmap = CreateEditableMask(index, exact)
+            ?? CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
+        _maskUndo.Clear();
+        _maskDirty = false;
 
         if (_maskProvider is FrameMaskProvider faceProvider &&
             faceProvider.TryGetFaceMaskData(index, out var faceData))
@@ -705,27 +761,19 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
 
         _currentFrameIndex = index;
+        PrepareFrameReplacement();
         FrameBitmap = exact;
-        _blurredFrame = null;
-        _blurredSource = null;
         _maskUndo.Clear();
         _maskDirty = false;
 
-        WriteableBitmap? providerMask = null;
-        if (_maskProvider != null)
-            providerMask = _maskProvider.GetFinalMask(index);
+        MaskBitmap = CreateEditableMask(index, exact);
 
-        if (providerMask == null ||
-            providerMask.PixelSize.Width != exact.PixelSize.Width ||
-            providerMask.PixelSize.Height != exact.PixelSize.Height)
+        if (MaskBitmap == null)
         {
-            MaskBitmap = null;
             DetectionRects = Array.Empty<Rect>();
-            PreviewBitmap = exact;
+            SetPreviewBitmap(exact, ownsBitmap: false);
             return;
         }
-
-        MaskBitmap = CloneBitmap(providerMask);
 
         if (_maskProvider is FrameMaskProvider faceProvider &&
             faceProvider.TryGetFaceMaskData(index, out var faceData))
@@ -738,6 +786,43 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
 
         RefreshPreview(force: true);
+    }
+
+    private WriteableBitmap? CreateEditableMask(int frameIndex, WriteableBitmap frame)
+    {
+        if (_maskProvider is FrameMaskProvider provider)
+        {
+            if (provider.TryGetStoredMask(frameIndex, out var stored))
+            {
+                return stored.PixelSize.Width == frame.PixelSize.Width &&
+                       stored.PixelSize.Height == frame.PixelSize.Height
+                    ? CloneBitmap(stored)
+                    : null;
+            }
+
+            if (provider.TryGetFaceMaskData(frameIndex, out var faceData))
+            {
+                if (faceData.Size.Width != frame.PixelSize.Width ||
+                    faceData.Size.Height != frame.PixelSize.Height)
+                {
+                    return null;
+                }
+
+                return FrameMaskProvider.CreateMaskFromFaceRects(faceData.Size, faceData.Faces);
+            }
+
+            return null;
+        }
+
+        var providerMask = _maskProvider?.GetFinalMask(frameIndex);
+        if (providerMask == null ||
+            providerMask.PixelSize.Width != frame.PixelSize.Width ||
+            providerMask.PixelSize.Height != frame.PixelSize.Height)
+        {
+            return null;
+        }
+
+        return CloneBitmap(providerMask);
     }
 
     public void PersistCurrentMask()
@@ -766,9 +851,40 @@ public partial class FramePreviewViewModel : ViewModelBase
         }
 
         if (exact == null || stamp != _changeStamp)
+        {
+            exact?.Dispose();
             return;
+        }
 
         ApplyExactFrame(exact, index, stamp);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        Interlocked.Increment(ref _changeStamp);
+        Interlocked.Increment(ref _playbackRunId);
+        _isPlaying = false;
+
+        if (_playbackCts != null)
+        {
+            try { _playbackCts.Cancel(); }
+            catch { }
+            _playbackCts.Dispose();
+            _playbackCts = null;
+        }
+
+        SetPreviewBitmap(null, ownsBitmap: false);
+        ResetBlurredFrame();
+        FrameBitmap = null;
+        MaskBitmap = null;
+
+        _session?.Dispose();
+        _session = null;
+        PreviewBlurProcessor.ReleaseCachedRenderer();
     }
 
     private void MarkDirty(Point from, Point to, int radius, int width, int height)
