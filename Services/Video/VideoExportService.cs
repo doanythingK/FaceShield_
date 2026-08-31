@@ -1588,7 +1588,7 @@ public unsafe sealed class VideoExportService
                 "출력 파일을 마무리하는 중..."));
             VideoExportFfmpegDiagnostics.Throw(ffmpeg.av_write_trailer(outFmt));
             outputCloseTimer.Start();
-            CloseOutputOrVideoExportFfmpegDiagnostics.Throw(outFmt);
+            CloseOutputOrThrow(outFmt);
             outputCloseTimer.Stop();
             int sampleWindowLimit = totalFrames > 0
                 ? Math.Min(exportSampleWindowFrames, totalFrames)
@@ -2890,7 +2890,7 @@ public unsafe sealed class VideoExportService
                 "원본 스트림 복사와 파일 검증을 마무리하는 중..."));
             VideoExportFfmpegDiagnostics.Throw(ffmpeg.av_write_trailer(outFmt));
             outputCloseTimer.Start();
-            CloseOutputOrVideoExportFfmpegDiagnostics.Throw(outFmt);
+            CloseOutputOrThrow(outFmt);
             outputCloseTimer.Stop();
         }
         finally
@@ -2915,7 +2915,7 @@ public unsafe sealed class VideoExportService
             outputCloseTimer.ElapsedMilliseconds);
     }
 
-    private static unsafe void CloseOutputOrVideoExportFfmpegDiagnostics.Throw(AVFormatContext* format)
+    private static unsafe void CloseOutputOrThrow(AVFormatContext* format)
     {
         if (format == null ||
             format->oformat == null ||
