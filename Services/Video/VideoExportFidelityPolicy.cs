@@ -317,4 +317,64 @@ internal static unsafe class VideoExportFidelityPolicy
 
         return ClampBitrate(baseFloor);
     }
+    internal static void ValidateDecodedFramePixelFidelity(
+        AVFrame* frame,
+        AVCodecContext* encoderContext,
+        bool losslessX264RgbConfigured)
+    {
+        if (frame == null || encoderContext == null)
+        {
+            throw new VideoExportIntegrityException(
+                "프레임 픽셀 품질 검증에 필요한 디코더 또는 인코더 정보가 없습니다.");
+        }
+
+        if (frame->width != encoderContext->width ||
+            frame->height != encoderContext->height)
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 해상도가 변경됐습니다({frame->width}x{frame->height} -> " +
+                $"{encoderContext->width}x{encoderContext->height}). " +
+                "자동 크기 변환 없이 원본 품질을 보존할 수 없어 내보내기를 중단했습니다.");
+        }
+
+        AVPixelFormat framePixelFormat = (AVPixelFormat)frame->format;
+        string? pixelFormatLoss = GetPixelFormatLossReason(
+            framePixelFormat,
+            encoderContext->pix_fmt);
+        if (!string.IsNullOrWhiteSpace(pixelFormatLoss))
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 원본 픽셀 형식이 변경되어 품질을 보존할 수 없습니다: {pixelFormatLoss}");
+        }
+
+        if (!losslessX264RgbConfigured)
+            return;
+
+        if (!CanEncodeLosslessX264Rgb(
+                framePixelFormat,
+                frame->color_range,
+                frame->colorspace,
+                out string? rgbCompatibilityError))
+        {
+            throw new VideoExportIntegrityException(
+                "영상 도중 RGB H.264 픽셀 속성이 변경됐습니다. " +
+                rgbCompatibilityError);
+        }
+
+        if (frame->color_primaries != AVColorPrimaries.AVCOL_PRI_UNSPECIFIED &&
+            frame->color_primaries != encoderContext->color_primaries)
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 RGB color primaries가 변경됐습니다({frame->color_primaries}).");
+        }
+
+        if (frame->color_trc !=
+                AVColorTransferCharacteristic.AVCOL_TRC_UNSPECIFIED &&
+            frame->color_trc != encoderContext->color_trc)
+        {
+            throw new VideoExportIntegrityException(
+                $"영상 도중 RGB transfer characteristic이 변경됐습니다({frame->color_trc}).");
+        }
+    }
+
 }
