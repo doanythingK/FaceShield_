@@ -173,6 +173,22 @@ internal static class AutoRunSignaturePolicy
             StringComparison.Ordinal);
     }
 
+    internal static string BuildSourceEvidenceId(string path)
+    {
+        try
+        {
+            var file = new FileInfo(Path.GetFullPath(path));
+            string identity = $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+            byte[] hash = System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(identity));
+            return Convert.ToHexString(hash.AsSpan(0, 12)).ToLowerInvariant();
+        }
+        catch
+        {
+            return "unavailable";
+        }
+    }
+
     internal static string BuildExecutionSignature(
         AutoMaskOptions autoOptions,
         FaceDetectorFactoryOptions detectorFactoryOptions,
