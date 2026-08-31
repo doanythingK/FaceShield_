@@ -25,7 +25,7 @@ using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Pages
 {
-    public partial class WorkspaceViewModel : ViewModelBase
+    public partial class WorkspaceViewModel : ViewModelBase, IDisposable
     {
         public ToolPanelViewModel ToolPanel { get; } = new();
         public FramePreviewViewModel FramePreview { get; }
@@ -75,6 +75,7 @@ namespace FaceShield.ViewModels.Pages
         private const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";
         private bool _autoExportAllowHybridCopy;
         private string? _autoExportHybridDisableReasons;
+        private bool _disposed;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -2495,6 +2496,23 @@ namespace FaceShield.ViewModels.Pages
         private static string GetDetectorExecutionProviderLabel(IFaceDetector detector)
         {
             return DetectorExecutionProviderIdentity.GetCanonicalLabel(detector);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
+            try { _autoCts?.Cancel(); }
+            catch { }
+            try { _exportCts?.Cancel(); }
+            catch { }
+
+            FramePreview.Dispose();
+            FrameList.Dispose();
+            _maskProvider.Dispose();
         }
 
         private static string BuildSourceEvidenceId(string path)
