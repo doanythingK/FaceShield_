@@ -63,9 +63,11 @@ public sealed class TimelineController
         try
         {
             var exact = await _exact.GetExactAsync(frameIndex, CancellationToken.None);
-            return requestId == Volatile.Read(ref _exactRequestId)
-                ? exact
-                : null;
+            if (requestId == Volatile.Read(ref _exactRequestId))
+                return exact;
+
+            exact?.Dispose();
+            return null;
         }
         catch
         {
@@ -81,9 +83,11 @@ public sealed class TimelineController
         try
         {
             var exact = await _exact.GetExactAsync(frameIndex, CancellationToken.None);
-            return requestId == Volatile.Read(ref _exactRequestId)
-                ? exact
-                : null;
+            if (requestId == Volatile.Read(ref _exactRequestId))
+                return exact;
+
+            exact?.Dispose();
+            return null;
         }
         catch
         {
