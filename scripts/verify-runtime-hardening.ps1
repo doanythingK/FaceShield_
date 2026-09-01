@@ -42,7 +42,9 @@ Assert-Match "workspace loader attempts backup generation" $workspaceStore 'TryL
 Assert-NotMatch "unreadable masks are not deleted while loading" $workspaceStore 'LoadMask[\s\S]{0,1400}File\.Delete\(path\)'
 
 Assert-Match "timeline cache has a hard entry bound" $thumbnailProvider '_maxCacheEntries[\s\S]*TrimCacheIfNeeded'
-Assert-Match "timeline thumbnails use ordinal-safe scaled extraction" $thumbnailProvider 'GetFrameByIndexScaled\('
+Assert-Match "timeline thumbnails use bounded timestamp-seek extraction" $thumbnailProvider 'GetTimelineThumbnailByFrameIndexScaled\('
+Assert-NotMatch "timeline thumbnails do not invoke exact ordinal extraction" $thumbnailProvider 'GetFrameByIndexScaled\('
+Assert-Match "timeline thumbnail extractor seeks by presentation time" $extractor 'GetTimelineThumbnailByFrameIndexScaled[\s\S]{0,9000}SeekMainDecoder\(targetPts\)'
 Assert-NotMatch "timeline thumbnail selection is not average-fps ordinal seek" $thumbnailProvider 'frameIndex\s*/\s*_fps'
 Assert-NotMatch "legacy thumbnail cache is no longer wired into video session" ($videoSession + $timelineController) '\bThumbnailCache\b'
 
@@ -55,6 +57,10 @@ Assert-Match "extractor exposes instance hardware failure state" $extractor 'pub
 Assert-Match "sequential decode error uses instance detail" $extractor 'string\?\s+detail\s*=\s*_decodeError'
 Assert-NotMatch "sequential decode error does not consume global last decoder error" $extractor 'string\?\s+detail\s*=\s*GetLastDecodeError\(\)'
 Assert-Match "auto mask fallback checks the current extractor" $autoMask 'IsHardwareTransferFailure\(extractor\)'
+
+Assert-Match "workspace defers resource disposal until active operations drain" $workspace '_activeLifetimeOperations[\s\S]*_disposeRequested[\s\S]*ScheduleOwnedResourceDispose'
+Assert-Match "auto run enters workspace lifetime gate" $workspace 'RunAutoAsync[\s\S]{0,1000}TryBeginLifetimeOperation'
+Assert-Match "export enters workspace lifetime gate" $workspace 'SaveVideoAsync[\s\S]{0,1200}TryBeginLifetimeOperation'
 
 Assert-Match "workspace carries explicit overwrite policy" $workspace 'allowOutputOverwrite'
 Assert-Match "save as unique path never falls back to original after numeric exhaustion" $workspace 'Guid\.NewGuid\(\)[\s\S]*고유한 내보내기 파일명'

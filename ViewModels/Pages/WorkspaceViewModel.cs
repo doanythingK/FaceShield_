@@ -74,6 +74,10 @@ namespace FaceShield.ViewModels.Pages
         private bool _autoExportAllowHybridCopy;
         private string? _autoExportHybridDisableReasons;
         private bool _disposed;
+        private readonly object _lifetimeSync = new();
+        private int _activeLifetimeOperations;
+        private bool _disposeRequested;
+        private bool _resourcesDisposed;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -246,6 +250,33 @@ namespace FaceShield.ViewModels.Pages
 
 
         private async Task<bool> SaveVideoAsync(
+            IProgress<ExportProgress>? exportProgress = null,
+            CancellationToken cancellationToken = default,
+            bool updateToolPanel = true,
+            string? runId = null,
+            AutoMaskRunSummary? autoRunSummary = null,
+            AutoMaskOptions? autoRunOptions = null)
+        {
+            if (!TryBeginLifetimeOperation())
+                return false;
+
+            try
+            {
+                return await SaveVideoCoreAsync(
+                    exportProgress,
+                    cancellationToken,
+                    updateToolPanel,
+                    runId,
+                    autoRunSummary,
+                    autoRunOptions);
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
+        }
+
+        private async Task<bool> SaveVideoCoreAsync(
             IProgress<ExportProgress>? exportProgress = null,
             CancellationToken cancellationToken = default,
             bool updateToolPanel = true,
@@ -942,7 +973,7 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken = default,
             IProgress<ExportProgress>? exportProgress = null)
         {
-            if (_isAutoRunning)
+            if (_isAutoRunning || !TryBeginLifetimeOperation())
                 return Task.FromResult(false);
 
             _isAutoRunning = true;
@@ -956,7 +987,22 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.AutoProgress = 0;
             }
 
-            return RunAutoCoreAsync(exportAfter, progress, exportProgress);
+            return RunTrackedAutoOperationAsync(exportAfter, progress, exportProgress);
+        }
+
+        private async Task<bool> RunTrackedAutoOperationAsync(
+            bool exportAfter,
+            IProgress<int>? progress,
+            IProgress<ExportProgress>? exportProgress)
+        {
+            try
+            {
+                return await RunAutoCoreAsync(exportAfter, progress, exportProgress);
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
         }
 
         private async Task<bool> RunAutoCoreAsync(
@@ -1472,10 +1518,22 @@ namespace FaceShield.ViewModels.Pages
         private Task<bool> RunAutoSingleFrameAsync()
         {
             int frameIndex = FrameList.SelectedFrameIndex;
-            if (frameIndex < 0)
+            if (frameIndex < 0 || !TryBeginLifetimeOperation())
                 return Task.FromResult(false);
 
-            return RunAutoSingleFrameCoreAsync(frameIndex);
+            return RunTrackedAutoSingleFrameAsync(frameIndex);
+        }
+
+        private async Task<bool> RunTrackedAutoSingleFrameAsync(int frameIndex)
+        {
+            try
+            {
+                return await RunAutoSingleFrameCoreAsync(frameIndex);
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
         }
 
         private async Task<bool> RunAutoSingleFrameCoreAsync(int frameIndex)
@@ -2090,21 +2148,81 @@ namespace FaceShield.ViewModels.Pages
             _autoCompleted = false;
         }
 
+        private bool TryBeginLifetimeOperation()
+        {
+            lock (_lifetimeSync)
+            {
+                if (_disposeRequested)
+                    return false;
+
+                _activeLifetimeOperations++;
+                return true;
+            }
+        }
+
+        private void EndLifetimeOperation()
+        {
+            bool disposeNow = false;
+            lock (_lifetimeSync)
+            {
+                if (_activeLifetimeOperations > 0)
+                    _activeLifetimeOperations--;
+
+                if (_disposeRequested &&
+                    _activeLifetimeOperations == 0 &&
+                    !_resourcesDisposed)
+                {
+                    _resourcesDisposed = true;
+                    disposeNow = true;
+                }
+            }
+
+            if (disposeNow)
+                ScheduleOwnedResourceDispose();
+        }
+
+        private void ScheduleOwnedResourceDispose()
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                DisposeOwnedResources();
+                return;
+            }
+
+            Dispatcher.UIThread.Post(DisposeOwnedResources);
+        }
+
+        private void DisposeOwnedResources()
+        {
+            FramePreview.Dispose();
+            FrameList.Dispose();
+            _maskProvider.Dispose();
+        }
+
         public void Dispose()
         {
-            if (_disposed)
-                return;
+            bool disposeNow = false;
+            lock (_lifetimeSync)
+            {
+                if (_disposeRequested)
+                    return;
 
-            _disposed = true;
+                _disposeRequested = true;
+                _disposed = true;
+                if (_activeLifetimeOperations == 0 && !_resourcesDisposed)
+                {
+                    _resourcesDisposed = true;
+                    disposeNow = true;
+                }
+            }
 
             try { _autoCts?.Cancel(); }
             catch { }
             try { _exportCts?.Cancel(); }
             catch { }
 
-            FramePreview.Dispose();
-            FrameList.Dispose();
-            _maskProvider.Dispose();
+            if (disposeNow)
+                ScheduleOwnedResourceDispose();
         }
 
 

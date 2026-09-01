@@ -538,6 +538,175 @@ namespace FaceShield.Services.Video
             }
         }
 
+        /// <summary>
+        /// Timeline-only thumbnail lookup. It seeks by presentation time from the
+        /// nearest keyframe instead of building the exact decoded-ordinal index.
+        /// </summary>
+        public WriteableBitmap? GetTimelineThumbnailByFrameIndexScaled(
+            int frameIndex,
+            int targetWidth,
+            int targetHeight,
+            CancellationToken cancellationToken)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
+            if (frameIndex < 0 || targetWidth <= 0 || targetHeight <= 0)
+                return null;
+
+            double fps = double.IsFinite(_fps) && _fps > 0 ? _fps : 30.0;
+            double timestampSeconds = frameIndex / fps;
+            return GetFrameAtTimestampScaled(
+                timestampSeconds,
+                targetWidth,
+                targetHeight,
+                cancellationToken);
+        }
+
+        private WriteableBitmap? GetFrameAtTimestampScaled(
+            double timestampSeconds,
+            int targetWidth,
+            int targetHeight,
+            CancellationToken cancellationToken)
+        {
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return null;
+
+            lock (_sync)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    return null;
+
+                double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
+                if (!double.IsFinite(timeBaseSeconds) || timeBaseSeconds <= 0)
+                    return null;
+
+                AVStream* stream = _fmt->streams[_videoStreamIndex];
+                long startPts = stream->start_time != ffmpeg.AV_NOPTS_VALUE
+                    ? stream->start_time
+                    : 0;
+                double offsetPts = timestampSeconds / timeBaseSeconds;
+                if (!double.IsFinite(offsetPts) ||
+                    offsetPts > long.MaxValue - Math.Max(0L, startPts))
+                {
+                    return null;
+                }
+
+                long targetPts = startPts + (long)Math.Floor(offsetPts);
+                if (SeekMainDecoder(targetPts) < 0)
+                    return null;
+
+                // The timeline provider owns a dedicated extractor. A timestamp seek
+                // intentionally abandons any previous sequential-read state.
+                _sequentialActive = false;
+
+                if (!EnsureReusableScaledBgraFrame(targetWidth, targetHeight))
+                    return null;
+                if (ffmpeg.av_frame_make_writable(_bgraScaledReusable) < 0)
+                    return null;
+
+                AVPacket* packet = ffmpeg.av_packet_alloc();
+                AVFrame* decodedFrame = ffmpeg.av_frame_alloc();
+                if (packet == null || decodedFrame == null)
+                {
+                    if (packet != null) ffmpeg.av_packet_free(&packet);
+                    if (decodedFrame != null) ffmpeg.av_frame_free(&decodedFrame);
+                    return null;
+                }
+
+                int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
+                bool drainSent = false;
+                try
+                {
+                    while (!cancellationToken.IsCancellationRequested)
+                    {
+                        ffmpeg.av_frame_unref(decodedFrame);
+                        int receiveResult = ffmpeg.avcodec_receive_frame(_dec, decodedFrame);
+                        if (receiveResult == 0)
+                        {
+                            long pts = GetDecodedPresentationTimestamp(decodedFrame);
+                            if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
+                                continue;
+
+                            if (!ConvertDecodedFrameToBgraScaled(
+                                    decodedFrame,
+                                    _bgraScaledReusable,
+                                    targetWidth,
+                                    targetHeight,
+                                    SwsFlags.SWS_BILINEAR))
+                            {
+                                return null;
+                            }
+
+                            var bitmap = new WriteableBitmap(
+                                new PixelSize(targetWidth, targetHeight),
+                                new Vector(96, 96),
+                                Avalonia.Platform.PixelFormat.Bgra8888,
+                                Avalonia.Platform.AlphaFormat.Premul);
+
+                            using var fb = bitmap.Lock();
+                            byte* src = _bgraScaledReusable->data[0];
+                            int srcStride = _bgraScaledReusable->linesize[0];
+                            if (srcStride < 0)
+                                src += (targetHeight - 1) * (-srcStride);
+
+                            int copyBytesPerRow = Math.Min(Math.Abs(srcStride), fb.RowBytes);
+                            byte* dst = (byte*)fb.Address;
+                            for (int y = 0; y < targetHeight; y++)
+                            {
+                                Buffer.MemoryCopy(
+                                    src + y * srcStride,
+                                    dst + y * fb.RowBytes,
+                                    fb.RowBytes,
+                                    copyBytesPerRow);
+                            }
+
+                            return bitmap;
+                        }
+
+                        if (receiveResult == ffmpeg.AVERROR_EOF)
+                            return null;
+                        if (receiveResult != tryAgain || drainSent)
+                            return null;
+
+                        int readResult;
+                        do
+                        {
+                            ffmpeg.av_packet_unref(packet);
+                            readResult = ffmpeg.av_read_frame(_fmt, packet);
+                        }
+                        while (readResult >= 0 && packet->stream_index != _videoStreamIndex);
+
+                        if (readResult == ffmpeg.AVERROR_EOF)
+                        {
+                            ffmpeg.av_packet_unref(packet);
+                            int drainResult = ffmpeg.avcodec_send_packet(_dec, null);
+                            drainSent = true;
+                            if (drainResult == 0)
+                                continue;
+                            return null;
+                        }
+
+                        if (readResult < 0)
+                        {
+                            ffmpeg.av_packet_unref(packet);
+                            return null;
+                        }
+
+                        int sendResult = ffmpeg.avcodec_send_packet(_dec, packet);
+                        ffmpeg.av_packet_unref(packet);
+                        if (sendResult < 0)
+                            return null;
+                    }
+
+                    return null;
+                }
+                finally
+                {
+                    ffmpeg.av_packet_free(&packet);
+                    ffmpeg.av_frame_free(&decodedFrame);
+                }
+            }
+        }
+
         public void StartSequentialRead(int startFrameIndex)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));

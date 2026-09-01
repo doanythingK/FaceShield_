@@ -55,7 +55,7 @@ namespace FaceShield.Services.Video
                     return cached;
                 }
 
-                WriteableBitmap? bitmap = _extractor.GetFrameByIndexScaled(
+                WriteableBitmap? bitmap = _extractor.GetTimelineThumbnailByFrameIndexScaled(
                     frameIndex,
                     _thumbWidth,
                     _thumbHeight,
