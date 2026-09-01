@@ -420,8 +420,12 @@ namespace FaceShield.Services.Video
             {
                 _decodedFrameTimeline.LastAccessTicks = DateTime.UtcNow.Ticks;
                 int count = _decodedFrameTimeline.Entries.Count;
-                if (!_decodedFrameTimeline.IsReliable || count == 0)
+                if (!_decodedFrameTimeline.IsReliable ||
+                    !_decodedFrameTimeline.SupportsExactTimestampSeek ||
+                    count == 0)
+                {
                     return false;
+                }
 
                 DecodedFrameTimelineEntry origin = _decodedFrameTimeline.Entries[0];
                 DecodedFrameTimelineEntry last = _decodedFrameTimeline.Entries[count - 1];
@@ -475,6 +479,72 @@ namespace FaceShield.Services.Video
 
                 frameIndex = candidate;
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// Resolves an ordinal to its decoded presentation timestamp. Unlike the cached
+        /// lookup, this may extend the decoded-ordinal timeline and must run off the UI
+        /// thread for uncached distant frames.
+        /// </summary>
+        public bool TryResolveFrameTimestampSeconds(
+            int frameIndex,
+            CancellationToken cancellationToken,
+            out double timestampSeconds)
+        {
+            timestampSeconds = double.NaN;
+            if (frameIndex < 0 || cancellationToken.IsCancellationRequested)
+                return false;
+            if (TryGetCachedFrameTimestampSeconds(frameIndex, out timestampSeconds))
+                return true;
+
+            lock (_sync)
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                    return false;
+                if (!EnsureDecodedFrameTimelineThrough(frameIndex, cancellationToken))
+                    return false;
+
+                return TryGetCachedFrameTimestampSeconds(
+                    frameIndex,
+                    out timestampSeconds);
+            }
+        }
+
+        /// <summary>
+        /// Resolves presentation time to the nearest decoded ordinal. It extends the
+        /// ordinal PTS index only until the requested timestamp is covered.
+        /// </summary>
+        public bool TryResolveFrameIndexAtTimestamp(
+            double timestampSeconds,
+            CancellationToken cancellationToken,
+            out int frameIndex)
+        {
+            frameIndex = -1;
+            if (!double.IsFinite(timestampSeconds) ||
+                timestampSeconds < 0 ||
+                cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (TryGetCachedFrameIndexAtTimestamp(timestampSeconds, out frameIndex))
+                return true;
+
+            lock (_sync)
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested)
+                    return false;
+                if (!EnsureDecodedFrameTimelineThroughTimestamp(
+                        timestampSeconds,
+                        cancellationToken))
+                {
+                    return false;
+                }
+
+                return TryGetCachedFrameIndexAtTimestamp(
+                    timestampSeconds,
+                    out frameIndex);
             }
         }
 
@@ -626,11 +696,12 @@ namespace FaceShield.Services.Video
             if (frameIndex < 0 || targetWidth <= 0 || targetHeight <= 0)
                 return null;
 
-            double timestampSeconds;
-            if (!TryGetCachedFrameTimestampSeconds(frameIndex, out timestampSeconds))
+            if (!TryResolveFrameTimestampSeconds(
+                    frameIndex,
+                    cancellationToken,
+                    out double timestampSeconds))
             {
-                double fps = double.IsFinite(_fps) && _fps > 0 ? _fps : 30.0;
-                timestampSeconds = frameIndex / fps;
+                return null;
             }
 
             return GetTimelineThumbnailAtTimestampScaled(
@@ -1572,8 +1643,12 @@ namespace FaceShield.Services.Video
                             return false;
                     }
 
-                    if (!TryDecodeNextOrdinalIndexFrame(out long timestamp))
+                    if (!TryDecodeNextOrdinalIndexFrame(
+                            cancellationToken,
+                            out long timestamp))
+                    {
                         break;
+                    }
 
                     lock (_decodedFrameTimeline.SyncRoot)
                     {
@@ -1608,6 +1683,135 @@ namespace FaceShield.Services.Video
                 _ordinalDecoderFailed = true;
                 Debug.WriteLine(
                     $"[FfFrameExtractor] decoded ordinal index failed; using beginning fallback: {ex}");
+                DisposeOrdinalDecoder();
+                return false;
+            }
+        }
+
+        private bool EnsureDecodedFrameTimelineThroughTimestamp(
+            double timestampSeconds,
+            CancellationToken cancellationToken)
+        {
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return false;
+
+            double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
+            if (!double.IsFinite(timeBaseSeconds) || timeBaseSeconds <= 0)
+                return false;
+            if (!EnsureDecodedFrameTimelineThrough(0, cancellationToken))
+                return false;
+
+            long targetPts;
+            lock (_decodedFrameTimeline.SyncRoot)
+            {
+                _decodedFrameTimeline.LastAccessTicks = DateTime.UtcNow.Ticks;
+                if (!_decodedFrameTimeline.IsReliable ||
+                    !_decodedFrameTimeline.SupportsExactTimestampSeek ||
+                    _decodedFrameTimeline.Entries.Count == 0)
+                {
+                    return false;
+                }
+
+                DecodedFrameTimelineEntry origin = _decodedFrameTimeline.Entries[0];
+                if (!origin.HasPresentationTimestamp)
+                    return false;
+
+                double targetPtsDouble =
+                    origin.PresentationTimestamp +
+                    timestampSeconds / timeBaseSeconds;
+                if (!double.IsFinite(targetPtsDouble) ||
+                    targetPtsDouble < long.MinValue ||
+                    targetPtsDouble > long.MaxValue)
+                {
+                    return false;
+                }
+
+                targetPts = (long)Math.Round(targetPtsDouble);
+                DecodedFrameTimelineEntry last = _decodedFrameTimeline.Entries[^1];
+                if (last.HasPresentationTimestamp &&
+                    last.PresentationTimestamp >= targetPts)
+                {
+                    return true;
+                }
+
+                if (_decodedFrameTimeline.IsComplete || _ordinalDecoderFailed)
+                    return _decodedFrameTimeline.IsComplete;
+            }
+
+            try
+            {
+                EnsureOrdinalDecoderInitialized();
+                while (!_ordinalReachedEndOfStream)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        return false;
+
+                    lock (_decodedFrameTimeline.SyncRoot)
+                    {
+                        _decodedFrameTimeline.LastAccessTicks = DateTime.UtcNow.Ticks;
+                        if (!_decodedFrameTimeline.IsReliable ||
+                            !_decodedFrameTimeline.SupportsExactTimestampSeek)
+                        {
+                            return false;
+                        }
+
+                        if (_decodedFrameTimeline.Entries.Count > 0)
+                        {
+                            DecodedFrameTimelineEntry last =
+                                _decodedFrameTimeline.Entries[^1];
+                            if (last.HasPresentationTimestamp &&
+                                last.PresentationTimestamp >= targetPts)
+                            {
+                                return true;
+                            }
+                        }
+
+                        if (_decodedFrameTimeline.IsComplete)
+                            return true;
+                    }
+
+                    if (!TryDecodeNextOrdinalIndexFrame(
+                            cancellationToken,
+                            out long timestamp))
+                    {
+                        break;
+                    }
+
+                    lock (_decodedFrameTimeline.SyncRoot)
+                    {
+                        if (!TryAddOrValidateTimelineEntry(
+                                _decodedFrameTimeline,
+                                _ordinalNextFrameIndex,
+                                timestamp))
+                        {
+                            _ordinalDecoderFailed = true;
+                            return false;
+                        }
+                    }
+
+                    _ordinalNextFrameIndex++;
+                }
+
+                lock (_decodedFrameTimeline.SyncRoot)
+                {
+                    if (_ordinalReachedEndOfStream)
+                    {
+                        _decodedFrameTimeline.IsComplete =
+                            _decodedFrameTimeline.IsReliable &&
+                            _ordinalNextFrameIndex ==
+                                _decodedFrameTimeline.Entries.Count;
+                    }
+
+                    return _decodedFrameTimeline.IsReliable &&
+                        _decodedFrameTimeline.SupportsExactTimestampSeek &&
+                        _decodedFrameTimeline.Entries.Count > 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                _ordinalDecoderFailed = true;
+                Debug.WriteLine(
+                    $"[FfFrameExtractor] timestamp ordinal index failed: {ex}");
                 DisposeOrdinalDecoder();
                 return false;
             }
@@ -1655,13 +1859,18 @@ namespace FaceShield.Services.Video
                 throw new InvalidOperationException("failed to allocate ordinal index decode buffers");
         }
 
-        private bool TryDecodeNextOrdinalIndexFrame(out long timestamp)
+        private bool TryDecodeNextOrdinalIndexFrame(
+            CancellationToken cancellationToken,
+            out long timestamp)
         {
             timestamp = ffmpeg.AV_NOPTS_VALUE;
             int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
 
             while (true)
             {
+                if (cancellationToken.IsCancellationRequested)
+                    return false;
+
                 ffmpeg.av_frame_unref(_ordinalFrame);
                 int receiveResult = ffmpeg.avcodec_receive_frame(_ordinalDecoder, _ordinalFrame);
                 if (receiveResult == 0)
@@ -1692,6 +1901,9 @@ namespace FaceShield.Services.Video
                 int readResult;
                 do
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                        return false;
+
                     ffmpeg.av_packet_unref(_ordinalPacket);
                     readResult = ffmpeg.av_read_frame(_ordinalFormat, _ordinalPacket);
                 }
@@ -1701,6 +1913,9 @@ namespace FaceShield.Services.Video
                 if (readResult == ffmpeg.AVERROR_EOF)
                 {
                     ffmpeg.av_packet_unref(_ordinalPacket);
+                    if (cancellationToken.IsCancellationRequested)
+                        return false;
+
                     int drainResult = ffmpeg.avcodec_send_packet(_ordinalDecoder, null);
                     _ordinalDrainSent = true;
                     if (drainResult == 0)
@@ -1722,6 +1937,12 @@ namespace FaceShield.Services.Video
                     throw new InvalidOperationException(
                         $"ordinal index av_read_frame failed: " +
                         $"{FFmpegErrorHelper.GetErrorMessage(readResult)} ({readResult})");
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    ffmpeg.av_packet_unref(_ordinalPacket);
+                    return false;
                 }
 
                 int sendResult = ffmpeg.avcodec_send_packet(_ordinalDecoder, _ordinalPacket);
