@@ -705,6 +705,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             bool endedNaturally = false;
             string? playbackError = null;
             double frameMs = fps > 0 ? 1000.0 / fps : 33.333;
+            double? playbackOriginTimestampSeconds = null;
+            double lastTargetMs = 0;
             var clock = Stopwatch.StartNew();
 
             try
@@ -730,7 +732,25 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                         break;
                     }
 
-                    double targetMs = Math.Max(0, frameIndex - startFrameIndex) * frameMs;
+                    double decodedTimestampSeconds =
+                        extractor.LastDecodedTimestampSeconds;
+                    double targetMs;
+                    if (double.IsFinite(decodedTimestampSeconds))
+                    {
+                        playbackOriginTimestampSeconds ??= decodedTimestampSeconds;
+                        targetMs = Math.Max(
+                            0,
+                            (decodedTimestampSeconds -
+                             playbackOriginTimestampSeconds.Value) * 1000.0);
+                    }
+                    else
+                    {
+                        targetMs =
+                            Math.Max(0, frameIndex - startFrameIndex) * frameMs;
+                    }
+
+                    targetMs = Math.Max(lastTargetMs, targetMs);
+                    lastTargetMs = targetMs;
                     double delayMs = targetMs - clock.Elapsed.TotalMilliseconds;
                     if (delayMs > 1)
                         await Task.Delay(TimeSpan.FromMilliseconds(delayMs), ct);
