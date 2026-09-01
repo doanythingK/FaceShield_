@@ -47,10 +47,18 @@ namespace FaceShield.ViewModels.Pages
         private static readonly bool DefaultAutoUseGpu =
             RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        private static readonly StringComparison FilePathComparison =
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+        private static readonly StringComparer FilePathComparer =
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal;
         private readonly Action<WorkspaceViewModel> _onStartWorkspace;
         private readonly Action _onBackHome;
         private readonly WorkspaceStateStore _stateStore;
-        private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(FilePathComparer);
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _yoloDownloadCts;
         private DateTime _autoStartTimeUtc;
@@ -1966,7 +1974,7 @@ namespace FaceShield.ViewModels.Pages
 
         private static IEnumerable<string> EnumerateDefaultYoloModelDirectories()
         {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new HashSet<string>(FilePathComparer);
             var downloadDirectory = YoloModelDownloadService.GetDownloadDirectory();
             if (seen.Add(downloadDirectory))
                 yield return downloadDirectory;
@@ -2165,7 +2173,7 @@ namespace FaceShield.ViewModels.Pages
             int existingIndex = -1;
             for (int i = 0; i < Recents.Count; i++)
             {
-                if (string.Equals(Recents[i].Path, videoPath, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(Recents[i].Path, videoPath, FilePathComparison))
                 {
                     existingIndex = i;
                     break;
@@ -2209,8 +2217,13 @@ namespace FaceShield.ViewModels.Pages
             var keys = new List<string>();
             foreach (var entry in _workspaceCache)
             {
-                if (entry.Key.EndsWith(videoPath, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(
+                        entry.Value.FrameList.VideoPath,
+                        videoPath,
+                        FilePathComparison))
+                {
                     keys.Add(entry.Key);
+                }
             }
 
             foreach (var key in keys)
