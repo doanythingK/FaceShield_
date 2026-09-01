@@ -519,7 +519,6 @@ namespace FaceShield.Controls
             IReadOnlyList<int> frames,
             double startSec,
             double range,
-            double fps,
             double width,
             int startFrame,
             int endFrame,
