@@ -48,13 +48,19 @@ namespace FaceShield.Services.Analysis
             float SmallFaceConfidenceMin,
             bool UseStatsFilter);
 
-        private static bool IsHardwareTransferFailure()
+        private static bool IsHardwareTransferFailure(FfFrameExtractor extractor)
         {
-            string status = FfFrameExtractor.GetLastDecodeStatus();
-            string? error = FfFrameExtractor.GetLastDecodeError();
-
-            if (!string.IsNullOrWhiteSpace(error) && error.Contains("av_hwframe_transfer_data 실패", StringComparison.Ordinal))
+            if (extractor.HardwareTransferFailed)
                 return true;
+
+            string status = extractor.DecodeStatus;
+            string? error = extractor.DecodeError;
+
+            if (!string.IsNullOrWhiteSpace(error) &&
+                error.Contains("av_hwframe_transfer_data 실패", StringComparison.Ordinal))
+            {
+                return true;
+            }
 
             return !string.IsNullOrWhiteSpace(status) &&
                 status.Contains("HW 프레임 전송 실패", StringComparison.Ordinal);
@@ -76,7 +82,7 @@ namespace FaceShield.Services.Analysis
                     ? extractor.TryGetNextFrameRaw(ct, requireBgra: true, out _, out _)
                     : extractor.TryGetNextFrame(ct, requireBitmap: true, out _, out _);
 
-                if (!ok && !ct.IsCancellationRequested && IsHardwareTransferFailure())
+                if (!ok && !ct.IsCancellationRequested && IsHardwareTransferFailure(extractor))
                 {
                     Debug.WriteLine("[AutoMask] HW decode failed; falling back to SW.");
                     extractor.Dispose();
