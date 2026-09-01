@@ -37,7 +37,7 @@ $frameList = Read-RepoFile "ViewModels/Workspace/FrameListViewModel.cs"
 $timelineStrip = Read-RepoFile "Controls/TimelineFrameStrip.cs"
 $frameListView = Read-RepoFile "Views/Workspace/FrameListView.axaml"
 $app = Read-RepoFile "App.axaml.cs"
-$home = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
+$homeViewModel = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
 $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
 
 Assert-Match "playback checks decoder error before normal eof" $framePreview 'SequentialDecodeError[\s\S]*SequentialReachedEndOfStream[\s\S]*onPlaybackFailed'
@@ -74,7 +74,7 @@ Assert-NotMatch "sequential decode error does not consume global last decoder er
 Assert-Match "auto mask fallback checks the current extractor" $autoMask 'IsHardwareTransferFailure\(extractor\)'
 Assert-NotMatch "extractor does not expose process-global last decode diagnostics" $extractor 'GetLastDecode(Status|Error|Diagnostics)|_lastDecode(Status|Error|Diagnostics)'
 Assert-Match "static hardware callback routes diagnostics to extractor owner" $extractor '_hwOwnerByDecoder[\s\S]*owner\?\.UpdateDecodeStatus'
-Assert-NotMatch "home status does not consume global decoder diagnostics" $home 'FfFrameExtractor\.GetLastDecode'
+Assert-NotMatch "home status does not consume global decoder diagnostics" $homeViewModel 'FfFrameExtractor\.GetLastDecode'
 Assert-Match "dispatcher classifies recoverable UI exceptions explicitly" $app 'IsRecoverableUiException\(e\.Exception\)[\s\S]{0,200}e\.Handled\s*=\s*true'
 Assert-NotMatch "dispatcher does not blanket swallow logged UI exceptions" $app 'HandleUnhandledException\(e\.Exception\);\s*e\.Handled\s*=\s*true'
 
