@@ -65,6 +65,7 @@ namespace FaceShield.ViewModels.Pages
         private bool _autoPreviewNeedsExactRefresh;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
+        private readonly SemaphoreSlim _exportGate = new(1, 1);
         private bool _autoExportGateRequired;
         private bool _autoExportGatePassed;
         private string? _autoExportGateFailure;
@@ -261,8 +262,13 @@ namespace FaceShield.ViewModels.Pages
             if (!TryBeginLifetimeOperation())
                 return false;
 
+            bool enteredExportGate = false;
             try
             {
+                enteredExportGate = await _exportGate.WaitAsync(0);
+                if (!enteredExportGate)
+                    return false;
+
                 return await SaveVideoCoreAsync(
                     exportProgress,
                     cancellationToken,
@@ -273,6 +279,8 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
+                if (enteredExportGate)
+                    _exportGate.Release();
                 EndLifetimeOperation();
             }
         }
@@ -334,7 +342,8 @@ namespace FaceShield.ViewModels.Pages
                 return false;
             output = resolvedOutput;
 
-            var exporter = new VideoExportService(_maskProvider);
+            using var exportMaskProvider = _maskProvider.CreateSnapshot();
+            var exporter = new VideoExportService(exportMaskProvider);
 
             if (updateToolPanel)
             {
@@ -358,12 +367,14 @@ namespace FaceShield.ViewModels.Pages
                 }
             });
 
+            var exportCts = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : new CancellationTokenSource();
+            _exportCts = exportCts;
+            CancellationToken exportToken = exportCts.Token;
+
             try
             {
-                _exportCts?.Dispose();
-                _exportCts = cancellationToken.CanBeCanceled
-                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                    : new CancellationTokenSource();
                 (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy = (
                     false,
                     new[] { HybridCopyDisabledReason });
@@ -380,11 +391,11 @@ namespace FaceShield.ViewModels.Pages
                         output,
                         blurRadius: ToolPanel.BlurRadius,
                         progress,
-                        _exportCts.Token,
+                        exportToken,
                         exportRunId,
                         allowHybridCopy: hybridPolicy.allowHybridCopy,
                         allowOutputOverwrite: allowOutputOverwrite);
-                }, _exportCts.Token);
+                }, exportToken);
                 if (exporter.LastExportSummary != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
@@ -411,8 +422,9 @@ namespace FaceShield.ViewModels.Pages
                     ToolPanel.ExportEtaText = null;
                     ToolPanel.ExportStatusText = null;
                 }
-                _exportCts?.Dispose();
-                _exportCts = null;
+                if (ReferenceEquals(_exportCts, exportCts))
+                    _exportCts = null;
+                exportCts.Dispose();
             }
         }
 
@@ -2198,6 +2210,7 @@ namespace FaceShield.ViewModels.Pages
             FramePreview.Dispose();
             FrameList.Dispose();
             _maskProvider.Dispose();
+            _exportGate.Dispose();
         }
 
         public void Dispose()
