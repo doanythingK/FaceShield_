@@ -143,6 +143,50 @@ namespace FaceShield.Services.Video
                 timestampSeconds,
                 out frameIndex);
 
+        public bool TryResolveFrameTimestampSeconds(
+            int frameIndex,
+            CancellationToken cancellationToken,
+            out double timestampSeconds)
+        {
+            timestampSeconds = double.NaN;
+            if (_disposed || cancellationToken.IsCancellationRequested)
+                return false;
+
+            using var linked = CreateLinkedTokenSource(cancellationToken);
+            lock (_sync)
+            {
+                if (_disposed || linked.Token.IsCancellationRequested)
+                    return false;
+
+                return _extractor.TryResolveFrameTimestampSeconds(
+                    frameIndex,
+                    linked.Token,
+                    out timestampSeconds);
+            }
+        }
+
+        public bool TryResolveFrameIndexAtTimestamp(
+            double timestampSeconds,
+            CancellationToken cancellationToken,
+            out int frameIndex)
+        {
+            frameIndex = -1;
+            if (_disposed || cancellationToken.IsCancellationRequested)
+                return false;
+
+            using var linked = CreateLinkedTokenSource(cancellationToken);
+            lock (_sync)
+            {
+                if (_disposed || linked.Token.IsCancellationRequested)
+                    return false;
+
+                return _extractor.TryResolveFrameIndexAtTimestamp(
+                    timestampSeconds,
+                    linked.Token,
+                    out frameIndex);
+            }
+        }
+
         private WriteableBitmap? GetOrCreate(
             long cacheKey,
             Func<CancellationToken, WriteableBitmap?> factory,
