@@ -1732,18 +1732,12 @@ namespace FaceShield.ViewModels.Pages
             var accelError = IsYoloDetectorSelected
                 ? YoloFaceOnnxDetector.GetLastExecutionProviderError()
                 : FaceOnnxDetector.GetLastExecutionProviderError();
-            var decode = FfFrameExtractor.GetLastDecodeStatus();
-            var decodeError = FfFrameExtractor.GetLastDecodeError();
-            var decodeDiag = FfFrameExtractor.GetLastDecodeDiagnostics();
-            string decodeText = decodeError == null ? decode : $"{decode} · 오류: {decodeError}";
-            if (!string.IsNullOrWhiteSpace(decodeDiag))
-                decodeText += $" · {decodeDiag}";
             string threadText =
                 $"onnx={SelectedOrtThreadOption?.Label ?? "자동"}, cores={Environment.ProcessorCount}, sessions={SelectedParallelSessionCount}";
 
             AutoAccelStatus = accelError == null
-                ? $"가속 상태: {accel} · {decodeText} · {threadText}"
-                : $"가속 상태: {accel} · 오류: {accelError} · {decodeText} · {threadText}";
+                ? $"가속 상태: {accel} · {threadText}"
+                : $"가속 상태: {accel} · 오류: {accelError} · {threadText}";
 
             if (lastFrame >= 0 && total > 0)
             {
