@@ -37,13 +37,6 @@ namespace FaceShield.Services.Analysis
         private const double OffModeYoloMaxFaceAspectRatio = 2.25;
         private const int StatsSampleStep = 5;
         private const int MinStatsSamples = 16;
-        private const double SparseTrackIouMin = 0.12;
-        private const double SparseTrackMaxCenterShiftRatio = 1.2;
-        private const double SparseTrackMaxAreaChangeRatio = 4.0;
-        private const double SparseSceneCutDifferenceThreshold = 0.32;
-        private const double OffModeSparseSceneCutDifferenceThreshold = 0.18;
-        private const int SparseSceneCutSignatureColumns = 24;
-        private const int SparseSceneCutSignatureRows = 14;
         private const double OffModeSceneCutSignatureDiffThreshold = 0.24;
         private const int OffModeSceneCutCarryClearFrames = 2;
 
@@ -681,23 +674,6 @@ namespace FaceShield.Services.Analysis
             public int Height { get; init; }
             public double[] SceneSignature { get; init; } = Array.Empty<double>();
         }
-
-        private sealed class DetectionResult
-        {
-            public int Index { get; init; }
-            public Rect[] Bounds { get; init; } = Array.Empty<Rect>();
-            public PixelSize Size { get; init; }
-            public float? MinConfidence { get; init; }
-            public float[] Confidences { get; init; } = Array.Empty<float>();
-            public double[] FrameSignature { get; init; } = Array.Empty<double>();
-        }
-
-        private readonly record struct SparseSceneCutTransition(int SourceFrameIndex, int NextFrameIndex);
-
-        private readonly record struct SparseMaterializeResult(
-            int Interpolated,
-            int SceneCutStops,
-            IReadOnlyList<SparseSceneCutTransition> SceneCutTransitions);
 
         private sealed class ProgressState
         {
@@ -1752,7 +1728,12 @@ namespace FaceShield.Services.Analysis
             int materializeEndExclusive = resumeWatermark >= start
                 ? resumeWatermark + 1
                 : start;
-            var materialized = MaterializeSparseTrackingResults(results, start, materializeEndExclusive);
+            var materialized = SparseTrackingMaterializer.Materialize(
+                results,
+                _maskProvider,
+                _options,
+                start,
+                materializeEndExclusive);
             foreach (var transition in materialized.SceneCutTransitions)
             {
                 for (int frame = transition.SourceFrameIndex + 1; frame <= transition.NextFrameIndex; frame++)
@@ -1766,7 +1747,7 @@ namespace FaceShield.Services.Analysis
             pipeline.ThrowIfFailedOrCanceled();
 
             Debug.WriteLine(
-                $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, sparseSceneCuts={materialized.SceneCutStops}, sparseSceneCutPairs={FormatSparseSceneCutTransitions(materialized.SceneCutTransitions)}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
+                $"[AutoMaskSparsePipe] done decoded={decoded}, detects={detected}, interpolated={interpolated}, sparseSceneCuts={materialized.SceneCutStops}, sparseSceneCutPairs={SparseTrackingMaterializer.FormatSceneCutTransitions(materialized.SceneCutTransitions)}, decodeMs={decodeMs}, detectMs={detectMs}, totalMs={swTotal.ElapsedMilliseconds}, filter={filterStats.BuildSummary()}");
             SetLastRunSummary(new AutoMaskRunSummary(
                 "sparse-pipe-parallel",
                 totalFrames,
@@ -2227,389 +2208,26 @@ namespace FaceShield.Services.Analysis
             return _detector.GetType().Name;
         }
 
-        private SparseMaterializeResult MaterializeSparseTrackingResults(
-            System.Collections.Concurrent.ConcurrentDictionary<int, DetectionResult> results,
-            int start,
-            int endExclusive)
-        {
-            if (results == null || results.Count == 0)
-                return new SparseMaterializeResult(0, 0, Array.Empty<SparseSceneCutTransition>());
-            if (endExclusive <= start)
-                return new SparseMaterializeResult(0, 0, Array.Empty<SparseSceneCutTransition>());
-
-            int[] keys = results.Keys.ToArray();
-            Array.Sort(keys);
-
-            int materialized = 0;
-            int sceneCutStops = 0;
-            var sceneCutTransitions = new List<SparseSceneCutTransition>();
-            int maxBridgeFrames = Math.Max(1, _options.DetectEveryNFrames * 2);
-            bool guardSceneCuts = _options.UseTracking &&
-                _options.ProcessingMode != AutoMaskProcessingMode.Raw;
-            double sceneCutThreshold = (_options.FilterProfile == FaceFilterProfile.Yolo && !_options.EnablePostProcessing)
-                ? OffModeSparseSceneCutDifferenceThreshold
-                : SparseSceneCutDifferenceThreshold;
-
-            for (int i = 0; i < keys.Length; i++)
-            {
-                int key = keys[i];
-                if (key < start || key >= endExclusive)
-                    continue;
-                if (!results.TryGetValue(key, out var current) || current.Bounds.Length == 0)
-                    continue;
-
-                if (!_maskProvider.HasEntry(key))
-                {
-                    _maskProvider.SetFaceRects(
-                        key,
-                        current.Bounds,
-                        current.Size,
-                        current.MinConfidence,
-                        current.Confidences);
-                }
-
-                DetectionResult? nextPositive = FindNextPositiveResult(results, keys, i + 1, endExclusive, key, maxBridgeFrames);
-                    bool canBridge = nextPositive != null &&
-                    CanBridgeSparseResults(
-                        current,
-                        nextPositive,
-                        maxBridgeFrames,
-                        guardSceneCuts,
-                        sceneCutThreshold);
-
-                int nextKey = FindNextDetectionKey(keys, i + 1, endExclusive);
-                    bool stopAtSceneCut = false;
-                    if (nextKey >= 0 &&
-                        results.TryGetValue(nextKey, out var nextDetection) &&
-                        ShouldStopSparseSceneCarry(
-                            key,
-                            nextKey,
-                            maxBridgeFrames,
-                            guardSceneCuts,
-                            current.FrameSignature,
-                            nextDetection.FrameSignature,
-                            sceneCutThreshold))
-                    {
-                        stopAtSceneCut = true;
-                        sceneCutStops++;
-                        sceneCutTransitions.Add(new SparseSceneCutTransition(key, nextKey));
-                    }
-
-                int segmentEnd = stopAtSceneCut
-                    ? key + 1
-                    : canBridge
-                        ? nextPositive!.Index
-                        : nextKey >= 0
-                            ? Math.Min(nextKey, key + Math.Max(1, _options.DetectEveryNFrames))
-                            : Math.Min(endExclusive, key + Math.Max(1, _options.DetectEveryNFrames));
-                if (segmentEnd <= key + 1)
-                    continue;
-
-                for (int frame = key + 1; frame < segmentEnd; frame++)
-                {
-                    if (_maskProvider.HasEntry(frame))
-                        continue;
-
-                    DetectionResult payload = canBridge
-                        ? InterpolateSparseResult(current, nextPositive!, frame)
-                        : current;
-
-                    if (payload.Bounds.Length == 0)
-                        continue;
-
-                    _maskProvider.SetFaceRects(
-                        frame,
-                        payload.Bounds,
-                        payload.Size,
-                        payload.MinConfidence,
-                        payload.Confidences);
-                    materialized++;
-                }
-            }
-
-            return new SparseMaterializeResult(materialized, sceneCutStops, sceneCutTransitions.ToArray());
-        }
-
-        private static int FindNextDetectionKey(int[] keys, int startIndex, int endExclusive)
-        {
-            if (startIndex < 0 || startIndex >= keys.Length)
-                return -1;
-
-            int key = keys[startIndex];
-            if (key >= endExclusive)
-                return -1;
-
-            return key;
-        }
-
-        private static DetectionResult? FindNextPositiveResult(
-            System.Collections.Concurrent.ConcurrentDictionary<int, DetectionResult> results,
-            int[] keys,
-            int startIndex,
-            int endExclusive,
-            int currentKey,
-            int maxBridgeFrames)
-        {
-            for (int i = startIndex; i < keys.Length; i++)
-            {
-                int key = keys[i];
-                if (key >= endExclusive)
-                    return null;
-                if (!results.TryGetValue(key, out var result))
-                    continue;
-                if (key - currentKey > maxBridgeFrames)
-                    return null;
-                if (result.Bounds.Length > 0)
-                    return result;
-            }
-
-            return null;
-        }
-
-        private static bool CanBridgeSparseResults(
-            DetectionResult current,
-            DetectionResult next,
-            int maxBridgeFrames,
-            bool guardSceneCuts,
-            double sceneCutThreshold)
-        {
-            if (next.Index <= current.Index || next.Index - current.Index > maxBridgeFrames)
-                return false;
-            if (current.Bounds.Length == 0 || next.Bounds.Length == 0)
-                return false;
-            if (guardSceneCuts && IsSparseSceneCut(current, next, sceneCutThreshold))
-                return false;
-
-            int matches = 0;
-            var used = new bool[next.Bounds.Length];
-            for (int i = 0; i < current.Bounds.Length; i++)
-            {
-                int match = FindBestSparseMatch(current.Bounds[i], next.Bounds, used);
-                if (match < 0)
-                    continue;
-
-                used[match] = true;
-                matches++;
-            }
-
-            return matches > 0;
-        }
-
-        private static DetectionResult InterpolateSparseResult(
-            DetectionResult current,
-            DetectionResult next,
-            int frameIndex)
-        {
-            if (next.Index <= current.Index)
-                return current;
-
-            double t = (frameIndex - current.Index) / (double)(next.Index - current.Index);
-            t = Math.Clamp(t, 0.0, 1.0);
-
-            var bounds = new List<Rect>(current.Bounds.Length);
-            var confidences = new List<float>(current.Bounds.Length);
-            var used = new bool[next.Bounds.Length];
-
-            for (int i = 0; i < current.Bounds.Length; i++)
-            {
-                var from = current.Bounds[i];
-                int match = FindBestSparseMatch(from, next.Bounds, used);
-                if (match >= 0)
-                {
-                    used[match] = true;
-                    var to = next.Bounds[match];
-                    bounds.Add(LerpRect(from, to, t));
-                    confidences.Add(LerpConfidence(current.Confidences, next.Confidences, i, match, t));
-                }
-            }
-
-            float? minConfidence = GetMinConfidence(confidences);
-            return new DetectionResult
-            {
-                Index = frameIndex,
-                Bounds = bounds.ToArray(),
-                Size = current.Size.Width > 0 && current.Size.Height > 0 ? current.Size : next.Size,
-                MinConfidence = minConfidence,
-                Confidences = confidences.ToArray()
-            };
-        }
-
-        private static int FindBestSparseMatch(Rect source, IReadOnlyList<Rect> candidates, bool[] used)
-        {
-            int bestIndex = -1;
-            double bestScore = 0.0;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                if (i < used.Length && used[i])
-                    continue;
-
-                var candidate = candidates[i];
-                if (!IsReasonableSparseTrack(source, candidate))
-                    continue;
-
-                double iou = IoU(source, candidate);
-                double score = iou > 0.0
-                    ? iou
-                    : 0.01 / Math.Max(0.01, GetCenterDistanceRatio(source, candidate));
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestIndex = i;
-                }
-            }
-
-            return bestIndex;
-        }
-
-        private static bool IsReasonableSparseTrack(Rect current, Rect next)
-        {
-            if (current.Width <= 0 || current.Height <= 0 || next.Width <= 0 || next.Height <= 0)
-                return false;
-
-            double area = Math.Max(1.0, current.Width * current.Height);
-            double nextArea = Math.Max(1.0, next.Width * next.Height);
-            double areaRatio = area / nextArea;
-            if (areaRatio > SparseTrackMaxAreaChangeRatio || areaRatio < 1.0 / SparseTrackMaxAreaChangeRatio)
-                return false;
-
-            double iou = IoU(current, next);
-            if (iou >= SparseTrackIouMin)
-                return true;
-
-            return GetCenterDistanceRatio(current, next) <= SparseTrackMaxCenterShiftRatio;
-        }
-
-        private static bool IsSparseSceneCut(
-            DetectionResult current,
-            DetectionResult next,
-            double sceneCutThreshold)
-            => ComputeSignatureDifference(current.FrameSignature, next.FrameSignature) >= sceneCutThreshold;
-
-        private static string FormatSparseSceneCutTransitions(IReadOnlyList<SparseSceneCutTransition> transitions)
-        {
-            if (transitions.Count == 0)
-                return "none";
-
-            const int maxTransitions = 16;
-            var selected = transitions
-                .Take(maxTransitions)
-                .Select(static x => string.Create(
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    $"{x.SourceFrameIndex}->{x.NextFrameIndex}"));
-            string text = string.Join(",", selected);
-            return transitions.Count > maxTransitions
-                ? string.Create(
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    $"{text},+{transitions.Count - maxTransitions}")
-                : text;
-        }
-
-        private static bool ShouldStopSparseSceneCarry(
-            int currentKey,
-            int nextKey,
-            int maxBridgeFrames,
-            bool guardSceneCuts,
-            IReadOnlyList<double> currentSignature,
-            IReadOnlyList<double> nextSignature,
-            double sceneCutThreshold)
-            => guardSceneCuts &&
-                nextKey >= 0 &&
-                nextKey > currentKey &&
-                nextKey - currentKey <= maxBridgeFrames &&
-                ComputeSignatureDifference(currentSignature, nextSignature) >= sceneCutThreshold;
-
         private static unsafe double[] ComputeFrameSignature(
             byte* basePtr,
             int stride,
             int width,
             int height)
-        {
-            if (basePtr == null || width <= 0 || height <= 0 || stride <= 0)
-                return Array.Empty<double>();
-
-            var signature = new double[SparseSceneCutSignatureColumns * SparseSceneCutSignatureRows];
-            int index = 0;
-            for (int sy = 0; sy < SparseSceneCutSignatureRows; sy++)
-            {
-                int y = Math.Clamp((int)Math.Round((sy + 0.5) * height / SparseSceneCutSignatureRows), 0, height - 1);
-                byte* row = basePtr + y * stride;
-                for (int sx = 0; sx < SparseSceneCutSignatureColumns; sx++)
-                {
-                    int x = Math.Clamp((int)Math.Round((sx + 0.5) * width / SparseSceneCutSignatureColumns), 0, width - 1);
-                    byte* pixel = row + x * 4;
-                    signature[index++] = ((77 * pixel[2]) + (150 * pixel[1]) + (29 * pixel[0])) / (255.0 * 256.0);
-                }
-            }
-
-            return signature;
-        }
+            => SparseSceneSignature.Compute(basePtr, stride, width, height);
 
         private static double ComputeSignatureDifference(
             IReadOnlyList<double> current,
             IReadOnlyList<double> next)
-        {
-            int count = Math.Min(current.Count, next.Count);
-            if (count == 0)
-                return 0.0;
-
-            double total = 0.0;
-            for (int i = 0; i < count; i++)
-                total += Math.Abs(current[i] - next[i]);
-
-            return total / count;
-        }
+            => SparseTrackingMath.SignatureDifference(current, next);
 
         private static double GetCenterDistanceRatio(Rect a, Rect b)
-        {
-            double ax = a.X + a.Width * 0.5;
-            double ay = a.Y + a.Height * 0.5;
-            double bx = b.X + b.Width * 0.5;
-            double by = b.Y + b.Height * 0.5;
-            double dx = ax - bx;
-            double dy = ay - by;
-            double distance = Math.Sqrt(dx * dx + dy * dy);
-            double maxDim = Math.Max(1.0, Math.Max(Math.Max(a.Width, a.Height), Math.Max(b.Width, b.Height)));
-            return distance / maxDim;
-        }
+            => SparseTrackingMath.CenterDistanceRatio(a, b);
 
         private static double IoU(Rect a, Rect b)
-        {
-            double ax1 = a.X;
-            double ay1 = a.Y;
-            double ax2 = a.X + a.Width;
-            double ay2 = a.Y + a.Height;
-
-            double bx1 = b.X;
-            double by1 = b.Y;
-            double bx2 = b.X + b.Width;
-            double by2 = b.Y + b.Height;
-
-            double ix1 = Math.Max(ax1, bx1);
-            double iy1 = Math.Max(ay1, by1);
-            double ix2 = Math.Min(ax2, bx2);
-            double iy2 = Math.Min(ay2, by2);
-
-            double iw = Math.Max(0.0, ix2 - ix1);
-            double ih = Math.Max(0.0, iy2 - iy1);
-            double inter = iw * ih;
-            if (inter <= 0.0)
-                return 0.0;
-
-            double union = a.Width * a.Height + b.Width * b.Height - inter;
-            if (union <= 0.0)
-                return 0.0;
-            return inter / union;
-        }
+            => SparseTrackingMath.IoU(a, b);
 
         private static Rect LerpRect(Rect from, Rect to, double t)
-        {
-            double keep = 1.0 - t;
-            return new Rect(
-                from.X * keep + to.X * t,
-                from.Y * keep + to.Y * t,
-                Math.Max(0.0, from.Width * keep + to.Width * t),
-                Math.Max(0.0, from.Height * keep + to.Height * t));
-        }
+            => SparseTrackingMath.LerpRect(from, to, t);
 
         private static float LerpConfidence(
             IReadOnlyList<float> from,
@@ -2617,28 +2235,10 @@ namespace FaceShield.Services.Analysis
             int fromIndex,
             int toIndex,
             double t)
-        {
-            double keep = 1.0 - t;
-            return (float)(GetConfidence(from, fromIndex) * keep + GetConfidence(to, toIndex) * t);
-        }
-
-        private static float GetConfidence(IReadOnlyList<float> values, int index)
-        {
-            if (index < 0 || index >= values.Count)
-                return 1.0f;
-            return values[index];
-        }
+            => SparseTrackingMath.LerpConfidence(from, to, fromIndex, toIndex, t);
 
         private static float? GetMinConfidence(IReadOnlyList<float> values)
-        {
-            if (values.Count == 0)
-                return null;
-
-            float min = float.MaxValue;
-            for (int i = 0; i < values.Count; i++)
-                min = Math.Min(min, values[i]);
-            return min == float.MaxValue ? null : min;
-        }
+            => SparseTrackingMath.MinConfidence(values);
 
         private static bool ShouldUsePrimaryRoiShortcut(AutoMaskOptions options)
         {

@@ -10,13 +10,13 @@ using FaceShield.Services.Analysis;
 using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
 using FaceShield.Services.Workspace;
+using FaceShield.Services.Models;
 using FaceShield.Views.Dialogs;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,7 +44,6 @@ namespace FaceShield.ViewModels.Pages
             "yolov8m-face-lindevs.onnx",
             "yolov8l-face-lindevs.onnx"
         ];
-        private static readonly HttpClient YoloModelDownloadHttpClient = new();
         private static readonly bool DefaultAutoUseGpu =
             RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -53,6 +52,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspaceStateStore _stateStore;
         private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(StringComparer.OrdinalIgnoreCase);
         private CancellationTokenSource? _autoCts;
+        private CancellationTokenSource? _yoloDownloadCts;
         private DateTime _autoStartTimeUtc;
         private DateTime _autoLastProgressAtUtc;
         private WorkspaceViewModel? _activeAutoWorkspace;
@@ -67,8 +67,8 @@ namespace FaceShield.ViewModels.Pages
         private bool _isApplyingAutoSettings;
         private bool _isApplyingYoloProfile;
         private YoloFaceModelType _activeYoloModelType = YoloFaceModelType.Yolo5Face;
-        private YoloProfileState _yoloV8Profile = YoloProfileState.CreateDefault(YoloFaceModelType.YoloV8Face);
-        private YoloProfileState _yolo5Profile = YoloProfileState.CreateDefault(YoloFaceModelType.Yolo5Face);
+        private YoloProfileState _yoloV8Profile = CreateDefaultYoloProfile(YoloFaceModelType.YoloV8Face);
+        private YoloProfileState _yolo5Profile = CreateDefaultYoloProfile(YoloFaceModelType.Yolo5Face);
 
         [ObservableProperty]
         private string? selectedVideoPath;
@@ -239,63 +239,6 @@ namespace FaceShield.ViewModels.Pages
             new YoloModelTypeOption("YOLOv8-Face", YoloFaceModelType.YoloV8Face),
             new YoloModelTypeOption("YOLO5Face", YoloFaceModelType.Yolo5Face)
         };
-
-        private sealed class YoloModelDownloadInfo
-        {
-            public string FileName { get; }
-            public string DownloadUrl { get; }
-            public string SourceLabel { get; }
-            public string LicenseLabel { get; }
-
-            public YoloModelDownloadInfo(string fileName, string downloadUrl, string sourceLabel, string licenseLabel)
-            {
-                FileName = fileName;
-                DownloadUrl = downloadUrl;
-                SourceLabel = sourceLabel;
-                LicenseLabel = licenseLabel;
-            }
-        }
-
-        private sealed class YoloProfileState
-        {
-            public string? ModelPath { get; init; }
-            public double ObjectnessThreshold { get; init; }
-            public double ConfidenceThreshold { get; init; }
-            public double NmsThreshold { get; init; }
-            public int InputSize { get; init; }
-            public bool UseTiling { get; init; }
-            public bool TileOnly { get; init; }
-            public int TileColumns { get; init; }
-            public int TileRows { get; init; }
-            public double TileOverlapRatio { get; init; }
-            public double DownscaleRatio { get; init; }
-            public DownscaleQuality DownscaleQuality { get; init; }
-            public bool AutoTrackingEnabled { get; init; }
-            public int AutoDetectEveryNFrames { get; init; }
-            public int ParallelSessionCount { get; init; }
-
-            public static YoloProfileState CreateDefault(YoloFaceModelType modelType)
-            {
-                return new YoloProfileState
-                {
-                    ModelPath = ResolveDefaultYoloModelPath(modelType),
-                    ObjectnessThreshold = modelType == YoloFaceModelType.Yolo5Face ? DefaultYolo5FaceObjectnessThreshold : 0.25,
-                    ConfidenceThreshold = modelType == YoloFaceModelType.Yolo5Face ? DefaultYolo5FaceConfidenceThreshold : 0.35,
-                    NmsThreshold = DefaultYoloNmsThreshold,
-                    InputSize = 640,
-                    UseTiling = false,
-                    TileOnly = false,
-                    TileColumns = 2,
-                    TileRows = 2,
-                    TileOverlapRatio = 0.15,
-                    DownscaleRatio = 1.0,
-                    DownscaleQuality = DownscaleQuality.BalancedBilinear,
-                    AutoTrackingEnabled = true,
-                    AutoDetectEveryNFrames = DefaultAutoDetectEveryNFrames,
-                    ParallelSessionCount = 2
-                };
-            }
-        }
 
         [ObservableProperty]
         private YoloModelTypeOption? selectedYoloModelTypeOption;
@@ -541,6 +484,7 @@ namespace FaceShield.ViewModels.Pages
         public bool IsYoloDetectorSelected => SelectedAutoDetectorBackendOption?.Backend == FaceDetectorBackend.YoloFaceOnnx;
         public bool IsFaceOnnxDetectorSelected => !IsYoloDetectorSelected;
         public bool CanDownloadYoloModel => IsYoloDetectorSelected && !IsYoloModelDownloading;
+        public bool CanCancelYoloModelDownload => IsYoloModelDownloading;
         public int MinBlurRadius => MinBlurRadiusValue;
         public int MaxBlurRadius => MaxBlurRadiusValue;
 
@@ -884,6 +828,18 @@ namespace FaceShield.ViewModels.Pages
             RequestAutoRestartForDetectorFactoryOptions("YOLO 모델 종류 변경 감지 · 재시작 준비 중...");
         }
 
+        private static YoloProfileState CreateDefaultYoloProfile(
+            YoloFaceModelType modelType)
+        {
+            return YoloProfilePersistencePolicy.CreateDefault(
+                modelType,
+                ResolveDefaultYoloModelPath(modelType),
+                DefaultAutoDetectEveryNFrames,
+                DefaultYolo5FaceObjectnessThreshold,
+                DefaultYolo5FaceConfidenceThreshold,
+                DefaultYoloNmsThreshold);
+        }
+
         private YoloProfileState GetYoloProfile(YoloFaceModelType modelType)
         {
             return modelType == YoloFaceModelType.Yolo5Face
@@ -970,7 +926,9 @@ namespace FaceShield.ViewModels.Pages
         partial void OnIsYoloModelDownloadingChanged(bool value)
         {
             OnPropertyChanged(nameof(CanDownloadYoloModel));
+            OnPropertyChanged(nameof(CanCancelYoloModelDownload));
             DownloadYoloModelCommand.NotifyCanExecuteChanged();
+            CancelYoloModelDownloadCommand.NotifyCanExecuteChanged();
         }
 
         partial void OnAutoYoloObjectnessThresholdChanged(double value)
@@ -1088,80 +1046,6 @@ namespace FaceShield.ViewModels.Pages
             _autoCts?.Cancel();
         }
 
-        private static YoloProfileState ReadSavedYoloProfile(
-            AutoSettingsState saved,
-            YoloFaceModelType modelType,
-            YoloFaceModelType selectedModelType)
-        {
-            var defaults = YoloProfileState.CreateDefault(modelType);
-            bool useLegacyActiveProfile = selectedModelType == modelType;
-            string? legacyModelPath = useLegacyActiveProfile ? NormalizeYoloModelPath(saved.YoloModelPath) : null;
-
-            if (modelType == YoloFaceModelType.Yolo5Face)
-            {
-                return new YoloProfileState
-                {
-                    ModelPath = NormalizeYoloModelPath(saved.Yolo5ModelPath) ?? legacyModelPath ?? defaults.ModelPath,
-                    ObjectnessThreshold = saved.Yolo5ObjectnessThreshold ?? (useLegacyActiveProfile ? saved.YoloObjectnessThreshold : null) ?? defaults.ObjectnessThreshold,
-                    ConfidenceThreshold = saved.Yolo5ConfidenceThreshold ?? (useLegacyActiveProfile ? saved.YoloConfidenceThreshold : null) ?? defaults.ConfidenceThreshold,
-                    NmsThreshold = saved.Yolo5NmsThreshold ?? (useLegacyActiveProfile ? saved.YoloNmsThreshold : null) ?? defaults.NmsThreshold,
-                    InputSize = Math.Clamp(saved.Yolo5InputSize ?? (useLegacyActiveProfile ? saved.YoloInputSize : null) ?? defaults.InputSize, 64, 2048),
-                    UseTiling = saved.Yolo5UseTiling ?? (useLegacyActiveProfile ? (bool?)saved.YoloUseTiling : null) ?? defaults.UseTiling,
-                    TileOnly = saved.Yolo5TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
-                    TileColumns = Math.Clamp(saved.Yolo5TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
-                    TileRows = Math.Clamp(saved.Yolo5TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
-                    TileOverlapRatio = Math.Clamp(saved.Yolo5TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45),
-                    DownscaleRatio = ResolveSavedYoloDownscaleRatio(saved.Yolo5DownscaleRatio, useLegacyActiveProfile ? saved.DownscaleRatio : null, defaults.DownscaleRatio),
-                    DownscaleQuality = ResolveSavedYoloDownscaleQuality(
-                        saved.Yolo5DownscaleQuality,
-                        useLegacyActiveProfile ? saved.DownscaleQuality : null,
-                        defaults.DownscaleQuality),
-                    AutoTrackingEnabled = saved.Yolo5AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
-                    AutoDetectEveryNFrames = Math.Max(1, saved.Yolo5AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
-                    ParallelSessionCount = Math.Max(1, saved.Yolo5ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
-                };
-            }
-
-            return new YoloProfileState
-            {
-                ModelPath = NormalizeYoloModelPath(saved.YoloV8ModelPath) ?? legacyModelPath ?? defaults.ModelPath,
-                ObjectnessThreshold = saved.YoloV8ObjectnessThreshold ?? (useLegacyActiveProfile ? saved.YoloObjectnessThreshold : null) ?? defaults.ObjectnessThreshold,
-                ConfidenceThreshold = saved.YoloV8ConfidenceThreshold ?? (useLegacyActiveProfile ? saved.YoloConfidenceThreshold : null) ?? defaults.ConfidenceThreshold,
-                NmsThreshold = saved.YoloV8NmsThreshold ?? (useLegacyActiveProfile ? saved.YoloNmsThreshold : null) ?? defaults.NmsThreshold,
-                InputSize = Math.Clamp(saved.YoloV8InputSize ?? (useLegacyActiveProfile ? saved.YoloInputSize : null) ?? defaults.InputSize, 64, 2048),
-                UseTiling = saved.YoloV8UseTiling ?? (useLegacyActiveProfile ? (bool?)saved.YoloUseTiling : null) ?? defaults.UseTiling,
-                TileOnly = saved.YoloV8TileOnly ?? (useLegacyActiveProfile ? (bool?)saved.YoloTileOnly : null) ?? defaults.TileOnly,
-                TileColumns = Math.Clamp(saved.YoloV8TileColumns ?? (useLegacyActiveProfile ? saved.YoloTileColumns : null) ?? defaults.TileColumns, 1, 8),
-                TileRows = Math.Clamp(saved.YoloV8TileRows ?? (useLegacyActiveProfile ? saved.YoloTileRows : null) ?? defaults.TileRows, 1, 8),
-                TileOverlapRatio = Math.Clamp(saved.YoloV8TileOverlapRatio ?? (useLegacyActiveProfile ? saved.YoloTileOverlapRatio : null) ?? defaults.TileOverlapRatio, 0.0, 0.45),
-                DownscaleRatio = ResolveSavedYoloDownscaleRatio(saved.YoloV8DownscaleRatio, useLegacyActiveProfile ? saved.DownscaleRatio : null, defaults.DownscaleRatio),
-                DownscaleQuality = ResolveSavedYoloDownscaleQuality(
-                    saved.YoloV8DownscaleQuality,
-                    useLegacyActiveProfile ? saved.DownscaleQuality : null,
-                    defaults.DownscaleQuality),
-                AutoTrackingEnabled = saved.YoloV8AutoTrackingEnabled ?? (useLegacyActiveProfile ? (bool?)saved.AutoTrackingEnabled : null) ?? defaults.AutoTrackingEnabled,
-                AutoDetectEveryNFrames = Math.Max(1, saved.YoloV8AutoDetectEveryNFrames ?? (useLegacyActiveProfile ? (int?)saved.AutoDetectEveryNFrames : null) ?? defaults.AutoDetectEveryNFrames),
-                ParallelSessionCount = Math.Max(1, saved.YoloV8ParallelSessionCount ?? (useLegacyActiveProfile ? (int?)saved.ParallelSessionCount : null) ?? defaults.ParallelSessionCount)
-            };
-        }
-
-        private static double ResolveSavedYoloDownscaleRatio(double? savedValue, double? legacyValue, double defaultValue)
-        {
-            double value = savedValue ?? legacyValue ?? defaultValue;
-            return value is 1.0 or 0.75 or 0.5 or 0.33 ? value : defaultValue;
-        }
-
-        private static DownscaleQuality ResolveSavedYoloDownscaleQuality(
-            int? savedValue,
-            int? legacyValue,
-            DownscaleQuality defaultValue)
-        {
-            int value = savedValue ?? legacyValue ?? (int)defaultValue;
-            return Enum.IsDefined(typeof(DownscaleQuality), value)
-                ? (DownscaleQuality)value
-                : defaultValue;
-        }
-
         private static DownscaleQuality ResolveSavedDownscaleQuality(int savedValue)
         {
             return Enum.IsDefined(typeof(DownscaleQuality), savedValue)
@@ -1238,8 +1122,8 @@ namespace FaceShield.ViewModels.Pages
                 EnableYoloTemporalSmoothing = saved.EnableYoloTemporalSmoothing;
                 EnableYoloRiskCascade = saved.EnableYoloRiskCascade;
 
-                _yoloV8Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType);
-                _yolo5Profile = ReadSavedYoloProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType);
+                _yoloV8Profile = YoloProfilePersistencePolicy.ReadSavedProfile(saved, YoloFaceModelType.YoloV8Face, selectedYoloModelType, CreateDefaultYoloProfile(YoloFaceModelType.YoloV8Face));
+                _yolo5Profile = YoloProfilePersistencePolicy.ReadSavedProfile(saved, YoloFaceModelType.Yolo5Face, selectedYoloModelType, CreateDefaultYoloProfile(YoloFaceModelType.Yolo5Face));
                 if (yoloType != null)
                     SelectedYoloModelTypeOption = yoloType;
                 _activeYoloModelType = selectedYoloModelType;
@@ -1502,16 +1386,20 @@ namespace FaceShield.ViewModels.Pages
             AutoYoloModelPath = localPath;
         }
 
+        [RelayCommand(CanExecute = nameof(CanCancelYoloModelDownload))]
+        private void CancelYoloModelDownload()
+        {
+            _yoloDownloadCts?.Cancel();
+        }
+
         [RelayCommand(CanExecute = nameof(CanDownloadYoloModel))]
         private async Task DownloadYoloModelAsync()
         {
             var modelType = SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.Yolo5Face;
-            var downloadInfo = GetYoloModelDownloadInfo(modelType);
-            var downloadDirectory = GetYoloModelDownloadDirectory();
-            Directory.CreateDirectory(downloadDirectory);
+            var downloadInfo = YoloModelDownloadService.GetInfo(modelType);
+            string destinationPath = YoloModelDownloadService.GetDestinationPath(modelType);
 
-            var destinationPath = Path.Combine(downloadDirectory, downloadInfo.FileName);
-            if (File.Exists(destinationPath) && new FileInfo(destinationPath).Length > 0)
+            if (YoloModelDownloadService.IsDownloaded(modelType))
             {
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
@@ -1519,65 +1407,42 @@ namespace FaceShield.ViewModels.Pages
                 return;
             }
 
-            var tempPath = destinationPath + ".download";
+            _yoloDownloadCts?.Cancel();
+            _yoloDownloadCts?.Dispose();
+            var downloadCts = new CancellationTokenSource();
+            _yoloDownloadCts = downloadCts;
+
             IsYoloModelDownloading = true;
             YoloModelDownloadProgress = 0;
             YoloModelDownloadStatus = $"다운로드 시작: {downloadInfo.SourceLabel} ({downloadInfo.LicenseLabel})";
 
             try
             {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
+                var progress = new Progress<int>(value => YoloModelDownloadProgress = value);
+                destinationPath = await YoloModelDownloadService.DownloadAsync(
+                    modelType,
+                    progress,
+                    downloadCts.Token);
 
-                using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
-                request.Headers.UserAgent.ParseAdd("FaceShield/1.0");
-                using var response = await YoloModelDownloadHttpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    CancellationToken.None);
-                response.EnsureSuccessStatusCode();
-
-                var totalBytes = response.Content.Headers.ContentLength;
-                await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
-                await using var destination = new FileStream(
-                    tempPath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None,
-                    bufferSize: 1024 * 128,
-                    useAsync: true);
-
-                var buffer = new byte[1024 * 128];
-                long readBytes = 0;
-                while (true)
-                {
-                    int read = await source.ReadAsync(buffer, CancellationToken.None);
-                    if (read <= 0)
-                        break;
-
-                    await destination.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
-                    readBytes += read;
-                    if (totalBytes.HasValue && totalBytes.Value > 0)
-                        YoloModelDownloadProgress = Math.Clamp((int)Math.Round(readBytes * 100.0 / totalBytes.Value), 0, 99);
-                }
-
-                await destination.FlushAsync(CancellationToken.None);
-                destination.Close();
-
-                File.Move(tempPath, destinationPath, overwrite: true);
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
                 YoloModelDownloadStatus = $"다운로드 완료: {downloadInfo.FileName}";
             }
+            catch (OperationCanceledException)
+            {
+                YoloModelDownloadProgress = 0;
+                YoloModelDownloadStatus = $"다운로드 취소됨: {downloadInfo.FileName}";
+            }
             catch (Exception ex)
             {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-
                 YoloModelDownloadStatus = $"다운로드 실패: {ex.Message}";
             }
             finally
             {
+                if (ReferenceEquals(_yoloDownloadCts, downloadCts))
+                    _yoloDownloadCts = null;
+
+                downloadCts.Dispose();
                 IsYoloModelDownloading = false;
             }
         }
@@ -2108,7 +1973,7 @@ namespace FaceShield.ViewModels.Pages
         private static IEnumerable<string> EnumerateDefaultYoloModelDirectories()
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var downloadDirectory = GetYoloModelDownloadDirectory();
+            var downloadDirectory = YoloModelDownloadService.GetDownloadDirectory();
             if (seen.Add(downloadDirectory))
                 yield return downloadDirectory;
 
@@ -2124,34 +1989,6 @@ namespace FaceShield.ViewModels.Pages
                     current = Directory.GetParent(current)?.FullName;
                 }
             }
-        }
-
-        private static string GetYoloModelDownloadDirectory()
-        {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var root = string.IsNullOrWhiteSpace(localAppData)
-                ? Path.Combine(Path.GetTempPath(), "FaceShield")
-                : Path.Combine(localAppData, "FaceShield");
-
-            return Path.Combine(root, "Models", "Yolo");
-        }
-
-        private static YoloModelDownloadInfo GetYoloModelDownloadInfo(YoloFaceModelType modelType)
-        {
-            if (modelType == YoloFaceModelType.Yolo5Face)
-            {
-                return new YoloModelDownloadInfo(
-                    "YoloV5Face.onnx",
-                    "https://huggingface.co/hayashiLin/deepfacelivemodels/resolve/main/YoloV5Face.onnx?download=true",
-                    "Hugging Face hayashiLin/deepfacelivemodels",
-                    "GPL-3.0 표시");
-            }
-
-            return new YoloModelDownloadInfo(
-                "yolov8n-face-lindevs.onnx",
-                "https://github.com/lindevs/yolov8-face/releases/download/1.0.1/yolov8n-face-lindevs.onnx",
-                "GitHub lindevs/yolov8-face 1.0.1",
-                "MIT 표시 + YOLOv8 upstream license caveat");
         }
 
         private static string? NormalizeYoloModelPath(string? modelPath)
@@ -2391,6 +2228,8 @@ namespace FaceShield.ViewModels.Pages
 
         public void DisposeAllWorkspaces()
         {
+            _yoloDownloadCts?.Cancel();
+
             foreach (var workspace in _workspaceCache.Values.Distinct())
                 workspace.Dispose();
 
