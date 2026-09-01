@@ -33,6 +33,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private int _changeStamp;
     private bool _isPlaying;
     private CancellationTokenSource? _playbackCts;
+    private Task? _playbackTask;
     private int _playbackRunId;
     private int _currentFrameIndex = -1;
     private bool _maskDirty;
@@ -617,7 +618,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         int safeStart = Math.Clamp(startFrameIndex, 0, totalFrames - 1);
         _currentFrameIndex = safeStart;
 
-        _ = RunSequentialPlaybackAsync(
+        _playbackTask = RunSequentialPlaybackAsync(
             runId,
             videoPath,
             safeStart,
@@ -646,6 +647,45 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             catch { }
             _playbackCts.Dispose();
             _playbackCts = null;
+        }
+    }
+
+    public async Task StopPlaybackAndWaitAsync()
+    {
+        Task? playbackTask = null;
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            playbackTask = _playbackTask;
+            StopPlayback();
+        }
+        else
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                playbackTask = _playbackTask;
+                StopPlayback();
+            });
+        }
+
+        if (playbackTask == null)
+            return;
+
+        try
+        {
+            await playbackTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[FramePreview] playback shutdown completed with error: {ex.Message}");
+        }
+        finally
+        {
+            if (ReferenceEquals(_playbackTask, playbackTask))
+                _playbackTask = null;
         }
     }
 
