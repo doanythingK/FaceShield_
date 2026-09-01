@@ -33,7 +33,8 @@ public unsafe sealed class VideoExportService
         IProgress<ExportProgress>? progress = null,
         System.Threading.CancellationToken cancellationToken = default,
         string? runId = null,
-        bool allowHybridCopy = false)
+        bool allowHybridCopy = false,
+        bool allowOutputOverwrite = true)
     {
         var endToEndTimer = Stopwatch.StartNew();
         int attemptCount = 0;
@@ -116,7 +117,21 @@ public unsafe sealed class VideoExportService
 
             var outputCommitTimer = Stopwatch.StartNew();
             string commitMode;
-            if (File.Exists(finalOutputPath))
+            if (!allowOutputOverwrite)
+            {
+                try
+                {
+                    File.Move(stagedOutputPath, finalOutputPath, overwrite: false);
+                    commitMode = "move-no-overwrite";
+                }
+                catch (IOException ex) when (File.Exists(finalOutputPath))
+                {
+                    throw new IOException(
+                        $"내보내기 대상 파일이 작업 중 생성되어 덮어쓰기를 중단했습니다: {finalOutputPath}",
+                        ex);
+                }
+            }
+            else if (File.Exists(finalOutputPath))
             {
                 File.Replace(
                     stagedOutputPath,
