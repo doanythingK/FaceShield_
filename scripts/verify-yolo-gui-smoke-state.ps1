@@ -240,13 +240,16 @@ Assert-Match "workspace loads initial selected frame after session init on UI th
 Assert-Match "workspace state restores face rect masks" $stateText 'FaceMasks[\s\S]*SetFaceRects'
 Assert-Match "workspace state saves face rect masks" $stateText 'GetFaceMaskEntries\(\)[\s\S]*FaceMasks'
 Assert-Match "frame preview uses sequential playback reader" $framePreviewText 'RunSequentialPlaybackAsync[\s\S]*FfFrameExtractor\(videoPath\)[\s\S]*StartSequentialRead\(startFrameIndex\)[\s\S]*TryGetNextFrame\(ct,\s*out\s+var\s+frame,\s*out\s+int\s+frameIndex\)'
+Assert-Match "frame preview distinguishes decoder failure from eof" $framePreviewText 'SequentialDecodeError[\s\S]*SequentialReachedEndOfStream[\s\S]*onPlaybackFailed'
 Assert-Match "frame preview avoids exact-frame cancellation flood while playing" $framePreviewText 'if\s*\(_isPlaying\)[\s\S]*return;[\s\S]*int\s+stamp\s*=\s*Interlocked\.Increment\(ref\s+_changeStamp\)'
 Assert-Match "frame preview applies playback frames on UI thread" $framePreviewText 'Dispatcher\.UIThread\.InvokeAsync\(\(\)\s*=>[\s\S]*runId\s*!=\s*_playbackRunId[\s\S]*ApplyPlaybackFrame\(frame,\s*frameIndex\)[\s\S]*onFrameAdvanced\(frameIndex\)'
 Assert-Match "exact frame provider cancels gate and extraction without surfacing an exception" $exactFrameProviderText 'WaitAsync\(ct\)[\s\S]*catch\s*\(OperationCanceledException\)[\s\S]*return\s+null[\s\S]*Task\.Run\(\(\)\s*=>\s*_extractor\.GetFrameByIndex\(frameIndex,\s*ct\)\)'
 Assert-Match "timeline controller uses request ids instead of canceling every preview frame" $timelineControllerText '_exactRequestId[\s\S]*Interlocked\.Increment\(ref\s+_exactRequestId\)[\s\S]*Volatile\.Read\(ref\s+_exactRequestId\)'
-Assert-Match "video session defaults to lazy thumbnail preload" $videoSessionText 'eagerThumbnailCount\s*=\s*0[\s\S]*done\s*<\s*preloadLimit'
+Assert-Match "video session uses one lazy thumbnail provider" $videoSessionText 'TimelineThumbnailProvider[\s\S]*TimelineController\(ExactProvider,\s*_thumbsProvider\)'
 Assert-Match "timeline render avoids synchronous thumbnail decode" $timelineFrameStripText 'TryGetCachedThumbnail\(frame[\s\S]*RequestThumbnail\(provider,\s*frame\)'
 Assert-Match "timeline requests missing thumbnails off render path" $timelineFrameStripText 'private\s+void\s+RequestThumbnail[\s\S]*Task\.Run[\s\S]*provider\.GetThumbnail\(frame\)'
+Assert-Match "thumbnail provider bounds cache entries" $timelineThumbnailProviderText '_maxCacheEntries[\s\S]*TrimCacheIfNeeded'
+Assert-Match "thumbnail provider uses ordinal-safe scaled extractor" $timelineThumbnailProviderText 'GetFrameByIndexScaled\('
 Assert-Contains "thumbnail provider exposes cache-only lookup" $timelineThumbnailProviderText "TryGetCachedThumbnail"
 Assert-Match "tool panel supports manual mode" $toolPanelText "SetManual|EditMode\.Manual"
 Assert-Match "tool panel supports brush" $toolPanelText "SetBrush|EditMode\.Brush"
