@@ -683,8 +683,10 @@ namespace FaceShield.Services.Video
         }
 
         /// <summary>
-        /// Timeline-only thumbnail lookup. It seeks by presentation time from the
-        /// nearest keyframe instead of building the exact decoded-ordinal index.
+        /// Frame-ordinal thumbnail lookup. The ordinal is first mapped to its decoded
+        /// presentation timestamp, then the image is obtained by timestamp seek.
+        /// Dense timeline rendering should use the timestamp-based overload directly
+        /// so scrolling does not build the ordinal index for every thumbnail slot.
         /// </summary>
         public WriteableBitmap? GetTimelineThumbnailByFrameIndexScaled(
             int frameIndex,
