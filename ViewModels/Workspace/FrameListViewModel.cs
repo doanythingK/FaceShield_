@@ -4,6 +4,9 @@ using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Threading;
 
 namespace FaceShield.ViewModels.Workspace;
 
@@ -32,6 +35,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     private bool isPlaying;
+
+    [ObservableProperty]
+    private bool isPlaybackEnabled = true;
 
     [ObservableProperty]
     private bool showNoFaceIssues = true;
@@ -67,6 +73,8 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private TimelineThumbnailProvider? thumbnailProvider;
 
     private bool _disposed;
+    private CancellationTokenSource? _timelineNavigationCts;
+    private CancellationTokenSource? _selectedTimestampCts;
 
     // ─────────────────────────────
     // ScrollBar 파생 프로퍼티
@@ -216,8 +224,11 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     public void SetThumbnailProvider(TimelineThumbnailProvider? provider)
     {
+        CancelTimelineNavigation();
+        CancelSelectedTimestampResolution();
         ThumbnailProvider = provider;
         OnPropertyChanged(nameof(TimelineTimeText));
+        ResolveSelectedTimestampInBackground();
     }
 
     public void UpdateActualTotalFrames(int actualTotalFrames)
@@ -303,6 +314,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         SelectedFrameIndexChanged?.Invoke(value);
         OnPropertyChanged(nameof(FramePositionText));
         OnPropertyChanged(nameof(TimelineTimeText));
+        ResolveSelectedTimestampInBackground();
     }
 
     partial void OnNoFaceIssueFramesChanged(IReadOnlyList<int> value)
@@ -419,7 +431,159 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             return;
 
         double currentSeconds = FrameIndexToSeconds(SelectedFrameIndex);
-        SelectedFrameIndex = SecondsToFrameIndex(currentSeconds + seconds);
+        double targetSeconds = Math.Clamp(
+            currentSeconds + seconds,
+            0,
+            Math.Max(0, TotalDurationSeconds));
+        int fallbackIndex = SecondsToFrameIndex(targetSeconds);
+        var provider = ThumbnailProvider;
+        if (provider == null ||
+            provider.TryGetFrameIndexAtTimestamp(targetSeconds, out int cachedIndex))
+        {
+            SelectedFrameIndex = provider == null
+                ? fallbackIndex
+                : Math.Clamp(cachedIndex, 0, TotalFrames - 1);
+            return;
+        }
+
+        CancelTimelineNavigation();
+        var cts = new CancellationTokenSource();
+        _timelineNavigationCts = cts;
+        _ = ResolveTimelineNavigationAsync(
+            provider,
+            targetSeconds,
+            fallbackIndex,
+            cts);
+    }
+
+    private async Task ResolveTimelineNavigationAsync(
+        TimelineThumbnailProvider provider,
+        double targetSeconds,
+        int fallbackIndex,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            (bool resolved, int frameIndex) = await Task.Run(() =>
+            {
+                bool ok = provider.TryResolveFrameIndexAtTimestamp(
+                    targetSeconds,
+                    cts.Token,
+                    out int resolvedIndex);
+                return (ok, resolvedIndex);
+            }, cts.Token);
+
+            if (cts.IsCancellationRequested)
+                return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_disposed ||
+                    cts.IsCancellationRequested ||
+                    !ReferenceEquals(_timelineNavigationCts, cts) ||
+                    !ReferenceEquals(ThumbnailProvider, provider) ||
+                    TotalFrames <= 0)
+                {
+                    return;
+                }
+
+                SelectedFrameIndex = resolved
+                    ? Math.Clamp(frameIndex, 0, TotalFrames - 1)
+                    : Math.Clamp(fallbackIndex, 0, TotalFrames - 1);
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_timelineNavigationCts, cts))
+                _timelineNavigationCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void ResolveSelectedTimestampInBackground()
+    {
+        CancelSelectedTimestampResolution();
+
+        int frameIndex = SelectedFrameIndex;
+        var provider = ThumbnailProvider;
+        if (_disposed ||
+            provider == null ||
+            frameIndex < 0 ||
+            provider.TryGetFrameTimestampSeconds(frameIndex, out _))
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _selectedTimestampCts = cts;
+        _ = ResolveSelectedTimestampAsync(provider, frameIndex, cts);
+    }
+
+    private async Task ResolveSelectedTimestampAsync(
+        TimelineThumbnailProvider provider,
+        int frameIndex,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            bool resolved = await Task.Run(
+                () => provider.TryResolveFrameTimestampSeconds(
+                    frameIndex,
+                    cts.Token,
+                    out _),
+                cts.Token);
+
+            if (!resolved || cts.IsCancellationRequested)
+                return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_disposed ||
+                    cts.IsCancellationRequested ||
+                    !ReferenceEquals(_selectedTimestampCts, cts) ||
+                    !ReferenceEquals(ThumbnailProvider, provider) ||
+                    SelectedFrameIndex != frameIndex)
+                {
+                    return;
+                }
+
+                OnPropertyChanged(nameof(TimelineTimeText));
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_selectedTimestampCts, cts))
+                _selectedTimestampCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void CancelTimelineNavigation()
+    {
+        var cts = _timelineNavigationCts;
+        _timelineNavigationCts = null;
+        if (cts == null)
+            return;
+
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void CancelSelectedTimestampResolution()
+    {
+        var cts = _selectedTimestampCts;
+        _selectedTimestampCts = null;
+        if (cts == null)
+            return;
+
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     private void TogglePlay()
@@ -429,6 +593,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             StopPlay();
             return;
         }
+
+        if (!IsPlaybackEnabled)
+            return;
 
         NotifyPlaybackStarted();
     }
@@ -444,6 +611,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
+        CancelTimelineNavigation();
+        CancelSelectedTimestampResolution();
 
         // VideoSession owns the shared thumbnail provider and decoder.
         ThumbnailProvider = null;
