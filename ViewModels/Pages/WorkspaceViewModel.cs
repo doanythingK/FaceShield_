@@ -230,16 +230,37 @@ namespace FaceShield.ViewModels.Pages
 
         public async Task EnsureSessionInitializedAsync(IProgress<int>? loadProgress)
         {
-            if (_sessionInitialized)
+            if (_sessionInitialized || !TryBeginLifetimeOperation())
                 return;
 
-            var session = await Task.Run(() => new VideoSession(FrameList.VideoPath, progress: loadProgress));
-            FramePreview.InitializeSession(session);
-            FrameList.SetThumbnailProvider(session.ThumbnailProvider);
-            _sessionInitialized = true;
+            try
+            {
+                if (_sessionInitialized)
+                    return;
 
-            if (FrameList.SelectedFrameIndex >= 0)
-                FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+                var session = await Task.Run(
+                    () => new VideoSession(FrameList.VideoPath, progress: loadProgress));
+
+                lock (_lifetimeSync)
+                {
+                    if (_disposeRequested)
+                    {
+                        session.Dispose();
+                        return;
+                    }
+                }
+
+                FramePreview.InitializeSession(session);
+                FrameList.SetThumbnailProvider(session.ThumbnailProvider);
+                _sessionInitialized = true;
+
+                if (FrameList.SelectedFrameIndex >= 0)
+                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
         }
 
         private void InitializeSession(IProgress<int>? loadProgress)
