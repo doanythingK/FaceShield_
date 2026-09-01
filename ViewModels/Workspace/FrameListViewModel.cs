@@ -4,7 +4,6 @@ using FaceShield.Services.Video;
 using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace FaceShield.ViewModels.Workspace;
 
@@ -15,8 +14,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     // ─────────────────────────────
     // Timeline bind targets
     // ─────────────────────────────
-    [ObservableProperty]
-    private IReadOnlyList<FrameItemViewModel> items = Array.Empty<FrameItemViewModel>();
 
     [ObservableProperty]
     private int totalFrames;
@@ -74,16 +71,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     // ─────────────────────────────
     // ScrollBar 파생 프로퍼티
     // ─────────────────────────────
-    public double TotalDurationSeconds
-    {
-        get
-        {
-            if (Fps <= 0 || TotalFrames <= 0)
-                return 0;
-
-            return TotalFrames / Fps;
-        }
-    }
+    public double TotalDurationSeconds { get; private set; }
 
     // ─────────────────────────────
     // ctor
@@ -94,19 +82,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
         LoadVideoInfo(videoPath);
 
-        Items = Enumerable
-            .Range(0, TotalFrames)
-            .Select(i =>
-                new FrameItemViewModel(
-                    index: i,
-                    hasFace: true,
-                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
-            .ToArray();
-
-        ThumbnailProvider = new TimelineThumbnailProvider(
-            videoPath,
-            thumbWidth: 160,
-            thumbHeight: 90);
     }
 
     // ─────────────────────────────
@@ -163,13 +138,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 : (int)Math.Floor(durationSeconds * fpsValue);
             TotalFrames = Math.Max(frames, 0);
 
-            // 전체 영상 길이(초)
-            double totalDurationSec =
-                Fps > 0 && TotalFrames > 0
+            TotalDurationSeconds = durationSeconds > 0
+                ? durationSeconds
+                : Fps > 0 && TotalFrames > 0
                     ? TotalFrames / Fps
                     : 0;
+            OnPropertyChanged(nameof(TotalDurationSeconds));
 
-            // 🔑 초기에는 전체 영상이 한 화면에 보이도록
             SecondsPerScreen = Math.Max(0.1, TotalDurationSeconds);
 
             // 시작은 항상 0초
@@ -189,23 +164,69 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     // Timeline helper
     // ─────────────────────────────
     public double FrameIndexToSeconds(int frameIndex)
-        => frameIndex < 0 ? 0 : frameIndex / Fps;
+    {
+        if (frameIndex < 0 || TotalFrames <= 0)
+            return 0;
+
+        if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
+                frameIndex,
+                out double ptsSeconds) == true)
+        {
+            return Math.Clamp(
+                ptsSeconds,
+                0,
+                Math.Max(0, TotalDurationSeconds));
+        }
+
+        if (TotalFrames <= 1 || TotalDurationSeconds <= 0)
+            return 0;
+
+        return Math.Clamp(
+                frameIndex / (double)(TotalFrames - 1),
+                0,
+                1)
+            * TotalDurationSeconds;
+    }
+
+    public int SecondsToFrameIndex(double seconds)
+    {
+        if (TotalFrames <= 0)
+            return -1;
+
+        double clamped = Math.Clamp(
+            seconds,
+            0,
+            Math.Max(0, TotalDurationSeconds));
+        if (ThumbnailProvider?.TryGetFrameIndexAtTimestamp(
+                clamped,
+                out int ptsFrame) == true)
+        {
+            return Math.Clamp(ptsFrame, 0, TotalFrames - 1);
+        }
+
+        if (TotalFrames <= 1 || TotalDurationSeconds <= 0)
+            return 0;
+
+        return Math.Clamp(
+            (int)Math.Round(
+                clamped / TotalDurationSeconds * (TotalFrames - 1)),
+            0,
+            TotalFrames - 1);
+    }
+
+    public void SetThumbnailProvider(TimelineThumbnailProvider? provider)
+    {
+        ThumbnailProvider = provider;
+        OnPropertyChanged(nameof(TimelineTimeText));
+    }
 
     public void UpdateActualTotalFrames(int actualTotalFrames)
     {
         int normalized = Math.Max(0, actualTotalFrames);
-        if (normalized == TotalFrames && Items.Count == normalized)
+        if (normalized == TotalFrames)
             return;
 
         int selected = SelectedFrameIndex;
-        Items = Enumerable
-            .Range(0, normalized)
-            .Select(i =>
-                new FrameItemViewModel(
-                    index: i,
-                    hasFace: true,
-                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
-            .ToArray();
         TotalFrames = normalized;
         SelectedFrameIndex = normalized > 0
             ? Math.Clamp(selected, 0, normalized - 1)
@@ -218,7 +239,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         if (SecondsPerScreen <= 0) return;
 
         double maxStart =
-            Math.Max(0, FrameIndexToSeconds(TotalFrames) - SecondsPerScreen);
+            Math.Max(0, TotalDurationSeconds - SecondsPerScreen);
 
         if (ViewStartSeconds < 0)
             ViewStartSeconds = 0;
@@ -242,11 +263,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         get
         {
-            if (Fps <= 0 || TotalFrames <= 0 || SelectedFrameIndex < 0)
+            if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "--:-- / --:--";
 
-            var current = TimeSpan.FromSeconds(SelectedFrameIndex / Fps);
-            var total = TimeSpan.FromSeconds(TotalFrames / Fps);
+            var current = TimeSpan.FromSeconds(
+                FrameIndexToSeconds(SelectedFrameIndex));
+            var total = TimeSpan.FromSeconds(
+                Math.Max(0, TotalDurationSeconds));
             return $"{FormatTime(current)} / {FormatTime(total)}";
         }
     }
@@ -392,16 +415,11 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     private void MoveBySeconds(int seconds)
     {
-        if (Fps <= 0) return;
+        if (SelectedFrameIndex < 0 || TotalFrames <= 0)
+            return;
 
-        int deltaFrames = (int)Math.Round(seconds * Fps);
-
-        int next = Math.Clamp(
-            SelectedFrameIndex + deltaFrames,
-            0,
-            TotalFrames - 1);
-
-        SelectedFrameIndex = next;
+        double currentSeconds = FrameIndexToSeconds(SelectedFrameIndex);
+        SelectedFrameIndex = SecondsToFrameIndex(currentSeconds + seconds);
     }
 
     private void TogglePlay()
@@ -427,11 +445,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        if (ThumbnailProvider != null)
-        {
-            try { ThumbnailProvider.Dispose(); }
-            catch { }
-            ThumbnailProvider = null;
-        }
+        // VideoSession owns the shared thumbnail provider and decoder.
+        ThumbnailProvider = null;
     }
 }
