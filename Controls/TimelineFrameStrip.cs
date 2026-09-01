@@ -8,6 +8,7 @@ using FaceShield.ViewModels.Workspace;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 
@@ -15,15 +16,6 @@ namespace FaceShield.Controls
 {
     public class TimelineFrameStrip : Control
     {
-        public static readonly StyledProperty<IReadOnlyList<FrameItemViewModel>?> ItemsProperty =
-            AvaloniaProperty.Register<TimelineFrameStrip, IReadOnlyList<FrameItemViewModel>?>(nameof(Items));
-
-        public IReadOnlyList<FrameItemViewModel>? Items
-        {
-            get => GetValue(ItemsProperty);
-            set => SetValue(ItemsProperty, value);
-        }
-
         public static readonly StyledProperty<int> TotalFramesProperty =
             AvaloniaProperty.Register<TimelineFrameStrip, int>(nameof(TotalFrames), 0);
 
@@ -31,6 +23,17 @@ namespace FaceShield.Controls
         {
             get => GetValue(TotalFramesProperty);
             set => SetValue(TotalFramesProperty, value);
+        }
+
+        public static readonly StyledProperty<double> TotalDurationSecondsProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, double>(
+                nameof(TotalDurationSeconds),
+                0d);
+
+        public double TotalDurationSeconds
+        {
+            get => GetValue(TotalDurationSecondsProperty);
+            set => SetValue(TotalDurationSecondsProperty, value);
         }
 
         public static readonly StyledProperty<double> FpsProperty =
@@ -137,13 +140,17 @@ namespace FaceShield.Controls
 
         private int _hoverIndex = -1;
         private readonly object _pendingThumbnailSync = new();
-        private readonly HashSet<int> _pendingThumbnails = new();
+        private readonly HashSet<long> _pendingThumbnails = new();
+        private CancellationTokenSource _thumbnailRequestCts = new();
+        private TimelineThumbnailProvider? _thumbnailRequestProvider;
+        private double _thumbnailRequestStart = double.NaN;
+        private double _thumbnailRequestEnd = double.NaN;
 
         static TimelineFrameStrip()
         {
             AffectsRender<TimelineFrameStrip>(
-                ItemsProperty,
                 TotalFramesProperty,
+                TotalDurationSecondsProperty,
                 FpsProperty,
                 SelectedFrameIndexProperty,
                 SecondsPerScreenProperty,
@@ -253,8 +260,6 @@ namespace FaceShield.Controls
             if (w <= 1 || h <= 1) return;
 
             int totalFrames = ResolveTotalFrames();
-            double fps = Math.Max(1, Fps);
-
             double stripH = Math.Max(24, h - 22);
 
             // background
@@ -267,14 +272,14 @@ namespace FaceShield.Controls
             double endSec = startSec + spanSec;
 
             DrawGridLines(ctx, w, stripH, startSec, endSec);
-            DrawThumbnailsDense(ctx, w, stripH, startSec, endSec, fps, totalFrames);
-            DrawIssueMarkers(ctx, w, stripH, startSec, endSec, fps, totalFrames);
+            DrawThumbnailsDense(ctx, w, stripH, startSec, endSec, totalFrames);
+            DrawIssueMarkers(ctx, w, stripH, startSec, endSec, totalFrames);
             DrawAxis(ctx, w, stripH, startSec, endSec);
 
             // selected line
             if (SelectedFrameIndex >= 0 && SelectedFrameIndex < totalFrames)
             {
-                double selSec = SelectedFrameIndex / fps;
+                double selSec = FrameToSeconds(SelectedFrameIndex, totalFrames);
                 double x = (selSec - startSec) / Math.Max(0.0001, spanSec) * w;
                 ctx.DrawLine(new Pen(Brushes.Lime, 2), new Point(x, 0), new Point(x, stripH));
             }
@@ -282,7 +287,7 @@ namespace FaceShield.Controls
             // hover line
             if (_hoverIndex >= 0 && _hoverIndex < totalFrames)
             {
-                double hovSec = _hoverIndex / fps;
+                double hovSec = FrameToSeconds(_hoverIndex, totalFrames);
                 double x = (hovSec - startSec) / Math.Max(0.0001, spanSec) * w;
 
                 var pen = new Pen(new SolidColorBrush(Color.FromRgb(255, 200, 0)), 2);
@@ -299,12 +304,12 @@ namespace FaceShield.Controls
             double stripH,
             double startSec,
             double endSec,
-            double fps,
             int totalFrames)
         {
             var provider = ThumbnailProvider;
             if (provider == null) return;
 
+            EnsureThumbnailRequestScope(provider, startSec, endSec);
             double range = Math.Max(0.0001, endSec - startSec);
 
             // 화면에 보여줄 썸네일 개수 먼저 결정
@@ -323,15 +328,12 @@ namespace FaceShield.Controls
                 double t = Math.Clamp((x + thumbW * 0.5) / Math.Max(1, w), 0.0, 1.0);
                 double sec = startSec + range * t;
 
-                int frame = (int)Math.Floor(sec * fps);
-                frame = Math.Clamp(frame, 0, Math.Max(0, totalFrames - 1));
-
                 WriteableBitmap? bmp;
                 try
                 {
-                    if (!provider.TryGetCachedThumbnail(frame, out bmp))
+                    if (!provider.TryGetCachedThumbnailAtTime(sec, out bmp))
                     {
-                        RequestThumbnail(provider, frame);
+                        RequestThumbnail(provider, sec);
                         continue;
                     }
                 }
@@ -349,38 +351,82 @@ namespace FaceShield.Controls
             }
         }
 
-        private void RequestThumbnail(TimelineThumbnailProvider provider, int frame)
+        private void EnsureThumbnailRequestScope(
+            TimelineThumbnailProvider provider,
+            double startSec,
+            double endSec)
         {
+            CancellationTokenSource previous;
             lock (_pendingThumbnailSync)
             {
-                if (!_pendingThumbnails.Add(frame))
+                bool changed =
+                    !ReferenceEquals(_thumbnailRequestProvider, provider) ||
+                    !double.IsFinite(_thumbnailRequestStart) ||
+                    Math.Abs(_thumbnailRequestStart - startSec) > 0.001 ||
+                    Math.Abs(_thumbnailRequestEnd - endSec) > 0.001;
+                if (!changed)
                     return;
+
+                previous = _thumbnailRequestCts;
+                _thumbnailRequestCts = new CancellationTokenSource();
+                _thumbnailRequestProvider = provider;
+                _thumbnailRequestStart = startSec;
+                _thumbnailRequestEnd = endSec;
+                _pendingThumbnails.Clear();
+            }
+
+            previous.Cancel();
+            previous.Dispose();
+        }
+
+        private void RequestThumbnail(
+            TimelineThumbnailProvider provider,
+            double timestampSeconds)
+        {
+            long requestKey = Math.Max(
+                0,
+                (long)Math.Round(timestampSeconds * 1000.0));
+            CancellationToken token;
+            lock (_pendingThumbnailSync)
+            {
+                if (!_pendingThumbnails.Add(requestKey))
+                    return;
+
+                token = _thumbnailRequestCts.Token;
             }
 
             _ = Task.Run(() =>
                 {
                     try
                     {
-                        return provider.GetThumbnail(frame) != null;
+                        return provider.GetThumbnailAtTime(
+                            timestampSeconds,
+                            token) != null;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return false;
                     }
                     catch
                     {
                         return false;
                     }
-                })
+                }, token)
                 .ContinueWith(task =>
                 {
                     Dispatcher.UIThread.Post(() =>
                     {
                         lock (_pendingThumbnailSync)
-                        {
-                            _pendingThumbnails.Remove(frame);
-                        }
+                            _pendingThumbnails.Remove(requestKey);
 
-                        if (task.Status == TaskStatus.RanToCompletion && task.Result)
+                        if (!token.IsCancellationRequested &&
+                            task.Status == TaskStatus.RanToCompletion &&
+                            task.Result)
+                        {
                             InvalidateVisual();
+                        }
                     });
-                }, TaskScheduler.Default);
+                }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
         }
 
         private static void DrawGridLines(DrawingContext ctx, double w, double stripH, double startSec, double endSec)
@@ -405,14 +451,15 @@ namespace FaceShield.Controls
             double stripH,
             double startSec,
             double endSec,
-            double fps,
             int totalFrames)
         {
             double range = Math.Max(0.0001, endSec - startSec);
-            int startFrame = (int)Math.Floor(startSec * fps);
-            int endFrame = (int)Math.Ceiling(endSec * fps);
+            int startFrame = SecondsToFrameIndex(startSec, totalFrames);
+            int endFrame = SecondsToFrameIndex(endSec, totalFrames);
             startFrame = Math.Max(0, startFrame);
-            endFrame = Math.Min(totalFrames - 1, endFrame);
+            endFrame = Math.Min(
+                totalFrames - 1,
+                Math.Max(startFrame, endFrame));
             if (endFrame < startFrame)
                 return;
 
@@ -428,7 +475,6 @@ namespace FaceShield.Controls
                     NoFaceIssueFrames,
                     startSec,
                     range,
-                    fps,
                     w,
                     startFrame,
                     endFrame,
@@ -444,7 +490,6 @@ namespace FaceShield.Controls
                     LowConfidenceIssueFrames,
                     startSec,
                     range,
-                    fps,
                     w,
                     startFrame,
                     endFrame,
@@ -460,7 +505,6 @@ namespace FaceShield.Controls
                     FlickerIssueFrames,
                     startSec,
                     range,
-                    fps,
                     w,
                     startFrame,
                     endFrame,
@@ -470,7 +514,7 @@ namespace FaceShield.Controls
             }
         }
 
-        private static void DrawIssueMarkerSeries(
+        private void DrawIssueMarkerSeries(
             DrawingContext ctx,
             IReadOnlyList<int> frames,
             double startSec,
@@ -490,7 +534,7 @@ namespace FaceShield.Controls
                 if (frame > endFrame)
                     break;
 
-                double sec = frame / Math.Max(1, fps);
+                double sec = FrameToSeconds(frame, TotalFrames);
                 double x = (sec - startSec) / range * width;
                 if (x < -1 || x > width + 1)
                     continue;
@@ -565,21 +609,73 @@ namespace FaceShield.Controls
         }
 
         private int ResolveTotalFrames()
-        {
-            var items = Items;
-            if (items is { Count: > 0 })
-            {
-                int last = items[^1].Index;
-                return Math.Max(0, last + 1);
-            }
-            return Math.Max(0, TotalFrames);
-        }
-
-        private static double TotalDurationSec(int totalFrames, double fps)
-            => totalFrames <= 0 ? 0 : totalFrames / Math.Max(1, fps);
+            => Math.Max(0, TotalFrames);
 
         private double TotalDurationSec(int totalFrames)
-            => TotalDurationSec(totalFrames, Fps);
+        {
+            if (TotalDurationSeconds > 0 &&
+                double.IsFinite(TotalDurationSeconds))
+            {
+                return TotalDurationSeconds;
+            }
+
+            return totalFrames <= 0
+                ? 0
+                : totalFrames / Math.Max(1, Fps);
+        }
+
+        private double FrameToSeconds(int frameIndex, int totalFrames)
+        {
+            if (frameIndex < 0 || totalFrames <= 0)
+                return 0;
+
+            if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
+                    frameIndex,
+                    out double ptsSeconds) == true)
+            {
+                return Math.Clamp(
+                    ptsSeconds,
+                    0,
+                    Math.Max(0, TotalDurationSec(totalFrames)));
+            }
+
+            double totalSeconds = TotalDurationSec(totalFrames);
+            if (totalFrames <= 1 || totalSeconds <= 0)
+                return 0;
+
+            return Math.Clamp(
+                    frameIndex / (double)(totalFrames - 1),
+                    0,
+                    1)
+                * totalSeconds;
+        }
+
+        private int SecondsToFrameIndex(double seconds, int totalFrames)
+        {
+            if (totalFrames <= 0)
+                return -1;
+
+            double totalSeconds = TotalDurationSec(totalFrames);
+            double clamped = Math.Clamp(
+                seconds,
+                0,
+                Math.Max(0, totalSeconds));
+            if (ThumbnailProvider?.TryGetFrameIndexAtTimestamp(
+                    clamped,
+                    out int ptsFrame) == true)
+            {
+                return Math.Clamp(ptsFrame, 0, totalFrames - 1);
+            }
+
+            if (totalFrames <= 1 || totalSeconds <= 0)
+                return 0;
+
+            return Math.Clamp(
+                (int)Math.Round(
+                    clamped / totalSeconds * (totalFrames - 1)),
+                0,
+                totalFrames - 1);
+        }
 
         private static double ClampStart(double start, double span, double totalSec)
         {
@@ -592,10 +688,10 @@ namespace FaceShield.Controls
             double w = Math.Max(1, Bounds.Width);
             double t = Math.Clamp(x / w, 0.0, 1.0);
 
-            double sec = ViewStartSeconds + Math.Max(0.05, SecondsPerScreen) * t;
-            int idx = (int)Math.Floor(sec * Math.Max(1, Fps));
-
-            return Math.Clamp(idx, 0, Math.Max(0, totalFrames - 1));
+            double sec =
+                ViewStartSeconds +
+                Math.Max(0.05, SecondsPerScreen) * t;
+            return SecondsToFrameIndex(sec, totalFrames);
         }
     }
 }
