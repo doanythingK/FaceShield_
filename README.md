@@ -1,122 +1,146 @@
 # FaceShield
 
-FaceShield는 Windows와 macOS에서 동작하는 Avalonia 기반 영상 모자이크 편집기입니다. 자동 얼굴 검출, 프레임별 마스크 보정, 원본 해상도 기준 영상 내보내기를 지원합니다.
+FaceShield는 Windows와 macOS용 Avalonia 기반 영상 얼굴 모자이크 편집기입니다.
 
-자동 검출은 기본적으로 FaceONNX 경로를 사용하며, 선택적으로 YOLO Face ONNX를 사용할 수 있습니다. 검출 속도보다 화질·검출 연속성·출력 프레임 보존을 우선하는 구조이므로, 설정 변경 후에는 짧은 영상으로 결과를 먼저 확인하는 것을 권장합니다.
+자동 얼굴 검출, 프레임별 마스크 검토·수정, 자동 처리 재개, 원본 영상 특성을 가능한 범위에서 보존하는 FFmpeg 내보내기를 하나의 데스크톱 앱에서 제공합니다. 기본 검출기는 FaceONNX이며 YOLO Face ONNX를 선택적으로 사용할 수 있습니다.
+
+현재 운영 기준 브랜치는 `main`입니다.
+
+## 주요 기능
+
+- 영상 선택 후 자동 모자이크 또는 직접 편집
+- FaceONNX 자동 얼굴 검출
+- YOLO5Face / YOLOv8-Face ONNX 선택 지원
+- 자동 처리 모드: Raw / Tracked / Full / Legacy
+- 프레임별 얼굴 박스·마스크 저장
+- 문제 프레임 검토: 얼굴 없음, 낮은 신뢰도, 연속성 끊김
+- 브러시·지우개 기반 수동 마스크 보정
+- 자동 처리 취소 및 이후 재개
+- 최근 영상 및 워크스페이스 상태 복원
+- Windows DirectML / macOS CoreML 또는 CPU 실행 경로
+- FFmpeg 기반 원본 해상도 내보내기
+- 영상/오디오/색상/HDR/타임스탬프/프레임 무결성 검사
+- Windows/macOS self-contained 배포 workflow
 
 ## 지원 환경
 
-| 구분 | 지원 대상 | 비고 |
+| 구분 | 대상 | 현재 검증 범위 |
 | --- | --- | --- |
-| Windows | win-x64 | DirectML 및 Windows용 FFmpeg/ONNX native 파일 포함 |
-| macOS Apple Silicon | osx-arm64 | macOS 15 GitHub runner 및 Apple Silicon 배포 대상 |
-| macOS Intel | osx-x64 | macOS 15 Intel GitHub runner 및 Intel Mac 배포 대상 |
-| 개발 SDK | .NET 8 SDK | net8.0, Avalonia 11.3.9 |
+| Windows | x64 / `win-x64` | GitHub Actions Release build 및 Windows publish workflow |
+| macOS Apple Silicon | `osx-arm64` | GitHub Actions Release build 및 macOS app workflow |
+| macOS Intel | `osx-x64` | publish workflow 제공 |
+| Linux | 별도 지원 대상 아님 | 소스 일부가 컴파일될 수 있어도 배포/실행 검증 범위 밖 |
+| .NET | .NET 8 | `net8.0` |
+| UI | Avalonia 11.3.9 | Desktop |
+| FFmpeg binding | FFmpeg.AutoGen 8.0.0 | native FFmpeg 별도 포함 |
+| ONNX Runtime | Windows DirectML 1.23.0 / macOS·기타 CPU/CoreML 1.23.2 | RID별 패키지 분리 |
 
-macOS에서 소스 빌드하거나 native 라이브러리를 준비할 때는 Homebrew와 다음 패키지가 필요합니다.
+Windows와 macOS 모두 64비트 환경을 전제로 합니다.
 
-~~~bash
-brew install ffmpeg libomp srt
-~~~
+## 사용자 빠른 시작
 
-Windows와 macOS 모두 64비트 환경을 전제로 합니다. Linux에서 소스 컴파일이 될 수는 있지만, 현재 배포 대상과 native 실행 검증 범위에는 포함되지 않습니다.
+1. FaceShield를 실행합니다.
+2. 홈 화면에서 영상을 선택합니다.
+3. 모자이크 강도를 설정합니다.
+4. 자동 처리라면 **자동 모자이크**, 직접 수정 중심이라면 **직접 편집**으로 시작합니다.
+5. 자동 처리 완료 후 문제 프레임을 확인합니다.
+6. 필요한 프레임에서 브러시 또는 지우개로 마스크를 수정합니다.
+7. 저장을 실행해 최종 영상을 내보냅니다.
 
-## 설치 및 개발 실행
+기본 모자이크 강도는 28이며 UI 허용 범위는 6~40입니다.
 
-### 1. 저장소 준비
-
-~~~bash
-git clone https://github.com/doanythingK/FaceShield_.git
-cd FaceShield_
-dotnet restore FaceShield.sln
-~~~
-
-### 2. 개발 빌드
-
-~~~bash
-dotnet build FaceShield.sln
-~~~
-
-### 3. 실행
-
-~~~bash
-dotnet run --project FaceShield.csproj
-~~~
-
-Windows 개발 실행에서는 저장소의 FFmpeg/win-x64 DLL과 DirectML/ONNX native 파일을 사용합니다. macOS에서 직접 실행할 때는 현재 Mac 아키텍처에 맞는 FFmpeg dylib를 먼저 준비합니다.
-
-~~~bash
-# 현재 Mac 아키텍처 자동 감지
-bash scripts/prepare-ffmpeg-osx.sh
-
-# 또는 명시적으로 지정
-bash scripts/prepare-ffmpeg-osx.sh osx-arm64  # Apple Silicon
-bash scripts/prepare-ffmpeg-osx.sh osx-x64    # Intel
-
-dotnet run --project FaceShield.csproj
-~~~
-
-## 기본 사용법
-
-1. 홈 화면에서 영상 선택으로 입력 영상을 선택합니다.
-2. 모자이크 강도를 조절합니다. 기본값은 28이며 허용 범위는 6~40입니다.
-3. 자동 검출을 사용할 경우 자동 모자이크 시작, 직접 마스크를 만들 경우 직접 편집을 선택합니다.
-4. 워크스페이스에서 검출 결과와 문제 프레임을 확인합니다.
-5. 필요한 경우 브러시·지우개로 마스크를 보정하고 저장을 눌러 내보냅니다.
-
-### 자동 저장 체크박스
-
-완료되면 원본 영상 폴더에 저장은 자동 모자이크 완료 후 동작을 결정합니다.
-
-- 체크함: 자동 검출·후처리 후 원본 영상 폴더에 바로 _blur 출력 파일을 만들고 홈 화면에 남습니다.
-- 체크하지 않음: 자동 검출 결과를 저장한 뒤 워크스페이스로 이동하여 검토·보정할 수 있습니다. 최종 출력은 워크스페이스의 저장 버튼으로 실행합니다.
-
-자동 처리 중 취소하면 진행 상태와 마스크가 저장되며, 같은 영상을 다시 열 때 재개 여부를 선택할 수 있습니다. 설정과 최근 프로젝트도 자동 저장됩니다.
-
-### 워크스페이스
-
-- 검출 표시: 현재 프레임의 검출 결과 표시/숨김
-- 문제 프레임: 얼굴 없음, 신뢰도 낮음, 연속 끊김 목록 확인
-- 이전 이상 프레임 / 다음 이상 프레임: 검토 대상 프레임 이동
-- 브러시: 마스크 추가
-- 지우개: 마스크 제거
-- 되돌리기: 최근 편집 취소
-- 저장: 최종 영상 내보내기
-
-### 단축키
-
-- Q / E: 이전·다음 이상 프레임
-- ← / →: 한 프레임 이동
-- Shift + ← / →: 10프레임 이동
-- ↑ / ↓: 1초 이동
-- Home / End: 처음·끝 프레임
-- Space: 재생·정지
-
-출력 파일은 입력 영상과 같은 폴더에 <원본이름>_blur<확장자>로 생성됩니다. 같은 이름이 이미 있으면 덮어쓰기 또는 고유 이름 생성을 선택하는 대화상자가 표시됩니다. 영상 해상도는 입력 해상도를 기준으로 유지됩니다.
-
-## 자동 검출 설정
-
-홈 화면의 상세 설정에서 자동 검출기를 선택할 수 있습니다. 설정은 LocalApplicationData/FaceShield/state.json에 저장되어 다음 실행에도 복원됩니다.
-
-### 검출 모델
-
-- FaceONNX: 기본 검출 경로입니다. Windows에서는 DirectML을 시도하고, macOS에서는 ONNX Runtime의 CoreML 경로를 시도할 수 있으며 실패 시 CPU로 전환합니다.
-- YOLO Face ONNX: 아래 YOLO 모델을 선택하여 사용합니다. 모델 파일은 저장소에 포함하지 않습니다.
-
-### YOLO 모델 준비
-
-YOLO를 선택한 뒤 홈 화면의 YOLO 모델 다운로드를 사용하거나 찾기로 직접 .onnx 파일을 지정합니다. 다운로드 모델은 다음 논리 경로에 저장됩니다.
+출력 파일은 일반적으로 입력 파일과 같은 폴더에 다음 형식으로 생성됩니다.
 
 ~~~text
-<LocalApplicationData>/FaceShield/Models/Yolo/
+<원본이름>_blur<원본확장자>
 ~~~
 
-일반적인 실제 경로 예시는 다음과 같습니다.
+동일 이름의 파일이 이미 있으면 덮어쓰기 또는 고유 이름 생성을 선택할 수 있습니다.
 
-- Windows: %LOCALAPPDATA%/FaceShield/Models/Yolo
-- macOS: ~/Library/Application Support/FaceShield/Models/Yolo (OS/.NET 환경에 따라 달라질 수 있음)
+## 자동 처리와 수동 편집
 
-지원되는 기본 파일명은 다음과 같습니다.
+### 자동 모자이크
+
+자동 모자이크는 선택한 얼굴 검출기와 처리 모드로 영상을 순차 분석합니다.
+
+자동 처리 중 취소하면 처리된 상태와 마스크를 저장하고, 동일 영상을 다시 열었을 때 가능한 경우 이어서 진행할 수 있습니다. 자동 실행 설정이 달라졌거나 이전 실행의 증거가 불완전하면 안전을 위해 재시작할 수 있습니다.
+
+### 직접 편집
+
+직접 편집에서는 자동 검출 결과에 의존하지 않고 프레임별 마스크를 추가·삭제할 수 있습니다.
+
+워크스페이스의 주요 기능:
+
+- 검출 결과 표시/숨김
+- 브러시로 마스크 추가
+- 지우개로 마스크 삭제
+- 최근 편집 되돌리기
+- 얼굴 없음 문제 프레임
+- 낮은 신뢰도 문제 프레임
+- 연속성 끊김 문제 프레임
+- 이전/다음 이상 프레임 이동
+- 재생 및 프레임 탐색
+- 최종 영상 저장
+
+### 주요 단축키
+
+| 키 | 동작 |
+| --- | --- |
+| Q / E | 이전 / 다음 이상 프레임 |
+| ← / → | 1프레임 이동 |
+| Shift + ← / → | 10프레임 이동 |
+| ↑ / ↓ | 약 1초 이동 |
+| Home / End | 처음 / 마지막 프레임 |
+| Space | 재생 / 정지 |
+
+## 자동 검출기
+
+### 현재 UI에서 선택 가능한 검출기
+
+| 검출기 | 기본 여부 | 모델 준비 | 가속 |
+| --- | --- | --- | --- |
+| FaceONNX | 기본 | FaceONNX 패키지 경로 사용 | Windows DirectML 시도, macOS CoreML 시도, 실패 시 CPU |
+| YOLO Face ONNX | 선택 | YOLO ONNX 모델 필요 | Windows DirectML, macOS는 CoreML 옵션을 명시적으로 켠 경우 시도, 실패 시 CPU |
+
+현재 홈 화면과 명령줄의 일반 사용자 경로는 FaceONNX와 YOLO Face ONNX 두 가지입니다.
+
+코드 레벨의 `FaceDetectorFactory`에는 SCRFD ONNX와 YuNet ONNX 백엔드도 구현되어 있습니다. 다만 현재 홈 UI와 시작 옵션에는 노출되지 않으므로 일반 사용자용 기능으로 문서화하지 않습니다. 개발자가 직접 `FaceDetectorFactoryOptions`를 구성하는 경우에만 사용할 수 있습니다.
+
+### FaceONNX
+
+FaceONNX는 앱의 기본 검출 경로입니다.
+
+설정 가능한 항목:
+
+- Detection threshold
+- Confidence threshold
+- NMS threshold
+- ONNX Runtime 최적화
+- GPU 사용 시도
+- ONNX intra-op thread 수
+
+GPU 실행 공급자를 사용할 수 없거나 초기화에 실패하면 CPU 경로로 전환합니다.
+
+### YOLO Face ONNX
+
+지원 프로필:
+
+- YOLO5Face
+- YOLOv8-Face
+
+각 프로필은 모델 경로, objectness/confidence/NMS threshold, 입력 크기, 타일 검출, 축소 비율, tracking 간격, 병렬 세션 수를 별도로 저장합니다.
+
+기본 YOLO 입력 크기는 640이며 UI 입력 범위는 64~2048입니다.
+
+#### 모델 파일 준비
+
+YOLO를 선택한 다음 다음 중 하나를 사용합니다.
+
+- 홈 화면의 **YOLO 모델 다운로드**
+- **찾기** 버튼으로 로컬 `.onnx` 지정
+- 개발 환경의 `Models/Yolo/` 폴더에 지원 파일명으로 배치
+
+지원 기본 파일명:
 
 ~~~text
 YoloV5Face.onnx
@@ -127,230 +151,487 @@ yolov8m-face-lindevs.onnx
 yolov8l-face-lindevs.onnx
 ~~~
 
-내장 다운로드 출처와 라이선스 표시는 다음과 같습니다.
+앱에서 다운로드한 모델의 논리 저장 위치:
 
-| 모델 | 다운로드 출처 | 코드에 표시된 라이선스 안내 |
+~~~text
+<LocalApplicationData>/FaceShield/Models/Yolo/
+~~~
+
+대표적인 경로:
+
+- Windows: `%LOCALAPPDATA%\FaceShield\Models\Yolo`
+- macOS: 일반적으로 `~/Library/Application Support/FaceShield/Models/Yolo`
+
+내장 다운로드 대상:
+
+| 파일 | 출처 | 코드에 표시된 라이선스 안내 |
 | --- | --- | --- |
-| YoloV5Face.onnx | Hugging Face hayashiLin/deepfacelivemodels | GPL-3.0 표시 |
-| yolov8n-face-lindevs.onnx | GitHub lindevs/yolov8-face 1.0.1 | MIT 표시 및 YOLOv8 upstream caveat |
+| `YoloV5Face.onnx` | Hugging Face `hayashiLin/deepfacelivemodels` | GPL-3.0 표시 |
+| `yolov8n-face-lindevs.onnx` | GitHub `lindevs/yolov8-face` 1.0.1 | MIT 표시 + YOLOv8 upstream caveat |
 
-모델의 배포·상업적 사용 조건은 각 upstream 저장소와 모델 파일의 라이선스를 별도로 확인해야 합니다. 모델 가중치는 저장소에 커밋하지 않습니다.
+다운로드는 취소할 수 있으며, 부분 `.download` 파일은 실패/취소 시 정리합니다. 서버가 `Content-Length`를 제공하는 경우 실제 수신 크기와 비교하고, 0 byte 파일은 완료로 인정하지 않습니다.
 
-### 분석 모드
+현재 저장소에는 해당 모델들의 권위 있는 SHA-256 값이 고정되어 있지 않으므로 다운로드 후 cryptographic checksum pinning은 아직 수행하지 않습니다. 모델의 배포·상업적 사용 조건은 각 upstream 라이선스를 별도로 확인해야 합니다.
 
-| 모드 | 동작 |
+## 자동 분석 설정
+
+### 처리 모드
+
+| UI 이름 | 내부 모드 | 동작 |
+| --- | --- | --- |
+| 자동 안정화 (권장) | Tracked | 추적을 사용해 짧은 누락을 연결하되 전체 후처리는 강제하지 않음 |
+| 검출 결과 그대로 | Raw | 매 프레임 검출, 추적·보간·후처리 비활성 |
+| 전체 보정 | Full | 추적 및 후처리 모듈 사용 |
+| 이전 설정 호환 | Legacy | 이전 버전의 tracking/후처리 토글 조합 유지 |
+
+### 품질·속도 설정
+
+| 항목 | 선택값 / 기본 |
 | --- | --- |
-| 자동 안정화 (권장) | 짧은 검출 누락만 연결하며 전체 후처리는 사용하지 않음 |
-| 검출 결과 그대로 | 매 프레임 검출만 수행하고 추적·보간·후처리를 사용하지 않음 |
-| 전체 보정 | 추적과 후처리 모듈을 모두 사용 |
-| 이전 설정 호환 | 기존의 추적/후처리 체크박스 조합을 그대로 사용 |
+| 검출 해상도 | 100% / 75% / 50% / 33%, 기본 100% |
+| 축소 품질 | 빠름(최근접) / 균형(보간), 기본 균형 |
+| 검출 간격 | 1 / 2 / 3 / 5프레임 |
+| 병렬 세션 | 1~4, 기본 2 |
+| ONNX Runtime 최적화 | 기본 켜짐 |
+| GPU 사용 | Windows/macOS에서 초기 기본 켜짐 |
+| ONNX thread | 자동 또는 CPU 논리 코어 범위에서 선택 |
+| 자동 완료 후 저장 | 기본 켜짐 |
+| 모자이크 강도 | 기본 28, 범위 6~40 |
 
-### 품질·속도 옵션
+품질 우선 시작점:
 
-- 검출 해상도: 100% (원본), 75%, 50%, 33%
-- 축소 품질: 빠름(최근접) 또는 균형(보간)
-- 검출 간격: 1, 2, 3, 5프레임. 1은 매 프레임 검출입니다.
-- 병렬 세션: 1~4개, 기본값 2. 세션 수를 늘리면 속도가 빨라질 수 있지만 메모리 사용량과 발열이 증가할 수 있습니다.
-- ONNX Runtime 최적화: 기본 활성화
-- GPU 가속: Windows/macOS 첫 실행 기본값은 활성화되며, DirectML/CoreML을 사용할 수 없으면 CPU로 전환합니다.
-- ONNX 스레드: 자동 또는 시스템에서 제공하는 스레드 수
-- YOLO 입력 크기: 기본 640, UI 범위 64~2048
-- 타일 검출: 작은 얼굴을 위한 분할 검출. 기본적으로 꺼져 있으며, 활성화 시 타일 구성과 겹침 비율을 조정합니다.
+- 검출 해상도 100%
+- 균형(보간)
+- 검출 간격 1
+- 병렬 세션 2
+- ONNX Runtime 최적화 켜짐
 
-품질 우선 시작점은 100% (원본), 균형(보간), 검출 간격 1, 병렬 세션 2, ONNX Runtime 최적화 활성화입니다. 해상도 축소나 검출 간격 증가는 영상별로 누락·연속성에 영향을 줄 수 있으므로 결과를 확인한 뒤 적용해야 합니다.
+해상도를 낮추거나 검출 간격을 늘리면 속도는 빨라질 수 있지만 작은 얼굴과 짧은 등장 구간의 누락 가능성이 증가할 수 있습니다.
 
-### YOLO 후처리 및 실험 기능
+### 후처리 설정
 
-전체 보정 또는 이전 설정 호환 모드에서 다음 후처리 기능을 선택할 수 있습니다.
+현재 자동 처리에는 다음 옵션이 있습니다.
 
-- ROI 재검증
+- ROI 후처리
 - 약한 단일 오탐 제거
-- 짧은 누락 구간 보강
-- 장면 전환 잔상 정리
-- 시간축 흔들림 완화
+- 짧은 gap 보강
+- 장면 전환 carry 정리
+- 시간축 smoothing
+- YOLO risk cascade
 
-위험 프레임 FaceONNX 재검출은 YOLO 후보를 보수적으로 재검증하는 실험 기능입니다. YOLO CoreML (macOS)도 선택 기능이며 기본적으로 꺼져 있습니다. CoreML의 실제 품질·속도는 Mac 모델과 영상 특성에 따라 별도 확인이 필요합니다.
+YOLO risk cascade는 YOLO 위험 프레임을 FaceONNX 계열 보조 검출로 재검증하는 경로입니다. 실행 증거가 불완전하면 자동 내보내기 gate가 실패할 수 있습니다.
+
+## GPU / 실행 공급자
+
+### Windows
+
+- ONNX Runtime DirectML 패키지 사용
+- `onnxruntime.dll`
+- `onnxruntime_providers_shared.dll`
+- `DirectML.dll`
+
+필요한 native DLL은 NuGet 또는 저장소의 fallback native 파일에서 publish 디렉터리로 복사됩니다.
+
+### macOS
+
+- CPU ONNX Runtime 기본 사용 가능
+- FaceONNX는 GPU 옵션 사용 시 CoreML provider를 시도할 수 있음
+- YOLO는 **YOLO CoreML** 옵션을 켠 경우에만 CoreML provider 시도
+- CoreML 사용 불가 시 CPU 경로 사용
+- OpenMP가 필요한 native 경로를 위해 `libomp` 사용
+
+실제 GPU 사용 여부는 드라이버, ONNX Runtime provider, 모델 호환성에 따라 달라질 수 있습니다.
+
+## 상태 저장과 복구
+
+FaceShield는 `Environment.SpecialFolder.LocalApplicationData` 아래의 `FaceShield` 디렉터리를 사용합니다.
+
+~~~text
+FaceShield/
+├─ state.json
+├─ state.json.bak
+├─ Models/
+│  └─ Yolo/
+├─ workspaces/
+│  └─ <video-path-hash>/
+└─ Logs/
+~~~
+
+저장 대상:
+
+- 최근 영상
+- 자동 분석 설정
+- YOLO v5/v8 개별 프로필
+- 현재 워크스페이스 위치
+- 프레임별 얼굴/마스크 정보
+- 자동 처리 resume 상태
+- 자동 내보내기 gate 상태
+
+`state.json` 저장은 temp 파일과 flush를 사용하고 기존 상태를 `state.json.bak`으로 보존합니다. 기본 상태 파일이 손상되면 backup 로드를 시도합니다.
+
+워크스페이스 데이터는 generation 기반 디렉터리를 사용합니다. 삭제할 때는 primary state와 backup이 모두 해당 workspace를 더 이상 참조하지 않는 상태가 된 뒤 실제 디렉터리를 제거합니다. backup 동기화에 실패하면 데이터 손실보다 orphan 디렉터리를 남기는 쪽을 선택합니다.
+
+## 내보내기
+
+FaceShield 내보내기는 FFmpeg 기반입니다.
+
+주요 정책:
+
+- 입력 해상도 유지
+- 프레임별 마스크를 원본 영상 프레임에 적용
+- 영상 프레임 수와 인코더 출력 coverage 검사
+- PTS/DTS 순서 및 누락 검사
+- 오디오 stream copy 또는 필요한 경우 AAC transcode
+- presentation/container metadata 복사
+- 색 공간, color range, chroma location 보존 검사
+- static HDR mastering/CLL metadata 보존 가능한 경로 검사
+- 출력 완료 전 trailer 및 파일 close 검증
+- staging 파일에 먼저 기록 후 성공 시 최종 경로 확정
+
+영상 품질을 조용히 떨어뜨리는 것보다 내보내기를 중단하는 정책을 우선합니다.
+
+### 현재 의도적으로 중단하는 대표 입력
+
+다음 입력은 원본 속성을 안전하게 보존할 수 없다고 판단되면 내보내기를 중단할 수 있습니다.
+
+- 인터레이스 영상
+- 원본 그대로 보존할 수 없는 dynamic HDR metadata
+- 프로그램 단위 스트림 구성
+- IAMF 등 지원되지 않는 stream group 구조
+- 영상 도중 해상도 또는 픽셀 형식이 변경되는 경우
+- frame/packet coverage 손실
+- 유효하지 않은 PTS/DTS 순서
+
+현재 hybrid copy window 구현은 코드에 존재하지만 production 정책에서는 비활성화되어 있으며 안전한 full encode 경로가 기본입니다.
+
+## 개발 환경
+
+### 저장소 받기
+
+~~~bash
+git clone https://github.com/doanythingK/FaceShield_.git
+cd FaceShield_
+git switch main
+~~~
+
+### 필수 SDK
+
+.NET 8 SDK가 필요합니다.
+
+~~~bash
+dotnet --info
+dotnet restore FaceShield.sln
+dotnet build FaceShield.sln
+~~~
+
+별도의 테스트 `.csproj`는 현재 없습니다. 현재 자동 Quality Gate는 conventional unit test가 아니라 Windows/macOS Release **컴파일·빌드 검증**입니다.
+
+### Windows 개발 실행
+
+Windows에서는 저장소의 FFmpeg bundle과 DirectML/ONNX native DLL을 사용합니다.
+
+~~~powershell
+dotnet restore FaceShield.csproj -r win-x64
+dotnet build FaceShield.csproj -c Debug -r win-x64
+dotnet run --project FaceShield.csproj
+~~~
+
+필요한 경우 FFmpeg bundle을 풉니다.
+
+~~~powershell
+New-Item -ItemType Directory -Force FFmpeg/win-x64 | Out-Null
+tar -xzf FFmpeg/win-x64-binaries.tar.gz -C FFmpeg/win-x64
+~~~
+
+### macOS 개발 실행
+
+Homebrew 의존성:
+
+~~~bash
+brew install ffmpeg libomp srt
+~~~
+
+현재 Mac 아키텍처에 맞게 FFmpeg dylib를 준비합니다.
+
+~~~bash
+bash scripts/prepare-ffmpeg-osx.sh
+
+# 명시 지정
+bash scripts/prepare-ffmpeg-osx.sh osx-arm64
+bash scripts/prepare-ffmpeg-osx.sh osx-x64
+~~~
+
+그 다음 실행합니다.
+
+~~~bash
+dotnet restore FaceShield.csproj
+dotnet build FaceShield.csproj
+dotnet run --project FaceShield.csproj
+~~~
+
+## 주요 NuGet 패키지
+
+| 패키지 | 버전 |
+| --- | --- |
+| Avalonia | 11.3.9 |
+| Avalonia.Desktop | 11.3.9 |
+| CommunityToolkit.Mvvm | 8.2.1 |
+| FaceONNX | 4.1.1.3 |
+| FaceONNX.Addons | 4.1.1.3 |
+| FFmpeg.AutoGen | 8.0.0 |
+| Microsoft.ML.OnnxRuntime | 1.23.2 |
+| Microsoft.ML.OnnxRuntime.DirectML | 1.23.0 |
+| Microsoft.AI.DirectML | 1.15.4 |
+| SixLabors.ImageSharp | 3.1.12 |
+
+## 프로젝트 구조
+
+~~~text
+FaceShield_
+├─ ViewModels/
+│  └─ Pages/
+│     ├─ HomePageViewModel.cs
+│     └─ WorkspaceViewModel.cs
+├─ Views/
+│  └─ Pages/
+├─ Services/
+│  ├─ Analysis/          # 자동 검출, tracking, post-process
+│  ├─ FaceDetection/     # detector backend와 ONNX 실행
+│  ├─ Models/            # YOLO 모델 다운로드/프로필
+│  ├─ Video/             # decode, timeline, mask, export
+│  └─ Workspace/         # 상태 저장, export gate, run signature
+├─ Models/
+├─ FFmpeg/
+├─ Native/
+├─ scripts/
+├─ .github/workflows/
+├─ FaceShield.csproj
+└─ FaceShield.sln
+~~~
+
+Video export는 큰 단일 서비스에 모든 정책을 두지 않고 timing, HDR, audio transcode, encoder selection/quality, packet integrity, frame processing, presentation metadata 등의 정책 클래스로 분리되어 있습니다.
 
 ## 명령줄 시작 옵션
 
-GUI를 열 때 영상·검출기·워크스페이스 모드를 미리 지정할 수 있습니다.
+GUI 실행 시 일부 시작 상태를 지정할 수 있습니다.
 
 ~~~bash
-dotnet run --project FaceShield.csproj -- \
-  --video /absolute/path/input.mp4 \
-  --detector yolo \
-  --yolo-model-type yolov8 \
-  --yolo-model /absolute/path/yolov8n-face-lindevs.onnx \
-  --open-auto \
-  --no-auto-export \
-  --auto-processing-mode tracked \
-  --frame 12
+dotnet run --project FaceShield.csproj --   --video /absolute/path/input.mp4   --detector faceonnx   --open-auto   --no-auto-export   --auto-processing-mode tracked   --frame 12
+~~~
+
+YOLO 예시:
+
+~~~bash
+dotnet run --project FaceShield.csproj --   --video /absolute/path/input.mp4   --detector yolo   --yolo-model-type yolov8   --yolo-model /absolute/path/model.onnx   --open-auto
 ~~~
 
 지원 옵션:
 
 | 옵션 | 설명 |
 | --- | --- |
-| --video <path> | 입력 영상 지정 |
-| --detector faceonnx\|yolo | 검출기 선택 |
-| --yolo-model-type yolo5\|yolov8 | YOLO 모델 종류 |
-| --yolo-model <path> | YOLO ONNX 파일 지정 |
-| --open-manual / --open-auto | 시작 시 워크스페이스 모드 지정 |
-| --auto-export / --no-auto-export | 자동 완료 후 즉시 내보내기 여부 |
-| --auto-processing-mode legacy\|raw\|tracked\|full | 자동 분석 모드 |
-| --yolo-risk-cascade / --no-yolo-risk-cascade | 위험 프레임 FaceONNX 재검증 토글 |
-| --frame <index> | 워크스페이스 시작 프레임(0부터 시작) |
+| `--video <path>` | 입력 영상 |
+| `--detector faceonnx\|yolo` | 시작 검출기 |
+| `--yolo-model-type yolo5\|yolov8` | YOLO 모델 프로필 |
+| `--yolo-model <path>` | YOLO ONNX 모델 |
+| `--open-manual` | 수동 워크스페이스 |
+| `--open-auto` | 자동 워크스페이스 |
+| `--auto-export` | 자동 처리 후 저장 |
+| `--no-auto-export` | 자동 처리 후 워크스페이스 검토 |
+| `--auto-processing-mode legacy\|raw\|tracked\|full` | 자동 처리 모드 |
+| `--yolo-risk-cascade` | YOLO risk cascade 켜기 |
+| `--no-yolo-risk-cascade` | YOLO risk cascade 끄기 |
+| `--frame <index>` | 시작 프레임, 0부터 시작 |
 
-검증용 --yolo-smoke 프리셋은 저장소 내부의 테스트 영상과 로컬 모델 경로가 존재할 때만 사용할 수 있습니다.
+`--yolo-smoke`는 저장소 내부 검증용 경로가 실제로 존재할 때만 유효한 개발 옵션입니다.
 
-## 배포 빌드
+현재 CLI parser는 SCRFD/YuNet 선택 문자열을 제공하지 않습니다.
+
+## Release 빌드
 
 ### Windows x64
-
-저장소에 포함된 FFmpeg 압축 번들을 먼저 풀고 self-contained publish를 실행합니다.
 
 ~~~powershell
 New-Item -ItemType Directory -Force FFmpeg/win-x64 | Out-Null
 tar -xzf FFmpeg/win-x64-binaries.tar.gz -C FFmpeg/win-x64
-dotnet restore FaceShield.sln
+
+dotnet restore FaceShield.csproj -r win-x64
 dotnet publish FaceShield.csproj -c Release -r win-x64 --self-contained true
-powershell -ExecutionPolicy Bypass -File scripts/verify-native-publish.ps1 -RuntimeIdentifier win-x64 -PublishDir bin/Release/net8.0/win-x64/publish
 ~~~
 
-주요 출력 경로는 bin/Release/net8.0/win-x64/publish이며 FaceShield.exe, FFmpeg DLL, onnxruntime.dll, DirectML.dll 등이 포함되어야 합니다.
+출력:
 
-### macOS Apple Silicon / Intel
+~~~text
+bin/Release/net8.0/win-x64/publish/
+~~~
+
+publish에는 `FaceShield.exe`, FFmpeg DLL, ONNX Runtime, DirectML native 파일이 함께 있어야 합니다.
+
+### macOS Apple Silicon
 
 ~~~bash
 brew install ffmpeg libomp srt
-
-# Apple Silicon
 bash scripts/prepare-ffmpeg-osx.sh osx-arm64
 dotnet publish FaceShield.csproj -c Release -r osx-arm64 --self-contained true
+~~~
 
-# Intel
+### macOS Intel
+
+~~~bash
+brew install ffmpeg libomp srt
 bash scripts/prepare-ffmpeg-osx.sh osx-x64
 dotnet publish FaceShield.csproj -c Release -r osx-x64 --self-contained true
 ~~~
 
-macOS publish 결과는 bin/Release/net8.0/<rid>/publish에 생성됩니다. native dylib가 별도 파일로 배치되므로 macOS publish에서는 single-file 설정을 사용하지 않습니다. scripts/verify-native-publish.ps1로 libonnxruntime.dylib와 FFmpeg dylib를 검사할 수 있습니다.
+macOS publish 결과는 다음 경로입니다.
 
-.app 생성, dylib 수집, ad-hoc 서명, ZIP 패키징은 GitHub Actions의 Build macOS App workflow를 사용하는 방법이 가장 간단합니다.
+~~~text
+bin/Release/net8.0/<rid>/publish/
+~~~
 
-## GitHub Actions 수동 빌드
+macOS는 native dylib 배치를 위해 single-file publish를 사용하지 않습니다.
 
-현재 workflow는 자동 push/PR 실행이 아니라 workflow_dispatch 수동 실행만 사용합니다.
+## GitHub Actions
 
-1. GitHub 저장소의 Actions 탭으로 이동합니다.
-2. Build Windows App 또는 Build macOS App을 선택합니다.
-3. Run workflow에서 대상 브랜치를 선택하고 실행합니다.
-4. 완료 후 workflow의 Artifacts에서 결과 ZIP을 다운로드합니다.
+### Hardening Quality Gate
 
-macOS workflow는 다음 두 작업을 병렬로 실행합니다.
+`.github/workflows/quality-gate.yml`
 
-- osx-arm64 (macos-15): FaceShield-osx-arm64
-- osx-x64 (macos-15-intel): FaceShield-osx-x64
+자동 실행:
 
-Windows workflow는 windows-latest에서 win-x64 self-contained publish와 native DLL 검사를 수행하고 FaceShield-win-x64 artifact를 업로드합니다.
+- `main` push
+- `hardening/**` push
+- `main` 대상 pull request
 
-자동 push/PR 빌드가 필요하지 않은 저장소 운영 정책을 유지하므로, 코드 push만으로 workflow가 실행되지는 않습니다.
+검증 항목:
 
-## 배포본 설치
+- Windows `win-x64` Release restore/build
+- macOS `osx-arm64` Release restore/build
 
-현재 공식 workflow가 제공하는 배포 형식은 ZIP입니다. MSI·DMG 설치 프로그램은 제공하지 않습니다.
+이 workflow는 현재 `dotnet test`를 실행하지 않습니다.
+
+### Build Windows App
+
+`.github/workflows/windows-build.yml`
+
+`workflow_dispatch` 수동 실행입니다.
+
+- `win-x64` self-contained publish
+- FFmpeg / ONNX Runtime / DirectML native 파일 검사
+- `FaceShield-win-x64` artifact 생성
+
+### Build macOS App
+
+`.github/workflows/macos-build.yml`
+
+`workflow_dispatch` 수동 실행입니다.
+
+- `osx-arm64` on `macos-15`
+- `osx-x64` on `macos-15-intel`
+- Homebrew FFmpeg/libomp/srt 설치
+- `.app` bundle 생성
+- dylib 수집
+- ad-hoc codesign
+- ZIP artifact 업로드
+
+## 배포본 실행
 
 ### Windows
 
-1. Actions artifact에서 FaceShield-win-x64 ZIP을 다운로드합니다.
-2. 원하는 폴더에 압축을 해제합니다.
-3. 압축 해제 폴더의 FaceShield.exe를 실행합니다.
-
-압축 파일에는 self-contained .NET 실행 파일과 FFmpeg, ONNX Runtime, DirectML native 파일이 함께 포함되어야 합니다. DLL을 실행 파일과 다른 폴더로 이동하면 시작 또는 영상 처리가 실패할 수 있습니다.
+1. `FaceShield-win-x64` artifact ZIP을 풉니다.
+2. native DLL을 이동하거나 삭제하지 않습니다.
+3. `FaceShield.exe`를 실행합니다.
 
 ### macOS
 
-1. Mac CPU에 맞는 FaceShield-osx-arm64 또는 FaceShield-osx-x64 artifact를 다운로드합니다.
-2. 압축을 해제하여 FaceShield.app를 응용 프로그램 폴더 등 원하는 위치로 이동합니다.
-3. Gatekeeper가 차단하면 아래 macOS 서명 절차를 실행합니다.
-
-## macOS 앱 실행 및 서명
-
-GitHub Actions에서 받은 ZIP을 압축 해제한 뒤 FaceShield.app를 실행합니다. 서명되지 않은 앱을 macOS Gatekeeper가 차단하면 ZIP 안의 macos-sign-local.command를 실행합니다.
+1. CPU에 맞는 `FaceShield-osx-arm64` 또는 `FaceShield-osx-x64` ZIP을 풉니다.
+2. `FaceShield.app`을 원하는 위치로 이동합니다.
+3. Gatekeeper가 차단하면 ZIP에 포함된 `macos-sign-local.command`를 사용할 수 있습니다.
 
 ~~~bash
 bash macos-sign-local.command /path/to/FaceShield.app
 ~~~
 
-이 스크립트는 quarantine 속성을 제거하고 ad-hoc 서명을 적용합니다. 실행 로그는 macos-sign-local.log에 기록됩니다.
-
-앱 시작 실패 원인을 확인하려면 다음 스크립트를 사용합니다.
+시작 로그:
 
 ~~~bash
 bash macos-run-log.command /path/to/FaceShield.app
 ~~~
 
-실행 로그는 macos-run.log에 기록됩니다. libomp.dylib 또는 ONNX Runtime dylib 오류가 표시되면 다음을 확인합니다.
+## 로그와 문제 진단
+
+예기치 않은 시작 오류는 LocalApplicationData 아래 `FaceShield/crash.log`에 기록될 수 있습니다.
+
+run metrics는 `FaceShield/Logs/` 아래에 기록됩니다. 내보내기 문제를 확인할 때 다음 지표가 유용합니다.
+
+- `droppedVideoPackets`
+- `videoFrameDropCount`
+- `outputFrames`
+- `outputPackets`
+- `hybridCopyFallbackReason`
+- `packetLossFallbackReason`
+- scene cut / gap fill 관련 지표
+
+로그에는 입력 파일 경로 등 개인 정보가 포함될 수 있으므로 외부 공유 전에 확인하십시오.
+
+## 검증 스크립트
+
+`scripts/`에는 export, HDR, VFR, container, mask, tracking, YOLO 품질 검토 등을 위한 PowerShell/bash 검증 스크립트가 있습니다.
+
+기본 소스 검증:
 
 ~~~bash
-brew install libomp
-~~~
-
-## 상태 파일과 로그
-
-Environment.SpecialFolder.LocalApplicationData 아래에 다음 데이터가 저장됩니다.
-
-~~~text
-FaceShield/
-├─ state.json                 # 최근 영상·자동 설정·워크스페이스 메타데이터
-├─ Models/Yolo/               # 앱에서 다운로드한 YOLO 모델
-├─ workspaces/<path-hash>/    # 프레임 마스크와 자동 처리 재개 상태
-└─ Logs/
-   └─ run-metrics-<runId>.log # 자동 검출·내보내기·품질 게이트 지표
-~~~
-
-예기치 않은 시작 오류는 FaceShield/crash.log에 기록됩니다. 로그에서 다음 항목을 확인하면 프레임 누락과 내보내기 문제를 구분하는 데 도움이 됩니다.
-
-- droppedVideoPackets
-- videoFrameDropCount
-- outputFrames, outputPackets
-- hybridCopyFallbackReason, packetLossFallbackReason
-- sampleShortGaps, samplePerFaceShortGaps, sampleMissRecovery
-- sceneCut 및 gapFill 관련 지표
-
-로그와 영상에는 입력 파일 경로가 포함될 수 있으므로 외부 공유 전에 경로와 개인정보를 확인합니다.
-
-## 검증 명령
-
-최소 검증:
-
-~~~bash
-dotnet restore FaceShield.sln
-dotnet build FaceShield.sln
-bash -n scripts/prepare-ffmpeg-osx.sh scripts/collect-macos-dylibs.sh
+dotnet restore FaceShield.csproj
+dotnet build FaceShield.csproj -c Release
 git diff --check
 ~~~
 
-native publish 검증:
+RID별 Quality Gate와 동일한 형태:
 
-~~~powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify-native-publish.ps1 -RuntimeIdentifier win-x64
-# macOS에서는 해당 RID를 사용
-pwsh -File scripts/verify-native-publish.ps1 -RuntimeIdentifier osx-arm64
+~~~bash
+dotnet restore FaceShield.csproj -r osx-arm64
+dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
 ~~~
 
-빌드·publish 성공만으로 실제 macOS 앱 시작, CoreML/DirectML 로드, 영상 품질, 재생 호환성까지 보증할 수는 없습니다. 변경 후에는 짧은 실제 영상을 열어 자동 검출, 워크스페이스 보정, 내보내기를 확인하고 다음을 점검합니다.
+Windows:
 
-- 입력/출력 프레임 수 동일
-- 평균 FPS와 재생시간 변화 없음
-- droppedVideoPackets=0
-- 출력 프레임 또는 FPS 감소 없음
-- 마지막 프레임 포함 전체 구간에서 마스크 누락·잔상 없음
+~~~powershell
+dotnet restore FaceShield.csproj -r win-x64
+dotnet build FaceShield.csproj -c Release -r win-x64 --no-restore -p:ContinuousIntegrationBuild=true
+~~~
+
+native publish 검증에는 `scripts/verify-native-publish.ps1`을 사용할 수 있습니다.
+
+## 현재 검증 수준과 한계
+
+현재 GitHub Quality Gate가 확인하는 것은 **컴파일/Release build 성공**입니다.
+
+다음은 별도 검증이 필요합니다.
+
+- 실제 Windows/macOS GUI 시작
+- DirectML/CoreML provider 실제 로드
+- 긴 영상의 메모리 사용
+- 다양한 컨테이너/코덱 재생 호환성
+- 실제 얼굴 검출 정확도
+- 작은 얼굴, 측면 얼굴, 가림, 조명 변화에 대한 recall
+- 내보낸 결과의 시각적 품질
+
+특히 얼굴 검출 정확도 수치는 라벨된 ground-truth 영상 데이터셋 없이 신뢰할 수 있게 산출할 수 없습니다. 저장소의 스크립트나 build PASS만으로 실제 accuracy를 주장하지 않습니다.
 
 ## 관련 문서
 
-- Models/Yolo/README.md: 저장소 내 YOLO 모델 파일명과 배치 규칙
-- YOLO_GUI_SMOKE_CHECKLIST.md: YOLO GUI 수동 smoke 절차
-- YOLO_PROBLEM_SPAN_VERIFICATION.md: 문제 구간 검증 기준
-- AUTO_MOSAIC_QUALITY_SPEED_PLAN.md: 자동 모자이크 품질·속도 설계 기록
-- YOLO_LOW_CONFIDENCE_ROI_CASCADE_PLAN.md: YOLO 저신뢰도 후보 좌표 ROI 보조 검증 설계안
-- FUTURE_FEATURE_ROADMAP.md: 예정 기능
+- `Models/Yolo/README.md` — 로컬 YOLO 모델 파일 규칙
+- `AUTO_MOSAIC_QUALITY_SPEED_PLAN.md` — 자동 모자이크 품질/속도 설계
+- `PERFORMANCE_REFACTOR_NOTES.md` — 성능 리팩터링 기록
+- `scripts/VIDEO_EXPORT_QUALITY_GATE.md` — 영상 내보내기 검증 기준
+- `FUTURE_FEATURE_ROADMAP.md` — 향후 기능 기록
+- YOLO 관련 smoke/GT/review 문서는 별도 검출 품질 검토용이며 전체 앱 사용 설명서를 대체하지 않습니다.
+
+## 개발 시 주의사항
+
+- 원본 영상 파일은 직접 수정하지 않습니다.
+- 모델 가중치는 저장소에 커밋하지 않습니다.
+- native FFmpeg/ONNX Runtime 파일은 RID가 맞아야 합니다.
+- macOS/Windows 간 publish native 파일을 혼합하지 않습니다.
+- export integrity guard를 단순히 우회해 오류를 숨기지 않습니다.
+- 상태 저장 구조 변경 시 `state.json.bak`과 generation cleanup을 함께 고려합니다.
+- 현재 `main`을 운영 기준으로 사용합니다.
