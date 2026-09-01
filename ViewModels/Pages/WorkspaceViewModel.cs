@@ -296,7 +296,8 @@ namespace FaceShield.ViewModels.Pages
 
             string output = BuildDefaultExportPath(input);
 
-            string? resolvedOutput = await ResolveExportOutputPathAsync(output);
+            (string? resolvedOutput, bool allowOutputOverwrite) =
+                await ResolveExportOutputPathAsync(output);
             if (string.IsNullOrWhiteSpace(resolvedOutput))
                 return false;
             output = resolvedOutput;
@@ -349,7 +350,8 @@ namespace FaceShield.ViewModels.Pages
                         progress,
                         _exportCts.Token,
                         exportRunId,
-                        allowHybridCopy: hybridPolicy.allowHybridCopy);
+                        allowHybridCopy: hybridPolicy.allowHybridCopy,
+                        allowOutputOverwrite: allowOutputOverwrite);
                 }, _exportCts.Token);
                 if (exporter.LastExportSummary != null)
                 {
@@ -851,19 +853,20 @@ namespace FaceShield.ViewModels.Pages
             );
         }
 
-        private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
+        private async Task<(string? Path, bool AllowOverwrite)> ResolveExportOutputPathAsync(
+            string outputPath)
         {
             if (!File.Exists(outputPath))
-                return outputPath;
+                return (outputPath, false);
 
             var result = await ShowExportConflictDialogAsync(outputPath);
             if (result == ExportConflictResult.Overwrite)
-                return outputPath;
+                return (outputPath, true);
 
             if (result == ExportConflictResult.SaveAs)
-                return GetUniqueExportPath(outputPath);
+                return (GetUniqueExportPath(outputPath), false);
 
-            return null;
+            return (null, false);
         }
 
         private static string GetUniqueExportPath(string outputPath)
@@ -879,7 +882,15 @@ namespace FaceShield.ViewModels.Pages
                     return candidate;
             }
 
-            return outputPath;
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                string suffix = Guid.NewGuid().ToString("N")[..8];
+                string candidate = Path.Combine(dir, $"{baseName} ({suffix}){ext}");
+                if (!File.Exists(candidate))
+                    return candidate;
+            }
+
+            throw new IOException("덮어쓰지 않는 고유한 내보내기 파일명을 만들 수 없습니다.");
         }
 
         private static string BuildDefaultExportPath(string inputPath)
