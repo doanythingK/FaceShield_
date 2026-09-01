@@ -7,7 +7,6 @@ namespace FaceShield.Services.Video.Session;
 
 public sealed class TimelineController
 {
-    private readonly ThumbnailCache _thumbs;
     private readonly ExactFrameProvider _exact;
     private readonly TimelineThumbnailProvider _thumbProvider;
 
@@ -38,7 +37,7 @@ public sealed class TimelineController
 
         try
         {
-            var thumbnail = await Task.Run(() => _thumbProvider.GetThumbnail(frameIndex));
+            var thumbnail = await Task.Run(() => _thumbProvider.GetThumbnailCopy(frameIndex));
             return requestId == Volatile.Read(ref _thumbRequestId)
                 ? thumbnail
                 : null;
