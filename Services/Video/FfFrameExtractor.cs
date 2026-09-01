@@ -404,6 +404,126 @@ namespace FaceShield.Services.Video
             }
         }
 
+        /// <summary>
+        /// Returns an already-decoded presentation timestamp for a frame ordinal.
+        /// This never grows the shared decoded timeline.
+        /// </summary>
+        public bool TryGetCachedFrameTimestampSeconds(
+            int frameIndex,
+            out double timestampSeconds)
+        {
+            timestampSeconds = double.NaN;
+            if (frameIndex < 0)
+                return false;
+
+            double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
+            if (!double.IsFinite(timeBaseSeconds) || timeBaseSeconds <= 0)
+                return false;
+
+            lock (_decodedFrameTimeline.SyncRoot)
+            {
+                _decodedFrameTimeline.LastAccessTicks = DateTime.UtcNow.Ticks;
+                if (!_decodedFrameTimeline.IsReliable ||
+                    _decodedFrameTimeline.Entries.Count == 0 ||
+                    frameIndex >= _decodedFrameTimeline.Entries.Count)
+                {
+                    return false;
+                }
+
+                DecodedFrameTimelineEntry origin = _decodedFrameTimeline.Entries[0];
+                DecodedFrameTimelineEntry target = _decodedFrameTimeline.Entries[frameIndex];
+                if (!origin.HasPresentationTimestamp || !target.HasPresentationTimestamp)
+                    return false;
+
+                double seconds =
+                    (target.PresentationTimestamp - origin.PresentationTimestamp) *
+                    timeBaseSeconds;
+                if (!double.IsFinite(seconds))
+                    return false;
+
+                timestampSeconds = Math.Max(0, seconds);
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Maps presentation time to an ordinal only when the existing decoded PTS cache
+        /// already covers that time. This method never triggers ordinal indexing.
+        /// </summary>
+        public bool TryGetCachedFrameIndexAtTimestamp(
+            double timestampSeconds,
+            out int frameIndex)
+        {
+            frameIndex = -1;
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return false;
+
+            double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
+            if (!double.IsFinite(timeBaseSeconds) || timeBaseSeconds <= 0)
+                return false;
+
+            lock (_decodedFrameTimeline.SyncRoot)
+            {
+                _decodedFrameTimeline.LastAccessTicks = DateTime.UtcNow.Ticks;
+                int count = _decodedFrameTimeline.Entries.Count;
+                if (!_decodedFrameTimeline.IsReliable || count == 0)
+                    return false;
+
+                DecodedFrameTimelineEntry origin = _decodedFrameTimeline.Entries[0];
+                DecodedFrameTimelineEntry last = _decodedFrameTimeline.Entries[count - 1];
+                if (!origin.HasPresentationTimestamp || !last.HasPresentationTimestamp)
+                    return false;
+
+                double targetPtsDouble =
+                    origin.PresentationTimestamp +
+                    timestampSeconds / timeBaseSeconds;
+                if (!double.IsFinite(targetPtsDouble) ||
+                    targetPtsDouble < long.MinValue ||
+                    targetPtsDouble > long.MaxValue)
+                {
+                    return false;
+                }
+
+                long targetPts = (long)Math.Round(targetPtsDouble);
+                if (!_decodedFrameTimeline.IsComplete &&
+                    targetPts > last.PresentationTimestamp)
+                {
+                    return false;
+                }
+
+                int lo = 0;
+                int hi = count - 1;
+                while (lo < hi)
+                {
+                    int mid = lo + (hi - lo) / 2;
+                    DecodedFrameTimelineEntry entry = _decodedFrameTimeline.Entries[mid];
+                    if (!entry.HasPresentationTimestamp)
+                        return false;
+
+                    if (entry.PresentationTimestamp < targetPts)
+                        lo = mid + 1;
+                    else
+                        hi = mid;
+                }
+
+                int candidate = lo;
+                if (candidate > 0)
+                {
+                    double currentDistance = Math.Abs(
+                        (double)_decodedFrameTimeline.Entries[candidate].PresentationTimestamp -
+                        targetPts);
+                    double previousDistance = Math.Abs(
+                        (double)_decodedFrameTimeline.Entries[candidate - 1].PresentationTimestamp -
+                        targetPts);
+                    if (previousDistance <= currentDistance)
+                        candidate--;
+                }
+
+                frameIndex = candidate;
+                return true;
+            }
+        }
+
         public string LastDecodedTimestampSource
         {
             get
@@ -552,16 +672,21 @@ namespace FaceShield.Services.Video
             if (frameIndex < 0 || targetWidth <= 0 || targetHeight <= 0)
                 return null;
 
-            double fps = double.IsFinite(_fps) && _fps > 0 ? _fps : 30.0;
-            double timestampSeconds = frameIndex / fps;
-            return GetFrameAtTimestampScaled(
+            double timestampSeconds;
+            if (!TryGetCachedFrameTimestampSeconds(frameIndex, out timestampSeconds))
+            {
+                double fps = double.IsFinite(_fps) && _fps > 0 ? _fps : 30.0;
+                timestampSeconds = frameIndex / fps;
+            }
+
+            return GetTimelineThumbnailAtTimestampScaled(
                 timestampSeconds,
                 targetWidth,
                 targetHeight,
                 cancellationToken);
         }
 
-        private WriteableBitmap? GetFrameAtTimestampScaled(
+        public WriteableBitmap? GetTimelineThumbnailAtTimestampScaled(
             double timestampSeconds,
             int targetWidth,
             int targetHeight,
