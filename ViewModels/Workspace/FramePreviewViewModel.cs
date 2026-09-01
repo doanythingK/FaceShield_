@@ -510,22 +510,16 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         int stamp = Interlocked.Increment(ref _changeStamp);
 
-        // 1) 저화질 썸네일
-        try
-        {
-            var low = _session.Timeline.OnFrameChanging(index);
-            if (low != null && stamp == _changeStamp)
-                SetPreviewBitmap(low, ownsBitmap: false);
-        }
-        catch
-        {
-            // 썸네일 없으면 무시
-        }
-
-        // 1-1) 선택 프레임과 동일한 저화질 썸네일 (정확도 우선)
+        // 1) 선택 프레임 저화질 프리뷰.
+        // 캐시 원본이 아니라 독립 복사본을 받아 eviction과 화면 수명을 분리합니다.
         var exactThumb = await _session.Timeline.OnFrameChangingExactAsync(index);
-        if (exactThumb != null && stamp == _changeStamp)
-            SetPreviewBitmap(exactThumb, ownsBitmap: false);
+        if (exactThumb != null)
+        {
+            if (stamp == _changeStamp)
+                SetPreviewBitmap(exactThumb, ownsBitmap: true);
+            else
+                exactThumb.Dispose();
+        }
 
         // 2) 고화질 프레임
         var exact = await _session.Timeline.OnFrameChangedAsync(index);
