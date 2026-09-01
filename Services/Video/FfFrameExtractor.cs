@@ -1665,6 +1665,9 @@ namespace FaceShield.Services.Video
                     _ordinalNextFrameIndex++;
                 }
 
+                if (cancellationToken.IsCancellationRequested)
+                    return false;
+
                 lock (_decodedFrameTimeline.SyncRoot)
                 {
                     if (_ordinalReachedEndOfStream)
@@ -1802,9 +1805,18 @@ namespace FaceShield.Services.Video
                                 _decodedFrameTimeline.Entries.Count;
                     }
 
-                    return _decodedFrameTimeline.IsReliable &&
-                        _decodedFrameTimeline.SupportsExactTimestampSeek &&
-                        _decodedFrameTimeline.Entries.Count > 0;
+                    if (!_decodedFrameTimeline.IsReliable ||
+                        !_decodedFrameTimeline.SupportsExactTimestampSeek ||
+                        _decodedFrameTimeline.Entries.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    DecodedFrameTimelineEntry last =
+                        _decodedFrameTimeline.Entries[^1];
+                    return _decodedFrameTimeline.IsComplete ||
+                        (last.HasPresentationTimestamp &&
+                         last.PresentationTimestamp >= targetPts);
                 }
             }
             catch (Exception ex)
