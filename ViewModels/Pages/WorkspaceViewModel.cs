@@ -234,6 +234,7 @@ namespace FaceShield.ViewModels.Pages
 
             var session = await Task.Run(() => new VideoSession(FrameList.VideoPath, progress: loadProgress));
             FramePreview.InitializeSession(session);
+            FrameList.SetThumbnailProvider(session.ThumbnailProvider);
             _sessionInitialized = true;
 
             if (FrameList.SelectedFrameIndex >= 0)
@@ -244,6 +245,7 @@ namespace FaceShield.ViewModels.Pages
         {
             var session = new VideoSession(FrameList.VideoPath, progress: loadProgress);
             FramePreview.InitializeSession(session);
+            FrameList.SetThumbnailProvider(session.ThumbnailProvider);
             _sessionInitialized = true;
         }
 
