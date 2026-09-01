@@ -1046,9 +1046,13 @@ namespace FaceShield.ViewModels.Pages
         {
             bool persisted = false;
             bool detectionCompleted = false;
+            bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
             string runId = $"auto-{Guid.NewGuid():N}";
+            FrameList.SetPlaybackEnabled(false);
             try
             {
+                await FramePreview.StopPlaybackAndWaitAsync();
+
                 // Progress updates no longer invoke the exact-frame path on every
                 // selection change, so preserve any pending manual edit once up front.
                 FramePreview.PersistCurrentMask();
@@ -1279,6 +1283,7 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
                 if (!exportAfter &&
                     _autoPreviewNeedsExactRefresh &&
                     FrameList.SelectedFrameIndex >= 0)
@@ -1577,12 +1582,16 @@ namespace FaceShield.ViewModels.Pages
 
             _isAutoRunning = true;
             _autoCts = new CancellationTokenSource();
+            bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
 
             ToolPanel.IsAutoRunning = true;
             ToolPanel.AutoProgress = 0;
+            FrameList.SetPlaybackEnabled(false);
 
             try
             {
+                await FramePreview.StopPlaybackAndWaitAsync();
+
                 var detectorFactory = CreateFaceDetectorFactory();
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory);
@@ -1617,6 +1626,7 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
                 PersistWorkspaceState();
             }
         }
