@@ -175,7 +175,12 @@ namespace FaceShield.ViewModels.Pages
                         FrameList.Fps,
                         FrameList.TotalFrames,
                         FrameList.SetPlaybackFrameIndex,
-                        FrameList.NotifyPlaybackStopped);
+                        FrameList.NotifyPlaybackStopped,
+                        message =>
+                        {
+                            FrameList.NotifyPlaybackStopped();
+                            _ = ShowErrorDialogAsync("재생 실패", message);
+                        });
                 }
                 else
                 {
