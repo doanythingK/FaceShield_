@@ -52,6 +52,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspaceStateStore _stateStore;
         private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(StringComparer.OrdinalIgnoreCase);
         private CancellationTokenSource? _autoCts;
+        private CancellationTokenSource? _yoloDownloadCts;
         private DateTime _autoStartTimeUtc;
         private DateTime _autoLastProgressAtUtc;
         private WorkspaceViewModel? _activeAutoWorkspace;
@@ -483,6 +484,7 @@ namespace FaceShield.ViewModels.Pages
         public bool IsYoloDetectorSelected => SelectedAutoDetectorBackendOption?.Backend == FaceDetectorBackend.YoloFaceOnnx;
         public bool IsFaceOnnxDetectorSelected => !IsYoloDetectorSelected;
         public bool CanDownloadYoloModel => IsYoloDetectorSelected && !IsYoloModelDownloading;
+        public bool CanCancelYoloModelDownload => IsYoloModelDownloading;
         public int MinBlurRadius => MinBlurRadiusValue;
         public int MaxBlurRadius => MaxBlurRadiusValue;
 
@@ -924,7 +926,9 @@ namespace FaceShield.ViewModels.Pages
         partial void OnIsYoloModelDownloadingChanged(bool value)
         {
             OnPropertyChanged(nameof(CanDownloadYoloModel));
+            OnPropertyChanged(nameof(CanCancelYoloModelDownload));
             DownloadYoloModelCommand.NotifyCanExecuteChanged();
+            CancelYoloModelDownloadCommand.NotifyCanExecuteChanged();
         }
 
         partial void OnAutoYoloObjectnessThresholdChanged(double value)
@@ -1382,6 +1386,12 @@ namespace FaceShield.ViewModels.Pages
             AutoYoloModelPath = localPath;
         }
 
+        [RelayCommand(CanExecute = nameof(CanCancelYoloModelDownload))]
+        private void CancelYoloModelDownload()
+        {
+            _yoloDownloadCts?.Cancel();
+        }
+
         [RelayCommand(CanExecute = nameof(CanDownloadYoloModel))]
         private async Task DownloadYoloModelAsync()
         {
@@ -1397,6 +1407,11 @@ namespace FaceShield.ViewModels.Pages
                 return;
             }
 
+            _yoloDownloadCts?.Cancel();
+            _yoloDownloadCts?.Dispose();
+            var downloadCts = new CancellationTokenSource();
+            _yoloDownloadCts = downloadCts;
+
             IsYoloModelDownloading = true;
             YoloModelDownloadProgress = 0;
             YoloModelDownloadStatus = $"다운로드 시작: {downloadInfo.SourceLabel} ({downloadInfo.LicenseLabel})";
@@ -1407,11 +1422,16 @@ namespace FaceShield.ViewModels.Pages
                 destinationPath = await YoloModelDownloadService.DownloadAsync(
                     modelType,
                     progress,
-                    CancellationToken.None);
+                    downloadCts.Token);
 
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
                 YoloModelDownloadStatus = $"다운로드 완료: {downloadInfo.FileName}";
+            }
+            catch (OperationCanceledException)
+            {
+                YoloModelDownloadProgress = 0;
+                YoloModelDownloadStatus = $"다운로드 취소됨: {downloadInfo.FileName}";
             }
             catch (Exception ex)
             {
@@ -1419,6 +1439,10 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
+                if (ReferenceEquals(_yoloDownloadCts, downloadCts))
+                    _yoloDownloadCts = null;
+
+                downloadCts.Dispose();
                 IsYoloModelDownloading = false;
             }
         }
@@ -2204,6 +2228,8 @@ namespace FaceShield.ViewModels.Pages
 
         public void DisposeAllWorkspaces()
         {
+            _yoloDownloadCts?.Cancel();
+
             foreach (var workspace in _workspaceCache.Values.Distinct())
                 workspace.Dispose();
 

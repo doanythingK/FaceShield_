@@ -197,10 +197,18 @@
                     </ComboBox.ItemTemplate>
                   </ComboBox>
                 </Grid>
-                <Button Content="YOLO 모델 다운로드"
-                        Classes="secondary"
-                        HorizontalAlignment="Left"
-                        Command="{Binding DownloadYoloModelCommand}"/>
+                <StackPanel Orientation="Horizontal"
+                            Spacing="8">
+                  <Button Content="YOLO 모델 다운로드"
+                          Classes="secondary"
+                          HorizontalAlignment="Left"
+                          Command="{Binding DownloadYoloModelCommand}"/>
+                  <Button Content="다운로드 취소"
+                          Classes="secondary"
+                          HorizontalAlignment="Left"
+                          IsVisible="{Binding IsYoloModelDownloading}"
+                          Command="{Binding CancelYoloModelDownloadCommand}"/>
+                </StackPanel>
 
                 <StackPanel Spacing="10"
                             IsVisible="{Binding IsYoloDetectorSelected}">
@@ -210,6 +218,7 @@
                     <ComboBox Grid.Column="1"
                               ItemsSource="{Binding YoloModelTypeOptions}"
                               SelectedItem="{Binding SelectedYoloModelTypeOption}"
+                              IsEnabled="{Binding CanDownloadYoloModel}"
                               HorizontalAlignment="Stretch">
                       <ComboBox.ItemTemplate>
                         <DataTemplate>

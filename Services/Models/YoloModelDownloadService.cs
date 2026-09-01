@@ -127,6 +127,18 @@ internal static class YoloModelDownloadService
             await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
             destination.Close();
 
+            if (readBytes <= 0)
+                throw new InvalidDataException("다운로드된 모델 파일이 비어 있습니다.");
+
+            if (totalBytes.HasValue &&
+                totalBytes.Value > 0 &&
+                readBytes != totalBytes.Value)
+            {
+                throw new InvalidDataException(
+                    $"모델 다운로드 크기가 예상과 다릅니다(expected={totalBytes.Value}, actual={readBytes}).");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(tempPath, destinationPath, overwrite: true);
             progress?.Report(100);
             return destinationPath;
