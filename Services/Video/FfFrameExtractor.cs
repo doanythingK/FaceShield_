@@ -16,6 +16,10 @@ namespace FaceShield.Services.Video
         private static string _lastDecodeStatus = "디코딩: 확인 중";
         private static string? _lastDecodeError;
         private static string? _lastDecodeDiagnostics;
+        private string _decodeStatus = "디코딩: 확인 중";
+        private string? _decodeError;
+        private string? _decodeDiagnostics;
+        private bool _hardwareTransferFailed;
         private static readonly object _hwFormatLock = new();
         private static readonly Dictionary<IntPtr, AVPixelFormat> _hwFormatByDecoder = new();
         private static readonly object _timelineCacheLock = new();
@@ -80,8 +84,55 @@ namespace FaceShield.Services.Video
             }
         }
 
-        private static void UpdateDecodeStatus(string status, string? error = null)
+        public string DecodeStatus
         {
+            get
+            {
+                lock (_sync)
+                    return _decodeStatus;
+            }
+        }
+
+        public string? DecodeError
+        {
+            get
+            {
+                lock (_sync)
+                    return _decodeError;
+            }
+        }
+
+        public string? DecodeDiagnostics
+        {
+            get
+            {
+                lock (_sync)
+                    return _decodeDiagnostics;
+            }
+        }
+
+        public bool HardwareTransferFailed
+        {
+            get
+            {
+                lock (_sync)
+                    return _hardwareTransferFailed;
+            }
+        }
+
+        private void UpdateDecodeStatus(string status, string? error = null)
+        {
+            lock (_sync)
+            {
+                _decodeStatus = status;
+                _decodeError = error;
+                if (!string.IsNullOrWhiteSpace(status) &&
+                    status.Contains("HW 프레임 전송 실패", StringComparison.Ordinal))
+                {
+                    _hardwareTransferFailed = true;
+                }
+            }
+
             lock (_decodeStatusLock)
             {
                 _lastDecodeStatus = status;
@@ -89,12 +140,13 @@ namespace FaceShield.Services.Video
             }
         }
 
-        private static void UpdateDecodeDiagnostics(string diagnostics)
+        private void UpdateDecodeDiagnostics(string diagnostics)
         {
+            lock (_sync)
+                _decodeDiagnostics = diagnostics;
+
             lock (_decodeStatusLock)
-            {
                 _lastDecodeDiagnostics = diagnostics;
-            }
         }
 
         public readonly struct BgraFrame
@@ -506,6 +558,8 @@ namespace FaceShield.Services.Video
         private void StartSequentialReadCore(int startFrameIndex, double? timestampSeconds)
         {
             ResetSequentialCompletionState();
+            _decodeError = null;
+            _hardwareTransferFailed = false;
             _lastDecodedTimestampSeconds = double.NaN;
             _lastDecodedTimestampSource = "none";
             _sequentialActive = true;
@@ -1533,7 +1587,7 @@ namespace FaceShield.Services.Video
 
         private void SetSequentialDecodeError(string message)
         {
-            string? detail = GetLastDecodeError();
+            string? detail = _decodeError;
             _sequentialDecodeError = string.IsNullOrWhiteSpace(detail)
                 ? message
                 : $"{message}: {detail}";
