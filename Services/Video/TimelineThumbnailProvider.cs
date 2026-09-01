@@ -23,6 +23,9 @@ namespace FaceShield.Services.Video
         private double _fps;
 
         private readonly ConcurrentDictionary<int, WriteableBitmap> _cache = new();
+        private readonly ConcurrentDictionary<int, long> _cacheAccess = new();
+        private readonly int _maxCacheEntries;
+        private long _cacheAccessClock;
         private bool _disposed;
 
         public TimelineThumbnailProvider(string videoPath, int thumbWidth = 160, int thumbHeight = 90)
@@ -104,10 +107,14 @@ namespace FaceShield.Services.Video
 
         public WriteableBitmap? GetThumbnail(int frameIndex)
         {
-            if (frameIndex < 0) return null;
+            if (frameIndex < 0)
+                return null;
 
             if (_cache.TryGetValue(frameIndex, out var cached))
+            {
+                TouchCacheEntry(frameIndex);
                 return cached;
+            }
 
             lock (_sync)
             {
@@ -115,13 +122,34 @@ namespace FaceShield.Services.Video
                     return null;
 
                 if (_cache.TryGetValue(frameIndex, out cached))
+                {
+                    TouchCacheEntry(frameIndex);
                     return cached;
+                }
 
                 var bmp = DecodeFrame(frameIndex);
-                if (bmp != null)
-                    _cache.TryAdd(frameIndex, bmp);
+                if (bmp == null)
+                    return null;
 
+                _cache[frameIndex] = bmp;
+                TouchCacheEntry(frameIndex);
+                TrimCacheIfNeeded(frameIndex);
                 return bmp;
+            }
+        }
+
+        public WriteableBitmap? GetThumbnailCopy(int frameIndex)
+        {
+            if (frameIndex < 0)
+                return null;
+
+            lock (_sync)
+            {
+                if (_disposed)
+                    return null;
+
+                WriteableBitmap? cached = GetThumbnail(frameIndex);
+                return cached == null ? null : CloneBitmap(cached);
             }
         }
 
@@ -131,7 +159,86 @@ namespace FaceShield.Services.Video
             if (frameIndex < 0)
                 return false;
 
-            return _cache.TryGetValue(frameIndex, out bitmap);
+            if (!_cache.TryGetValue(frameIndex, out bitmap))
+                return false;
+
+            TouchCacheEntry(frameIndex);
+            return true;
+        }
+
+        private void TouchCacheEntry(int frameIndex)
+        {
+            long access = Interlocked.Increment(ref _cacheAccessClock);
+            _cacheAccess[frameIndex] = access;
+        }
+
+        private void TrimCacheIfNeeded(int protectedFrameIndex)
+        {
+            while (_cache.Count > _maxCacheEntries)
+            {
+                int evictionKey = -1;
+                long oldestAccess = long.MaxValue;
+
+                foreach (var entry in _cacheAccess)
+                {
+                    if (entry.Key == protectedFrameIndex)
+                        continue;
+
+                    if (entry.Value < oldestAccess)
+                    {
+                        oldestAccess = entry.Value;
+                        evictionKey = entry.Key;
+                    }
+                }
+
+                if (evictionKey < 0)
+                    break;
+
+                _cacheAccess.TryRemove(evictionKey, out _);
+                if (_cache.TryRemove(evictionKey, out WriteableBitmap? evicted))
+                    DisposeOnUiThread(evicted);
+            }
+        }
+
+        private static WriteableBitmap CloneBitmap(WriteableBitmap source)
+        {
+            var copy = new WriteableBitmap(
+                source.PixelSize,
+                source.Dpi,
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Premul);
+
+            using var sourceBuffer = source.Lock();
+            using var copyBuffer = copy.Lock();
+            int rows = Math.Min(sourceBuffer.Size.Height, copyBuffer.Size.Height);
+            int bytesPerRow = Math.Min(sourceBuffer.RowBytes, copyBuffer.RowBytes);
+
+            unsafe
+            {
+                byte* src = (byte*)sourceBuffer.Address;
+                byte* dst = (byte*)copyBuffer.Address;
+                for (int y = 0; y < rows; y++)
+                {
+                    Buffer.MemoryCopy(
+                        src + y * sourceBuffer.RowBytes,
+                        dst + y * copyBuffer.RowBytes,
+                        copyBuffer.RowBytes,
+                        bytesPerRow);
+                }
+            }
+
+            return copy;
+        }
+
+        private static void DisposeOnUiThread(WriteableBitmap bitmap)
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                bitmap.Dispose();
+                return;
+            }
+
+            Dispatcher.UIThread.Post(bitmap.Dispose);
         }
 
         private WriteableBitmap? DecodeFrame(int frameIndex)
@@ -281,6 +388,7 @@ namespace FaceShield.Services.Video
                 foreach (var kv in _cache)
                     kv.Value.Dispose();
                 _cache.Clear();
+                _cacheAccess.Clear();
 
                 if (_sws != null)
                 {
