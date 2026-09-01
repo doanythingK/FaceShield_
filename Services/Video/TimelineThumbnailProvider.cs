@@ -10,12 +10,15 @@ namespace FaceShield.Services.Video
     {
         private readonly object _sync = new();
         private readonly FfFrameExtractor _extractor;
+        private readonly bool _ownsExtractor;
         private readonly int _thumbWidth;
         private readonly int _thumbHeight;
         private readonly int _maxCacheEntries;
-        private readonly ConcurrentDictionary<int, WriteableBitmap> _cache = new();
-        private readonly ConcurrentDictionary<int, long> _cacheAccess = new();
+        private readonly ConcurrentDictionary<long, WriteableBitmap> _cache = new();
+        private readonly ConcurrentDictionary<long, long> _cacheAccess = new();
+        private readonly CancellationTokenSource _lifetimeCts = new();
         private long _cacheAccessClock;
+        private int _disposeStarted;
         private bool _disposed;
 
         public TimelineThumbnailProvider(
@@ -23,97 +26,219 @@ namespace FaceShield.Services.Video
             int thumbWidth = 160,
             int thumbHeight = 90,
             int maxCacheEntries = 256)
+            : this(
+                new FfFrameExtractor(videoPath, enableHardware: false),
+                thumbWidth,
+                thumbHeight,
+                maxCacheEntries,
+                ownsExtractor: true)
         {
-            if (string.IsNullOrWhiteSpace(videoPath))
-                throw new ArgumentException("Video path is required.", nameof(videoPath));
+        }
 
+        internal TimelineThumbnailProvider(
+            FfFrameExtractor extractor,
+            int thumbWidth = 160,
+            int thumbHeight = 90,
+            int maxCacheEntries = 256,
+            bool ownsExtractor = false)
+        {
+            _extractor = extractor ?? throw new ArgumentNullException(nameof(extractor));
+            _ownsExtractor = ownsExtractor;
             _thumbWidth = Math.Max(1, thumbWidth);
             _thumbHeight = Math.Max(1, thumbHeight);
             _maxCacheEntries = Math.Max(16, maxCacheEntries);
-            _extractor = new FfFrameExtractor(videoPath, enableHardware: false);
         }
 
         public WriteableBitmap? GetThumbnail(int frameIndex)
+            => GetThumbnail(frameIndex, CancellationToken.None);
+
+        public WriteableBitmap? GetThumbnail(int frameIndex, CancellationToken cancellationToken)
         {
             if (frameIndex < 0)
                 return null;
 
-            if (_cache.TryGetValue(frameIndex, out WriteableBitmap? cached))
-            {
-                TouchCacheEntry(frameIndex);
-                return cached;
-            }
-
-            lock (_sync)
-            {
-                if (_disposed)
-                    return null;
-
-                if (_cache.TryGetValue(frameIndex, out cached))
-                {
-                    TouchCacheEntry(frameIndex);
-                    return cached;
-                }
-
-                WriteableBitmap? bitmap = _extractor.GetTimelineThumbnailByFrameIndexScaled(
+            long cacheKey = FrameCacheKey(frameIndex);
+            return GetOrCreate(
+                cacheKey,
+                token => _extractor.GetTimelineThumbnailByFrameIndexScaled(
                     frameIndex,
                     _thumbWidth,
                     _thumbHeight,
-                    CancellationToken.None);
-                if (bitmap == null)
-                    return null;
+                    token),
+                cancellationToken);
+        }
 
-                _cache[frameIndex] = bitmap;
-                TouchCacheEntry(frameIndex);
-                TrimCacheIfNeeded(frameIndex);
-                return bitmap;
-            }
+        public WriteableBitmap? GetThumbnailAtTime(
+            double timestampSeconds,
+            CancellationToken cancellationToken = default)
+        {
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return null;
+
+            long cacheKey = TimeCacheKey(timestampSeconds);
+            return GetOrCreate(
+                cacheKey,
+                token => _extractor.GetTimelineThumbnailAtTimestampScaled(
+                    timestampSeconds,
+                    _thumbWidth,
+                    _thumbHeight,
+                    token),
+                cancellationToken);
         }
 
         public WriteableBitmap? GetThumbnailCopy(int frameIndex)
+            => GetThumbnailCopy(frameIndex, CancellationToken.None);
+
+        public WriteableBitmap? GetThumbnailCopy(
+            int frameIndex,
+            CancellationToken cancellationToken)
         {
-            if (frameIndex < 0)
+            if (frameIndex < 0 || cancellationToken.IsCancellationRequested)
                 return null;
 
+            long cacheKey = FrameCacheKey(frameIndex);
+            using var linked = CreateLinkedTokenSource(cancellationToken);
             lock (_sync)
             {
-                if (_disposed)
+                if (_disposed || linked.Token.IsCancellationRequested)
                     return null;
 
-                WriteableBitmap? cached = GetThumbnail(frameIndex);
+                WriteableBitmap? cached = GetOrCreateLocked(
+                    cacheKey,
+                    token => _extractor.GetTimelineThumbnailByFrameIndexScaled(
+                        frameIndex,
+                        _thumbWidth,
+                        _thumbHeight,
+                        token),
+                    linked.Token);
                 return cached == null ? null : CloneBitmap(cached);
             }
         }
 
         public bool TryGetCachedThumbnail(int frameIndex, out WriteableBitmap? bitmap)
+            => TryGetCached(FrameCacheKey(frameIndex), out bitmap);
+
+        public bool TryGetCachedThumbnailAtTime(
+            double timestampSeconds,
+            out WriteableBitmap? bitmap)
         {
             bitmap = null;
-            if (frameIndex < 0 || _disposed)
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
                 return false;
 
-            if (!_cache.TryGetValue(frameIndex, out bitmap))
+            return TryGetCached(TimeCacheKey(timestampSeconds), out bitmap);
+        }
+
+        public bool TryGetFrameTimestampSeconds(
+            int frameIndex,
+            out double timestampSeconds)
+            => _extractor.TryGetCachedFrameTimestampSeconds(
+                frameIndex,
+                out timestampSeconds);
+
+        public bool TryGetFrameIndexAtTimestamp(
+            double timestampSeconds,
+            out int frameIndex)
+            => _extractor.TryGetCachedFrameIndexAtTimestamp(
+                timestampSeconds,
+                out frameIndex);
+
+        private WriteableBitmap? GetOrCreate(
+            long cacheKey,
+            Func<CancellationToken, WriteableBitmap?> factory,
+            CancellationToken cancellationToken)
+        {
+            if (_disposed || cancellationToken.IsCancellationRequested)
+                return null;
+
+            if (_cache.TryGetValue(cacheKey, out WriteableBitmap? cached))
+            {
+                TouchCacheEntry(cacheKey);
+                return cached;
+            }
+
+            using var linked = CreateLinkedTokenSource(cancellationToken);
+            lock (_sync)
+            {
+                if (_disposed || linked.Token.IsCancellationRequested)
+                    return null;
+
+                return GetOrCreateLocked(cacheKey, factory, linked.Token);
+            }
+        }
+
+        private WriteableBitmap? GetOrCreateLocked(
+            long cacheKey,
+            Func<CancellationToken, WriteableBitmap?> factory,
+            CancellationToken cancellationToken)
+        {
+            if (_cache.TryGetValue(cacheKey, out WriteableBitmap? cached))
+            {
+                TouchCacheEntry(cacheKey);
+                return cached;
+            }
+
+            WriteableBitmap? bitmap = factory(cancellationToken);
+            if (bitmap == null || cancellationToken.IsCancellationRequested)
+            {
+                bitmap?.Dispose();
+                return null;
+            }
+
+            _cache[cacheKey] = bitmap;
+            TouchCacheEntry(cacheKey);
+            TrimCacheIfNeeded(cacheKey);
+            return bitmap;
+        }
+
+        private bool TryGetCached(long cacheKey, out WriteableBitmap? bitmap)
+        {
+            bitmap = null;
+            if (_disposed)
                 return false;
 
-            TouchCacheEntry(frameIndex);
+            if (!_cache.TryGetValue(cacheKey, out bitmap))
+                return false;
+
+            TouchCacheEntry(cacheKey);
             return true;
         }
 
-        private void TouchCacheEntry(int frameIndex)
+        private CancellationTokenSource CreateLinkedTokenSource(
+            CancellationToken cancellationToken)
+            => cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    _lifetimeCts.Token)
+                : CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+
+        private static long FrameCacheKey(int frameIndex)
+            => ((long)Math.Max(0, frameIndex)) << 1;
+
+        private static long TimeCacheKey(double timestampSeconds)
         {
-            long access = Interlocked.Increment(ref _cacheAccessClock);
-            _cacheAccess[frameIndex] = access;
+            long milliseconds = Math.Max(
+                0,
+                (long)Math.Round(timestampSeconds * 1000.0));
+            return (milliseconds << 1) | 1L;
         }
 
-        private void TrimCacheIfNeeded(int protectedFrameIndex)
+        private void TouchCacheEntry(long cacheKey)
+        {
+            long access = Interlocked.Increment(ref _cacheAccessClock);
+            _cacheAccess[cacheKey] = access;
+        }
+
+        private void TrimCacheIfNeeded(long protectedCacheKey)
         {
             while (_cache.Count > _maxCacheEntries)
             {
-                int evictionKey = -1;
+                long evictionKey = -1;
                 long oldestAccess = long.MaxValue;
 
                 foreach (var entry in _cacheAccess)
                 {
-                    if (entry.Key == protectedFrameIndex)
+                    if (entry.Key == protectedCacheKey)
                         continue;
 
                     if (entry.Value < oldestAccess)
@@ -175,13 +300,15 @@ namespace FaceShield.Services.Video
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+                return;
+
+            _lifetimeCts.Cancel();
             lock (_sync)
             {
-                if (_disposed)
-                    return;
-
                 _disposed = true;
-                _extractor.Dispose();
+                if (_ownsExtractor)
+                    _extractor.Dispose();
 
                 foreach (var entry in _cache)
                     entry.Value.Dispose();
@@ -189,6 +316,8 @@ namespace FaceShield.Services.Video
                 _cache.Clear();
                 _cacheAccess.Clear();
             }
+
+            _lifetimeCts.Dispose();
         }
     }
 }
