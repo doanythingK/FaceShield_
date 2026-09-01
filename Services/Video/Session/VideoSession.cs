@@ -8,7 +8,9 @@ public sealed class VideoSession : IDisposable
 {
     public readonly ExactFrameProvider ExactProvider;
     public readonly TimelineController Timeline;
-    private readonly TimelineThumbnailProvider _thumbsProvider;
+    public TimelineThumbnailProvider ThumbnailProvider { get; }
+
+    private readonly FfFrameExtractor _extractor;
     private bool _disposed;
 
     public VideoSession(
@@ -18,22 +20,24 @@ public sealed class VideoSession : IDisposable
         IProgress<int>? progress = null,
         int maxThumbnailCacheEntries = 256)
     {
-        var extractor = new FfFrameExtractor(videoPath, enableHardware: false);
-        ExactProvider = new ExactFrameProvider(extractor);
+        _extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+        ExactProvider = new ExactFrameProvider(_extractor, ownsExtractor: false);
 
         try
         {
-            _thumbsProvider = new TimelineThumbnailProvider(
-                videoPath,
+            ThumbnailProvider = new TimelineThumbnailProvider(
+                _extractor,
                 thumbWidth,
                 thumbHeight,
-                maxThumbnailCacheEntries);
-            Timeline = new TimelineController(ExactProvider, _thumbsProvider);
+                maxThumbnailCacheEntries,
+                ownsExtractor: false);
+            Timeline = new TimelineController(ExactProvider, ThumbnailProvider);
             progress?.Report(100);
         }
         catch
         {
             ExactProvider.Dispose();
+            _extractor.Dispose();
             throw;
         }
     }
@@ -44,7 +48,9 @@ public sealed class VideoSession : IDisposable
             return;
 
         _disposed = true;
+        Timeline.Dispose();
         ExactProvider.Dispose();
-        _thumbsProvider.Dispose();
+        ThumbnailProvider.Dispose();
+        _extractor.Dispose();
     }
 }
