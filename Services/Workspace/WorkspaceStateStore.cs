@@ -103,16 +103,116 @@ namespace FaceShield.Services.Workspace
             out WorkspaceSnapshot? snapshot)
         {
             snapshot = null;
-            var state = _state.Workspaces.FirstOrDefault(w =>
-                string.Equals(w.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase));
-
-            if (state == null)
+            WorkspaceState? primaryState = FindWorkspaceState(_state, videoPath, mode);
+            if (primaryState == null)
                 return false;
 
-            string dir = GetWorkspaceDir(videoPath, mode, state.StorageGeneration);
-            maskProvider.Clear();
+            WorkspaceState stateToUse = primaryState;
+            bool loadedComplete = TryLoadWorkspacePayload(
+                videoPath,
+                mode,
+                primaryState,
+                maskProvider,
+                requireComplete: true);
 
+            if (!loadedComplete)
+            {
+                AppState? backupAppState = TryLoadStateFile(_stateBackupFile);
+                WorkspaceState? backupState = FindWorkspaceState(backupAppState, videoPath, mode);
+                if (backupState != null &&
+                    TryLoadWorkspacePayload(
+                        videoPath,
+                        mode,
+                        backupState,
+                        maskProvider,
+                        requireComplete: true))
+                {
+                    stateToUse = backupState;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[WorkspaceStateStore] recovered workspace payload from backup generation " +
+                        $"'{backupState.StorageGeneration ?? "legacy"}'.");
+                }
+                else
+                {
+                    // Preserve the old best-effort behavior when neither generation is complete,
+                    // but never delete unreadable payload files while attempting recovery.
+                    TryLoadWorkspacePayload(
+                        videoPath,
+                        mode,
+                        primaryState,
+                        maskProvider,
+                        requireComplete: false);
+                }
+            }
+
+            snapshot = CreateWorkspaceSnapshot(stateToUse, mode);
+            return true;
+        }
+
+        private static WorkspaceState? FindWorkspaceState(
+            AppState? appState,
+            string videoPath,
+            WorkspaceMode mode)
+        {
+            if (appState == null)
+                return null;
+
+            return appState.Workspaces.FirstOrDefault(w =>
+                string.Equals(w.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool TryLoadWorkspacePayload(
+            string videoPath,
+            WorkspaceMode mode,
+            WorkspaceState state,
+            FrameMaskProvider maskProvider,
+            bool requireComplete)
+        {
+            string dir = GetWorkspaceDir(videoPath, mode, state.StorageGeneration);
+            var loadedMasks = new List<KeyValuePair<int, WriteableBitmap>>();
+
+            try
+            {
+                foreach (int index in state.MaskIndices ?? new List<int>())
+                {
+                    string filePath = Path.Combine(dir, $"mask_{index}.png");
+                    if (!File.Exists(filePath))
+                    {
+                        if (requireComplete)
+                            return false;
+                        continue;
+                    }
+
+                    WriteableBitmap? mask = LoadMask(filePath);
+                    if (mask == null)
+                    {
+                        if (requireComplete)
+                            return false;
+                        continue;
+                    }
+
+                    loadedMasks.Add(new KeyValuePair<int, WriteableBitmap>(index, mask));
+                }
+
+                maskProvider.Clear();
+                ApplyFaceMasks(state, maskProvider);
+
+                foreach (var entry in loadedMasks)
+                    maskProvider.SetMask(entry.Key, entry.Value);
+
+                loadedMasks.Clear();
+                return true;
+            }
+            finally
+            {
+                foreach (var entry in loadedMasks)
+                    entry.Value.Dispose();
+            }
+        }
+
+        private static void ApplyFaceMasks(WorkspaceState state, FrameMaskProvider maskProvider)
+        {
             foreach (var faceState in state.FaceMasks ?? new List<FaceMaskState>())
             {
                 if (faceState == null ||
@@ -139,19 +239,13 @@ namespace FaceShield.Services.Workspace
                     faceState.MinConfidence,
                     faceState.Confidences);
             }
+        }
 
-            foreach (int index in state.MaskIndices ?? new List<int>())
-            {
-                string filePath = Path.Combine(dir, $"mask_{index}.png");
-                if (!File.Exists(filePath))
-                    continue;
-
-                var mask = LoadMask(filePath);
-                if (mask != null)
-                    maskProvider.SetMask(index, mask);
-            }
-
-            snapshot = new WorkspaceSnapshot(
+        private static WorkspaceSnapshot CreateWorkspaceSnapshot(
+            WorkspaceState state,
+            WorkspaceMode mode)
+        {
+            return new WorkspaceSnapshot(
                 state.VideoPath,
                 mode,
                 state.SelectedFrameIndex,
@@ -168,8 +262,6 @@ namespace FaceShield.Services.Workspace
                 state.AutoExportAllowHybridCopy,
                 state.AutoExportHybridDisableReasons,
                 state.AutoExecutionSignature);
-
-            return true;
         }
 
         public void SaveWorkspace(WorkspaceSnapshot snapshot, FrameMaskProvider maskProvider)
@@ -327,16 +419,10 @@ namespace FaceShield.Services.Workspace
 
                 return wb;
             }
-            catch
+            catch (Exception ex)
             {
-                try
-                {
-                    File.Delete(path);
-                }
-                catch
-                {
-                    // ignore cleanup failures
-                }
+                System.Diagnostics.Debug.WriteLine(
+                    $"[WorkspaceStateStore] failed to load mask '{path}': {ex.Message}");
                 return null;
             }
         }
