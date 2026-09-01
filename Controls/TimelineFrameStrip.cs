@@ -142,6 +142,7 @@ namespace FaceShield.Controls
         private readonly object _pendingThumbnailSync = new();
         private readonly HashSet<long> _pendingThumbnails = new();
         private CancellationTokenSource _thumbnailRequestCts = new();
+        private CancellationTokenSource? _selectionRequestCts;
         private TimelineThumbnailProvider? _thumbnailRequestProvider;
         private double _thumbnailRequestStart = double.NaN;
         private double _thumbnailRequestEnd = double.NaN;
@@ -181,13 +182,31 @@ namespace FaceShield.Controls
             if (pos.Y < 0 || pos.Y > stripH)
                 return;
 
-            int idx = XToFrameIndex(pos.X, total);
+            double seconds = XToSeconds(pos.X);
+            int fallbackIndex = SecondsToFrameIndex(seconds, total);
+            var provider = ThumbnailProvider;
 
-            // ✅ TwoWay 전파 확실히
-            SetCurrentValue(SelectedFrameIndexProperty, idx);
+            if (provider == null ||
+                provider.TryGetFrameIndexAtTimestamp(
+                    seconds,
+                    out int cachedFrameIndex))
+            {
+                int selected = provider == null
+                    ? fallbackIndex
+                    : Math.Clamp(cachedFrameIndex, 0, total - 1);
+                SetCurrentValue(SelectedFrameIndexProperty, selected);
+                InvalidateVisual();
+            }
+            else
+            {
+                RequestExactFrameSelection(
+                    provider,
+                    seconds,
+                    fallbackIndex,
+                    total);
+            }
 
             e.Handled = true;
-            InvalidateVisual();
         }
 
         protected override void OnPointerMoved(PointerEventArgs e)
@@ -427,6 +446,77 @@ namespace FaceShield.Controls
                         }
                     });
                 }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        }
+
+        private void RequestExactFrameSelection(
+            TimelineThumbnailProvider provider,
+            double timestampSeconds,
+            int fallbackIndex,
+            int totalFrames)
+        {
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _selectionRequestCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            _ = ResolveExactFrameSelectionAsync(
+                provider,
+                timestampSeconds,
+                fallbackIndex,
+                totalFrames,
+                cts);
+        }
+
+        private async Task ResolveExactFrameSelectionAsync(
+            TimelineThumbnailProvider provider,
+            double timestampSeconds,
+            int fallbackIndex,
+            int totalFrames,
+            CancellationTokenSource cts)
+        {
+            try
+            {
+                (bool resolved, int frameIndex) = await Task.Run(() =>
+                {
+                    bool ok = provider.TryResolveFrameIndexAtTimestamp(
+                        timestampSeconds,
+                        cts.Token,
+                        out int resolvedIndex);
+                    return (ok, resolvedIndex);
+                }, cts.Token);
+
+                if (cts.IsCancellationRequested)
+                    return;
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (cts.IsCancellationRequested ||
+                        !ReferenceEquals(_selectionRequestCts, cts) ||
+                        !ReferenceEquals(ThumbnailProvider, provider))
+                    {
+                        return;
+                    }
+
+                    int selected = resolved
+                        ? Math.Clamp(frameIndex, 0, Math.Max(0, totalFrames - 1))
+                        : Math.Clamp(fallbackIndex, 0, Math.Max(0, totalFrames - 1));
+                    SetCurrentValue(SelectedFrameIndexProperty, selected);
+                    InvalidateVisual();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(_selectionRequestCts, cts))
+                    Interlocked.CompareExchange(ref _selectionRequestCts, null, cts);
+                cts.Dispose();
+            }
         }
 
         private static void DrawGridLines(DrawingContext ctx, double w, double stripH, double startSec, double endSec)
@@ -682,15 +772,15 @@ namespace FaceShield.Controls
             return Math.Clamp(start, 0, maxStart);
         }
 
-        private int XToFrameIndex(double x, int totalFrames)
+        private double XToSeconds(double x)
         {
             double w = Math.Max(1, Bounds.Width);
             double t = Math.Clamp(x / w, 0.0, 1.0);
-
-            double sec =
-                ViewStartSeconds +
+            return ViewStartSeconds +
                 Math.Max(0.05, SecondsPerScreen) * t;
-            return SecondsToFrameIndex(sec, totalFrames);
         }
+
+        private int XToFrameIndex(double x, int totalFrames)
+            => SecondsToFrameIndex(XToSeconds(x), totalFrames);
     }
 }
