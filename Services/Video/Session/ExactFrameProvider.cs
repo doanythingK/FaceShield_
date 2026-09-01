@@ -9,12 +9,16 @@ namespace FaceShield.Services.Video.Session;
 public sealed class ExactFrameProvider : IDisposable
 {
     private readonly FfFrameExtractor _extractor;
+    private readonly bool _ownsExtractor;
     private readonly SemaphoreSlim _decodeGate = new(1, 1);
+    private readonly CancellationTokenSource _lifetimeCts = new();
+    private int _disposeStarted;
     private bool _disposed;
 
-    public ExactFrameProvider(FfFrameExtractor extractor)
+    public ExactFrameProvider(FfFrameExtractor extractor, bool ownsExtractor = true)
     {
-        _extractor = extractor;
+        _extractor = extractor ?? throw new ArgumentNullException(nameof(extractor));
+        _ownsExtractor = ownsExtractor;
     }
 
     public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
@@ -22,9 +26,14 @@ public sealed class ExactFrameProvider : IDisposable
         if (_disposed)
             return null;
 
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            ct,
+            _lifetimeCts.Token);
+        CancellationToken token = linked.Token;
+
         try
         {
-            await _decodeGate.WaitAsync(ct).ConfigureAwait(false);
+            await _decodeGate.WaitAsync(token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -37,17 +46,23 @@ public sealed class ExactFrameProvider : IDisposable
 
         try
         {
-            if (_disposed || ct.IsCancellationRequested)
+            if (_disposed || token.IsCancellationRequested)
                 return null;
 
-            var frame = await Task.Run(() => _extractor.GetFrameByIndex(frameIndex, ct)).ConfigureAwait(false);
-            if (ct.IsCancellationRequested)
+            var frame = await Task.Run(
+                () => _extractor.GetFrameByIndex(frameIndex, token),
+                token).ConfigureAwait(false);
+            if (token.IsCancellationRequested)
             {
                 frame?.Dispose();
                 return null;
             }
 
             return frame;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
         }
         finally
         {
@@ -57,19 +72,22 @@ public sealed class ExactFrameProvider : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
 
         _disposed = true;
+        _lifetimeCts.Cancel();
         _decodeGate.Wait();
         try
         {
-            _extractor.Dispose();
+            if (_ownsExtractor)
+                _extractor.Dispose();
         }
         finally
         {
             _decodeGate.Release();
             _decodeGate.Dispose();
+            _lifetimeCts.Dispose();
         }
     }
 }
