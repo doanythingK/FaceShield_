@@ -361,11 +361,21 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     public void NotifyPlaybackStarted()
     {
-        if (IsPlaying)
+        if (IsPlaying || !IsPlaybackEnabled)
             return;
 
         IsPlaying = true;
         PlaybackStateChanged?.Invoke(true);
+    }
+
+    public void SetPlaybackEnabled(bool enabled)
+    {
+        IsPlaybackEnabled = enabled;
+        if (enabled || !IsPlaying)
+            return;
+
+        IsPlaying = false;
+        PlaybackStateChanged?.Invoke(false);
     }
 
     public void SetPlaybackFrameIndex(int frameIndex)
