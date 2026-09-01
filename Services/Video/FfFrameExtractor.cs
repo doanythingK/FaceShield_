@@ -417,6 +417,65 @@ namespace FaceShield.Services.Video
             }
         }
 
+        public WriteableBitmap? GetFrameByIndexScaled(
+            int frameIndex,
+            int targetWidth,
+            int targetHeight,
+            CancellationToken cancellationToken)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
+            if (frameIndex < 0 || targetWidth <= 0 || targetHeight <= 0)
+                return null;
+
+            lock (_sync)
+            {
+                StartSequentialReadCore(frameIndex, timestampSeconds: null);
+                if (!TryGetNextFrameRawScaled(
+                        cancellationToken,
+                        requireBgra: true,
+                        targetWidth,
+                        targetHeight,
+                        useBilinear: true,
+                        out BgraFrame raw,
+                        out int decodedFrameIndex))
+                {
+                    return null;
+                }
+
+                if (decodedFrameIndex != frameIndex)
+                {
+                    SetSequentialDecodeError(
+                        $"exact scaled frame ordinal mismatch (requested={frameIndex}, decoded={decodedFrameIndex})");
+                    return null;
+                }
+
+                var bitmap = new WriteableBitmap(
+                    new PixelSize(raw.Width, raw.Height),
+                    new Vector(96, 96),
+                    Avalonia.Platform.PixelFormat.Bgra8888,
+                    Avalonia.Platform.AlphaFormat.Premul);
+
+                using var fb = bitmap.Lock();
+                byte* src = (byte*)raw.Data;
+                int srcStride = raw.Stride;
+                if (srcStride < 0)
+                    src += (raw.Height - 1) * (-srcStride);
+
+                int copyBytesPerRow = Math.Min(Math.Abs(srcStride), fb.RowBytes);
+                byte* dst = (byte*)fb.Address;
+                for (int y = 0; y < raw.Height; y++)
+                {
+                    Buffer.MemoryCopy(
+                        src + y * srcStride,
+                        dst + y * fb.RowBytes,
+                        fb.RowBytes,
+                        copyBytesPerRow);
+                }
+
+                return bitmap;
+            }
+        }
+
         public void StartSequentialRead(int startFrameIndex)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
