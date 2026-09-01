@@ -73,7 +73,6 @@ namespace FaceShield.ViewModels.Pages
         private const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";
         private bool _autoExportAllowHybridCopy;
         private string? _autoExportHybridDisableReasons;
-        private bool _disposed;
         private readonly object _lifetimeSync = new();
         private int _activeLifetimeOperations;
         private bool _disposeRequested;
@@ -2208,7 +2207,6 @@ namespace FaceShield.ViewModels.Pages
                     return;
 
                 _disposeRequested = true;
-                _disposed = true;
                 if (_activeLifetimeOperations == 0 && !_resourcesDisposed)
                 {
                     _resourcesDisposed = true;
