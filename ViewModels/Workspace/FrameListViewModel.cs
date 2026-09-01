@@ -311,6 +311,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedFrameIndexChanged(int value)
     {
+        CancelTimelineNavigation();
         SelectedFrameIndexChanged?.Invoke(value);
         OnPropertyChanged(nameof(FramePositionText));
         OnPropertyChanged(nameof(TimelineTimeText));
