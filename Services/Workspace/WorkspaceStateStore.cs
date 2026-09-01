@@ -68,14 +68,32 @@ namespace FaceShield.Services.Workspace
             if (string.IsNullOrWhiteSpace(videoPath))
                 return;
 
-            _state.Workspaces.RemoveAll(w =>
-                string.Equals(w.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase));
+            var previousWorkspaces = _state.Workspaces.ToList();
+            try
+            {
+                _state.Workspaces.RemoveAll(w =>
+                    string.Equals(
+                        w.VideoPath,
+                        videoPath,
+                        StringComparison.OrdinalIgnoreCase));
 
-            string baseDir = GetWorkspaceBaseDir(videoPath);
-            if (Directory.Exists(baseDir))
-                Directory.Delete(baseDir, recursive: true);
+                // Commit the reference removal first. The old state remains in the
+                // backup until we explicitly synchronize it below.
+                SaveState();
+            }
+            catch
+            {
+                _state.Workspaces = previousWorkspaces;
+                throw;
+            }
 
-            SaveState();
+            // Never delete workspace payloads while the backup can still reference
+            // them. If backup synchronization fails, leaving orphaned files is safer
+            // than creating a backup that points at missing data.
+            if (!TrySyncBackupToCurrentState())
+                return;
+
+            TryDeleteWorkspaceBaseDirectory(videoPath);
         }
 
         public bool TryLoadWorkspace(
@@ -426,6 +444,75 @@ namespace FaceShield.Services.Workspace
                 {
                     // ignore temp cleanup failures
                 }
+            }
+        }
+
+        private bool TrySyncBackupToCurrentState()
+        {
+            if (!File.Exists(_stateFile))
+                return false;
+
+            string tempPath = _stateBackupFile + ".tmp";
+            try
+            {
+                Directory.CreateDirectory(_rootDir);
+
+                using (var source = new FileStream(
+                    _stateFile,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read))
+                using (var destination = new FileStream(
+                    tempPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 16 * 1024,
+                    options: FileOptions.WriteThrough))
+                {
+                    source.CopyTo(destination);
+                    destination.Flush(flushToDisk: true);
+                }
+
+                File.Move(tempPath, _stateBackupFile, overwrite: true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[WorkspaceStateStore] backup sync skipped workspace cleanup: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                    // ignore temp cleanup failures
+                }
+            }
+        }
+
+        private void TryDeleteWorkspaceBaseDirectory(string videoPath)
+        {
+            string baseDir = GetWorkspaceBaseDir(videoPath);
+            if (!Directory.Exists(baseDir))
+                return;
+
+            try
+            {
+                Directory.Delete(baseDir, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                // State and backup no longer reference this directory. Keeping an
+                // orphan is safe and allows a later cleanup attempt.
+                System.Diagnostics.Debug.WriteLine(
+                    $"[WorkspaceStateStore] orphan workspace cleanup deferred: {ex.Message}");
             }
         }
 
