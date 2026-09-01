@@ -566,7 +566,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         double fps,
         int totalFrames,
         Action<int> onFrameAdvanced,
-        Action onPlaybackEnded)
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
@@ -576,7 +577,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 fps,
                 totalFrames,
                 onFrameAdvanced,
-                onPlaybackEnded));
+                onPlaybackEnded,
+                onPlaybackFailed));
             return;
         }
 
@@ -610,7 +612,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             totalFrames,
             _playbackCts.Token,
             onFrameAdvanced,
-            onPlaybackEnded);
+            onPlaybackEnded,
+            onPlaybackFailed);
     }
 
     public void StopPlayback()
@@ -641,11 +644,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         int totalFrames,
         CancellationToken ct,
         Action<int> onFrameAdvanced,
-        Action onPlaybackEnded)
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed)
     {
         return Task.Run(async () =>
         {
             bool endedNaturally = false;
+            string? playbackError = null;
             double frameMs = fps > 0 ? 1000.0 / fps : 33.333;
             var clock = Stopwatch.StartNew();
 
@@ -668,6 +673,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     if (totalFrames > 0 && frameIndex >= totalFrames)
                     {
                         frame.Dispose();
+                        endedNaturally = true;
                         break;
                     }
 
@@ -697,7 +703,21 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
                 }
 
-                endedNaturally |= !ct.IsCancellationRequested;
+                if (!ct.IsCancellationRequested && !extractor.SequentialReadCancelled)
+                {
+                    if (!string.IsNullOrWhiteSpace(extractor.SequentialDecodeError))
+                    {
+                        playbackError = extractor.SequentialDecodeError;
+                    }
+                    else if (extractor.SequentialReachedEndOfStream)
+                    {
+                        endedNaturally = true;
+                    }
+                    else if (!endedNaturally)
+                    {
+                        playbackError = "재생 디코더가 EOF에 도달하지 않은 상태에서 중단되었습니다.";
+                    }
+                }
             }
             catch (OperationCanceledException)
             {
@@ -706,17 +726,31 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             catch (Exception ex)
             {
                 Debug.WriteLine($"[FramePreview] sequential playback failed: {ex.Message}");
-                endedNaturally = true;
+                playbackError = ex.Message;
+                endedNaturally = false;
             }
 
-            if (endedNaturally && !ct.IsCancellationRequested)
+            if (ct.IsCancellationRequested)
+                return;
+
+            Dispatcher.UIThread.Post(() =>
             {
-                Dispatcher.UIThread.Post(() =>
+                if (runId != _playbackRunId || !_isPlaying)
+                    return;
+
+                if (!string.IsNullOrWhiteSpace(playbackError))
                 {
-                    if (runId == _playbackRunId && _isPlaying)
+                    Debug.WriteLine($"[FramePreview] sequential playback stopped by decode error: {playbackError}");
+                    if (onPlaybackFailed != null)
+                        onPlaybackFailed(playbackError);
+                    else
                         onPlaybackEnded();
-                });
-            }
+                    return;
+                }
+
+                if (endedNaturally)
+                    onPlaybackEnded();
+            });
         }, CancellationToken.None);
     }
 
