@@ -133,11 +133,7 @@ namespace FaceShield.Services.Video
                 }
             }
 
-            lock (_decodeStatusLock)
-            {
-                _lastDecodeStatus = status;
-                _lastDecodeError = error;
-            }
+            UpdateGlobalDecodeStatus(status, error);
         }
 
         private void UpdateDecodeDiagnostics(string diagnostics)
@@ -145,6 +141,20 @@ namespace FaceShield.Services.Video
             lock (_sync)
                 _decodeDiagnostics = diagnostics;
 
+            UpdateGlobalDecodeDiagnostics(diagnostics);
+        }
+
+        private static void UpdateGlobalDecodeStatus(string status, string? error = null)
+        {
+            lock (_decodeStatusLock)
+            {
+                _lastDecodeStatus = status;
+                _lastDecodeError = error;
+            }
+        }
+
+        private static void UpdateGlobalDecodeDiagnostics(string diagnostics)
+        {
             lock (_decodeStatusLock)
                 _lastDecodeDiagnostics = diagnostics;
         }
@@ -2119,14 +2129,14 @@ namespace FaceShield.Services.Video
             {
                 if (*p == target)
                 {
-                    UpdateDecodeStatus($"디코딩: HW 픽셀 포맷 선택됨 ({target})");
-                    UpdateDecodeDiagnostics(BuildFormatList("get_format", pixFmts, target));
+                    UpdateGlobalDecodeStatus($"디코딩: HW 픽셀 포맷 선택됨 ({target})");
+                    UpdateGlobalDecodeDiagnostics(BuildFormatList("get_format", pixFmts, target));
                     return *p;
                 }
             }
 
-            UpdateDecodeStatus("디코딩: HW 픽셀 포맷 미지원");
-            UpdateDecodeDiagnostics(BuildFormatList("get_format", pixFmts, target));
+            UpdateGlobalDecodeStatus("디코딩: HW 픽셀 포맷 미지원");
+            UpdateGlobalDecodeDiagnostics(BuildFormatList("get_format", pixFmts, target));
             return *pixFmts;
         }
 
