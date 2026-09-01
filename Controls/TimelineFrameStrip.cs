@@ -203,7 +203,8 @@ namespace FaceShield.Controls
                     provider,
                     seconds,
                     fallbackIndex,
-                    total);
+                    total,
+                    SelectedFrameIndex);
             }
 
             e.Handled = true;
@@ -452,7 +453,8 @@ namespace FaceShield.Controls
             TimelineThumbnailProvider provider,
             double timestampSeconds,
             int fallbackIndex,
-            int totalFrames)
+            int totalFrames,
+            int baselineSelectedFrameIndex)
         {
             var cts = new CancellationTokenSource();
             CancellationTokenSource? previous =
@@ -468,6 +470,7 @@ namespace FaceShield.Controls
                 timestampSeconds,
                 fallbackIndex,
                 totalFrames,
+                baselineSelectedFrameIndex,
                 cts);
         }
 
@@ -476,6 +479,7 @@ namespace FaceShield.Controls
             double timestampSeconds,
             int fallbackIndex,
             int totalFrames,
+            int baselineSelectedFrameIndex,
             CancellationTokenSource cts)
         {
             try
@@ -496,7 +500,8 @@ namespace FaceShield.Controls
                 {
                     if (cts.IsCancellationRequested ||
                         !ReferenceEquals(_selectionRequestCts, cts) ||
-                        !ReferenceEquals(ThumbnailProvider, provider))
+                        !ReferenceEquals(ThumbnailProvider, provider) ||
+                        SelectedFrameIndex != baselineSelectedFrameIndex)
                     {
                         return;
                     }
