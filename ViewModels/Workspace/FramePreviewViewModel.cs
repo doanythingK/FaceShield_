@@ -473,6 +473,11 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     {
         if (session == null)
             throw new ArgumentNullException(nameof(session));
+        if (_disposed)
+        {
+            session.Dispose();
+            return;
+        }
 
         PreviewBlurProcessor.ReleaseCachedRenderer();
         _session?.Dispose();
@@ -495,7 +500,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (_session == null)
+        var session = _session;
+        if (_disposed || session == null)
             return;
         if (index < 0)
             return;
@@ -512,7 +518,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         // 1) 선택 프레임 저화질 프리뷰.
         // 캐시 원본이 아니라 독립 복사본을 받아 eviction과 화면 수명을 분리합니다.
-        var exactThumb = await _session.Timeline.OnFrameChangingExactAsync(index);
+        var exactThumb = await session.Timeline.OnFrameChangingExactAsync(index);
+        if (_disposed || !ReferenceEquals(_session, session))
+        {
+            exactThumb?.Dispose();
+            return;
+        }
+
         if (exactThumb != null)
         {
             if (stamp == _changeStamp)
@@ -522,13 +534,19 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         // 2) 고화질 프레임
-        var exact = await _session.Timeline.OnFrameChangedAsync(index);
+        var exact = await session.Timeline.OnFrameChangedAsync(index);
+        if (_disposed || !ReferenceEquals(_session, session))
+        {
+            exact?.Dispose();
+            return;
+        }
+
         if (exact == null || stamp != _changeStamp)
         {
             if (exact != null)
                 exact.Dispose();
             if (!_isPlaying && stamp == _changeStamp)
-                await TryLoadExactFallbackAsync(index, stamp);
+                await TryLoadExactFallbackAsync(session, index, stamp);
             Debug.WriteLine($"[FramePreview] exact frame not available (frame={index}, stamp={stamp}).");
             return;
         }
@@ -544,14 +562,15 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (_session == null)
+        var session = _session;
+        if (_disposed || session == null)
             return;
         if (index < 0)
             return;
 
         int stamp = Interlocked.Increment(ref _changeStamp);
 
-        await TryLoadExactFallbackAsync(index, stamp);
+        await TryLoadExactFallbackAsync(session, index, stamp);
     }
 
     public void StartPlayback(
@@ -871,28 +890,40 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _maskDirty = false;
     }
 
-    private async Task TryLoadExactFallbackAsync(int index, int stamp)
+    private async Task TryLoadExactFallbackAsync(
+        VideoSession session,
+        int index,
+        int stamp)
     {
-        if (_session == null)
+        if (_disposed || !ReferenceEquals(_session, session))
             return;
 
-        var exact = await _session.Timeline.GetExactNowAsync(index);
-        if (exact != null && stamp != _changeStamp)
+        var exact = await session.Timeline.GetExactNowAsync(index);
+        if (_disposed ||
+            !ReferenceEquals(_session, session) ||
+            stamp != _changeStamp)
         {
-            exact.Dispose();
+            exact?.Dispose();
             return;
         }
 
         if (exact == null)
         {
             await Task.Delay(120);
-            if (stamp != _changeStamp)
+            if (_disposed ||
+                !ReferenceEquals(_session, session) ||
+                stamp != _changeStamp)
+            {
                 return;
+            }
 
-            exact = await _session.Timeline.GetExactNowAsync(index);
+            exact = await session.Timeline.GetExactNowAsync(index);
         }
 
-        if (exact == null || stamp != _changeStamp)
+        if (exact == null ||
+            _disposed ||
+            !ReferenceEquals(_session, session) ||
+            stamp != _changeStamp)
         {
             exact?.Dispose();
             return;
@@ -924,8 +955,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         FrameBitmap = null;
         MaskBitmap = null;
 
-        _session?.Dispose();
+        var session = _session;
         _session = null;
+        session?.Dispose();
         PreviewBlurProcessor.ReleaseCachedRenderer();
     }
 
