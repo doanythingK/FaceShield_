@@ -16,6 +16,14 @@ namespace FaceShield.Services.Workspace
 {
     public sealed class WorkspaceStateStore
     {
+        private static readonly StringComparison FilePathComparison =
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+        private static readonly StringComparer FilePathComparer =
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal;
         private readonly string _rootDir;
         private readonly string _stateFile;
         private readonly string _stateBackupFile;
@@ -158,7 +166,7 @@ namespace FaceShield.Services.Workspace
                 return null;
 
             return appState.Workspaces.FirstOrDefault(w =>
-                string.Equals(w.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(w.VideoPath, videoPath, FilePathComparison) &&
                 string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase));
         }
 
@@ -169,7 +177,10 @@ namespace FaceShield.Services.Workspace
             FrameMaskProvider maskProvider,
             bool requireComplete)
         {
-            string dir = GetWorkspaceDir(videoPath, mode, state.StorageGeneration);
+            string dir = ResolveWorkspaceDirForRead(
+                videoPath,
+                mode,
+                state.StorageGeneration);
             var loadedMasks = new List<KeyValuePair<int, WriteableBitmap>>();
 
             try
@@ -272,7 +283,7 @@ namespace FaceShield.Services.Workspace
             string generation = Guid.NewGuid().ToString("N");
             string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode, generation);
             WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
-                string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
                 string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
 
             if (Directory.Exists(dir))
@@ -339,7 +350,7 @@ namespace FaceShield.Services.Workspace
                 };
 
                 _state.Workspaces.RemoveAll(w =>
-                    string.Equals(w.VideoPath, snapshot.VideoPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
                     string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
                 _state.Workspaces.Add(newState);
 
@@ -388,6 +399,36 @@ namespace FaceShield.Services.Workspace
                 ? mode.ToString()
                 : $"{mode}-{storageGeneration}";
             return Path.Combine(GetWorkspaceBaseDir(videoPath), directoryName);
+        }
+
+        private string ResolveWorkspaceDirForRead(
+            string videoPath,
+            WorkspaceMode mode,
+            string? storageGeneration)
+        {
+            string current = GetWorkspaceDir(videoPath, mode, storageGeneration);
+            if (Directory.Exists(current))
+                return current;
+
+            string legacy = GetLegacyWorkspaceDir(videoPath, mode, storageGeneration);
+            return Directory.Exists(legacy) ? legacy : current;
+        }
+
+        private string GetLegacyWorkspaceDir(
+            string videoPath,
+            WorkspaceMode mode,
+            string? storageGeneration)
+        {
+            string directoryName = string.IsNullOrWhiteSpace(storageGeneration)
+                ? mode.ToString()
+                : $"{mode}-{storageGeneration}";
+            return Path.Combine(GetLegacyWorkspaceBaseDir(videoPath), directoryName);
+        }
+
+        private string GetLegacyWorkspaceBaseDir(string videoPath)
+        {
+            string hash = LegacyHashPath(videoPath);
+            return Path.Combine(_rootDir, "workspaces", hash);
         }
 
         private static void SaveMask(string path, WriteableBitmap mask)
@@ -585,20 +626,28 @@ namespace FaceShield.Services.Workspace
 
         private void TryDeleteWorkspaceBaseDirectory(string videoPath)
         {
-            string baseDir = GetWorkspaceBaseDir(videoPath);
-            if (!Directory.Exists(baseDir))
-                return;
+            var candidates = new HashSet<string>(FilePathComparer)
+            {
+                GetWorkspaceBaseDir(videoPath),
+                GetLegacyWorkspaceBaseDir(videoPath)
+            };
 
-            try
+            foreach (string baseDir in candidates)
             {
-                Directory.Delete(baseDir, recursive: true);
-            }
-            catch (Exception ex)
-            {
-                // State and backup no longer reference this directory. Keeping an
-                // orphan is safe and allows a later cleanup attempt.
-                System.Diagnostics.Debug.WriteLine(
-                    $"[WorkspaceStateStore] orphan workspace cleanup deferred: {ex.Message}");
+                if (!Directory.Exists(baseDir))
+                    continue;
+
+                try
+                {
+                    Directory.Delete(baseDir, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    // State and backup no longer reference this directory. Keeping an
+                    // orphan is safe and allows a later cleanup attempt.
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[WorkspaceStateStore] orphan workspace cleanup deferred: {ex.Message}");
+                }
             }
         }
 
@@ -610,7 +659,7 @@ namespace FaceShield.Services.Workspace
                 if (!Directory.Exists(baseDir))
                     return;
 
-                var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var keep = new HashSet<string>(FilePathComparer);
 
                 void AddReferencedDirectories(AppState? appState)
                 {
@@ -619,7 +668,7 @@ namespace FaceShield.Services.Workspace
 
                     foreach (var workspace in appState.Workspaces)
                     {
-                        if (!string.Equals(workspace.VideoPath, videoPath, StringComparison.OrdinalIgnoreCase) ||
+                        if (!string.Equals(workspace.VideoPath, videoPath, FilePathComparison) ||
                             !string.Equals(workspace.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase))
                         {
                             continue;
@@ -656,8 +705,20 @@ namespace FaceShield.Services.Workspace
 
         private static string HashPath(string value)
         {
+            string identity = OperatingSystem.IsWindows()
+                ? value.ToLowerInvariant()
+                : value;
+
             using var sha1 = SHA1.Create();
-            byte[] bytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(value.ToLowerInvariant()));
+            byte[] bytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(identity));
+            return Convert.ToHexString(bytes).ToLowerInvariant();
+        }
+
+        private static string LegacyHashPath(string value)
+        {
+            using var sha1 = SHA1.Create();
+            byte[] bytes = sha1.ComputeHash(
+                Encoding.UTF8.GetBytes(value.ToLowerInvariant()));
             return Convert.ToHexString(bytes).ToLowerInvariant();
         }
 
