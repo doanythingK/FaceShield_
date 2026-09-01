@@ -12,16 +12,13 @@ namespace FaceShield.Services.Video
 {
     public unsafe sealed class FfFrameExtractor : IDisposable
     {
-        private static readonly object _decodeStatusLock = new();
-        private static string _lastDecodeStatus = "디코딩: 확인 중";
-        private static string? _lastDecodeError;
-        private static string? _lastDecodeDiagnostics;
         private string _decodeStatus = "디코딩: 확인 중";
         private string? _decodeError;
         private string? _decodeDiagnostics;
         private bool _hardwareTransferFailed;
         private static readonly object _hwFormatLock = new();
         private static readonly Dictionary<IntPtr, AVPixelFormat> _hwFormatByDecoder = new();
+        private static readonly Dictionary<IntPtr, WeakReference<FfFrameExtractor>> _hwOwnerByDecoder = new();
         private static readonly object _timelineCacheLock = new();
         private static readonly Dictionary<FrameTimelineCacheKey, DecodedFrameTimeline> _timelineCache = new();
         private const int MaxTimelineCacheEntries = 8;
@@ -58,30 +55,6 @@ namespace FaceShield.Services.Video
             ResolveIndexedTimestamp,
             DecodeFromBeginning,
             MatchIndexedTimestamp
-        }
-
-        public static string GetLastDecodeStatus()
-        {
-            lock (_decodeStatusLock)
-            {
-                return _lastDecodeStatus;
-            }
-        }
-
-        public static string? GetLastDecodeError()
-        {
-            lock (_decodeStatusLock)
-            {
-                return _lastDecodeError;
-            }
-        }
-
-        public static string? GetLastDecodeDiagnostics()
-        {
-            lock (_decodeStatusLock)
-            {
-                return _lastDecodeDiagnostics;
-            }
         }
 
         public string DecodeStatus
@@ -132,31 +105,12 @@ namespace FaceShield.Services.Video
                     _hardwareTransferFailed = true;
                 }
             }
-
-            UpdateGlobalDecodeStatus(status, error);
         }
 
         private void UpdateDecodeDiagnostics(string diagnostics)
         {
             lock (_sync)
                 _decodeDiagnostics = diagnostics;
-
-            UpdateGlobalDecodeDiagnostics(diagnostics);
-        }
-
-        private static void UpdateGlobalDecodeStatus(string status, string? error = null)
-        {
-            lock (_decodeStatusLock)
-            {
-                _lastDecodeStatus = status;
-                _lastDecodeError = error;
-            }
-        }
-
-        private static void UpdateGlobalDecodeDiagnostics(string diagnostics)
-        {
-            lock (_decodeStatusLock)
-                _lastDecodeDiagnostics = diagnostics;
         }
 
         public readonly struct BgraFrame
@@ -2414,23 +2368,30 @@ namespace FaceShield.Services.Video
                 return AVPixelFormat.AV_PIX_FMT_NONE;
 
             AVPixelFormat target = AVPixelFormat.AV_PIX_FMT_NONE;
+            FfFrameExtractor? owner = null;
             lock (_hwFormatLock)
             {
-                _hwFormatByDecoder.TryGetValue((IntPtr)ctx, out target);
+                IntPtr key = (IntPtr)ctx;
+                _hwFormatByDecoder.TryGetValue(key, out target);
+                if (_hwOwnerByDecoder.TryGetValue(key, out var ownerRef))
+                    ownerRef.TryGetTarget(out owner);
             }
 
             for (AVPixelFormat* p = pixFmts; *p != AVPixelFormat.AV_PIX_FMT_NONE; p++)
             {
                 if (*p == target)
                 {
-                    UpdateGlobalDecodeStatus($"디코딩: HW 픽셀 포맷 선택됨 ({target})");
-                    UpdateGlobalDecodeDiagnostics(BuildFormatList("get_format", pixFmts, target));
+                    owner?.UpdateDecodeStatus(
+                        $"디코딩: HW 픽셀 포맷 선택됨 ({target})");
+                    owner?.UpdateDecodeDiagnostics(
+                        BuildFormatList("get_format", pixFmts, target));
                     return *p;
                 }
             }
 
-            UpdateGlobalDecodeStatus("디코딩: HW 픽셀 포맷 미지원");
-            UpdateGlobalDecodeDiagnostics(BuildFormatList("get_format", pixFmts, target));
+            owner?.UpdateDecodeStatus("디코딩: HW 픽셀 포맷 미지원");
+            owner?.UpdateDecodeDiagnostics(
+                BuildFormatList("get_format", pixFmts, target));
             return *pixFmts;
         }
 
@@ -2446,25 +2407,30 @@ namespace FaceShield.Services.Video
             return $"{label}: target={target}, formats={list}";
         }
 
-        private static void RegisterHardwareFormat(AVCodecContext* ctx, AVPixelFormat format)
+        private void RegisterHardwareFormat(AVCodecContext* ctx, AVPixelFormat format)
         {
             if (ctx == null)
                 return;
 
             lock (_hwFormatLock)
             {
-                _hwFormatByDecoder[(IntPtr)ctx] = format;
+                IntPtr key = (IntPtr)ctx;
+                _hwFormatByDecoder[key] = format;
+                _hwOwnerByDecoder[key] =
+                    new WeakReference<FfFrameExtractor>(this);
             }
         }
 
-        private static void UnregisterHardwareFormat(AVCodecContext* ctx)
+        private void UnregisterHardwareFormat(AVCodecContext* ctx)
         {
             if (ctx == null)
                 return;
 
             lock (_hwFormatLock)
             {
-                _hwFormatByDecoder.Remove((IntPtr)ctx);
+                IntPtr key = (IntPtr)ctx;
+                _hwFormatByDecoder.Remove(key);
+                _hwOwnerByDecoder.Remove(key);
             }
         }
 
