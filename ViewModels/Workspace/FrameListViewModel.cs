@@ -576,6 +576,27 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         catch (ObjectDisposedException) { }
     }
 
+    public async Task SuspendTimelineOperationsAndWaitAsync()
+    {
+        CancelTimelineNavigation();
+        CancelSelectedTimestampResolution();
+
+        var provider = ThumbnailProvider;
+        if (provider != null)
+            await provider.SuspendOperationsAndWaitAsync();
+    }
+
+    public void ResumeTimelineOperations()
+    {
+        var provider = ThumbnailProvider;
+        if (provider == null)
+            return;
+
+        provider.ResumeOperations();
+        OnPropertyChanged(nameof(TimelineTimeText));
+        ResolveSelectedTimestampInBackground();
+    }
+
     private void TogglePlay()
     {
         if (IsPlaying)
