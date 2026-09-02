@@ -1289,6 +1289,12 @@ namespace FaceShield.Services.Video
                 int readResult;
                 do
                 {
+                    if (ct.IsCancellationRequested)
+                    {
+                        _sequentialCancelled = true;
+                        return false;
+                    }
+
                     ffmpeg.av_packet_unref(packet);
                     readResult = ffmpeg.av_read_frame(_fmt, packet);
                 }
@@ -1297,6 +1303,12 @@ namespace FaceShield.Services.Video
                 if (readResult == ffmpeg.AVERROR_EOF)
                 {
                     ffmpeg.av_packet_unref(packet);
+                    if (ct.IsCancellationRequested)
+                    {
+                        _sequentialCancelled = true;
+                        return false;
+                    }
+
                     int drainResult = ffmpeg.avcodec_send_packet(_dec, null);
                     _sequentialDrainSent = true;
                     if (drainResult == 0)
@@ -1323,6 +1335,13 @@ namespace FaceShield.Services.Video
                 {
                     ffmpeg.av_packet_unref(packet);
                     SetSequentialDecodeError("av_read_frame failed", readResult);
+                    return false;
+                }
+
+                if (ct.IsCancellationRequested)
+                {
+                    ffmpeg.av_packet_unref(packet);
+                    _sequentialCancelled = true;
                     return false;
                 }
 
