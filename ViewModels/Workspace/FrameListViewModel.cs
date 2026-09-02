@@ -168,60 +168,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         }
     }
 
-    // ─────────────────────────────
-    // Timeline helper
-    // ─────────────────────────────
-    public double FrameIndexToSeconds(int frameIndex)
-    {
-        if (frameIndex < 0 || TotalFrames <= 0)
-            return 0;
-
-        if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
-                frameIndex,
-                out double ptsSeconds) == true)
-        {
-            return Math.Clamp(
-                ptsSeconds,
-                0,
-                Math.Max(0, TotalDurationSeconds));
-        }
-
-        if (TotalFrames <= 1 || TotalDurationSeconds <= 0)
-            return 0;
-
-        return Math.Clamp(
-                frameIndex / (double)(TotalFrames - 1),
-                0,
-                1)
-            * TotalDurationSeconds;
-    }
-
-    public int SecondsToFrameIndex(double seconds)
-    {
-        if (TotalFrames <= 0)
-            return -1;
-
-        double clamped = Math.Clamp(
-            seconds,
-            0,
-            Math.Max(0, TotalDurationSeconds));
-        if (ThumbnailProvider?.TryGetFrameIndexAtTimestamp(
-                clamped,
-                out int ptsFrame) == true)
-        {
-            return Math.Clamp(ptsFrame, 0, TotalFrames - 1);
-        }
-
-        if (TotalFrames <= 1 || TotalDurationSeconds <= 0)
-            return 0;
-
-        return Math.Clamp(
-            (int)Math.Round(
-                clamped / TotalDurationSeconds * (TotalFrames - 1)),
-            0,
-            TotalFrames - 1);
-    }
-
     public void SetThumbnailProvider(TimelineThumbnailProvider? provider)
     {
         CancelTimelineNavigation();
