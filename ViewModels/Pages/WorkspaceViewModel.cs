@@ -1046,12 +1046,15 @@ namespace FaceShield.ViewModels.Pages
         {
             bool persisted = false;
             bool detectionCompleted = false;
+            bool timelineOperationsSuspended = false;
             bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
             string runId = $"auto-{Guid.NewGuid():N}";
             FrameList.SetPlaybackEnabled(false);
             try
             {
                 await FramePreview.StopPlaybackAndWaitAsync();
+                await FrameList.SuspendTimelineOperationsAndWaitAsync();
+                timelineOperationsSuspended = true;
 
                 // Progress updates no longer invoke the exact-frame path on every
                 // selection change, so preserve any pending manual edit once up front.
@@ -1283,6 +1286,8 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                if (timelineOperationsSuspended)
+                    FrameList.ResumeTimelineOperations();
                 FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
                 if (!exportAfter &&
                     _autoPreviewNeedsExactRefresh &&
@@ -1582,6 +1587,7 @@ namespace FaceShield.ViewModels.Pages
 
             _isAutoRunning = true;
             _autoCts = new CancellationTokenSource();
+            bool timelineOperationsSuspended = false;
             bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
 
             ToolPanel.IsAutoRunning = true;
@@ -1591,6 +1597,8 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 await FramePreview.StopPlaybackAndWaitAsync();
+                await FrameList.SuspendTimelineOperationsAndWaitAsync();
+                timelineOperationsSuspended = true;
 
                 var detectorFactory = CreateFaceDetectorFactory();
                 using IFaceDetector detector = detectorFactory.CreateDetector();
@@ -1626,6 +1634,8 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                if (timelineOperationsSuspended)
+                    FrameList.ResumeTimelineOperations();
                 FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
                 PersistWorkspaceState();
             }
