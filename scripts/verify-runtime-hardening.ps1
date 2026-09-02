@@ -50,7 +50,7 @@ Assert-NotMatch "unreadable masks are not deleted while loading" $workspaceStore
 Assert-Match "timeline cache has a hard entry bound" $thumbnailProvider '_maxCacheEntries[\s\S]*TrimCacheIfNeeded'
 Assert-Match "timeline thumbnails expose direct timestamp-seek extraction" $thumbnailProvider 'GetTimelineThumbnailAtTimestampScaled\('
 Assert-NotMatch "timeline thumbnails do not invoke exact ordinal extraction" $thumbnailProvider 'GetFrameByIndexScaled\('
-Assert-Match "timeline thumbnail extractor seeks by presentation time" $extractor 'GetTimelineThumbnailAtTimestampScaled[\s\S]{0,9000}SeekMainDecoder\(targetPts\)'
+Assert-Match "timeline thumbnail extractor seeks by presentation time" $extractor 'GetTimelineThumbnailAtTimestampScaled[\s\S]{0,9000}SeekMainDecoder\(targetPts,\s*cancellationToken\)'
 Assert-Match "timeline viewport requests pass cancellation to thumbnail decode" ($thumbnailProvider + $timelineStrip) 'GetThumbnailAtTime\([\s\S]{0,240}token'
 Assert-NotMatch "timeline controller does not issue uncancellable exact requests" $timelineController 'CancellationToken\.None'
 Assert-Match "exact provider cancels lifetime before decoder ownership wait" $exactProvider '_lifetimeCts\.Cancel\(\)[\s\S]{0,300}_decodeGate\.Wait\(\)'
