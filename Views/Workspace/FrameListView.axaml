@@ -38,6 +38,7 @@
             TotalFrames="{Binding TotalFrames}"
             TotalDurationSeconds="{Binding TimelineExtentSeconds}"
             RenderVersion="{Binding TimelineRenderVersion}"
+            IsTotalFramesEstimated="{Binding IsTotalFramesEstimated}"
             Fps="{Binding Fps}"
             SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
             SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
