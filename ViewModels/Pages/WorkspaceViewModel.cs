@@ -1046,6 +1046,7 @@ namespace FaceShield.ViewModels.Pages
         {
             bool persisted = false;
             bool detectionCompleted = false;
+            bool exactFrameOperationsSuspended = false;
             bool timelineOperationsSuspended = false;
             bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
             string runId = $"auto-{Guid.NewGuid():N}";
@@ -1053,6 +1054,8 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 await FramePreview.StopPlaybackAndWaitAsync();
+                await FramePreview.SuspendExactFrameOperationsAndWaitAsync();
+                exactFrameOperationsSuspended = true;
                 await FrameList.SuspendTimelineOperationsAndWaitAsync();
                 timelineOperationsSuspended = true;
 
@@ -1288,6 +1291,8 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.IsAutoRunning = false;
                 if (timelineOperationsSuspended)
                     FrameList.ResumeTimelineOperations();
+                if (exactFrameOperationsSuspended)
+                    FramePreview.ResumeExactFrameOperations();
                 FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
                 if (!exportAfter &&
                     _autoPreviewNeedsExactRefresh &&
@@ -1587,6 +1592,8 @@ namespace FaceShield.ViewModels.Pages
 
             _isAutoRunning = true;
             _autoCts = new CancellationTokenSource();
+            bool refreshPreviewAfterAuto = false;
+            bool exactFrameOperationsSuspended = false;
             bool timelineOperationsSuspended = false;
             bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
 
@@ -1597,6 +1604,8 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 await FramePreview.StopPlaybackAndWaitAsync();
+                await FramePreview.SuspendExactFrameOperationsAndWaitAsync();
+                exactFrameOperationsSuspended = true;
                 await FrameList.SuspendTimelineOperationsAndWaitAsync();
                 timelineOperationsSuspended = true;
 
@@ -1617,7 +1626,7 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
-                FramePreview.OnFrameIndexChanged(frameIndex);
+                refreshPreviewAfterAuto = true;
                 _autoLastProcessedFrame = frameIndex;
                 _autoLastProcessedAtUtc = DateTime.UtcNow;
                 PersistWorkspaceState();
@@ -1636,7 +1645,11 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.IsAutoRunning = false;
                 if (timelineOperationsSuspended)
                     FrameList.ResumeTimelineOperations();
+                if (exactFrameOperationsSuspended)
+                    FramePreview.ResumeExactFrameOperations();
                 FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
+                if (refreshPreviewAfterAuto)
+                    FramePreview.OnFrameIndexChanged(frameIndex);
                 PersistWorkspaceState();
             }
         }
