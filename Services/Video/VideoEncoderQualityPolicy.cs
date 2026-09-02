@@ -103,18 +103,18 @@ internal static unsafe class VideoEncoderQualityPolicy
         else if (isSvtAv1)
         {
             SetOption("preset", "6", required: true);
-            SetOption("crf", "12", required: true);
+            SetOption("crf", "20", required: true);
             SetOption("svtav1-params", "tune=0", required: true);
-            mode = forceSafeEncoding ? "crf12-preset6-vq-safe" : "crf12-preset6-vq";
+            mode = forceSafeEncoding ? "crf20-preset6-vq-safe" : "crf20-preset6-vq";
         }
         else if (isAomAv1)
         {
             SetOption("usage", "good", required: true);
             SetOption("cpu-used", "4", required: true);
-            SetOption("crf", "12", required: true);
+            SetOption("crf", "20", required: true);
             SetOption("row-mt", "1", required: false);
             SetOption("tune", "psnr", required: false);
-            mode = forceSafeEncoding ? "crf12-cpu4-good-safe" : "crf12-cpu4-good";
+            mode = forceSafeEncoding ? "crf20-cpu4-good-safe" : "crf20-cpu4-good";
         }
         else if (isNvenc)
         {
