@@ -435,6 +435,7 @@ namespace FaceShield.ViewModels.Pages
             selectedAutoDetectorBackendOption = AutoDetectorBackendOptions[0];
             selectedAutoProcessingModeOption = AutoProcessingModeOptions[0];
             selectedYoloModelTypeOption = YoloModelTypeOptions[1];
+            selectedYoloDebugThresholdPreset = YoloDebugThresholdPresets[0];
             selectedResolutionOption = ResolutionOptions[0];
             var defaults = FaceOnnxDetector.GetDefaultThresholds();
             autoDetectionThreshold = defaults.Detection;
