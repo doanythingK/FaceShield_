@@ -583,9 +583,15 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         var provider = ThumbnailProvider;
         if (_disposed ||
             provider == null ||
-            frameIndex < 0 ||
-            provider.TryGetFrameTimestampSeconds(frameIndex, out _))
+            frameIndex < 0)
         {
+            return;
+        }
+
+        if (provider.TryGetFrameTimestampSeconds(frameIndex, out _))
+        {
+            RefreshTimelineExtentFromProvider(provider);
+            OnPropertyChanged(nameof(TimelineTimeText));
             return;
         }
 
