@@ -1,7 +1,6 @@
 using Avalonia.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
-using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -99,98 +98,47 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     // ─────────────────────────────
     // ctor
     // ─────────────────────────────
-    public FrameListViewModel(string videoPath)
+    public FrameListViewModel(
+        string videoPath,
+        CancellationToken cancellationToken = default)
     {
         VideoPath = videoPath;
-
-        LoadVideoInfo(videoPath);
-
+        LoadVideoInfo(videoPath, cancellationToken);
     }
 
     // ─────────────────────────────
     // FFmpeg metadata load
     // ─────────────────────────────
-    private unsafe void LoadVideoInfo(string path)
+    private void LoadVideoInfo(
+        string path,
+        CancellationToken cancellationToken)
     {
-        AVFormatContext* fmt = null;
+        VideoMetadataInfo metadata =
+            VideoMetadataReader.Read(path, cancellationToken);
 
-        try
-        {
-            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
+        Fps = metadata.Fps;
+        TotalFrames = metadata.GetFrameCountEstimate(
+            minimumOneWhenUnknown: true);
+        IsTotalFramesEstimated =
+            !metadata.HasContainerFrameCount && TotalFrames > 0;
 
-            int openResult = ffmpeg.avformat_open_input(&fmt, path, null, null);
-            FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
+        // A missing duration is unknown, not "frame count / average FPS".
+        // Keep it at zero rather than presenting an estimated VFR time axis as exact.
+        IsDurationKnown = metadata.DurationSeconds > 0;
+        TotalDurationSeconds = IsDurationKnown
+            ? metadata.DurationSeconds
+            : 0;
+        OnPropertyChanged(nameof(TotalDurationSeconds));
 
-            int streamInfo = ffmpeg.avformat_find_stream_info(fmt, null);
-            FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
+        TimelineExtentSeconds = TotalDurationSeconds > 0
+            ? TotalDurationSeconds
+            : UnknownTimelineInitialExtentSeconds;
+        SecondsPerScreen = TotalDurationSeconds > 0
+            ? Math.Max(0.1, TotalDurationSeconds)
+            : UnknownTimelineInitialViewportSeconds;
 
-            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
-            AVStream* videoStream = videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
-
-            if (videoStream == null)
-                throw new InvalidOperationException("Video stream not found.");
-
-            double fpsValue =
-                videoStream->avg_frame_rate.num != 0
-                    ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
-                    : videoStream->r_frame_rate.num != 0
-                        ? ffmpeg.av_q2d(videoStream->r_frame_rate)
-                        : 30.0;
-
-            Fps = fpsValue;
-
-            double durationSeconds;
-
-            if (videoStream->duration > 0)
-            {
-                durationSeconds =
-                    videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
-            }
-            else if (fmt->duration > 0)
-            {
-                durationSeconds =
-                    fmt->duration / (double)ffmpeg.AV_TIME_BASE;
-            }
-            else
-            {
-                durationSeconds = 0;
-            }
-
-            bool hasContainerFrameCount = videoStream->nb_frames > 0;
-            int frames = hasContainerFrameCount
-                ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
-                : durationSeconds > 0 && fpsValue > 0
-                    ? Math.Max(1, (int)Math.Floor(durationSeconds * fpsValue))
-                    : 1;
-            TotalFrames = Math.Max(frames, 0);
-            IsTotalFramesEstimated = !hasContainerFrameCount && TotalFrames > 0;
-
-            // A missing duration is unknown, not "frame count / average FPS".
-            // Keep it at zero rather than presenting an estimated VFR time axis as exact.
-            IsDurationKnown = durationSeconds > 0;
-            TotalDurationSeconds = IsDurationKnown
-                ? durationSeconds
-                : 0;
-            OnPropertyChanged(nameof(TotalDurationSeconds));
-
-            TimelineExtentSeconds = TotalDurationSeconds > 0
-                ? TotalDurationSeconds
-                : UnknownTimelineInitialExtentSeconds;
-            SecondsPerScreen = TotalDurationSeconds > 0
-                ? Math.Max(0.1, TotalDurationSeconds)
-                : UnknownTimelineInitialViewportSeconds;
-
-            // 시작은 항상 0초
-            ViewStartSeconds = 0;
-
-            // 첫 프레임 선택
-            SelectedFrameIndex = TotalFrames > 0 ? 0 : -1;
-        }
-        finally
-        {
-            if (fmt != null)
-                ffmpeg.avformat_close_input(&fmt);
-        }
+        ViewStartSeconds = 0;
+        SelectedFrameIndex = TotalFrames > 0 ? 0 : -1;
     }
 
     public void SetThumbnailProvider(TimelineThumbnailProvider? provider)

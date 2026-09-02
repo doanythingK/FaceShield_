@@ -133,11 +133,13 @@ namespace FaceShield.Services.Analysis
             if (string.IsNullOrWhiteSpace(videoPath))
                 throw new ArgumentException("videoPath is null or empty.", nameof(videoPath));
 
-            var (fps, totalFrames, _) = ReadVideoInfo(videoPath);
+            ct.ThrowIfCancellationRequested();
+            VideoMetadataInfo metadata =
+                VideoMetadataReader.Read(videoPath, ct);
+            double fps = metadata.Fps;
+            int totalFrames = metadata.GetFrameCountEstimate();
 
             if (fps <= 0)
-                return;
-            if (ct.IsCancellationRequested)
                 return;
 
             int requestedStartFrameIndex = Math.Max(0, startFrameIndex);
@@ -2942,64 +2944,5 @@ namespace FaceShield.Services.Analysis
             return min == float.MaxValue ? null : min;
         }
 
-        private unsafe static (double fps, int totalFrames, double durationSeconds) ReadVideoInfo(string path)
-        {
-            AVFormatContext* fmt = null;
-
-            try
-            {
-                ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
-
-                int openResult = ffmpeg.avformat_open_input(&fmt, path, null, null);
-                FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
-
-                int streamInfo = ffmpeg.avformat_find_stream_info(fmt, null);
-                FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
-
-                int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
-                AVStream* videoStream = videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
-
-                if (videoStream == null)
-                    throw new InvalidOperationException("Video stream not found.");
-
-                double fpsValue =
-                    videoStream->avg_frame_rate.num != 0
-                        ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
-                        : videoStream->r_frame_rate.num != 0
-                            ? ffmpeg.av_q2d(videoStream->r_frame_rate)
-                            : 30.0;
-
-                double durationSeconds;
-
-                if (videoStream->duration > 0)
-                {
-                    durationSeconds =
-                        videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
-                }
-                else if (fmt->duration > 0)
-                {
-                    durationSeconds =
-                        fmt->duration / (double)ffmpeg.AV_TIME_BASE;
-                }
-                else
-                {
-                    durationSeconds = 0;
-                }
-
-                int frames = videoStream->nb_frames > 0
-                    ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
-                    : (int)Math.Floor(durationSeconds * fpsValue);
-
-                return (
-                    fps: fpsValue,
-                    totalFrames: Math.Max(frames, 0),
-                    durationSeconds: Math.Max(durationSeconds, 0));
-            }
-            finally
-            {
-                if (fmt != null)
-                    ffmpeg.avformat_close_input(&fmt);
-            }
-        }
     }
 }

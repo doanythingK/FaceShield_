@@ -135,7 +135,8 @@ namespace FaceShield.ViewModels.Pages
             FaceOnnxDetectorOptions? detectorOptions = null,
             WorkspaceStateStore? stateStore = null,
             bool deferSessionInit = false,
-            FaceDetectorFactoryOptions? detectorFactoryOptions = null)
+            FaceDetectorFactoryOptions? detectorFactoryOptions = null,
+            CancellationToken initializationToken = default)
         {
             Mode = mode;
             _onBack = onBack;
@@ -143,10 +144,13 @@ namespace FaceShield.ViewModels.Pages
             _detectorOptions = detectorOptions ?? new FaceOnnxDetectorOptions();
             _detectorFactoryOptions = detectorFactoryOptions ?? FaceDetectorFactoryOptions.ForOnnx(_detectorOptions);
             _stateStore = stateStore;
-            FrameList = new FrameListViewModel(videoPath);
+            initializationToken.ThrowIfCancellationRequested();
+            FrameList = new FrameListViewModel(
+                videoPath,
+                initializationToken);
             FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);
             if (!deferSessionInit)
-                InitializeSession(loadProgress);
+                InitializeSession(loadProgress, initializationToken);
 
             // 🔹 자동/최종 마스크 provider 주입
             FramePreview.SetMaskProvider(_maskProvider);
@@ -251,12 +255,16 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        public async Task EnsureSessionInitializedAsync(IProgress<int>? loadProgress)
+        public async Task EnsureSessionInitializedAsync(
+            IProgress<int>? loadProgress,
+            CancellationToken cancellationToken = default)
         {
             if (_sessionInitialized || !TryBeginLifetimeOperation())
                 return;
 
-            var sessionCts = new CancellationTokenSource();
+            var sessionCts =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
             CancellationTokenSource? previousSessionCts =
                 Interlocked.Exchange(ref _sessionInitCts, sessionCts);
             if (previousSessionCts != null)
@@ -295,6 +303,8 @@ namespace FaceShield.ViewModels.Pages
             }
             catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
             {
+                if (cancellationToken.IsCancellationRequested)
+                    throw;
             }
             finally
             {
@@ -304,9 +314,15 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private void InitializeSession(IProgress<int>? loadProgress)
+        private void InitializeSession(
+            IProgress<int>? loadProgress,
+            CancellationToken cancellationToken)
         {
-            var session = new VideoSession(FrameList.VideoPath, progress: loadProgress);
+            cancellationToken.ThrowIfCancellationRequested();
+            var session = new VideoSession(
+                FrameList.VideoPath,
+                progress: loadProgress,
+                cancellationToken: cancellationToken);
             FramePreview.InitializeSession(session);
             FrameList.SetThumbnailProvider(session.ThumbnailProvider);
             _sessionInitialized = true;

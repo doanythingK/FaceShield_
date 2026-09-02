@@ -60,6 +60,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspaceStateStore _stateStore;
         private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(FilePathComparer);
         private CancellationTokenSource? _autoCts;
+        private CancellationTokenSource? _workspaceLoadCts;
         private CancellationTokenSource? _yoloDownloadCts;
         private DateTime _autoStartTimeUtc;
         private DateTime _autoLastProgressAtUtc;
@@ -1474,6 +1475,7 @@ namespace FaceShield.ViewModels.Pages
             IsWorkspaceLoadingIndeterminate = false;
 
             WorkspaceViewModel vm;
+            CancellationTokenSource loadCts = BeginWorkspaceLoad();
             try
             {
                 var progress = new Progress<int>(p => WorkspaceLoadingProgress = p);
@@ -1487,10 +1489,17 @@ namespace FaceShield.ViewModels.Pages
                         WorkspaceMode.Manual,
                         progress,
                         autoOptions,
-                        detectorFactoryOptions));
+                        detectorFactoryOptions,
+                        loadCts.Token),
+                    loadCts.Token);
+            }
+            catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+            {
+                return;
             }
             finally
             {
+                EndWorkspaceLoad(loadCts);
                 IsWorkspaceLoading = false;
             }
 
@@ -1519,6 +1528,7 @@ namespace FaceShield.ViewModels.Pages
             IsWorkspaceLoadingIndeterminate = false;
 
             WorkspaceViewModel vm;
+            CancellationTokenSource loadCts = BeginWorkspaceLoad();
             try
             {
                 var autoOptions = BuildAutoOptions();
@@ -1530,10 +1540,17 @@ namespace FaceShield.ViewModels.Pages
                         WorkspaceMode.Auto,
                         loadProgress: null,
                         autoOptions,
-                        detectorFactoryOptions));
+                        detectorFactoryOptions,
+                        loadCts.Token),
+                    loadCts.Token);
+            }
+            catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+            {
+                return;
             }
             finally
             {
+                EndWorkspaceLoad(loadCts);
                 IsWorkspaceLoading = false;
             }
 
@@ -1542,8 +1559,8 @@ namespace FaceShield.ViewModels.Pages
                 bool resume = await ShowResumeAutoDialogAsync();
                 if (!resume)
                 {
-                    await EnsureWorkspaceReadyAsync(vm);
-                    _onStartWorkspace(vm);
+                    if (await EnsureWorkspaceReadyAsync(vm))
+                        _onStartWorkspace(vm);
                     return;
                 }
             }
@@ -1632,8 +1649,8 @@ namespace FaceShield.ViewModels.Pages
             {
                 if (!AutoExportAfter)
                 {
-                    await EnsureWorkspaceReadyAsync(vm);
-                    _onStartWorkspace(vm);
+                    if (await EnsureWorkspaceReadyAsync(vm))
+                        _onStartWorkspace(vm);
                 }
             }
         }
@@ -1643,6 +1660,38 @@ namespace FaceShield.ViewModels.Pages
 
         [RelayCommand]
         private void OpenAbout() { }
+
+        private CancellationTokenSource BeginWorkspaceLoad()
+        {
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _workspaceLoadCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+                previous.Dispose();
+            }
+
+            return cts;
+        }
+
+        private void EndWorkspaceLoad(
+            CancellationTokenSource cts)
+        {
+            Interlocked.CompareExchange(
+                ref _workspaceLoadCts,
+                null,
+                cts);
+            cts.Dispose();
+        }
+
+        [RelayCommand]
+        private void CancelWorkspaceLoading()
+        {
+            try { _workspaceLoadCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
 
         [RelayCommand]
         private void CancelAuto()
@@ -2034,20 +2083,31 @@ namespace FaceShield.ViewModels.Pages
             return list;
         }
 
-        private async Task EnsureWorkspaceReadyAsync(WorkspaceViewModel vm)
+        private async Task<bool> EnsureWorkspaceReadyAsync(
+            WorkspaceViewModel vm)
         {
             IsWorkspaceLoading = true;
             WorkspaceLoadingMessage = "워크스페이스 준비 중...";
             WorkspaceLoadingProgress = 0;
             IsWorkspaceLoadingIndeterminate = false;
 
+            CancellationTokenSource loadCts = BeginWorkspaceLoad();
             try
             {
-                var loadProgress = new Progress<int>(p => WorkspaceLoadingProgress = p);
-                await vm.EnsureSessionInitializedAsync(loadProgress);
+                var loadProgress =
+                    new Progress<int>(p => WorkspaceLoadingProgress = p);
+                await vm.EnsureSessionInitializedAsync(
+                    loadProgress,
+                    loadCts.Token);
+                return true;
+            }
+            catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+            {
+                return false;
             }
             finally
             {
+                EndWorkspaceLoad(loadCts);
                 IsWorkspaceLoading = false;
             }
         }
@@ -2133,14 +2193,17 @@ namespace FaceShield.ViewModels.Pages
             WorkspaceMode mode,
             IProgress<int>? loadProgress,
             AutoMaskOptions autoOptions,
-            FaceDetectorFactoryOptions detectorFactoryOptions)
+            FaceDetectorFactoryOptions detectorFactoryOptions,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(SelectedVideoPath))
                 throw new InvalidOperationException("SelectedVideoPath is empty.");
 
             string key = $"{mode}:{SelectedVideoPath}";
             if (_workspaceCache.TryGetValue(key, out var cached))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 cached.UpdateAutoOptions(autoOptions);
                 cached.UpdateDetectorFactoryOptions(detectorFactoryOptions);
                 cached.ToolPanel.BlurRadius = BlurRadius;
@@ -2156,7 +2219,8 @@ namespace FaceShield.ViewModels.Pages
                 detectorFactoryOptions.FaceOnnxOptions ?? new FaceOnnxDetectorOptions(),
                 _stateStore,
                 detectorFactoryOptions: detectorFactoryOptions,
-                deferSessionInit: mode == WorkspaceMode.Auto);
+                deferSessionInit: mode == WorkspaceMode.Auto,
+                initializationToken: cancellationToken);
 
             vm.RestoreFromStore(_stateStore);
             vm.ToolPanel.BlurRadius = BlurRadius;

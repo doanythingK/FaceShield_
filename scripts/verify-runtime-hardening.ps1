@@ -28,7 +28,9 @@ $framePreview = Read-RepoFile "ViewModels/Workspace/FramePreviewViewModel.cs"
 $workspace = Read-RepoFile "ViewModels/Pages/WorkspaceViewModel.cs"
 $workspaceStore = Read-RepoFile "Services/Workspace/WorkspaceStateStore.cs"
 $extractor = Read-RepoFile "Services/Video/FfFrameExtractor.cs"
+$metadataReader = Read-RepoFile "Services/Video/VideoMetadataReader.cs"
 $autoMask = Read-RepoFile "Services/Analysis/AutoMaskGenerator.cs"
+$frameAnalyzer = Read-RepoFile "Services/Analysis/FrameAnalyzer.cs"
 $autoPostProcess = Read-RepoFile "Services/Analysis/AutoMaskPostProcessPipeline.cs"
 $roiStep = Read-RepoFile "Services/Analysis/AutoMaskRoiRefineStep.cs"
 $roiRefiner = Read-RepoFile "Services/Analysis/FaceTrackRoiRefiner.cs"
@@ -41,6 +43,7 @@ $timelineStrip = Read-RepoFile "Controls/TimelineFrameStrip.cs"
 $frameListView = Read-RepoFile "Views/Workspace/FrameListView.axaml"
 $app = Read-RepoFile "App.axaml.cs"
 $homeViewModel = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
+$homeView = Read-RepoFile "Views/Pages/HomePageView.axaml"
 $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
 
 Assert-Match "playback checks decoder error before normal eof" $framePreview 'SequentialDecodeError[\s\S]*SequentialReachedEndOfStream[\s\S]*onPlaybackFailed'
@@ -68,6 +71,14 @@ Assert-NotMatch "timestamp thumbnails do not use stream start_time as timeline o
 Assert-Match "timestamp thumbnail checks cancellation after packet read" $extractor 'ReadFrameInterruptibly\([\s\S]{0,180}_fmt[\s\S]{0,180}packet[\s\S]{0,180}cancellationToken[\s\S]{0,1400}cancellationToken\.IsCancellationRequested[\s\S]{0,1400}avcodec_send_packet\(_dec, packet\)'
 Assert-Match "blocking frame reads install an AVIO interrupt callback" $extractor 'AVIOInterruptCB_callback[\s\S]*interrupt_callback\.callback\s*=\s*IoInterruptCallback[\s\S]*CancellationTokenRegistration'
 Assert-Match "ffmpeg input open installs interrupt callback before open" $extractor 'avformat_alloc_context\(\)[\s\S]{0,900}ConfigureIoInterrupt\(_fmt\)[\s\S]{0,900}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,900}avformat_open_input'
+Assert-Match "shared metadata reader installs interrupt callback before open" $metadataReader 'avformat_alloc_context\(\)[\s\S]{0,1200}interrupt_callback\.callback\s*=\s*InterruptCallback[\s\S]{0,1400}CancellationTokenRegistration[\s\S]{0,1200}avformat_open_input'
+Assert-Match "shared metadata reader checks cancellation after open and stream info" $metadataReader 'avformat_open_input[\s\S]{0,500}ThrowIfCancellationRequested\(\)[\s\S]{0,900}avformat_find_stream_info[\s\S]{0,500}ThrowIfCancellationRequested\(\)'
+Assert-Match "auto metadata probe uses shared cancellable reader" $autoMask 'ThrowIfCancellationRequested\(\)[\s\S]{0,500}VideoMetadataReader\.Read\(videoPath,\s*ct\)'
+Assert-NotMatch "auto mask no longer performs raw metadata open" $autoMask 'avformat_(open_input|find_stream_info)'
+Assert-Match "frame analyzer metadata probe uses shared cancellable reader" $frameAnalyzer 'VideoMetadataReader\.Read\(videoPath,\s*ct\)'
+Assert-NotMatch "frame analyzer no longer performs raw metadata open" $frameAnalyzer 'avformat_(open_input|find_stream_info)'
+Assert-Match "frame list metadata probe accepts workspace cancellation" $frameList 'FrameListViewModel\([\s\S]{0,300}CancellationToken\s+cancellationToken[\s\S]{0,900}VideoMetadataReader\.Read\(path,\s*cancellationToken\)'
+Assert-NotMatch "frame list no longer performs raw metadata open" $frameList 'avformat_(open_input|find_stream_info)'
 Assert-Match "ffmpeg stream info uses cancellable native io scope" $extractor 'BeginIoInterrupt\(cancellationToken\)[\s\S]{0,800}avformat_find_stream_info\(_fmt'
 Assert-Match "ffmpeg seeks use cancellable native io scope" $extractor 'SeekMainDecoder\([\s\S]{0,1200}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,800}av_seek_frame'
 Assert-Match "ordinal input open and stream info use cancellation" $extractor 'EnsureOrdinalDecoderInitialized\([\s\S]{0,2200}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,1000}avformat_open_input[\s\S]{0,1400}avformat_find_stream_info'
@@ -95,6 +106,10 @@ Assert-NotMatch "timeline control no longer depends on per-frame item collection
 Assert-Match "video session shares one extractor for exact and thumbnail providers" $videoSession 'ExactFrameProvider\(_extractor, ownsExtractor: false\)[\s\S]*TimelineThumbnailProvider\([\s\S]{0,300}_extractor'
 Assert-NotMatch "frame list no longer creates a duplicate thumbnail provider" $frameList 'new\s+TimelineThumbnailProvider'
 Assert-Match "workspace attaches session-owned thumbnail provider" $workspace 'FrameList\.SetThumbnailProvider\(session\.ThumbnailProvider\)'
+Assert-Match "workspace initialization passes cancellation into metadata and session open" $workspace 'initializationToken\.ThrowIfCancellationRequested\(\)[\s\S]{0,500}new FrameListViewModel\([\s\S]{0,200}initializationToken[\s\S]{0,500}InitializeSession\(loadProgress,\s*initializationToken\)'
+Assert-Match "async session initialization links external cancellation" $workspace 'EnsureSessionInitializedAsync\([\s\S]{0,600}CreateLinkedTokenSource\([\s\S]{0,120}cancellationToken[\s\S]{0,1500}cancellationToken\.IsCancellationRequested[\s\S]{0,100}throw'
+Assert-Match "home workspace loading owns a cancellable token" $homeViewModel '_workspaceLoadCts[\s\S]*BeginWorkspaceLoad\([\s\S]*GetOrCreateWorkspace\([\s\S]{0,800}loadCts\.Token'
+Assert-Match "home workspace loading exposes cancellation command" ($homeViewModel + $homeView) 'CancelWorkspaceLoading[\s\S]*CancelWorkspaceLoadingCommand'
 Assert-NotMatch "legacy thumbnail cache is no longer wired into video session" ($videoSession + $timelineController) '\bThumbnailCache\b'
 
 $legacyThumbnailCache = Join-Path $RepoRoot "Services/Video/Session/ThumbnailCache.cs"
