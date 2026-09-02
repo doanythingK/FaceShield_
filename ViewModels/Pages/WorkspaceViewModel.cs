@@ -173,13 +173,26 @@ namespace FaceShield.ViewModels.Pages
             {
                 if (isPlaying)
                 {
+                    int playbackTotalFrames = FrameList.IsTotalFramesEstimated
+                        ? 0
+                        : FrameList.TotalFrames;
                     FramePreview.StartPlayback(
                         FrameList.VideoPath,
                         FrameList.SelectedFrameIndex,
                         FrameList.Fps,
-                        FrameList.TotalFrames,
+                        playbackTotalFrames,
                         FrameList.SetPlaybackFrameIndex,
-                        FrameList.NotifyPlaybackStopped,
+                        () =>
+                        {
+                            if (FrameList.IsTotalFramesEstimated &&
+                                FrameList.SelectedFrameIndex >= 0)
+                            {
+                                FrameList.UpdateActualTotalFrames(
+                                    FrameList.SelectedFrameIndex + 1);
+                            }
+
+                            FrameList.NotifyPlaybackStopped();
+                        },
                         message =>
                         {
                             FrameList.NotifyPlaybackStopped();
