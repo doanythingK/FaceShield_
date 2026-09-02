@@ -346,6 +346,40 @@ new FaceTrackInterpolator().Apply(
 if (edgeTerminalProvider.TryGetFaceMaskData(7, out var edgeTailHold) && edgeTailHold.Faces.Count > 0)
     throw new InvalidOperationException("Expected a low-confidence edge detection not to create a terminal hold.");
 
+var stabilizerProvider = new FrameMaskProvider();
+stabilizerProvider.SetFaceRects(0, new[] { new Rect(100, 100, 100, 100) }, size, 0.90f, new[] { 0.90f });
+stabilizerProvider.SetFaceRects(1, new[] { new Rect(102, 101, 102, 99) }, size, 0.89f, new[] { 0.89f });
+stabilizerProvider.SetFaceRects(2, new[] { new Rect(120, 110, 100, 100) }, size, 0.88f, new[] { 0.88f });
+stabilizerProvider.SetFaceRects(3, new[] { new Rect(160, 130, 100, 100) }, size, 0.87f, new[] { 0.87f });
+
+int stabilizedFrames = new AutoMaskTemporalPostProcessor().ApplyTrackedBoxStabilization(
+    stabilizerProvider,
+    totalFrames: 4,
+    blockedSceneCutStarts: new HashSet<int> { 2 });
+
+if (!stabilizerProvider.TryGetFaceMaskData(1, out var stableDeadZone) ||
+    Math.Abs(stableDeadZone.Faces[0].X - 100) > 0.01 ||
+    Math.Abs(stableDeadZone.Faces[0].Y - 100) > 0.01)
+{
+    throw new InvalidOperationException("Expected tiny tracked-box jitter to stay inside the dead zone.");
+}
+
+if (!stabilizerProvider.TryGetFaceMaskData(2, out var stableMotion) ||
+    stableMotion.Faces[0].X <= 100 ||
+    stableMotion.Faces[0].X >= 120)
+{
+    throw new InvalidOperationException("Expected moderate tracked-box motion to use partial adaptive follow.");
+}
+
+if (!stabilizerProvider.TryGetFaceMaskData(3, out var cutStable) ||
+    Math.Abs(cutStable.Faces[0].X - 160) > 0.01)
+{
+    throw new InvalidOperationException("Expected scene-cut boundary to block tracked-box stabilization.");
+}
+
+if (stabilizedFrames != 2)
+    throw new InvalidOperationException($"Expected two stabilized frames, got {stabilizedFrames}.");
+
 Console.WriteLine(
     $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, terminalHold=True, terminalHoldFrames={string.Join(",", terminalHoldResult.FilledLostFrameIndices)}, unconfirmedTail=False, cutTail=False, edgeTailHold=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
