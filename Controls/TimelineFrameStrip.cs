@@ -146,10 +146,10 @@ namespace FaceShield.Controls
         private CancellationTokenSource? _selectedPtsRequestCts;
         private TimelineThumbnailProvider? _selectedPtsRequestProvider;
         private int _selectedPtsRequestFrame = -1;
-        private CancellationTokenSource? _issueRangeRequestCts;
-        private TimelineThumbnailProvider? _issueRangeRequestProvider;
-        private double _issueRangeRequestEnd = double.NaN;
-        private double _issueRangeFailedEnd = double.NaN;
+        private CancellationTokenSource? _issueFrameRequestCts;
+        private TimelineThumbnailProvider? _issueFrameRequestProvider;
+        private int _issueFrameRequestIndex = -1;
+        private int _issueFrameFailedIndex = -1;
         private TimelineThumbnailProvider? _thumbnailRequestProvider;
         private double _thumbnailRequestStart = double.NaN;
         private double _thumbnailRequestEnd = double.NaN;
@@ -621,58 +621,51 @@ namespace FaceShield.Controls
             }
         }
 
-        private void RequestIssueRangeMapping(
+        private void RequestIssueFrameMapping(
             TimelineThumbnailProvider provider,
-            double endSeconds)
+            int frameIndex)
         {
-            if (provider.OperationsSuspended ||
-                !double.IsFinite(endSeconds) ||
-                endSeconds < 0)
-            {
+            if (provider.OperationsSuspended || frameIndex < 0)
                 return;
-            }
 
-            if (ReferenceEquals(_issueRangeRequestProvider, provider))
+            if (ReferenceEquals(_issueFrameRequestProvider, provider))
             {
-                if (_issueRangeRequestCts != null &&
-                    Math.Abs(_issueRangeRequestEnd - endSeconds) <= 0.001)
+                if (_issueFrameRequestCts != null &&
+                    _issueFrameRequestIndex == frameIndex)
                 {
                     return;
                 }
 
-                if (double.IsFinite(_issueRangeFailedEnd) &&
-                    Math.Abs(_issueRangeFailedEnd - endSeconds) <= 0.001)
-                {
+                if (_issueFrameFailedIndex == frameIndex)
                     return;
-                }
             }
 
             var cts = new CancellationTokenSource();
             CancellationTokenSource? previous =
-                Interlocked.Exchange(ref _issueRangeRequestCts, cts);
+                Interlocked.Exchange(ref _issueFrameRequestCts, cts);
             if (previous != null)
             {
                 try { previous.Cancel(); }
                 catch (ObjectDisposedException) { }
             }
 
-            _issueRangeRequestProvider = provider;
-            _issueRangeRequestEnd = endSeconds;
-            _issueRangeFailedEnd = double.NaN;
-            _ = ResolveIssueRangeMappingAsync(provider, endSeconds, cts);
+            _issueFrameRequestProvider = provider;
+            _issueFrameRequestIndex = frameIndex;
+            _issueFrameFailedIndex = -1;
+            _ = ResolveIssueFrameMappingAsync(provider, frameIndex, cts);
         }
 
-        private async Task ResolveIssueRangeMappingAsync(
+        private async Task ResolveIssueFrameMappingAsync(
             TimelineThumbnailProvider provider,
-            double endSeconds,
+            int frameIndex,
             CancellationTokenSource cts)
         {
             bool resolved = false;
             try
             {
                 resolved = await Task.Run(
-                    () => provider.TryResolveFrameIndexAtTimestamp(
-                        endSeconds,
+                    () => provider.TryResolveFrameTimestampSeconds(
+                        frameIndex,
                         cts.Token,
                         out _),
                     cts.Token);
@@ -683,14 +676,14 @@ namespace FaceShield.Controls
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
                     if (cts.IsCancellationRequested ||
-                        !ReferenceEquals(_issueRangeRequestCts, cts) ||
+                        !ReferenceEquals(_issueFrameRequestCts, cts) ||
                         !ReferenceEquals(ThumbnailProvider, provider))
                     {
                         return;
                     }
 
                     if (!resolved && !provider.OperationsSuspended)
-                        _issueRangeFailedEnd = endSeconds;
+                        _issueFrameFailedIndex = frameIndex;
 
                     InvalidateVisual();
                 });
@@ -700,10 +693,10 @@ namespace FaceShield.Controls
             }
             finally
             {
-                if (ReferenceEquals(_issueRangeRequestCts, cts))
+                if (ReferenceEquals(_issueFrameRequestCts, cts))
                 {
                     Interlocked.CompareExchange(
-                        ref _issueRangeRequestCts,
+                        ref _issueFrameRequestCts,
                         null,
                         cts);
                 }
@@ -748,20 +741,74 @@ namespace FaceShield.Controls
             if (provider == null)
                 return;
 
+            const double markerH = 6;
+            double yNoFace = Math.Max(0, stripH - markerH);
+            double yLowConf = Math.Max(0, stripH - markerH * 2);
+            double yFlicker = Math.Max(0, stripH - markerH * 3);
+
             if (!provider.TryGetFrameIndexAtTimestamp(startSec, out int startFrame) ||
                 !provider.TryGetFrameIndexAtTimestamp(endSec, out int endFrame))
             {
-                RequestIssueRangeMapping(provider, endSec);
+                int nextMissingFrame = -1;
+
+                if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
+                {
+                    nextMissingFrame = PickEarlierMissingFrame(
+                        nextMissingFrame,
+                        DrawCachedIssueMarkerSeries(
+                            ctx,
+                            provider,
+                            NoFaceIssueFrames,
+                            startSec,
+                            endSec,
+                            range,
+                            w,
+                            yNoFace,
+                            markerH,
+                            new SolidColorBrush(Color.FromRgb(220, 60, 60))));
+                }
+
+                if (ShowLowConfidenceIssues && LowConfidenceIssueFrames is { Count: > 0 })
+                {
+                    nextMissingFrame = PickEarlierMissingFrame(
+                        nextMissingFrame,
+                        DrawCachedIssueMarkerSeries(
+                            ctx,
+                            provider,
+                            LowConfidenceIssueFrames,
+                            startSec,
+                            endSec,
+                            range,
+                            w,
+                            yLowConf,
+                            markerH,
+                            new SolidColorBrush(Color.FromRgb(255, 160, 60))));
+                }
+
+                if (ShowFlickerIssues && FlickerIssueFrames is { Count: > 0 })
+                {
+                    nextMissingFrame = PickEarlierMissingFrame(
+                        nextMissingFrame,
+                        DrawCachedIssueMarkerSeries(
+                            ctx,
+                            provider,
+                            FlickerIssueFrames,
+                            startSec,
+                            endSec,
+                            range,
+                            w,
+                            yFlicker,
+                            markerH,
+                            new SolidColorBrush(Color.FromRgb(80, 180, 255))));
+                }
+
+                if (nextMissingFrame >= 0)
+                    RequestIssueFrameMapping(provider, nextMissingFrame);
                 return;
             }
 
             startFrame = Math.Clamp(startFrame, 0, Math.Max(0, totalFrames - 1));
             endFrame = Math.Clamp(endFrame, startFrame, Math.Max(startFrame, totalFrames - 1));
-
-            const double markerH = 6;
-            double yNoFace = Math.Max(0, stripH - markerH);
-            double yLowConf = Math.Max(0, stripH - markerH * 2);
-            double yFlicker = Math.Max(0, stripH - markerH * 3);
 
             if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
             {
@@ -807,6 +854,48 @@ namespace FaceShield.Controls
                     markerH,
                     new SolidColorBrush(Color.FromRgb(80, 180, 255)));
             }
+        }
+
+        private static int PickEarlierMissingFrame(
+            int current,
+            int candidate)
+        {
+            if (candidate < 0)
+                return current;
+            if (current < 0)
+                return candidate;
+            return Math.Min(current, candidate);
+        }
+
+        private int DrawCachedIssueMarkerSeries(
+            DrawingContext ctx,
+            TimelineThumbnailProvider provider,
+            IReadOnlyList<int> frames,
+            double startSec,
+            double endSec,
+            double range,
+            double width,
+            double y,
+            double h,
+            IBrush brush)
+        {
+            for (int i = 0; i < frames.Count; i++)
+            {
+                int frame = frames[i];
+                if (!provider.TryGetFrameTimestampSeconds(frame, out double sec))
+                    return frame;
+
+                if (sec < startSec || sec > endSec)
+                    continue;
+
+                double x = (sec - startSec) / range * width;
+                if (x < -1 || x > width + 1)
+                    continue;
+
+                ctx.FillRectangle(brush, new Rect(x, y, 2, h));
+            }
+
+            return -1;
         }
 
         private void DrawIssueMarkerSeries(
