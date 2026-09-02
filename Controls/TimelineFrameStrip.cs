@@ -143,6 +143,13 @@ namespace FaceShield.Controls
         private readonly HashSet<long> _pendingThumbnails = new();
         private CancellationTokenSource _thumbnailRequestCts = new();
         private CancellationTokenSource? _selectionRequestCts;
+        private CancellationTokenSource? _selectedPtsRequestCts;
+        private TimelineThumbnailProvider? _selectedPtsRequestProvider;
+        private int _selectedPtsRequestFrame = -1;
+        private CancellationTokenSource? _issueRangeRequestCts;
+        private TimelineThumbnailProvider? _issueRangeRequestProvider;
+        private double _issueRangeRequestEnd = double.NaN;
+        private double _issueRangeFailedEnd = double.NaN;
         private TimelineThumbnailProvider? _thumbnailRequestProvider;
         private double _thumbnailRequestStart = double.NaN;
         private double _thumbnailRequestEnd = double.NaN;
@@ -298,15 +305,27 @@ namespace FaceShield.Controls
             DrawIssueMarkers(ctx, w, stripH, startSec, endSec, totalFrames);
             DrawAxis(ctx, w, stripH, startSec, endSec);
 
-            // selected line: do not invent a VFR position before its decoded PTS is known.
+            // Selected-frame PTS may be resolved by the view model or another
+            // background request. If it is still missing, warm it here and repaint
+            // when the exact mapping becomes available.
+            var timelineProvider = ThumbnailProvider;
             if (SelectedFrameIndex >= 0 &&
                 SelectedFrameIndex < totalFrames &&
-                ThumbnailProvider?.TryGetFrameTimestampSeconds(
-                    SelectedFrameIndex,
-                    out double selSec) == true)
+                timelineProvider != null)
             {
-                double x = (selSec - startSec) / Math.Max(0.0001, spanSec) * w;
-                ctx.DrawLine(new Pen(Brushes.Lime, 2), new Point(x, 0), new Point(x, stripH));
+                if (timelineProvider.TryGetFrameTimestampSeconds(
+                        SelectedFrameIndex,
+                        out double selSec))
+                {
+                    double x = (selSec - startSec) / Math.Max(0.0001, spanSec) * w;
+                    ctx.DrawLine(new Pen(Brushes.Lime, 2), new Point(x, 0), new Point(x, stripH));
+                }
+                else
+                {
+                    RequestSelectedFrameTimestamp(
+                        timelineProvider,
+                        SelectedFrameIndex);
+                }
             }
 
             // Hover is already a timeline time coordinate, so no frame-rate conversion is needed.
@@ -526,6 +545,173 @@ namespace FaceShield.Controls
             }
         }
 
+        private void RequestSelectedFrameTimestamp(
+            TimelineThumbnailProvider provider,
+            int frameIndex)
+        {
+            if (provider.OperationsSuspended)
+                return;
+            if (ReferenceEquals(_selectedPtsRequestProvider, provider) &&
+                _selectedPtsRequestFrame == frameIndex &&
+                _selectedPtsRequestCts != null)
+            {
+                return;
+            }
+
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _selectedPtsRequestCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            _selectedPtsRequestProvider = provider;
+            _selectedPtsRequestFrame = frameIndex;
+            _ = ResolveSelectedFrameTimestampAsync(provider, frameIndex, cts);
+        }
+
+        private async Task ResolveSelectedFrameTimestampAsync(
+            TimelineThumbnailProvider provider,
+            int frameIndex,
+            CancellationTokenSource cts)
+        {
+            try
+            {
+                bool resolved = await Task.Run(
+                    () => provider.TryResolveFrameTimestampSeconds(
+                        frameIndex,
+                        cts.Token,
+                        out _),
+                    cts.Token);
+
+                if (!resolved || cts.IsCancellationRequested)
+                    return;
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (cts.IsCancellationRequested ||
+                        !ReferenceEquals(_selectedPtsRequestCts, cts) ||
+                        !ReferenceEquals(ThumbnailProvider, provider) ||
+                        SelectedFrameIndex != frameIndex)
+                    {
+                        return;
+                    }
+
+                    InvalidateVisual();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(_selectedPtsRequestCts, cts))
+                {
+                    Interlocked.CompareExchange(
+                        ref _selectedPtsRequestCts,
+                        null,
+                        cts);
+                    _selectedPtsRequestProvider = null;
+                    _selectedPtsRequestFrame = -1;
+                }
+
+                cts.Dispose();
+            }
+        }
+
+        private void RequestIssueRangeMapping(
+            TimelineThumbnailProvider provider,
+            double endSeconds)
+        {
+            if (provider.OperationsSuspended ||
+                !double.IsFinite(endSeconds) ||
+                endSeconds < 0)
+            {
+                return;
+            }
+
+            if (ReferenceEquals(_issueRangeRequestProvider, provider))
+            {
+                if (_issueRangeRequestCts != null &&
+                    Math.Abs(_issueRangeRequestEnd - endSeconds) <= 0.001)
+                {
+                    return;
+                }
+
+                if (double.IsFinite(_issueRangeFailedEnd) &&
+                    Math.Abs(_issueRangeFailedEnd - endSeconds) <= 0.001)
+                {
+                    return;
+                }
+            }
+
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _issueRangeRequestCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            _issueRangeRequestProvider = provider;
+            _issueRangeRequestEnd = endSeconds;
+            _issueRangeFailedEnd = double.NaN;
+            _ = ResolveIssueRangeMappingAsync(provider, endSeconds, cts);
+        }
+
+        private async Task ResolveIssueRangeMappingAsync(
+            TimelineThumbnailProvider provider,
+            double endSeconds,
+            CancellationTokenSource cts)
+        {
+            bool resolved = false;
+            try
+            {
+                resolved = await Task.Run(
+                    () => provider.TryResolveFrameIndexAtTimestamp(
+                        endSeconds,
+                        cts.Token,
+                        out _),
+                    cts.Token);
+
+                if (cts.IsCancellationRequested)
+                    return;
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (cts.IsCancellationRequested ||
+                        !ReferenceEquals(_issueRangeRequestCts, cts) ||
+                        !ReferenceEquals(ThumbnailProvider, provider))
+                    {
+                        return;
+                    }
+
+                    if (!resolved && !provider.OperationsSuspended)
+                        _issueRangeFailedEnd = endSeconds;
+
+                    InvalidateVisual();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(_issueRangeRequestCts, cts))
+                {
+                    Interlocked.CompareExchange(
+                        ref _issueRangeRequestCts,
+                        null,
+                        cts);
+                }
+
+                cts.Dispose();
+            }
+        }
+
         private static void DrawGridLines(DrawingContext ctx, double w, double stripH, double startSec, double endSec)
         {
             double range = Math.Max(0.0001, endSec - startSec);
@@ -550,12 +736,22 @@ namespace FaceShield.Controls
             double endSec,
             int totalFrames)
         {
+            bool hasVisibleIssues =
+                (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 }) ||
+                (ShowLowConfidenceIssues && LowConfidenceIssueFrames is { Count: > 0 }) ||
+                (ShowFlickerIssues && FlickerIssueFrames is { Count: > 0 });
+            if (!hasVisibleIssues)
+                return;
+
             double range = Math.Max(0.0001, endSec - startSec);
             var provider = ThumbnailProvider;
-            if (provider == null ||
-                !provider.TryGetFrameIndexAtTimestamp(startSec, out int startFrame) ||
+            if (provider == null)
+                return;
+
+            if (!provider.TryGetFrameIndexAtTimestamp(startSec, out int startFrame) ||
                 !provider.TryGetFrameIndexAtTimestamp(endSec, out int endFrame))
             {
+                RequestIssueRangeMapping(provider, endSec);
                 return;
             }
 
