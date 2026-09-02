@@ -790,8 +790,10 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
             try
             {
-                using var extractor = new FfFrameExtractor(videoPath);
-                extractor.StartSequentialRead(startFrameIndex);
+                using var extractor = new FfFrameExtractor(
+                    videoPath,
+                    cancellationToken: ct);
+                extractor.StartSequentialRead(startFrameIndex, ct);
 
                 while (!ct.IsCancellationRequested &&
                        extractor.TryGetNextFrame(ct, out var frame, out int frameIndex))
