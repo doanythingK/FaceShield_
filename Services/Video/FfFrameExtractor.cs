@@ -311,7 +311,7 @@ namespace FaceShield.Services.Video
                 int totalFrames = GetResidentTimelineFrameCountLocked();
 
                 while (_timelineCache.Count > MaxTimelineCacheEntries ||
-                       totalFrames > MaxCachedTimelineFramesTotal)
+                       totalFrames >= MaxCachedTimelineFramesTotal)
                 {
                     FrameTimelineCacheKey? evictionKey = null;
                     DecodedFrameTimeline? evictionTimeline = null;
