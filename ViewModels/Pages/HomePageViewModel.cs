@@ -75,6 +75,7 @@ namespace FaceShield.ViewModels.Pages
         private (DateTime Timestamp, int FrameIndex) _exportLastSample;
         private bool _isApplyingAutoSettings;
         private bool _isApplyingYoloProfile;
+        private bool _isApplyingYoloDebugPreset;
         private YoloFaceModelType _activeYoloModelType = YoloFaceModelType.Yolo5Face;
         private YoloProfileState _yoloV8Profile = CreateDefaultYoloProfile(YoloFaceModelType.YoloV8Face);
         private YoloProfileState _yolo5Profile = CreateDefaultYoloProfile(YoloFaceModelType.Yolo5Face);
@@ -230,6 +231,45 @@ namespace FaceShield.ViewModels.Pages
 
         [ObservableProperty]
         private AutoProcessingModeOption? selectedAutoProcessingModeOption;
+
+        public sealed class YoloDebugThresholdPreset
+        {
+            public string Label { get; }
+            public double Objectness { get; }
+            public double Confidence { get; }
+            public double Nms { get; }
+            public bool ApplyValues { get; }
+
+            public YoloDebugThresholdPreset(
+                string label,
+                double objectness,
+                double confidence,
+                double nms,
+                bool applyValues = true)
+            {
+                Label = label;
+                Objectness = objectness;
+                Confidence = confidence;
+                Nms = nms;
+                ApplyValues = applyValues;
+            }
+        }
+
+        public IReadOnlyList<YoloDebugThresholdPreset> YoloDebugThresholdPresets { get; } =
+            new[]
+            {
+                new YoloDebugThresholdPreset("사용자 설정", 0, 0, 0, applyValues: false),
+                new YoloDebugThresholdPreset("A · 0.12 / 0.22 / 0.45", 0.12, 0.22, 0.45),
+                new YoloDebugThresholdPreset("B · 0.12 / 0.26 / 0.45 (권장 시작)", 0.12, 0.26, 0.45),
+                new YoloDebugThresholdPreset("C · 0.12 / 0.30 / 0.45", 0.12, 0.30, 0.45),
+                new YoloDebugThresholdPreset("D · 0.12 / 0.35 / 0.45", 0.12, 0.35, 0.45),
+                new YoloDebugThresholdPreset("E · 0.16 / 0.30 / 0.45", 0.16, 0.30, 0.45),
+                new YoloDebugThresholdPreset("F · 0.20 / 0.30 / 0.45", 0.20, 0.30, 0.45),
+                new YoloDebugThresholdPreset("G · 0.24 / 0.30 / 0.45", 0.24, 0.30, 0.45)
+            };
+
+        [ObservableProperty]
+        private YoloDebugThresholdPreset? selectedYoloDebugThresholdPreset;
 
         public sealed class YoloModelTypeOption
         {
@@ -921,6 +961,71 @@ namespace FaceShield.ViewModels.Pages
             {
                 _isApplyingYoloProfile = false;
             }
+
+            SyncSelectedYoloDebugPresetFromThresholds();
+        }
+
+        partial void OnSelectedYoloDebugThresholdPresetChanged(
+            YoloDebugThresholdPreset? value)
+        {
+            if (_isApplyingAutoSettings ||
+                _isApplyingYoloProfile ||
+                _isApplyingYoloDebugPreset ||
+                value == null ||
+                !value.ApplyValues)
+            {
+                return;
+            }
+
+            _isApplyingYoloDebugPreset = true;
+            try
+            {
+                AutoYoloObjectnessThreshold = value.Objectness;
+                AutoYoloConfidenceThreshold = value.Confidence;
+                AutoYoloNmsThreshold = value.Nms;
+            }
+            finally
+            {
+                _isApplyingYoloDebugPreset = false;
+            }
+
+            PersistAutoSettings();
+            RequestAutoRestartForDetectorFactoryOptions(
+                $"YOLO 오검출 디버그 프리셋 적용 · obj={value.Objectness:0.00}, conf={value.Confidence:0.00}, nms={value.Nms:0.00} · 재시작 준비 중...");
+        }
+
+        private void SyncSelectedYoloDebugPresetFromThresholds()
+        {
+            if (_isApplyingYoloDebugPreset)
+                return;
+
+            const double epsilon = 0.0001;
+            YoloDebugThresholdPreset selected =
+                YoloDebugThresholdPresets.First();
+
+            foreach (var preset in YoloDebugThresholdPresets)
+            {
+                if (!preset.ApplyValues)
+                    continue;
+
+                if (Math.Abs(preset.Objectness - AutoYoloObjectnessThreshold) <= epsilon &&
+                    Math.Abs(preset.Confidence - AutoYoloConfidenceThreshold) <= epsilon &&
+                    Math.Abs(preset.Nms - AutoYoloNmsThreshold) <= epsilon)
+                {
+                    selected = preset;
+                    break;
+                }
+            }
+
+            _isApplyingYoloDebugPreset = true;
+            try
+            {
+                SelectedYoloDebugThresholdPreset = selected;
+            }
+            finally
+            {
+                _isApplyingYoloDebugPreset = false;
+            }
         }
 
         partial void OnAutoYoloModelPathChanged(string? value)
@@ -942,27 +1047,30 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnAutoYoloObjectnessThresholdChanged(double value)
         {
-            if (_isApplyingYoloProfile)
+            if (_isApplyingYoloProfile || _isApplyingYoloDebugPreset)
                 return;
 
+            SyncSelectedYoloDebugPresetFromThresholds();
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO objectness 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloConfidenceThresholdChanged(double value)
         {
-            if (_isApplyingYoloProfile)
+            if (_isApplyingYoloProfile || _isApplyingYoloDebugPreset)
                 return;
 
+            SyncSelectedYoloDebugPresetFromThresholds();
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO confidence 변경 감지 · 재시작 준비 중...");
         }
 
         partial void OnAutoYoloNmsThresholdChanged(double value)
         {
-            if (_isApplyingYoloProfile)
+            if (_isApplyingYoloProfile || _isApplyingYoloDebugPreset)
                 return;
 
+            SyncSelectedYoloDebugPresetFromThresholds();
             PersistAutoSettings();
             RequestAutoRestartForDetectorFactoryOptions("YOLO NMS 변경 감지 · 재시작 준비 중...");
         }
