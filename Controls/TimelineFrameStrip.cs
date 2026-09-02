@@ -919,9 +919,9 @@ namespace FaceShield.Controls
                 return TotalDurationSeconds;
             }
 
-            return totalFrames <= 0
-                ? 0
-                : totalFrames / Math.Max(1, Fps);
+            // Unknown duration stays unknown. Do not synthesize a VFR time axis
+            // from totalFrames / average FPS.
+            return 0;
         }
 
         private static double ClampStart(double start, double span, double totalSec)
