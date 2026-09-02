@@ -47,6 +47,17 @@ namespace FaceShield.Controls
             set => SetValue(RenderVersionProperty, value);
         }
 
+        public static readonly StyledProperty<bool> IsTotalFramesEstimatedProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, bool>(
+                nameof(IsTotalFramesEstimated),
+                false);
+
+        public bool IsTotalFramesEstimated
+        {
+            get => GetValue(IsTotalFramesEstimatedProperty);
+            set => SetValue(IsTotalFramesEstimatedProperty, value);
+        }
+
         public static readonly StyledProperty<double> FpsProperty =
             AvaloniaProperty.Register<TimelineFrameStrip, double>(nameof(Fps), 30d);
 
@@ -175,6 +186,7 @@ namespace FaceShield.Controls
                 TotalFramesProperty,
                 TotalDurationSecondsProperty,
                 RenderVersionProperty,
+                IsTotalFramesEstimatedProperty,
                 FpsProperty,
                 SelectedFrameIndexProperty,
                 SecondsPerScreenProperty,
@@ -219,7 +231,7 @@ namespace FaceShield.Controls
             {
                 SetCurrentValue(
                     SelectedFrameIndexProperty,
-                    Math.Clamp(cachedFrameIndex, 0, total - 1));
+                    NormalizeResolvedFrameIndex(cachedFrameIndex, total));
                 InvalidateVisual();
             }
             else
@@ -546,7 +558,7 @@ namespace FaceShield.Controls
 
                     SetCurrentValue(
                         SelectedFrameIndexProperty,
-                        Math.Clamp(frameIndex, 0, Math.Max(0, totalFrames - 1)));
+                        NormalizeResolvedFrameIndex(frameIndex, totalFrames));
                     InvalidateVisual();
                 });
             }
@@ -947,8 +959,22 @@ namespace FaceShield.Controls
                 return;
             }
 
-            startFrame = Math.Clamp(startFrame, 0, Math.Max(0, totalFrames - 1));
-            endFrame = Math.Clamp(endFrame, startFrame, Math.Max(startFrame, totalFrames - 1));
+            if (IsTotalFramesEstimated)
+            {
+                startFrame = Math.Max(0, startFrame);
+                endFrame = Math.Max(startFrame, endFrame);
+            }
+            else
+            {
+                startFrame = Math.Clamp(
+                    startFrame,
+                    0,
+                    Math.Max(0, totalFrames - 1));
+                endFrame = Math.Clamp(
+                    endFrame,
+                    startFrame,
+                    Math.Max(startFrame, totalFrames - 1));
+            }
 
             if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
             {
@@ -994,6 +1020,19 @@ namespace FaceShield.Controls
                     markerH,
                     new SolidColorBrush(Color.FromRgb(80, 180, 255)));
             }
+        }
+
+        private int NormalizeResolvedFrameIndex(
+            int frameIndex,
+            int totalFrames)
+        {
+            if (IsTotalFramesEstimated)
+                return Math.Max(0, frameIndex);
+
+            return Math.Clamp(
+                frameIndex,
+                0,
+                Math.Max(0, totalFrames - 1));
         }
 
         private static int PickCloserMissingFrame(
