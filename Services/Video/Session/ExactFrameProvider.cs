@@ -12,6 +12,9 @@ public sealed class ExactFrameProvider : IDisposable
     private readonly bool _ownsExtractor;
     private readonly SemaphoreSlim _decodeGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly object _operationStateSync = new();
+    private CancellationTokenSource _operationCts = new();
+    private int _operationsSuspended;
     private int _disposeStarted;
     private bool _disposed;
 
@@ -23,12 +26,17 @@ public sealed class ExactFrameProvider : IDisposable
 
     public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
     {
-        if (_disposed)
+        if (_disposed || Volatile.Read(ref _operationsSuspended) != 0)
             return null;
+
+        CancellationToken operationToken;
+        lock (_operationStateSync)
+            operationToken = _operationCts.Token;
 
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             ct,
-            _lifetimeCts.Token);
+            _lifetimeCts.Token,
+            operationToken);
         CancellationToken token = linked.Token;
 
         try
@@ -46,8 +54,12 @@ public sealed class ExactFrameProvider : IDisposable
 
         try
         {
-            if (_disposed || token.IsCancellationRequested)
+            if (_disposed ||
+                Volatile.Read(ref _operationsSuspended) != 0 ||
+                token.IsCancellationRequested)
+            {
                 return null;
+            }
 
             var frame = await Task.Run(
                 () => _extractor.GetFrameByIndex(frameIndex, token),
@@ -70,6 +82,42 @@ public sealed class ExactFrameProvider : IDisposable
         }
     }
 
+    public async Task SuspendOperationsAndWaitAsync()
+    {
+        CancellationTokenSource previous;
+        lock (_operationStateSync)
+        {
+            if (_disposed)
+                return;
+
+            Volatile.Write(ref _operationsSuspended, 1);
+            previous = _operationCts;
+            _operationCts = new CancellationTokenSource();
+        }
+
+        try
+        {
+            previous.Cancel();
+            await _decodeGate.WaitAsync().ConfigureAwait(false);
+            _decodeGate.Release();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            previous.Dispose();
+        }
+    }
+
+    public void ResumeOperations()
+    {
+        if (_disposed)
+            return;
+
+        Volatile.Write(ref _operationsSuspended, 0);
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
@@ -77,6 +125,11 @@ public sealed class ExactFrameProvider : IDisposable
 
         _disposed = true;
         _lifetimeCts.Cancel();
+        lock (_operationStateSync)
+        {
+            Volatile.Write(ref _operationsSuspended, 1);
+            _operationCts.Cancel();
+        }
         _decodeGate.Wait();
         try
         {
@@ -87,6 +140,7 @@ public sealed class ExactFrameProvider : IDisposable
         {
             _decodeGate.Release();
             _decodeGate.Dispose();
+            _operationCts.Dispose();
             _lifetimeCts.Dispose();
         }
     }
