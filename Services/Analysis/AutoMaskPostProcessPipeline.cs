@@ -192,6 +192,21 @@ namespace FaceShield.Services.Analysis
             swTrack.Stop();
             Debug.WriteLine(
                 $"[AutoMaskPostProcessTiming] runId={runId} phase=track-post run={runTrackPost} continuity={runTrackedContinuity} elapsedMs={swTrack.ElapsedMilliseconds} trackCount={trackPost.TrackCount} fillGap={trackPost.FilledGapFaces} fillLost={trackPost.FilledLostFaces} fillInitial={trackPost.FilledInitialFaces}");
+
+            var swTrackedStabilize = Stopwatch.StartNew();
+            bool runTrackedBoxStabilization =
+                _options.UseTracking &&
+                _options.ProcessingMode == AutoMaskProcessingMode.Tracked;
+            int stabilizedFrames = runTrackedBoxStabilization
+                ? temporalPostProcessor.ApplyTrackedBoxStabilization(
+                    _maskProvider,
+                    _totalFrames,
+                    _sceneCutStarts,
+                    _mutableStartFrameIndex)
+                : 0;
+            swTrackedStabilize.Stop();
+            Debug.WriteLine(
+                $"[AutoMaskPostProcessTiming] runId={runId} phase=tracked-box-stabilization run={runTrackedBoxStabilization} elapsedMs={swTrackedStabilize.ElapsedMilliseconds} rewrittenFrames={stabilizedFrames}");
             int finalMissRecoveryFillCount = trackPost.FilledGapFaces + trackPost.FilledLostFaces + trackPost.FilledInitialFaces;
             var finalMissRecoveryFillFrameIndices = new HashSet<int>();
             AddFrameIndices(finalMissRecoveryFillFrameIndices, trackPost.FilledGapFacesInfo);
