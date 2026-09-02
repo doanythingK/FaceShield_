@@ -36,6 +36,17 @@ namespace FaceShield.Controls
             set => SetValue(TotalDurationSecondsProperty, value);
         }
 
+        public static readonly StyledProperty<int> RenderVersionProperty =
+            AvaloniaProperty.Register<TimelineFrameStrip, int>(
+                nameof(RenderVersion),
+                0);
+
+        public int RenderVersion
+        {
+            get => GetValue(RenderVersionProperty);
+            set => SetValue(RenderVersionProperty, value);
+        }
+
         public static readonly StyledProperty<double> FpsProperty =
             AvaloniaProperty.Register<TimelineFrameStrip, double>(nameof(Fps), 30d);
 
@@ -159,6 +170,7 @@ namespace FaceShield.Controls
             AffectsRender<TimelineFrameStrip>(
                 TotalFramesProperty,
                 TotalDurationSecondsProperty,
+                RenderVersionProperty,
                 FpsProperty,
                 SelectedFrameIndexProperty,
                 SecondsPerScreenProperty,
@@ -749,11 +761,12 @@ namespace FaceShield.Controls
             if (!provider.TryGetFrameIndexAtTimestamp(startSec, out int startFrame) ||
                 !provider.TryGetFrameIndexAtTimestamp(endSec, out int endFrame))
             {
+                int anchorFrame = Math.Max(0, SelectedFrameIndex);
                 int nextMissingFrame = -1;
 
                 if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
                 {
-                    nextMissingFrame = PickEarlierMissingFrame(
+                    nextMissingFrame = PickCloserMissingFrame(
                         nextMissingFrame,
                         DrawCachedIssueMarkerSeries(
                             ctx,
@@ -763,14 +776,16 @@ namespace FaceShield.Controls
                             endSec,
                             range,
                             w,
+                            anchorFrame,
                             yNoFace,
                             markerH,
-                            new SolidColorBrush(Color.FromRgb(220, 60, 60))));
+                            new SolidColorBrush(Color.FromRgb(220, 60, 60))),
+                        anchorFrame);
                 }
 
                 if (ShowLowConfidenceIssues && LowConfidenceIssueFrames is { Count: > 0 })
                 {
-                    nextMissingFrame = PickEarlierMissingFrame(
+                    nextMissingFrame = PickCloserMissingFrame(
                         nextMissingFrame,
                         DrawCachedIssueMarkerSeries(
                             ctx,
@@ -780,14 +795,16 @@ namespace FaceShield.Controls
                             endSec,
                             range,
                             w,
+                            anchorFrame,
                             yLowConf,
                             markerH,
-                            new SolidColorBrush(Color.FromRgb(255, 160, 60))));
+                            new SolidColorBrush(Color.FromRgb(255, 160, 60))),
+                        anchorFrame);
                 }
 
                 if (ShowFlickerIssues && FlickerIssueFrames is { Count: > 0 })
                 {
-                    nextMissingFrame = PickEarlierMissingFrame(
+                    nextMissingFrame = PickCloserMissingFrame(
                         nextMissingFrame,
                         DrawCachedIssueMarkerSeries(
                             ctx,
@@ -797,9 +814,11 @@ namespace FaceShield.Controls
                             endSec,
                             range,
                             w,
+                            anchorFrame,
                             yFlicker,
                             markerH,
-                            new SolidColorBrush(Color.FromRgb(80, 180, 255))));
+                            new SolidColorBrush(Color.FromRgb(80, 180, 255))),
+                        anchorFrame);
                 }
 
                 if (nextMissingFrame >= 0)
@@ -856,15 +875,21 @@ namespace FaceShield.Controls
             }
         }
 
-        private static int PickEarlierMissingFrame(
+        private static int PickCloserMissingFrame(
             int current,
-            int candidate)
+            int candidate,
+            int anchorFrame)
         {
             if (candidate < 0)
                 return current;
             if (current < 0)
                 return candidate;
-            return Math.Min(current, candidate);
+
+            long currentDistance = Math.Abs((long)current - anchorFrame);
+            long candidateDistance = Math.Abs((long)candidate - anchorFrame);
+            return candidateDistance < currentDistance
+                ? candidate
+                : current;
         }
 
         private int DrawCachedIssueMarkerSeries(
@@ -875,15 +900,27 @@ namespace FaceShield.Controls
             double endSec,
             double range,
             double width,
+            int anchorFrame,
             double y,
             double h,
             IBrush brush)
         {
+            int nearestMissingFrame = -1;
+            long nearestMissingDistance = long.MaxValue;
+
             for (int i = 0; i < frames.Count; i++)
             {
                 int frame = frames[i];
                 if (!provider.TryGetFrameTimestampSeconds(frame, out double sec))
-                    return frame;
+                {
+                    long distance = Math.Abs((long)frame - anchorFrame);
+                    if (distance < nearestMissingDistance)
+                    {
+                        nearestMissingDistance = distance;
+                        nearestMissingFrame = frame;
+                    }
+                    continue;
+                }
 
                 if (sec < startSec || sec > endSec)
                     continue;
@@ -895,7 +932,7 @@ namespace FaceShield.Controls
                 ctx.FillRectangle(brush, new Rect(x, y, 2, h));
             }
 
-            return -1;
+            return nearestMissingFrame;
         }
 
         private void DrawIssueMarkerSeries(
