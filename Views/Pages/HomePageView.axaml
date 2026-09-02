@@ -447,6 +447,22 @@
                 <StackPanel Spacing="12"
                             IsVisible="{Binding IsYoloDetectorSelected}">
                   <StackPanel Spacing="5">
+                    <TextBlock Text="오검출 디버그 프리셋"
+                               Classes="label"/>
+                    <ComboBox ItemsSource="{Binding YoloDebugThresholdPresets}"
+                              SelectedItem="{Binding SelectedYoloDebugThresholdPreset, Mode=TwoWay}"
+                              HorizontalAlignment="Stretch">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                          <TextBlock Text="{Binding Label}"/>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="표기 순서: Objectness / Confidence / NMS. 프리셋 적용 후 아래 슬라이더에서 미세 조정할 수 있습니다."
+                               Classes="muted"
+                               TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <StackPanel Spacing="5">
                     <TextBlock Text="Objectness" Classes="label"/>
                     <Grid ColumnDefinitions="*,48" ColumnSpacing="8">
                       <Slider Minimum="0.05"
