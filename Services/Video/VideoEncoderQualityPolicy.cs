@@ -65,23 +65,23 @@ internal static unsafe class VideoEncoderQualityPolicy
         if (isX264Rgb)
         {
             SetOption("preset", "fast", required: true);
-            SetOption("crf", "0", required: true);
+            SetOption("crf", "18", required: true);
             mode = forceSafeEncoding
-                ? "lossless-crf0-fast-rgb-safe"
-                : "lossless-crf0-fast-rgb";
+                ? "crf18-fast-rgb-safe"
+                : "crf18-fast-rgb";
         }
         else if (isX264)
         {
             SetOption("preset", "fast", required: true);
-            SetOption("crf", "14", required: true);
-            mode = forceSafeEncoding ? "crf14-fast-safe" : "crf14-fast";
+            SetOption("crf", "19", required: true);
+            mode = forceSafeEncoding ? "crf19-fast-safe" : "crf19-fast";
         }
         else if (isX265)
         {
             SetOption("preset", "fast", required: true);
             if (hasStaticHdrMetadata)
             {
-                SetOption("crf", "12", required: true);
+                SetOption("crf", "18", required: true);
                 if (string.IsNullOrWhiteSpace(x265Params))
                 {
                     const string failure = "x265-params=empty:missing-hdr-parameters";
@@ -92,12 +92,12 @@ internal static unsafe class VideoEncoderQualityPolicy
                 {
                     SetOption("x265-params", x265Params, required: true);
                 }
-                mode = forceSafeEncoding ? "crf12-fast-safe-hdr" : "crf12-fast-hdr";
+                mode = forceSafeEncoding ? "crf18-fast-safe-hdr" : "crf18-fast-hdr";
             }
             else
             {
-                SetOption("crf", "16", required: true);
-                mode = forceSafeEncoding ? "crf16-fast-safe" : "crf16-fast";
+                SetOption("crf", "20", required: true);
+                mode = forceSafeEncoding ? "crf20-fast-safe" : "crf20-fast";
             }
         }
         else if (isSvtAv1)
@@ -121,13 +121,13 @@ internal static unsafe class VideoEncoderQualityPolicy
             SetOption("preset", "p6", required: true);
             SetOption("tune", "hq", required: true);
             SetOption("rc", "vbr", required: true);
-            SetOption("cq", "12", required: true);
+            SetOption("cq", "18", required: true);
             SetOption("multipass", "qres", required: false);
             SetOption("spatial_aq", "1", required: false);
             SetOption("temporal_aq", "1", required: false);
             SetOption("rc-lookahead", "20", required: false);
             SetOption("extra_sei", "1", required: false);
-            mode = forceSafeEncoding ? "p6-hq-vbr-cq12-safe" : "p6-hq-vbr-cq12";
+            mode = forceSafeEncoding ? "p6-hq-vbr-cq18-safe" : "p6-hq-vbr-cq18";
         }
         else if (isQsv)
         {
