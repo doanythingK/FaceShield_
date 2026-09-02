@@ -1068,13 +1068,23 @@ namespace FaceShield.Controls
             int nearestMissingFrame = -1;
             long nearestMissingDistance = long.MaxValue;
 
-            for (int i = 0; i < frames.Count; i++)
+            // Viewport ordinal bounds are not available yet. Inspect only a bounded
+            // neighborhood around the resolved center anchor; the normal draw path
+            // takes over once start/end timestamp mappings have been resolved.
+            const int neighborCount = 64;
+            int pivot = FindFirstIndexAtOrAfter(frames, anchorFrame);
+            int startIndex = Math.Max(0, pivot - neighborCount);
+            int endIndex = Math.Min(frames.Count, pivot + neighborCount + 1);
+            long maxWarmupDistance = GetIssueWarmupFrameDistance(range);
+
+            for (int i = startIndex; i < endIndex; i++)
             {
                 int frame = frames[i];
                 if (!provider.TryGetFrameTimestampSeconds(frame, out double sec))
                 {
                     long distance = Math.Abs((long)frame - anchorFrame);
-                    if (distance < nearestMissingDistance)
+                    if (distance <= maxWarmupDistance &&
+                        distance < nearestMissingDistance)
                     {
                         nearestMissingDistance = distance;
                         nearestMissingFrame = frame;
@@ -1093,6 +1103,23 @@ namespace FaceShield.Controls
             }
 
             return nearestMissingFrame;
+        }
+
+        private long GetIssueWarmupFrameDistance(double rangeSeconds)
+        {
+            double safeFps = double.IsFinite(Fps) && Fps > 0
+                ? Fps
+                : 30.0;
+            double estimatedFrames = Math.Max(
+                30.0,
+                Math.Max(0.0, rangeSeconds) * safeFps * 2.0);
+            if (!double.IsFinite(estimatedFrames) ||
+                estimatedFrames >= int.MaxValue)
+            {
+                return int.MaxValue;
+            }
+
+            return (long)Math.Ceiling(estimatedFrames);
         }
 
         private void DrawIssueMarkerSeries(
