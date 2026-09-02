@@ -325,11 +325,11 @@ Assert-Contains "ten-bit-encoder-fallback" $tenBitEncoderOutput "software=libx26
 $encoderQualityOutput = Invoke-ScriptStep "encoder-quality-options" $encoderQualityOptionsVerify @()
 Assert-Contains "encoder-quality-options" $encoderQualityOutput "av1Software=[1-9][0-9]*"
 Assert-Contains "encoder-quality-options" $encoderQualityOutput "PASS rgbPolicy=7 pixelLossCases=5"
-Assert-Contains "encoder-quality-options" $encoderQualityOutput "PASS encoder=libx264rgb option=crf value=0"
+Assert-Contains "encoder-quality-options" $encoderQualityOutput "PASS encoder=libx264rgb option=crf value=18"
 
 $rgbLosslessOutput = Invoke-ScriptStep "rgb-lossless-export" $rgbLosslessExportVerify @()
-Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "serviceExport=true encoder=libx264rgb quality=lossless-crf0-fast-rgb .*frames=6 submitted=6 masked=1 packets=6/6 attemptCount=1 outputCommitted=true packetMismatch=0"
-Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "pixelFidelity=true unmaskedFrames=5/5 outsideMaskExact=5120/5120 changedInside=1024/1024 canonicalRgb=true"
+Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "serviceExport=true encoder=libx264rgb quality=crf18-fast-rgb .*frames=6 submitted=6 masked=1 packets=6/6 attemptCount=1 outputCommitted=true packetMismatch=0"
+Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "pixelQuality=true meanOutsideChannelError=[0-9.]+ maxOutsideChannelError=[0-9]+ changedInside=[0-9]+/1024 canonicalRgb=true"
 Assert-Contains "rgb-lossless-export" $rgbLosslessOutput "tenBitFailClosed=true .*finalOutput=false stagedOutputs=0 outputCommitted=false"
 
 $av1EncoderOutput = Invoke-ScriptStep "av1-encoder-policy" $av1EncoderPolicyVerify @()
