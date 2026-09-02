@@ -322,6 +322,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     partial void OnSelectedFrameIndexChanged(int value)
     {
         CancelTimelineNavigation();
+        if (IsTotalFramesEstimated && value >= TotalFrames)
+            TotalFrames = value + 1;
+
         SelectedFrameIndexChanged?.Invoke(value);
         OnPropertyChanged(nameof(FramePositionText));
         OnPropertyChanged(nameof(TimelineTimeText));
@@ -366,6 +369,8 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             return;
 
         IsPlaying = false;
+        RefreshTimelineExtentFromProvider(ThumbnailProvider);
+        TimelineRenderVersion++;
         PlaybackStateChanged?.Invoke(false);
         PlaybackStopped?.Invoke();
     }
@@ -448,6 +453,15 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         int step = mods.HasFlag(KeyModifiers.Shift) ? 10 : 1;
         int delta = forward ? step : -step;
+
+        if (IsTotalFramesEstimated)
+        {
+            int nextEstimated = Math.Max(0, SelectedFrameIndex + delta);
+            if (nextEstimated >= TotalFrames)
+                TotalFrames = nextEstimated + 1;
+            SelectedFrameIndex = nextEstimated;
+            return;
+        }
 
         int next = Math.Clamp(
             SelectedFrameIndex + delta,
