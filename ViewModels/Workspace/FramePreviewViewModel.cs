@@ -596,7 +596,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(videoPath) || totalFrames <= 0 || startFrameIndex < 0)
+        if (string.IsNullOrWhiteSpace(videoPath) || startFrameIndex < 0)
         {
             onPlaybackEnded();
             return;
@@ -615,7 +615,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         _isPlaying = true;
         int runId = Interlocked.Increment(ref _playbackRunId);
-        int safeStart = Math.Clamp(startFrameIndex, 0, totalFrames - 1);
+        int safeStart = totalFrames > 0
+            ? Math.Clamp(startFrameIndex, 0, totalFrames - 1)
+            : Math.Max(0, startFrameIndex);
         _currentFrameIndex = safeStart;
 
         _playbackTask = RunSequentialPlaybackAsync(
