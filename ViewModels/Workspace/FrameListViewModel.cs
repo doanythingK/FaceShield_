@@ -31,6 +31,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private bool isTotalFramesEstimated;
 
     [ObservableProperty]
+    private bool isDurationKnown;
+
+    [ObservableProperty]
     private int selectedFrameIndex = -1;
 
     [ObservableProperty]
@@ -164,7 +167,8 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
             // A missing duration is unknown, not "frame count / average FPS".
             // Keep it at zero rather than presenting an estimated VFR time axis as exact.
-            TotalDurationSeconds = durationSeconds > 0
+            IsDurationKnown = durationSeconds > 0;
+            TotalDurationSeconds = IsDurationKnown
                 ? durationSeconds
                 : 0;
             OnPropertyChanged(nameof(TotalDurationSeconds));
@@ -680,8 +684,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     }
 
     private bool HasKnownDuration()
-        => TotalDurationSeconds > 0 &&
-           double.IsFinite(TotalDurationSeconds);
+        => IsDurationKnown &&
+           double.IsFinite(TotalDurationSeconds) &&
+           TotalDurationSeconds >= 0;
 
     private double ClampTimelineTargetSeconds(double seconds)
     {
@@ -715,8 +720,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         }
 
         decodedExtentSeconds = Math.Max(0, decodedExtentSeconds);
-        if (!HasKnownDuration() && isComplete && decodedExtentSeconds > 0)
+        if (!HasKnownDuration() && isComplete)
         {
+            IsDurationKnown = true;
             TotalDurationSeconds = decodedExtentSeconds;
             OnPropertyChanged(nameof(TotalDurationSeconds));
             OnPropertyChanged(nameof(TimelineTimeText));
