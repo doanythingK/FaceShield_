@@ -120,10 +120,10 @@ internal static unsafe class VideoExportFidelityPolicy
     {
         int resolutionFloor = EstimateHighQualityBitrate(width, height, framerate);
         int boundedSourceBitrate = ClampBitrate(sourceBitrate);
-        int targetBitrate = boundedSourceBitrate > 0
-            ? ClampBitrate((long)boundedSourceBitrate * 3L / 2L)
-            : resolutionFloor;
+        if (boundedSourceBitrate > 0)
+            return boundedSourceBitrate;
 
+        int targetBitrate = resolutionFloor;
         if (codecId == AVCodecID.AV_CODEC_ID_AV1)
             targetBitrate = Math.Max(targetBitrate, resolutionFloor);
 
@@ -287,7 +287,7 @@ internal static unsafe class VideoExportFidelityPolicy
 
         long sourceBitrate = ResolveSourceVideoBitrate(stream, decoder);
         return sourceBitrate > 0
-            ? ClampBitrate(sourceBitrate * 3L / 2L)
+            ? ClampBitrate(sourceBitrate)
             : 0;
     }
 
