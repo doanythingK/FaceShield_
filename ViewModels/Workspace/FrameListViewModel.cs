@@ -148,8 +148,8 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             int frames = hasContainerFrameCount
                 ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
                 : durationSeconds > 0 && fpsValue > 0
-                    ? (int)Math.Floor(durationSeconds * fpsValue)
-                    : 0;
+                    ? Math.Max(1, (int)Math.Floor(durationSeconds * fpsValue))
+                    : 1;
             TotalFrames = Math.Max(frames, 0);
             IsTotalFramesEstimated = !hasContainerFrameCount && TotalFrames > 0;
 
@@ -219,8 +219,12 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "- / -";
 
-            // 사용자 표시용이므로 1-based
-            return $"{SelectedFrameIndex + 1} / {TotalFrames}";
+            // 사용자 표시용이므로 1-based. "~"는 컨테이너가 정확한
+            // nb_frames를 제공하지 않아 현재 값이 추정치임을 뜻합니다.
+            string totalText = IsTotalFramesEstimated
+                ? $"~{TotalFrames}"
+                : TotalFrames.ToString();
+            return $"{SelectedFrameIndex + 1} / {totalText}";
         }
     }
 
@@ -231,21 +235,25 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "--:-- / --:--";
 
-            var total = TimeSpan.FromSeconds(
-                Math.Max(0, TotalDurationSeconds));
+            bool hasKnownDuration =
+                TotalDurationSeconds > 0 &&
+                double.IsFinite(TotalDurationSeconds);
+            string totalText = hasKnownDuration
+                ? FormatTime(TimeSpan.FromSeconds(TotalDurationSeconds))
+                : "--:--";
+
             if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
                     SelectedFrameIndex,
                     out double currentSeconds) != true)
             {
-                return $"--:-- / {FormatTime(total)}";
+                return $"--:-- / {totalText}";
             }
 
-            var current = TimeSpan.FromSeconds(
-                Math.Clamp(
-                    currentSeconds,
-                    0,
-                    Math.Max(0, TotalDurationSeconds)));
-            return $"{FormatTime(current)} / {FormatTime(total)}";
+            double displayCurrentSeconds = hasKnownDuration
+                ? Math.Clamp(currentSeconds, 0, TotalDurationSeconds)
+                : Math.Max(0, currentSeconds);
+            var current = TimeSpan.FromSeconds(displayCurrentSeconds);
+            return $"{FormatTime(current)} / {totalText}";
         }
     }
 
@@ -271,6 +279,11 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         ClampView();
         OnPropertyChanged(nameof(TotalDurationSeconds));
         OnPropertyChanged(nameof(TimelineTimeText));
+    }
+
+    partial void OnIsTotalFramesEstimatedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(FramePositionText));
     }
 
     partial void OnSelectedFrameIndexChanged(int value)
@@ -345,6 +358,17 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     public void SetPlaybackFrameIndex(int frameIndex)
     {
+        if (frameIndex < 0)
+            return;
+
+        if (IsTotalFramesEstimated)
+        {
+            if (frameIndex >= TotalFrames)
+                TotalFrames = frameIndex + 1;
+            SelectedFrameIndex = frameIndex;
+            return;
+        }
+
         if (TotalFrames <= 0)
             return;
 
