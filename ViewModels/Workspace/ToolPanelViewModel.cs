@@ -49,6 +49,7 @@ namespace FaceShield.ViewModels.Workspace
             CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
 
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
+        public bool CanEditWorkspace => !IsExportRunning;
 
 
         partial void OnCurrentModeChanged(EditMode value)
@@ -64,6 +65,7 @@ namespace FaceShield.ViewModels.Workspace
         partial void OnIsExportRunningChanged(bool value)
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
+            OnPropertyChanged(nameof(CanEditWorkspace));
         }
 
 

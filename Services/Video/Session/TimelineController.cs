@@ -5,43 +5,43 @@ using System.Threading.Tasks;
 
 namespace FaceShield.Services.Video.Session;
 
-public sealed class TimelineController
+public sealed class TimelineController : IDisposable
 {
-    private readonly ThumbnailCache _thumbs;
     private readonly ExactFrameProvider _exact;
     private readonly TimelineThumbnailProvider _thumbProvider;
-
-    private readonly int _debounceMs = 80; // 반응 속도 개선
+    private readonly object _requestSync = new();
+    private readonly int _debounceMs = 80;
     private int _exactRequestId;
     private int _thumbRequestId;
+    private CancellationTokenSource? _exactCts;
+    private CancellationTokenSource? _thumbCts;
+    private bool _disposed;
 
-    public TimelineController(
-        ThumbnailCache thumbs,
-        ExactFrameProvider exact,
-        TimelineThumbnailProvider thumbProvider)
+    public TimelineController(ExactFrameProvider exact, TimelineThumbnailProvider thumbProvider)
     {
-        _thumbs = thumbs;
         _exact = exact;
         _thumbProvider = thumbProvider;
     }
 
-    // 🔹 드래그 중 즉시 썸네일 표시
-    public WriteableBitmap OnFrameChanging(int frameIndex)
-    {
-        return _thumbs.GetNearest(frameIndex);
-    }
-
-    // 🔹 선택된 프레임에 대한 정확한 썸네일 로드 (저화질이지만 프레임 일치)
     public async Task<WriteableBitmap?> OnFrameChangingExactAsync(int frameIndex)
     {
         int requestId = Interlocked.Increment(ref _thumbRequestId);
-
+        CancellationToken token = ReplaceRequestToken(ref _thumbCts);
         try
         {
-            var thumbnail = await Task.Run(() => _thumbProvider.GetThumbnail(frameIndex));
-            return requestId == Volatile.Read(ref _thumbRequestId)
-                ? thumbnail
-                : null;
+            WriteableBitmap? thumbnail = await Task.Run(
+                () => _thumbProvider.GetThumbnailCopy(frameIndex, token),
+                token);
+            if (!token.IsCancellationRequested &&
+                requestId == Volatile.Read(ref _thumbRequestId))
+                return thumbnail;
+
+            thumbnail?.Dispose();
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
         }
         catch
         {
@@ -49,24 +49,23 @@ public sealed class TimelineController
         }
     }
 
-    // 🔹 드래그 종료 판단 → 고화질 로드
     public async Task<WriteableBitmap?> OnFrameChangedAsync(int frameIndex)
     {
         int requestId = Interlocked.Increment(ref _exactRequestId);
-
-        // 사용자가 손을 떼었다고 판단하는 지연
-        await Task.Delay(_debounceMs);
-        if (requestId != Volatile.Read(ref _exactRequestId))
-            return null;
-
-        // 🔥 선택한 프레임에 대해 정확히 고화질 1장 로딩
+        CancellationToken token = ReplaceRequestToken(ref _exactCts);
         try
         {
-            var exact = await _exact.GetExactAsync(frameIndex, CancellationToken.None);
-            if (requestId == Volatile.Read(ref _exactRequestId))
+            await Task.Delay(_debounceMs, token);
+            var exact = await _exact.GetExactAsync(frameIndex, token);
+            if (!token.IsCancellationRequested &&
+                requestId == Volatile.Read(ref _exactRequestId))
                 return exact;
 
             exact?.Dispose();
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
             return null;
         }
         catch
@@ -75,23 +74,58 @@ public sealed class TimelineController
         }
     }
 
-    // 🔹 재생 중지 시 즉시 고화질 로드 (디바운스 없음)
     public async Task<WriteableBitmap?> GetExactNowAsync(int frameIndex)
     {
         int requestId = Interlocked.Increment(ref _exactRequestId);
-
+        CancellationToken token = ReplaceRequestToken(ref _exactCts);
         try
         {
-            var exact = await _exact.GetExactAsync(frameIndex, CancellationToken.None);
-            if (requestId == Volatile.Read(ref _exactRequestId))
+            var exact = await _exact.GetExactAsync(frameIndex, token);
+            if (!token.IsCancellationRequested &&
+                requestId == Volatile.Read(ref _exactRequestId))
                 return exact;
 
             exact?.Dispose();
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
         catch
         {
             return null;
+        }
+    }
+
+    private CancellationToken ReplaceRequestToken(ref CancellationTokenSource? slot)
+    {
+        lock (_requestSync)
+        {
+            if (_disposed)
+                return new CancellationToken(canceled: true);
+
+            slot?.Cancel();
+            slot?.Dispose();
+            slot = new CancellationTokenSource();
+            return slot.Token;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_requestSync)
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _exactCts?.Cancel();
+            _thumbCts?.Cancel();
+            _exactCts?.Dispose();
+            _thumbCts?.Dispose();
+            _exactCts = null;
+            _thumbCts = null;
         }
     }
 }

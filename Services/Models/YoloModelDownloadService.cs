@@ -2,6 +2,7 @@ using FaceShield.Services.FaceDetection;
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,7 +16,9 @@ internal static class YoloModelDownloadService
         string FileName,
         string DownloadUrl,
         string SourceLabel,
-        string LicenseLabel);
+        string LicenseLabel,
+        long ExpectedSize,
+        string ExpectedSha256);
 
     internal static DownloadInfo GetInfo(YoloFaceModelType modelType)
     {
@@ -23,16 +26,20 @@ internal static class YoloModelDownloadService
         {
             return new DownloadInfo(
                 "YoloV5Face.onnx",
-                "https://huggingface.co/hayashiLin/deepfacelivemodels/resolve/main/YoloV5Face.onnx?download=true",
-                "Hugging Face hayashiLin/deepfacelivemodels",
-                "GPL-3.0 표시");
+                "https://huggingface.co/hayashiLin/deepfacelivemodels/resolve/b6f5aa06757a2601fe1e35bdec6d97916494802d/YoloV5Face.onnx?download=true",
+                "Hugging Face hayashiLin/deepfacelivemodels @ b6f5aa0",
+                "GPL-3.0 표시",
+                28_282_217,
+                "907c295f79eba1b0f4be59bcf5d8aabe4e2a9002ec44c5d1c518b97eb9fb13da");
         }
 
         return new DownloadInfo(
             "yolov8n-face-lindevs.onnx",
             "https://github.com/lindevs/yolov8-face/releases/download/1.0.1/yolov8n-face-lindevs.onnx",
             "GitHub lindevs/yolov8-face 1.0.1",
-            "MIT 표시 + YOLOv8 upstream license caveat");
+            "MIT 표시 + YOLOv8 upstream license caveat",
+            12_250_955,
+            "8d0bfb0c3383c5bd7a78dd24ef79a21e2aa456619b6ab5e53867092d1c7dc414");
     }
 
     internal static string GetDownloadDirectory()
@@ -53,8 +60,9 @@ internal static class YoloModelDownloadService
 
     internal static bool IsDownloaded(YoloFaceModelType modelType)
     {
+        DownloadInfo info = GetInfo(modelType);
         string path = GetDestinationPath(modelType);
-        return File.Exists(path) && new FileInfo(path).Length > 0;
+        return IsExpectedArtifact(path, info);
     }
 
     internal static async Task<string> DownloadAsync(
@@ -67,7 +75,7 @@ internal static class YoloModelDownloadService
         Directory.CreateDirectory(directory);
 
         string destinationPath = Path.Combine(directory, info.FileName);
-        if (File.Exists(destinationPath) && new FileInfo(destinationPath).Length > 0)
+        if (IsExpectedArtifact(destinationPath, info))
         {
             progress?.Report(100);
             return destinationPath;
@@ -135,10 +143,22 @@ internal static class YoloModelDownloadService
                 readBytes != totalBytes.Value)
             {
                 throw new InvalidDataException(
-                    $"모델 다운로드 크기가 예상과 다릅니다(expected={totalBytes.Value}, actual={readBytes}).");
+                    $"모델 다운로드 크기가 HTTP Content-Length와 다릅니다(expected={totalBytes.Value}, actual={readBytes}).");
+            }
+
+            if (readBytes != info.ExpectedSize)
+            {
+                throw new InvalidDataException(
+                    $"모델 다운로드 크기가 고정 배포 파일과 다릅니다(expected={info.ExpectedSize}, actual={readBytes}).");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            if (!HasExpectedSha256(tempPath, info.ExpectedSha256))
+            {
+                throw new InvalidDataException(
+                    $"모델 SHA-256 검증에 실패했습니다: {info.FileName}");
+            }
+
             File.Move(tempPath, destinationPath, overwrite: true);
             progress?.Report(100);
             return destinationPath;
@@ -156,6 +176,43 @@ internal static class YoloModelDownloadService
             }
 
             throw;
+        }
+    }
+
+    private static bool IsExpectedArtifact(string path, DownloadInfo info)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            return file.Exists &&
+                   file.Length == info.ExpectedSize &&
+                   HasExpectedSha256(path, info.ExpectedSha256);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasExpectedSha256(string path, string expectedSha256)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read);
+            byte[] digest = SHA256.HashData(stream);
+            string actual = Convert.ToHexString(digest);
+            return string.Equals(
+                actual,
+                expectedSha256,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
         }
     }
 }

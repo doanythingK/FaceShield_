@@ -613,6 +613,10 @@
                      IsVisible="{Binding IsWorkspaceLoading}"
                      Classes="muted"
                      TextWrapping="Wrap"/>
+          <Button Content="워크스페이스 로딩 취소"
+                  Classes="danger"
+                  IsVisible="{Binding IsWorkspaceLoading}"
+                  Command="{Binding CancelWorkspaceLoadingCommand}"/>
           <TextBlock Text="{Binding AutoEtaText}"
                      IsVisible="{Binding IsAutoStatusVisible}"
                      Classes="muted"

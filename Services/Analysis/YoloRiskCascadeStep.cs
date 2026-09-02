@@ -150,7 +150,7 @@ namespace FaceShield.Services.Analysis
                 if (secondaryBase is not IBgraFaceDetector secondary)
                     return YoloRiskCascadeResult.Empty with { Enabled = true, Error = "secondary detector does not support BGRA input" };
 
-                using var extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+                using var extractor = new FfFrameExtractor(videoPath, enableHardware: false, cancellationToken: cancellationToken);
                 foreach (var range in BuildContiguousRanges(riskFrames.Keys))
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -158,11 +158,14 @@ namespace FaceShield.Services.Analysis
                     if (frameTimings.TryGetValue(range.Start, out var rangeStartTiming) &&
                         rangeStartTiming.Source == FrameTimingSource.PresentationTimestamp)
                     {
-                        extractor.StartSequentialReadAtTimestamp(range.Start, rangeStartTiming.TimestampSeconds);
+                        extractor.StartSequentialReadAtTimestamp(
+                            range.Start,
+                            rangeStartTiming.TimestampSeconds,
+                            cancellationToken);
                     }
                     else
                     {
-                        extractor.StartSequentialRead(range.Start);
+                        extractor.StartSequentialRead(range.Start, cancellationToken);
                     }
                     int nextFrameIndex = range.Start;
 

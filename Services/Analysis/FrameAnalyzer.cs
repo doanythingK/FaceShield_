@@ -25,16 +25,17 @@ namespace FaceShield.Services.Analysis
             IProgress<int>? progress,
             CancellationToken ct)
         {
-            // (확실) FfFrameExtractor 안에 이미 FPS 계산 로직이 있어서
-            // 여기서는 전체 프레임 수만 추정해도 충분합니다.
-            var (fps, totalFrames, _) = ReadVideoInfo(videoPath);
+            ct.ThrowIfCancellationRequested();
+            VideoMetadataInfo metadata = VideoMetadataReader.Read(videoPath, ct);
+            double fps = metadata.Fps;
+            int totalFrames = metadata.GetFrameCountEstimate();
 
             if (fps <= 0 || totalFrames <= 0)
                 return Array.Empty<FrameAnalysisResult>();
 
             var list = new List<FrameAnalysisResult>();
 
-            using var extractor = new FfFrameExtractor(videoPath);
+            using var extractor = new FfFrameExtractor(videoPath, cancellationToken: ct);
 
             await Task.Run(() =>
             {
@@ -69,67 +70,5 @@ namespace FaceShield.Services.Analysis
             return list;
         }
 
-        // ↓ 아래 ReadVideoInfo는 AutoMaskGenerator에서도 쓸 거라면,
-        // util 클래스로 빼는 게 좋지만 지금은 여기 안에 둡니다.
-        private unsafe static (double fps, int totalFrames, double durationSeconds) ReadVideoInfo(string path)
-        {
-            FFmpeg.AutoGen.AVFormatContext* fmt = null;
-
-            try
-            {
-                FFmpeg.AutoGen.ffmpeg.av_log_set_level(FFmpeg.AutoGen.ffmpeg.AV_LOG_QUIET);
-
-                int openResult = FFmpeg.AutoGen.ffmpeg.avformat_open_input(&fmt, path, null, null);
-                FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
-
-                int streamInfo = FFmpeg.AutoGen.ffmpeg.avformat_find_stream_info(fmt, null);
-                FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
-
-                int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
-                FFmpeg.AutoGen.AVStream* videoStream =
-                    videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
-
-                if (videoStream == null)
-                    throw new InvalidOperationException("Video stream not found.");
-
-                double fpsValue =
-                    videoStream->avg_frame_rate.num != 0
-                        ? FFmpeg.AutoGen.ffmpeg.av_q2d(videoStream->avg_frame_rate)
-                        : videoStream->r_frame_rate.num != 0
-                            ? FFmpeg.AutoGen.ffmpeg.av_q2d(videoStream->r_frame_rate)
-                            : 30.0;
-
-                double durationSeconds;
-
-                if (videoStream->duration > 0)
-                {
-                    durationSeconds =
-                        videoStream->duration * FFmpeg.AutoGen.ffmpeg.av_q2d(videoStream->time_base);
-                }
-                else if (fmt->duration > 0)
-                {
-                    durationSeconds =
-                        fmt->duration / (double)FFmpeg.AutoGen.ffmpeg.AV_TIME_BASE;
-                }
-                else
-                {
-                    durationSeconds = 0;
-                }
-
-                int frames = videoStream->nb_frames > 0
-                    ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
-                    : (int)Math.Floor(durationSeconds * fpsValue);
-
-                return (
-                    fps: fpsValue,
-                    totalFrames: Math.Max(frames, 0),
-                    durationSeconds: Math.Max(durationSeconds, 0));
-            }
-            finally
-            {
-                if (fmt != null)
-                    FFmpeg.AutoGen.ffmpeg.avformat_close_input(&fmt);
-            }
-        }
     }
 }
