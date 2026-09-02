@@ -29,6 +29,9 @@ $workspace = Read-RepoFile "ViewModels/Pages/WorkspaceViewModel.cs"
 $workspaceStore = Read-RepoFile "Services/Workspace/WorkspaceStateStore.cs"
 $extractor = Read-RepoFile "Services/Video/FfFrameExtractor.cs"
 $autoMask = Read-RepoFile "Services/Analysis/AutoMaskGenerator.cs"
+$autoPostProcess = Read-RepoFile "Services/Analysis/AutoMaskPostProcessPipeline.cs"
+$roiStep = Read-RepoFile "Services/Analysis/AutoMaskRoiRefineStep.cs"
+$roiRefiner = Read-RepoFile "Services/Analysis/FaceTrackRoiRefiner.cs"
 $thumbnailProvider = Read-RepoFile "Services/Video/TimelineThumbnailProvider.cs"
 $videoSession = Read-RepoFile "Services/Video/Session/VideoSession.cs"
 $timelineController = Read-RepoFile "Services/Video/Session/TimelineController.cs"
@@ -68,12 +71,21 @@ Assert-Match "ffmpeg input open installs interrupt callback before open" $extrac
 Assert-Match "ffmpeg stream info uses cancellable native io scope" $extractor 'BeginIoInterrupt\(cancellationToken\)[\s\S]{0,800}avformat_find_stream_info\(_fmt'
 Assert-Match "ffmpeg seeks use cancellable native io scope" $extractor 'SeekMainDecoder\([\s\S]{0,1200}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,800}av_seek_frame'
 Assert-Match "ordinal input open and stream info use cancellation" $extractor 'EnsureOrdinalDecoderInitialized\([\s\S]{0,2200}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,1000}avformat_open_input[\s\S]{0,1400}avformat_find_stream_info'
+Assert-Match "frame ordinal cancellation is not recorded as permanent decoder failure" $extractor 'EnsureDecodedFrameTimelineThrough\([\s\S]{0,7000}catch\s*\(OperationCanceledException\)\s*when\s*\(cancellationToken\.IsCancellationRequested\)[\s\S]{0,300}DisposeOrdinalDecoder\(\);[\s\S]{0,200}catch\s*\(Exception\s+ex\)[\s\S]{0,160}_ordinalDecoderFailed\s*=\s*true'
+Assert-Match "timestamp ordinal cancellation is not recorded as permanent decoder failure" $extractor 'EnsureDecodedFrameTimelineThroughTimestamp\([\s\S]{0,7000}catch\s*\(OperationCanceledException\)\s*when\s*\(cancellationToken\.IsCancellationRequested\)[\s\S]{0,300}DisposeOrdinalDecoder\(\);[\s\S]{0,200}catch\s*\(Exception\s+ex\)[\s\S]{0,160}_ordinalDecoderFailed\s*=\s*true'
+Assert-Match "auto ROI pipeline propagates cancellation" $autoPostProcess 'AutoMaskRoiRefineStep\(\)\.Apply\([\s\S]{0,700}useFaceOnnxRoiDetector,\s*cancellationToken\)'
+Assert-Match "auto ROI step forwards cancellation to refiner" $roiStep 'CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,1500}FaceTrackRoiRefiner\(\)\.Apply\([\s\S]{0,500}cancellationToken:\s*cancellationToken'
+Assert-Match "ROI refiner cancels ffmpeg open seek and read" $roiRefiner 'new FfFrameExtractor\([\s\S]{0,300}cancellationToken:\s*cancellationToken[\s\S]{0,1800}StartSequentialRead\([\s\S]{0,200}cancellationToken[\s\S]{0,1200}TryGetNextFrameRawToBuffer\(\s*cancellationToken'
+Assert-NotMatch "ROI refiner does not use uncancellable frame reads" $roiRefiner 'TryGetNextFrameRawToBuffer\(\s*CancellationToken\.None'
 Assert-Match "playback restart waits for the prior playback task" $framePreview 'StartPlaybackAfterPreviousAsync[\s\S]{0,1400}await previousPlaybackTask\.ConfigureAwait\(false\)[\s\S]{0,1400}RunSequentialPlaybackAsync'
 Assert-Match "playback passes cancellation into ffmpeg initialization" $framePreview 'new FfFrameExtractor\([\s\S]{0,300}cancellationToken:\s*ct[\s\S]{0,300}StartSequentialRead\(startFrameIndex,\s*ct\)'
 Assert-Match "issue list resolves display time from decoded PTS" $workspace 'ResetIssueList[\s\S]{0,1800}TryGetFrameTimestampSeconds[\s\S]{0,9000}TryResolveFrameTimestampSeconds'
 Assert-Match "issue time refresh does not start while timeline operations are suspended" $workspace 'RefreshIssueTimesInBackground\([\s\S]{0,800}provider\.OperationsSuspended'
 Assert-Match "auto resumes issue time refresh after timeline operations resume" $workspace 'FrameList\.ResumeTimelineOperations\(\)[\s\S]{0,500}RefreshIssueTimesInBackground\(FrameList\.SelectedFrameIndex\)'
 Assert-Match "issue time uncached resolution is bounded near the selected frame" $workspace 'IssueTimeResolveBudget\s*=\s*96[\s\S]*nearFrameDistance[\s\S]*Take\(IssueTimeResolveBudget\)'
+Assert-Match "issue time cache probing is bounded around the navigation anchor" $workspace 'IssueTimeCacheProbeBudget\s*=\s*192[\s\S]*CollectIssueEntriesNearAnchor\([\s\S]{0,300}IssueTimeCacheProbeBudget[\s\S]*AddIssueEntriesNearAnchor'
+Assert-Match "auto anomaly navigation refreshes nearby issue timestamps" $workspace 'JumpAutoAnomaly\([\s\S]{0,1400}RefreshIssueTimesInBackground\(targetFrame\)[\s\S]{0,1200}ReviewAutoAnomalies\([\s\S]{0,500}RefreshIssueTimesInBackground\(targetFrame\)'
+Assert-NotMatch "background issue refresh does not concatenate every issue collection" $workspace 'RefreshIssueTimesAsync\([\s\S]{0,1800}_noFaceIssueEntries\s*\.Concat\('
 Assert-NotMatch "issue list no longer formats time from frame index divided by fps" $workspace 'FormatFrameTime\(|frameIndex\s*/\s*framesPerSecond'
 Assert-Match "issue warmup scan is bounded around the center anchor" $timelineStrip 'neighborCount\s*=\s*64[\s\S]{0,800}FindFirstIndexAtOrAfter\(frames, anchorFrame\)'
 Assert-Match "decoded PTS cache tracks live owners" $extractor 'LiveOwnerCount[\s\S]*ReleaseDecodedFrameTimeline'

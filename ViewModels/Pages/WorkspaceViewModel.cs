@@ -68,6 +68,7 @@ namespace FaceShield.ViewModels.Pages
         private CancellationTokenSource? _issueTimeCts;
         private CancellationTokenSource? _sessionInitCts;
         private const int IssueTimeResolveBudget = 96;
+        private const int IssueTimeCacheProbeBudget = 192;
         private readonly SemaphoreSlim _exportGate = new(1, 1);
         private bool _autoExportGateRequired;
         private bool _autoExportGatePassed;
@@ -1729,7 +1730,9 @@ namespace FaceShield.ViewModels.Pages
                 if (idx < 0) idx = _autoAnomalies.Length - 1;
             }
 
-            FrameList.SelectedFrameIndex = _autoAnomalies[idx];
+            int targetFrame = _autoAnomalies[idx];
+            FrameList.SelectedFrameIndex = targetFrame;
+            RefreshIssueTimesInBackground(targetFrame);
         }
 
         [RelayCommand]
@@ -1745,7 +1748,10 @@ namespace FaceShield.ViewModels.Pages
         {
             if (_autoAnomalies.Length == 0)
                 return;
-            FrameList.SelectedFrameIndex = _autoAnomalies[0];
+
+            int targetFrame = _autoAnomalies[0];
+            FrameList.SelectedFrameIndex = targetFrame;
+            RefreshIssueTimesInBackground(targetFrame);
         }
 
         private async Task BuildAutoAnomaliesAsync()
@@ -1815,6 +1821,9 @@ namespace FaceShield.ViewModels.Pages
                         flicker.Add(i);
                 }
 
+                noFace.Sort();
+                lowConfidence.Sort();
+                flicker.Sort();
                 return (noFace.ToArray(), lowConfidence.ToArray(), flicker.ToArray());
             });
 
@@ -2119,10 +2128,9 @@ namespace FaceShield.ViewModels.Pages
             try
             {
                 IssueEntryViewModel[] entries =
-                    _noFaceIssueEntries
-                        .Concat(_lowConfidenceIssueEntries)
-                        .Concat(_flickerIssueEntries)
-                        .ToArray();
+                    CollectIssueEntriesNearAnchor(
+                        anchorFrame,
+                        IssueTimeCacheProbeBudget);
                 if (entries.Length == 0)
                     return;
 
@@ -2215,6 +2223,94 @@ namespace FaceShield.ViewModels.Pages
                 Interlocked.CompareExchange(ref _issueTimeCts, null, cts);
                 cts.Dispose();
                 EndLifetimeOperation();
+            }
+        }
+
+        private IssueEntryViewModel[] CollectIssueEntriesNearAnchor(
+            int anchorFrame,
+            int maxEntries)
+        {
+            if (maxEntries <= 0)
+                return Array.Empty<IssueEntryViewModel>();
+
+            int safeAnchor = Math.Max(0, anchorFrame);
+            int perCollectionBudget = Math.Max(
+                1,
+                (maxEntries + 2) / 3);
+            var candidates = new List<IssueEntryViewModel>(
+                Math.Min(maxEntries * 2, 512));
+
+            AddIssueEntriesNearAnchor(
+                _noFaceIssueEntries,
+                safeAnchor,
+                perCollectionBudget,
+                candidates);
+            AddIssueEntriesNearAnchor(
+                _lowConfidenceIssueEntries,
+                safeAnchor,
+                perCollectionBudget,
+                candidates);
+            AddIssueEntriesNearAnchor(
+                _flickerIssueEntries,
+                safeAnchor,
+                perCollectionBudget,
+                candidates);
+
+            return candidates
+                .OrderBy(entry =>
+                    Math.Abs((long)entry.FrameIndex - safeAnchor))
+                .ThenBy(static entry => entry.FrameIndex)
+                .Take(maxEntries)
+                .ToArray();
+        }
+
+        private static void AddIssueEntriesNearAnchor(
+            ObservableCollection<IssueEntryViewModel> source,
+            int anchorFrame,
+            int maxEntries,
+            List<IssueEntryViewModel> target)
+        {
+            if (source.Count == 0 || maxEntries <= 0)
+                return;
+
+            int low = 0;
+            int high = source.Count;
+            while (low < high)
+            {
+                int mid = low + ((high - low) / 2);
+                if (source[mid].FrameIndex < anchorFrame)
+                    low = mid + 1;
+                else
+                    high = mid;
+            }
+
+            int left = low - 1;
+            int right = low;
+            int added = 0;
+            while (added < maxEntries &&
+                   (left >= 0 || right < source.Count))
+            {
+                if (left < 0)
+                {
+                    target.Add(source[right++]);
+                }
+                else if (right >= source.Count)
+                {
+                    target.Add(source[left--]);
+                }
+                else
+                {
+                    long leftDistance =
+                        Math.Abs((long)source[left].FrameIndex - anchorFrame);
+                    long rightDistance =
+                        Math.Abs((long)source[right].FrameIndex - anchorFrame);
+                    if (leftDistance <= rightDistance)
+                        target.Add(source[left--]);
+                    else
+                        target.Add(source[right++]);
+                }
+
+                added++;
             }
         }
 

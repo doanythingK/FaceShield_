@@ -2015,6 +2015,11 @@ namespace FaceShield.Services.Video
                         _decodedFrameTimeline.Entries.Count > frameIndex;
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                DisposeOrdinalDecoder();
+                return false;
+            }
             catch (Exception ex)
             {
                 _ordinalDecoderFailed = true;
@@ -2165,6 +2170,11 @@ namespace FaceShield.Services.Video
                         (last.HasPresentationTimestamp &&
                          last.PresentationTimestamp >= targetPts);
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                DisposeOrdinalDecoder();
+                return false;
             }
             catch (Exception ex)
             {
