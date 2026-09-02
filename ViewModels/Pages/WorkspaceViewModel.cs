@@ -66,6 +66,7 @@ namespace FaceShield.ViewModels.Pages
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
         private CancellationTokenSource? _issueTimeCts;
+        private CancellationTokenSource? _sessionInitCts;
         private const int IssueTimeResolveBudget = 96;
         private readonly SemaphoreSlim _exportGate = new(1, 1);
         private bool _autoExportGateRequired;
@@ -254,13 +255,26 @@ namespace FaceShield.ViewModels.Pages
             if (_sessionInitialized || !TryBeginLifetimeOperation())
                 return;
 
+            var sessionCts = new CancellationTokenSource();
+            CancellationTokenSource? previousSessionCts =
+                Interlocked.Exchange(ref _sessionInitCts, sessionCts);
+            if (previousSessionCts != null)
+            {
+                try { previousSessionCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
             try
             {
                 if (_sessionInitialized)
                     return;
 
                 var session = await Task.Run(
-                    () => new VideoSession(FrameList.VideoPath, progress: loadProgress));
+                    () => new VideoSession(
+                        FrameList.VideoPath,
+                        progress: loadProgress,
+                        cancellationToken: sessionCts.Token),
+                    sessionCts.Token);
 
                 lock (_lifetimeSync)
                 {
@@ -278,8 +292,13 @@ namespace FaceShield.ViewModels.Pages
                 if (FrameList.SelectedFrameIndex >= 0)
                     FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
             }
+            catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
+            {
+            }
             finally
             {
+                Interlocked.CompareExchange(ref _sessionInitCts, null, sessionCts);
+                sessionCts.Dispose();
                 EndLifetimeOperation();
             }
         }
@@ -2476,6 +2495,8 @@ namespace FaceShield.ViewModels.Pages
             try { _autoCts?.Cancel(); }
             catch { }
             try { _exportCts?.Cancel(); }
+            catch { }
+            try { _sessionInitCts?.Cancel(); }
             catch { }
             CancelIssueTimeRefresh();
 
