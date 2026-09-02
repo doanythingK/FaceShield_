@@ -154,6 +154,13 @@ namespace FaceShield.Services.Video
                 timestampSeconds,
                 out frameIndex);
 
+        public bool TryGetDecodedTimelineExtentSeconds(
+            out double extentSeconds,
+            out bool isComplete)
+            => _extractor.TryGetDecodedTimelineExtentSeconds(
+                out extentSeconds,
+                out isComplete);
+
         public bool TryResolveFrameTimestampSeconds(
             int frameIndex,
             CancellationToken cancellationToken,
