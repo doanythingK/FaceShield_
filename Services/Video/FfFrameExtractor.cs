@@ -187,7 +187,10 @@ namespace FaceShield.Services.Video
         private bool _ordinalDecoderFailed;
         private int _timelineOwnerReleased;
 
-        public FfFrameExtractor(string videoPath, bool enableHardware = true)
+        public FfFrameExtractor(
+            string videoPath,
+            bool enableHardware = true,
+            CancellationToken cancellationToken = default)
         {
             ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
 
@@ -197,16 +200,39 @@ namespace FaceShield.Services.Video
 
             try
             {
-                // open input (AVFormatContext**)
-                fixed (AVFormatContext** pFmt = &_fmt)
-                {
-                    int r = ffmpeg.avformat_open_input(pFmt, _videoPath, null, null);
-                    FFmpegErrorHelper.ThrowIfError(r, $"Failed to open video: {_videoPath}");
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Allocate the format context ourselves so AVIOInterruptCB is active
+                // during avformat_open_input as well as later blocking I/O.
+                _fmt = ffmpeg.avformat_alloc_context();
+                if (_fmt == null)
+                    throw new InvalidOperationException("avformat_alloc_context failed");
                 ConfigureIoInterrupt(_fmt);
 
-                int streamInfo = ffmpeg.avformat_find_stream_info(_fmt, null);
-                FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {_videoPath}");
+                int openResult;
+                fixed (AVFormatContext** pFmt = &_fmt)
+                {
+                    using var ioInterrupt = BeginIoInterrupt(cancellationToken);
+                    openResult = ffmpeg.avformat_open_input(
+                        pFmt,
+                        _videoPath,
+                        null,
+                        null);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                FFmpegErrorHelper.ThrowIfError(
+                    openResult,
+                    $"Failed to open video: {_videoPath}");
+
+                int streamInfo;
+                using (var ioInterrupt = BeginIoInterrupt(cancellationToken))
+                {
+                    streamInfo = ffmpeg.avformat_find_stream_info(_fmt, null);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                FFmpegErrorHelper.ThrowIfError(
+                    streamInfo,
+                    $"Failed to read stream info: {_videoPath}");
 
                 _videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(_fmt);
                 if (_videoStreamIndex < 0)
@@ -815,7 +841,7 @@ namespace FaceShield.Services.Video
                 }
 
                 long targetPts = (long)Math.Round(targetPtsDouble);
-                if (SeekMainDecoder(targetPts) < 0)
+                if (SeekMainDecoder(targetPts, cancellationToken) < 0)
                     return null;
 
                 // The timeline provider owns a dedicated extractor. A timestamp seek
@@ -952,34 +978,50 @@ namespace FaceShield.Services.Video
             }
         }
 
-        public void StartSequentialRead(int startFrameIndex)
+        public void StartSequentialRead(
+            int startFrameIndex,
+            CancellationToken cancellationToken = default)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (startFrameIndex < 0) startFrameIndex = 0;
+            cancellationToken.ThrowIfCancellationRequested();
 
             lock (_sync)
             {
-                StartSequentialReadCore(startFrameIndex, timestampSeconds: null);
+                StartSequentialReadCore(
+                    startFrameIndex,
+                    timestampSeconds: null,
+                    cancellationToken);
             }
         }
 
         /// <summary>
         /// 실제 표시 시각을 기준으로 순차 읽기를 시작합니다. VFR 위험 프레임 재검출에서 사용합니다.
         /// </summary>
-        public void StartSequentialReadAtTimestamp(int startFrameIndex, double timestampSeconds)
+        public void StartSequentialReadAtTimestamp(
+            int startFrameIndex,
+            double timestampSeconds,
+            CancellationToken cancellationToken = default)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (startFrameIndex < 0) startFrameIndex = 0;
             if (!double.IsFinite(timestampSeconds))
                 throw new ArgumentOutOfRangeException(nameof(timestampSeconds));
+            cancellationToken.ThrowIfCancellationRequested();
 
             lock (_sync)
             {
-                StartSequentialReadCore(startFrameIndex, timestampSeconds);
+                StartSequentialReadCore(
+                    startFrameIndex,
+                    timestampSeconds,
+                    cancellationToken);
             }
         }
 
-        private void StartSequentialReadCore(int startFrameIndex, double? timestampSeconds)
+        private void StartSequentialReadCore(
+            int startFrameIndex,
+            double? timestampSeconds,
+            CancellationToken cancellationToken)
         {
             ResetSequentialCompletionState();
             _decodeError = null;
@@ -992,7 +1034,7 @@ namespace FaceShield.Services.Video
 
             if (startFrameIndex == 0)
             {
-                PrepareSequentialDecodeFromBeginning();
+                PrepareSequentialDecodeFromBeginning(cancellationToken);
                 return;
             }
 
@@ -1330,7 +1372,7 @@ namespace FaceShield.Services.Video
                                     _sequentialRequestedIndex,
                                     _sequentialTargetPts))
                             {
-                                if (!TryRestartSequentialDecodeFromBeginning(packet))
+                                if (!TryRestartSequentialDecodeFromBeginning(packet, ct))
                                     return false;
                                 continue;
                             }
@@ -1351,7 +1393,7 @@ namespace FaceShield.Services.Video
                         if (pts != ffmpeg.AV_NOPTS_VALUE && pts < _sequentialTargetPts)
                             continue;
 
-                        if (!TryRestartSequentialDecodeFromBeginning(packet))
+                        if (!TryRestartSequentialDecodeFromBeginning(packet, ct))
                             return false;
                         continue;
                     }
@@ -1375,7 +1417,7 @@ namespace FaceShield.Services.Video
                 {
                     if (_sequentialOrdinalMode == SequentialOrdinalMode.MatchIndexedTimestamp &&
                         !_sequentialStarted &&
-                        TryRestartSequentialDecodeFromBeginning(packet))
+                        TryRestartSequentialDecodeFromBeginning(packet, ct))
                     {
                         continue;
                     }
@@ -1439,7 +1481,7 @@ namespace FaceShield.Services.Video
                     {
                         if (_sequentialOrdinalMode == SequentialOrdinalMode.MatchIndexedTimestamp &&
                             !_sequentialStarted &&
-                            TryRestartSequentialDecodeFromBeginning(packet))
+                            TryRestartSequentialDecodeFromBeginning(packet, ct))
                         {
                             continue;
                         }
@@ -1481,9 +1523,10 @@ namespace FaceShield.Services.Video
             }
         }
 
-        private void PrepareSequentialDecodeFromBeginning()
+        private void PrepareSequentialDecodeFromBeginning(
+            CancellationToken cancellationToken)
         {
-            if (SeekMainDecoderToBeginning() < 0)
+            if (SeekMainDecoderToBeginning(cancellationToken) < 0)
             {
                 throw new InvalidOperationException(
                     $"Could not seek to the beginning for exact frame {_sequentialRequestedIndex}.");
@@ -1496,10 +1539,12 @@ namespace FaceShield.Services.Video
             _sequentialStarted = false;
         }
 
-        private bool TryRestartSequentialDecodeFromBeginning(AVPacket* packet)
+        private bool TryRestartSequentialDecodeFromBeginning(
+            AVPacket* packet,
+            CancellationToken cancellationToken)
         {
             ffmpeg.av_packet_unref(packet);
-            int seekResult = SeekMainDecoderToBeginning();
+            int seekResult = SeekMainDecoderToBeginning(cancellationToken);
             if (seekResult < 0)
             {
                 SetSequentialDecodeError(
@@ -1535,7 +1580,9 @@ namespace FaceShield.Services.Video
                     cancellationToken,
                     out long indexedTimestamp))
             {
-                int seekResult = SeekMainDecoder(indexedTimestamp);
+                int seekResult = SeekMainDecoder(
+                    indexedTimestamp,
+                    cancellationToken);
                 if (seekResult >= 0)
                 {
                     _sequentialOrdinalMode = SequentialOrdinalMode.MatchIndexedTimestamp;
@@ -1564,7 +1611,7 @@ namespace FaceShield.Services.Video
 
             try
             {
-                PrepareSequentialDecodeFromBeginning();
+                PrepareSequentialDecodeFromBeginning(cancellationToken);
                 return true;
             }
             catch (Exception ex)
@@ -1598,7 +1645,8 @@ namespace FaceShield.Services.Video
             }
         }
 
-        private int SeekMainDecoderToBeginning()
+        private int SeekMainDecoderToBeginning(
+            CancellationToken cancellationToken = default)
         {
             long timestamp = GetFirstKnownPresentationTimestamp();
             if (timestamp == ffmpeg.AV_NOPTS_VALUE)
@@ -1609,16 +1657,29 @@ namespace FaceShield.Services.Video
                     : 0;
             }
 
-            return SeekMainDecoder(timestamp);
+            return SeekMainDecoder(timestamp, cancellationToken);
         }
 
-        private int SeekMainDecoder(long timestamp)
+        private int SeekMainDecoder(
+            long timestamp,
+            CancellationToken cancellationToken = default)
         {
-            int seekResult = ffmpeg.av_seek_frame(
-                _fmt,
-                _videoStreamIndex,
-                timestamp,
-                ffmpeg.AVSEEK_FLAG_BACKWARD);
+            if (cancellationToken.IsCancellationRequested)
+                return -1;
+
+            int seekResult;
+            using (var ioInterrupt = BeginIoInterrupt(cancellationToken))
+            {
+                seekResult = ffmpeg.av_seek_frame(
+                    _fmt,
+                    _videoStreamIndex,
+                    timestamp,
+                    ffmpeg.AVSEEK_FLAG_BACKWARD);
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+                return -1;
+
             if (seekResult >= 0)
             {
                 ffmpeg.avcodec_flush_buffers(_dec);
@@ -1728,6 +1789,50 @@ namespace FaceShield.Services.Video
                 (void*)GCHandle.ToIntPtr(_ioInterruptHandle);
         }
 
+        private IoInterruptScope BeginIoInterrupt(
+            CancellationToken cancellationToken)
+            => new(this, cancellationToken);
+
+        private readonly struct IoInterruptScope : IDisposable
+        {
+            private readonly FfFrameExtractor _owner;
+            private readonly CancellationTokenRegistration _registration;
+
+            public IoInterruptScope(
+                FfFrameExtractor owner,
+                CancellationToken cancellationToken)
+            {
+                _owner = owner;
+                Volatile.Write(ref owner._ioInterruptRequested, 0);
+                _registration = cancellationToken.CanBeCanceled
+                    ? cancellationToken.Register(
+                        static state =>
+                        {
+                            if (state is FfFrameExtractor extractor)
+                            {
+                                Volatile.Write(
+                                    ref extractor._ioInterruptRequested,
+                                    1);
+                            }
+                        },
+                        owner)
+                    : default;
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    Volatile.Write(
+                        ref owner._ioInterruptRequested,
+                        1);
+                }
+            }
+
+            public void Dispose()
+            {
+                _registration.Dispose();
+                Volatile.Write(ref _owner._ioInterruptRequested, 0);
+            }
+        }
+
         private int ReadFrameInterruptibly(
             AVFormatContext* format,
             AVPacket* packet,
@@ -1736,27 +1841,8 @@ namespace FaceShield.Services.Video
             if (cancellationToken.IsCancellationRequested)
                 return -1;
 
-            Volatile.Write(ref _ioInterruptRequested, 0);
-            using CancellationTokenRegistration registration =
-                cancellationToken.Register(
-                    static state =>
-                    {
-                        if (state is FfFrameExtractor owner)
-                            Volatile.Write(ref owner._ioInterruptRequested, 1);
-                    },
-                    this);
-
-            try
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    Volatile.Write(ref _ioInterruptRequested, 1);
-
-                return ffmpeg.av_read_frame(format, packet);
-            }
-            finally
-            {
-                Volatile.Write(ref _ioInterruptRequested, 0);
-            }
+            using var ioInterrupt = BeginIoInterrupt(cancellationToken);
+            return ffmpeg.av_read_frame(format, packet);
         }
 
         private static int HandleIoInterrupt(void* opaque)
@@ -1856,7 +1942,7 @@ namespace FaceShield.Services.Video
             {
                 if (cancellationToken.IsCancellationRequested)
                     return false;
-                EnsureOrdinalDecoderInitialized();
+                EnsureOrdinalDecoderInitialized(cancellationToken);
                 while (!_ordinalReachedEndOfStream)
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -1989,7 +2075,7 @@ namespace FaceShield.Services.Video
 
             try
             {
-                EnsureOrdinalDecoderInitialized();
+                EnsureOrdinalDecoderInitialized(cancellationToken);
                 while (!_ordinalReachedEndOfStream)
                 {
                     if (cancellationToken.IsCancellationRequested)
@@ -2084,21 +2170,44 @@ namespace FaceShield.Services.Video
             }
         }
 
-        private void EnsureOrdinalDecoderInitialized()
+        private void EnsureOrdinalDecoderInitialized(
+            CancellationToken cancellationToken)
         {
             if (_ordinalDecoder != null)
                 return;
 
-            fixed (AVFormatContext** format = &_ordinalFormat)
-            {
-                FFmpegErrorHelper.ThrowIfError(
-                    ffmpeg.avformat_open_input(format, _videoPath, null, null),
-                    $"Failed to open ordinal index input: {_videoPath}");
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _ordinalFormat = ffmpeg.avformat_alloc_context();
+            if (_ordinalFormat == null)
+                throw new InvalidOperationException(
+                    "ordinal index avformat_alloc_context failed");
             ConfigureIoInterrupt(_ordinalFormat);
 
+            int openResult;
+            fixed (AVFormatContext** format = &_ordinalFormat)
+            {
+                using var ioInterrupt = BeginIoInterrupt(cancellationToken);
+                openResult = ffmpeg.avformat_open_input(
+                    format,
+                    _videoPath,
+                    null,
+                    null);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
             FFmpegErrorHelper.ThrowIfError(
-                ffmpeg.avformat_find_stream_info(_ordinalFormat, null),
+                openResult,
+                $"Failed to open ordinal index input: {_videoPath}");
+
+            int streamInfoResult;
+            using (var ioInterrupt = BeginIoInterrupt(cancellationToken))
+            {
+                streamInfoResult =
+                    ffmpeg.avformat_find_stream_info(_ordinalFormat, null);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            FFmpegErrorHelper.ThrowIfError(
+                streamInfoResult,
                 $"Failed to read ordinal index stream info: {_videoPath}");
 
             _ordinalVideoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(_ordinalFormat);
