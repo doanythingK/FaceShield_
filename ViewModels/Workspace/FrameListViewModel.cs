@@ -277,10 +277,20 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "--:-- / --:--";
 
-            var current = TimeSpan.FromSeconds(
-                FrameIndexToSeconds(SelectedFrameIndex));
             var total = TimeSpan.FromSeconds(
                 Math.Max(0, TotalDurationSeconds));
+            if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
+                    SelectedFrameIndex,
+                    out double currentSeconds) != true)
+            {
+                return $"--:-- / {FormatTime(total)}";
+            }
+
+            var current = TimeSpan.FromSeconds(
+                Math.Clamp(
+                    currentSeconds,
+                    0,
+                    Math.Max(0, TotalDurationSeconds)));
             return $"{FormatTime(current)} / {FormatTime(total)}";
         }
     }
@@ -441,20 +451,29 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         if (SelectedFrameIndex < 0 || TotalFrames <= 0)
             return;
 
-        double currentSeconds = FrameIndexToSeconds(SelectedFrameIndex);
-        double targetSeconds = Math.Clamp(
-            currentSeconds + seconds,
-            0,
-            Math.Max(0, TotalDurationSeconds));
-        int fallbackIndex = SecondsToFrameIndex(targetSeconds);
         var provider = ThumbnailProvider;
-        if (provider == null ||
-            provider.TryGetFrameIndexAtTimestamp(targetSeconds, out int cachedIndex))
-        {
-            SelectedFrameIndex = provider == null
-                ? fallbackIndex
-                : Math.Clamp(cachedIndex, 0, TotalFrames - 1);
+        if (provider == null)
             return;
+
+        int sourceFrameIndex = SelectedFrameIndex;
+        if (provider.TryGetFrameTimestampSeconds(
+                sourceFrameIndex,
+                out double currentSeconds))
+        {
+            double targetSeconds = Math.Clamp(
+                currentSeconds + seconds,
+                0,
+                Math.Max(0, TotalDurationSeconds));
+            if (provider.TryGetFrameIndexAtTimestamp(
+                    targetSeconds,
+                    out int cachedIndex))
+            {
+                SelectedFrameIndex = Math.Clamp(
+                    cachedIndex,
+                    0,
+                    TotalFrames - 1);
+                return;
+            }
         }
 
         CancelTimelineNavigation();
@@ -462,21 +481,33 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         _timelineNavigationCts = cts;
         _ = ResolveTimelineNavigationAsync(
             provider,
-            targetSeconds,
-            fallbackIndex,
+            sourceFrameIndex,
+            seconds,
             cts);
     }
 
     private async Task ResolveTimelineNavigationAsync(
         TimelineThumbnailProvider provider,
-        double targetSeconds,
-        int fallbackIndex,
+        int sourceFrameIndex,
+        int secondsDelta,
         CancellationTokenSource cts)
     {
         try
         {
             (bool resolved, int frameIndex) = await Task.Run(() =>
             {
+                if (!provider.TryResolveFrameTimestampSeconds(
+                        sourceFrameIndex,
+                        cts.Token,
+                        out double currentSeconds))
+                {
+                    return (false, -1);
+                }
+
+                double targetSeconds = Math.Clamp(
+                    currentSeconds + secondsDelta,
+                    0,
+                    Math.Max(0, TotalDurationSeconds));
                 bool ok = provider.TryResolveFrameIndexAtTimestamp(
                     targetSeconds,
                     cts.Token,
@@ -484,7 +515,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 return (ok, resolvedIndex);
             }, cts.Token);
 
-            if (cts.IsCancellationRequested)
+            if (!resolved || cts.IsCancellationRequested)
                 return;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -493,14 +524,16 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                     cts.IsCancellationRequested ||
                     !ReferenceEquals(_timelineNavigationCts, cts) ||
                     !ReferenceEquals(ThumbnailProvider, provider) ||
+                    SelectedFrameIndex != sourceFrameIndex ||
                     TotalFrames <= 0)
                 {
                     return;
                 }
 
-                SelectedFrameIndex = resolved
-                    ? Math.Clamp(frameIndex, 0, TotalFrames - 1)
-                    : Math.Clamp(fallbackIndex, 0, TotalFrames - 1);
+                SelectedFrameIndex = Math.Clamp(
+                    frameIndex,
+                    0,
+                    TotalFrames - 1);
             });
         }
         catch (OperationCanceledException)
