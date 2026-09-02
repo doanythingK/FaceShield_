@@ -138,7 +138,7 @@ namespace FaceShield.Controls
             set => SetValue(ShowFlickerIssuesProperty, value);
         }
 
-        private int _hoverIndex = -1;
+        private double _hoverSeconds = double.NaN;
         private readonly object _pendingThumbnailSync = new();
         private readonly HashSet<long> _pendingThumbnails = new();
         private CancellationTokenSource _thumbnailRequestCts = new();
@@ -183,18 +183,20 @@ namespace FaceShield.Controls
                 return;
 
             double seconds = XToSeconds(pos.X);
-            int fallbackIndex = SecondsToFrameIndex(seconds, total);
             var provider = ThumbnailProvider;
+            if (provider == null)
+            {
+                e.Handled = true;
+                return;
+            }
 
-            if (provider == null ||
-                provider.TryGetFrameIndexAtTimestamp(
+            if (provider.TryGetFrameIndexAtTimestamp(
                     seconds,
                     out int cachedFrameIndex))
             {
-                int selected = provider == null
-                    ? fallbackIndex
-                    : Math.Clamp(cachedFrameIndex, 0, total - 1);
-                SetCurrentValue(SelectedFrameIndexProperty, selected);
+                SetCurrentValue(
+                    SelectedFrameIndexProperty,
+                    Math.Clamp(cachedFrameIndex, 0, total - 1));
                 InvalidateVisual();
             }
             else
@@ -202,7 +204,6 @@ namespace FaceShield.Controls
                 RequestExactFrameSelection(
                     provider,
                     seconds,
-                    fallbackIndex,
                     total,
                     SelectedFrameIndex);
             }
@@ -217,10 +218,11 @@ namespace FaceShield.Controls
             int total = ResolveTotalFrames();
             if (total <= 0) return;
 
-            int idx = XToFrameIndex(e.GetPosition(this).X, total);
-            if (idx != _hoverIndex)
+            double hoverSeconds = XToSeconds(e.GetPosition(this).X);
+            if (!double.IsFinite(_hoverSeconds) ||
+                Math.Abs(hoverSeconds - _hoverSeconds) > 0.000001)
             {
-                _hoverIndex = idx;
+                _hoverSeconds = hoverSeconds;
                 InvalidateVisual();
             }
         }
@@ -296,20 +298,21 @@ namespace FaceShield.Controls
             DrawIssueMarkers(ctx, w, stripH, startSec, endSec, totalFrames);
             DrawAxis(ctx, w, stripH, startSec, endSec);
 
-            // selected line
-            if (SelectedFrameIndex >= 0 && SelectedFrameIndex < totalFrames)
+            // selected line: do not invent a VFR position before its decoded PTS is known.
+            if (SelectedFrameIndex >= 0 &&
+                SelectedFrameIndex < totalFrames &&
+                ThumbnailProvider?.TryGetFrameTimestampSeconds(
+                    SelectedFrameIndex,
+                    out double selSec) == true)
             {
-                double selSec = FrameToSeconds(SelectedFrameIndex, totalFrames);
                 double x = (selSec - startSec) / Math.Max(0.0001, spanSec) * w;
                 ctx.DrawLine(new Pen(Brushes.Lime, 2), new Point(x, 0), new Point(x, stripH));
             }
 
-            // hover line
-            if (_hoverIndex >= 0 && _hoverIndex < totalFrames)
+            // Hover is already a timeline time coordinate, so no frame-rate conversion is needed.
+            if (double.IsFinite(_hoverSeconds))
             {
-                double hovSec = FrameToSeconds(_hoverIndex, totalFrames);
-                double x = (hovSec - startSec) / Math.Max(0.0001, spanSec) * w;
-
+                double x = (_hoverSeconds - startSec) / Math.Max(0.0001, spanSec) * w;
                 var pen = new Pen(new SolidColorBrush(Color.FromRgb(255, 200, 0)), 2);
                 ctx.DrawLine(pen, new Point(x, 0), new Point(x, stripH));
             }
@@ -452,7 +455,6 @@ namespace FaceShield.Controls
         private void RequestExactFrameSelection(
             TimelineThumbnailProvider provider,
             double timestampSeconds,
-            int fallbackIndex,
             int totalFrames,
             int baselineSelectedFrameIndex)
         {
@@ -468,7 +470,6 @@ namespace FaceShield.Controls
             _ = ResolveExactFrameSelectionAsync(
                 provider,
                 timestampSeconds,
-                fallbackIndex,
                 totalFrames,
                 baselineSelectedFrameIndex,
                 cts);
@@ -477,7 +478,6 @@ namespace FaceShield.Controls
         private async Task ResolveExactFrameSelectionAsync(
             TimelineThumbnailProvider provider,
             double timestampSeconds,
-            int fallbackIndex,
             int totalFrames,
             int baselineSelectedFrameIndex,
             CancellationTokenSource cts)
@@ -506,10 +506,12 @@ namespace FaceShield.Controls
                         return;
                     }
 
-                    int selected = resolved
-                        ? Math.Clamp(frameIndex, 0, Math.Max(0, totalFrames - 1))
-                        : Math.Clamp(fallbackIndex, 0, Math.Max(0, totalFrames - 1));
-                    SetCurrentValue(SelectedFrameIndexProperty, selected);
+                    if (!resolved)
+                        return;
+
+                    SetCurrentValue(
+                        SelectedFrameIndexProperty,
+                        Math.Clamp(frameIndex, 0, Math.Max(0, totalFrames - 1)));
                     InvalidateVisual();
                 });
             }
@@ -549,14 +551,16 @@ namespace FaceShield.Controls
             int totalFrames)
         {
             double range = Math.Max(0.0001, endSec - startSec);
-            int startFrame = SecondsToFrameIndex(startSec, totalFrames);
-            int endFrame = SecondsToFrameIndex(endSec, totalFrames);
-            startFrame = Math.Max(0, startFrame);
-            endFrame = Math.Min(
-                totalFrames - 1,
-                Math.Max(startFrame, endFrame));
-            if (endFrame < startFrame)
+            var provider = ThumbnailProvider;
+            if (provider == null ||
+                !provider.TryGetFrameIndexAtTimestamp(startSec, out int startFrame) ||
+                !provider.TryGetFrameIndexAtTimestamp(endSec, out int endFrame))
+            {
                 return;
+            }
+
+            startFrame = Math.Clamp(startFrame, 0, Math.Max(0, totalFrames - 1));
+            endFrame = Math.Clamp(endFrame, startFrame, Math.Max(startFrame, totalFrames - 1));
 
             const double markerH = 6;
             double yNoFace = Math.Max(0, stripH - markerH);
@@ -628,7 +632,13 @@ namespace FaceShield.Controls
                 if (frame > endFrame)
                     break;
 
-                double sec = FrameToSeconds(frame, TotalFrames);
+                if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
+                        frame,
+                        out double sec) != true)
+                {
+                    continue;
+                }
+
                 double x = (sec - startSec) / range * width;
                 if (x < -1 || x > width + 1)
                     continue;
@@ -718,59 +728,6 @@ namespace FaceShield.Controls
                 : totalFrames / Math.Max(1, Fps);
         }
 
-        private double FrameToSeconds(int frameIndex, int totalFrames)
-        {
-            if (frameIndex < 0 || totalFrames <= 0)
-                return 0;
-
-            if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
-                    frameIndex,
-                    out double ptsSeconds) == true)
-            {
-                return Math.Clamp(
-                    ptsSeconds,
-                    0,
-                    Math.Max(0, TotalDurationSec(totalFrames)));
-            }
-
-            double totalSeconds = TotalDurationSec(totalFrames);
-            if (totalFrames <= 1 || totalSeconds <= 0)
-                return 0;
-
-            return Math.Clamp(
-                    frameIndex / (double)(totalFrames - 1),
-                    0,
-                    1)
-                * totalSeconds;
-        }
-
-        private int SecondsToFrameIndex(double seconds, int totalFrames)
-        {
-            if (totalFrames <= 0)
-                return -1;
-
-            double totalSeconds = TotalDurationSec(totalFrames);
-            double clamped = Math.Clamp(
-                seconds,
-                0,
-                Math.Max(0, totalSeconds));
-            if (ThumbnailProvider?.TryGetFrameIndexAtTimestamp(
-                    clamped,
-                    out int ptsFrame) == true)
-            {
-                return Math.Clamp(ptsFrame, 0, totalFrames - 1);
-            }
-
-            if (totalFrames <= 1 || totalSeconds <= 0)
-                return 0;
-
-            return Math.Clamp(
-                (int)Math.Round(
-                    clamped / totalSeconds * (totalFrames - 1)),
-                0,
-                totalFrames - 1);
-        }
-
         private static double ClampStart(double start, double span, double totalSec)
         {
             double maxStart = Math.Max(0, totalSec - span);
@@ -785,7 +742,5 @@ namespace FaceShield.Controls
                 Math.Max(0.05, SecondsPerScreen) * t;
         }
 
-        private int XToFrameIndex(double x, int totalFrames)
-            => SecondsToFrameIndex(XToSeconds(x), totalFrames);
     }
 }
