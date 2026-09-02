@@ -2199,7 +2199,7 @@ namespace FaceShield.ViewModels.Pages
                 secondsPerScreen = FrameList.SecondsPerScreen;
             FrameList.SecondsPerScreen = secondsPerScreen;
 
-            double maxStart = Math.Max(0, FrameList.TotalDurationSeconds - FrameList.SecondsPerScreen);
+            double maxStart = Math.Max(0, FrameList.TimelineExtentSeconds - FrameList.SecondsPerScreen);
             FrameList.ViewStartSeconds = Math.Clamp(snapshot.ViewStartSeconds, 0, maxStart);
 
             int index;
