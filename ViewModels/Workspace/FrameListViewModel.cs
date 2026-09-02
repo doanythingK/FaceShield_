@@ -25,6 +25,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private double fps;
 
     [ObservableProperty]
+    private bool isTotalFramesEstimated;
+
+    [ObservableProperty]
     private int selectedFrameIndex = -1;
 
     [ObservableProperty]
@@ -141,16 +144,20 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 durationSeconds = 0;
             }
 
-            int frames = videoStream->nb_frames > 0
+            bool hasContainerFrameCount = videoStream->nb_frames > 0;
+            int frames = hasContainerFrameCount
                 ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
-                : (int)Math.Floor(durationSeconds * fpsValue);
+                : durationSeconds > 0 && fpsValue > 0
+                    ? (int)Math.Floor(durationSeconds * fpsValue)
+                    : 0;
             TotalFrames = Math.Max(frames, 0);
+            IsTotalFramesEstimated = !hasContainerFrameCount && TotalFrames > 0;
 
+            // A missing duration is unknown, not "frame count / average FPS".
+            // Keep it at zero rather than presenting an estimated VFR time axis as exact.
             TotalDurationSeconds = durationSeconds > 0
                 ? durationSeconds
-                : Fps > 0 && TotalFrames > 0
-                    ? TotalFrames / Fps
-                    : 0;
+                : 0;
             OnPropertyChanged(nameof(TotalDurationSeconds));
 
             SecondsPerScreen = Math.Max(0.1, TotalDurationSeconds);
@@ -180,6 +187,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     public void UpdateActualTotalFrames(int actualTotalFrames)
     {
         int normalized = Math.Max(0, actualTotalFrames);
+        IsTotalFramesEstimated = false;
         if (normalized == TotalFrames)
             return;
 
