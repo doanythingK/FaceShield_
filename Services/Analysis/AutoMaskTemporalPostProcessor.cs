@@ -60,6 +60,227 @@ namespace FaceShield.Services.Analysis
             return result;
         }
 
+        public int ApplyTrackedBoxStabilization(
+            FrameMaskProvider maskProvider,
+            int totalFrames,
+            IReadOnlySet<int>? blockedSceneCutStarts = null,
+            int mutableStartFrameIndex = 0)
+        {
+            if (totalFrames < 2)
+                return 0;
+
+            const double deadZoneCenterRatio = 0.035;
+            const double deadZoneSizeRatio = 0.05;
+            const double baseFollowWeight = 0.25;
+            const double fullFollowMovementRatio = 0.35;
+            const double matchIouMin = 0.08;
+            const double matchCenterShiftMax = 0.70;
+            const double matchAreaRatioMax = 2.8;
+
+            var facesByFrame = new List<Rect>?[totalFrames];
+            var confByFrame = new List<float>?[totalFrames];
+            var sizeByFrame = new PixelSize[totalFrames];
+            var hasStored = new bool[totalFrames];
+
+            foreach (int index in maskProvider.GetStoredMaskFrameIndices())
+            {
+                if (index >= 0 && index < totalFrames)
+                    hasStored[index] = true;
+            }
+
+            foreach (var entry in maskProvider.GetFaceMaskEntries())
+            {
+                int frameIndex = entry.Key;
+                if (frameIndex < 0 || frameIndex >= totalFrames)
+                    continue;
+
+                var data = entry.Value;
+                if (data.Faces.Count == 0)
+                    continue;
+
+                facesByFrame[frameIndex] = new List<Rect>(data.Faces);
+                confByFrame[frameIndex] = new List<float>(data.Confidences);
+                sizeByFrame[frameIndex] = data.Size;
+            }
+
+            int rewrittenFrames = 0;
+            int start = Math.Max(1, mutableStartFrameIndex);
+            for (int frameIndex = start; frameIndex < totalFrames; frameIndex++)
+            {
+                if (hasStored[frameIndex] ||
+                    facesByFrame[frameIndex] == null ||
+                    facesByFrame[frameIndex - 1] == null ||
+                    (blockedSceneCutStarts?.Contains(frameIndex - 1) ?? false))
+                {
+                    continue;
+                }
+
+                var previousFaces = facesByFrame[frameIndex - 1]!;
+                var currentFaces = facesByFrame[frameIndex]!;
+                if (previousFaces.Count == 0 || currentFaces.Count == 0)
+                    continue;
+
+                var stabilized = new List<Rect>(currentFaces);
+                var usedPrevious = new bool[previousFaces.Count];
+                bool changed = false;
+
+                for (int currentIndex = 0; currentIndex < currentFaces.Count; currentIndex++)
+                {
+                    Rect current = currentFaces[currentIndex];
+                    int bestPreviousIndex = -1;
+                    double bestScore = double.NegativeInfinity;
+
+                    for (int previousIndex = 0; previousIndex < previousFaces.Count; previousIndex++)
+                    {
+                        if (usedPrevious[previousIndex])
+                            continue;
+
+                        Rect previous = previousFaces[previousIndex];
+                        double iou = IoU(current, previous);
+                        double centerShiftRatio = GetCenterShiftRatio(previous, current);
+                        double areaRatio = GetAreaRatio(previous, current);
+                        if (iou < matchIouMin &&
+                            centerShiftRatio > matchCenterShiftMax)
+                        {
+                            continue;
+                        }
+                        if (areaRatio > matchAreaRatioMax ||
+                            areaRatio < 1.0 / matchAreaRatioMax)
+                        {
+                            continue;
+                        }
+
+                        double score =
+                            iou * 2.0 -
+                            centerShiftRatio * 0.35 -
+                            Math.Abs(Math.Log(Math.Max(0.0001, areaRatio))) * 0.15;
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestPreviousIndex = previousIndex;
+                        }
+                    }
+
+                    if (bestPreviousIndex < 0)
+                        continue;
+
+                    usedPrevious[bestPreviousIndex] = true;
+                    Rect previousMatch = previousFaces[bestPreviousIndex];
+                    double centerMovement =
+                        GetCenterShiftRatio(previousMatch, current);
+                    double sizeMovement =
+                        GetSizeChangeRatio(previousMatch, current);
+
+                    Rect next;
+                    if (centerMovement <= deadZoneCenterRatio &&
+                        sizeMovement <= deadZoneSizeRatio)
+                    {
+                        next = previousMatch;
+                    }
+                    else
+                    {
+                        double movement = Math.Max(
+                            centerMovement,
+                            sizeMovement * 0.75);
+                        double normalized = Math.Clamp(
+                            (movement - deadZoneCenterRatio) /
+                            Math.Max(
+                                0.0001,
+                                fullFollowMovementRatio - deadZoneCenterRatio),
+                            0.0,
+                            1.0);
+                        double followWeight =
+                            baseFollowWeight +
+                            (1.0 - baseFollowWeight) * normalized;
+                        next = BlendRect(
+                            previousMatch,
+                            current,
+                            followWeight);
+                    }
+
+                    next = ClampRectToFrame(next, sizeByFrame[frameIndex]);
+                    if (!RectNearlyEquals(next, current))
+                    {
+                        stabilized[currentIndex] = next;
+                        changed = true;
+                    }
+                }
+
+                if (!changed)
+                    continue;
+
+                facesByFrame[frameIndex] = stabilized;
+                maskProvider.SetFaceRects(
+                    frameIndex,
+                    stabilized,
+                    sizeByFrame[frameIndex],
+                    minConfidence:
+                        confByFrame[frameIndex] == null ||
+                        confByFrame[frameIndex]!.Count == 0
+                            ? null
+                            : confByFrame[frameIndex]!.Min(),
+                    confidences: confByFrame[frameIndex]);
+                rewrittenFrames++;
+            }
+
+            return rewrittenFrames;
+        }
+
+        private static double GetCenterShiftRatio(Rect previous, Rect current)
+        {
+            double px = previous.X + previous.Width * 0.5;
+            double py = previous.Y + previous.Height * 0.5;
+            double cx = current.X + current.Width * 0.5;
+            double cy = current.Y + current.Height * 0.5;
+            double distance = Math.Sqrt(
+                (cx - px) * (cx - px) +
+                (cy - py) * (cy - py));
+            return distance /
+                Math.Max(1.0, Math.Max(previous.Width, previous.Height));
+        }
+
+        private static double GetSizeChangeRatio(Rect previous, Rect current)
+        {
+            double widthChange =
+                Math.Abs(current.Width - previous.Width) /
+                Math.Max(1.0, previous.Width);
+            double heightChange =
+                Math.Abs(current.Height - previous.Height) /
+                Math.Max(1.0, previous.Height);
+            return Math.Max(widthChange, heightChange);
+        }
+
+        private static double GetAreaRatio(Rect a, Rect b)
+        {
+            double areaA = Math.Max(1.0, a.Width * a.Height);
+            double areaB = Math.Max(1.0, b.Width * b.Height);
+            return areaB / areaA;
+        }
+
+        private static Rect ClampRectToFrame(Rect rect, PixelSize size)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return rect;
+
+            double x = Math.Clamp(rect.X, 0, Math.Max(0, size.Width - 1));
+            double y = Math.Clamp(rect.Y, 0, Math.Max(0, size.Height - 1));
+            double right = Math.Clamp(
+                rect.Right,
+                x + 1,
+                Math.Max(x + 1, size.Width));
+            double bottom = Math.Clamp(
+                rect.Bottom,
+                y + 1,
+                Math.Max(y + 1, size.Height));
+            return new Rect(x, y, right - x, bottom - y);
+        }
+
+        private static bool RectNearlyEquals(Rect a, Rect b)
+            => Math.Abs(a.X - b.X) < 0.01 &&
+               Math.Abs(a.Y - b.Y) < 0.01 &&
+               Math.Abs(a.Width - b.Width) < 0.01 &&
+               Math.Abs(a.Height - b.Height) < 0.01;
+
         public void ApplyTemporalSmoothing(
             FrameMaskProvider maskProvider,
             int totalFrames,
