@@ -605,13 +605,16 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         PersistCurrentMask();
         Interlocked.Increment(ref _changeStamp);
 
-        if (_playbackCts != null)
+        Task? previousPlaybackTask = _playbackTask;
+        CancellationTokenSource? previousCts = _playbackCts;
+        if (previousCts != null)
         {
-            try { _playbackCts.Cancel(); }
-            catch { }
-            _playbackCts.Dispose();
+            try { previousCts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
-        _playbackCts = new CancellationTokenSource();
+
+        var playbackCts = new CancellationTokenSource();
+        _playbackCts = playbackCts;
 
         _isPlaying = true;
         int runId = Interlocked.Increment(ref _playbackRunId);
@@ -620,16 +623,73 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             : Math.Max(0, startFrameIndex);
         _currentFrameIndex = safeStart;
 
-        _playbackTask = RunSequentialPlaybackAsync(
+        _playbackTask = StartPlaybackAfterPreviousAsync(
+            previousPlaybackTask,
             runId,
             videoPath,
             safeStart,
             fps,
             totalFrames,
-            _playbackCts.Token,
+            playbackCts,
             onFrameAdvanced,
             onPlaybackEnded,
             onPlaybackFailed);
+    }
+
+    private async Task StartPlaybackAfterPreviousAsync(
+        Task? previousPlaybackTask,
+        int runId,
+        string videoPath,
+        int startFrameIndex,
+        double fps,
+        int totalFrames,
+        CancellationTokenSource playbackCts,
+        Action<int> onFrameAdvanced,
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed)
+    {
+        try
+        {
+            if (previousPlaybackTask != null)
+            {
+                try
+                {
+                    await previousPlaybackTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(
+                        $"[FramePreview] previous playback shutdown completed with error: {ex.Message}");
+                }
+            }
+
+            if (playbackCts.IsCancellationRequested ||
+                runId != Volatile.Read(ref _playbackRunId) ||
+                _disposed)
+            {
+                return;
+            }
+
+            await RunSequentialPlaybackAsync(
+                runId,
+                videoPath,
+                startFrameIndex,
+                fps,
+                totalFrames,
+                playbackCts.Token,
+                onFrameAdvanced,
+                onPlaybackEnded,
+                onPlaybackFailed).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ReferenceEquals(_playbackCts, playbackCts))
+                _playbackCts = null;
+            playbackCts.Dispose();
+        }
     }
 
     public void StopPlayback()
@@ -643,12 +703,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _isPlaying = false;
         Interlocked.Increment(ref _playbackRunId);
 
-        if (_playbackCts != null)
+        CancellationTokenSource? playbackCts = _playbackCts;
+        _playbackCts = null;
+        if (playbackCts != null)
         {
-            try { _playbackCts.Cancel(); }
-            catch { }
-            _playbackCts.Dispose();
-            _playbackCts = null;
+            try { playbackCts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -1021,12 +1081,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         Interlocked.Increment(ref _playbackRunId);
         _isPlaying = false;
 
-        if (_playbackCts != null)
+        CancellationTokenSource? playbackCts = _playbackCts;
+        _playbackCts = null;
+        if (playbackCts != null)
         {
-            try { _playbackCts.Cancel(); }
-            catch { }
-            _playbackCts.Dispose();
-            _playbackCts = null;
+            try { playbackCts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         SetPreviewBitmap(null, ownsBitmap: false);
