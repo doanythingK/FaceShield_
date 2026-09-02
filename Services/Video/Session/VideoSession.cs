@@ -1,6 +1,7 @@
 // FILE: Services/Video/Session/VideoSession.cs
 using FaceShield.Services.Video;
 using System;
+using System.Threading;
 
 namespace FaceShield.Services.Video.Session;
 
@@ -18,9 +19,13 @@ public sealed class VideoSession : IDisposable
         int thumbWidth = 240,
         int thumbHeight = 135,
         IProgress<int>? progress = null,
-        int maxThumbnailCacheEntries = 256)
+        int maxThumbnailCacheEntries = 256,
+        CancellationToken cancellationToken = default)
     {
-        _extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+        _extractor = new FfFrameExtractor(
+            videoPath,
+            enableHardware: false,
+            cancellationToken: cancellationToken);
         ExactProvider = new ExactFrameProvider(_extractor, ownsExtractor: false);
 
         try
