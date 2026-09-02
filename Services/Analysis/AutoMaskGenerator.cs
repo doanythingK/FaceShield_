@@ -72,11 +72,11 @@ namespace FaceShield.Services.Analysis
             bool useRaw,
             CancellationToken ct)
         {
-            var extractor = new FfFrameExtractor(videoPath, enableHardware: true);
+            var extractor = new FfFrameExtractor(videoPath, enableHardware: true, cancellationToken: ct);
 
             try
             {
-                extractor.StartSequentialRead(startFrameIndex);
+                extractor.StartSequentialRead(startFrameIndex, ct);
 
                 bool ok = useRaw
                     ? extractor.TryGetNextFrameRaw(ct, requireBgra: true, out _, out _)
@@ -86,7 +86,7 @@ namespace FaceShield.Services.Analysis
                 {
                     Debug.WriteLine("[AutoMask] HW decode failed; falling back to SW.");
                     extractor.Dispose();
-                    extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+                    extractor = new FfFrameExtractor(videoPath, enableHardware: false, cancellationToken: ct);
                 }
             }
             catch
@@ -95,7 +95,7 @@ namespace FaceShield.Services.Analysis
                 throw;
             }
 
-            extractor.StartSequentialRead(startFrameIndex);
+            extractor.StartSequentialRead(startFrameIndex, ct);
             return extractor;
         }
         private readonly IFaceDetector _detector;
@@ -1109,7 +1109,7 @@ namespace FaceShield.Services.Analysis
                     if (ct.IsCancellationRequested)
                         return false;
 
-            using var extractor = new FfFrameExtractor(videoPath);
+            using var extractor = new FfFrameExtractor(videoPath, cancellationToken: ct);
                     using var frame = extractor.GetFrameByIndex(frameIndex, ct);
                     if (frame == null)
                     {
