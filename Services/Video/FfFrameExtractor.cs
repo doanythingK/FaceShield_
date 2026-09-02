@@ -358,23 +358,6 @@ namespace FaceShield.Services.Video
             return (int)totalFrames;
         }
 
-        private static bool HasDecodedTimelineCapacity(
-            DecodedFrameTimeline timeline)
-        {
-            if (timeline.Entries.Count >= MaxCachedTimelineFramesPerVideo)
-                return false;
-
-            TrimDecodedFrameTimelineCache(timeline);
-            lock (_timelineCacheLock)
-            {
-                if (Volatile.Read(ref timeline.IsCacheResident) == 0)
-                    return false;
-
-                return GetResidentTimelineFrameCountLocked() <
-                    MaxCachedTimelineFramesTotal;
-            }
-        }
-
         private static void ReleaseDecodedFrameTimeline(
             DecodedFrameTimeline timeline)
         {
@@ -2165,17 +2148,11 @@ namespace FaceShield.Services.Video
                 if (!_decodedFrameTimeline.IsReliable)
                     return true;
 
-                if (frameIndex >= _decodedFrameTimeline.Entries.Count &&
-                    !HasDecodedTimelineCapacity(_decodedFrameTimeline))
-                {
-                    _decodedFrameTimeline.CapacityReached = true;
-                    return true;
-                }
-
-                return TryAddOrValidateTimelineEntry(
+                bool accepted = TryAddOrValidateTimelineEntry(
                     _decodedFrameTimeline,
                     frameIndex,
                     timestamp);
+                return accepted || _decodedFrameTimeline.CapacityReached;
             }
         }
 
@@ -2223,39 +2200,48 @@ namespace FaceShield.Services.Video
             if (frameIndex != timeline.Entries.Count)
                 return false;
 
-            if (!HasDecodedTimelineCapacity(timeline))
+            TrimDecodedFrameTimelineCache(timeline);
+            lock (_timelineCacheLock)
             {
-                timeline.CapacityReached = true;
-                return false;
-            }
-
-            if (timestamp != ffmpeg.AV_NOPTS_VALUE)
-            {
-                if (timeline.LastValidPresentationTimestamp != ffmpeg.AV_NOPTS_VALUE &&
-                    timestamp <= timeline.LastValidPresentationTimestamp)
+                if (timeline.Entries.Count >= MaxCachedTimelineFramesPerVideo ||
+                    Volatile.Read(ref timeline.IsCacheResident) == 0 ||
+                    GetResidentTimelineFrameCountLocked() >=
+                        MaxCachedTimelineFramesTotal)
                 {
-                    timeline.SupportsExactTimestampSeek = false;
-                    Debug.WriteLine(
-                        $"[FfFrameExtractor] decoded timeline PTS is not strictly increasing at " +
-                        $"ordinal {frameIndex}: previous={timeline.LastValidPresentationTimestamp}, " +
-                        $"current={timestamp}. " +
-                        "Timestamp seek is disabled for this source.");
+                    timeline.CapacityReached = true;
+                    return false;
                 }
-                timeline.LastValidPresentationTimestamp = timestamp;
-            }
 
-            int occurrence = 0;
-            if (timestamp != ffmpeg.AV_NOPTS_VALUE)
-            {
-                occurrence = timeline.Entries.Count > 0 &&
-                    timeline.Entries[^1].PresentationTimestamp == timestamp
-                        ? timeline.Entries[^1].TimestampOccurrence + 1
-                        : 1;
-            }
+                if (timestamp != ffmpeg.AV_NOPTS_VALUE)
+                {
+                    if (timeline.LastValidPresentationTimestamp != ffmpeg.AV_NOPTS_VALUE &&
+                        timestamp <= timeline.LastValidPresentationTimestamp)
+                    {
+                        timeline.SupportsExactTimestampSeek = false;
+                        Debug.WriteLine(
+                            $"[FfFrameExtractor] decoded timeline PTS is not strictly increasing at " +
+                            $"ordinal {frameIndex}: previous={timeline.LastValidPresentationTimestamp}, " +
+                            $"current={timestamp}. " +
+                            "Timestamp seek is disabled for this source.");
+                    }
+                    timeline.LastValidPresentationTimestamp = timestamp;
+                }
 
-            var entry = new DecodedFrameTimelineEntry(timestamp, occurrence);
-            timeline.Entries.Add(entry);
-            Volatile.Write(ref timeline.EntryCountSnapshot, timeline.Entries.Count);
+                int occurrence = 0;
+                if (timestamp != ffmpeg.AV_NOPTS_VALUE)
+                {
+                    occurrence = timeline.Entries.Count > 0 &&
+                        timeline.Entries[^1].PresentationTimestamp == timestamp
+                            ? timeline.Entries[^1].TimestampOccurrence + 1
+                            : 1;
+                }
+
+                var entry = new DecodedFrameTimelineEntry(timestamp, occurrence);
+                timeline.Entries.Add(entry);
+                Volatile.Write(
+                    ref timeline.EntryCountSnapshot,
+                    timeline.Entries.Count);
+            }
 
             if (Volatile.Read(ref timeline.IsCacheResident) != 0 &&
                 (timeline.Entries.Count & 4095) == 0)
