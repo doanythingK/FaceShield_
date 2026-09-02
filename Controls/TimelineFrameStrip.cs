@@ -157,6 +157,10 @@ namespace FaceShield.Controls
         private CancellationTokenSource? _selectedPtsRequestCts;
         private TimelineThumbnailProvider? _selectedPtsRequestProvider;
         private int _selectedPtsRequestFrame = -1;
+        private CancellationTokenSource? _issueViewportRequestCts;
+        private TimelineThumbnailProvider? _issueViewportRequestProvider;
+        private double _issueViewportRequestSeconds = double.NaN;
+        private double _issueViewportFailedSeconds = double.NaN;
         private CancellationTokenSource? _issueFrameRequestCts;
         private TimelineThumbnailProvider? _issueFrameRequestProvider;
         private int _issueFrameRequestIndex = -1;
@@ -633,6 +637,105 @@ namespace FaceShield.Controls
             }
         }
 
+        private bool RequestIssueViewportMapping(
+            TimelineThumbnailProvider provider,
+            double timestampSeconds)
+        {
+            if (provider.OperationsSuspended ||
+                !double.IsFinite(timestampSeconds) ||
+                timestampSeconds < 0)
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(_issueViewportRequestProvider, provider))
+            {
+                if (_issueViewportRequestCts != null &&
+                    Math.Abs(
+                        _issueViewportRequestSeconds -
+                        timestampSeconds) <= 0.001)
+                {
+                    return true;
+                }
+
+                if (double.IsFinite(_issueViewportFailedSeconds) &&
+                    Math.Abs(
+                        _issueViewportFailedSeconds -
+                        timestampSeconds) <= 0.001)
+                {
+                    return false;
+                }
+            }
+
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _issueViewportRequestCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            _issueViewportRequestProvider = provider;
+            _issueViewportRequestSeconds = timestampSeconds;
+            _issueViewportFailedSeconds = double.NaN;
+            _ = ResolveIssueViewportMappingAsync(
+                provider,
+                timestampSeconds,
+                cts);
+            return true;
+        }
+
+        private async Task ResolveIssueViewportMappingAsync(
+            TimelineThumbnailProvider provider,
+            double timestampSeconds,
+            CancellationTokenSource cts)
+        {
+            bool resolved = false;
+            try
+            {
+                resolved = await Task.Run(
+                    () => provider.TryResolveFrameIndexAtTimestamp(
+                        timestampSeconds,
+                        cts.Token,
+                        out _),
+                    cts.Token);
+
+                if (cts.IsCancellationRequested)
+                    return;
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (cts.IsCancellationRequested ||
+                        !ReferenceEquals(_issueViewportRequestCts, cts) ||
+                        !ReferenceEquals(ThumbnailProvider, provider))
+                    {
+                        return;
+                    }
+
+                    if (!resolved && !provider.OperationsSuspended)
+                        _issueViewportFailedSeconds = timestampSeconds;
+
+                    InvalidateVisual();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(_issueViewportRequestCts, cts))
+                {
+                    Interlocked.CompareExchange(
+                        ref _issueViewportRequestCts,
+                        null,
+                        cts);
+                }
+
+                cts.Dispose();
+            }
+        }
+
         private void RequestIssueFrameMapping(
             TimelineThumbnailProvider provider,
             int frameIndex)
@@ -758,10 +861,28 @@ namespace FaceShield.Controls
             double yLowConf = Math.Max(0, stripH - markerH * 2);
             double yFlicker = Math.Max(0, stripH - markerH * 3);
 
-            if (!provider.TryGetFrameIndexAtTimestamp(startSec, out int startFrame) ||
-                !provider.TryGetFrameIndexAtTimestamp(endSec, out int endFrame))
+            bool hasStartFrame =
+                provider.TryGetFrameIndexAtTimestamp(
+                    startSec,
+                    out int startFrame);
+            bool hasEndFrame =
+                provider.TryGetFrameIndexAtTimestamp(
+                    endSec,
+                    out int endFrame);
+            if (!hasStartFrame || !hasEndFrame)
             {
-                int anchorFrame = Math.Max(0, SelectedFrameIndex);
+                double centerSec = startSec + range * 0.5;
+                int anchorFrame;
+                if (!provider.TryGetFrameIndexAtTimestamp(
+                        centerSec,
+                        out anchorFrame))
+                {
+                    if (RequestIssueViewportMapping(provider, centerSec))
+                        return;
+
+                    anchorFrame = Math.Max(0, SelectedFrameIndex);
+                }
+
                 int nextMissingFrame = -1;
 
                 if (ShowNoFaceIssues && NoFaceIssueFrames is { Count: > 0 })
