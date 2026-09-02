@@ -66,6 +66,7 @@ namespace FaceShield.ViewModels.Pages
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
         private CancellationTokenSource? _issueTimeCts;
+        private const int IssueTimeResolveBudget = 96;
         private readonly SemaphoreSlim _exportGate = new(1, 1);
         private bool _autoExportGateRequired;
         private bool _autoExportGatePassed;
@@ -1310,7 +1311,11 @@ namespace FaceShield.ViewModels.Pages
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
                 if (timelineOperationsSuspended)
+                {
                     FrameList.ResumeTimelineOperations();
+                    if (!exportAfter)
+                        RefreshIssueTimesInBackground(FrameList.SelectedFrameIndex);
+                }
                 if (exactFrameOperationsSuspended)
                     FramePreview.ResumeExactFrameOperations();
                 FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
@@ -1711,7 +1716,9 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private void JumpToIssue(int frameIndex)
         {
-            FrameList.SelectedFrameIndex = Math.Clamp(frameIndex, 0, FrameList.TotalFrames - 1);
+            int targetFrame = Math.Clamp(frameIndex, 0, FrameList.TotalFrames - 1);
+            FrameList.SelectedFrameIndex = targetFrame;
+            RefreshIssueTimesInBackground(targetFrame);
         }
 
         [RelayCommand]
@@ -2042,11 +2049,24 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private void RefreshIssueTimesInBackground()
+        private void RefreshIssueTimesInBackground(int? preferredFrameIndex = null)
         {
             TimelineThumbnailProvider? provider = FrameList.ThumbnailProvider;
-            if (provider == null)
+            if (provider == null || provider.OperationsSuspended)
                 return;
+
+            int anchorFrame = preferredFrameIndex ?? FrameList.SelectedFrameIndex;
+            double safeFps = double.IsFinite(FrameList.Fps) && FrameList.Fps > 0
+                ? FrameList.Fps
+                : 30.0;
+            double safeSpan = double.IsFinite(FrameList.SecondsPerScreen) &&
+                              FrameList.SecondsPerScreen > 0
+                ? FrameList.SecondsPerScreen
+                : 10.0;
+            int nearFrameDistance = (int)Math.Clamp(
+                Math.Ceiling(safeFps * safeSpan * 2.0),
+                120,
+                50_000);
 
             var cts = new CancellationTokenSource();
             CancellationTokenSource? previous =
@@ -2057,12 +2077,18 @@ namespace FaceShield.ViewModels.Pages
                 catch (ObjectDisposedException) { }
             }
 
-            _ = RefreshIssueTimesAsync(provider, cts);
+            _ = RefreshIssueTimesAsync(
+                provider,
+                cts,
+                anchorFrame,
+                nearFrameDistance);
         }
 
         private async Task RefreshIssueTimesAsync(
             TimelineThumbnailProvider provider,
-            CancellationTokenSource cts)
+            CancellationTokenSource cts,
+            int anchorFrame,
+            int nearFrameDistance)
         {
             if (!TryBeginLifetimeOperation())
             {
@@ -2085,20 +2111,53 @@ namespace FaceShield.ViewModels.Pages
                 Dictionary<int, double> resolved = await Task.Run(() =>
                 {
                     var times = new Dictionary<int, double>();
+                    var unresolved = new HashSet<int>();
+
                     foreach (int frameIndex in entries
                                  .Select(static entry => entry.FrameIndex)
-                                 .Distinct()
-                                 .OrderBy(static frameIndex => frameIndex))
+                                 .Distinct())
                     {
                         token.ThrowIfCancellationRequested();
 
                         if (provider.TryGetFrameTimestampSeconds(
                                 frameIndex,
-                                out double timestampSeconds) ||
-                            provider.TryResolveFrameTimestampSeconds(
+                                out double timestampSeconds))
+                        {
+                            times[frameIndex] = timestampSeconds;
+                        }
+                        else
+                        {
+                            unresolved.Add(frameIndex);
+                        }
+                    }
+
+                    if (provider.OperationsSuspended || unresolved.Count == 0)
+                        return times;
+
+                    int effectiveAnchor = anchorFrame >= 0
+                        ? anchorFrame
+                        : unresolved.Min();
+
+                    int[] candidates = unresolved
+                        .Where(frameIndex =>
+                            frameIndex == effectiveAnchor ||
+                            Math.Abs((long)frameIndex - effectiveAnchor) <= nearFrameDistance)
+                        .OrderBy(frameIndex =>
+                            Math.Abs((long)frameIndex - effectiveAnchor))
+                        .Take(IssueTimeResolveBudget)
+                        .OrderBy(static frameIndex => frameIndex)
+                        .ToArray();
+
+                    foreach (int frameIndex in candidates)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (provider.OperationsSuspended)
+                            break;
+
+                        if (provider.TryResolveFrameTimestampSeconds(
                                 frameIndex,
                                 token,
-                                out timestampSeconds))
+                                out double timestampSeconds))
                         {
                             times[frameIndex] = timestampSeconds;
                         }
