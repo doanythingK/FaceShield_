@@ -34,7 +34,7 @@ namespace FaceShield.Services.Analysis
 
             var list = new List<FrameAnalysisResult>();
 
-            using var extractor = new FfFrameExtractor(videoPath);
+            using var extractor = new FfFrameExtractor(videoPath, cancellationToken: ct);
 
             await Task.Run(() =>
             {
