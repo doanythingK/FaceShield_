@@ -267,8 +267,8 @@ namespace FaceShield.Services.Video
                 else
                     UpdateDecodeStatus("디코딩: HW 비활성화");
 
-                int openResult = ffmpeg.avcodec_open2(_dec, codec, null);
-                FFmpegErrorHelper.ThrowIfError(openResult, "Failed to open decoder");
+                int decoderOpenResult = ffmpeg.avcodec_open2(_dec, codec, null);
+                FFmpegErrorHelper.ThrowIfError(decoderOpenResult, "Failed to open decoder");
             }
             catch
             {
@@ -696,7 +696,10 @@ namespace FaceShield.Services.Video
 
             lock (_sync)
             {
-                StartSequentialReadCore(frameIndex, timestampSeconds: null);
+                StartSequentialReadCore(
+                    frameIndex,
+                    timestampSeconds: null,
+                    cancellationToken);
                 if (!TryGetNextFrame(
                         cancellationToken,
                         requireBitmap: true,
@@ -728,7 +731,10 @@ namespace FaceShield.Services.Video
 
             lock (_sync)
             {
-                StartSequentialReadCore(frameIndex, timestampSeconds: null);
+                StartSequentialReadCore(
+                    frameIndex,
+                    timestampSeconds: null,
+                    cancellationToken);
                 if (!TryGetNextFrameRawScaled(
                         cancellationToken,
                         requireBgra: true,
