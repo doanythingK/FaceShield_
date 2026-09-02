@@ -44,6 +44,7 @@ namespace FaceShield.Services.Video
             public bool IsComplete { get; set; }
             public bool IsReliable { get; set; } = true;
             public bool SupportsExactTimestampSeek { get; set; } = true;
+            public bool CapacityReached { get; set; }
             public long LastValidPresentationTimestamp { get; set; } = ffmpeg.AV_NOPTS_VALUE;
             public int EntryCountSnapshot;
             public int IsCacheResident = 1;
@@ -289,26 +290,6 @@ namespace FaceShield.Services.Video
         {
             lock (_timelineCacheLock)
             {
-                if (Volatile.Read(ref activeTimeline.EntryCountSnapshot) >
-                    MaxCachedTimelineFramesPerVideo)
-                {
-                    FrameTimelineCacheKey? activeKey = null;
-                    foreach (var pair in _timelineCache)
-                    {
-                        if (ReferenceEquals(pair.Value, activeTimeline))
-                        {
-                            activeKey = pair.Key;
-                            break;
-                        }
-                    }
-
-                    if (activeKey.HasValue)
-                    {
-                        _timelineCache.Remove(activeKey.Value);
-                        Volatile.Write(ref activeTimeline.IsCacheResident, 0);
-                    }
-                }
-
                 int totalFrames = 0;
                 foreach (DecodedFrameTimeline timeline in _timelineCache.Values)
                     totalFrames += Math.Max(0, Volatile.Read(ref timeline.EntryCountSnapshot));
@@ -1618,8 +1599,12 @@ namespace FaceShield.Services.Video
                     return false;
                 if (_decodedFrameTimeline.Entries.Count > frameIndex)
                     return true;
-                if (_decodedFrameTimeline.IsComplete || _ordinalDecoderFailed)
+                if (_decodedFrameTimeline.IsComplete ||
+                    _decodedFrameTimeline.CapacityReached ||
+                    _ordinalDecoderFailed)
+                {
                     return false;
+                }
             }
 
             try
@@ -1641,8 +1626,11 @@ namespace FaceShield.Services.Video
                             return false;
                         if (_decodedFrameTimeline.Entries.Count > frameIndex)
                             return true;
-                        if (_decodedFrameTimeline.IsComplete)
+                        if (_decodedFrameTimeline.IsComplete ||
+                            _decodedFrameTimeline.CapacityReached)
+                        {
                             return false;
+                        }
                     }
 
                     if (!TryDecodeNextOrdinalIndexFrame(
@@ -1652,16 +1640,23 @@ namespace FaceShield.Services.Video
                         break;
                     }
 
+                    bool accepted;
+                    bool capacityReached;
                     lock (_decodedFrameTimeline.SyncRoot)
                     {
-                        if (!TryAddOrValidateTimelineEntry(
-                                _decodedFrameTimeline,
-                                _ordinalNextFrameIndex,
-                                timestamp))
-                        {
-                            _ordinalDecoderFailed = true;
-                            return false;
-                        }
+                        accepted = TryAddOrValidateTimelineEntry(
+                            _decodedFrameTimeline,
+                            _ordinalNextFrameIndex,
+                            timestamp);
+                        capacityReached = _decodedFrameTimeline.CapacityReached;
+                    }
+
+                    if (!accepted)
+                    {
+                        _ordinalDecoderFailed = true;
+                        if (capacityReached)
+                            DisposeOrdinalDecoder();
+                        return false;
                     }
 
                     _ordinalNextFrameIndex++;
@@ -1739,8 +1734,12 @@ namespace FaceShield.Services.Video
                     return true;
                 }
 
-                if (_decodedFrameTimeline.IsComplete || _ordinalDecoderFailed)
+                if (_decodedFrameTimeline.IsComplete ||
+                    _decodedFrameTimeline.CapacityReached ||
+                    _ordinalDecoderFailed)
+                {
                     return _decodedFrameTimeline.IsComplete;
+                }
             }
 
             try
@@ -1773,6 +1772,8 @@ namespace FaceShield.Services.Video
 
                         if (_decodedFrameTimeline.IsComplete)
                             return true;
+                        if (_decodedFrameTimeline.CapacityReached)
+                            return false;
                     }
 
                     if (!TryDecodeNextOrdinalIndexFrame(
@@ -1782,16 +1783,23 @@ namespace FaceShield.Services.Video
                         break;
                     }
 
+                    bool accepted;
+                    bool capacityReached;
                     lock (_decodedFrameTimeline.SyncRoot)
                     {
-                        if (!TryAddOrValidateTimelineEntry(
-                                _decodedFrameTimeline,
-                                _ordinalNextFrameIndex,
-                                timestamp))
-                        {
-                            _ordinalDecoderFailed = true;
-                            return false;
-                        }
+                        accepted = TryAddOrValidateTimelineEntry(
+                            _decodedFrameTimeline,
+                            _ordinalNextFrameIndex,
+                            timestamp);
+                        capacityReached = _decodedFrameTimeline.CapacityReached;
+                    }
+
+                    if (!accepted)
+                    {
+                        _ordinalDecoderFailed = true;
+                        if (capacityReached)
+                            DisposeOrdinalDecoder();
+                        return false;
                     }
 
                     _ordinalNextFrameIndex++;
@@ -1977,7 +1985,18 @@ namespace FaceShield.Services.Video
                 _decodedFrameTimeline.LastAccessTicks = DateTime.UtcNow.Ticks;
                 if (!_decodedFrameTimeline.IsReliable)
                     return true;
-                return TryAddOrValidateTimelineEntry(_decodedFrameTimeline, frameIndex, timestamp);
+
+                if (frameIndex >= _decodedFrameTimeline.Entries.Count &&
+                    _decodedFrameTimeline.Entries.Count >= MaxCachedTimelineFramesPerVideo)
+                {
+                    _decodedFrameTimeline.CapacityReached = true;
+                    return true;
+                }
+
+                return TryAddOrValidateTimelineEntry(
+                    _decodedFrameTimeline,
+                    frameIndex,
+                    timestamp);
             }
         }
 
@@ -1989,6 +2008,7 @@ namespace FaceShield.Services.Video
             lock (_decodedFrameTimeline.SyncRoot)
             {
                 if (_decodedFrameTimeline.IsReliable &&
+                    !_decodedFrameTimeline.CapacityReached &&
                     _decodedFrameTimeline.Entries.Count == _sequentialIndex)
                 {
                     _decodedFrameTimeline.IsComplete = true;
@@ -2024,6 +2044,12 @@ namespace FaceShield.Services.Video
             if (frameIndex != timeline.Entries.Count)
                 return false;
 
+            if (timeline.Entries.Count >= MaxCachedTimelineFramesPerVideo)
+            {
+                timeline.CapacityReached = true;
+                return false;
+            }
+
             if (timestamp != ffmpeg.AV_NOPTS_VALUE)
             {
                 if (timeline.LastValidPresentationTimestamp != ffmpeg.AV_NOPTS_VALUE &&
@@ -2053,8 +2079,7 @@ namespace FaceShield.Services.Video
             Volatile.Write(ref timeline.EntryCountSnapshot, timeline.Entries.Count);
 
             if (Volatile.Read(ref timeline.IsCacheResident) != 0 &&
-                ((timeline.Entries.Count & 4095) == 0 ||
-                 timeline.Entries.Count == MaxCachedTimelineFramesPerVideo + 1))
+                (timeline.Entries.Count & 4095) == 0)
             {
                 TrimDecodedFrameTimelineCache(timeline);
             }
