@@ -304,7 +304,7 @@ namespace FaceShield.Services.Video
                 file.Exists ? file.LastWriteTimeUtc.Ticks : 0);
         }
 
-        private static void TrimDecodedFrameTimelineCache(DecodedFrameTimeline activeTimeline)
+        private static void TrimDecodedFrameTimelineCache(DecodedFrameTimeline? activeTimeline)
         {
             lock (_timelineCacheLock)
             {
@@ -366,7 +366,7 @@ namespace FaceShield.Services.Video
                 if (timeline.LiveOwnerCount > 0)
                     timeline.LiveOwnerCount--;
 
-                TrimDecodedFrameTimelineCache(timeline);
+                TrimDecodedFrameTimelineCache(activeTimeline: null);
             }
         }
 
