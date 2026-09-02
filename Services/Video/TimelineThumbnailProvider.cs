@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace FaceShield.Services.Video
 {
@@ -17,9 +18,15 @@ namespace FaceShield.Services.Video
         private readonly ConcurrentDictionary<long, WriteableBitmap> _cache = new();
         private readonly ConcurrentDictionary<long, long> _cacheAccess = new();
         private readonly CancellationTokenSource _lifetimeCts = new();
+        private readonly object _operationStateSync = new();
+        private CancellationTokenSource _operationCts = new();
         private long _cacheAccessClock;
+        private int _operationsSuspended;
         private int _disposeStarted;
         private bool _disposed;
+
+        public bool OperationsSuspended =>
+            Volatile.Read(ref _operationsSuspended) != 0;
 
         public TimelineThumbnailProvider(
             string videoPath,
@@ -149,14 +156,26 @@ namespace FaceShield.Services.Video
             out double timestampSeconds)
         {
             timestampSeconds = double.NaN;
-            if (_disposed || cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested)
+                return false;
+            if (_extractor.TryGetCachedFrameTimestampSeconds(
+                    frameIndex,
+                    out timestampSeconds))
+            {
+                return true;
+            }
+            if (_disposed || OperationsSuspended)
                 return false;
 
             using var linked = CreateLinkedTokenSource(cancellationToken);
             lock (_sync)
             {
-                if (_disposed || linked.Token.IsCancellationRequested)
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
                     return false;
+                }
 
                 return _extractor.TryResolveFrameTimestampSeconds(
                     frameIndex,
@@ -171,20 +190,69 @@ namespace FaceShield.Services.Video
             out int frameIndex)
         {
             frameIndex = -1;
-            if (_disposed || cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested)
+                return false;
+            if (_extractor.TryGetCachedFrameIndexAtTimestamp(
+                    timestampSeconds,
+                    out frameIndex))
+            {
+                return true;
+            }
+            if (_disposed || OperationsSuspended)
                 return false;
 
             using var linked = CreateLinkedTokenSource(cancellationToken);
             lock (_sync)
             {
-                if (_disposed || linked.Token.IsCancellationRequested)
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
                     return false;
+                }
 
                 return _extractor.TryResolveFrameIndexAtTimestamp(
                     timestampSeconds,
                     linked.Token,
                     out frameIndex);
             }
+        }
+
+        public async Task SuspendOperationsAndWaitAsync()
+        {
+            CancellationTokenSource previous;
+            lock (_operationStateSync)
+            {
+                if (_disposed)
+                    return;
+
+                Volatile.Write(ref _operationsSuspended, 1);
+                previous = _operationCts;
+                _operationCts = new CancellationTokenSource();
+            }
+
+            try
+            {
+                previous.Cancel();
+                await Task.Run(() =>
+                {
+                    lock (_sync)
+                    {
+                    }
+                });
+            }
+            finally
+            {
+                previous.Dispose();
+            }
+        }
+
+        public void ResumeOperations()
+        {
+            if (_disposed)
+                return;
+
+            Volatile.Write(ref _operationsSuspended, 0);
         }
 
         private WriteableBitmap? GetOrCreate(
@@ -201,11 +269,18 @@ namespace FaceShield.Services.Video
                 return cached;
             }
 
+            if (OperationsSuspended)
+                return null;
+
             using var linked = CreateLinkedTokenSource(cancellationToken);
             lock (_sync)
             {
-                if (_disposed || linked.Token.IsCancellationRequested)
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
                     return null;
+                }
 
                 return GetOrCreateLocked(cacheKey, factory, linked.Token);
             }
@@ -250,11 +325,19 @@ namespace FaceShield.Services.Video
 
         private CancellationTokenSource CreateLinkedTokenSource(
             CancellationToken cancellationToken)
-            => cancellationToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    _lifetimeCts.Token)
-                : CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        {
+            lock (_operationStateSync)
+            {
+                return cancellationToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken,
+                        _lifetimeCts.Token,
+                        _operationCts.Token)
+                    : CancellationTokenSource.CreateLinkedTokenSource(
+                        _lifetimeCts.Token,
+                        _operationCts.Token);
+            }
+        }
 
         private static long FrameCacheKey(int frameIndex)
             => ((long)Math.Max(0, frameIndex)) << 1;
@@ -348,6 +431,11 @@ namespace FaceShield.Services.Video
                 return;
 
             _lifetimeCts.Cancel();
+            lock (_operationStateSync)
+            {
+                Volatile.Write(ref _operationsSuspended, 1);
+                _operationCts.Cancel();
+            }
             lock (_sync)
             {
                 _disposed = true;
@@ -358,6 +446,7 @@ namespace FaceShield.Services.Video
                     entry.Value.Dispose();
 
                 _cache.Clear();
+                _operationCts.Dispose();
                 _cacheAccess.Clear();
             }
 
