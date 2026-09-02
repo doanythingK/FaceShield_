@@ -107,8 +107,12 @@ namespace FaceShield.Services.Video
             using var linked = CreateLinkedTokenSource(cancellationToken);
             lock (_sync)
             {
-                if (_disposed || linked.Token.IsCancellationRequested)
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
                     return null;
+                }
 
                 WriteableBitmap? cached = GetOrCreateLocked(
                     cacheKey,
