@@ -36,7 +36,8 @@
             Grid.Row="1"
             Height="100"
             TotalFrames="{Binding TotalFrames}"
-            TotalDurationSeconds="{Binding TotalDurationSeconds}"
+            TotalDurationSeconds="{Binding TimelineExtentSeconds}"
+            RenderVersion="{Binding TimelineRenderVersion}"
             Fps="{Binding Fps}"
             SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
             SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
@@ -81,7 +82,7 @@
             Orientation="Horizontal"
             Height="16"
             Minimum="0"
-            Maximum="{Binding TotalDurationSeconds}"
+            Maximum="{Binding TimelineExtentSeconds}"
             ViewportSize="{Binding SecondsPerScreen}"
             Value="{Binding ViewStartSeconds, Mode=TwoWay}" />
     </Grid>
