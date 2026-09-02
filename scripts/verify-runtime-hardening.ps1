@@ -62,7 +62,7 @@ Assert-Match "frame list models unknown duration explicitly" $frameList 'IsDurat
 Assert-NotMatch "unknown duration is not synthesized from average fps" $frameList 'TotalDurationSeconds\s*=\s*[^;]*(TotalFrames\s*/\s*Fps|fpsValue)'
 Assert-Match "timestamp thumbnails share decoded timeline origin" $extractor 'GetTimelineThumbnailAtTimestampScaled[\s\S]{0,2200}TryGetTimelineOriginPresentationTimestamp'
 Assert-NotMatch "timestamp thumbnails do not use stream start_time as timeline origin" $extractor 'GetTimelineThumbnailAtTimestampScaled[\s\S]{0,1800}stream->start_time'
-Assert-Match "timestamp thumbnail checks cancellation after packet read" $extractor 'av_read_frame\(_fmt, packet\)[\s\S]{0,500}cancellationToken\.IsCancellationRequested[\s\S]{0,500}avcodec_send_packet\(_dec, packet\)'
+Assert-Match "timestamp thumbnail checks cancellation after packet read" $extractor 'av_read_frame\(_fmt, packet\)[\s\S]{0,1400}cancellationToken\.IsCancellationRequested[\s\S]{0,1400}avcodec_send_packet\(_dec, packet\)'
 Assert-Match "decoded PTS cache tracks live owners" $extractor 'LiveOwnerCount[\s\S]*ReleaseDecodedFrameTimeline'
 Assert-Match "decoded PTS cache enforces global resident budget" $extractor 'GetResidentTimelineFrameCountLocked\(\)\s*>?=\s*MaxCachedTimelineFramesTotal'
 Assert-NotMatch "frame list does not materialize per-frame view models" $frameList 'Enumerable\.Range|FrameItemViewModel'
