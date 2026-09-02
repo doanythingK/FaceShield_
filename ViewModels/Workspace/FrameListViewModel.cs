@@ -12,6 +12,9 @@ namespace FaceShield.ViewModels.Workspace;
 
 public partial class FrameListViewModel : ViewModelBase, IDisposable
 {
+    private const double UnknownTimelineInitialExtentSeconds = 60.0;
+    private const double UnknownTimelineInitialViewportSeconds = 10.0;
+
     public string VideoPath { get; }
 
     // ─────────────────────────────
@@ -41,6 +44,12 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     private bool isPlaybackEnabled = true;
+
+    [ObservableProperty]
+    private double timelineExtentSeconds;
+
+    [ObservableProperty]
+    private int timelineRenderVersion;
 
     [ObservableProperty]
     private bool showNoFaceIssues = true;
@@ -160,7 +169,12 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 : 0;
             OnPropertyChanged(nameof(TotalDurationSeconds));
 
-            SecondsPerScreen = Math.Max(0.1, TotalDurationSeconds);
+            TimelineExtentSeconds = TotalDurationSeconds > 0
+                ? TotalDurationSeconds
+                : UnknownTimelineInitialExtentSeconds;
+            SecondsPerScreen = TotalDurationSeconds > 0
+                ? Math.Max(0.1, TotalDurationSeconds)
+                : UnknownTimelineInitialViewportSeconds;
 
             // 시작은 항상 0초
             ViewStartSeconds = 0;
@@ -180,7 +194,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         CancelTimelineNavigation();
         CancelSelectedTimestampResolution();
         ThumbnailProvider = provider;
+        RefreshTimelineExtentFromProvider(provider);
         OnPropertyChanged(nameof(TimelineTimeText));
+        TimelineRenderVersion++;
         ResolveSelectedTimestampInBackground();
     }
 
@@ -204,7 +220,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         if (SecondsPerScreen <= 0) return;
 
         double maxStart =
-            Math.Max(0, TotalDurationSeconds - SecondsPerScreen);
+            Math.Max(0, TimelineExtentSeconds - SecondsPerScreen);
 
         if (ViewStartSeconds < 0)
             ViewStartSeconds = 0;
@@ -271,6 +287,23 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     // ─────────────────────────────
     partial void OnSecondsPerScreenChanged(double value)
     {
+        if (!HasKnownDuration())
+        {
+            EnsureOpenEndedTimelineExtent(
+                ViewStartSeconds + Math.Max(value, 0.1) * 2.0);
+        }
+
+        ClampView();
+    }
+
+    partial void OnViewStartSecondsChanged(double value)
+    {
+        if (!HasKnownDuration())
+        {
+            EnsureOpenEndedTimelineExtent(
+                Math.Max(0, value) + Math.Max(SecondsPerScreen, 0.1) * 2.0);
+        }
+
         ClampView();
     }
 
@@ -438,18 +471,20 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 sourceFrameIndex,
                 out double currentSeconds))
         {
-            double targetSeconds = Math.Clamp(
-                currentSeconds + seconds,
-                0,
-                Math.Max(0, TotalDurationSeconds));
+            double targetSeconds = ClampTimelineTargetSeconds(
+                currentSeconds + seconds);
+            if (!HasKnownDuration())
+            {
+                EnsureOpenEndedTimelineExtent(
+                    targetSeconds + Math.Max(SecondsPerScreen, 1.0));
+            }
+
             if (provider.TryGetFrameIndexAtTimestamp(
                     targetSeconds,
                     out int cachedIndex))
             {
-                SelectedFrameIndex = Math.Clamp(
-                    cachedIndex,
-                    0,
-                    TotalFrames - 1);
+                ApplyResolvedFrameIndex(cachedIndex);
+                RefreshTimelineExtentFromProvider(provider);
                 return;
             }
         }
@@ -482,10 +517,8 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                     return (false, -1);
                 }
 
-                double targetSeconds = Math.Clamp(
-                    currentSeconds + secondsDelta,
-                    0,
-                    Math.Max(0, TotalDurationSeconds));
+                double targetSeconds = ClampTimelineTargetSeconds(
+                    currentSeconds + secondsDelta);
                 bool ok = provider.TryResolveFrameIndexAtTimestamp(
                     targetSeconds,
                     cts.Token,
@@ -508,10 +541,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                SelectedFrameIndex = Math.Clamp(
-                    frameIndex,
-                    0,
-                    TotalFrames - 1);
+                ApplyResolvedFrameIndex(frameIndex);
+                RefreshTimelineExtentFromProvider(provider);
+                TimelineRenderVersion++;
             });
         }
         catch (OperationCanceledException)
@@ -572,7 +604,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
+                RefreshTimelineExtentFromProvider(provider);
                 OnPropertyChanged(nameof(TimelineTimeText));
+                TimelineRenderVersion++;
             });
         }
         catch (OperationCanceledException)
@@ -625,8 +659,85 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             return;
 
         provider.ResumeOperations();
+        RefreshTimelineExtentFromProvider(provider);
         OnPropertyChanged(nameof(TimelineTimeText));
+        TimelineRenderVersion++;
         ResolveSelectedTimestampInBackground();
+    }
+
+    private bool HasKnownDuration()
+        => TotalDurationSeconds > 0 &&
+           double.IsFinite(TotalDurationSeconds);
+
+    private double ClampTimelineTargetSeconds(double seconds)
+    {
+        double target = Math.Max(0, seconds);
+        return HasKnownDuration()
+            ? Math.Min(target, TotalDurationSeconds)
+            : target;
+    }
+
+    private void EnsureOpenEndedTimelineExtent(double minimumSeconds)
+    {
+        if (HasKnownDuration() ||
+            !double.IsFinite(minimumSeconds) ||
+            minimumSeconds <= TimelineExtentSeconds)
+        {
+            return;
+        }
+
+        TimelineExtentSeconds = minimumSeconds;
+    }
+
+    private void RefreshTimelineExtentFromProvider(
+        TimelineThumbnailProvider? provider)
+    {
+        if (provider == null ||
+            !provider.TryGetDecodedTimelineExtentSeconds(
+                out double decodedExtentSeconds,
+                out bool isComplete))
+        {
+            return;
+        }
+
+        decodedExtentSeconds = Math.Max(0, decodedExtentSeconds);
+        if (!HasKnownDuration() && isComplete && decodedExtentSeconds > 0)
+        {
+            TotalDurationSeconds = decodedExtentSeconds;
+            OnPropertyChanged(nameof(TotalDurationSeconds));
+            OnPropertyChanged(nameof(TimelineTimeText));
+            TimelineExtentSeconds = Math.Max(0.1, decodedExtentSeconds);
+            if (SecondsPerScreen > TimelineExtentSeconds)
+                SecondsPerScreen = TimelineExtentSeconds;
+            ClampView();
+            return;
+        }
+
+        if (!HasKnownDuration())
+        {
+            EnsureOpenEndedTimelineExtent(
+                decodedExtentSeconds +
+                Math.Max(UnknownTimelineInitialViewportSeconds, SecondsPerScreen));
+        }
+    }
+
+    private void ApplyResolvedFrameIndex(int frameIndex)
+    {
+        if (frameIndex < 0)
+            return;
+
+        if (IsTotalFramesEstimated)
+        {
+            if (frameIndex >= TotalFrames)
+                TotalFrames = frameIndex + 1;
+            SelectedFrameIndex = frameIndex;
+            return;
+        }
+
+        if (TotalFrames <= 0)
+            return;
+
+        SelectedFrameIndex = Math.Clamp(frameIndex, 0, TotalFrames - 1);
     }
 
     private void TogglePlay()
