@@ -650,6 +650,23 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
     }
 
+    public async Task SuspendExactFrameOperationsAndWaitAsync()
+    {
+        var session = _session;
+        if (_disposed || session == null)
+            return;
+
+        await session.ExactProvider.SuspendOperationsAndWaitAsync();
+    }
+
+    public void ResumeExactFrameOperations()
+    {
+        if (_disposed)
+            return;
+
+        _session?.ExactProvider.ResumeOperations();
+    }
+
     public async Task StopPlaybackAndWaitAsync()
     {
         Task? playbackTask = null;
