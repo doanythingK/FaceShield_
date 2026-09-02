@@ -65,6 +65,7 @@ namespace FaceShield.ViewModels.Pages
         private bool _autoPreviewNeedsExactRefresh;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
+        private CancellationTokenSource? _issueTimeCts;
         private readonly SemaphoreSlim _exportGate = new(1, 1);
         private bool _autoExportGateRequired;
         private bool _autoExportGatePassed;
@@ -1735,6 +1736,7 @@ namespace FaceShield.ViewModels.Pages
                 ResetIssueList(_noFaceIssueEntries, Array.Empty<int>(), "얼굴 없음");
                 ResetIssueList(_lowConfidenceIssueEntries, Array.Empty<int>(), "신뢰도 낮음");
                 ResetIssueList(_flickerIssueEntries, Array.Empty<int>(), "연속 끊김");
+                CancelIssueTimeRefresh();
                 return;
             }
 
@@ -1806,6 +1808,7 @@ namespace FaceShield.ViewModels.Pages
             ResetIssueList(_noFaceIssueEntries, noFaceFrames, "얼굴 없음");
             ResetIssueList(_lowConfidenceIssueEntries, lowConfidenceFrames, "신뢰도 낮음");
             ResetIssueList(_flickerIssueEntries, flickerFrames, "연속 끊김");
+            RefreshIssueTimesInBackground();
         }
 
         private float GetLowConfidenceCutoff()
@@ -2019,15 +2022,133 @@ namespace FaceShield.ViewModels.Pages
             string label)
         {
             target.Clear();
+            TimelineThumbnailProvider? provider = FrameList.ThumbnailProvider;
             for (int i = 0; i < frames.Count; i++)
             {
-                var entry = new IssueEntryViewModel(frames[i], label, FormatFrameTime(frames[i], FrameList.Fps))
+                string timeText = "--:--.--";
+                if (provider?.TryGetFrameTimestampSeconds(
+                        frames[i],
+                        out double timestampSeconds) == true)
+                {
+                    timeText = FormatIssueTime(timestampSeconds);
+                }
+
+                var entry = new IssueEntryViewModel(frames[i], label, timeText)
                 {
                     HideResolved = HideResolvedIssues
                 };
                 entry.Resolved += OnIssueResolved;
                 target.Add(entry);
             }
+        }
+
+        private void RefreshIssueTimesInBackground()
+        {
+            TimelineThumbnailProvider? provider = FrameList.ThumbnailProvider;
+            if (provider == null)
+                return;
+
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _issueTimeCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            _ = RefreshIssueTimesAsync(provider, cts);
+        }
+
+        private async Task RefreshIssueTimesAsync(
+            TimelineThumbnailProvider provider,
+            CancellationTokenSource cts)
+        {
+            if (!TryBeginLifetimeOperation())
+            {
+                Interlocked.CompareExchange(ref _issueTimeCts, null, cts);
+                cts.Dispose();
+                return;
+            }
+
+            try
+            {
+                IssueEntryViewModel[] entries =
+                    _noFaceIssueEntries
+                        .Concat(_lowConfidenceIssueEntries)
+                        .Concat(_flickerIssueEntries)
+                        .ToArray();
+                if (entries.Length == 0)
+                    return;
+
+                CancellationToken token = cts.Token;
+                Dictionary<int, double> resolved = await Task.Run(() =>
+                {
+                    var times = new Dictionary<int, double>();
+                    foreach (int frameIndex in entries
+                                 .Select(static entry => entry.FrameIndex)
+                                 .Distinct()
+                                 .OrderBy(static frameIndex => frameIndex))
+                    {
+                        token.ThrowIfCancellationRequested();
+
+                        if (provider.TryGetFrameTimestampSeconds(
+                                frameIndex,
+                                out double timestampSeconds) ||
+                            provider.TryResolveFrameTimestampSeconds(
+                                frameIndex,
+                                token,
+                                out timestampSeconds))
+                        {
+                            times[frameIndex] = timestampSeconds;
+                        }
+                    }
+
+                    return times;
+                }, token).ConfigureAwait(false);
+
+                token.ThrowIfCancellationRequested();
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (token.IsCancellationRequested ||
+                        !ReferenceEquals(_issueTimeCts, cts) ||
+                        !ReferenceEquals(FrameList.ThumbnailProvider, provider))
+                    {
+                        return;
+                    }
+
+                    for (int i = 0; i < entries.Length; i++)
+                    {
+                        IssueEntryViewModel entry = entries[i];
+                        if (resolved.TryGetValue(
+                                entry.FrameIndex,
+                                out double timestampSeconds))
+                        {
+                            entry.TimeText = FormatIssueTime(timestampSeconds);
+                        }
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _issueTimeCts, null, cts);
+                cts.Dispose();
+                EndLifetimeOperation();
+            }
+        }
+
+        private void CancelIssueTimeRefresh()
+        {
+            CancellationTokenSource? cts =
+                Interlocked.Exchange(ref _issueTimeCts, null);
+            if (cts == null)
+                return;
+
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         private void OnIssueResolved(IssueEntryViewModel entry)
@@ -2092,24 +2213,15 @@ namespace FaceShield.ViewModels.Pages
                 entries[i].HideResolved = hideResolved;
         }
 
-        private static string FormatFrameTime(int frameIndex, double fps)
+        private static string FormatIssueTime(double timestampSeconds)
         {
-            if (fps <= 0)
-                return "00:00.00";
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return "--:--.--";
 
-            double framesPerSecond = fps;
-            int wholeSeconds = (int)Math.Floor(frameIndex / framesPerSecond);
-            int frameRemainder = (int)Math.Round(frameIndex - wholeSeconds * framesPerSecond);
-            int fpsInt = (int)Math.Round(framesPerSecond);
-            if (fpsInt > 0 && frameRemainder >= fpsInt)
-            {
-                wholeSeconds += frameRemainder / fpsInt;
-                frameRemainder %= fpsInt;
-            }
-
-            int minutes = wholeSeconds / 60;
-            int seconds = wholeSeconds % 60;
-            return $"{minutes:D2}:{seconds:D2}.{frameRemainder:D2}";
+            TimeSpan time = TimeSpan.FromSeconds(timestampSeconds);
+            long minutes = (long)Math.Floor(time.TotalMinutes);
+            int hundredths = time.Milliseconds / 10;
+            return $"{minutes:D2}:{time.Seconds:D2}.{hundredths:D2}";
         }
 
         public void RestoreFromStore(WorkspaceStateStore store)
@@ -2306,6 +2418,7 @@ namespace FaceShield.ViewModels.Pages
             catch { }
             try { _exportCts?.Cancel(); }
             catch { }
+            CancelIssueTimeRefresh();
 
             if (disposeNow)
                 ScheduleOwnedResourceDispose();
