@@ -36,6 +36,7 @@ namespace FaceShield.Services.FaceDetection
         private static long _perfTotalMs;
 
         internal string ExecutionProviderLabel { get; }
+        internal string? ExecutionProviderError { get; private set; }
 
         internal bool UsesGpuExecutionProvider =>
             ExecutionProviderLabel.StartsWith("GPU:", StringComparison.OrdinalIgnoreCase);
@@ -44,6 +45,7 @@ namespace FaceShield.Services.FaceDetection
         {
             _detector = new FaceDetector(); // 확실함
             ExecutionProviderLabel = "CPU";
+            ExecutionProviderError = null;
             UpdateExecutionProviderLabel(ExecutionProviderLabel);
             UpdateExecutionProviderError(null);
         }
@@ -67,6 +69,7 @@ namespace FaceShield.Services.FaceDetection
             {
                 _detector = new FaceDetector();
                 ExecutionProviderLabel = "CPU";
+                ExecutionProviderError = null;
                 UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 UpdateExecutionProviderError(null);
                 return;
@@ -89,8 +92,11 @@ namespace FaceShield.Services.FaceDetection
             if (options.UseGpu)
                 gpuProvider = TryAppendGpuExecutionProvider(so);
 
-            if (options.UseGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
-                UpdateExecutionProviderError("GPU 실행 공급자 로드 실패(패키지/의존성 확인)");
+            string? providerError = options.UseGpu && gpuProvider == null
+                ? "GPU 실행 공급자 로드 실패(패키지/의존성 확인)"
+                : null;
+            if (providerError != null && GetLastExecutionProviderError() == null)
+                UpdateExecutionProviderError(providerError);
 
             if (options.IntraOpNumThreads.HasValue)
                 so.IntraOpNumThreads = options.IntraOpNumThreads.Value;
@@ -105,6 +111,7 @@ namespace FaceShield.Services.FaceDetection
                 ExecutionProviderLabel = gpuProvider != null
                     ? $"GPU:{gpuProvider}"
                     : options.UseGpu ? "CPU(가속 실패)" : "CPU";
+                ExecutionProviderError = providerError;
                 UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 if (gpuProvider != null)
                     UpdateExecutionProviderError(null);
@@ -113,6 +120,7 @@ namespace FaceShield.Services.FaceDetection
             {
                 _detector = new FaceDetector(detection, confidence, nms);
                 ExecutionProviderLabel = "CPU(가속 실패)";
+                ExecutionProviderError = ex.Message;
                 UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 UpdateExecutionProviderError(ex.Message);
             }
