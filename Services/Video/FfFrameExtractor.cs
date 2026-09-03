@@ -24,9 +24,6 @@ namespace FaceShield.Services.Video
         private const int MaxTimelineCacheEntries = 8;
         private const int MaxCachedTimelineFramesPerVideo = 1_000_000;
         private const int MaxCachedTimelineFramesTotal = 1_000_000;
-        private static readonly AVIOInterruptCB_callback IoInterruptCallback =
-            HandleIoInterrupt;
-
         private readonly record struct FrameTimelineCacheKey(
             string NormalizedPath,
             long FileLength,
@@ -134,8 +131,7 @@ namespace FaceShield.Services.Video
         }
 
         private readonly object _sync = new();
-        private GCHandle _ioInterruptHandle;
-        private int _ioInterruptRequested;
+        private readonly VideoIoInterruptGuard _ioInterrupt = new();
 
         private AVFormatContext* _fmt;
         private AVCodecContext* _dec;
@@ -196,7 +192,6 @@ namespace FaceShield.Services.Video
 
             _videoPath = Path.GetFullPath(videoPath);
             _decodedFrameTimeline = GetOrCreateDecodedFrameTimeline(_videoPath);
-            _ioInterruptHandle = GCHandle.Alloc(this, GCHandleType.Normal);
 
             try
             {
@@ -1787,58 +1782,11 @@ namespace FaceShield.Services.Video
         }
 
         private void ConfigureIoInterrupt(AVFormatContext* format)
-        {
-            if (format == null || !_ioInterruptHandle.IsAllocated)
-                return;
+            => _ioInterrupt.Configure(format);
 
-            format->interrupt_callback.callback = IoInterruptCallback;
-            format->interrupt_callback.opaque =
-                (void*)GCHandle.ToIntPtr(_ioInterruptHandle);
-        }
-
-        private IoInterruptScope BeginIoInterrupt(
+        private VideoIoInterruptGuard.InterruptScope BeginIoInterrupt(
             CancellationToken cancellationToken)
-            => new(this, cancellationToken);
-
-        private readonly struct IoInterruptScope : IDisposable
-        {
-            private readonly FfFrameExtractor _owner;
-            private readonly CancellationTokenRegistration _registration;
-
-            public IoInterruptScope(
-                FfFrameExtractor owner,
-                CancellationToken cancellationToken)
-            {
-                _owner = owner;
-                Volatile.Write(ref owner._ioInterruptRequested, 0);
-                _registration = cancellationToken.CanBeCanceled
-                    ? cancellationToken.Register(
-                        static state =>
-                        {
-                            if (state is FfFrameExtractor extractor)
-                            {
-                                Volatile.Write(
-                                    ref extractor._ioInterruptRequested,
-                                    1);
-                            }
-                        },
-                        owner)
-                    : default;
-
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    Volatile.Write(
-                        ref owner._ioInterruptRequested,
-                        1);
-                }
-            }
-
-            public void Dispose()
-            {
-                _registration.Dispose();
-                Volatile.Write(ref _owner._ioInterruptRequested, 0);
-            }
-        }
+            => _ioInterrupt.Begin(cancellationToken);
 
         private int ReadFrameInterruptibly(
             AVFormatContext* format,
@@ -1850,29 +1798,6 @@ namespace FaceShield.Services.Video
 
             using var ioInterrupt = BeginIoInterrupt(cancellationToken);
             return ffmpeg.av_read_frame(format, packet);
-        }
-
-        private static int HandleIoInterrupt(void* opaque)
-        {
-            if (opaque == null)
-                return 0;
-
-            try
-            {
-                GCHandle handle =
-                    GCHandle.FromIntPtr((IntPtr)opaque);
-                if (handle.Target is not FfFrameExtractor owner)
-                    return 1;
-
-                return Volatile.Read(ref owner._ioInterruptRequested) != 0 ||
-                       Volatile.Read(ref owner._disposed)
-                    ? 1
-                    : 0;
-            }
-            catch
-            {
-                return 1;
-            }
         }
 
         private static long GetDecodedPresentationTimestamp(AVFrame* frame)
@@ -2608,8 +2533,7 @@ namespace FaceShield.Services.Video
             }
             finally
             {
-                if (_ioInterruptHandle.IsAllocated)
-                    _ioInterruptHandle.Free();
+                _ioInterrupt.Dispose();
                 if (Interlocked.Exchange(ref _timelineOwnerReleased, 1) == 0)
                     ReleaseDecodedFrameTimeline(_decodedFrameTimeline);
             }
