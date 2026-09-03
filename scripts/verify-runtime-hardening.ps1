@@ -51,6 +51,12 @@ $temporalPostProcessor = Read-RepoFile "Services/Analysis/AutoMaskTemporalPostPr
 $trackInterpolator = Read-RepoFile "Services/Analysis/FaceTrackInterpolator.cs"
 $trackBuilder = Read-RepoFile "Services/Analysis/FaceTrackBuilder.cs"
 $exportFidelity = Read-RepoFile "Services/Video/VideoExportFidelityPolicy.cs"
+$yoloFinalPostProcessor = Read-RepoFile "Services/Analysis/YoloFinalMaskPostProcessor.cs"
+$sceneCutGuard = Read-RepoFile "Services/Analysis/FaceTrackSceneCutGuard.cs"
+$yoloSceneCutPostProcessor = Read-RepoFile "Services/Analysis/YoloSceneCutPostProcessor.cs"
+$toolPanel = Read-RepoFile "ViewModels/Workspace/ToolPanelViewModel.cs"
+$faceOnnxDetector = Read-RepoFile "Services/FaceDetection/FaceOnnxDetector.cs"
+$yoloOnnxDetector = Read-RepoFile "Services/FaceDetection/YoloFaceOnnxDetector.cs"
 
 Assert-Match "export input uses cancellable native io guard" ($exportService + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]{0,1000}Begin\(cancellationToken\)[\s\S]{0,1800}avformat_open_input[\s\S]{0,1200}avformat_find_stream_info'
 Assert-Match "HDR probe accepts cancellation and uses native io guard" ($hdrProbe + $videoIoInterrupt) 'ProbeVideoHdrMetadata\([\s\S]{0,220}CancellationToken\s+cancellationToken[\s\S]{0,1400}VideoIoInterruptGuard[\s\S]{0,1800}avformat_open_input'
@@ -73,6 +79,35 @@ Assert-NotMatch "RGB quality path no longer claims lossless compatibility" ($exp
 Assert-Match "hardware bitrate uses bounded source-relative guardrail" $exportFidelity 'boundedSourceBitrate\s*\*\s*5L\s*/\s*4L'
 Assert-Match "single video can use full global PTS frame budget" $extractor 'MaxCachedTimelineFramesPerVideo\s*=\s*1_000_000[\s\S]{0,120}MaxCachedTimelineFramesTotal\s*=\s*1_000_000'
 Assert-Match "decoded timeline extent fails closed when exact timestamp seek is unsafe" $extractor 'TryGetDecodedTimelineExtentSeconds\([\s\S]{0,700}!_decodedFrameTimeline\.SupportsExactTimestampSeek'
+
+Assert-Match "extractor frame size is protected by native lifetime lock" $extractor 'public\s+PixelSize\s+FrameSize[\s\S]{0,260}lock\s*\(_sync\)[\s\S]{0,160}ThrowIfDisposedLocked\(\)[\s\S]{0,160}_dec->width'
+Assert-Match "extractor dispose marks disposed while holding lifetime lock" $extractor 'public\s+void\s+Dispose\(\)[\s\S]{0,240}lock\s*\(_sync\)[\s\S]{0,160}if\s*\(_disposed\)[\s\S]{0,120}_disposed\s*=\s*true'
+Assert-Match "extractor decode entry checks disposed after acquiring lifetime lock" $extractor 'GetFrameByIndex\([\s\S]{0,420}lock\s*\(_sync\)[\s\S]{0,120}ThrowIfDisposedLocked\(\)'
+Assert-Match "raw buffer dimensions are read only inside extractor lifetime lock" $extractor 'TryGetNextFrameRawToBuffer\([\s\S]{0,700}lock\s*\(_sync\)[\s\S]{0,180}ThrowIfDisposedLocked\(\)[\s\S]{0,240}_dec->width'
+
+Assert-Match "yolo weak final cleanup accepts cancellation" $yoloFinalPostProcessor 'RemoveWeakIsolatedMasks\([\s\S]{0,220}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,500}ThrowIfCancellationRequested\(\)'
+Assert-Match "yolo gap fill accepts cancellation" $yoloFinalPostProcessor 'FillShortStableGaps\([\s\S]{0,220}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,500}ThrowIfCancellationRequested\(\)'
+Assert-Match "yolo scene carry cleanup accepts cancellation" $yoloFinalPostProcessor 'RemoveSceneCutCarryRemnants\([\s\S]{0,280}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,500}ThrowIfCancellationRequested\(\)'
+Assert-Match "scene cut candidate generation forwards cancellation into track builder" ($sceneCutGuard + $yoloSceneCutPostProcessor) 'BuildWeakTrackTransitionCandidates\([\s\S]{0,420}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,2600}FaceTrackBuilder\(\)\.Build\([\s\S]{0,180}cancellationToken[\s\S]*BuildWeakTrackTransitionCandidates\([\s\S]{0,900}cancellationToken:\s*cancellationToken'
+Assert-Match "auto final cleanup pipeline forwards cancellation" $autoPostProcess 'RemoveWeakIsolatedMasks\([\s\S]{0,700}cancellationToken\)[\s\S]*FillShortStableGaps\([\s\S]{0,1000}cancellationToken\)[\s\S]*RemoveSceneCutCarryRemnants\([\s\S]{0,1000}cancellationToken\)'
+Assert-Match "final mask summary is cancellable" $autoPostProcess 'LogFinalMaskSummary\([\s\S]{0,5000}cancellationToken:\s*cancellationToken[\s\S]*private\s+AutoMaskPostProcessFinalSummary\s+LogFinalMaskSummary\([\s\S]{0,3200}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,300}ThrowIfCancellationRequested\(\)'
+
+Assert-Match "auto anomaly review accepts cancellation" $workspace 'BuildAutoAnomaliesAsync\(\s*CancellationToken\s+cancellationToken\)[\s\S]{0,500}ThrowIfCancellationRequested\(\)'
+Assert-NotMatch "auto anomaly review does not allocate total-frame bool array" $workspace 'BuildAutoAnomaliesAsync\([\s\S]{0,6000}new\s+bool\[total\]'
+Assert-Match "auto anomaly review uses sparse face frame indices" $workspace 'BuildAutoAnomaliesAsync\([\s\S]{0,2500}SortedSet<int>[\s\S]{0,1800}faceFrameIndices'
+Assert-Match "auto completion checks cancellation after anomaly review" $workspace 'await\s+BuildAutoAnomaliesAsync\(token\);[\s\S]{0,180}token\.ThrowIfCancellationRequested\(\);[\s\S]{0,500}_autoCompleted\s*=\s*true'
+
+Assert-Match "workspace edit gate blocks auto and export" $toolPanel 'CanEditWorkspace\s*=>\s*!IsExportRunning\s*&&\s*!IsAutoRunning'
+Assert-Match "auto state invalidates edit gate" $toolPanel 'OnIsAutoRunningChanged\([\s\S]{0,220}OnPropertyChanged\(nameof\(CanEditWorkspace\)\)'
+Assert-Match "preview pointer input checks workspace edit gate" $framePreview 'OnPointerPressed\([\s\S]{0,220}!_toolPanel\.CanEditWorkspace[\s\S]*OnPointerMoved\([\s\S]{0,260}!_toolPanel\.CanEditWorkspace[\s\S]*OnPointerReleased\([\s\S]{0,260}!_toolPanel\.CanEditWorkspace'
+Assert-Match "save handler blocks before persisting a mask during auto" $workspace 'ToolPanel\.SaveRequested[\s\S]{0,260}_isAutoRunning\s*\|\|\s*ToolPanel\.IsAutoRunning[\s\S]{0,180}FramePreview\.PersistCurrentMask\(\)'
+Assert-Match "auto settles pending manual mask before becoming writer" $workspace 'RunAutoAsync[\s\S]{0,1200}FramePreview\.PersistCurrentMask\(\);[\s\S]{0,160}_isAutoRunning\s*=\s*true'
+
+Assert-Match "workspace state persists timeline extent" $workspaceStore 'TimelineExtentSeconds[\s\S]*TimelineExtentSeconds\s*=\s*snapshot\.TimelineExtentSeconds'
+Assert-Match "workspace restores timeline extent before clamping view start" ($workspace + $frameList) 'RestoreTimelineExtentSeconds\([\s\S]*snapshot\.TimelineExtentSeconds[\s\S]{0,500}Math\.Clamp\(snapshot\.ViewStartSeconds'
+Assert-Match "timeline controller logs non-cancellation request failures" $timelineController 'catch\s*\(Exception\s+ex\)[\s\S]{0,180}ReportRequestFailure\([\s\S]*\[TimelineController\]'
+Assert-Match "active auto workspace exposes instance provider diagnostics" ($workspace + $faceOnnxDetector + $yoloOnnxDetector) 'AutoExecutionProviderLabel[\s\S]*ExecutionProviderError[\s\S]*FaceOnnxDetector[\s\S]*YoloFaceOnnxDetector'
+Assert-NotMatch "home auto status does not read process-global provider diagnostics" $homeViewModel '(FaceOnnxDetector|YoloFaceOnnxDetector)\.GetLastExecutionProvider(Label|Error)\('
 
 Assert-Match "playback checks decoder error before normal eof" $framePreview 'SequentialDecodeError[\s\S]*SequentialReachedEndOfStream[\s\S]*onPlaybackFailed'
 Assert-NotMatch "playback does not convert any non-cancel stop into natural eof" $framePreview 'endedNaturally\s*\|=\s*!ct\.IsCancellationRequested'
