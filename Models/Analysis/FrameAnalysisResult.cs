@@ -7,6 +7,11 @@ namespace FaceShield.Models.Analysis
     public sealed class FrameAnalysisResult
     {
         public int FrameIndex { get; init; }
+        
+        /// <summary>
+        /// Exact decoded presentation time in seconds.
+        /// NaN means the decoder did not expose a reliable presentation timestamp.
+        /// </summary>
         public double TimestampSec { get; init; }
 
         public bool HasFace { get; init; }
