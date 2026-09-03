@@ -1650,6 +1650,9 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private void GoBack()
         {
+            if (_isAutoRunning || ToolPanel.IsAutoRunning)
+                return;
+
             FramePreview.PersistCurrentMask();
             PersistWorkspaceState();
             _onBack?.Invoke();
