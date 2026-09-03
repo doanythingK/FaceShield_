@@ -386,9 +386,9 @@ A decoded timeline can remain structurally reliable and complete while `Supports
 
 ### FrameAnalyzer VFR timestamps
 
-`FrameAnalyzer` no longer assigns `TimestampSec = idx / fps` unconditionally.
+`FrameAnalyzer` no longer assigns `TimestampSec = idx / fps` or silently substitutes average-FPS time.
 
-After decoding each ordinal it now prefers the decoded PTS already recorded by `FfFrameExtractor.TryGetCachedFrameTimestampSeconds`. Average-FPS time is retained only as a fallback when no decoded timestamp is available.
+After decoding each ordinal it uses the decoded PTS already recorded by `FfFrameExtractor.TryGetCachedFrameTimestampSeconds`. If no reliable decoded presentation timestamp is available, `TimestampSec` is `double.NaN`.
 
 ### FFmpeg I/O interrupt implementation
 
@@ -461,4 +461,79 @@ It now records:
 ### Validation status
 
 These changes were pushed to `docs/manual-blur-player-architecture` with source invariants and the face-track harness updated. The branch is not covered by the normal push-triggered Quality Gate, so no Windows/macOS Actions build or real-video runtime validation is claimed by this follow-up.
+
+---
+
+## 12. Lifetime, cancellation, workspace-write, and persistence follow-up
+
+A later review of `docs/manual-blur-player-architecture` identified remaining lifetime, cancellation, workspace concurrency, persistence, and diagnostics gaps.
+
+### FfFrameExtractor native lifetime gate
+
+Public decode entry points previously checked `_disposed` before entering `_sync`, while `Dispose()` could free FFmpeg resources between that check and lock acquisition. `FrameSize` also dereferenced `_dec` without the lifetime lock.
+
+The extractor now:
+
+- checks disposed state after acquiring `_sync` for native decode operations
+- reads `FrameSize` under the same lock and disposed check
+- computes raw-buffer dimensions from `_dec` only after acquiring the lock
+- sets `_disposed = true` while holding `_sync` before freeing native resources
+- preserves the constructor exception-safe interrupt-guard disposal added earlier
+
+This removes the source-level race where a call could pass an outer disposed check and later enter native code after disposal.
+
+### Complete Auto cancellation propagation
+
+Cancellation is now propagated through the remaining CPU-heavy post-processing paths:
+
+- YOLO weak-isolated final cleanup
+- stable gap filling
+- scene-cut carry cleanup and blocked-frame generation
+- scene-cut candidate generation, including `FaceTrackBuilder`
+- final mask summary processing
+- Auto anomaly review generation
+
+`BuildAutoAnomaliesAsync` no longer allocates `new bool[total]`. It builds a sorted sparse set of actual face-mask frame indices and derives short no-face gaps, sparse-review samples, and one-frame flicker gaps from adjacent detected-frame ordinals.
+
+After anomaly generation returns, the Auto run checks the same cancellation token again before setting `_autoCompleted = true`. Cancellation during anomaly generation therefore cannot silently promote the run to completed state.
+
+### Auto/manual writer serialization
+
+The workspace policy is now explicit: manual editing, Undo, and user Save are disabled while Auto or export is running.
+
+Defense is applied at more than the visual layer:
+
+- `ToolPanelViewModel.CanEditWorkspace` includes `!IsAutoRunning`
+- Auto state changes invalidate the edit-enabled binding
+- brush/eraser pointer handlers and Undo check the edit gate directly
+- the Save event handler checks Auto state before calling `PersistCurrentMask()`
+- a pending manual mask is persisted immediately before Auto becomes the active mask writer
+
+This prevents the Auto pipeline and manual UI from concurrently mutating the two underlying mask stores during a run without requiring a larger transactional rewrite of `FrameMaskProvider`.
+
+### Unknown-duration timeline persistence
+
+Workspace state now persists `TimelineExtentSeconds` in addition to view start and viewport scale.
+
+When reopening an unknown-duration workspace, the saved open-ended timeline extent is restored before `ViewStartSeconds` is clamped. Older saved state remains compatible because the new field defaults to zero.
+
+### Timeline diagnostics
+
+`TimelineController` still treats cancellation as a normal null result, but non-cancellation exceptions are no longer silently discarded. Thumbnail and exact-frame request failures now emit an operation/frame-specific diagnostic line before returning null.
+
+### Current-run ONNX provider diagnostics
+
+The active Auto status UI no longer reads the process-global static "last execution provider" values from `FaceOnnxDetector` / `YoloFaceOnnxDetector`.
+
+Each detector instance exposes its own execution-provider error state, `WorkspaceViewModel` captures the provider label/error for the current Auto detector, and `HomePageViewModel` reads that workspace-owned status. Static accessors remain for compatibility/internal diagnostics but no longer drive the active Auto status display.
+
+### PTS mapping asymmetry
+
+No change was made solely to force frame→time and time→frame acceptance conditions to be identical.
+
+Reading the presentation timestamp of an already-known ordinal can remain meaningful on a non-monotonic timeline, while timestamp→ordinal binary search requires `SupportsExactTimestampSeek`. The asymmetry is therefore retained unless a caller is later found to require the two operations to be strict inverses.
+
+### Validation status
+
+The repository invariants were extended to cover the changes above. This remains source-level/static validation on this branch; no Windows/macOS Actions build, forced Dispose race reproduction, cancellation timing replay, or real-video runtime validation is claimed here.
 
