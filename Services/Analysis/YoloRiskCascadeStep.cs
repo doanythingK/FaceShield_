@@ -61,10 +61,21 @@ namespace FaceShield.Services.Analysis
                 };
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             var totalTimer = Stopwatch.StartNew();
-            var primaryEntries = maskProvider.GetFaceMaskEntries()
-                .ToDictionary(static entry => entry.Key, static entry => entry.Value);
-            var riskFrames = BuildRiskFrames(primaryEntries, totalFrames, options, frameTimings);
+            var primaryEntries = new Dictionary<int, FrameMaskProvider.FaceMaskData>();
+            foreach (var entry in maskProvider.GetFaceMaskEntries())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                primaryEntries[entry.Key] = entry.Value;
+            }
+
+            var riskFrames = BuildRiskFrames(
+                primaryEntries,
+                totalFrames,
+                options,
+                frameTimings,
+                cancellationToken);
             int timelineStart = Math.Clamp(processedStartFrame, 0, Math.Max(0, totalFrames - 1));
             int timelineEndExclusive = (int)Math.Min(
                 totalFrames,
@@ -73,6 +84,7 @@ namespace FaceShield.Services.Analysis
             int ptsTimingFrames = 0;
             for (int frameIndex = timelineStart; frameIndex < timelineEndExclusive; frameIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (frameTimings.TryGetValue(frameIndex, out var timing) &&
                     timing.Source == FrameTimingSource.PresentationTimestamp &&
                     double.IsFinite(timing.TimestampSeconds))
@@ -102,13 +114,18 @@ namespace FaceShield.Services.Analysis
                 };
             }
 
-            int[] unalignedRiskFrames = riskFrames.Keys
-                .Where(frame =>
-                    !frameTimings.TryGetValue(frame, out var timing) ||
+            var unalignedRiskFrameList = new List<int>();
+            foreach (int frame in riskFrames.Keys.OrderBy(static frame => frame))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!frameTimings.TryGetValue(frame, out var timing) ||
                     timing.Source != FrameTimingSource.PresentationTimestamp ||
                     !double.IsFinite(timing.TimestampSeconds))
-                .OrderBy(static frame => frame)
-                .ToArray();
+                {
+                    unalignedRiskFrameList.Add(frame);
+                }
+            }
+            int[] unalignedRiskFrames = unalignedRiskFrameList.ToArray();
             if (unalignedTimelineFrames > 0 || unalignedRiskFrames.Length > 0)
             {
                 totalTimer.Stop();
@@ -129,7 +146,7 @@ namespace FaceShield.Services.Analysis
                     UnalignedTimelineFrames = unalignedTimelineFrames,
                     UnalignedRiskFrames = unalignedRiskFrames.Length,
                     TotalMs = totalTimer.ElapsedMilliseconds,
-                    ReasonBreakdown = BuildReasonBreakdown(riskFrames),
+                    ReasonBreakdown = BuildReasonBreakdown(riskFrames, cancellationToken),
                     Error = timingError
                 };
             }
@@ -151,10 +168,9 @@ namespace FaceShield.Services.Analysis
                     return YoloRiskCascadeResult.Empty with { Enabled = true, Error = "secondary detector does not support BGRA input" };
 
                 using var extractor = new FfFrameExtractor(videoPath, enableHardware: false, cancellationToken: cancellationToken);
-                foreach (var range in BuildContiguousRanges(riskFrames.Keys))
+                foreach (var range in BuildContiguousRanges(riskFrames.Keys, cancellationToken))
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (frameTimings.TryGetValue(range.Start, out var rangeStartTiming) &&
                         rangeStartTiming.Source == FrameTimingSource.PresentationTimestamp)
                     {
@@ -178,6 +194,7 @@ namespace FaceShield.Services.Analysis
                             out var bgra,
                             out int frameIndex);
                         decodeTimer.Stop();
+                        cancellationToken.ThrowIfCancellationRequested();
                         decodeMs += decodeTimer.ElapsedMilliseconds;
                         if (!ok)
                         {
@@ -219,6 +236,7 @@ namespace FaceShield.Services.Analysis
 
                         attempts++;
 
+                        cancellationToken.ThrowIfCancellationRequested();
                         var detectTimer = Stopwatch.StartNew();
                         var faces = secondary.DetectFacesBgra(
                             bgra.Data,
@@ -228,6 +246,7 @@ namespace FaceShield.Services.Analysis
                             1.0,
                             DownscaleQuality.BalancedBilinear);
                         detectTimer.Stop();
+                        cancellationToken.ThrowIfCancellationRequested();
                         detectMs += detectTimer.ElapsedMilliseconds;
 
                         var strongFaces = faces
@@ -249,13 +268,17 @@ namespace FaceShield.Services.Analysis
                         break;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 error = ex.Message;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (error == null &&
-                !cancellationToken.IsCancellationRequested &&
                 attempts + protectedStoredMaskFrames != riskFrames.Count)
             {
                 error =
@@ -265,10 +288,11 @@ namespace FaceShield.Services.Analysis
             int acceptedFaces = 0;
             int acceptedFrames = 0;
             int rejectedFaces = 0;
-            if (error == null && !cancellationToken.IsCancellationRequested)
+            if (error == null)
             {
                 foreach (var entry in strongResults.OrderBy(static entry => entry.Key))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int frameIndex = entry.Key;
                     if (!riskFrames.TryGetValue(frameIndex, out var riskReason))
                         continue;
@@ -281,6 +305,7 @@ namespace FaceShield.Services.Analysis
                     var mergedConfidences = new List<float>(existingFaces.Count + strong.Faces.Count);
                     for (int i = 0; i < existingFaces.Count; i++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         mergedConfidences.Add(i < existingConfidences.Count
                             ? existingConfidences[i]
                             : primary.MinConfidence ?? 1.0f);
@@ -291,7 +316,8 @@ namespace FaceShield.Services.Analysis
                             existingFaces,
                             strong.Faces.Select(static face => face.Bounds).ToArray(),
                             IsLikelyDuplicate,
-                            ComputeGeometryMatchScore)
+                            ComputeGeometryMatchScore,
+                            cancellationToken)
                         .Select(static match => match.RightIndex)
                         .ToHashSet();
 
@@ -299,6 +325,7 @@ namespace FaceShield.Services.Analysis
                     var acceptedSecondaryFaces = new List<Rect>();
                     for (int candidateIndex = 0; candidateIndex < strong.Faces.Count; candidateIndex++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var candidate = strong.Faces[candidateIndex];
                         if (duplicateCandidateIndices.Contains(candidateIndex))
                             continue;
@@ -313,7 +340,8 @@ namespace FaceShield.Services.Analysis
                             strongResults,
                             Math.Max(1, options.YoloStrongConfirmationFrames),
                             (riskReason & (YoloRiskReason.ExpectedTrackMissing | YoloRiskReason.NewTrackEntry)) != 0 ||
-                                (riskReason & ~YoloRiskReason.Confirmation) == YoloRiskReason.None);
+                                (riskReason & ~YoloRiskReason.Confirmation) == YoloRiskReason.None,
+                            cancellationToken);
                         if (!supported)
                         {
                             rejectedFaces++;
@@ -329,7 +357,8 @@ namespace FaceShield.Services.Analysis
                                 strong,
                                 strongResults,
                                 riskFrames,
-                                Math.Max(1, options.YoloStrongConfirmationFrames)))
+                                Math.Max(1, options.YoloStrongConfirmationFrames),
+                                cancellationToken))
                         {
                             rejectedFaces++;
                             continue;
@@ -345,6 +374,7 @@ namespace FaceShield.Services.Analysis
                     if (acceptedOnFrame <= 0)
                         continue;
 
+                    cancellationToken.ThrowIfCancellationRequested();
                     acceptedFrames++;
                     float? minConfidence = mergedConfidences.Count > 0
                         ? mergedConfidences.Min()
@@ -361,7 +391,7 @@ namespace FaceShield.Services.Analysis
             totalTimer.Stop();
             int periodicFrames = riskFrames.Count(static entry =>
                 (entry.Value & YoloRiskReason.PeriodicGlobal) != 0);
-            string reasonBreakdown = BuildReasonBreakdown(riskFrames);
+            string reasonBreakdown = BuildReasonBreakdown(riskFrames, cancellationToken);
 
             Debug.WriteLine(
                 $"[YoloRiskCascade] enabled=true riskFrames={riskFrames.Count} timelineFrames={timelineFrames} ptsTimingFrames={ptsTimingFrames} unalignedTimelineFrames=0 unalignedRiskFrames=0 periodicFrames={periodicFrames} attempts={attempts} protectedStoredMaskFrames={protectedStoredMaskFrames} hitFrames={hitFrames} candidates={secondaryCandidates} acceptedFrames={acceptedFrames} acceptedFaces={acceptedFaces} rejectedFaces={rejectedFaces} decodeMs={decodeMs} detectMs={detectMs} totalMs={totalTimer.ElapsedMilliseconds} reasons={reasonBreakdown} error={error ?? "none"}");
@@ -389,37 +419,65 @@ namespace FaceShield.Services.Analysis
         }
 
         private static string BuildReasonBreakdown(
-            IReadOnlyDictionary<int, YoloRiskReason> riskFrames)
+            IReadOnlyDictionary<int, YoloRiskReason> riskFrames,
+            CancellationToken cancellationToken)
         {
-            return string.Join(
-                ",",
-                Enum.GetValues<YoloRiskReason>()
-                    .Where(static reason => reason != YoloRiskReason.None)
-                    .Select(reason => $"{reason}={riskFrames.Count(entry => (entry.Value & reason) != 0)}"));
+            var parts = new List<string>();
+            foreach (YoloRiskReason reason in Enum.GetValues<YoloRiskReason>())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (reason == YoloRiskReason.None)
+                    continue;
+
+                int count = 0;
+                foreach (var entry in riskFrames)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if ((entry.Value & reason) != 0)
+                        count++;
+                }
+
+                parts.Add($"{reason}={count}");
+            }
+
+            return string.Join(",", parts);
         }
 
         private static Dictionary<int, YoloRiskReason> BuildRiskFrames(
             IReadOnlyDictionary<int, FrameMaskProvider.FaceMaskData> entries,
             int totalFrames,
             AutoMaskOptions options,
-            IReadOnlyDictionary<int, FrameTimingSample> frameTimings)
+            IReadOnlyDictionary<int, FrameTimingSample> frameTimings,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var risks = new Dictionary<int, YoloRiskReason>();
             int maxGap = Math.Max(1, options.YoloRiskMaxTrackGapFrames);
             int confirmationRadius = Math.Max(1, options.YoloStrongConfirmationFrames);
             double intervalSeconds = Math.Max(0.25, options.YoloStrongFullScanIntervalSeconds);
-            var orderedTimings = frameTimings
-                .Where(entry => entry.Key >= 0 &&
+            var orderedTimingList = new List<KeyValuePair<int, FrameTimingSample>>();
+            foreach (var entry in frameTimings)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (entry.Key >= 0 &&
                     entry.Key < totalFrames &&
                     entry.Value.Source == FrameTimingSource.PresentationTimestamp &&
                     double.IsFinite(entry.Value.TimestampSeconds))
+                {
+                    orderedTimingList.Add(entry);
+                }
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var orderedTimings = orderedTimingList
                 .OrderBy(static entry => entry.Key)
                 .ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
             if (orderedTimings.Length > 0)
             {
                 double nextScanSeconds = orderedTimings[0].Value.TimestampSeconds;
                 foreach (var timing in orderedTimings)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (timing.Value.TimestampSeconds + 0.000001 < nextScanSeconds)
                         continue;
 
@@ -432,9 +490,12 @@ namespace FaceShield.Services.Analysis
                 }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             var orderedFrames = entries.Keys.OrderBy(static frame => frame).ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
             for (int i = 1; i < orderedFrames.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int previous = orderedFrames[i - 1];
                 int current = orderedFrames[i];
                 int missing = current - previous - 1;
@@ -443,7 +504,10 @@ namespace FaceShield.Services.Analysis
                     if (missing <= maxGap)
                     {
                         for (int frameIndex = previous + 1; frameIndex < current; frameIndex++)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
                             AddRisk(risks, frameIndex, YoloRiskReason.ExpectedTrackMissing, totalFrames);
+                        }
                     }
                     else
                     {
@@ -460,7 +524,8 @@ namespace FaceShield.Services.Analysis
                         previousData.Faces,
                         currentData.Faces,
                         IsGeometrySupported,
-                        ComputeGeometryMatchScore);
+                        ComputeGeometryMatchScore,
+                        cancellationToken);
                     if (temporalMatches.Count < previousData.Faces.Count)
                     {
                         AddRiskWindowByTimestamp(
@@ -470,7 +535,8 @@ namespace FaceShield.Services.Analysis
                             frameTimings,
                             YoloRiskReason.ExpectedTrackMissing,
                             totalFrames,
-                            maxGap);
+                            maxGap,
+                            cancellationToken);
                     }
 
                     if (temporalMatches.Count < currentData.Faces.Count)
@@ -481,9 +547,11 @@ namespace FaceShield.Services.Analysis
             var detectionsByFrame = new Dictionary<int, IReadOnlyList<FaceTrackDetection>>();
             foreach (var entry in entries)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var detections = new FaceTrackDetection[entry.Value.Faces.Count];
                 for (int i = 0; i < detections.Length; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     float confidence = i < entry.Value.Confidences.Count
                         ? entry.Value.Confidences[i]
                         : entry.Value.MinConfidence ?? 1.0f;
@@ -499,11 +567,14 @@ namespace FaceShield.Services.Analysis
 
             var tracks = new FaceTrackBuilder().Build(
                 detectionsByFrame,
-                new FaceTrackPostProcessOptions { MaxTrackGap = maxGap });
+                new FaceTrackPostProcessOptions { MaxTrackGap = maxGap },
+                cancellationToken);
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int i = 1; i < track.Detections.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int previous = track.Detections[i - 1].FrameIndex;
                     int current = track.Detections[i].FrameIndex;
                     int missing = current - previous - 1;
@@ -511,26 +582,51 @@ namespace FaceShield.Services.Analysis
                         continue;
 
                     for (int frameIndex = previous + 1; frameIndex < current; frameIndex++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
                         AddRisk(risks, frameIndex, YoloRiskReason.ExpectedTrackMissing, totalFrames);
+                    }
                 }
             }
 
             foreach (var entry in entries)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entry.Key;
                 var data = entry.Value;
                 double frameArea = Math.Max(1.0, data.Size.Width * (double)data.Size.Height);
                 double edgeX = data.Size.Width * Math.Clamp(options.YoloRiskEdgeMarginRatio, 0.0, 0.25);
                 double edgeY = data.Size.Height * Math.Clamp(options.YoloRiskEdgeMarginRatio, 0.0, 0.25);
-                bool lowConfidence = data.Confidences.Any(confidence =>
-                    confidence <= options.YoloRiskLowConfidenceThreshold);
-                bool smallFace = data.Faces.Any(face =>
-                    face.Width * face.Height / frameArea <= options.YoloRiskSmallFaceAreaRatio);
-                bool edgeFace = data.Faces.Any(face =>
-                    face.X <= edgeX ||
-                    face.Y <= edgeY ||
-                    face.Right >= data.Size.Width - edgeX ||
-                    face.Bottom >= data.Size.Height - edgeY);
+                bool lowConfidence = false;
+                for (int confidenceIndex = 0; confidenceIndex < data.Confidences.Count; confidenceIndex++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (data.Confidences[confidenceIndex] <= options.YoloRiskLowConfidenceThreshold)
+                    {
+                        lowConfidence = true;
+                        break;
+                    }
+                }
+
+                bool smallFace = false;
+                bool edgeFace = false;
+                for (int faceIndex = 0; faceIndex < data.Faces.Count; faceIndex++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var face = data.Faces[faceIndex];
+                    if (face.Width * face.Height / frameArea <= options.YoloRiskSmallFaceAreaRatio)
+                        smallFace = true;
+                    if (face.X <= edgeX ||
+                        face.Y <= edgeY ||
+                        face.Right >= data.Size.Width - edgeX ||
+                        face.Bottom >= data.Size.Height - edgeY)
+                    {
+                        edgeFace = true;
+                    }
+
+                    if (smallFace && edgeFace)
+                        break;
+                }
 
                 if (lowConfidence)
                     AddRisk(risks, frameIndex, YoloRiskReason.LowConfidence, totalFrames);
@@ -543,8 +639,10 @@ namespace FaceShield.Services.Analysis
             int[] seedFrames = risks.Keys.ToArray();
             foreach (int seedFrame in seedFrames)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int offset = 1; offset <= confirmationRadius; offset++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     AddRisk(risks, seedFrame - offset, YoloRiskReason.Confirmation, totalFrames);
                     AddRisk(risks, seedFrame + offset, YoloRiskReason.Confirmation, totalFrames);
                 }
@@ -560,8 +658,10 @@ namespace FaceShield.Services.Analysis
             IReadOnlyDictionary<int, FrameTimingSample> frameTimings,
             YoloRiskReason reason,
             int totalFrames,
-            int fallbackFrames)
+            int fallbackFrames,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (frameTimings.TryGetValue(startFrame, out var startTiming) &&
                 startTiming.Source == FrameTimingSource.PresentationTimestamp &&
                 double.IsFinite(startTiming.TimestampSeconds))
@@ -569,6 +669,7 @@ namespace FaceShield.Services.Analysis
                 double endTimestamp = startTiming.TimestampSeconds + Math.Max(0.0, durationSeconds);
                 for (int frameIndex = startFrame; frameIndex < totalFrames; frameIndex++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!frameTimings.TryGetValue(frameIndex, out var timing) ||
                         timing.Source != FrameTimingSource.PresentationTimestamp ||
                         !double.IsFinite(timing.TimestampSeconds) ||
@@ -583,7 +684,10 @@ namespace FaceShield.Services.Analysis
             }
 
             for (int offset = 0; offset <= Math.Max(0, fallbackFrames); offset++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 AddRisk(risks, startFrame + offset, reason, totalFrames);
+            }
         }
 
         private static void AddRisk(
@@ -600,9 +704,13 @@ namespace FaceShield.Services.Analysis
                 : reason;
         }
 
-        private static IReadOnlyList<FrameRange> BuildContiguousRanges(IEnumerable<int> frames)
+        private static IReadOnlyList<FrameRange> BuildContiguousRanges(
+            IEnumerable<int> frames,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var ordered = frames.Distinct().OrderBy(static frame => frame).ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
             if (ordered.Length == 0)
                 return Array.Empty<FrameRange>();
 
@@ -611,6 +719,7 @@ namespace FaceShield.Services.Analysis
             int end = start;
             for (int i = 1; i < ordered.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (ordered[i] == end + 1)
                 {
                     end = ordered[i];
@@ -671,13 +780,16 @@ namespace FaceShield.Services.Analysis
             StrongFrameResult current,
             IReadOnlyDictionary<int, StrongFrameResult> strongResults,
             int confirmationFrames,
-            bool allowOneSidedSupport)
+            bool allowOneSidedSupport,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int supportingFrames = 0;
             bool hasPrevious = false;
             bool hasNext = false;
             for (int distance = 1; distance <= confirmationFrames; distance++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (strongResults.TryGetValue(frameIndex - distance, out var previous) &&
                     ComputeSceneDifference(current.SceneSample, previous.SceneSample) <= SceneDifferenceThreshold &&
                     previous.Faces.Any(face => IsGeometrySupported(candidate, face.Bounds)))
@@ -709,22 +821,26 @@ namespace FaceShield.Services.Analysis
             StrongFrameResult current,
             IReadOnlyDictionary<int, StrongFrameResult> strongResults,
             IReadOnlyDictionary<int, YoloRiskReason> riskFrames,
-            int confirmationFrames)
+            int confirmationFrames,
+            CancellationToken cancellationToken)
         {
             for (int distance = 1; distance <= confirmationFrames; distance++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (HasMatchingPrimaryRiskCandidate(
                         candidate,
                         frameIndex - distance,
                         current,
                         strongResults,
-                        riskFrames) ||
+                        riskFrames,
+                        cancellationToken) ||
                     HasMatchingPrimaryRiskCandidate(
                         candidate,
                         frameIndex + distance,
                         current,
                         strongResults,
-                        riskFrames))
+                        riskFrames,
+                        cancellationToken))
                 {
                     return true;
                 }
@@ -738,13 +854,26 @@ namespace FaceShield.Services.Analysis
             int candidateFrameIndex,
             StrongFrameResult current,
             IReadOnlyDictionary<int, StrongFrameResult> strongResults,
-            IReadOnlyDictionary<int, YoloRiskReason> riskFrames)
+            IReadOnlyDictionary<int, YoloRiskReason> riskFrames,
+            CancellationToken cancellationToken)
         {
-            return riskFrames.TryGetValue(candidateFrameIndex, out var reason) &&
-                (reason & (YoloRiskReason.ExpectedTrackMissing | YoloRiskReason.NewTrackEntry)) != 0 &&
-                strongResults.TryGetValue(candidateFrameIndex, out var support) &&
-                ComputeSceneDifference(current.SceneSample, support.SceneSample) <= SceneDifferenceThreshold &&
-                support.Faces.Any(face => IsGeometrySupported(candidate, face.Bounds));
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!riskFrames.TryGetValue(candidateFrameIndex, out var reason) ||
+                (reason & (YoloRiskReason.ExpectedTrackMissing | YoloRiskReason.NewTrackEntry)) == 0 ||
+                !strongResults.TryGetValue(candidateFrameIndex, out var support) ||
+                ComputeSceneDifference(current.SceneSample, support.SceneSample) > SceneDifferenceThreshold)
+            {
+                return false;
+            }
+
+            foreach (var face in support.Faces)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (IsGeometrySupported(candidate, face.Bounds))
+                    return true;
+            }
+
+            return false;
         }
 
         private static unsafe byte[] CaptureSceneSample(
@@ -831,16 +960,20 @@ namespace FaceShield.Services.Analysis
             IReadOnlyList<Rect> leftFaces,
             IReadOnlyList<Rect> rightFaces,
             Func<Rect, Rect, bool> isCompatible,
-            Func<Rect, Rect, double> score)
+            Func<Rect, Rect, double> score,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (leftFaces.Count == 0 || rightFaces.Count == 0)
                 return Array.Empty<GeometryMatch>();
 
             var candidates = new List<GeometryMatch>();
             for (int leftIndex = 0; leftIndex < leftFaces.Count; leftIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int rightIndex = 0; rightIndex < rightFaces.Count; rightIndex++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!isCompatible(leftFaces[leftIndex], rightFaces[rightIndex]))
                         continue;
 
@@ -863,11 +996,13 @@ namespace FaceShield.Services.Analysis
 
             bool TryAssign(int leftIndex, bool[] visitedRight)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!candidatesByLeft.TryGetValue(leftIndex, out var edges))
                     return false;
 
                 foreach (var edge in edges)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (visitedRight[edge.RightIndex])
                         continue;
                     visitedRight[edge.RightIndex] = true;
@@ -888,6 +1023,7 @@ namespace FaceShield.Services.Analysis
                              : int.MaxValue)
                          .ThenBy(static index => index))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 _ = TryAssign(leftIndex, new bool[rightFaces.Count]);
             }
 
