@@ -558,6 +558,7 @@ namespace FaceShield.Services.Video
             lock (_decodedFrameTimeline.SyncRoot)
             {
                 if (!_decodedFrameTimeline.IsReliable ||
+                    !_decodedFrameTimeline.SupportsExactTimestampSeek ||
                     _decodedFrameTimeline.Entries.Count == 0)
                 {
                     return false;
