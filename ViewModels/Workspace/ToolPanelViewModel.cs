@@ -49,7 +49,7 @@ namespace FaceShield.ViewModels.Workspace
             CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
 
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
-        public bool CanEditWorkspace => !IsExportRunning;
+        public bool CanEditWorkspace => !IsExportRunning && !IsAutoRunning;
 
 
         partial void OnCurrentModeChanged(EditMode value)
@@ -60,6 +60,7 @@ namespace FaceShield.ViewModels.Workspace
         partial void OnIsAutoRunningChanged(bool value)
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
+            OnPropertyChanged(nameof(CanEditWorkspace));
         }
 
         partial void OnIsExportRunningChanged(bool value)
@@ -85,19 +86,39 @@ namespace FaceShield.ViewModels.Workspace
         }
 
         [RelayCommand]
-        private void SetManual() => CurrentMode = EditMode.Manual;
+        private void SetManual()
+        {
+            if (!CanEditWorkspace) return;
+            CurrentMode = EditMode.Manual;
+        }
 
         [RelayCommand]
-        private void SetBrush() => CurrentMode = EditMode.Brush;
+        private void SetBrush()
+        {
+            if (!CanEditWorkspace) return;
+            CurrentMode = EditMode.Brush;
+        }
 
         [RelayCommand]
-        private void SetEraser() => CurrentMode = EditMode.Eraser;
+        private void SetEraser()
+        {
+            if (!CanEditWorkspace) return;
+            CurrentMode = EditMode.Eraser;
+        }
 
         [RelayCommand]
-        private void Undo() => UndoRequested?.Invoke();
+        private void Undo()
+        {
+            if (!CanEditWorkspace) return;
+            UndoRequested?.Invoke();
+        }
 
         [RelayCommand]
-        private void Save() => SaveRequested?.Invoke();
+        private void Save()
+        {
+            if (!CanEditWorkspace) return;
+            SaveRequested?.Invoke();
+        }
 
         [RelayCommand]
         private void CancelAuto() => AutoCancelRequested?.Invoke();
