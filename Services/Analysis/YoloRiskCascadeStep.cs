@@ -129,8 +129,10 @@ namespace FaceShield.Services.Analysis
             if (unalignedTimelineFrames > 0 || unalignedRiskFrames.Length > 0)
             {
                 totalTimer.Stop();
-                int periodicRiskFrames = riskFrames.Count(static entry =>
-                    (entry.Value & YoloRiskReason.PeriodicGlobal) != 0);
+                int periodicRiskFrames = CountRiskFramesByReason(
+                    riskFrames,
+                    YoloRiskReason.PeriodicGlobal,
+                    cancellationToken);
                 string timingError =
                     $"risk cascade PTS coverage is incomplete " +
                     $"(timeline={ptsTimingFrames}/{timelineFrames}, unalignedRisk={unalignedRiskFrames.Length})";
@@ -389,8 +391,10 @@ namespace FaceShield.Services.Analysis
             }
 
             totalTimer.Stop();
-            int periodicFrames = riskFrames.Count(static entry =>
-                (entry.Value & YoloRiskReason.PeriodicGlobal) != 0);
+            int periodicFrames = CountRiskFramesByReason(
+                riskFrames,
+                YoloRiskReason.PeriodicGlobal,
+                cancellationToken);
             string reasonBreakdown = BuildReasonBreakdown(riskFrames, cancellationToken);
 
             Debug.WriteLine(
@@ -416,6 +420,22 @@ namespace FaceShield.Services.Analysis
                 TotalMs: totalTimer.ElapsedMilliseconds,
                 ReasonBreakdown: reasonBreakdown,
                 Error: error);
+        }
+
+        private static int CountRiskFramesByReason(
+            IReadOnlyDictionary<int, YoloRiskReason> riskFrames,
+            YoloRiskReason reason,
+            CancellationToken cancellationToken)
+        {
+            int count = 0;
+            foreach (var entry in riskFrames)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if ((entry.Value & reason) != 0)
+                    count++;
+            }
+
+            return count;
         }
 
         private static string BuildReasonBreakdown(
