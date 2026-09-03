@@ -40,13 +40,15 @@ namespace FaceShield.Services.Analysis
                 maxTransitionGap: SuspiciousNoFaceMaxGap,
                 minConfidenceDrop: 0.0f,
                 maxPostCutCarryFrames: YoloSceneCutCarryProbeFrames,
-                minSourceConfidence: YoloSceneCutDirectCarryMinSourceConfidence);
+                minSourceConfidence: YoloSceneCutDirectCarryMinSourceConfidence,
+                cancellationToken: cancellationToken);
             var postCutCandidates = guard.BuildWeakPostCutCarryCandidates(
                 maskProvider,
                 maxTargetConfidence: YoloSceneCutPostCutCarryMaxConfidence,
                 maxCarryFrames: YoloSceneCutCarryProbeFrames,
                 sourceLookbackFrames: YoloSceneCutPostCutLookbackFrames,
-                includeEdgeCandidates: true);
+                includeEdgeCandidates: true,
+                cancellationToken: cancellationToken);
             var candidates = directCandidates
                 .Concat(postCutCandidates)
                 .Concat(trackPost.FilledGapFacesInfo)
@@ -109,7 +111,8 @@ namespace FaceShield.Services.Analysis
                 maxCenterShiftRatio: YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                 maxAreaChangeRatio: YoloSceneCutCandidateMatchMaxAreaChangeRatio,
                 includeEdgeCandidates: true,
-                includeIndependentStrongContinuation: true);
+                includeIndependentStrongContinuation: true,
+                cancellationToken: cancellationToken);
 
             if (candidates.Count > 0)
             {
