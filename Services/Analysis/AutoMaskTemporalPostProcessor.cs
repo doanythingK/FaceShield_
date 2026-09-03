@@ -306,53 +306,82 @@ namespace FaceShield.Services.Analysis
         public void ApplyTemporalSmoothing(
             FrameMaskProvider maskProvider,
             int totalFrames,
-            IReadOnlyList<string>? blockedCutPairs = null)
+            IReadOnlyList<string>? blockedCutPairs = null,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (totalFrames < 3)
                 return;
 
-            var blockedCutStarts = BuildTemporalSmoothingCutStarts(blockedCutPairs);
-            var facesByFrame = new List<Rect>?[totalFrames];
-            var confByFrame = new List<float>?[totalFrames];
-            var sizeByFrame = new PixelSize[totalFrames];
-            var hasStored = new bool[totalFrames];
-
+            var blockedCutStarts = BuildTemporalSmoothingCutStarts(
+                blockedCutPairs,
+                cancellationToken);
+            var storedFrames = new HashSet<int>();
             foreach (int index in maskProvider.GetStoredMaskFrameIndices())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (index >= 0 && index < totalFrames)
-                    hasStored[index] = true;
+                    storedFrames.Add(index);
             }
+
+            var facesByFrame = new Dictionary<int, List<Rect>>();
+            var confByFrame = new Dictionary<int, List<float>>();
+            var sizeByFrame = new Dictionary<int, PixelSize>();
 
             foreach (var entry in maskProvider.GetFaceMaskEntries())
             {
-                int i = entry.Key;
-                if (i < 0 || i >= totalFrames || hasStored[i])
+                cancellationToken.ThrowIfCancellationRequested();
+                int frameIndex = entry.Key;
+                if (frameIndex < 0 ||
+                    frameIndex >= totalFrames ||
+                    storedFrames.Contains(frameIndex))
+                {
                     continue;
+                }
 
                 var data = entry.Value;
-                if (data.Faces.Count > 0)
-                {
-                    facesByFrame[i] = new List<Rect>(data.Faces);
-                    confByFrame[i] = new List<float>(data.Confidences);
-                    sizeByFrame[i] = data.Size;
-                }
+                if (data.Faces.Count == 0)
+                    continue;
+
+                facesByFrame[frameIndex] = new List<Rect>(data.Faces);
+                confByFrame[frameIndex] = new List<float>(data.Confidences);
+                sizeByFrame[frameIndex] = data.Size;
             }
+
+            int[] smoothingFrameIndices = facesByFrame.Keys
+                .Where(static frameIndex => frameIndex > 0)
+                .Where(frameIndex => frameIndex < totalFrames - 1)
+                .OrderBy(static frameIndex => frameIndex)
+                .ToArray();
 
             for (int pass = 0; pass < TemporalSmoothPasses; pass++)
             {
-                for (int i = 1; i < totalFrames - 1; i++)
+                foreach (int frameIndex in smoothingFrameIndices)
                 {
-                    if (hasStored[i] || facesByFrame[i] == null)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!facesByFrame.TryGetValue(frameIndex, out var currentFaces))
                         continue;
 
-                    var currentFaces = facesByFrame[i]!;
                     var smoothed = new List<Rect>(currentFaces.Count);
-                    var prevFaces = FindNearestTemporalFaces(facesByFrame, i, -1, TemporalSmoothSearchWindowFrames, blockedCutStarts);
-                    var nextFaces = FindNearestTemporalFaces(facesByFrame, i, 1, TemporalSmoothSearchWindowFrames, blockedCutStarts);
+                    var prevFaces = FindNearestTemporalFaces(
+                        facesByFrame,
+                        frameIndex,
+                        -1,
+                        TemporalSmoothSearchWindowFrames,
+                        totalFrames,
+                        blockedCutStarts);
+                    var nextFaces = FindNearestTemporalFaces(
+                        facesByFrame,
+                        frameIndex,
+                        1,
+                        TemporalSmoothSearchWindowFrames,
+                        totalFrames,
+                        blockedCutStarts);
 
-                    for (int j = 0; j < currentFaces.Count; j++)
+                    for (int faceIndex = 0; faceIndex < currentFaces.Count; faceIndex++)
                     {
-                        var current = currentFaces[j];
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var current = currentFaces[faceIndex];
                         Rect target = current;
                         int targetCount = 0;
 
@@ -371,24 +400,37 @@ namespace FaceShield.Services.Analysis
                             targetCount++;
                         }
 
-                        smoothed.Add(targetCount == 0 ? current : BlendRect(current, target, TemporalSmoothWeight));
+                        smoothed.Add(
+                            targetCount == 0
+                                ? current
+                                : BlendRect(current, target, TemporalSmoothWeight));
                     }
 
-                    facesByFrame[i] = smoothed;
+                    facesByFrame[frameIndex] = smoothed;
                 }
             }
 
-            for (int i = 0; i < totalFrames; i++)
+            foreach (int frameIndex in facesByFrame.Keys.OrderBy(static index => index))
             {
-                if (hasStored[i] || facesByFrame[i] == null || facesByFrame[i]!.Count == 0 || sizeByFrame[i].Width <= 0 || sizeByFrame[i].Height <= 0)
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!facesByFrame.TryGetValue(frameIndex, out var faces) ||
+                    faces.Count == 0 ||
+                    !sizeByFrame.TryGetValue(frameIndex, out var size) ||
+                    size.Width <= 0 ||
+                    size.Height <= 0)
+                {
                     continue;
+                }
 
+                confByFrame.TryGetValue(frameIndex, out var confidences);
                 maskProvider.SetFaceRects(
-                    i,
-                    facesByFrame[i]!,
-                    sizeByFrame[i],
-                    minConfidence: confByFrame[i] == null || confByFrame[i]!.Count == 0 ? null : confByFrame[i]!.Min(),
-                    confidences: confByFrame[i]);
+                    frameIndex,
+                    faces,
+                    size,
+                    minConfidence: confidences == null || confidences.Count == 0
+                        ? null
+                        : confidences.Min(),
+                    confidences: confidences);
             }
         }
 
@@ -566,30 +608,38 @@ namespace FaceShield.Services.Analysis
         }
 
         private static IReadOnlyList<Rect>? FindNearestTemporalFaces(
-            IReadOnlyList<Rect>?[] facesByFrame,
+            IReadOnlyDictionary<int, List<Rect>> facesByFrame,
             int frameIndex,
             int direction,
             int maxDistanceFrames,
+            int totalFrames,
             IReadOnlySet<int>? blockedCutStarts)
         {
-            if (maxDistanceFrames <= 0)
+            if (maxDistanceFrames <= 0 || direction == 0)
                 return null;
 
             int index = frameIndex + direction;
             int searched = 0;
             int previousIndex = frameIndex;
-            while (index >= 0 && index < facesByFrame.Length)
+            while (index >= 0 && index < totalFrames)
             {
-                if (IsBlockedTemporalSmoothingStep(previousIndex, index, blockedCutStarts))
+                if (IsBlockedTemporalSmoothingStep(
+                        previousIndex,
+                        index,
+                        blockedCutStarts))
+                {
                     break;
+                }
 
                 searched++;
                 if (searched > maxDistanceFrames)
                     break;
 
-                var faces = facesByFrame[index];
-                if (faces != null && faces.Count > 0)
+                if (facesByFrame.TryGetValue(index, out var faces) &&
+                    faces.Count > 0)
+                {
                     return faces;
+                }
 
                 previousIndex = index;
                 index += direction;
@@ -598,7 +648,9 @@ namespace FaceShield.Services.Analysis
             return null;
         }
 
-        private static IReadOnlySet<int> BuildTemporalSmoothingCutStarts(IReadOnlyList<string>? cutPairs)
+        private static IReadOnlySet<int> BuildTemporalSmoothingCutStarts(
+            IReadOnlyList<string>? cutPairs,
+            CancellationToken cancellationToken)
         {
             if (cutPairs == null || cutPairs.Count == 0)
                 return new HashSet<int>();
@@ -606,6 +658,7 @@ namespace FaceShield.Services.Analysis
             var blocked = new HashSet<int>();
             foreach (string pair in cutPairs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (string.IsNullOrWhiteSpace(pair))
                     continue;
 
@@ -622,7 +675,10 @@ namespace FaceShield.Services.Analysis
                 int start = Math.Min(a, b);
                 int end = Math.Max(a, b);
                 for (int frame = start; frame < end; frame++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     blocked.Add(frame);
+                }
             }
 
             return blocked;
