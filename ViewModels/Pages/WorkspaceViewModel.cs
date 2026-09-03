@@ -1078,6 +1078,8 @@ namespace FaceShield.ViewModels.Pages
                 // Settle any pending manual bitmap into the provider before Auto becomes
                 // the sole mask writer for the run.
                 FramePreview.PersistCurrentMask();
+                AutoExecutionProviderLabel = null;
+                AutoExecutionProviderError = null;
                 _isAutoRunning = true;
                 _autoCts = cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
@@ -1682,6 +1684,8 @@ namespace FaceShield.ViewModels.Pages
                 return false;
 
             FramePreview.PersistCurrentMask();
+            AutoExecutionProviderLabel = null;
+            AutoExecutionProviderError = null;
             _isAutoRunning = true;
             _autoCts = new CancellationTokenSource();
             bool refreshPreviewAfterAuto = false;
