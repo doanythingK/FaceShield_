@@ -69,7 +69,7 @@ internal static unsafe class VideoExportFidelityPolicy
         if (descriptor->nb_components != 3)
         {
             error =
-                $"RGB 색상 성분 수({descriptor->nb_components})를 H.264에서 정확히 보존할 수 없습니다.";
+                $"RGB 색상 성분 수({descriptor->nb_components})는 현재 RGB H.264 품질 경로에서 지원하지 않습니다.";
             return false;
         }
         if (descriptor->log2_chroma_w != 0 || descriptor->log2_chroma_h != 0)
