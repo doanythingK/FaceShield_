@@ -2,6 +2,7 @@ using Avalonia;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Analysis
 {
@@ -9,13 +10,15 @@ namespace FaceShield.Services.Analysis
     {
         public IReadOnlyList<FaceTrack> Build(
             IReadOnlyDictionary<int, IReadOnlyList<FaceTrackDetection>> detectionsByFrame,
-            FaceTrackPostProcessOptions options)
+            FaceTrackPostProcessOptions options,
+            CancellationToken cancellationToken = default)
         {
             var tracks = new List<FaceTrack>();
             int nextTrackId = 1;
 
             foreach (var frame in detectionsByFrame.OrderBy(static x => x.Key))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var frameDetections = frame.Value
                     .OrderByDescending(static x => x.Confidence)
                     .ToArray();
@@ -25,11 +28,13 @@ namespace FaceShield.Services.Analysis
                 var usedTracks = new HashSet<int>();
                 foreach (var detection in frameDetections)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     FaceTrack? bestTrack = null;
                     double bestScore = double.NegativeInfinity;
 
                     foreach (var track in tracks)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (usedTracks.Contains(track.Id))
                             continue;
 
