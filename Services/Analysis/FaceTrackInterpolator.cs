@@ -3,6 +3,7 @@ using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Analysis
 {
@@ -13,27 +14,31 @@ namespace FaceShield.Services.Analysis
             int totalFrames,
             FaceTrackPostProcessOptions? options = null,
             IReadOnlySet<int>? blockedSceneCutStarts = null,
-            int mutableStartFrameIndex = 0)
+            int mutableStartFrameIndex = 0,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             options ??= new FaceTrackPostProcessOptions();
             if (totalFrames < 3)
                 return FaceTrackPostProcessResult.Empty;
             int firstMutableFrame = Math.Clamp(mutableStartFrameIndex, 0, totalFrames);
 
-            var hasStoredMask = new bool[totalFrames];
+            var hasStoredMask = new SparseFrameSet();
             foreach (int index in maskProvider.GetStoredMaskFrameIndices())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (index >= 0 && index < totalFrames)
                     hasStoredMask[index] = true;
             }
 
-            var facesByFrame = new List<Rect>?[totalFrames];
-            var confByFrame = new List<float>?[totalFrames];
-            var sizeByFrame = new PixelSize[totalFrames];
+            var facesByFrame = new SparseFrameMap<List<Rect>?>(totalFrames);
+            var confByFrame = new SparseFrameMap<List<float>?>(totalFrames);
+            var sizeByFrame = new SparseFrameMap<PixelSize>(totalFrames);
             var detectionsByFrame = new Dictionary<int, IReadOnlyList<FaceTrackDetection>>();
 
             foreach (var entry in maskProvider.GetFaceMaskEntries())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entry.Key;
                 if (frameIndex < 0 || frameIndex >= totalFrames || hasStoredMask[frameIndex])
                     continue;
@@ -56,21 +61,21 @@ namespace FaceShield.Services.Analysis
             }
 
             var builder = new FaceTrackBuilder();
-            var tracks = builder.Build(detectionsByFrame, options);
+            var tracks = builder.Build(detectionsByFrame, options, cancellationToken);
             var removedTrackIds = new HashSet<int>();
             var gapFilledFaces = new List<FaceTrackFilledFace>();
             var lostFillFrameIndices = new List<int>();
             var lostFilledFaces = new List<FaceTrackFilledFace>();
             var initialFilledFaces = new List<FaceTrackFilledFace>();
-            int removedUnstableTailFaces = TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
-            int removedEdgeTailFaces = TrimEdgeLowConfidenceTails(tracks, facesByFrame, confByFrame, options);
-            int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
-            int removedSparseFaces = RemoveSparseLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
-            int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds);
-            int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces, blockedSceneCutStarts, firstMutableFrame);
-            int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces, blockedSceneCutStarts, firstMutableFrame);
-            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces, blockedSceneCutStarts, firstMutableFrame, out int blockedInitialFillTracks);
-            int rewrittenFrames = RewriteMaskProvider(maskProvider, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, firstMutableFrame);
+            int removedUnstableTailFaces = TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options, cancellationToken);
+            int removedEdgeTailFaces = TrimEdgeLowConfidenceTails(tracks, facesByFrame, confByFrame, options, cancellationToken);
+            int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
+            int removedSparseFaces = RemoveSparseLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
+            int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
+            int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces, blockedSceneCutStarts, firstMutableFrame, cancellationToken);
+            int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces, blockedSceneCutStarts, firstMutableFrame, cancellationToken);
+            int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces, blockedSceneCutStarts, firstMutableFrame, out int blockedInitialFillTracks, cancellationToken);
+            int rewrittenFrames = RewriteMaskProvider(maskProvider, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, firstMutableFrame, cancellationToken);
 
             return new FaceTrackPostProcessResult(
                 tracks.Count,
@@ -92,9 +97,10 @@ namespace FaceShield.Services.Analysis
 
         private static int TrimUnstableLowConfidenceTails(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
-            FaceTrackPostProcessOptions options)
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            FaceTrackPostProcessOptions options,
+            CancellationToken cancellationToken)
         {
             if (options.UnstableTailMaxConfidence <= 0)
                 return 0;
@@ -102,6 +108,7 @@ namespace FaceShield.Services.Analysis
             int removed = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int keepCount = track.DetectionCount;
                 while (keepCount > options.UnstableTailMinStableDetections)
                 {
@@ -126,9 +133,10 @@ namespace FaceShield.Services.Analysis
 
         private static int TrimEdgeLowConfidenceTails(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
-            FaceTrackPostProcessOptions options)
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            FaceTrackPostProcessOptions options,
+            CancellationToken cancellationToken)
         {
             if (options.EdgeTailMaxConfidence <= 0)
                 return 0;
@@ -136,6 +144,7 @@ namespace FaceShield.Services.Analysis
             int removed = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int keepCount = track.DetectionCount;
                 while (keepCount > options.EdgeTailMinStableDetections)
                 {
@@ -160,10 +169,11 @@ namespace FaceShield.Services.Analysis
 
         private static int RemoveLowerFrameLowConfidenceTracks(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
             FaceTrackPostProcessOptions options,
-            ISet<int> removedTrackIds)
+            ISet<int> removedTrackIds,
+            CancellationToken cancellationToken)
         {
             if (options.LowerFrameTrackMaxConfidence <= 0)
                 return 0;
@@ -171,6 +181,7 @@ namespace FaceShield.Services.Analysis
             int removed = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (removedTrackIds.Contains(track.Id) ||
                     track.MaxConfidence > options.LowerFrameTrackMaxConfidence ||
                     !IsLowerFrameMediumAreaTrack(track, options))
@@ -179,7 +190,7 @@ namespace FaceShield.Services.Analysis
                 }
 
                 removedTrackIds.Add(track.Id);
-                removed += RemoveTrackDetections(track, facesByFrame, confByFrame);
+                removed += RemoveTrackDetections(track, facesByFrame, confByFrame, cancellationToken);
             }
 
             return removed;
@@ -224,8 +235,8 @@ namespace FaceShield.Services.Analysis
 
         private static void RemoveDetectionFromFrame(
             FaceTrackDetection detection,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame)
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame)
         {
             var faces = facesByFrame[detection.FrameIndex];
             var confs = confByFrame[detection.FrameIndex];
@@ -251,14 +262,16 @@ namespace FaceShield.Services.Analysis
 
         private static int RemoveShortLowConfidenceTracks(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
             FaceTrackPostProcessOptions options,
-            ISet<int> removedTrackIds)
+            ISet<int> removedTrackIds,
+            CancellationToken cancellationToken)
         {
             int removed = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&
                     track.MaxConfidence < options.ShortTrackMaxConfidence;
                 bool removeShortSmall = track.DetectionCount <= options.DropShortSmallTrackMaxDetections &&
@@ -269,7 +282,7 @@ namespace FaceShield.Services.Analysis
                     continue;
 
                 removedTrackIds.Add(track.Id);
-                removed += RemoveTrackDetections(track, facesByFrame, confByFrame);
+                removed += RemoveTrackDetections(track, facesByFrame, confByFrame, cancellationToken);
             }
 
             return removed;
@@ -277,10 +290,11 @@ namespace FaceShield.Services.Analysis
 
         private static int RemoveSparseLowConfidenceTracks(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
             FaceTrackPostProcessOptions options,
-            ISet<int> removedTrackIds)
+            ISet<int> removedTrackIds,
+            CancellationToken cancellationToken)
         {
             if (options.DropSparseTrackMaxDetections <= 0 ||
                 options.SparseTrackMaxConfidence <= 0 ||
@@ -292,6 +306,7 @@ namespace FaceShield.Services.Analysis
             int removed = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (removedTrackIds.Contains(track.Id) ||
                     !IsSparseLowConfidenceTrack(track, tracks, options))
                 {
@@ -299,7 +314,7 @@ namespace FaceShield.Services.Analysis
                 }
 
                 removedTrackIds.Add(track.Id);
-                removed += RemoveTrackDetections(track, facesByFrame, confByFrame);
+                removed += RemoveTrackDetections(track, facesByFrame, confByFrame, cancellationToken);
             }
 
             return removed;
@@ -328,12 +343,14 @@ namespace FaceShield.Services.Analysis
 
         private static int RemoveTrackDetections(
             FaceTrack track,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame)
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            CancellationToken cancellationToken)
         {
             int removed = 0;
             foreach (var detection in track.Detections)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var faces = facesByFrame[detection.FrameIndex];
                 var confs = confByFrame[detection.FrameIndex];
                 if (faces == null || confs == null)
@@ -415,19 +432,21 @@ namespace FaceShield.Services.Analysis
 
         private static int FillShortTrackGaps(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
-            PixelSize[] sizeByFrame,
-            bool[] hasStoredMask,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            SparseFrameMap<PixelSize> sizeByFrame,
+            SparseFrameSet hasStoredMask,
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
             ICollection<FaceTrackFilledFace> gapFilledFaces,
             IReadOnlySet<int>? blockedSceneCutStarts,
-            int firstMutableFrame)
+            int firstMutableFrame,
+            CancellationToken cancellationToken)
         {
             int filled = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (removedTrackIds.Contains(track.Id))
                     continue;
 
@@ -457,6 +476,7 @@ namespace FaceShield.Services.Analysis
 
                     for (int frameIndex = previous.FrameIndex + 1; frameIndex < next.FrameIndex; frameIndex++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (frameIndex < firstMutableFrame)
                             continue;
                         if (hasStoredMask[frameIndex])
@@ -496,16 +516,17 @@ namespace FaceShield.Services.Analysis
 
         private static int FillConfirmedInitialFrames(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
-            PixelSize[] sizeByFrame,
-            bool[] hasStoredMask,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            SparseFrameMap<PixelSize> sizeByFrame,
+            SparseFrameSet hasStoredMask,
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
             ICollection<FaceTrackFilledFace> initialFilledFaces,
             IReadOnlySet<int>? blockedSceneCutStarts,
             int firstMutableFrame,
-            out int blockedInitialFillTracks)
+            out int blockedInitialFillTracks,
+            CancellationToken cancellationToken)
         {
             blockedInitialFillTracks = 0;
             if (options.MaxInitialFillFrames <= 0)
@@ -514,6 +535,7 @@ namespace FaceShield.Services.Analysis
             int filled = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (removedTrackIds.Contains(track.Id) ||
                     !IsConfirmedTrack(track, options) ||
                     track.Detections.Count < 2)
@@ -545,6 +567,7 @@ namespace FaceShield.Services.Analysis
 
                 for (int offset = 1; offset <= options.MaxInitialFillFrames; offset++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int frameIndex = first.FrameIndex - offset;
                     if (frameIndex < firstMutableFrame)
                         break;
@@ -643,16 +666,17 @@ namespace FaceShield.Services.Analysis
 
         private static int FillConfirmedLostFrames(
             IReadOnlyList<FaceTrack> tracks,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
-            PixelSize[] sizeByFrame,
-            bool[] hasStoredMask,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            SparseFrameMap<PixelSize> sizeByFrame,
+            SparseFrameSet hasStoredMask,
             FaceTrackPostProcessOptions options,
             IReadOnlySet<int> removedTrackIds,
             ICollection<int> lostFillFrameIndices,
             ICollection<FaceTrackFilledFace> lostFilledFaces,
             IReadOnlySet<int>? blockedSceneCutStarts,
-            int firstMutableFrame)
+            int firstMutableFrame,
+            CancellationToken cancellationToken)
         {
             if (options.MaxLostFillFrames <= 0)
                 return 0;
@@ -660,6 +684,7 @@ namespace FaceShield.Services.Analysis
             int filled = 0;
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (removedTrackIds.Contains(track.Id) ||
                     !IsConfirmedTrack(track, options))
                 {
@@ -691,6 +716,7 @@ namespace FaceShield.Services.Analysis
 
                 for (int offset = 1; offset <= options.MaxLostFillFrames; offset++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int frameIndex = lastFrame + offset;
                     if (frameIndex >= facesByFrame.Length)
                         break;
@@ -785,15 +811,19 @@ namespace FaceShield.Services.Analysis
 
         private static int RewriteMaskProvider(
             FrameMaskProvider maskProvider,
-            List<Rect>?[] facesByFrame,
-            List<float>?[] confByFrame,
-            PixelSize[] sizeByFrame,
-            bool[] hasStoredMask,
-            int firstMutableFrame)
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            SparseFrameMap<PixelSize> sizeByFrame,
+            SparseFrameSet hasStoredMask,
+            int firstMutableFrame,
+            CancellationToken cancellationToken)
         {
             int rewritten = 0;
-            for (int frameIndex = firstMutableFrame; frameIndex < facesByFrame.Length; frameIndex++)
+            foreach (int frameIndex in facesByFrame.TouchedKeys
+                         .Where(index => index >= firstMutableFrame)
+                         .OrderBy(static index => index))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (hasStoredMask[frameIndex])
                     continue;
 
@@ -824,6 +854,52 @@ namespace FaceShield.Services.Analysis
             }
 
             return rewritten;
+        }
+
+        private sealed class SparseFrameMap<T>
+        {
+            private readonly Dictionary<int, T> _values = new();
+            private readonly HashSet<int> _touched = new();
+
+            public SparseFrameMap(int length)
+            {
+                Length = Math.Max(0, length);
+            }
+
+            public int Length { get; }
+            public IEnumerable<int> TouchedKeys => _touched;
+
+            public T this[int frameIndex]
+            {
+                get => _values.TryGetValue(frameIndex, out var value)
+                    ? value
+                    : default!;
+                set
+                {
+                    _touched.Add(frameIndex);
+                    if (EqualityComparer<T>.Default.Equals(value, default!))
+                        _values.Remove(frameIndex);
+                    else
+                        _values[frameIndex] = value;
+                }
+            }
+        }
+
+        private sealed class SparseFrameSet
+        {
+            private readonly HashSet<int> _values = new();
+
+            public bool this[int frameIndex]
+            {
+                get => _values.Contains(frameIndex);
+                set
+                {
+                    if (value)
+                        _values.Add(frameIndex);
+                    else
+                        _values.Remove(frameIndex);
+                }
+            }
         }
 
         private static List<float> NormalizeConfidences(
