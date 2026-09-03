@@ -22,7 +22,7 @@ namespace FaceShield.Services.Video
         private static readonly object _timelineCacheLock = new();
         private static readonly Dictionary<FrameTimelineCacheKey, DecodedFrameTimeline> _timelineCache = new();
         private const int MaxTimelineCacheEntries = 8;
-        private const int MaxCachedTimelineFramesPerVideo = 500_000;
+        private const int MaxCachedTimelineFramesPerVideo = 1_000_000;
         private const int MaxCachedTimelineFramesTotal = 1_000_000;
         private static readonly AVIOInterruptCB_callback IoInterruptCallback =
             HandleIoInterrupt;
