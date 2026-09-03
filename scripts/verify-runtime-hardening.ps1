@@ -52,6 +52,8 @@ $trackInterpolator = Read-RepoFile "Services/Analysis/FaceTrackInterpolator.cs"
 $trackBuilder = Read-RepoFile "Services/Analysis/FaceTrackBuilder.cs"
 $exportFidelity = Read-RepoFile "Services/Video/VideoExportFidelityPolicy.cs"
 $yoloFinalPostProcessor = Read-RepoFile "Services/Analysis/YoloFinalMaskPostProcessor.cs"
+$yoloRiskCascade = Read-RepoFile "Services/Analysis/YoloRiskCascadeStep.cs"
+$frameMaskProvider = Read-RepoFile "Services/Video/FrameMaskProvider.cs"
 $sceneCutGuard = Read-RepoFile "Services/Analysis/FaceTrackSceneCutGuard.cs"
 $yoloSceneCutPostProcessor = Read-RepoFile "Services/Analysis/YoloSceneCutPostProcessor.cs"
 $toolPanel = Read-RepoFile "ViewModels/Workspace/ToolPanelViewModel.cs"
@@ -95,6 +97,24 @@ Assert-Match "auto scene carry cleanup forwards cancellation" $autoPostProcess '
 Assert-Match "auto scene carry blocked-frame generation forwards cancellation" $autoPostProcess 'BuildSceneCutCarryBlockedFrames\([\s\S]{0,300}cancellationToken\)'
 Assert-Match "final mask summary call forwards cancellation" $autoPostProcess 'finalSceneCutPostGapFillPairSourceBreakdown:\s*finalSceneCutPostGapFillPairSourceBreakdown,[\s\S]{0,160}cancellationToken:\s*cancellationToken'
 Assert-Match "final mask summary implementation checks cancellation" $autoPostProcess 'string\s+finalSceneCutPostGapFillPairSourceBreakdown\s*=[\s\S]{0,260}CancellationToken\s+cancellationToken\s*=\s*default\)[\s\S]{0,160}ThrowIfCancellationRequested\(\)'
+
+Assert-Match "risk cascade precomputation accepts cancellation" $yoloRiskCascade 'BuildRiskFrames\([\s\S]{0,320}CancellationToken\s+cancellationToken[\s\S]{0,300}ThrowIfCancellationRequested\(\)'
+Assert-Match "risk cascade forwards cancellation into track building" $yoloRiskCascade 'FaceTrackBuilder\(\)\.Build\([\s\S]{0,220}cancellationToken\)'
+Assert-Match "risk cascade separates cancellation from ordinary failures" $yoloRiskCascade 'catch\s*\(OperationCanceledException\)[\s\S]{0,80}throw;[\s\S]{0,120}catch\s*\(Exception\s+ex\)'
+Assert-Match "risk cascade checks cancellation after synchronous secondary detection" $yoloRiskCascade 'DetectFacesBgra\([\s\S]{0,420}detectTimer\.Stop\(\);[\s\S]{0,120}ThrowIfCancellationRequested\(\)'
+Assert-Match "risk cascade checks cancellation while committing accepted secondary faces" $yoloRiskCascade 'foreach\s*\(var\s+entry\s+in\s+strongResults[\s\S]{0,260}ThrowIfCancellationRequested\(\)[\s\S]{0,2600}SetFaceRects\('
+
+Assert-Match "mask provider serializes cross-store state changes" $frameMaskProvider 'private\s+readonly\s+object\s+_stateGate\s*=\s*new\(\)[\s\S]{0,1000}SetMask\([\s\S]{0,500}lock\s*\(_stateGate\)[\s\S]*SetFaceRects\([\s\S]{0,500}lock\s*\(_stateGate\)'
+Assert-Match "mask provider snapshot exposes source version and cancellation" $frameMaskProvider 'CreateSnapshot\([\s\S]{0,180}out\s+long\s+sourceVersion[\s\S]{0,160}CancellationToken\s+cancellationToken[\s\S]{0,260}ThrowIfCancellationRequested\(\)'
+Assert-Match "mask provider staged commit validates live version before replacement" $frameMaskProvider 'CommitFaceMasksFrom\([\s\S]{0,280}expectedVersion[\s\S]{0,700}_version\s*!=\s*expectedVersion[\s\S]{0,600}_faceMasks\.Clear\(\)'
+Assert-Match "mask provider staged commit keeps stored manual masks authoritative" $frameMaskProvider 'CommitFaceMasksFrom\([\s\S]{0,1200}_masks\.ContainsKey\(entry\.Key\)[\s\S]{0,220}continue'
+Assert-Match "bitmap snapshot copy checks cancellation per row" $frameMaskProvider 'CloneBitmap\([\s\S]{0,140}CancellationToken\s+cancellationToken[\s\S]{0,900}for\s*\(int\s+y[\s\S]{0,140}ThrowIfCancellationRequested\(\)'
+
+Assert-Match "risk cascade and postprocess run on one staged provider" $autoMask 'CreateSnapshot\([\s\S]{0,180}providerVersion[\s\S]{0,500}YoloRiskCascadeStep\(\)\.Apply\([\s\S]{0,180}workingProvider[\s\S]{0,900}AutoMaskPostProcessPipeline\([\s\S]{0,180}workingProvider'
+Assert-Match "staged auto face state commits only after postprocess succeeds" $autoMask 'postProcess\.Apply\([\s\S]{0,700}ThrowIfCancellationRequested\(\)[\s\S]{0,320}CommitFaceMasksFrom\([\s\S]{0,260}providerVersion'
+Assert-Match "single frame auto checks cancellation after synchronous detection" $autoMask 'GenerateFrameAsync\([\s\S]{0,2200}DetectFacesWithOptions\(frame\);[\s\S]{0,120}ThrowIfCancellationRequested\(\)'
+Assert-Match "single frame auto checks cancellation immediately before mask commit" $autoMask 'BuildMaskPayload\(faces\);[\s\S]{0,140}ThrowIfCancellationRequested\(\);[\s\S]{0,180}_maskProvider\.SetFaceRects\('
+Assert-Match "deterministic scene cut overload is cooperatively cancellable" $sceneCutGuard 'Func<int,\s*int,\s*double>\s+frameDifferenceProvider[\s\S]{0,700}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,220}ThrowIfCancellationRequested\(\)'
 
 Assert-Match "auto anomaly review accepts cancellation" $workspace 'BuildAutoAnomaliesAsync\(\s*CancellationToken\s+cancellationToken\)[\s\S]{0,500}ThrowIfCancellationRequested\(\)'
 Assert-NotMatch "auto anomaly review does not allocate total-frame bool array" $workspace 'BuildAutoAnomaliesAsync\([\s\S]{0,6000}new\s+bool\[total\]'
