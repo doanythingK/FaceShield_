@@ -27,10 +27,9 @@ namespace FaceShield.Services.Analysis
         {
             ct.ThrowIfCancellationRequested();
             VideoMetadataInfo metadata = VideoMetadataReader.Read(videoPath, ct);
-            double fps = metadata.Fps;
             int totalFrames = metadata.GetFrameCountEstimate();
 
-            if (fps <= 0 || totalFrames <= 0)
+            if (totalFrames <= 0)
                 return Array.Empty<FrameAnalysisResult>();
 
             var list = new List<FrameAnalysisResult>();
@@ -55,7 +54,7 @@ namespace FaceShield.Services.Analysis
                         idx,
                         out double decodedTimestampSec)
                             ? decodedTimestampSec
-                            : idx / fps;
+                            : double.NaN;
 
                     list.Add(new FrameAnalysisResult
                     {
