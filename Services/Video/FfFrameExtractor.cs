@@ -131,7 +131,7 @@ namespace FaceShield.Services.Video
         }
 
         private readonly object _sync = new();
-        private readonly VideoIoInterruptGuard _ioInterrupt = new();
+        private readonly VideoIoInterruptGuard? _ioInterrupt;
 
         private AVFormatContext* _fmt;
         private AVCodecContext* _dec;
@@ -195,6 +195,7 @@ namespace FaceShield.Services.Video
 
             try
             {
+                _ioInterrupt = new VideoIoInterruptGuard();
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // Allocate the format context ourselves so AVIOInterruptCB is active
@@ -1782,11 +1783,19 @@ namespace FaceShield.Services.Video
         }
 
         private void ConfigureIoInterrupt(AVFormatContext* format)
-            => _ioInterrupt.Configure(format);
+        {
+            var ioInterrupt = _ioInterrupt ??
+                throw new InvalidOperationException("FFmpeg I/O interrupt guard is not initialized.");
+            ioInterrupt.Configure(format);
+        }
 
         private VideoIoInterruptGuard.InterruptScope BeginIoInterrupt(
             CancellationToken cancellationToken)
-            => _ioInterrupt.Begin(cancellationToken);
+        {
+            var ioInterrupt = _ioInterrupt ??
+                throw new InvalidOperationException("FFmpeg I/O interrupt guard is not initialized.");
+            return ioInterrupt.Begin(cancellationToken);
+        }
 
         private int ReadFrameInterruptibly(
             AVFormatContext* format,
@@ -2533,7 +2542,7 @@ namespace FaceShield.Services.Video
             }
             finally
             {
-                _ioInterrupt.Dispose();
+                _ioInterrupt?.Dispose();
                 if (Interlocked.Exchange(ref _timelineOwnerReleased, 1) == 0)
                     ReleaseDecodedFrameTimeline(_decodedFrameTimeline);
             }
