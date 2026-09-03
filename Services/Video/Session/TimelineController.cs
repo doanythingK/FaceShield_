@@ -1,5 +1,6 @@
 using Avalonia.Media.Imaging;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -43,8 +44,9 @@ public sealed class TimelineController : IDisposable
         {
             return null;
         }
-        catch
+        catch (Exception ex)
         {
+            ReportRequestFailure("thumbnail", frameIndex, ex);
             return null;
         }
     }
@@ -68,8 +70,9 @@ public sealed class TimelineController : IDisposable
         {
             return null;
         }
-        catch
+        catch (Exception ex)
         {
+            ReportRequestFailure("exact-debounced", frameIndex, ex);
             return null;
         }
     }
@@ -92,10 +95,20 @@ public sealed class TimelineController : IDisposable
         {
             return null;
         }
-        catch
+        catch (Exception ex)
         {
+            ReportRequestFailure("exact-now", frameIndex, ex);
             return null;
         }
+    }
+
+    private static void ReportRequestFailure(
+        string operation,
+        int frameIndex,
+        Exception exception)
+    {
+        Debug.WriteLine(
+            $"[TimelineController] operation={operation} frame={frameIndex} error={exception.GetType().Name}: {exception.Message}");
     }
 
     private CancellationToken ReplaceRequestToken(ref CancellationTokenSource? slot)
