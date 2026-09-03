@@ -1120,6 +1120,7 @@ namespace FaceShield.Services.Analysis
                     }
 
                     var faces = DetectFacesWithOptions(frame);
+                    ct.ThrowIfCancellationRequested();
                     if (faces.Count > 0)
                     {
                         int rawFaceCount = faces.Count;
@@ -1140,13 +1141,16 @@ namespace FaceShield.Services.Analysis
                                     1.0,
                                     _faceFilterSettings);
                             }
+                            ct.ThrowIfCancellationRequested();
                         }
                         WriteDetectionDiagnostics(frameIndex, rawFaceCount, faces, frame.PixelSize);
                     }
 
+                    ct.ThrowIfCancellationRequested();
                     if (faces != null && faces.Count > 0)
                     {
                         var payload = BuildMaskPayload(faces);
+                        ct.ThrowIfCancellationRequested();
                         _maskProvider.SetFaceRects(
                             frameIndex,
                             payload.Bounds,
@@ -1905,11 +1909,14 @@ namespace FaceShield.Services.Analysis
 
         private AutoMaskPostProcessResult RunAutoPostProcessIfNeeded(string videoPath, int totalFrames, CancellationToken ct)
         {
-            if (ct.IsCancellationRequested || totalFrames <= 0)
+            ct.ThrowIfCancellationRequested();
+            if (totalFrames <= 0)
                 return AutoMaskPostProcessResult.Empty;
 
+            using var workingProvider = _maskProvider.CreateSnapshot(out long providerVersion);
+
             var cascadeResult = new YoloRiskCascadeStep().Apply(
-                _maskProvider,
+                workingProvider,
                 videoPath,
                 totalFrames,
                 LastRunSummary?.StartFrameIndex ?? 0,
@@ -1918,10 +1925,11 @@ namespace FaceShield.Services.Analysis
                 _options,
                 _frameTimings,
                 ct);
-            ApplyYoloRiskCascadeResultToRunSummary(cascadeResult);
+
+            ct.ThrowIfCancellationRequested();
 
             var postProcess = new AutoMaskPostProcessPipeline(
-                _maskProvider,
+                workingProvider,
                 _options,
                 totalFrames,
                 _sourceFpsForSummary,
@@ -1929,12 +1937,25 @@ namespace FaceShield.Services.Analysis
                 _sceneCutStarts,
                 _postProcessStartFrameIndex);
 
-            return postProcess.Apply(
+            var postProcessResult = postProcess.Apply(
                 videoPath,
                 ct,
                 _detector as IBgraFaceDetector,
                 _options.RoiRefinerDetectorOptions,
                 _options.UseFaceOnnxRoiRefiner);
+
+            ct.ThrowIfCancellationRequested();
+
+            // Detection results remain on the live provider while risk cascade and
+            // post-processing mutate the isolated working copy. The live face state is
+            // replaced only after the whole staged phase succeeds.
+            _maskProvider.CommitFaceMasksFrom(
+                workingProvider,
+                providerVersion,
+                ct);
+
+            ApplyYoloRiskCascadeResultToRunSummary(cascadeResult);
+            return postProcessResult;
         }
 
         private void ApplyYoloRiskCascadeResultToRunSummary(YoloRiskCascadeResult result)
