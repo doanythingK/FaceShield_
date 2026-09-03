@@ -272,7 +272,8 @@ namespace FaceShield.Services.Workspace
                 state.AutoExportHybridPolicyAvailable,
                 state.AutoExportAllowHybridCopy,
                 state.AutoExportHybridDisableReasons,
-                state.AutoExecutionSignature);
+                state.AutoExecutionSignature,
+                state.TimelineExtentSeconds);
         }
 
         public void SaveWorkspace(WorkspaceSnapshot snapshot, FrameMaskProvider maskProvider)
@@ -334,6 +335,7 @@ namespace FaceShield.Services.Workspace
                     SelectedFrameIndex = snapshot.SelectedFrameIndex,
                     ViewStartSeconds = snapshot.ViewStartSeconds,
                     SecondsPerScreen = snapshot.SecondsPerScreen,
+                    TimelineExtentSeconds = snapshot.TimelineExtentSeconds,
                     LastOpened = snapshot.LastOpened,
                     MaskIndices = indices,
                     FaceMasks = faceMasks,
@@ -744,6 +746,7 @@ namespace FaceShield.Services.Workspace
             public int SelectedFrameIndex { get; set; }
             public double ViewStartSeconds { get; set; }
             public double SecondsPerScreen { get; set; }
+            public double TimelineExtentSeconds { get; set; }
             public DateTimeOffset LastOpened { get; set; }
             public List<int> MaskIndices { get; set; } = new();
             public List<FaceMaskState> FaceMasks { get; set; } = new();
@@ -854,6 +857,7 @@ namespace FaceShield.Services.Workspace
         public int SelectedFrameIndex { get; }
         public double ViewStartSeconds { get; }
         public double SecondsPerScreen { get; }
+        public double TimelineExtentSeconds { get; }
         public DateTimeOffset LastOpened { get; }
         public int AutoResumeIndex { get; }
         public bool AutoCompleted { get; }
@@ -882,13 +886,17 @@ namespace FaceShield.Services.Workspace
             bool autoExportHybridPolicyAvailable,
             bool autoExportAllowHybridCopy,
             string? autoExportHybridDisableReasons,
-            string? autoExecutionSignature = null)
+            string? autoExecutionSignature = null,
+            double timelineExtentSeconds = 0)
         {
             VideoPath = videoPath;
             Mode = mode;
             SelectedFrameIndex = selectedFrameIndex;
             ViewStartSeconds = viewStartSeconds;
             SecondsPerScreen = secondsPerScreen;
+            TimelineExtentSeconds = double.IsFinite(timelineExtentSeconds) && timelineExtentSeconds > 0
+                ? timelineExtentSeconds
+                : 0;
             LastOpened = lastOpened;
             AutoResumeIndex = autoResumeIndex;
             AutoCompleted = autoCompleted;
