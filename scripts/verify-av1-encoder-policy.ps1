@@ -91,6 +91,13 @@ AssertTargetBitrate(
     codecId: AVCodecID.AV_CODEC_ID_AV1,
     expected: 30_000_000);
 AssertTargetBitrate(
+    "medium-bitrate 4K bounded uplift",
+    sourceBitrate: 8_000_000,
+    width: 3840,
+    height: 2160,
+    codecId: AVCodecID.AV_CODEC_ID_H264,
+    expected: 10_000_000);
+AssertTargetBitrate(
     "legacy H264 source scale",
     sourceBitrate: 1_000_000,
     width: 3840,
