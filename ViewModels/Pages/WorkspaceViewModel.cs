@@ -224,6 +224,9 @@ namespace FaceShield.ViewModels.Pages
 
             ToolPanel.SaveRequested += async () =>
             {
+                if (_isAutoRunning || ToolPanel.IsAutoRunning)
+                    return;
+
                 FramePreview.PersistCurrentMask();
 
                 try
@@ -1067,6 +1070,9 @@ namespace FaceShield.ViewModels.Pages
             if (_isAutoRunning || !TryBeginLifetimeOperation())
                 return Task.FromResult(false);
 
+            // Settle any pending manual bitmap into the provider before Auto becomes
+            // the sole mask writer for the run.
+            FramePreview.PersistCurrentMask();
             _isAutoRunning = true;
             _autoCts = cancellationToken.CanBeCanceled
                 ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
