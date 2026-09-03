@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Analysis
 {
@@ -64,7 +65,8 @@ namespace FaceShield.Services.Analysis
             FrameMaskProvider maskProvider,
             int totalFrames,
             IReadOnlySet<int>? blockedSceneCutStarts = null,
-            int mutableStartFrameIndex = 0)
+            int mutableStartFrameIndex = 0,
+            CancellationToken cancellationToken = default)
         {
             if (totalFrames < 2)
                 return 0;
@@ -77,68 +79,78 @@ namespace FaceShield.Services.Analysis
             const double matchCenterShiftMax = 0.70;
             const double matchAreaRatioMax = 2.8;
 
-            var facesByFrame = new List<Rect>?[totalFrames];
-            var confByFrame = new List<float>?[totalFrames];
-            var sizeByFrame = new PixelSize[totalFrames];
-            var hasStored = new bool[totalFrames];
+            int[] faceFrameIndices = maskProvider.GetFaceMaskFrameIndices();
+            if (faceFrameIndices.Length < 2)
+                return 0;
 
-            foreach (int index in maskProvider.GetStoredMaskFrameIndices())
-            {
-                if (index >= 0 && index < totalFrames)
-                    hasStored[index] = true;
-            }
+            Array.Sort(faceFrameIndices);
+            var storedMaskFrames =
+                new HashSet<int>(maskProvider.GetStoredMaskFrameIndices());
 
-            foreach (var entry in maskProvider.GetFaceMaskEntries())
+            int firstMutableFrame =
+                Math.Clamp(mutableStartFrameIndex, 0, totalFrames);
+            int rewrittenFrames = 0;
+            int previousFrameIndex = -1;
+            IReadOnlyList<Rect>? previousFaces = null;
+
+            foreach (int frameIndex in faceFrameIndices)
             {
-                int frameIndex = entry.Key;
+                cancellationToken.ThrowIfCancellationRequested();
+
                 if (frameIndex < 0 || frameIndex >= totalFrames)
                     continue;
-
-                var data = entry.Value;
-                if (data.Faces.Count == 0)
-                    continue;
-
-                facesByFrame[frameIndex] = new List<Rect>(data.Faces);
-                confByFrame[frameIndex] = new List<float>(data.Confidences);
-                sizeByFrame[frameIndex] = data.Size;
-            }
-
-            int rewrittenFrames = 0;
-            int start = Math.Max(1, mutableStartFrameIndex);
-            for (int frameIndex = start; frameIndex < totalFrames; frameIndex++)
-            {
-                if (hasStored[frameIndex] ||
-                    facesByFrame[frameIndex] == null ||
-                    facesByFrame[frameIndex - 1] == null ||
-                    (blockedSceneCutStarts?.Contains(frameIndex - 1) ?? false))
+                if (!maskProvider.TryGetFaceMaskData(
+                        frameIndex,
+                        out var currentData) ||
+                    currentData.Faces.Count == 0)
                 {
+                    previousFrameIndex = -1;
+                    previousFaces = null;
                     continue;
                 }
 
-                var previousFaces = facesByFrame[frameIndex - 1]!;
-                var currentFaces = facesByFrame[frameIndex]!;
-                if (previousFaces.Count == 0 || currentFaces.Count == 0)
-                    continue;
+                IReadOnlyList<Rect> currentFaces = currentData.Faces;
+                bool canStabilize =
+                    frameIndex >= Math.Max(1, firstMutableFrame) &&
+                    previousFrameIndex == frameIndex - 1 &&
+                    previousFaces != null &&
+                    previousFaces.Count > 0 &&
+                    !storedMaskFrames.Contains(frameIndex) &&
+                    !(blockedSceneCutStarts?.Contains(frameIndex) ?? false);
 
-                var stabilized = new List<Rect>(currentFaces);
-                var usedPrevious = new bool[previousFaces.Count];
-                bool changed = false;
-
-                for (int currentIndex = 0; currentIndex < currentFaces.Count; currentIndex++)
+                if (!canStabilize)
                 {
+                    previousFrameIndex = frameIndex;
+                    previousFaces = currentFaces;
+                    continue;
+                }
+
+                Rect[]? stabilized = null;
+                var usedPrevious = new bool[previousFaces!.Count];
+
+                for (int currentIndex = 0;
+                     currentIndex < currentFaces.Count;
+                     currentIndex++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     Rect current = currentFaces[currentIndex];
                     int bestPreviousIndex = -1;
                     double bestScore = double.NegativeInfinity;
 
-                    for (int previousIndex = 0; previousIndex < previousFaces.Count; previousIndex++)
+                    for (int previousIndex = 0;
+                         previousIndex < previousFaces.Count;
+                         previousIndex++)
                     {
                         if (usedPrevious[previousIndex])
                             continue;
 
                         Rect previous = previousFaces[previousIndex];
                         double iou = IoU(current, previous);
-                        double centerShiftRatio = GetCenterShiftRatio(previous, current);
-                        double areaRatio = GetAreaRatio(previous, current);
+                        double centerShiftRatio =
+                            GetCenterShiftRatio(previous, current);
+                        double areaRatio =
+                            GetAreaRatio(previous, current);
                         if (iou < matchIouMin &&
                             centerShiftRatio > matchCenterShiftMax)
                         {
@@ -153,7 +165,9 @@ namespace FaceShield.Services.Analysis
                         double score =
                             iou * 2.0 -
                             centerShiftRatio * 0.35 -
-                            Math.Abs(Math.Log(Math.Max(0.0001, areaRatio))) * 0.15;
+                            Math.Abs(
+                                Math.Log(
+                                    Math.Max(0.0001, areaRatio))) * 0.15;
                         if (score > bestScore)
                         {
                             bestScore = score;
@@ -165,7 +179,8 @@ namespace FaceShield.Services.Analysis
                         continue;
 
                     usedPrevious[bestPreviousIndex] = true;
-                    Rect previousMatch = previousFaces[bestPreviousIndex];
+                    Rect previousMatch =
+                        previousFaces[bestPreviousIndex];
                     double centerMovement =
                         GetCenterShiftRatio(previousMatch, current);
                     double sizeMovement =
@@ -186,7 +201,8 @@ namespace FaceShield.Services.Analysis
                             (movement - deadZoneCenterRatio) /
                             Math.Max(
                                 0.0001,
-                                fullFollowMovementRatio - deadZoneCenterRatio),
+                                fullFollowMovementRatio -
+                                deadZoneCenterRatio),
                             0.0,
                             1.0);
                         double followWeight =
@@ -198,29 +214,33 @@ namespace FaceShield.Services.Analysis
                             followWeight);
                     }
 
-                    next = ClampRectToFrame(next, sizeByFrame[frameIndex]);
-                    if (!RectNearlyEquals(next, current))
-                    {
-                        stabilized[currentIndex] = next;
-                        changed = true;
-                    }
+                    next = ClampRectToFrame(
+                        next,
+                        currentData.Size);
+                    if (RectNearlyEquals(next, current))
+                        continue;
+
+                    stabilized ??= currentFaces.ToArray();
+                    stabilized[currentIndex] = next;
                 }
 
-                if (!changed)
-                    continue;
+                if (stabilized != null)
+                {
+                    maskProvider.SetFaceRects(
+                        frameIndex,
+                        stabilized,
+                        currentData.Size,
+                        currentData.MinConfidence,
+                        currentData.Confidences);
+                    rewrittenFrames++;
+                    previousFaces = stabilized;
+                }
+                else
+                {
+                    previousFaces = currentFaces;
+                }
 
-                facesByFrame[frameIndex] = stabilized;
-                maskProvider.SetFaceRects(
-                    frameIndex,
-                    stabilized,
-                    sizeByFrame[frameIndex],
-                    minConfidence:
-                        confByFrame[frameIndex] == null ||
-                        confByFrame[frameIndex]!.Count == 0
-                            ? null
-                            : confByFrame[frameIndex]!.Min(),
-                    confidences: confByFrame[frameIndex]);
-                rewrittenFrames++;
+                previousFrameIndex = frameIndex;
             }
 
             return rewrittenFrames;

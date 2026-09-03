@@ -310,8 +310,12 @@ else {
     -1
 }
 $probeCallIndex = $exportSource.IndexOf(
-    "ProbeVideoHdrMetadata(inputPath)",
+    "ProbeVideoHdrMetadata(",
     [Math]::Max(0, $losslessRemuxIndex),
+    [StringComparison]::Ordinal)
+$probeCancellationIndex = $exportSource.IndexOf(
+    "cancellationToken)",
+    [Math]::Max(0, $probeCallIndex),
     [StringComparison]::Ordinal)
 $frameGuardIndex = $exportSource.IndexOf(
     "FFmpegHdrMetadataGuard.FindUnsupportedMetadata(frame)",
@@ -321,11 +325,22 @@ if ($losslessRemuxIndex -lt 0 -or
     $remuxReturnIndex -le $losslessRemuxIndex -or
     $streamGuardIndex -le $remuxReturnIndex -or
     $probeCallIndex -le $remuxReturnIndex -or
+    $probeCancellationIndex -le $probeCallIndex -or
     $frameGuardIndex -le $remuxReturnIndex) {
     throw "Dynamic metadata guard must run after the lossless no-mask remux path."
 }
 
-Write-Host "[HdrMetadataGuardVerify] PASS no-mask-remux-before-reencode-guard"
+$hdrProbeSource = Get-Content -Raw (Join-Path $repo "Services\Video\VideoHdrProbePolicy.cs")
+$ioGuardSource = Get-Content -Raw (Join-Path $repo "Services\Video\VideoIoInterruptGuard.cs")
+if ($hdrProbeSource -notmatch 'CancellationToken\s+cancellationToken' -or
+    $hdrProbeSource -notmatch 'VideoIoInterruptGuard' -or
+    $hdrProbeSource -notmatch 'ThrowIfCancellationRequested\(\)' -or
+    $ioGuardSource -notmatch 'interrupt_callback\.callback' -or
+    $ioGuardSource -notmatch 'CancellationTokenRegistration') {
+    throw "HDR probe native cancellation guard is incomplete."
+}
+
+Write-Host "[HdrMetadataGuardVerify] PASS no-mask-remux-before-reencode-guard nativeCancel=true"
 }
 finally {
     if (Test-Path $work) {

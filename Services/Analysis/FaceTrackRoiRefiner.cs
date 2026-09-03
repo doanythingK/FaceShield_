@@ -106,8 +106,18 @@ namespace FaceShield.Services.Analysis
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        if (TryRefineCandidate(maskProvider, detector, candidate, frameSize, buffer, stride, quality))
+                        if (TryRefineCandidate(
+                                maskProvider,
+                                detector,
+                                candidate,
+                                frameSize,
+                                buffer,
+                                stride,
+                                quality,
+                                cancellationToken))
+                        {
                             hits++;
+                        }
                         attempts++;
                     }
                 }
@@ -128,8 +138,10 @@ namespace FaceShield.Services.Analysis
             PixelSize frameSize,
             byte[] buffer,
             int stride,
-            DownscaleQuality quality)
+            DownscaleQuality quality,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var roi = BuildRefineRoi(candidate.Bounds, frameSize);
             int rx = (int)Math.Floor(roi.X);
             int ry = (int)Math.Floor(roi.Y);
@@ -141,6 +153,7 @@ namespace FaceShield.Services.Analysis
             fixed (byte* basePtr = buffer)
             {
                 IntPtr roiPtr = (IntPtr)(basePtr + ry * stride + rx * 4);
+                cancellationToken.ThrowIfCancellationRequested();
                 var roiFaces = detector.DetectFacesBgra(
                     roiPtr,
                     stride,
@@ -148,6 +161,7 @@ namespace FaceShield.Services.Analysis
                     rh,
                     1.0,
                     quality);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (roiFaces.Count == 0)
                     return false;
 

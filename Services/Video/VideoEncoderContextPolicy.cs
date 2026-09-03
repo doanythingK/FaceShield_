@@ -41,31 +41,31 @@ internal static unsafe class VideoEncoderContextPolicy
 
         AVPixelFormat sourcePixelFormat =
             VideoExportFidelityPolicy.ResolveSourcePixelFormat(inStream, dec);
-        bool requiresLosslessRgbH264 =
+        bool requiresRgbH264Path =
             codecId == AVCodecID.AV_CODEC_ID_H264 &&
             VideoExportFidelityPolicy.IsRgbPixelFormat(sourcePixelFormat);
 
-        if (requiresLosslessRgbH264 &&
-            !VideoExportFidelityPolicy.CanEncodeLosslessX264Rgb(
+        if (requiresRgbH264Path &&
+            !VideoExportFidelityPolicy.CanEncodeCompatibleX264Rgb(
                 sourcePixelFormat,
                 dec->color_range,
                 dec->colorspace,
                 out string? rgbCompatibilityError))
         {
             throw new VideoExportIntegrityException(
-                "RGB H.264 원본을 품질 저하 없이 내보낼 수 없습니다. " +
+                "RGB H.264 원본을 현재 RGB H.264 품질 경로로 내보낼 수 없습니다. " +
                 rgbCompatibilityError);
         }
 
         bool allowTenBitHevcFallback =
             codecId == AVCodecID.AV_CODEC_ID_H264 &&
-            !requiresLosslessRgbH264 &&
+            !requiresRgbH264Path &&
             VideoExportFidelityPolicy.GetPixelFormatBitDepth(dec->pix_fmt) > 8;
 
         var attemptedNames =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string> candidateNames =
-            requiresLosslessRgbH264
+            requiresRgbH264Path
                 ? new[] { "libx264rgb" }
                 : VideoEncoderSelectionPolicy.GetCandidateNames(
                     codecId,
@@ -157,10 +157,10 @@ internal static unsafe class VideoEncoderContextPolicy
                 openError);
         }
 
-        if (requiresLosslessRgbH264)
+        if (requiresRgbH264Path)
         {
             throw new VideoExportIntegrityException(
-                "RGB H.264 원본은 검증된 무손실 libx264rgb 경로로만 내보낼 수 있습니다. " +
+                "RGB H.264 원본은 호환되는 libx264rgb RGB 품질 경로로만 내보낼 수 있습니다. " +
                 $"인코더 초기화 실패: {error ?? "libx264rgb를 찾을 수 없습니다."}");
         }
 
@@ -235,7 +235,7 @@ internal static unsafe class VideoEncoderContextPolicy
 
         string encoderName =
             VideoExportFfmpegDiagnostics.GetEncoderName(encoder);
-        bool isLosslessX264Rgb = string.Equals(
+        bool isX264Rgb = string.Equals(
             encoderName,
             "libx264rgb",
             StringComparison.OrdinalIgnoreCase);
@@ -246,9 +246,9 @@ internal static unsafe class VideoEncoderContextPolicy
         ctx->height = dec->height;
         ctx->pix_fmt = sourcePixelFormat;
 
-        if (isLosslessX264Rgb)
+        if (isX264Rgb)
         {
-            if (!VideoExportFidelityPolicy.CanEncodeLosslessX264Rgb(
+            if (!VideoExportFidelityPolicy.CanEncodeCompatibleX264Rgb(
                     sourcePixelFormat,
                     dec->color_range,
                     dec->colorspace,
@@ -329,7 +329,7 @@ internal static unsafe class VideoEncoderContextPolicy
         {
             if (inStream->codecpar->profile != -99)
                 ctx->profile = inStream->codecpar->profile;
-            if (!isLosslessX264Rgb &&
+            if (!isX264Rgb &&
                 inStream->codecpar->level > 0)
             {
                 ctx->level = inStream->codecpar->level;
@@ -346,7 +346,7 @@ internal static unsafe class VideoEncoderContextPolicy
                 inStream,
                 dec);
 
-        if (isLosslessX264Rgb)
+        if (isX264Rgb)
         {
             ctx->color_range = AVColorRange.AVCOL_RANGE_JPEG;
             ctx->colorspace = AVColorSpace.AVCOL_SPC_RGB;

@@ -16,7 +16,7 @@ public unsafe sealed class VideoExportService
     private int _bitmapMaskBlurFrames;
     private int _nativeYuvBlurFrames;
     private bool _staticHdrConfigured;
-    private bool _losslessX264RgbConfigured;
+    private bool _x264RgbConfigured;
     private VideoHdrMetadata? _configuredHdrMetadata;
 
     public ExportRunSummary? LastExportSummary { get; private set; }
@@ -194,7 +194,7 @@ public unsafe sealed class VideoExportService
         _bitmapMaskBlurFrames = 0;
         _nativeYuvBlurFrames = 0;
         _staticHdrConfigured = false;
-        _losslessX264RgbConfigured = false;
+        _x264RgbConfigured = false;
         LastExportSummary = null;
         bool shouldRetryWithFullEncode = false;
         string? packetDropFallbackReason = null;
@@ -277,12 +277,26 @@ public unsafe sealed class VideoExportService
         bool hasPacketTimestampBase = false;
         int packetFrameIndexReliabilityFailureCount = 0;
         var swTotal = Stopwatch.StartNew();
+        using var inputIoInterrupt = new VideoIoInterruptGuard();
+        using var inputIoScope = inputIoInterrupt.Begin(cancellationToken);
 
         try
         {
             // ───────── input ─────────
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avformat_open_input(&inFmt, inputPath, null, null));
-            VideoExportFfmpegDiagnostics.Throw(ffmpeg.avformat_find_stream_info(inFmt, null));
+            cancellationToken.ThrowIfCancellationRequested();
+            inFmt = ffmpeg.avformat_alloc_context();
+            if (inFmt == null)
+                throw new InvalidOperationException("입력 컨텍스트를 만들 수 없습니다.");
+            inputIoInterrupt.Configure(inFmt);
+
+            int openInputResult =
+                ffmpeg.avformat_open_input(&inFmt, inputPath, null, null);
+            cancellationToken.ThrowIfCancellationRequested();
+            VideoExportFfmpegDiagnostics.Throw(openInputResult);
+            int streamInfoResult =
+                ffmpeg.avformat_find_stream_info(inFmt, null);
+            cancellationToken.ThrowIfCancellationRequested();
+            VideoExportFfmpegDiagnostics.Throw(streamInfoResult);
             VideoPresentationMetadataPolicy.EnsureContainerStructureSupported(inFmt);
 
             videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(inFmt);
@@ -464,7 +478,9 @@ public unsafe sealed class VideoExportService
                     AVCodecID.AV_CODEC_ID_HEVC or
                     AVCodecID.AV_CODEC_ID_AV1;
             VideoHdrMetadata? hdrMetadata = sourceMayCarryHdrMetadata
-                ? VideoHdrProbePolicy.ProbeVideoHdrMetadata(inputPath)
+                ? VideoHdrProbePolicy.ProbeVideoHdrMetadata(
+                    inputPath,
+                    cancellationToken)
                 : null;
             _configuredHdrMetadata = hdrMetadata;
             _staticHdrConfigured = hdrMetadata?.HasStaticMetadata == true;
@@ -547,7 +563,7 @@ public unsafe sealed class VideoExportService
                     $"10비트 원본 품질을 보존하기 위해 " +
                     $"{VideoExportFfmpegDiagnostics.GetEncoderName(encoder)} 인코더를 사용합니다.";
             }
-            _losslessX264RgbConfigured = string.Equals(
+            _x264RgbConfigured = string.Equals(
                 VideoExportFfmpegDiagnostics.GetEncoderName(encoder),
                 "libx264rgb",
                 StringComparison.OrdinalIgnoreCase);
@@ -889,8 +905,13 @@ public unsafe sealed class VideoExportService
             int lastReportedFrame = -1;
             bool videoFlushed = false;
 
-            while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
+            while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                int readResult = ffmpeg.av_read_frame(inFmt, pkt);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (readResult < 0)
+                    break;
                 VideoPresentationMetadataPolicy.EnsureContainerStructureSupported(inFmt);
                 if (copiedStreams.TryGetValue(pkt->stream_index, out StreamCopyState? copyState))
                 {
@@ -1107,7 +1128,7 @@ public unsafe sealed class VideoExportService
                                 _maskProvider,
                                 _masked,
                                 _staticHdrConfigured,
-                                _losslessX264RgbConfigured,
+                                _x264RgbConfigured,
                                 _configuredHdrMetadata,
                                 ref _directFaceBlurFrames,
                                 ref _bitmapMaskBlurFrames,
@@ -1211,7 +1232,7 @@ public unsafe sealed class VideoExportService
                             _maskProvider,
                             _masked,
                             _staticHdrConfigured,
-                            _losslessX264RgbConfigured,
+                            _x264RgbConfigured,
                             _configuredHdrMetadata,
                             ref _directFaceBlurFrames,
                             ref _bitmapMaskBlurFrames,
@@ -1355,7 +1376,7 @@ public unsafe sealed class VideoExportService
                         _maskProvider,
                         _masked,
                         _staticHdrConfigured,
-                        _losslessX264RgbConfigured,
+                        _x264RgbConfigured,
                         _configuredHdrMetadata,
                         ref _directFaceBlurFrames,
                         ref _bitmapMaskBlurFrames,
@@ -1426,7 +1447,7 @@ public unsafe sealed class VideoExportService
                 _maskProvider,
                 _masked,
                 _staticHdrConfigured,
-                _losslessX264RgbConfigured,
+                _x264RgbConfigured,
                 _configuredHdrMetadata,
                 ref _directFaceBlurFrames,
                 ref _bitmapMaskBlurFrames,

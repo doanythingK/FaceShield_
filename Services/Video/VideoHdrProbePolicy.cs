@@ -1,5 +1,6 @@
 using FFmpeg.AutoGen;
 using System;
+using System.Threading;
 
 namespace FaceShield.Services.Video;
 
@@ -7,7 +8,9 @@ internal static unsafe class VideoHdrProbePolicy
 {
     private const int MaxProbeFrames = 16;
 
-    internal static VideoHdrMetadata? ProbeVideoHdrMetadata(string inputPath)
+    internal static VideoHdrMetadata? ProbeVideoHdrMetadata(
+        string inputPath,
+        CancellationToken cancellationToken = default)
     {
         AVFormatContext* format = null;
         AVCodecContext* decoderContext = null;
@@ -21,12 +24,27 @@ internal static unsafe class VideoHdrProbePolicy
                 "HDR 메타데이터 확인용 프레임을 할당할 수 없습니다.");
         }
 
+        using var ioInterrupt = new VideoIoInterruptGuard();
         try
         {
-            VideoExportFfmpegDiagnostics.Throw(
-                ffmpeg.avformat_open_input(&format, inputPath, null, null));
-            VideoExportFfmpegDiagnostics.Throw(
-                ffmpeg.avformat_find_stream_info(format, null));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            format = ffmpeg.avformat_alloc_context();
+            if (format == null)
+                throw new InvalidOperationException("HDR 메타데이터 확인용 입력 컨텍스트를 만들 수 없습니다.");
+            ioInterrupt.Configure(format);
+
+            int openResult;
+            using (ioInterrupt.Begin(cancellationToken))
+                openResult = ffmpeg.avformat_open_input(&format, inputPath, null, null);
+            cancellationToken.ThrowIfCancellationRequested();
+            VideoExportFfmpegDiagnostics.Throw(openResult);
+
+            int streamInfoResult;
+            using (ioInterrupt.Begin(cancellationToken))
+                streamInfoResult = ffmpeg.avformat_find_stream_info(format, null);
+            cancellationToken.ThrowIfCancellationRequested();
+            VideoExportFfmpegDiagnostics.Throw(streamInfoResult);
 
             int videoStreamIndex =
                 FFmpegStreamSelection.FindPrimaryVideoStreamIndex(format);
@@ -64,9 +82,16 @@ internal static unsafe class VideoHdrProbePolicy
             bool reachedProbeLimit = false;
             VideoHdrMetadata? accumulatedMetadata = null;
 
-            while (!reachedProbeLimit &&
-                   ffmpeg.av_read_frame(format, packet) >= 0)
+            while (!reachedProbeLimit)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                int readResult;
+                using (ioInterrupt.Begin(cancellationToken))
+                    readResult = ffmpeg.av_read_frame(format, packet);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (readResult < 0)
+                    break;
+
                 if (packet->stream_index != videoStreamIndex)
                 {
                     ffmpeg.av_packet_unref(packet);
@@ -83,6 +108,7 @@ internal static unsafe class VideoHdrProbePolicy
                            decoderContext,
                            decodedFrame) == 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     decodedFrames++;
                     MergeFrameMetadata(decodedFrame, ref accumulatedMetadata);
                     ffmpeg.av_frame_unref(decodedFrame);
@@ -102,6 +128,7 @@ internal static unsafe class VideoHdrProbePolicy
                            decoderContext,
                            decodedFrame) == 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     decodedFrames++;
                     MergeFrameMetadata(decodedFrame, ref accumulatedMetadata);
                     ffmpeg.av_frame_unref(decodedFrame);

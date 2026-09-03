@@ -3,12 +3,12 @@ param()
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$work = Join-Path $repo ".tmp\rgb-lossless-export"
-$project = Join-Path $work "RgbLosslessExportHarness.csproj"
+$work = Join-Path $repo ".tmp\rgb-quality-export"
+$project = Join-Path $work "RgbQualityExportHarness.csproj"
 $program = Join-Path $work "Program.cs"
 $artifacts = Join-Path $work "artifacts"
 $bundle = Join-Path $repo "FFmpeg\win-x64"
-$successRunId = "rgb-lossless-export-$([Guid]::NewGuid().ToString('N'))"
+$successRunId = "rgb-quality-export-$([Guid]::NewGuid().ToString('N'))"
 $failureRunId = "rgb-ten-bit-fail-$([Guid]::NewGuid().ToString('N'))"
 
 try {
@@ -16,7 +16,7 @@ try {
         Remove-Item -Recurse -Force -Path $work
     }
     if (Test-Path $work) {
-        throw "Unable to remove stale RGB lossless export harness: $work"
+        throw "Unable to remove stale RGB quality export harness: $work"
     }
     if (-not (Test-Path (Join-Path $bundle "avcodec-62.dll"))) {
         throw "Bundled Windows FFmpeg was not found: $bundle"
@@ -80,7 +80,7 @@ try
         ValidateEightBitFixture(source);
         ValidateGeneratedPixels(source);
 
-        RunLosslessServiceExport(sourcePath, outputPath, successRunId, source);
+        RunQualityServiceExport(sourcePath, outputPath, successRunId, source);
         DecodedVideo output = DecodeFixture(outputPath);
         ValidateEightBitOutput(output, source);
         ValidateMaskedPixelFidelity(source, output);
@@ -94,7 +94,7 @@ try
             failureRunId);
 
         Console.WriteLine(
-            $"[RgbLosslessExportVerify] PASS ffmpeg={version} fixture=libx264rgb " +
+            $"[RgbQualityExportVerify] PASS ffmpeg={version} fixture=libx264rgb " +
             $"codec=h264 container=matroska frames={source.Frames.Count} packets={source.Packets} " +
             $"pixelFormat={source.PixelFormat} canonicalRgb=true spatialPattern=true");
     }
@@ -452,7 +452,7 @@ static void ValidateGeneratedPixels(DecodedVideo source)
     {
         byte[] expected = CreateExpectedCanonicalRgb(frameIndex, source.Width, source.Height);
         if (!source.Frames[frameIndex].AsSpan().SequenceEqual(expected))
-            throw new InvalidOperationException($"Lossless RGB fixture changed frame {frameIndex} pixels.");
+            throw new InvalidOperationException($"Canonical RGB fixture changed frame {frameIndex} pixels.");
     }
 }
 
@@ -517,13 +517,13 @@ static void ValidateMaskedPixelFidelity(DecodedVideo source, DecodedVideo output
     }
 
     Console.WriteLine(
-        "[RgbLosslessExportVerify] PASS pixelQuality=true " +
+        "[RgbQualityExportVerify] PASS pixelQuality=true " +
         $"meanOutsideChannelError={meanOutsideChannelError:0.###} " +
         $"maxOutsideChannelError={maxOutsideChannelError} " +
         $"changedInside={changedInsidePixels}/{insidePixels} canonicalRgb=true");
 }
 
-static unsafe void RunLosslessServiceExport(
+static unsafe void RunQualityServiceExport(
     string inputPath,
     string outputPath,
     string runId,
@@ -587,7 +587,7 @@ static unsafe void RunLosslessServiceExport(
         throw new InvalidOperationException($"RGB export left staged outputs: {string.Join(',', stagedOutputs)}");
 
     Console.WriteLine(
-        "[RgbLosslessExportVerify] PASS serviceExport=true " +
+        "[RgbQualityExportVerify] PASS serviceExport=true " +
         $"encoder={summary.EncoderName} quality={summary.EncoderQualityMode} " +
         $"source={summary.SourcePixelFormat}/{summary.SourceBitDepth} " +
         $"output={summary.OutputPixelFormat}/{summary.OutputBitDepth} " +
@@ -603,7 +603,7 @@ static void ValidateTenBitFixture(DecodedVideo source)
         throw new InvalidOperationException(
             $"10-bit RGB matrix fixture did not decode as gbrp10le: {source.PixelFormat}");
     Console.WriteLine(
-        "[RgbLosslessExportVerify] PASS tenBitFixture=true encoder=libx264 " +
+        "[RgbQualityExportVerify] PASS tenBitFixture=true encoder=libx264 " +
         $"encoderInput=yuv444p10le decoded={source.PixelFormat} bitDepth={source.BitDepth} " +
         "colorspace=rgb range=jpeg profile=244");
 }
@@ -654,7 +654,7 @@ static void RunTenBitFailClosedExport(
         throw new InvalidOperationException($"Failed 10-bit RGB export left staged outputs: {string.Join(',', stagedOutputs)}");
 
     Console.WriteLine(
-        "[RgbLosslessExportVerify] PASS tenBitFailClosed=true " +
+        "[RgbQualityExportVerify] PASS tenBitFailClosed=true " +
         "message='non-8-bit RGB' finalOutput=false stagedOutputs=0 outputCommitted=false");
 }
 
@@ -846,7 +846,7 @@ sealed record DecodedVideo(
     )
     & dotnet @runArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "RGB lossless export E2E harness failed with exit code $LASTEXITCODE."
+        throw "RGB quality export E2E harness failed with exit code $LASTEXITCODE."
     }
 }
 finally {
@@ -874,6 +874,6 @@ finally {
         $cleanupFailure = "Harness directory remained after cleanup: $work"
     }
     if ($cleanupFailure) {
-        throw "RGB lossless export harness cleanup failed: $cleanupFailure"
+        throw "RGB quality export harness cleanup failed: $cleanupFailure"
     }
 }

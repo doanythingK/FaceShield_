@@ -35,15 +35,21 @@ using System.Runtime.InteropServices;
 
 FFmpegBootstrap.Initialize();
 
-MethodInfo getPreferredEncoderNames = typeof(VideoExportService).GetMethod(
+Type selectionPolicy = typeof(VideoExportService).Assembly.GetType(
+    "FaceShield.Services.Video.VideoEncoderSelectionPolicy")
+    ?? throw new InvalidOperationException("VideoEncoderSelectionPolicy was not found.");
+Type fidelityPolicy = typeof(VideoExportService).Assembly.GetType(
+    "FaceShield.Services.Video.VideoExportFidelityPolicy")
+    ?? throw new InvalidOperationException("VideoExportFidelityPolicy was not found.");
+MethodInfo getPreferredEncoderNames = selectionPolicy.GetMethod(
     "GetPreferredEncoderNames",
     BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("GetPreferredEncoderNames was not found.");
-MethodInfo usesSoftwareConstantQuality = typeof(VideoExportService).GetMethod(
+MethodInfo usesSoftwareConstantQuality = selectionPolicy.GetMethod(
     "UsesSoftwareConstantQuality",
     BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("UsesSoftwareConstantQuality was not found.");
-MethodInfo resolveTargetBitrate = typeof(VideoExportService).GetMethod(
+MethodInfo resolveTargetBitrate = fidelityPolicy.GetMethod(
     "ResolveHighQualityTargetBitrate",
     BindingFlags.NonPublic | BindingFlags.Static)
     ?? throw new InvalidOperationException("ResolveHighQualityTargetBitrate was not found.");
@@ -71,19 +77,26 @@ foreach (string name in softwareCandidates)
 }
 
 AssertTargetBitrate(
-    "low-bitrate 4K AV1 floor",
+    "low-bitrate 4K AV1 bounded guardrail",
     sourceBitrate: 1_000_000,
     width: 3840,
     height: 2160,
     codecId: AVCodecID.AV_CODEC_ID_AV1,
-    expected: 28_000_000);
+    expected: 2_000_000);
 AssertTargetBitrate(
-    "high-bitrate AV1 source scale",
+    "high-bitrate AV1 source hold",
     sourceBitrate: 30_000_000,
     width: 3840,
     height: 2160,
     codecId: AVCodecID.AV_CODEC_ID_AV1,
-    expected: 45_000_000);
+    expected: 30_000_000);
+AssertTargetBitrate(
+    "medium-bitrate 4K bounded uplift",
+    sourceBitrate: 8_000_000,
+    width: 3840,
+    height: 2160,
+    codecId: AVCodecID.AV_CODEC_ID_H264,
+    expected: 10_000_000);
 AssertTargetBitrate(
     "legacy H264 source scale",
     sourceBitrate: 1_000_000,
@@ -124,7 +137,7 @@ Console.WriteLine(
     $"[Av1EncoderPolicyVerify] PASS candidates={string.Join(',', platformCandidates)} " +
     $"software={string.Join(',', softwareCandidates)} hardware={availableHardware} " +
     $"softwareAvailable={availableSoftware} encodedPackets={encodedPackets} " +
-    "bitDepths=8,10,12 chroma=420,422,444 rgb=true bitrateFloor=true");
+    "bitDepths=8,10,12 chroma=420,422,444 rgb=true bitrateGuardrail=true");
 
 string[] InvokeCandidates(bool forceSoftwareOnly)
 {
