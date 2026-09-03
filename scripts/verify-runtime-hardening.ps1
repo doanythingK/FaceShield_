@@ -48,18 +48,25 @@ $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
 $hdrProbe = Read-RepoFile "Services/Video/VideoHdrProbePolicy.cs"
 $videoIoInterrupt = Read-RepoFile "Services/Video/VideoIoInterruptGuard.cs"
 $temporalPostProcessor = Read-RepoFile "Services/Analysis/AutoMaskTemporalPostProcessor.cs"
+$trackInterpolator = Read-RepoFile "Services/Analysis/FaceTrackInterpolator.cs"
+$trackBuilder = Read-RepoFile "Services/Analysis/FaceTrackBuilder.cs"
 $exportFidelity = Read-RepoFile "Services/Video/VideoExportFidelityPolicy.cs"
 
 Assert-Match "export input uses cancellable native io guard" ($exportService + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]{0,1000}Begin\(cancellationToken\)[\s\S]{0,1800}avformat_open_input[\s\S]{0,1200}avformat_find_stream_info'
 Assert-Match "HDR probe accepts cancellation and uses native io guard" ($hdrProbe + $videoIoInterrupt) 'ProbeVideoHdrMetadata\([\s\S]{0,220}CancellationToken\s+cancellationToken[\s\S]{0,1400}VideoIoInterruptGuard[\s\S]{0,1800}avformat_open_input'
 Assert-Match "tracked stabilizer is sparse and cancellable" $temporalPostProcessor 'ApplyTrackedBoxStabilization\([\s\S]{0,300}CancellationToken\s+cancellationToken[\s\S]{0,2200}GetFaceMaskFrameIndices\(\)[\s\S]{0,2400}ThrowIfCancellationRequested\(\)'
 Assert-NotMatch "tracked stabilizer does not allocate total-frame arrays" $temporalPostProcessor 'ApplyTrackedBoxStabilization\([\s\S]{0,3500}new\s+(List<Rect>\?\[|List<float>\?\[|PixelSize\[|bool\[)totalFrames\]'
+Assert-Match "face track interpolator is sparse and cancellable" ($trackInterpolator + $trackBuilder + $temporalPostProcessor + $autoPostProcess) 'FaceTrackInterpolator[\s\S]*CancellationToken\s+cancellationToken\s*=\s*default[\s\S]*SparseFrameMap[\s\S]*builder\.Build\(detectionsByFrame,\s*options,\s*cancellationToken\)[\s\S]*ApplyTemporalFixes\([\s\S]*CancellationToken\s+cancellationToken[\s\S]*cancellationToken:\s*cancellationToken'
+Assert-NotMatch "face track interpolator does not allocate total-frame arrays" $trackInterpolator 'new\s+(List<Rect>\?\[|List<float>\?\[|PixelSize\[|bool\[)totalFrames\]'
+Assert-NotMatch "face track interpolator does not scan every video frame when rewriting" $trackInterpolator 'for\s*\(int\s+frameIndex\s*=\s*firstMutableFrame;\s*frameIndex\s*<\s*facesByFrame\.Length'
+Assert-Match "face track builder checks cancellation while matching tracks" $trackBuilder 'Build\([\s\S]{0,300}CancellationToken\s+cancellationToken[\s\S]{0,1800}cancellationToken\.ThrowIfCancellationRequested\(\)'
 Assert-Match "tracked stabilizer blocks the current scene-cut start" $temporalPostProcessor 'blockedSceneCutStarts\?\.Contains\(frameIndex\)'
 Assert-NotMatch "tracked stabilizer does not shift scene cut by one frame" $temporalPostProcessor 'blockedSceneCutStarts\?\.Contains\(frameIndex\s*-\s*1\)'
 Assert-Match "RGB H264 uses compatibility contract instead of lossless contract" $exportFidelity 'CanEncodeCompatibleX264Rgb'
 Assert-NotMatch "RGB quality path no longer claims lossless compatibility" ($exportService + $exportFidelity) 'CanEncodeLosslessX264Rgb|losslessX264RgbConfigured'
 Assert-Match "hardware bitrate uses bounded source-relative guardrail" $exportFidelity 'boundedSourceBitrate\s*\*\s*5L\s*/\s*4L'
 Assert-Match "single video can use full global PTS frame budget" $extractor 'MaxCachedTimelineFramesPerVideo\s*=\s*1_000_000[\s\S]{0,120}MaxCachedTimelineFramesTotal\s*=\s*1_000_000'
+Assert-Match "decoded timeline extent fails closed when exact timestamp seek is unsafe" $extractor 'TryGetDecodedTimelineExtentSeconds\([\s\S]{0,700}!_decodedFrameTimeline\.SupportsExactTimestampSeek'
 
 Assert-Match "playback checks decoder error before normal eof" $framePreview 'SequentialDecodeError[\s\S]*SequentialReachedEndOfStream[\s\S]*onPlaybackFailed'
 Assert-NotMatch "playback does not convert any non-cancel stop into natural eof" $framePreview 'endedNaturally\s*\|=\s*!ct\.IsCancellationRequested'
@@ -84,7 +91,8 @@ Assert-NotMatch "unknown duration is not synthesized from average fps" $frameLis
 Assert-Match "timestamp thumbnails share decoded timeline origin" $extractor 'GetTimelineThumbnailAtTimestampScaled[\s\S]{0,2200}TryGetTimelineOriginPresentationTimestamp'
 Assert-NotMatch "timestamp thumbnails do not use stream start_time as timeline origin" $extractor 'GetTimelineThumbnailAtTimestampScaled[\s\S]{0,1800}stream->start_time'
 Assert-Match "timestamp thumbnail checks cancellation after packet read" $extractor 'ReadFrameInterruptibly\([\s\S]{0,180}_fmt[\s\S]{0,180}packet[\s\S]{0,180}cancellationToken[\s\S]{0,1400}cancellationToken\.IsCancellationRequested[\s\S]{0,1400}avcodec_send_packet\(_dec, packet\)'
-Assert-Match "blocking frame reads install an AVIO interrupt callback" $extractor 'AVIOInterruptCB_callback[\s\S]*interrupt_callback\.callback\s*=\s*IoInterruptCallback[\s\S]*CancellationTokenRegistration'
+Assert-Match "blocking frame reads use the shared AVIO interrupt guard" ($extractor + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]*ConfigureIoInterrupt\([\s\S]*_ioInterrupt\.Configure\(format\)[\s\S]*BeginIoInterrupt\([\s\S]*_ioInterrupt\.Begin\(cancellationToken\)'
+Assert-NotMatch "extractor no longer owns a duplicate AVIO interrupt callback" $extractor '_ioInterruptHandle|_ioInterruptRequested|HandleIoInterrupt|IoInterruptCallback'
 Assert-Match "ffmpeg input open installs interrupt callback before open" $extractor 'avformat_alloc_context\(\)[\s\S]{0,900}ConfigureIoInterrupt\(_fmt\)[\s\S]{0,900}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,900}avformat_open_input'
 Assert-Match "shared metadata reader installs interrupt callback before open" $metadataReader 'avformat_alloc_context\(\)[\s\S]{0,1800}interrupt_callback\.callback\s*=\s*InterruptCallback[\s\S]{0,1800}avformat_open_input'
 Assert-Match "shared metadata reader registers cancellation for native io" $metadataReader 'CancellationTokenRegistration\s+registration[\s\S]{0,1800}cancellationToken\.Register\([\s\S]{0,900}Volatile\.Write\(ref\s+interrupt\.Requested,\s*1\)'
@@ -92,6 +100,8 @@ Assert-Match "shared metadata reader checks cancellation after open and stream i
 Assert-Match "auto metadata probe uses shared cancellable reader" $autoMask 'ThrowIfCancellationRequested\(\)[\s\S]{0,500}VideoMetadataReader\.Read\(videoPath,\s*ct\)'
 Assert-NotMatch "auto mask no longer performs raw metadata open" $autoMask 'avformat_(open_input|find_stream_info)'
 Assert-Match "frame analyzer metadata probe uses shared cancellable reader" $frameAnalyzer 'VideoMetadataReader\.Read\(videoPath,\s*ct\)'
+Assert-Match "frame analyzer prefers decoded PTS over average FPS" $frameAnalyzer 'TryGetCachedFrameTimestampSeconds\([\s\S]{0,240}decodedTimestampSec[\s\S]{0,240}\?\s*decodedTimestampSec\s*:\s*idx\s*/\s*fps'
+Assert-NotMatch "frame analyzer no longer assigns average FPS time unconditionally" $frameAnalyzer 'TimestampSec\s*=\s*idx\s*/\s*fps'
 Assert-NotMatch "frame analyzer no longer performs raw metadata open" $frameAnalyzer 'avformat_(open_input|find_stream_info)'
 Assert-Match "frame list metadata probe accepts workspace cancellation" $frameList 'FrameListViewModel\([\s\S]{0,300}CancellationToken\s+cancellationToken[\s\S]{0,900}VideoMetadataReader\.Read\(path,\s*cancellationToken\)'
 Assert-NotMatch "frame list no longer performs raw metadata open" $frameList 'avformat_(open_input|find_stream_info)'
