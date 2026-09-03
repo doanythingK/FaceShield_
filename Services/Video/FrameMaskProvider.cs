@@ -4,27 +4,34 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Video
 {
     public sealed class FrameMaskProvider : IFrameMaskProvider, IDisposable
 {
+    private readonly object _stateGate = new();
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
+    private long _version;
 
     public void SetMask(int frameIndex, WriteableBitmap mask)
     {
         if (mask == null)
             throw new ArgumentNullException(nameof(mask));
 
-        if (_masks.TryRemove(frameIndex, out var previous) &&
-            !ReferenceEquals(previous, mask))
+        lock (_stateGate)
         {
-            previous.Dispose();
-        }
+            if (_masks.TryRemove(frameIndex, out var previous) &&
+                !ReferenceEquals(previous, mask))
+            {
+                previous.Dispose();
+            }
 
-        _masks[frameIndex] = mask;
-        _faceMasks.TryRemove(frameIndex, out _);
+            _masks[frameIndex] = mask;
+            _faceMasks.TryRemove(frameIndex, out _);
+            _version++;
+        }
     }
 
     public void SetFaceRects(
@@ -34,17 +41,15 @@ namespace FaceShield.Services.Video
         float? minConfidence = null,
         IReadOnlyList<float>? confidences = null)
     {
-        RemoveStoredMask(frameIndex);
-
-        if (faces == null || faces.Count == 0 || size.Width <= 0 || size.Height <= 0)
+        lock (_stateGate)
         {
-            _faceMasks.TryRemove(frameIndex, out _);
-            return;
+            SetFaceRectsLocked(
+                frameIndex,
+                faces == null ? Array.Empty<Rect>() : faces.ToArray(),
+                size,
+                minConfidence,
+                confidences);
         }
-
-        var faceArray = faces as Rect[] ?? faces.ToArray();
-        var confArray = NormalizeConfidences(faceArray.Length, minConfidence, confidences);
-        _faceMasks[frameIndex] = new FaceMaskData(size, faceArray, minConfidence, confArray);
     }
 
     public void SetFaceRects(
@@ -54,131 +59,278 @@ namespace FaceShield.Services.Video
         float? minConfidence = null,
         IReadOnlyList<float>? confidences = null)
     {
-        RemoveStoredMask(frameIndex);
+        lock (_stateGate)
+        {
+            SetFaceRectsLocked(
+                frameIndex,
+                faces == null ? Array.Empty<Rect>() : faces.ToArray(),
+                size,
+                minConfidence,
+                confidences);
+        }
+    }
 
-        if (faces == null || faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
+    private void SetFaceRectsLocked(
+        int frameIndex,
+        Rect[] faces,
+        PixelSize size,
+        float? minConfidence,
+        IReadOnlyList<float>? confidences)
+    {
+        RemoveStoredMaskLocked(frameIndex);
+
+        if (faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
         {
             _faceMasks.TryRemove(frameIndex, out _);
+            _version++;
             return;
         }
 
         var confArray = NormalizeConfidences(faces.Length, minConfidence, confidences);
         _faceMasks[frameIndex] = new FaceMaskData(size, faces, minConfidence, confArray);
+        _version++;
     }
 
     public WriteableBitmap? GetFinalMask(int frameIndex)
     {
-        if (_masks.TryGetValue(frameIndex, out var m))
-            return m;
+        lock (_stateGate)
+        {
+            if (_masks.TryGetValue(frameIndex, out var mask))
+                return mask;
 
-        if (_faceMasks.TryGetValue(frameIndex, out var faces))
-            return CreateMaskFromFaceRects(faces.Size, faces.Faces);
+            if (_faceMasks.TryGetValue(frameIndex, out var faces))
+                return CreateMaskFromFaceRects(faces.Size, faces.Faces);
 
-        return null;
+            return null;
+        }
     }
 
     public bool HasEntry(int frameIndex)
-        => _masks.ContainsKey(frameIndex) || _faceMasks.ContainsKey(frameIndex);
+    {
+        lock (_stateGate)
+            return _masks.ContainsKey(frameIndex) || _faceMasks.ContainsKey(frameIndex);
+    }
 
     public bool TryGetStoredMask(int frameIndex, out WriteableBitmap mask)
-        => _masks.TryGetValue(frameIndex, out mask!);
+    {
+        lock (_stateGate)
+            return _masks.TryGetValue(frameIndex, out mask!);
+    }
 
     public bool TryGetFaceMaskData(int frameIndex, out FaceMaskData data)
-        => _faceMasks.TryGetValue(frameIndex, out data);
+    {
+        lock (_stateGate)
+        {
+            if (_faceMasks.TryGetValue(frameIndex, out var stored))
+            {
+                data = CloneFaceMaskData(stored);
+                return true;
+            }
+
+            data = default;
+            return false;
+        }
+    }
 
     public void RemoveFaceMask(int frameIndex)
     {
-        _faceMasks.TryRemove(frameIndex, out _);
+        lock (_stateGate)
+        {
+            if (_faceMasks.TryRemove(frameIndex, out _))
+                _version++;
+        }
     }
 
     public int RemoveFaceMasksFrom(int startFrameIndex)
     {
-        int removed = 0;
-        foreach (int frameIndex in _faceMasks.Keys)
+        lock (_stateGate)
         {
-            if (frameIndex < startFrameIndex)
-                continue;
+            int removed = 0;
+            foreach (int frameIndex in _faceMasks.Keys.ToArray())
+            {
+                if (frameIndex < startFrameIndex)
+                    continue;
 
-            if (_faceMasks.TryRemove(frameIndex, out _))
-                removed++;
+                if (_faceMasks.TryRemove(frameIndex, out _))
+                    removed++;
+            }
+
+            if (removed > 0)
+                _version++;
+            return removed;
         }
-
-        return removed;
     }
 
     public int RemoveFaceMasksRange(int startFrameIndex, int endExclusive)
     {
-        int start = Math.Max(0, startFrameIndex);
-        int end = Math.Max(start, endExclusive);
-        int removedFaceMasks = 0;
-        int removedStoredMasks = 0;
-        for (int frameIndex = start; frameIndex < end; frameIndex++)
+        lock (_stateGate)
         {
-            if (_faceMasks.TryRemove(frameIndex, out _))
-                removedFaceMasks++;
-            if (_masks.TryRemove(frameIndex, out var storedMask))
+            int start = Math.Max(0, startFrameIndex);
+            int end = Math.Max(start, endExclusive);
+            int removedFaceMasks = 0;
+            int removedStoredMasks = 0;
+            for (int frameIndex = start; frameIndex < end; frameIndex++)
             {
-                storedMask.Dispose();
-                removedStoredMasks++;
+                if (_faceMasks.TryRemove(frameIndex, out _))
+                    removedFaceMasks++;
+                if (_masks.TryRemove(frameIndex, out var storedMask))
+                {
+                    storedMask.Dispose();
+                    removedStoredMasks++;
+                }
             }
-        }
 
-        return removedFaceMasks + removedStoredMasks;
+            int removed = removedFaceMasks + removedStoredMasks;
+            if (removed > 0)
+                _version++;
+            return removed;
+        }
     }
 
     public void ClearFaceMasks()
     {
-        _faceMasks.Clear();
+        lock (_stateGate)
+        {
+            if (_faceMasks.IsEmpty)
+                return;
+
+            _faceMasks.Clear();
+            _version++;
+        }
     }
 
     public bool HasAnyMaskEntries()
-        => !_masks.IsEmpty || !_faceMasks.IsEmpty;
+    {
+        lock (_stateGate)
+            return !_masks.IsEmpty || !_faceMasks.IsEmpty;
+    }
 
     public int[] GetStoredMaskFrameIndices()
-        => _masks.Keys.ToArray();
+    {
+        lock (_stateGate)
+            return _masks.Keys.ToArray();
+    }
 
     public int[] GetFaceMaskFrameIndices()
-        => _faceMasks.Keys.ToArray();
+    {
+        lock (_stateGate)
+            return _faceMasks.Keys.ToArray();
+    }
 
     public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()
-        => _faceMasks.ToArray();
+    {
+        lock (_stateGate)
+        {
+            return _faceMasks
+                .Select(static entry =>
+                    new KeyValuePair<int, FaceMaskData>(
+                        entry.Key,
+                        CloneFaceMaskData(entry.Value)))
+                .ToArray();
+        }
+    }
 
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
-        => _masks.ToArray();
+    {
+        lock (_stateGate)
+            return _masks.ToArray();
+    }
 
     public FrameMaskProvider CreateSnapshot()
-    {
-        var snapshot = new FrameMaskProvider();
-        try
-        {
-            foreach (var entry in _masks.ToArray())
-                snapshot._masks[entry.Key] = CloneBitmap(entry.Value);
+        => CreateSnapshot(out _);
 
-            foreach (var entry in _faceMasks.ToArray())
+    public FrameMaskProvider CreateSnapshot(out long sourceVersion)
+    {
+        lock (_stateGate)
+        {
+            sourceVersion = _version;
+            var snapshot = new FrameMaskProvider();
+            try
             {
-                FaceMaskData data = entry.Value;
-                snapshot._faceMasks[entry.Key] = new FaceMaskData(
-                    data.Size,
-                    data.Faces.ToArray(),
-                    data.MinConfidence,
-                    data.Confidences.ToArray());
+                foreach (var entry in _masks)
+                    snapshot._masks[entry.Key] = CloneBitmap(entry.Value);
+
+                foreach (var entry in _faceMasks)
+                    snapshot._faceMasks[entry.Key] = CloneFaceMaskData(entry.Value);
+
+                return snapshot;
+            }
+            catch
+            {
+                snapshot.Dispose();
+                throw;
+            }
+        }
+    }
+
+    public void CommitFaceMasksFrom(
+        FrameMaskProvider source,
+        long expectedVersion,
+        CancellationToken cancellationToken = default)
+    {
+        if (source == null)
+            throw new ArgumentNullException(nameof(source));
+        if (ReferenceEquals(this, source))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return;
+        }
+
+        var committedFaces = source.ExportFaceMaskSnapshot(cancellationToken);
+
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_version != expectedVersion)
+            {
+                throw new InvalidOperationException(
+                    "Mask provider changed while Auto post-processing was staged.");
+            }
+
+            _faceMasks.Clear();
+            foreach (var entry in committedFaces)
+            {
+                // A manually stored bitmap remains authoritative if an unexpected
+                // working-copy mutation attempted to replace it with face rectangles.
+                if (_masks.ContainsKey(entry.Key))
+                    continue;
+
+                _faceMasks[entry.Key] = entry.Value;
+            }
+
+            _version++;
+        }
+    }
+
+    private Dictionary<int, FaceMaskData> ExportFaceMaskSnapshot(
+        CancellationToken cancellationToken)
+    {
+        lock (_stateGate)
+        {
+            var snapshot = new Dictionary<int, FaceMaskData>(_faceMasks.Count);
+            foreach (var entry in _faceMasks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                snapshot[entry.Key] = CloneFaceMaskData(entry.Value);
             }
 
             return snapshot;
-        }
-        catch
-        {
-            snapshot.Dispose();
-            throw;
         }
     }
 
     public void Clear()
     {
-        foreach (int frameIndex in _masks.Keys)
-            RemoveStoredMask(frameIndex);
+        lock (_stateGate)
+        {
+            foreach (var entry in _masks.ToArray())
+            {
+                if (_masks.TryRemove(entry.Key, out var mask))
+                    mask.Dispose();
+            }
 
-        _faceMasks.Clear();
+            _faceMasks.Clear();
+            _version++;
+        }
     }
 
     public void Dispose()
@@ -216,11 +368,18 @@ namespace FaceShield.Services.Video
         return copy;
     }
 
-    private void RemoveStoredMask(int frameIndex)
+    private void RemoveStoredMaskLocked(int frameIndex)
     {
         if (_masks.TryRemove(frameIndex, out var mask))
             mask.Dispose();
     }
+
+    private static FaceMaskData CloneFaceMaskData(FaceMaskData data)
+        => new(
+            data.Size,
+            data.Faces.ToArray(),
+            data.MinConfidence,
+            data.Confidences.ToArray());
 
     public readonly record struct FaceMaskData(
         PixelSize Size,
@@ -237,7 +396,7 @@ namespace FaceShield.Services.Video
             return Array.Empty<float>();
 
         if (confidences != null && confidences.Count == faceCount)
-            return confidences is float[] arr ? arr : confidences.ToArray();
+            return confidences.ToArray();
 
         float fill = minConfidence ?? 1.0f;
         var fallback = new float[faceCount];
