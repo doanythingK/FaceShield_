@@ -51,10 +51,16 @@ namespace FaceShield.Services.Analysis
 
                     Rect? first = hasFace ? faces[0].Bounds : null;
 
+                    double timestampSec = extractor.TryGetCachedFrameTimestampSeconds(
+                        idx,
+                        out double decodedTimestampSec)
+                            ? decodedTimestampSec
+                            : idx / fps;
+
                     list.Add(new FrameAnalysisResult
                     {
                         FrameIndex = idx,
-                        TimestampSec = idx / fps,
+                        TimestampSec = timestampSec,
                         HasFace = hasFace,
                         Confidence = hasFace ? 1.0f : 0.0f, // 점수는 실제 detector에서 추출 가능하면 교체
                         FaceBounds = first
