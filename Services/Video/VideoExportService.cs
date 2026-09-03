@@ -16,7 +16,7 @@ public unsafe sealed class VideoExportService
     private int _bitmapMaskBlurFrames;
     private int _nativeYuvBlurFrames;
     private bool _staticHdrConfigured;
-    private bool _losslessX264RgbConfigured;
+    private bool _x264RgbConfigured;
     private VideoHdrMetadata? _configuredHdrMetadata;
 
     public ExportRunSummary? LastExportSummary { get; private set; }
@@ -194,7 +194,7 @@ public unsafe sealed class VideoExportService
         _bitmapMaskBlurFrames = 0;
         _nativeYuvBlurFrames = 0;
         _staticHdrConfigured = false;
-        _losslessX264RgbConfigured = false;
+        _x264RgbConfigured = false;
         LastExportSummary = null;
         bool shouldRetryWithFullEncode = false;
         string? packetDropFallbackReason = null;
@@ -547,7 +547,7 @@ public unsafe sealed class VideoExportService
                     $"10비트 원본 품질을 보존하기 위해 " +
                     $"{VideoExportFfmpegDiagnostics.GetEncoderName(encoder)} 인코더를 사용합니다.";
             }
-            _losslessX264RgbConfigured = string.Equals(
+            _x264RgbConfigured = string.Equals(
                 VideoExportFfmpegDiagnostics.GetEncoderName(encoder),
                 "libx264rgb",
                 StringComparison.OrdinalIgnoreCase);
@@ -1107,7 +1107,7 @@ public unsafe sealed class VideoExportService
                                 _maskProvider,
                                 _masked,
                                 _staticHdrConfigured,
-                                _losslessX264RgbConfigured,
+                                _x264RgbConfigured,
                                 _configuredHdrMetadata,
                                 ref _directFaceBlurFrames,
                                 ref _bitmapMaskBlurFrames,
@@ -1211,7 +1211,7 @@ public unsafe sealed class VideoExportService
                             _maskProvider,
                             _masked,
                             _staticHdrConfigured,
-                            _losslessX264RgbConfigured,
+                            _x264RgbConfigured,
                             _configuredHdrMetadata,
                             ref _directFaceBlurFrames,
                             ref _bitmapMaskBlurFrames,
@@ -1355,7 +1355,7 @@ public unsafe sealed class VideoExportService
                         _maskProvider,
                         _masked,
                         _staticHdrConfigured,
-                        _losslessX264RgbConfigured,
+                        _x264RgbConfigured,
                         _configuredHdrMetadata,
                         ref _directFaceBlurFrames,
                         ref _bitmapMaskBlurFrames,
@@ -1426,7 +1426,7 @@ public unsafe sealed class VideoExportService
                 _maskProvider,
                 _masked,
                 _staticHdrConfigured,
-                _losslessX264RgbConfigured,
+                _x264RgbConfigured,
                 _configuredHdrMetadata,
                 ref _directFaceBlurFrames,
                 ref _bitmapMaskBlurFrames,
