@@ -1913,7 +1913,9 @@ namespace FaceShield.Services.Analysis
             if (totalFrames <= 0)
                 return AutoMaskPostProcessResult.Empty;
 
-            using var workingProvider = _maskProvider.CreateSnapshot(out long providerVersion);
+            using var workingProvider = _maskProvider.CreateSnapshot(
+                out long providerVersion,
+                ct);
 
             var cascadeResult = new YoloRiskCascadeStep().Apply(
                 workingProvider,
