@@ -237,21 +237,36 @@ namespace FaceShield.Services.Video
     }
 
     public FrameMaskProvider CreateSnapshot()
-        => CreateSnapshot(out _);
+        => CreateSnapshot(out _, CancellationToken.None);
 
     public FrameMaskProvider CreateSnapshot(out long sourceVersion)
+        => CreateSnapshot(out sourceVersion, CancellationToken.None);
+
+    public FrameMaskProvider CreateSnapshot(
+        out long sourceVersion,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_stateGate)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             sourceVersion = _version;
             var snapshot = new FrameMaskProvider();
             try
             {
                 foreach (var entry in _masks)
-                    snapshot._masks[entry.Key] = CloneBitmap(entry.Value);
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    snapshot._masks[entry.Key] = CloneBitmap(
+                        entry.Value,
+                        cancellationToken);
+                }
 
                 foreach (var entry in _faceMasks)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     snapshot._faceMasks[entry.Key] = CloneFaceMaskData(entry.Value);
+                }
 
                 return snapshot;
             }
@@ -338,8 +353,11 @@ namespace FaceShield.Services.Video
         Clear();
     }
 
-    private static WriteableBitmap CloneBitmap(WriteableBitmap source)
+    private static WriteableBitmap CloneBitmap(
+        WriteableBitmap source,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var copy = new WriteableBitmap(
             source.PixelSize,
             source.Dpi,
@@ -357,6 +375,7 @@ namespace FaceShield.Services.Video
             byte* dst = (byte*)copyBuffer.Address;
             for (int y = 0; y < rows; y++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 Buffer.MemoryCopy(
                     src + y * sourceBuffer.RowBytes,
                     dst + y * copyBuffer.RowBytes,
