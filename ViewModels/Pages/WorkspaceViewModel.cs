@@ -115,6 +115,9 @@ namespace FaceShield.ViewModels.Pages
 
         public int AutoLastProcessedFrame => _autoLastProcessedFrame;
         public DateTime AutoLastProcessedAtUtc => _autoLastProcessedAtUtc;
+        public string? AutoExecutionProviderLabel { get; private set; }
+        public string? AutoExecutionProviderError { get; private set; }
+
 
         public WorkspaceViewModel(string videoPath)
             : this(videoPath, WorkspaceMode.Manual, null, null)
@@ -1210,6 +1213,13 @@ namespace FaceShield.ViewModels.Pages
                 }.ResolveProcessingMode();
                 var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
                 using IFaceDetector detector = detectorFactory.CreateDetector();
+                AutoExecutionProviderLabel = AutoRunSignaturePolicy.GetExecutionProviderLabel(detector);
+                AutoExecutionProviderError = detector switch
+                {
+                    FaceOnnxDetector faceOnnx => faceOnnx.ExecutionProviderError,
+                    YoloFaceOnnxDetector yoloOnnx => yoloOnnx.ExecutionProviderError,
+                    _ => null
+                };
                 string sourceEvidenceId = AutoRunSignaturePolicy.BuildSourceEvidenceId(FrameList.VideoPath);
                 string executionSignature = AutoRunSignaturePolicy.BuildExecutionSignature(
                     runOptions,
