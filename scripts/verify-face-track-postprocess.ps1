@@ -401,6 +401,26 @@ using (var cancelled = new CancellationTokenSource())
         throw new InvalidOperationException("Expected tracked-box stabilization to observe cancellation.");
 }
 
+using (var cancelledTrackPost = new CancellationTokenSource())
+{
+    cancelledTrackPost.Cancel();
+    bool trackCancellationObserved = false;
+    try
+    {
+        new FaceTrackInterpolator().Apply(
+            stabilizerProvider,
+            totalFrames: 4,
+            cancellationToken: cancelledTrackPost.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        trackCancellationObserved = true;
+    }
+
+    if (!trackCancellationObserved)
+        throw new InvalidOperationException("Expected face-track interpolation to observe cancellation.");
+}
+
 Console.WriteLine(
     $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, terminalHold=True, terminalHoldFrames={string.Join(",", terminalHoldResult.FilledLostFrameIndices)}, unconfirmedTail=False, cutTail=False, edgeTailHold=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
