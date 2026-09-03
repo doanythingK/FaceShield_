@@ -120,16 +120,7 @@ namespace FaceShield.Services.Video
     public bool TryGetFaceMaskData(int frameIndex, out FaceMaskData data)
     {
         lock (_stateGate)
-        {
-            if (_faceMasks.TryGetValue(frameIndex, out var stored))
-            {
-                data = CloneFaceMaskData(stored);
-                return true;
-            }
-
-            data = default;
-            return false;
-        }
+            return _faceMasks.TryGetValue(frameIndex, out data);
     }
 
     public void RemoveFaceMask(int frameIndex)
@@ -220,14 +211,7 @@ namespace FaceShield.Services.Video
     public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()
     {
         lock (_stateGate)
-        {
-            return _faceMasks
-                .Select(static entry =>
-                    new KeyValuePair<int, FaceMaskData>(
-                        entry.Key,
-                        CloneFaceMaskData(entry.Value)))
-                .ToArray();
-        }
+            return _faceMasks.ToArray();
     }
 
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
