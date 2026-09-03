@@ -1123,7 +1123,8 @@ namespace FaceShield.ViewModels.Pages
             IProgress<ExportProgress>? exportProgress)
         {
             bool persisted = false;
-            bool detectionCompleted = false;
+            bool postProcessCommitted = false;
+            bool autoAnalysisCompleted = false;
             bool exactFrameOperationsSuspended = false;
             bool timelineOperationsSuspended = false;
             bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
@@ -1287,14 +1288,6 @@ namespace FaceShield.ViewModels.Pages
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceAuto] {generator.LastRunSummary.ToLogLine()}");
                 SynchronizeFrameListWithDecodedTimeline(generator.LastRunSummary);
 
-                if (token.IsCancellationRequested)
-                {
-                    _autoCompleted = false;
-                    PersistWorkspaceState(includePreviewMask: !exportAfter);
-                    persisted = true;
-                    return false;
-                }
-
                 if (!IsAutoDetectionRunComplete(generator.LastRunSummary, lastProcessed, FrameList.TotalFrames))
                 {
                     _autoCompleted = false;
@@ -1305,6 +1298,13 @@ namespace FaceShield.ViewModels.Pages
                     persisted = true;
                     return false;
                 }
+
+                // GenerateAsync only returns a complete run after the staged risk-cascade
+                // and post-process transaction has committed. A cancellation observed
+                // after this point must not be persisted as a resumable partial detection.
+                postProcessCommitted = true;
+                _autoResumeIndex = 0;
+                token.ThrowIfCancellationRequested();
 
                 ApplyAutoExportGateState(
                     WorkspaceExportGatePolicy.Complete(
@@ -1322,7 +1322,7 @@ namespace FaceShield.ViewModels.Pages
                 // canceled afterwards, do not reopen as a partial detection resume.
                 _autoCompleted = true;
                 _autoResumeIndex = 0;
-                detectionCompleted = true;
+                autoAnalysisCompleted = true;
 
                 if (exportAfter)
                 {
@@ -1363,8 +1363,8 @@ namespace FaceShield.ViewModels.Pages
             }
             catch (OperationCanceledException)
             {
-                _autoCompleted = detectionCompleted;
-                if (detectionCompleted)
+                _autoCompleted = autoAnalysisCompleted;
+                if (postProcessCommitted)
                     _autoResumeIndex = 0;
                 PersistWorkspaceState(includePreviewMask: !exportAfter);
                 persisted = true;
