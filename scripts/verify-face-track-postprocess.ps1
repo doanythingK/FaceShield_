@@ -421,6 +421,69 @@ using (var cancelledTrackPost = new CancellationTokenSource())
         throw new InvalidOperationException("Expected face-track interpolation to observe cancellation.");
 }
 
+var smoothingProvider = new FrameMaskProvider();
+smoothingProvider.SetFaceRects(0, new[] { new Rect(100, 100, 100, 100) }, size, 0.90f, new[] { 0.90f });
+smoothingProvider.SetFaceRects(1, new[] { new Rect(112, 100, 100, 100) }, size, 0.89f, new[] { 0.89f });
+smoothingProvider.SetFaceRects(2, new[] { new Rect(100, 100, 100, 100) }, size, 0.88f, new[] { 0.88f });
+new AutoMaskTemporalPostProcessor().ApplyTemporalSmoothing(
+    smoothingProvider,
+    totalFrames: 3);
+
+if (!smoothingProvider.TryGetFaceMaskData(1, out var smoothedMiddle) ||
+    smoothedMiddle.Faces.Count != 1 ||
+    smoothedMiddle.Faces[0].X <= 100 ||
+    smoothedMiddle.Faces[0].X >= 112)
+{
+    throw new InvalidOperationException("Expected temporal smoothing to blend the middle frame toward nearby frames.");
+}
+
+var cutSmoothingProvider = new FrameMaskProvider();
+cutSmoothingProvider.SetFaceRects(0, new[] { new Rect(100, 100, 100, 100) }, size, 0.90f, new[] { 0.90f });
+cutSmoothingProvider.SetFaceRects(1, new[] { new Rect(112, 100, 100, 100) }, size, 0.89f, new[] { 0.89f });
+new AutoMaskTemporalPostProcessor().ApplyTemporalSmoothing(
+    cutSmoothingProvider,
+    totalFrames: 3,
+    blockedCutPairs: new[] { "0->1" });
+
+if (!cutSmoothingProvider.TryGetFaceMaskData(1, out var cutSmoothed) ||
+    Math.Abs(cutSmoothed.Faces[0].X - 112) > 0.01)
+{
+    throw new InvalidOperationException("Expected a scene-cut boundary to block temporal smoothing across the cut.");
+}
+
+var distantSmoothingProvider = new FrameMaskProvider();
+distantSmoothingProvider.SetFaceRects(1, new[] { new Rect(112, 100, 100, 100) }, size, 0.89f, new[] { 0.89f });
+distantSmoothingProvider.SetFaceRects(4, new[] { new Rect(100, 100, 100, 100) }, size, 0.90f, new[] { 0.90f });
+new AutoMaskTemporalPostProcessor().ApplyTemporalSmoothing(
+    distantSmoothingProvider,
+    totalFrames: 5);
+
+if (!distantSmoothingProvider.TryGetFaceMaskData(1, out var distantSmoothed) ||
+    Math.Abs(distantSmoothed.Faces[0].X - 112) > 0.01)
+{
+    throw new InvalidOperationException("Expected temporal smoothing not to use a face beyond the configured frame-distance window.");
+}
+
+using (var cancelledSmoothing = new CancellationTokenSource())
+{
+    cancelledSmoothing.Cancel();
+    bool smoothingCancellationObserved = false;
+    try
+    {
+        new AutoMaskTemporalPostProcessor().ApplyTemporalSmoothing(
+            smoothingProvider,
+            totalFrames: 3,
+            cancellationToken: cancelledSmoothing.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        smoothingCancellationObserved = true;
+    }
+
+    if (!smoothingCancellationObserved)
+        throw new InvalidOperationException("Expected temporal smoothing to observe cancellation.");
+}
+
 Console.WriteLine(
     $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, terminalHold=True, terminalHoldFrames={string.Join(",", terminalHoldResult.FilledLostFrameIndices)}, unconfirmedTail=False, cutTail=False, edgeTailHold=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
