@@ -590,7 +590,9 @@ namespace FaceShield.Services.Video
 
             lock (_sync)
             {
-                if (_disposed || cancellationToken.IsCancellationRequested)
+                if (_disposed)
+                    return false;
+                if (cancellationToken.IsCancellationRequested)
                     return false;
                 if (!EnsureDecodedFrameTimelineThrough(frameIndex, cancellationToken))
                     return false;
@@ -623,7 +625,9 @@ namespace FaceShield.Services.Video
 
             lock (_sync)
             {
-                if (_disposed || cancellationToken.IsCancellationRequested)
+                if (_disposed)
+                    return false;
+                if (cancellationToken.IsCancellationRequested)
                     return false;
                 if (!EnsureDecodedFrameTimelineThroughTimestamp(
                         timestampSeconds,
@@ -674,7 +678,23 @@ namespace FaceShield.Services.Video
             }
         }
 
-        public PixelSize FrameSize => new(_dec->width, _dec->height);
+        public PixelSize FrameSize
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    ThrowIfDisposedLocked();
+                    return new PixelSize(_dec->width, _dec->height);
+                }
+            }
+        }
+
+        private void ThrowIfDisposedLocked()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(FfFrameExtractor));
+        }
 
         /// <summary>
         /// 지정 프레임 인덱스의 BGRA WriteableBitmap 반환.
@@ -688,11 +708,11 @@ namespace FaceShield.Services.Video
             int frameIndex,
             CancellationToken cancellationToken)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (frameIndex < 0) return null;
 
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 StartSequentialReadCore(
                     frameIndex,
                     timestampSeconds: null,
@@ -722,12 +742,12 @@ namespace FaceShield.Services.Video
             int targetHeight,
             CancellationToken cancellationToken)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (frameIndex < 0 || targetWidth <= 0 || targetHeight <= 0)
                 return null;
 
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 StartSequentialReadCore(
                     frameIndex,
                     timestampSeconds: null,
@@ -790,7 +810,6 @@ namespace FaceShield.Services.Video
             int targetHeight,
             CancellationToken cancellationToken)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (frameIndex < 0 || targetWidth <= 0 || targetHeight <= 0)
                 return null;
 
@@ -820,6 +839,7 @@ namespace FaceShield.Services.Video
 
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 if (cancellationToken.IsCancellationRequested)
                     return null;
 
@@ -985,12 +1005,12 @@ namespace FaceShield.Services.Video
             int startFrameIndex,
             CancellationToken cancellationToken = default)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (startFrameIndex < 0) startFrameIndex = 0;
             cancellationToken.ThrowIfCancellationRequested();
 
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 StartSequentialReadCore(
                     startFrameIndex,
                     timestampSeconds: null,
@@ -1006,7 +1026,6 @@ namespace FaceShield.Services.Video
             double timestampSeconds,
             CancellationToken cancellationToken = default)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
             if (startFrameIndex < 0) startFrameIndex = 0;
             if (!double.IsFinite(timestampSeconds))
                 throw new ArgumentOutOfRangeException(nameof(timestampSeconds));
@@ -1014,6 +1033,7 @@ namespace FaceShield.Services.Video
 
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 StartSequentialReadCore(
                     startFrameIndex,
                     timestampSeconds,
@@ -1055,10 +1075,9 @@ namespace FaceShield.Services.Video
             frame = null;
             frameIndex = -1;
 
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
-
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrame.");
 
@@ -1121,10 +1140,9 @@ namespace FaceShield.Services.Video
             frame = default;
             frameIndex = -1;
 
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
-
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRaw.");
 
@@ -1193,10 +1211,9 @@ namespace FaceShield.Services.Video
             frame = default;
             frameIndex = -1;
 
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
-
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawScaled.");
 
@@ -1268,17 +1285,17 @@ namespace FaceShield.Services.Video
 
             if (buffer == null)
                 throw new ArgumentNullException(nameof(buffer));
-            if (_disposed) throw new ObjectDisposedException(nameof(FfFrameExtractor));
-
-            int dstW = targetWidth > 0 ? targetWidth : _dec->width;
-            int dstH = targetHeight > 0 ? targetHeight : _dec->height;
-            stride = dstW * 4;
-            int bytes = stride * dstH;
-            if (buffer.Length < bytes)
-                throw new ArgumentException("The destination buffer is too small.", nameof(buffer));
 
             lock (_sync)
             {
+                ThrowIfDisposedLocked();
+                int dstW = targetWidth > 0 ? targetWidth : _dec->width;
+                int dstH = targetHeight > 0 ? targetHeight : _dec->height;
+                stride = dstW * 4;
+                int bytes = stride * dstH;
+                if (buffer.Length < bytes)
+                    throw new ArgumentException("The destination buffer is too small.", nameof(buffer));
+
                 if (!_sequentialActive)
                     throw new InvalidOperationException("StartSequentialRead must be called before TryGetNextFrameRawToBuffer.");
 
@@ -2463,14 +2480,15 @@ namespace FaceShield.Services.Video
 
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
-
             try
             {
                 lock (_sync)
                 {
-                DisposeOrdinalDecoder();
+                    if (_disposed)
+                        return;
+
+                    _disposed = true;
+                    DisposeOrdinalDecoder();
 
                 if (_sws != null)
                 {
