@@ -1085,11 +1085,9 @@ namespace FaceShield.ViewModels.Pages
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : new CancellationTokenSource();
 
+                ToolPanel.IsAutoRunning = true;
                 if (!exportAfter)
-                {
-                    ToolPanel.IsAutoRunning = true;
                     ToolPanel.AutoProgress = 0;
-                }
 
                 return RunTrackedAutoOperationAsync(exportAfter, progress, exportProgress);
             }
