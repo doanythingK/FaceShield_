@@ -578,6 +578,8 @@ The live provider is updated only after:
 
 Cancellation or an exception before commit disposes the working provider and leaves the live detection results unchanged. An unexpected concurrent live-provider mutation causes commit rejection rather than overwriting the newer state.
 
+If cancellation is first observed after the staged face-mask commit has already completed, the workspace clears the resume index instead of treating the committed masks as a resumable partial detection. Auto completion remains separate: cancellation during anomaly/review generation can leave `_autoCompleted=false`, but it does not cause already-committed masks to be resumed from a partial frame index.
+
 ### Atomic face-mask commit and bitmap ownership
 
 `FrameMaskProvider` now serializes stored-mask and face-mask state transitions through one state gate.
