@@ -593,10 +593,12 @@ namespace FaceShield.Services.Analysis
                         CandidateMatchMinIou = YoloSceneCutCandidateMatchMinIou,
                         CandidateMatchMaxCenterShiftRatio = YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                         CandidateMatchMaxAreaChangeRatio = YoloSceneCutCandidateMatchMaxAreaChangeRatio
-                    });
+                    },
+                    cancellationToken);
                 yoloSceneCutBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
                     yoloCutPairs,
-                    YoloSceneCutCarryBlockFrames);
+                    YoloSceneCutCarryBlockFrames,
+                    cancellationToken);
                 yoloProtectedSceneCarryFrames = yoloCarryCleanup.ProtectedStrongCarryLikeFrameIndices;
                 if (yoloCutPairs.Count > 0)
                 {
@@ -685,10 +687,12 @@ namespace FaceShield.Services.Analysis
                             CandidateMatchMinIou = YoloSceneCutCandidateMatchMinIou,
                             CandidateMatchMaxCenterShiftRatio = YoloSceneCutCandidateMatchMaxCenterShiftRatio,
                             CandidateMatchMaxAreaChangeRatio = YoloSceneCutCandidateMatchMaxAreaChangeRatio
-                        });
+                        },
+                        cancellationToken);
                     var postGapFillBlockedFrames = YoloFinalMaskPostProcessor.BuildSceneCutCarryBlockedFrames(
                         postGapFillCutPairs,
-                        YoloSceneCutCarryBlockFrames);
+                        YoloSceneCutCarryBlockFrames,
+                        cancellationToken);
                     yoloProtectedSceneCarryFrames = CombineFrameIndices(
                         yoloProtectedSceneCarryFrames,
                         postGapFillCarryCleanup.ProtectedStrongCarryLikeFrameIndices);
@@ -856,7 +860,8 @@ namespace FaceShield.Services.Analysis
                     NeighborWindowFrames = 1,
                     WeakConfidenceMax = YoloFinalMaskWeakIsolatedConfidenceMax,
                     EdgeMarginRatio = YoloFinalMaskEdgeMarginRatio
-                });
+                },
+                cancellationToken);
             if (cleanup.RemovedWeakIsolatedFaces > 0 || logWhenNoRemovals)
             {
                 Debug.WriteLine(
@@ -945,7 +950,8 @@ namespace FaceShield.Services.Analysis
                     BlockedSceneCarryFrameIndices = sceneCarryBlockedFrameIndices ?? Array.Empty<int>(),
                     MinAnchorConfidence = gapFillMinAnchorConfidence,
                     SupportedAnchorMinConfidence = gapFillSupportedAnchorMinConfidence
-                });
+                },
+                cancellationToken);
             if (gapFill.FilledFaces <= 0 &&
                 gapFill.BlockedCutGapFaces <= 0 &&
                 gapFill.BlockedCleanupGapFrames <= 0 &&
