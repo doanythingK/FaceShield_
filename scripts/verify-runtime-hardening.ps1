@@ -102,7 +102,9 @@ Assert-Match "risk cascade precomputation accepts cancellation" $yoloRiskCascade
 Assert-Match "risk cascade forwards cancellation into track building" $yoloRiskCascade 'FaceTrackBuilder\(\)\.Build\([\s\S]{0,220}cancellationToken\)'
 Assert-Match "risk cascade separates cancellation from ordinary failures" $yoloRiskCascade 'catch\s*\(OperationCanceledException\)[\s\S]{0,80}throw;[\s\S]{0,120}catch\s*\(Exception\s+ex\)'
 Assert-Match "risk cascade checks cancellation after synchronous secondary detection" $yoloRiskCascade 'DetectFacesBgra\([\s\S]{0,420}detectTimer\.Stop\(\);[\s\S]{0,120}ThrowIfCancellationRequested\(\)'
-Assert-Match "risk cascade checks cancellation while committing accepted secondary faces" $yoloRiskCascade 'foreach\s*\(var\s+entry\s+in\s+strongResults[\s\S]{0,260}ThrowIfCancellationRequested\(\)[\s\S]{0,2600}SetFaceRects\('
+Assert-Match "risk cascade checks cancellation while iterating accepted secondary results" $yoloRiskCascade 'foreach\s*\(var\s+entry\s+in\s+strongResults[\s\S]{0,260}ThrowIfCancellationRequested\(\)'
+Assert-Match "risk cascade checks cancellation immediately before accepted face commit" $yoloRiskCascade 'if\s*\(acceptedOnFrame\s*<=\s*0\)[\s\S]{0,220}ThrowIfCancellationRequested\(\)[\s\S]{0,280}SetFaceRects\('
+Assert-Match "aborted bitmap snapshot copy disposes its uncommitted bitmap" $frameMaskProvider 'CloneBitmap\([\s\S]{0,1200}catch[\s\S]{0,120}copy\.Dispose\(\)[\s\S]{0,80}throw;'
 
 Assert-Match "mask provider serializes cross-store state changes" $frameMaskProvider 'private\s+readonly\s+object\s+_stateGate\s*=\s*new\(\)[\s\S]{0,1000}SetMask\([\s\S]{0,500}lock\s*\(_stateGate\)[\s\S]*SetFaceRects\([\s\S]{0,500}lock\s*\(_stateGate\)'
 Assert-Match "mask provider snapshot exposes source version and cancellation" $frameMaskProvider 'CreateSnapshot\([\s\S]{0,180}out\s+long\s+sourceVersion[\s\S]{0,160}CancellationToken\s+cancellationToken[\s\S]{0,260}ThrowIfCancellationRequested\(\)'
