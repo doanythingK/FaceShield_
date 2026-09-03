@@ -45,6 +45,21 @@ $app = Read-RepoFile "App.axaml.cs"
 $homeViewModel = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
 $homeView = Read-RepoFile "Views/Pages/HomePageView.axaml"
 $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
+$hdrProbe = Read-RepoFile "Services/Video/VideoHdrProbePolicy.cs"
+$videoIoInterrupt = Read-RepoFile "Services/Video/VideoIoInterruptGuard.cs"
+$temporalPostProcessor = Read-RepoFile "Services/Analysis/AutoMaskTemporalPostProcessor.cs"
+$exportFidelity = Read-RepoFile "Services/Video/VideoExportFidelityPolicy.cs"
+
+Assert-Match "export input uses cancellable native io guard" ($exportService + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]{0,1000}Begin\(cancellationToken\)[\s\S]{0,1800}avformat_open_input[\s\S]{0,1200}avformat_find_stream_info'
+Assert-Match "HDR probe accepts cancellation and uses native io guard" ($hdrProbe + $videoIoInterrupt) 'ProbeVideoHdrMetadata\([\s\S]{0,220}CancellationToken\s+cancellationToken[\s\S]{0,1400}VideoIoInterruptGuard[\s\S]{0,1800}avformat_open_input'
+Assert-Match "tracked stabilizer is sparse and cancellable" $temporalPostProcessor 'ApplyTrackedBoxStabilization\([\s\S]{0,300}CancellationToken\s+cancellationToken[\s\S]{0,2200}GetFaceMaskFrameIndices\(\)[\s\S]{0,2400}ThrowIfCancellationRequested\(\)'
+Assert-NotMatch "tracked stabilizer does not allocate total-frame arrays" $temporalPostProcessor 'ApplyTrackedBoxStabilization\([\s\S]{0,3500}new\s+(List<Rect>\?\[|List<float>\?\[|PixelSize\[|bool\[)totalFrames\]'
+Assert-Match "tracked stabilizer blocks the current scene-cut start" $temporalPostProcessor 'blockedSceneCutStarts\?\.Contains\(frameIndex\)'
+Assert-NotMatch "tracked stabilizer does not shift scene cut by one frame" $temporalPostProcessor 'blockedSceneCutStarts\?\.Contains\(frameIndex\s*-\s*1\)'
+Assert-Match "RGB H264 uses compatibility contract instead of lossless contract" $exportFidelity 'CanEncodeCompatibleX264Rgb'
+Assert-NotMatch "RGB quality path no longer claims lossless compatibility" ($exportService + $exportFidelity) 'CanEncodeLosslessX264Rgb|losslessX264RgbConfigured'
+Assert-Match "hardware bitrate uses bounded source-relative guardrail" $exportFidelity 'boundedSourceBitrate\s*\*\s*5L\s*/\s*4L'
+Assert-Match "single video can use full global PTS frame budget" $extractor 'MaxCachedTimelineFramesPerVideo\s*=\s*1_000_000[\s\S]{0,120}MaxCachedTimelineFramesTotal\s*=\s*1_000_000'
 
 Assert-Match "playback checks decoder error before normal eof" $framePreview 'SequentialDecodeError[\s\S]*SequentialReachedEndOfStream[\s\S]*onPlaybackFailed'
 Assert-NotMatch "playback does not convert any non-cancel stop into natural eof" $framePreview 'endedNaturally\s*\|=\s*!ct\.IsCancellationRequested'
