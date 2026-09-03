@@ -32,7 +32,8 @@ namespace FaceShield.Services.Analysis
             bool missRecoveryOnly = false,
             bool continuityOnly = false,
             IReadOnlySet<int>? blockedSceneCutStarts = null,
-            int mutableStartFrameIndex = 0)
+            int mutableStartFrameIndex = 0,
+            CancellationToken cancellationToken = default)
         {
             if (!useTracking)
                 return FaceTrackPostProcessResult.Empty;
@@ -42,7 +43,8 @@ namespace FaceShield.Services.Analysis
                 totalFrames,
                 BuildTrackPostProcessOptions(profile, missRecoveryOnly, continuityOnly),
                 blockedSceneCutStarts,
-                mutableStartFrameIndex);
+                mutableStartFrameIndex,
+                cancellationToken);
 
             if (result.FilledGapFaces > 0 ||
                 result.FilledLostFaces > 0 ||
