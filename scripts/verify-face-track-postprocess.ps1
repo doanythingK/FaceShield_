@@ -484,6 +484,110 @@ using (var cancelledSmoothing = new CancellationTokenSource())
         throw new InvalidOperationException("Expected temporal smoothing to observe cancellation.");
 }
 
+using var transactionalProvider = new FrameMaskProvider();
+transactionalProvider.SetFaceRects(
+    7,
+    new[] { new Rect(100, 100, 80, 80) },
+    size,
+    0.80f,
+    new[] { 0.80f });
+
+using (var cancelledWorking = transactionalProvider.CreateSnapshot(
+           out long cancelledVersion))
+{
+    cancelledWorking.SetFaceRects(
+        7,
+        new[] { new Rect(300, 100, 80, 80) },
+        size,
+        0.90f,
+        new[] { 0.90f });
+
+    using var cancelledCommit = new CancellationTokenSource();
+    cancelledCommit.Cancel();
+    bool commitCancellationObserved = false;
+    try
+    {
+        transactionalProvider.CommitFaceMasksFrom(
+            cancelledWorking,
+            cancelledVersion,
+            cancelledCommit.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        commitCancellationObserved = true;
+    }
+
+    if (!commitCancellationObserved)
+        throw new InvalidOperationException("Expected staged face-mask commit to observe cancellation.");
+
+    if (!transactionalProvider.TryGetFaceMaskData(7, out var afterCancelledCommit) ||
+        Math.Abs(afterCancelledCommit.Faces[0].X - 100) > 0.01)
+    {
+        throw new InvalidOperationException("Expected cancelled staged commit to leave the live provider unchanged.");
+    }
+}
+
+using (var committedWorking = transactionalProvider.CreateSnapshot(
+           out long committedVersion))
+{
+    committedWorking.SetFaceRects(
+        7,
+        new[] { new Rect(300, 100, 80, 80) },
+        size,
+        0.90f,
+        new[] { 0.90f });
+
+    transactionalProvider.CommitFaceMasksFrom(
+        committedWorking,
+        committedVersion);
+}
+
+if (!transactionalProvider.TryGetFaceMaskData(7, out var afterCommittedState) ||
+    Math.Abs(afterCommittedState.Faces[0].X - 300) > 0.01)
+{
+    throw new InvalidOperationException("Expected successful staged commit to replace the live face-mask state.");
+}
+
+using (var conflictedWorking = transactionalProvider.CreateSnapshot(
+           out long conflictedVersion))
+{
+    conflictedWorking.SetFaceRects(
+        7,
+        new[] { new Rect(500, 100, 80, 80) },
+        size,
+        0.95f,
+        new[] { 0.95f });
+
+    transactionalProvider.SetFaceRects(
+        8,
+        new[] { new Rect(700, 100, 80, 80) },
+        size,
+        0.85f,
+        new[] { 0.85f });
+
+    bool conflictObserved = false;
+    try
+    {
+        transactionalProvider.CommitFaceMasksFrom(
+            conflictedWorking,
+            conflictedVersion);
+    }
+    catch (InvalidOperationException)
+    {
+        conflictObserved = true;
+    }
+
+    if (!conflictObserved)
+        throw new InvalidOperationException("Expected staged commit to reject a concurrently changed live provider.");
+
+    if (!transactionalProvider.TryGetFaceMaskData(7, out var afterConflict) ||
+        Math.Abs(afterConflict.Faces[0].X - 300) > 0.01 ||
+        !transactionalProvider.TryGetFaceMaskData(8, out _))
+    {
+        throw new InvalidOperationException("Expected rejected staged commit to preserve the newer live provider state.");
+    }
+}
+
 Console.WriteLine(
     $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, terminalHold=True, terminalHoldFrames={string.Join(",", terminalHoldResult.FilledLostFrameIndices)}, unconfirmedTail=False, cutTail=False, edgeTailHold=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
 '@ | Set-Content -Encoding UTF8 $program
