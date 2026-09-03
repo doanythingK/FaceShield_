@@ -13,7 +13,7 @@ internal static unsafe class VideoFrameProcessingPolicy
         IFrameMaskProvider maskProvider,
         MaskedVideoExporter masked,
         bool staticHdrConfigured,
-        bool losslessX264RgbConfigured,
+        bool x264RgbConfigured,
         VideoHdrMetadata? configuredHdrMetadata,
         ref int directFaceBlurFrames,
         ref int bitmapMaskBlurFrames,
@@ -82,7 +82,7 @@ internal static unsafe class VideoFrameProcessingPolicy
             FFmpegHdrMetadataGuard.FindUnsupportedMetadata(frame);
         if (unsupportedFrameMetadata != null)
             VideoExportCompatibilityPolicy.ThrowUnsupportedDynamicVideoMetadata(unsupportedFrameMetadata);
-        VideoExportFidelityPolicy.ValidateDecodedFramePixelFidelity(frame, enc, losslessX264RgbConfigured);
+        VideoExportFidelityPolicy.ValidateDecodedFrameFormatCompatibility(frame, enc, x264RgbConfigured);
 
         if (FFmpegHdrMetadataGuard.RequiresStaticHdrConfiguration(
                 frame,
@@ -380,7 +380,7 @@ internal static unsafe class VideoFrameProcessingPolicy
         IFrameMaskProvider maskProvider,
         MaskedVideoExporter masked,
         bool staticHdrConfigured,
-        bool losslessX264RgbConfigured,
+        bool x264RgbConfigured,
         VideoHdrMetadata? configuredHdrMetadata,
         ref int directFaceBlurFrames,
         ref int bitmapMaskBlurFrames,
@@ -450,7 +450,7 @@ internal static unsafe class VideoFrameProcessingPolicy
                 maskProvider,
                 masked,
                 staticHdrConfigured,
-                losslessX264RgbConfigured,
+                x264RgbConfigured,
                 configuredHdrMetadata,
                 ref directFaceBlurFrames,
                 ref bitmapMaskBlurFrames,
