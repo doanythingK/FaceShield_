@@ -348,27 +348,35 @@ namespace FaceShield.Services.Video
             Avalonia.Platform.PixelFormat.Bgra8888,
             Avalonia.Platform.AlphaFormat.Premul);
 
-        using var sourceBuffer = source.Lock();
-        using var copyBuffer = copy.Lock();
-        int rows = Math.Min(sourceBuffer.Size.Height, copyBuffer.Size.Height);
-        int bytesPerRow = Math.Min(sourceBuffer.RowBytes, copyBuffer.RowBytes);
-
-        unsafe
+        try
         {
-            byte* src = (byte*)sourceBuffer.Address;
-            byte* dst = (byte*)copyBuffer.Address;
-            for (int y = 0; y < rows; y++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                Buffer.MemoryCopy(
-                    src + y * sourceBuffer.RowBytes,
-                    dst + y * copyBuffer.RowBytes,
-                    copyBuffer.RowBytes,
-                    bytesPerRow);
-            }
-        }
+            using var sourceBuffer = source.Lock();
+            using var copyBuffer = copy.Lock();
+            int rows = Math.Min(sourceBuffer.Size.Height, copyBuffer.Size.Height);
+            int bytesPerRow = Math.Min(sourceBuffer.RowBytes, copyBuffer.RowBytes);
 
-        return copy;
+            unsafe
+            {
+                byte* src = (byte*)sourceBuffer.Address;
+                byte* dst = (byte*)copyBuffer.Address;
+                for (int y = 0; y < rows; y++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Buffer.MemoryCopy(
+                        src + y * sourceBuffer.RowBytes,
+                        dst + y * copyBuffer.RowBytes,
+                        copyBuffer.RowBytes,
+                        bytesPerRow);
+                }
+            }
+
+            return copy;
+        }
+        catch
+        {
+            copy.Dispose();
+            throw;
+        }
     }
 
     private void RemoveStoredMaskLocked(int frameIndex)
