@@ -2505,7 +2505,8 @@ namespace FaceShield.ViewModels.Pages
                 _autoExportHybridPolicyAvailable,
                 _autoExportAllowHybridCopy,
                 _autoExportHybridDisableReasons,
-                _autoExecutionSignature);
+                _autoExecutionSignature,
+                FrameList.TimelineExtentSeconds);
         }
 
         private void ApplySnapshot(WorkspaceSnapshot snapshot)
@@ -2527,6 +2528,7 @@ namespace FaceShield.ViewModels.Pages
                 secondsPerScreen = FrameList.SecondsPerScreen;
             FrameList.SecondsPerScreen = secondsPerScreen;
 
+            FrameList.RestoreTimelineExtentSeconds(snapshot.TimelineExtentSeconds);
             double maxStart = Math.Max(0, FrameList.TimelineExtentSeconds - FrameList.SecondsPerScreen);
             FrameList.ViewStartSeconds = Math.Clamp(snapshot.ViewStartSeconds, 0, maxStart);
 
