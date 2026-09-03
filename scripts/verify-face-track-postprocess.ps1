@@ -26,6 +26,7 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Avalonia;
 using FaceShield.Services.Analysis;
 using FaceShield.Services.Video;
@@ -355,7 +356,7 @@ stabilizerProvider.SetFaceRects(3, new[] { new Rect(160, 130, 100, 100) }, size,
 int stabilizedFrames = new AutoMaskTemporalPostProcessor().ApplyTrackedBoxStabilization(
     stabilizerProvider,
     totalFrames: 4,
-    blockedSceneCutStarts: new HashSet<int> { 2 });
+    blockedSceneCutStarts: new HashSet<int> { 3 });
 
 if (!stabilizerProvider.TryGetFaceMaskData(1, out var stableDeadZone) ||
     Math.Abs(stableDeadZone.Faces[0].X - 100) > 0.01 ||
@@ -379,6 +380,26 @@ if (!stabilizerProvider.TryGetFaceMaskData(3, out var cutStable) ||
 
 if (stabilizedFrames != 2)
     throw new InvalidOperationException($"Expected two stabilized frames, got {stabilizedFrames}.");
+
+using (var cancelled = new CancellationTokenSource())
+{
+    cancelled.Cancel();
+    bool cancelledObserved = false;
+    try
+    {
+        new AutoMaskTemporalPostProcessor().ApplyTrackedBoxStabilization(
+            stabilizerProvider,
+            totalFrames: 4,
+            cancellationToken: cancelled.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        cancelledObserved = true;
+    }
+
+    if (!cancelledObserved)
+        throw new InvalidOperationException("Expected tracked-box stabilization to observe cancellation.");
+}
 
 Console.WriteLine(
     $"[FaceTrackPostVerify] tracks={result.TrackCount}, filled={result.FilledGapFaces}, gapFrames={string.Join(",", result.FilledGapFacesInfo.Select(x => x.FrameIndex))}, lostFilled={result.FilledLostFaces}, initialFilled={result.FilledInitialFaces}, outwardInitialFilled=False, blockedInitialFill={result.BlockedInitialFillTracks}, lostFrames={string.Join(",", result.FilledLostFrameIndices)}, removedShort={result.RemovedShortFaces}, removedSparse={result.RemovedSparseFaces}, removedUnstableTail={result.RemovedUnstableTailFaces}, removedEdgeTail={result.RemovedEdgeTailFaces}, removedLower={result.RemovedLowerFrameFaces}, largeJumpFilled=False, sceneGuard=True, faceOnnxContinuity=True, resumeBoundary=True, confirmedHold=True, terminalHold=True, terminalHoldFrames={string.Join(",", terminalHoldResult.FilledLostFrameIndices)}, unconfirmedTail=False, cutTail=False, edgeTailHold=False, rewritten={result.RewrittenFrames}, filledFrames={string.Join(",", provider.GetFaceMaskFrameIndices().OrderBy(x => x))}");
