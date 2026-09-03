@@ -23,6 +23,7 @@ namespace FaceShield.Services.FaceDetection
         private static string? _lastExecutionProviderError;
 
         internal string ExecutionProviderLabel { get; }
+        internal string? ExecutionProviderError { get; private set; }
 
         private static readonly (float Width, float Height)[][] Yolo5FaceAnchors =
         {
@@ -64,8 +65,11 @@ namespace FaceShield.Services.FaceDetection
             if (shouldTryGpu)
                 gpuProvider = TryAppendGpuExecutionProvider(sessionOptions);
 
-            if (shouldTryGpu && gpuProvider == null && GetLastExecutionProviderError() == null)
-                UpdateExecutionProviderError("GPU execution provider load failed.");
+            string? providerError = shouldTryGpu && gpuProvider == null
+                ? "GPU execution provider load failed."
+                : null;
+            if (providerError != null && GetLastExecutionProviderError() == null)
+                UpdateExecutionProviderError(providerError);
 
             try
             {
@@ -75,6 +79,7 @@ namespace FaceShield.Services.FaceDetection
                     : gpuProvider != null
                         ? $"GPU:{gpuProvider}"
                         : shouldTryGpu ? "CPU(가속 실패)" : "CPU";
+                ExecutionProviderError = providerError;
                 UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 if (gpuProvider != null || !shouldTryGpu)
                     UpdateExecutionProviderError(null);
@@ -84,6 +89,7 @@ namespace FaceShield.Services.FaceDetection
                 using var fallbackOptions = CreateSessionOptions();
                 _session = new InferenceSession(_options.ModelPath, fallbackOptions);
                 ExecutionProviderLabel = "CPU(가속 실패)";
+                ExecutionProviderError = ex.Message;
                 UpdateExecutionProviderLabel(ExecutionProviderLabel);
                 UpdateExecutionProviderError(ex.Message);
             }
