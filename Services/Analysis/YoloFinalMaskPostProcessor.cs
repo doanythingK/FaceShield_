@@ -3,6 +3,7 @@ using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Analysis
 {
@@ -10,8 +11,10 @@ namespace FaceShield.Services.Analysis
     {
         public YoloFinalMaskCleanupResult RemoveWeakIsolatedMasks(
             FrameMaskProvider maskProvider,
-            YoloFinalMaskCleanupOptions? options = null)
+            YoloFinalMaskCleanupOptions? options = null,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             options ??= new YoloFinalMaskCleanupOptions();
             if (options.NeighborWindowFrames <= 0 || options.WeakConfidenceMax <= 0)
                 return YoloFinalMaskCleanupResult.Empty;
@@ -40,6 +43,7 @@ namespace FaceShield.Services.Analysis
             var removedFacesInfo = new List<FaceTrackFilledFace>();
             for (int i = 0; i < entries.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entries[i].Key;
                 var data = entries[i].Value;
                 var faces = new List<Rect>(data.Faces.Count);
@@ -49,6 +53,7 @@ namespace FaceShield.Services.Analysis
 
                 for (int faceIndex = 0; faceIndex < data.Faces.Count; faceIndex++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var face = data.Faces[faceIndex];
                     float confidence = faceIndex < data.Confidences.Count
                         ? data.Confidences[faceIndex]
@@ -260,8 +265,10 @@ namespace FaceShield.Services.Analysis
 
         public YoloFinalMaskGapFillResult FillShortStableGaps(
             FrameMaskProvider maskProvider,
-            YoloFinalMaskGapFillOptions? options = null)
+            YoloFinalMaskGapFillOptions? options = null,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             options ??= new YoloFinalMaskGapFillOptions();
             if (options.MaxGapFrames <= 0 || options.MinAnchorConfidence <= 0)
                 return YoloFinalMaskGapFillResult.Empty;
@@ -297,6 +304,7 @@ namespace FaceShield.Services.Analysis
 
             for (int entryIndex = 0; entryIndex < entries.Length - 1; entryIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int previousFrame = entries[entryIndex].Key;
                 var previous = entries[entryIndex].Value;
                 if (previous.Size.Width <= 0 || previous.Size.Height <= 0)
@@ -304,10 +312,12 @@ namespace FaceShield.Services.Analysis
 
                 for (int faceIndex = 0; faceIndex < previous.Faces.Count; faceIndex++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     float previousConfidence = GetConfidence(previous, faceIndex);
                     var previousFace = previous.Faces[faceIndex];
                     for (int nextEntryIndex = entryIndex + 1; nextEntryIndex < entries.Length; nextEntryIndex++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         int nextFrame = entries[nextEntryIndex].Key;
                         int gap = nextFrame - previousFrame - 1;
                         if (gap > options.MaxGapFrames)
@@ -357,6 +367,7 @@ namespace FaceShield.Services.Analysis
                             blockedCutGapFaces += gap;
                             for (int frameIndex = previousFrame + 1; frameIndex < nextFrame; frameIndex++)
                             {
+                                cancellationToken.ThrowIfCancellationRequested();
                                 if (!storedFrames.Contains(frameIndex))
                                 {
                                     blockedCutFrames.Add(frameIndex);
@@ -418,6 +429,7 @@ namespace FaceShield.Services.Analysis
                         bool hasSceneCarryBlockedFace = false;
                         foreach (int frameIndex in allGapFrameIndices)
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
                             double t = (frameIndex - previousFrame) / (double)(nextFrame - previousFrame);
                             var interpolated = Interpolate(previousFace, nextFace, t);
                             if (interpolated.Width <= 0 || interpolated.Height <= 0)
@@ -446,6 +458,7 @@ namespace FaceShield.Services.Analysis
 
                         foreach (var interpolatedGapFace in interpolatedGapFaces)
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
                             int frameIndex = interpolatedGapFace.FrameIndex;
                             var interpolated = interpolatedGapFace.Face;
                             bool blockedByCleanupFace = HasMatchingBlockedFace(
@@ -512,6 +525,7 @@ namespace FaceShield.Services.Analysis
 
             foreach (var entry in fills.OrderBy(static x => x.Key))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (entry.Value.Faces.Count == 0)
                     continue;
 
@@ -605,8 +619,10 @@ namespace FaceShield.Services.Analysis
         public YoloSceneCutCarryCleanupResult RemoveSceneCutCarryRemnants(
             FrameMaskProvider maskProvider,
             IReadOnlyCollection<string> cutFramePairs,
-            YoloSceneCutCarryCleanupOptions? options = null)
+            YoloSceneCutCarryCleanupOptions? options = null,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             options ??= new YoloSceneCutCarryCleanupOptions();
             if (cutFramePairs.Count == 0 || options.MaxCarryFrames <= 0 || options.MaxConfidence <= 0)
                 return YoloSceneCutCarryCleanupResult.Empty;
@@ -623,6 +639,7 @@ namespace FaceShield.Services.Analysis
 
             foreach (string cutFramePair in cutFramePairs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!TryParseFramePair(cutFramePair, out int sourceFrame, out int targetFrame))
                     continue;
 
@@ -642,6 +659,7 @@ namespace FaceShield.Services.Analysis
                 int lastTargetFrame = Math.Max(purgeLastTargetFrame, weakLastTargetFrame);
                 for (int frameIndex = firstTargetFrame; frameIndex <= lastTargetFrame; frameIndex++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!maskProvider.TryGetFaceMaskData(frameIndex, out var data) ||
                         data.Faces.Count == 0)
                     {
@@ -653,6 +671,7 @@ namespace FaceShield.Services.Analysis
                     bool changed = false;
                     for (int i = faces.Count - 1; i >= 0; i--)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         float confidence = GetConfidence(data, i);
                         var matchingReferences = references
                             .Where(reference => IsSceneCutCarryMatch(reference, faces[i], options))
@@ -733,14 +752,17 @@ namespace FaceShield.Services.Analysis
 
         public static IReadOnlyList<int> BuildSceneCutCarryBlockedFrames(
             IReadOnlyCollection<string> cutFramePairs,
-            int maxCarryFrames)
+            int maxCarryFrames,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (cutFramePairs.Count == 0 || maxCarryFrames <= 0)
                 return Array.Empty<int>();
 
             var frames = new SortedSet<int>();
             foreach (string cutFramePair in cutFramePairs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!TryParseFramePair(cutFramePair, out int sourceFrame, out int targetFrame))
                     continue;
 
