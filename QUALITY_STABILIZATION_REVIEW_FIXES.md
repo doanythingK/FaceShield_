@@ -537,3 +537,83 @@ Reading the presentation timestamp of an already-known ordinal can remain meanin
 
 The repository invariants were extended to cover the changes above. This remains source-level/static validation on this branch; no Windows/macOS Actions build, forced Dispose race reproduction, cancellation timing replay, or real-video runtime validation is claimed here.
 
+---
+
+## 13. Transactional Auto post-process and risk-cascade cancellation
+
+A further cancellation review found that the YOLO risk cascade still performed substantial precomputation without cancellation and that successful detection results could be partially mutated by risk/post-processing before a later cancellation was observed.
+
+### Risk cascade cancellation completion
+
+`YoloRiskCascadeStep` now propagates the run cancellation token through:
+
+- primary face-entry collection
+- timing coverage scans
+- risk-frame construction and confirmation expansion
+- one-to-one geometry matching
+- `FaceTrackBuilder.Build`
+- risk-range construction
+- secondary decode boundaries
+- immediately before and after synchronous secondary detection
+- temporal-support checks
+- accepted-result merge loops and the final `SetFaceRects` commit boundary
+- risk summary accounting
+
+`OperationCanceledException` is rethrown separately instead of being converted to a normal cascade error string.
+
+Synchronous detector execution is still cooperative at the call boundary: a native/ONNX call already executing cannot be interrupted by the token, but cancellation is checked again immediately after it returns.
+
+### Transaction boundary: risk cascade plus post-process
+
+Detection results remain on the live `FrameMaskProvider`.
+
+Before risk cascade starts, Auto creates an isolated working snapshot and records the live provider version. Both `YoloRiskCascadeStep` and `AutoMaskPostProcessPipeline` mutate only that working provider.
+
+The live provider is updated only after:
+
+1. risk cascade completes
+2. the full post-process pipeline completes
+3. the cancellation token is checked again
+4. the live provider version still matches the version captured when the transaction began
+
+Cancellation or an exception before commit disposes the working provider and leaves the live detection results unchanged. An unexpected concurrent live-provider mutation causes commit rejection rather than overwriting the newer state.
+
+### Atomic face-mask commit and bitmap ownership
+
+`FrameMaskProvider` now serializes stored-mask and face-mask state transitions through one state gate.
+
+The transaction snapshot deep-copies stored `WriteableBitmap` instances, so the working provider owns its bitmap copies independently and can safely dispose them on rollback. Snapshot bitmap copying checks cancellation for each copied row.
+
+The transaction commit replaces only face-mask state while holding the live provider state gate. Existing stored/manual bitmap masks remain authoritative and are never replaced by staged face rectangles.
+
+Face-mask arrays and confidence arrays are copied when entering or exporting provider state so the committed state is not backed by mutable caller-owned arrays.
+
+### Single-frame Auto cancellation
+
+Single-frame Auto now checks cancellation:
+
+- immediately after synchronous face detection
+- after optional filtering
+- before constructing/committing the face-mask payload
+- immediately before `SetFaceRects`
+
+This is cooperative cancellation. If cancellation occurs after the final check and the atomic provider commit has already begun, that one-frame commit is considered completed rather than rolled back.
+
+### Deterministic scene-cut overload
+
+The deterministic `Func<int,int,double>` scene-cut guard overload remains available for verifier/test use, but now also accepts an optional cancellation token and checks it around candidate and frame-difference work. Production Auto continues to use the video-path overload with the run token.
+
+### Regression coverage
+
+The face-track harness now verifies:
+
+- cancelled staged commit leaves the live provider unchanged
+- successful staged commit replaces face-mask state
+- a live-provider version conflict rejects a stale staged commit and preserves the newer state
+
+The runtime hardening verifier also checks risk-cascade token propagation, transactional provider usage, provider state/version gating, bitmap snapshot cancellation, single-frame commit boundaries, and the deterministic scene-cut cancellation contract.
+
+### Validation status
+
+These changes are source-level and verifier/harness updates on `docs/manual-blur-player-architecture`. No Windows/macOS Actions build, real cancellation timing replay, long-video run, or forced concurrent provider mutation test has been executed on this branch in this follow-up.
+
