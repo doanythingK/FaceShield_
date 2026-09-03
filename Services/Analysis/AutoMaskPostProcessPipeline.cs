@@ -467,7 +467,8 @@ namespace FaceShield.Services.Analysis
                     _totalFrames,
                     _options.FilterProfile == FaceFilterProfile.Yolo
                         ? CombineCutFramePairs(yoloPreSmoothCutPairs, yoloPreSmoothStrongCarryProbeCutPairs)
-                        : Array.Empty<string>());
+                        : Array.Empty<string>(),
+                    cancellationToken);
                 ranTemporalSmoothing = true;
             }
             swSmooth.Stop();
