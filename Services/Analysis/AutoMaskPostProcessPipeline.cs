@@ -535,6 +535,7 @@ namespace FaceShield.Services.Analysis
                     $"[AutoMaskPostProcessTiming] runId={runId} phase=yolo-scene-guard-post-smooth run=false elapsedMs=0 enabledTemporal={enableTemporalSmoothing} enabledScene={enableSceneCutCleanup}");
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             IReadOnlyList<int> yoloProtectedSceneCarryFrames = Array.Empty<int>();
             const string defaultSceneCutPairSourceBreakdown = "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0";
             string finalSceneCutPairSourceBreakdown = defaultSceneCutPairSourceBreakdown;
@@ -727,6 +728,7 @@ namespace FaceShield.Services.Analysis
                     $"[AutoMaskPostProcessTiming] runId={runId} phase=yolo-scene-cleanup run=false elapsedMs=0 enabled={enableSceneCutCleanup} profile={_options.FilterProfile}");
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             var swGapFill = Stopwatch.StartNew();
             bool ranStandaloneGapFill = _options.FilterProfile == FaceFilterProfile.Yolo && enableGapFill && !enableWeakIsolationCleanup;
             YoloGapFillRunSummary yoloStandaloneGapFillSummary = YoloGapFillRunSummary.Empty;
@@ -774,6 +776,7 @@ namespace FaceShield.Services.Analysis
                         ? "[AutoMaskPostProcess] post-processing disabled · YOLO baseline 보완 모드(추적 기반 미탐 보완)"
                         : "[AutoMaskPostProcess] post-processing disabled");
             }
+            cancellationToken.ThrowIfCancellationRequested();
             var finalSummary = LogFinalMaskSummary(
                 yoloProtectedSceneCarryFrames,
                 sceneCutPreGuardPairCount: yoloPreSmoothCutPairs.Count,
@@ -826,7 +829,8 @@ namespace FaceShield.Services.Analysis
                 finalSceneCutCarryWindowCount: finalSceneCutCarryWindowCount,
                 finalSceneCutPostGapFillWindowCount: finalSceneCutPostGapFillWindowCount,
                 finalSceneCutPairSourceBreakdown: finalSceneCutPairSourceBreakdown,
-                finalSceneCutPostGapFillPairSourceBreakdown: finalSceneCutPostGapFillPairSourceBreakdown);
+                finalSceneCutPostGapFillPairSourceBreakdown: finalSceneCutPostGapFillPairSourceBreakdown,
+                cancellationToken: cancellationToken);
             swTotal.Stop();
             Debug.WriteLine(
                 $"[AutoMaskPostProcessTiming] runId={runId} phase=total elapsedMs={swTotal.ElapsedMilliseconds} profile={_options.FilterProfile} totalFrames={_totalFrames} detectEveryN={_options.DetectEveryNFrames}");
@@ -1134,8 +1138,10 @@ namespace FaceShield.Services.Analysis
             int finalSceneCutPostGapFillCarryRemovedCount = 0,
             int finalSceneCutPostGapFillProtectedFrameCount = 0,
             string finalSceneCutPairSourceBreakdown = "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0",
-            string finalSceneCutPostGapFillPairSourceBreakdown = "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0")
+            string finalSceneCutPostGapFillPairSourceBreakdown = "preCutOnly=0,preStrongOnly=0,postCutOnly=0,postStrongOnly=0,shared=0,pairOrphans=0",
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_options.FilterProfile != FaceFilterProfile.Yolo)
             {
                 var genericEntries = _maskProvider.GetFaceMaskEntries()
@@ -1146,6 +1152,7 @@ namespace FaceShield.Services.Analysis
                 int genericShortGaps = 0;
                 for (int i = 1; i < genericEntries.Length; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int gap = genericEntries[i].Key - genericEntries[i - 1].Key - 1;
                     if (gap > 0 && gap <= FinalMaskShortGapMaxFrames)
                         genericShortGaps++;
@@ -1290,6 +1297,7 @@ namespace FaceShield.Services.Analysis
             int shortGapCount = 0;
             for (int i = 1; i < frames.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int missing = frames[i] - frames[i - 1] - 1;
                 if (missing <= 0 || missing > FinalMaskShortGapMaxFrames)
                     continue;
@@ -1326,6 +1334,7 @@ namespace FaceShield.Services.Analysis
             var isolatedFrames = new List<int>();
             for (int i = 0; i < frames.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 bool hasPreviousNeighbor = i > 0 && frames[i] - frames[i - 1] <= 1;
                 bool hasNextNeighbor = i < frames.Length - 1 && frames[i + 1] - frames[i] <= 1;
                 if (!hasPreviousNeighbor && !hasNextNeighbor)
@@ -1357,10 +1366,12 @@ namespace FaceShield.Services.Analysis
             var tinyShortFrames = new HashSet<int>();
             foreach (var entry in entries)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entry.Key;
                 var data = entry.Value;
                 for (int i = 0; i < data.Faces.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var face = data.Faces[i];
                     float confidence = i < data.Confidences.Count
                         ? data.Confidences[i]
@@ -1539,6 +1550,7 @@ namespace FaceShield.Services.Analysis
             int sampleShortGapCount = 0;
             for (int i = 1; i < sampleShortGapFrames.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int missing = sampleShortGapFrames[i] - sampleShortGapFrames[i - 1] - 1;
                 if (missing <= 0 || missing > FinalMaskShortGapMaxFrames)
                     continue;
@@ -1550,6 +1562,7 @@ namespace FaceShield.Services.Analysis
             int sampleIsolatedFrames = 0;
             for (int i = 0; i < sampleShortGapFrames.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 bool hasPreviousNeighbor = i > 0 && sampleShortGapFrames[i] - sampleShortGapFrames[i - 1] <= 1;
                 bool hasNextNeighbor = i < sampleShortGapFrames.Length - 1 && sampleShortGapFrames[i + 1] - sampleShortGapFrames[i] <= 1;
                 if (!hasPreviousNeighbor && !hasNextNeighbor)
@@ -1560,6 +1573,7 @@ namespace FaceShield.Services.Analysis
             var sampleLargeJumpGapRanges = new List<string>();
             for (int i = 1; i < sampleShortGapFrames.Length; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int sampleMissing = sampleShortGapFrames[i] - sampleShortGapFrames[i - 1] - 1;
                 if (sampleMissing <= 0 || sampleMissing > FinalMaskShortGapMaxFrames)
                     continue;
@@ -1594,10 +1608,12 @@ namespace FaceShield.Services.Analysis
             var sampleProtectedCarryFrames = protectedSceneCarryFrames.Count(x => x >= sampleWindowStart && x <= sampleWindowEnd);
             foreach (var entry in sampleEntries)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entry.Key;
                 var data = entry.Value;
                 for (int i = 0; i < data.Faces.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var face = data.Faces[i];
                     float confidence = i < data.Confidences.Count
                         ? data.Confidences[i]
