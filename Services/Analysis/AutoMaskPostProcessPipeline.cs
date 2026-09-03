@@ -187,7 +187,8 @@ namespace FaceShield.Services.Analysis
                     missRecoveryOnly: runYoloMissRecovery,
                     continuityOnly: runTrackedContinuity,
                     blockedSceneCutStarts: _sceneCutStarts,
-                    mutableStartFrameIndex: _mutableStartFrameIndex)
+                    mutableStartFrameIndex: _mutableStartFrameIndex,
+                    cancellationToken: cancellationToken)
                 : FaceTrackPostProcessResult.Empty;
             swTrack.Stop();
             Debug.WriteLine(
