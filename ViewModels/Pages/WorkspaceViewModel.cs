@@ -1286,7 +1286,9 @@ namespace FaceShield.ViewModels.Pages
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
                 if (!exportAfter)
-                    await BuildAutoAnomaliesAsync();
+                    await BuildAutoAnomaliesAsync(token);
+
+                token.ThrowIfCancellationRequested();
 
                 // Detection and post-processing are complete at this point. If export is
                 // canceled afterwards, do not reopen as a partial detection resume.
@@ -1770,8 +1772,10 @@ namespace FaceShield.ViewModels.Pages
             RefreshIssueTimesInBackground(targetFrame);
         }
 
-        private async Task BuildAutoAnomaliesAsync()
+        private async Task BuildAutoAnomaliesAsync(
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int total = FrameList.TotalFrames;
             if (total <= 0)
             {
@@ -1792,56 +1796,81 @@ namespace FaceShield.ViewModels.Pages
 
             var (noFaceFrames, lowConfidenceFrames, flickerFrames) = await Task.Run(() =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var noFace = new System.Collections.Generic.List<int>();
                 var lowConfidence = new System.Collections.Generic.List<int>();
                 var flicker = new System.Collections.Generic.List<int>();
-                var hasFace = new bool[total];
+                var faceFrames = new SortedSet<int>();
 
                 foreach (var entry in _maskProvider.GetFaceMaskEntries())
                 {
-                    int i = entry.Key;
-                    if (i < 0 || i >= total)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int frameIndex = entry.Key;
+                    if (frameIndex < 0 || frameIndex >= total)
                         continue;
 
                     var data = entry.Value;
-                    if (data.Faces.Count > 0)
+                    if (data.Faces.Count == 0)
+                        continue;
+
+                    faceFrames.Add(frameIndex);
+                    if (data.MinConfidence.HasValue &&
+                        data.MinConfidence.Value < lowConfidenceCutoff)
                     {
-                        hasFace[i] = true;
-                        if (data.MinConfidence.HasValue &&
-                            data.MinConfidence.Value < lowConfidenceCutoff)
-                        {
-                            lowConfidence.Add(i);
-                        }
+                        lowConfidence.Add(frameIndex);
                     }
                 }
 
-                int faceFrameCount = hasFace.Count(static x => x);
+                int[] faceFrameIndices = faceFrames.ToArray();
+                int faceFrameCount = faceFrameIndices.Length;
                 if (_autoOptions.FilterProfile == FaceFilterProfile.Yolo)
                 {
                     if (faceFrameCount == 0)
-                        AddNoDetectionReviewFrames(total, noFace);
+                    {
+                        AddNoDetectionReviewFrames(
+                            total,
+                            noFace,
+                            cancellationToken);
+                    }
                     else
                     {
-                        AddSuspiciousNoFaceGaps(hasFace, noFace);
-                        AddSparseNoFaceReviewFrames(hasFace, faceFrameCount, noFace);
+                        AddSuspiciousNoFaceGaps(
+                            faceFrameIndices,
+                            total,
+                            noFace,
+                            cancellationToken);
+                        AddSparseNoFaceReviewFrames(
+                            faceFrameIndices,
+                            total,
+                            noFace,
+                            cancellationToken);
                     }
                 }
                 else
                 {
-                    AddSuspiciousNoFaceGaps(hasFace, noFace);
+                    AddSuspiciousNoFaceGaps(
+                        faceFrameIndices,
+                        total,
+                        noFace,
+                        cancellationToken);
                 }
 
-                for (int i = 1; i < total - 1; i++)
+                for (int i = 1; i < faceFrameIndices.Length; i++)
                 {
-                    if (!hasFace[i] && hasFace[i - 1] && hasFace[i + 1])
-                        flicker.Add(i);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int previous = faceFrameIndices[i - 1];
+                    int current = faceFrameIndices[i];
+                    if (current - previous == 2)
+                        flicker.Add(previous + 1);
                 }
 
                 noFace.Sort();
                 lowConfidence.Sort();
                 flicker.Sort();
                 return (noFace.ToArray(), lowConfidence.ToArray(), flicker.ToArray());
-            });
+            }, cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             FrameList.NoFaceIssueFrames = noFaceFrames;
             FrameList.LowConfidenceIssueFrames = lowConfidenceFrames;
@@ -1880,39 +1909,40 @@ namespace FaceShield.ViewModels.Pages
             return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);
         }
 
-        private static void AddSuspiciousNoFaceGaps(bool[] hasFace, List<int> noFace)
+        private static void AddSuspiciousNoFaceGaps(
+            IReadOnlyList<int> faceFrames,
+            int totalFrames,
+            List<int> noFace,
+            CancellationToken cancellationToken)
         {
-            int total = hasFace.Length;
-            int i = 0;
-            while (i < total)
+            if (faceFrames.Count < 2 || totalFrames <= 0)
+                return;
+
+            for (int i = 1; i < faceFrames.Count; i++)
             {
-                if (hasFace[i])
-                {
-                    i++;
-                    continue;
-                }
-
-                int start = i;
-                while (i < total && !hasFace[i])
-                    i++;
-
-                int endExclusive = i;
-                int length = endExclusive - start;
-                if (length > SuspiciousNoFaceMaxGap)
+                cancellationToken.ThrowIfCancellationRequested();
+                int previous = faceFrames[i - 1];
+                int current = faceFrames[i];
+                int length = current - previous - 1;
+                if (length <= 0 || length > SuspiciousNoFaceMaxGap)
                     continue;
 
-                bool hasPreviousFace = start > 0 && hasFace[start - 1];
-                bool hasNextFace = endExclusive < total && hasFace[endExclusive];
-                if (!hasPreviousFace || !hasNextFace)
-                    continue;
-
+                int start = previous + 1;
+                int endExclusive = Math.Min(current, totalFrames);
                 for (int frame = start; frame < endExclusive; frame++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     noFace.Add(frame);
+                }
             }
         }
 
-        private static void AddNoDetectionReviewFrames(int totalFrames, List<int> noFace)
+        private static void AddNoDetectionReviewFrames(
+            int totalFrames,
+            List<int> noFace,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (totalFrames <= 0)
                 return;
 
@@ -1929,6 +1959,7 @@ namespace FaceShield.ViewModels.Pages
             {
                 for (int i = 0; i < sampleCount; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int frame = (int)Math.Round(i * (totalFrames - 1) / (double)(sampleCount - 1));
                     frames.Add(Math.Clamp(frame, 0, totalFrames - 1));
                 }
@@ -1939,45 +1970,33 @@ namespace FaceShield.ViewModels.Pages
                 $"[AutoMaskNoDetectionReview] frames={string.Join(",", frames)} totalFrames={totalFrames}");
         }
 
-        private static void AddSparseNoFaceReviewFrames(bool[] hasFace, int faceFrameCount, List<int> noFace)
+        private static void AddSparseNoFaceReviewFrames(
+            IReadOnlyList<int> faceFrames,
+            int totalFrames,
+            List<int> noFace,
+            CancellationToken cancellationToken)
         {
-            int totalFrames = hasFace.Length;
+            cancellationToken.ThrowIfCancellationRequested();
+            int faceFrameCount = faceFrames.Count;
             if (totalFrames <= 0 || faceFrameCount <= 0)
                 return;
 
             double coverage = faceFrameCount / (double)totalFrames;
-            if (coverage > SparseNoFaceReviewMaxCoverageRatio)
-                return;
-
-            int firstFace = Array.FindIndex(hasFace, static x => x);
-            int lastFace = Array.FindLastIndex(hasFace, static x => x);
-            if (firstFace < 0 || lastFace <= firstFace)
+            if (coverage > SparseNoFaceReviewMaxCoverageRatio || faceFrameCount < 2)
                 return;
 
             var candidateFrames = new List<int>();
-            int i = 0;
-            while (i < totalFrames)
+            for (int i = 1; i < faceFrames.Count; i++)
             {
-                if (hasFace[i])
-                {
-                    i++;
-                    continue;
-                }
-
-                int start = i;
-                while (i < totalFrames && !hasFace[i])
-                    i++;
-
-                int endExclusive = i;
-                int length = endExclusive - start;
+                cancellationToken.ThrowIfCancellationRequested();
+                int previous = faceFrames[i - 1];
+                int current = faceFrames[i];
+                int length = current - previous - 1;
                 if (length <= SuspiciousNoFaceMaxGap)
                     continue;
 
-                bool hasPreviousFace = start > firstFace;
-                bool hasNextFace = endExclusive <= lastFace;
-                if (!hasPreviousFace || !hasNextFace)
-                    continue;
-
+                int start = previous + 1;
+                int endExclusive = current;
                 candidateFrames.Add(start);
                 if (length > 2)
                     candidateFrames.Add(start + length / 2);
@@ -1997,6 +2016,7 @@ namespace FaceShield.ViewModels.Pages
             {
                 for (int sample = 0; sample < sampleCount; sample++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int index = (int)Math.Round(sample * (candidateFrames.Count - 1) / (double)(sampleCount - 1));
                     frames.Add(Math.Clamp(candidateFrames[index], 0, totalFrames - 1));
                 }
