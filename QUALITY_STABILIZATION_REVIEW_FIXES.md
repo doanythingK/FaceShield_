@@ -359,3 +359,58 @@ Real runtime validation should specifically compare:
 5. low-bitrate 4K hardware export quality
 6. RGB CRF 18 color/range/metadata compatibility
 7. long videos approaching the 1,000,000 PTS frame budget
+---
+
+## 10. Follow-up review corrections
+
+A second source review found four remaining inconsistencies after the fixes above.
+
+### Face-track interpolation memory and cancellation
+
+`FaceTrackInterpolator` still allocated several arrays sized to `totalFrames` and did not accept the Auto pipeline cancellation token.
+
+The interpolator now:
+
+- stores per-frame faces, confidences, frame sizes, and stored-mask membership in sparse dictionary/set-backed containers
+- rewrites only frame indices that were actually touched instead of scanning every frame in the video
+- accepts and checks a `CancellationToken` while loading masks, building tracks, filtering tracks, filling gaps/tails, and rewriting masks
+- forwards the token through `AutoMaskPostProcessPipeline -> AutoMaskTemporalPostProcessor -> FaceTrackInterpolator -> FaceTrackBuilder`
+
+This makes post-process working memory scale primarily with actual mask/detection entries rather than the declared total video frame count.
+
+### Non-monotonic PTS extent safety
+
+A decoded timeline can remain structurally reliable and complete while `SupportsExactTimestampSeek` is disabled because presentation timestamps are not strictly increasing.
+
+`TryGetDecodedTimelineExtentSeconds` now fails closed when exact timestamp seek is unsafe. This prevents `FrameListViewModel` from promoting `last PTS - first PTS` to a known duration for a timeline that was already rejected for exact timestamp navigation.
+
+### FrameAnalyzer VFR timestamps
+
+`FrameAnalyzer` no longer assigns `TimestampSec = idx / fps` unconditionally.
+
+After decoding each ordinal it now prefers the decoded PTS already recorded by `FfFrameExtractor.TryGetCachedFrameTimestampSeconds`. Average-FPS time is retained only as a fallback when no decoded timestamp is available.
+
+### FFmpeg I/O interrupt implementation
+
+`FfFrameExtractor` no longer carries its own GCHandle, interrupt flag, callback, and cancellation scope implementation.
+
+It now uses the same `VideoIoInterruptGuard` already used by export and HDR probing for both the main format context and the ordinal-index format context.
+
+### Verification updates
+
+The runtime hardening verifier now checks:
+
+- sparse/cancellable face-track interpolation
+- absence of `totalFrames`-sized interpolation arrays
+- absence of a full-video rewrite scan
+- cancellation inside `FaceTrackBuilder`
+- fail-closed decoded timeline extent when exact timestamp seek is disabled
+- decoded-PTS-first `FrameAnalyzer` timestamps
+- removal of the duplicate extractor interrupt callback implementation
+
+The face-track post-process harness also verifies that a pre-cancelled token is observed by `FaceTrackInterpolator`.
+
+### Validation status
+
+These follow-up changes were source-reviewed and the repository verification scripts were updated. The normal GitHub Actions workflow still does not run automatically for `fix/**` pushes, so no Windows/macOS Actions build or real-video runtime result is claimed here.
+
