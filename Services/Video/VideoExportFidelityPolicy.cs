@@ -41,7 +41,7 @@ internal static unsafe class VideoExportFidelityPolicy
                (descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
     }
 
-    internal static bool CanEncodeLosslessX264Rgb(
+    internal static bool CanEncodeCompatibleX264Rgb(
         AVPixelFormat sourcePixelFormat,
         AVColorRange sourceColorRange,
         AVColorSpace sourceColorSpace,
@@ -63,7 +63,7 @@ internal static unsafe class VideoExportFidelityPolicy
         if ((descriptor->flags & ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0)
         {
             error =
-                $"알파 채널이 있는 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 H.264에 보존할 수 없습니다.";
+                $"알파 채널이 있는 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 현재 RGB H.264 품질 경로에서 지원하지 않습니다.";
             return false;
         }
         if (descriptor->nb_components != 3)
@@ -76,7 +76,7 @@ internal static unsafe class VideoExportFidelityPolicy
         {
             error =
                 $"서브샘플링된 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 " +
-                "libx264rgb에서 정확히 보존할 수 없습니다.";
+                "현재 libx264rgb RGB 품질 경로에서 지원하지 않습니다.";
             return false;
         }
         for (int component = 0; component < descriptor->nb_components; component++)
@@ -85,7 +85,7 @@ internal static unsafe class VideoExportFidelityPolicy
             {
                 error =
                     $"8비트가 아닌 RGB 형식({GetPixelFormatName(sourcePixelFormat)})은 " +
-                    "libx264rgb에서 원본 정밀도를 보존할 수 없습니다.";
+                    "현재 libx264rgb RGB 품질 경로에서 지원하지 않습니다.";
                 return false;
             }
         }
@@ -95,7 +95,7 @@ internal static unsafe class VideoExportFidelityPolicy
         {
             error =
                 $"지원하지 않는 RGB 범위 태그({sourceColorRange})는 " +
-                "libx264rgb full-range 경로에서 정확히 보존할 수 없습니다.";
+                "현재 libx264rgb RGB 품질 경로에서 지원하지 않습니다.";
             return false;
         }
         if (sourceColorSpace is not
@@ -104,7 +104,7 @@ internal static unsafe class VideoExportFidelityPolicy
         {
             error =
                 $"RGB가 아닌 matrix 태그({sourceColorSpace})가 지정된 RGB 영상은 " +
-                "색상 해석을 바꾸지 않고 보존할 수 없습니다.";
+                "현재 RGB H.264 품질 경로에서 지원하지 않습니다.";
             return false;
         }
 
@@ -121,13 +121,18 @@ internal static unsafe class VideoExportFidelityPolicy
         int resolutionFloor = EstimateHighQualityBitrate(width, height, framerate);
         int boundedSourceBitrate = ClampBitrate(sourceBitrate);
         if (boundedSourceBitrate > 0)
-            return boundedSourceBitrate;
+        {
+            int sourceRelativeGuardrail = ClampBitrate(
+                Math.Min(
+                    (long)resolutionFloor,
+                    (long)boundedSourceBitrate * 5L / 4L));
+            int targetBitrate = Math.Max(
+                boundedSourceBitrate,
+                sourceRelativeGuardrail);
+            return Math.Max(targetBitrate, 2_000_000);
+        }
 
-        int targetBitrate = resolutionFloor;
-        if (codecId == AVCodecID.AV_CODEC_ID_AV1)
-            targetBitrate = Math.Max(targetBitrate, resolutionFloor);
-
-        return Math.Max(targetBitrate, 2_000_000);
+        return Math.Max(resolutionFloor, 2_000_000);
     }
 
     internal static int ClampBitrate(long value)
@@ -317,10 +322,10 @@ internal static unsafe class VideoExportFidelityPolicy
 
         return ClampBitrate(baseFloor);
     }
-    internal static void ValidateDecodedFramePixelFidelity(
+    internal static void ValidateDecodedFrameFormatCompatibility(
         AVFrame* frame,
         AVCodecContext* encoderContext,
-        bool losslessX264RgbConfigured)
+        bool x264RgbConfigured)
     {
         if (frame == null || encoderContext == null)
         {
@@ -347,10 +352,10 @@ internal static unsafe class VideoExportFidelityPolicy
                 $"영상 도중 원본 픽셀 형식이 변경되어 품질을 보존할 수 없습니다: {pixelFormatLoss}");
         }
 
-        if (!losslessX264RgbConfigured)
+        if (!x264RgbConfigured)
             return;
 
-        if (!CanEncodeLosslessX264Rgb(
+        if (!CanEncodeCompatibleX264Rgb(
                 framePixelFormat,
                 frame->color_range,
                 frame->colorspace,
