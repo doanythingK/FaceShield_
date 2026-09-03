@@ -104,6 +104,7 @@ Assert-Match "auto ROI pipeline propagates cancellation" $autoPostProcess 'AutoM
 Assert-Match "auto ROI step forwards cancellation to refiner" $roiStep 'CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,1500}FaceTrackRoiRefiner\(\)\.Apply\([\s\S]{0,500}cancellationToken:\s*cancellationToken'
 Assert-Match "ROI refiner cancels ffmpeg open seek and read" $roiRefiner 'new FfFrameExtractor\([\s\S]{0,300}cancellationToken:\s*cancellationToken[\s\S]{0,1800}StartSequentialRead\([\s\S]{0,200}cancellationToken[\s\S]{0,1200}TryGetNextFrameRawToBuffer\(\s*cancellationToken'
 Assert-NotMatch "ROI refiner does not use uncancellable frame reads" $roiRefiner 'TryGetNextFrameRawToBuffer\(\s*CancellationToken\.None'
+Assert-Match "ROI refiner checks cancellation immediately around synchronous detector inference" $roiRefiner 'ThrowIfCancellationRequested\(\);[\s\S]{0,350}DetectFacesBgra\([\s\S]{0,350}ThrowIfCancellationRequested\(\);'
 Assert-Match "playback restart waits for the prior playback task" $framePreview 'StartPlaybackAfterPreviousAsync[\s\S]{0,1400}await previousPlaybackTask\.ConfigureAwait\(false\)[\s\S]{0,1400}RunSequentialPlaybackAsync'
 Assert-Match "playback passes cancellation into ffmpeg initialization" $framePreview 'new FfFrameExtractor\([\s\S]{0,300}cancellationToken:\s*ct[\s\S]{0,300}StartSequentialRead\(startFrameIndex,\s*ct\)'
 Assert-Match "issue list resolves display time from decoded PTS" $workspace 'ResetIssueList[\s\S]{0,1800}TryGetFrameTimestampSeconds[\s\S]{0,9000}TryResolveFrameTimestampSeconds'
