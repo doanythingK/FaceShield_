@@ -202,7 +202,8 @@ namespace FaceShield.Services.Analysis
                     _maskProvider,
                     _totalFrames,
                     _sceneCutStarts,
-                    _mutableStartFrameIndex)
+                    _mutableStartFrameIndex,
+                    cancellationToken)
                 : 0;
             swTrackedStabilize.Stop();
             Debug.WriteLine(
