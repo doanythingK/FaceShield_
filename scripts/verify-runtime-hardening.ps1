@@ -122,6 +122,8 @@ Assert-Match "auto anomaly review accepts cancellation" $workspace 'BuildAutoAno
 Assert-NotMatch "auto anomaly review does not allocate total-frame bool array" $workspace 'BuildAutoAnomaliesAsync\([\s\S]{0,6000}new\s+bool\[total\]'
 Assert-Match "auto anomaly review uses sparse face frame indices" $workspace 'BuildAutoAnomaliesAsync\([\s\S]{0,2500}SortedSet<int>[\s\S]{0,1800}faceFrameIndices'
 Assert-Match "auto completion checks cancellation after anomaly review" $workspace 'await\s+BuildAutoAnomaliesAsync\(token\);[\s\S]{0,180}token\.ThrowIfCancellationRequested\(\);[\s\S]{0,500}_autoCompleted\s*=\s*true'
+Assert-Match "workspace distinguishes committed masks from completed review" $workspace 'bool\s+postProcessCommitted\s*=\s*false;[\s\S]{0,120}bool\s+autoAnalysisCompleted\s*=\s*false;[\s\S]*postProcessCommitted\s*=\s*true;[\s\S]{0,160}_autoResumeIndex\s*=\s*0;[\s\S]{0,120}token\.ThrowIfCancellationRequested\(\)'
+Assert-Match "late auto cancellation does not create a resumable partial detection" $workspace 'catch\s*\(OperationCanceledException\)[\s\S]{0,220}_autoCompleted\s*=\s*autoAnalysisCompleted;[\s\S]{0,180}if\s*\(postProcessCommitted\)[\s\S]{0,120}_autoResumeIndex\s*=\s*0'
 
 Assert-Match "workspace edit gate blocks auto and export" $toolPanel 'CanEditWorkspace\s*=>\s*!IsExportRunning\s*&&\s*!IsAutoRunning'
 Assert-Match "auto state invalidates edit gate" $toolPanel 'OnIsAutoRunningChanged\([\s\S]{0,220}OnPropertyChanged\(nameof\(CanEditWorkspace\)\)'
