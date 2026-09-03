@@ -197,6 +197,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void Undo()
     {
+        if (!_toolPanel.CanEditWorkspace) return;
         if (_maskBitmap == null) return;
         if (_maskUndo.Count == 0) return;
 
@@ -209,6 +210,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void OnPointerPressed(Point point)
     {
+        if (!_toolPanel.CanEditWorkspace) return;
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
         if (_maskBitmap == null || _frameBitmap == null) return;
 
@@ -221,6 +223,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void OnPointerMoved(Point point)
     {
+        if (!_toolPanel.CanEditWorkspace)
+        {
+            _isDrawing = false;
+            _lastDrawPoint = null;
+            return;
+        }
         if (!_isDrawing) return;
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
         if (_lastDrawPoint == null)
@@ -236,6 +244,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void OnPointerReleased(Point point)
     {
+        if (!_toolPanel.CanEditWorkspace)
+        {
+            _isDrawing = false;
+            _lastDrawPoint = null;
+            return;
+        }
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
         _isDrawing = false;
         _lastDrawPoint = null;
