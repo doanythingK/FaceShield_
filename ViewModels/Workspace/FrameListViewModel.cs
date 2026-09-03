@@ -662,6 +662,18 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         TimelineExtentSeconds = minimumSeconds;
     }
 
+    public void RestoreTimelineExtentSeconds(double savedExtentSeconds)
+    {
+        if (HasKnownDuration() ||
+            !double.IsFinite(savedExtentSeconds) ||
+            savedExtentSeconds <= 0)
+        {
+            return;
+        }
+
+        EnsureOpenEndedTimelineExtent(savedExtentSeconds);
+    }
+
     private void RefreshTimelineExtentFromProvider(
         TimelineThumbnailProvider? provider)
     {
