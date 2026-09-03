@@ -258,8 +258,10 @@ namespace FaceShield.Services.Analysis
             double candidateMatchMaxCenterShiftRatio = 0.35,
             double candidateMatchMaxAreaChangeRatio = 1.8,
             bool removeCandidates = true,
-            string stage = "default")
+            string stage = "default",
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
             if (frameDifferenceProvider == null)
@@ -292,6 +294,7 @@ namespace FaceShield.Services.Analysis
 
             foreach (var candidate in candidates)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int sourceFrame = Math.Min(candidate.SourceFrameIndex, candidate.FrameIndex);
                 int targetFrame = Math.Max(candidate.SourceFrameIndex, candidate.FrameIndex);
                 if (sourceFrame < 0 || targetFrame <= sourceFrame)
@@ -305,6 +308,7 @@ namespace FaceShield.Services.Analysis
                     frameDifferenceProvider,
                     differenceByPair,
                     out string cutFramePair);
+                cancellationToken.ThrowIfCancellationRequested();
 
                 bool isCut = difference >= differenceThreshold;
                 if (!isCut &&
@@ -323,6 +327,7 @@ namespace FaceShield.Services.Analysis
                                 targetFrame,
                                 frameDifferenceProvider,
                                 differenceByPair);
+                            cancellationToken.ThrowIfCancellationRequested();
                         }
 
                         if (directDifference > difference)
@@ -349,6 +354,7 @@ namespace FaceShield.Services.Analysis
                 if (!removeCandidates)
                     continue;
 
+                cancellationToken.ThrowIfCancellationRequested();
                 if (RemoveFaceCandidate(
                         maskProvider,
                         candidate.FrameIndex,
