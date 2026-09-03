@@ -125,11 +125,14 @@ Console.WriteLine($"[EncoderQualityOptionsVerify] PASS available={available} av1
 
 static void VerifyRgbPolicy()
 {
-    MethodInfo compatibility = typeof(VideoExportService).GetMethod(
-        "CanEncodeLosslessX264Rgb",
+    Type fidelityPolicy = typeof(VideoExportService).Assembly.GetType(
+        "FaceShield.Services.Video.VideoExportFidelityPolicy")
+        ?? throw new InvalidOperationException("VideoExportFidelityPolicy was not found.");
+    MethodInfo compatibility = fidelityPolicy.GetMethod(
+        "CanEncodeCompatibleX264Rgb",
         BindingFlags.NonPublic | BindingFlags.Static)
-        ?? throw new InvalidOperationException("CanEncodeLosslessX264Rgb was not found.");
-    MethodInfo lossReason = typeof(VideoExportService).GetMethod(
+        ?? throw new InvalidOperationException("CanEncodeCompatibleX264Rgb was not found.");
+    MethodInfo lossReason = fidelityPolicy.GetMethod(
         "GetPixelFormatLossReason",
         BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new InvalidOperationException("GetPixelFormatLossReason was not found.");
@@ -183,7 +186,7 @@ static void VerifyRgbPolicy()
     AssertLoss("yuv-depth", AVPixelFormat.AV_PIX_FMT_YUV444P10LE, AVPixelFormat.AV_PIX_FMT_YUV444P, "\uBE44\uD2B8 \uC2EC\uB3C4 \uD558\uB77D");
     AssertNoLoss("yuv-upsample", AVPixelFormat.AV_PIX_FMT_YUV420P, AVPixelFormat.AV_PIX_FMT_YUV444P);
 
-    Console.WriteLine("[EncoderQualityOptionsVerify] PASS rgbPolicy=7 pixelLossCases=5");
+    Console.WriteLine("[EncoderQualityOptionsVerify] PASS rgbCompatibilityPolicy=7 pixelLossCases=5");
 
     void AssertCompatibility(
         string name,
