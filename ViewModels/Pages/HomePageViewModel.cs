@@ -1892,12 +1892,8 @@ namespace FaceShield.ViewModels.Pages
 
             var since = now - lastAt;
             AutoStatusText = $"마지막 처리: {frameInfo} · 업데이트 {FormatAge(since)} 전";
-            var accel = IsYoloDetectorSelected
-                ? YoloFaceOnnxDetector.GetLastExecutionProviderLabel()
-                : FaceOnnxDetector.GetLastExecutionProviderLabel();
-            var accelError = IsYoloDetectorSelected
-                ? YoloFaceOnnxDetector.GetLastExecutionProviderError()
-                : FaceOnnxDetector.GetLastExecutionProviderError();
+            var accel = vm?.AutoExecutionProviderLabel ?? "확인 중";
+            var accelError = vm?.AutoExecutionProviderError;
             string threadText =
                 $"onnx={SelectedOrtThreadOption?.Label ?? "자동"}, cores={Environment.ProcessorCount}, sessions={SelectedParallelSessionCount}";
 
