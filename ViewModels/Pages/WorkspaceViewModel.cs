@@ -1073,21 +1073,33 @@ namespace FaceShield.ViewModels.Pages
             if (_isAutoRunning || !TryBeginLifetimeOperation())
                 return Task.FromResult(false);
 
-            // Settle any pending manual bitmap into the provider before Auto becomes
-            // the sole mask writer for the run.
-            FramePreview.PersistCurrentMask();
-            _isAutoRunning = true;
-            _autoCts = cancellationToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : new CancellationTokenSource();
-
-            if (!exportAfter)
+            try
             {
-                ToolPanel.IsAutoRunning = true;
-                ToolPanel.AutoProgress = 0;
-            }
+                // Settle any pending manual bitmap into the provider before Auto becomes
+                // the sole mask writer for the run.
+                FramePreview.PersistCurrentMask();
+                _isAutoRunning = true;
+                _autoCts = cancellationToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                    : new CancellationTokenSource();
 
-            return RunTrackedAutoOperationAsync(exportAfter, progress, exportProgress);
+                if (!exportAfter)
+                {
+                    ToolPanel.IsAutoRunning = true;
+                    ToolPanel.AutoProgress = 0;
+                }
+
+                return RunTrackedAutoOperationAsync(exportAfter, progress, exportProgress);
+            }
+            catch
+            {
+                _autoCts?.Dispose();
+                _autoCts = null;
+                _isAutoRunning = false;
+                ToolPanel.IsAutoRunning = false;
+                EndLifetimeOperation();
+                throw;
+            }
         }
 
         private async Task<bool> RunTrackedAutoOperationAsync(
@@ -1669,6 +1681,7 @@ namespace FaceShield.ViewModels.Pages
             if (_isAutoRunning)
                 return false;
 
+            FramePreview.PersistCurrentMask();
             _isAutoRunning = true;
             _autoCts = new CancellationTokenSource();
             bool refreshPreviewAfterAuto = false;
