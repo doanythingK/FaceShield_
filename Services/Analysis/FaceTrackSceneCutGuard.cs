@@ -23,8 +23,10 @@ namespace FaceShield.Services.Analysis
             int maxTransitionGap,
             float minConfidenceDrop = 0.10f,
             int maxPostCutCarryFrames = 3,
-            float minSourceConfidence = 0.0f)
+            float minSourceConfidence = 0.0f,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
             if (maxTargetConfidence <= 0 || maxTransitionGap <= 0)
@@ -35,6 +37,7 @@ namespace FaceShield.Services.Analysis
 
             foreach (var entry in maskProvider.GetFaceMaskEntries())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entry.Key;
                 if (hasStoredMask.Contains(frameIndex))
                     continue;
@@ -46,6 +49,7 @@ namespace FaceShield.Services.Analysis
                 var detections = new List<FaceTrackDetection>(data.Faces.Count);
                 for (int i = 0; i < data.Faces.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     float confidence = i < data.Confidences.Count
                         ? data.Confidences[i]
                         : data.MinConfidence ?? 1.0f;
@@ -58,13 +62,18 @@ namespace FaceShield.Services.Analysis
             if (detectionsByFrame.Count == 0)
                 return Array.Empty<FaceTrackFilledFace>();
 
-            var tracks = new FaceTrackBuilder().Build(detectionsByFrame, options);
+            var tracks = new FaceTrackBuilder().Build(
+                detectionsByFrame,
+                options,
+                cancellationToken);
             var candidates = new List<FaceTrackFilledFace>();
             foreach (var track in tracks)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var detections = track.Detections;
                 for (int i = 1; i < detections.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var previous = detections[i - 1];
                     var current = detections[i];
                     int gap = current.FrameIndex - previous.FrameIndex;
@@ -87,6 +96,7 @@ namespace FaceShield.Services.Analysis
                     int lastAddedIndex = i - 1;
                     for (int j = i; j < detections.Count; j++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var carried = detections[j];
                         if (carried.FrameIndex > carryEndFrame ||
                             carried.Confidence > maxTargetConfidence)
@@ -122,8 +132,10 @@ namespace FaceShield.Services.Analysis
             double maxCenterShiftRatio = 0.65,
             double maxAreaChangeRatio = 3.0,
             bool includeEdgeCandidates = false,
-            bool includeIndependentStrongContinuation = false)
+            bool includeIndependentStrongContinuation = false,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
             if (maxTargetConfidence <= 0 || maxCarryFrames <= 0)
@@ -141,6 +153,7 @@ namespace FaceShield.Services.Analysis
             var seenTargets = new HashSet<string>(StringComparer.Ordinal);
             foreach (var entry in entries)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int frameIndex = entry.Key;
                 if (frameIndex <= 0)
                     continue;
@@ -148,6 +161,7 @@ namespace FaceShield.Services.Analysis
                 var data = entry.Value;
                 for (int i = 0; i < data.Faces.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var face = data.Faces[i];
                     float confidence = GetConfidence(data, i);
                     if (!IsWeakCandidate(face, data.Size, confidence, maxTargetConfidence, minTargetConfidence, edgeMarginRatio, includeEdgeCandidates))
@@ -172,10 +186,12 @@ namespace FaceShield.Services.Analysis
                     int lookbackFrames = Math.Max(1, sourceLookbackFrames);
                     foreach (var item in run)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         string targetKey = $"{item.FrameIndex}:{Math.Round(item.Bounds.X, 2)}:{Math.Round(item.Bounds.Y, 2)}:{Math.Round(item.Bounds.Width, 2)}:{Math.Round(item.Bounds.Height, 2)}";
 
                         for (int offset = lookbackFrames; offset >= 1; offset--)
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
                             int sourceFrame = frameIndex - offset;
                             if (sourceFrame < 0)
                                 continue;
