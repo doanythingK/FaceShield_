@@ -414,3 +414,51 @@ The face-track post-process harness also verifies that a pre-cancelled token is 
 
 These follow-up changes were source-reviewed and the repository verification scripts were updated. The normal GitHub Actions workflow still does not run automatically for `fix/**` pushes, so no Windows/macOS Actions build or real-video runtime result is claimed here.
 
+---
+
+## 11. Temporal smoothing and exception-safety follow-up
+
+A further review of `docs/manual-blur-player-architecture` found three remaining correctness/resource issues.
+
+### Sparse and cancellable temporal smoothing
+
+`ApplyTemporalSmoothing` still allocated four arrays sized to `totalFrames` and scanned the full declared video range on every smoothing pass and rewrite pass.
+
+It now:
+
+- stores only actual face-mask frames in dictionaries
+- stores manual/stored-mask frame membership in a `HashSet<int>`
+- iterates only actual face-mask frame indices during smoothing and rewrite
+- preserves the existing search window in frame-number units, so a face three frames away is still excluded when the configured window is two frames
+- preserves step-by-step scene-cut blocking while searching backward or forward
+- keeps stored/manual mask frames excluded from smoothing input and output
+- accepts a `CancellationToken` and checks it while building cut boundaries, reading mask entries, smoothing frames/faces, and rewriting results
+- receives the existing Auto post-process cancellation token from `AutoMaskPostProcessPipeline`
+
+The face-track verification harness now covers normal smoothing, scene-cut blocking, distance-window behavior, and pre-cancelled execution.
+
+### FfFrameExtractor interrupt-guard exception safety
+
+The shared `VideoIoInterruptGuard` previously allocated its GCHandle in a field initializer before the `FfFrameExtractor` constructor entered its cleanup-protected initialization block.
+
+The extractor now keeps a nullable guard field and creates the guard inside the constructor `try` block. Constructor failure after guard creation therefore reaches `Dispose()`, while path/timeline failures that happen earlier occur before any interrupt GCHandle is allocated. Disposal is null-safe for failures during initialization.
+
+### FrameAnalyzer exact timestamp contract
+
+`FrameAnalyzer` no longer silently substitutes `frameIndex / averageFps` when a decoded presentation timestamp is unavailable.
+
+It now records:
+
+- decoded PTS seconds when the extractor has a reliable cached timestamp
+- `double.NaN` when no reliable decoded presentation timestamp is available
+
+`FrameAnalysisResult.TimestampSec` documents this exact-time contract explicitly. This avoids presenting an average-FPS estimate as an exact timestamp on VFR or irregular-PTS material.
+
+### Remaining cancellation boundary
+
+`AVIOInterruptCB` still interrupts FFmpeg I/O operations, not arbitrary codec execution or synchronous detector inference already running inside a native call. The FaceONNX path therefore still checks cancellation immediately before and after synchronous detection, but cannot terminate the external synchronous inference call mid-execution with the current detector API.
+
+### Validation status
+
+These changes were pushed to `docs/manual-blur-player-architecture` with source invariants and the face-track harness updated. The branch is not covered by the normal push-triggered Quality Gate, so no Windows/macOS Actions build or real-video runtime validation is claimed by this follow-up.
+
