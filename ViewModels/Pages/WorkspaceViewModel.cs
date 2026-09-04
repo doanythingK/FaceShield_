@@ -2580,24 +2580,24 @@ namespace FaceShield.ViewModels.Pages
 
         private WorkspaceSnapshot BuildSnapshot()
         {
-            return new WorkspaceSnapshot(
+            var state = new WorkspaceStateCapture(
                 FrameList.VideoPath,
                 Mode,
                 FrameList.SelectedFrameIndex,
                 FrameList.ViewStartSeconds,
                 FrameList.SecondsPerScreen,
-                DateTimeOffset.Now,
+                FrameList.TimelineExtentSeconds,
                 _autoResumeIndex,
                 _autoCompleted,
                 _autoRunSignature,
+                _autoExecutionSignature,
                 _autoExportGateRequired,
                 _autoExportGatePassed,
                 _autoExportGateFailure,
                 _autoExportHybridPolicyAvailable,
                 _autoExportAllowHybridCopy,
-                _autoExportHybridDisableReasons,
-                _autoExecutionSignature,
-                FrameList.TimelineExtentSeconds);
+                _autoExportHybridDisableReasons);
+            return WorkspaceStateMapper.CreateSnapshot(state, DateTimeOffset.Now);
         }
 
         private void ApplySnapshot(WorkspaceSnapshot snapshot)
@@ -2605,31 +2605,25 @@ namespace FaceShield.ViewModels.Pages
             if (snapshot == null)
                 return;
 
-            _autoResumeIndex = snapshot.AutoResumeIndex;
-            _autoCompleted = snapshot.AutoCompleted;
-            _autoRunSignature = snapshot.AutoRunSignature;
-            _autoExecutionSignature = snapshot.AutoExecutionSignature;
-            ApplyAutoExportGateState(
-                WorkspaceExportGatePolicy.Restore(
-                    snapshot,
-                    HybridCopyDisabledReason));
+            WorkspaceRestoreState state = WorkspaceStateMapper.CreateRestoreState(
+                snapshot,
+                FrameList.SecondsPerScreen,
+                FrameList.TotalFrames,
+                HybridCopyDisabledReason);
 
-            double secondsPerScreen = snapshot.SecondsPerScreen;
-            if (secondsPerScreen <= 0)
-                secondsPerScreen = FrameList.SecondsPerScreen;
-            FrameList.SecondsPerScreen = secondsPerScreen;
+            _autoResumeIndex = state.AutoResumeIndex;
+            _autoCompleted = state.AutoCompleted;
+            _autoRunSignature = state.AutoRunSignature;
+            _autoExecutionSignature = state.AutoExecutionSignature;
+            ApplyAutoExportGateState(state.ExportGateState);
 
-            FrameList.RestoreTimelineExtentSeconds(snapshot.TimelineExtentSeconds);
-            double maxStart = Math.Max(0, FrameList.TimelineExtentSeconds - FrameList.SecondsPerScreen);
-            FrameList.ViewStartSeconds = Math.Clamp(snapshot.ViewStartSeconds, 0, maxStart);
-
-            int index;
-            if (FrameList.TotalFrames <= 0)
-                index = -1;
-            else
-                index = Math.Clamp(snapshot.SelectedFrameIndex, 0, FrameList.TotalFrames - 1);
-
-            FrameList.SelectedFrameIndex = index;
+            FrameList.SecondsPerScreen = state.SecondsPerScreen;
+            FrameList.RestoreTimelineExtentSeconds(state.TimelineExtentSeconds);
+            FrameList.ViewStartSeconds = WorkspaceStateMapper.ClampViewStart(
+                state.RequestedViewStartSeconds,
+                FrameList.TimelineExtentSeconds,
+                FrameList.SecondsPerScreen);
+            FrameList.SelectedFrameIndex = state.SelectedFrameIndex;
         }
 
         private bool IsAutoResumeSignatureCurrent(string currentSignature)
