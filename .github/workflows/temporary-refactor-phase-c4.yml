@@ -34,6 +34,44 @@ jobs:
             exit $status
           fi
 
+          python3 - <<'PY' > /tmp/phase-c4-cleanup.log 2>&1
+          from pathlib import Path
+
+          path = Path('ViewModels/Pages/WorkspaceViewModel.cs')
+          text = path.read_text(encoding='utf-8')
+
+          text = text.replace(
+              '            if (_isAutoRunning || ToolPanel.IsAutoRunning)\n',
+              '            if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)\n')
+
+          start_marker = '        private void TryUpdateAutoPreview(int frameIndex)\n'
+          end_marker = '        private async void OnAutoRequested()\n'
+          start = text.find(start_marker)
+          end = text.find(end_marker, start if start >= 0 else 0)
+          if start >= 0:
+              if end < 0:
+                  raise RuntimeError('OnAutoRequested marker missing after legacy preview helpers')
+              text = text[:start] + text[end:]
+
+          if '_isAutoRunning' in text:
+              text = text.replace('_isAutoRunning', '_autoRunCoordinator.IsRunning')
+
+          path.write_text(text, encoding='utf-8')
+          print('Phase C4 legacy VM auto references cleaned.')
+          PY
+          status=$?
+          cat /tmp/phase-c4-cleanup.log
+          if [ $status -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/phase-c4-cleanup.log temporary-refactor-phase-c4-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add temporary-refactor-phase-c4-error.txt
+            git commit -m 'chore: capture auto coordinator cleanup failure'
+            git push origin HEAD:refactor/ownership-workspace-hardening
+            exit $status
+          fi
+
       - name: Verify source invariants
         shell: bash
         run: |
@@ -54,6 +92,8 @@ jobs:
           check_absent '_autoCts' ViewModels/Pages/WorkspaceViewModel.cs
           check_absent '_autoResumeIndex' ViewModels/Pages/WorkspaceViewModel.cs
           check_absent '_isAutoRunning' ViewModels/Pages/WorkspaceViewModel.cs
+          check_absent '_autoPreviewNeedsExactRefresh' ViewModels/Pages/WorkspaceViewModel.cs
+          check_absent '_autoLastPreviewTick' ViewModels/Pages/WorkspaceViewModel.cs
           check_absent 'DetectorAutoTuner.TryTune' ViewModels/Pages/WorkspaceViewModel.cs
           cat "$log"
           if [ $status -ne 0 ]; then
