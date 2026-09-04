@@ -2362,7 +2362,7 @@ namespace FaceShield.ViewModels.Pages
         public void PersistAllWorkspaces()
         {
             foreach (var vm in _workspaceCache.Values)
-                vm.PersistWorkspaceState();
+                vm.PersistWorkspaceStateImmediate();
 
             _stateStore.SaveRecents(Recents);
         }

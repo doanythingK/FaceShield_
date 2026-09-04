@@ -33,6 +33,7 @@ namespace FaceShield.ViewModels.Pages
         private FaceOnnxDetectorOptions _detectorOptions;
         private FaceDetectorFactoryOptions _detectorFactoryOptions;
         private readonly WorkspaceStateStore? _stateStore;
+        private readonly WorkspacePersistenceCoordinator? _workspacePersistence;
         private int[] _autoAnomalies = Array.Empty<int>();
         private const float LowConfidenceMargin = 0.05f;
         private const int SuspiciousNoFaceMaxGap = 8;
@@ -147,6 +148,9 @@ namespace FaceShield.ViewModels.Pages
             _detectorOptions = detectorOptions ?? new FaceOnnxDetectorOptions();
             _detectorFactoryOptions = detectorFactoryOptions ?? FaceDetectorFactoryOptions.ForOnnx(_detectorOptions);
             _stateStore = stateStore;
+            _workspacePersistence = stateStore == null
+                ? null
+                : new WorkspacePersistenceCoordinator(stateStore, _maskProvider);
             initializationToken.ThrowIfCancellationRequested();
             FrameList = new FrameListViewModel(
                 videoPath,
@@ -1648,13 +1652,27 @@ namespace FaceShield.ViewModels.Pages
         }
 
         [RelayCommand]
-        private void GoBack()
+        private async Task GoBack()
         {
             if (_isAutoRunning || ToolPanel.IsAutoRunning)
                 return;
 
             FramePreview.PersistCurrentMask();
-            PersistWorkspaceState();
+            PersistWorkspaceState(includePreviewMask: false);
+
+            if (_workspacePersistence != null)
+            {
+                try
+                {
+                    await _workspacePersistence.FlushAsync();
+                }
+                catch (Exception ex)
+                {
+                    await ShowErrorDialogAsync("워크스페이스 저장 실패", ex.Message);
+                    return;
+                }
+            }
+
             _onBack?.Invoke();
         }
 
@@ -2504,15 +2522,60 @@ namespace FaceShield.ViewModels.Pages
             PersistWorkspaceState(includePreviewMask: true);
         }
 
-        private void PersistWorkspaceState(bool includePreviewMask)
+        public void PersistWorkspaceStateImmediate()
         {
             if (_stateStore == null)
                 return;
 
+            FramePreview.PersistCurrentMask();
+            WorkspaceSnapshot snapshot = BuildSnapshot();
+            if (_workspacePersistence != null)
+                _workspacePersistence.SaveNow(snapshot);
+            else
+                _stateStore.SaveWorkspace(snapshot, _maskProvider);
+        }
+
+        private void PersistWorkspaceState(bool includePreviewMask)
+        {
+            if (_workspacePersistence == null)
+                return;
+
             if (includePreviewMask)
                 FramePreview.PersistCurrentMask();
-            var snapshot = BuildSnapshot();
-            _stateStore.SaveWorkspace(snapshot, _maskProvider);
+
+            WorkspaceSnapshot snapshot = BuildSnapshot();
+            if (!TryBeginLifetimeOperation())
+                return;
+
+            Task saveTask;
+            try
+            {
+                saveTask = _workspacePersistence.QueueSaveAsync(snapshot);
+            }
+            catch
+            {
+                EndLifetimeOperation();
+                throw;
+            }
+
+            _ = ObserveWorkspacePersistenceAsync(saveTask);
+        }
+
+        private async Task ObserveWorkspacePersistenceAsync(Task saveTask)
+        {
+            try
+            {
+                await saveTask.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[WorkspacePersistence] background save failed: {ex.Message}");
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
         }
 
         private WorkspaceSnapshot BuildSnapshot()
@@ -2640,6 +2703,7 @@ namespace FaceShield.ViewModels.Pages
         {
             FramePreview.Dispose();
             FrameList.Dispose();
+            _workspacePersistence?.Dispose();
             _maskProvider.Dispose();
             _exportGate.Dispose();
         }
