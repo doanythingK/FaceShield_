@@ -1,0 +1,51 @@
+name: Temporary Refactor Phase C5
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply session playback extraction
+        run: python3 scripts/temporary_refactor_phase_c5.py
+
+      - name: Verify source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config core.whitespace cr-at-eol
+          git diff --check
+          grep -q 'class WorkspaceSessionPlaybackCoordinator' ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs
+          grep -q '_sessionPlaybackCoordinator = new WorkspaceSessionPlaybackCoordinator' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_sessionPlaybackCoordinator.EnsureInitializedAsync' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_sessionPlaybackCoordinator.CancelInitialization' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_sessionPlaybackCoordinator.Dispose' ViewModels/Pages/WorkspaceViewModel.cs
+          if grep -q '_sessionInitCts' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q '_sessionInitialized' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q 'FrameList.PlaybackStateChanged +=' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q 'new VideoSession' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+
+      - name: Build Release
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/temporary_refactor_phase_c5.py
+          rm -f .github/workflows/temporary-refactor-phase-c5.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Extract workspace session playback coordination'
+          git push origin HEAD:refactor/ownership-workspace-hardening
