@@ -13,7 +13,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace FaceShield.Services.FaceDetection
 {
-    public sealed class YoloFaceOnnxDetector : IBgraFaceDetector
+    public sealed class YoloFaceOnnxDetector : IBgraFaceDetector, IExecutionProviderDiagnostics
     {
         private const int Yolo5FaceAnchorsPerScale = 3;
         private const int Yolo5FaceFeaturesPerAnchor = 16;
@@ -24,6 +24,9 @@ namespace FaceShield.Services.FaceDetection
 
         internal string ExecutionProviderLabel { get; }
         internal string? ExecutionProviderError { get; private set; }
+
+        string IExecutionProviderDiagnostics.ExecutionProviderLabel => ExecutionProviderLabel;
+        string? IExecutionProviderDiagnostics.ExecutionProviderError => ExecutionProviderError;
 
         private static readonly (float Width, float Height)[][] Yolo5FaceAnchors =
         {

@@ -2231,20 +2231,10 @@ namespace FaceShield.Services.Analysis
 
         private string GetDetectorName()
         {
-            if (_detector is FaceOnnxDetector)
+            if (_detector is IExecutionProviderDiagnostics diagnostics)
             {
-                string provider = FaceOnnxDetector.GetLastExecutionProviderLabel();
-                string? error = FaceOnnxDetector.GetLastExecutionProviderError();
-                if (!string.IsNullOrWhiteSpace(error))
-                    return $"{_detector.GetType().Name}/{provider}({error})";
-
-                return $"{_detector.GetType().Name}/{provider}";
-            }
-
-            if (_detector is YoloFaceOnnxDetector)
-            {
-                string provider = YoloFaceOnnxDetector.GetLastExecutionProviderLabel();
-                string? error = YoloFaceOnnxDetector.GetLastExecutionProviderError();
+                string provider = diagnostics.ExecutionProviderLabel;
+                string? error = diagnostics.ExecutionProviderError;
                 if (!string.IsNullOrWhiteSpace(error))
                     return $"{_detector.GetType().Name}/{provider}({error})";
 

@@ -14,6 +14,16 @@ namespace FaceShield.Services.Video
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
     private long _version;
+    private readonly bool _allowsBorrowedBitmapReads;
+
+    public FrameMaskProvider()
+    {
+    }
+
+    private FrameMaskProvider(bool allowsBorrowedBitmapReads)
+    {
+        _allowsBorrowedBitmapReads = allowsBorrowedBitmapReads;
+    }
 
     internal sealed class SparseFaceMaskWorkingCopy
     {
@@ -75,6 +85,10 @@ namespace FaceShield.Services.Video
     }
 
 
+    /// <summary>
+    /// Stores the supplied bitmap and takes ownership of it.
+    /// After this call succeeds, the caller must not mutate or dispose the bitmap.
+    /// </summary>
     public void SetMask(int frameIndex, WriteableBitmap mask)
     {
         if (mask == null)
@@ -177,6 +191,12 @@ namespace FaceShield.Services.Video
     /// </summary>
     internal bool TryGetStoredMaskBorrowed(int frameIndex, out WriteableBitmap mask)
     {
+        if (!_allowsBorrowedBitmapReads)
+        {
+            throw new InvalidOperationException(
+                "Borrowed stored-mask reads are only allowed on detached provider snapshots.");
+        }
+
         lock (_stateGate)
             return _masks.TryGetValue(frameIndex, out mask!);
     }
@@ -371,7 +391,7 @@ namespace FaceShield.Services.Video
         {
             cancellationToken.ThrowIfCancellationRequested();
             sourceVersion = _version;
-            var snapshot = new FrameMaskProvider();
+            var snapshot = new FrameMaskProvider(allowsBorrowedBitmapReads: true);
             try
             {
                 foreach (var entry in _masks)
@@ -561,11 +581,27 @@ namespace FaceShield.Services.Video
             data.MinConfidence,
             data.Confidences.ToArray());
 
-    public readonly record struct FaceMaskData(
-        PixelSize Size,
-        IReadOnlyList<Rect> Faces,
-        float? MinConfidence,
-        IReadOnlyList<float> Confidences);
+    public readonly record struct FaceMaskData
+    {
+        public FaceMaskData(
+            PixelSize size,
+            IReadOnlyList<Rect> faces,
+            float? minConfidence,
+            IReadOnlyList<float> confidences)
+        {
+            Size = size;
+            Faces = Array.AsReadOnly(
+                faces == null ? Array.Empty<Rect>() : faces.ToArray());
+            MinConfidence = minConfidence;
+            Confidences = Array.AsReadOnly(
+                confidences == null ? Array.Empty<float>() : confidences.ToArray());
+        }
+
+        public PixelSize Size { get; }
+        public IReadOnlyList<Rect> Faces { get; }
+        public float? MinConfidence { get; }
+        public IReadOnlyList<float> Confidences { get; }
+    }
 
     private static IReadOnlyList<float> NormalizeConfidences(
         int faceCount,

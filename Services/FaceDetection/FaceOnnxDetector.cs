@@ -19,7 +19,7 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace FaceShield.Services.FaceDetection
 {
-    public sealed class FaceOnnxDetector : IBgraFaceDetector
+    public sealed class FaceOnnxDetector : IBgraFaceDetector, IExecutionProviderDiagnostics
     {
         private readonly FaceDetector _detector;
         private readonly bool _enablePreprocessOptimizations = true;
@@ -37,6 +37,9 @@ namespace FaceShield.Services.FaceDetection
 
         internal string ExecutionProviderLabel { get; }
         internal string? ExecutionProviderError { get; private set; }
+
+        string IExecutionProviderDiagnostics.ExecutionProviderLabel => ExecutionProviderLabel;
+        string? IExecutionProviderDiagnostics.ExecutionProviderError => ExecutionProviderError;
 
         internal bool UsesGpuExecutionProvider =>
             ExecutionProviderLabel.StartsWith("GPU:", StringComparison.OrdinalIgnoreCase);
