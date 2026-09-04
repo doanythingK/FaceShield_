@@ -31,7 +31,13 @@ jobs:
           git status --short
 
       - name: Build Release
-        run: dotnet build FaceShield.csproj -c Release --nologo
+        shell: bash
+        run: |
+          set +e
+          dotnet build FaceShield.csproj -c Release --nologo > temporary-sparse-build.txt 2>&1
+          code=$?
+          cat temporary-sparse-build.txt
+          exit $code
 
       - name: Commit verified changes
         shell: bash
@@ -40,6 +46,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config core.whitespace cr-at-eol
+          rm -f temporary-sparse-build.txt
           git rm .github/workflows/temporary-sparse-api-cleanup.yml
           git rm scripts/temporary_sparse_api_cleanup.py
           git rm -f --ignore-unmatch temporary-sparse-cleanup-error.txt
@@ -53,3 +60,20 @@ jobs:
           git diff --cached --check
           git commit -m "Optimize sparse staging and bitmap ownership"
           git push origin HEAD:docs/manual-blur-player-architecture
+
+      - name: Publish build diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -s temporary-sparse-build.txt ]; then
+            cp temporary-sparse-build.txt temporary-sparse-cleanup-error.txt
+          else
+            echo "Sparse cleanup failed before build diagnostics were produced." > temporary-sparse-cleanup-error.txt
+          fi
+          git reset --hard HEAD
+          git add -f temporary-sparse-cleanup-error.txt
+          git commit -m "chore: capture sparse cleanup build failure" || true
+          git push origin HEAD:docs/manual-blur-player-architecture || true
