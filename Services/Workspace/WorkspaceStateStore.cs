@@ -293,16 +293,24 @@ namespace FaceShield.Services.Workspace
 
             try
             {
-                var entries = maskProvider.GetMaskEntries();
+                var entries = maskProvider.GetStoredMaskSnapshot();
                 var indices = new List<int>(entries.Count);
                 var indexSet = new HashSet<int>();
 
-                foreach (var entry in entries)
+                try
                 {
-                    indices.Add(entry.Key);
-                    indexSet.Add(entry.Key);
-                    string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
-                    SaveMask(filePath, entry.Value);
+                    foreach (var entry in entries)
+                    {
+                        indices.Add(entry.Key);
+                        indexSet.Add(entry.Key);
+                        string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
+                        SaveMask(filePath, entry.Value);
+                    }
+                }
+                finally
+                {
+                    foreach (var entry in entries)
+                        entry.Value.Dispose();
                 }
 
                 var faceMasks = maskProvider.GetFaceMaskEntries()

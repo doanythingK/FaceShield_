@@ -1001,14 +1001,17 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     {
         if (_maskProvider is FrameMaskProvider provider)
         {
-            if (provider.TryGetStoredMask(frameIndex, out var stored))
+            if (provider.TryCloneStoredMask(frameIndex, out var stored))
             {
-                return stored.PixelSize.Width == frame.PixelSize.Width &&
-                       stored.PixelSize.Height == frame.PixelSize.Height
-                    ? CloneBitmap(stored)
-                    : null;
-            }
+                if (stored.PixelSize.Width == frame.PixelSize.Width &&
+                    stored.PixelSize.Height == frame.PixelSize.Height)
+                {
+                    return stored;
+                }
 
+                stored.Dispose();
+                return null;
+            }
             if (provider.TryGetFaceMaskData(frameIndex, out var faceData))
             {
                 if (faceData.Size.Width != frame.PixelSize.Width ||

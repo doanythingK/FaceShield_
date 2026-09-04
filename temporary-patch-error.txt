@@ -1,1 +1,0 @@
-Workflow failed before producing a diagnostic log.

@@ -618,4 +618,15 @@ The runtime hardening verifier also checks risk-cascade token propagation, trans
 ### Validation status
 
 These changes are source-level and verifier/harness updates on `docs/manual-blur-player-architecture`. No Windows/macOS Actions build, real cancellation timing replay, long-video run, or forced concurrent provider mutation test has been executed on this branch in this follow-up.
+---
+
+## Follow-up: Auto cancellation and stored-mask ownership (2026-09-04)
+
+Confirmed production-code fixes on `docs/manual-blur-player-architecture`:
+
+- `AutoMaskGenerator.GenerateAsync()` rethrows caller cancellation so Workspace cannot treat a cancelled Auto transaction as a successful return.
+- Sparse materialization accepts cancellation, performs work against an isolated `FrameMaskProvider` snapshot, and commits face masks to the live provider only after successful completion and version validation.
+- Sequential, single-pipeline, and parallel-pipeline bulk writers check cancellation immediately before `SetFaceRects()` provider writes.
+- `FrameMaskProvider` now provides state-gated independent stored-mask clone/snapshot APIs; Preview and Workspace persistence use those owned copies instead of live provider-owned bitmap references.
+- The standard Workspace video-export path is intentionally unchanged because it already exports from `FrameMaskProvider.CreateSnapshot()`.
 

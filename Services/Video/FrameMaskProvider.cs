@@ -117,6 +117,26 @@ namespace FaceShield.Services.Video
             return _masks.TryGetValue(frameIndex, out mask!);
     }
 
+    public bool TryCloneStoredMask(
+        int frameIndex,
+        out WriteableBitmap mask,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_masks.TryGetValue(frameIndex, out var stored))
+            {
+                mask = null!;
+                return false;
+            }
+
+            mask = CloneBitmap(stored, cancellationToken);
+            return true;
+        }
+    }
+
     public bool TryGetFaceMaskData(int frameIndex, out FaceMaskData data)
     {
         lock (_stateGate)
@@ -218,6 +238,35 @@ namespace FaceShield.Services.Video
     {
         lock (_stateGate)
             return _masks.ToArray();
+    }
+
+    public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetStoredMaskSnapshot(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = new List<KeyValuePair<int, WriteableBitmap>>(_masks.Count);
+            try
+            {
+                foreach (var entry in _masks)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    snapshot.Add(new KeyValuePair<int, WriteableBitmap>(
+                        entry.Key,
+                        CloneBitmap(entry.Value, cancellationToken)));
+                }
+
+                return snapshot;
+            }
+            catch
+            {
+                foreach (var entry in snapshot)
+                    entry.Value.Dispose();
+                throw;
+            }
+        }
     }
 
     public FrameMaskProvider CreateSnapshot()

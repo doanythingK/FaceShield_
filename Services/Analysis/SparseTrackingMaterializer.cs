@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Analysis;
 
@@ -37,8 +38,10 @@ internal static class SparseTrackingMaterializer
         FrameMaskProvider maskProvider,
         AutoMaskOptions options,
         int start,
-        int endExclusive)
+        int endExclusive,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (results == null || results.Count == 0)
         {
             return new SparseMaterializeResult(
@@ -55,6 +58,7 @@ internal static class SparseTrackingMaterializer
                 Array.Empty<SparseSceneCutTransition>());
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         int[] keys = results.Keys.ToArray();
         Array.Sort(keys);
 
@@ -73,6 +77,7 @@ internal static class SparseTrackingMaterializer
 
         for (int i = 0; i < keys.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int key = keys[i];
             if (key < start || key >= endExclusive)
                 continue;
@@ -85,6 +90,7 @@ internal static class SparseTrackingMaterializer
 
             if (!maskProvider.HasEntry(key))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 maskProvider.SetFaceRects(
                     key,
                     current.Bounds,
@@ -99,7 +105,8 @@ internal static class SparseTrackingMaterializer
                 i + 1,
                 endExclusive,
                 key,
-                maxBridgeFrames);
+                maxBridgeFrames,
+                cancellationToken);
             bool canBridge =
                 nextPositive != null &&
                 CanBridgeSparseResults(
@@ -107,8 +114,10 @@ internal static class SparseTrackingMaterializer
                     nextPositive,
                     maxBridgeFrames,
                     guardSceneCuts,
-                    sceneCutThreshold);
+                    sceneCutThreshold,
+                    cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             int nextKey =
                 FindNextDetectionKey(keys, i + 1, endExclusive);
             bool stopAtSceneCut = false;
@@ -145,6 +154,7 @@ internal static class SparseTrackingMaterializer
 
             for (int frame = key + 1; frame < segmentEnd; frame++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (maskProvider.HasEntry(frame))
                     continue;
 
@@ -152,12 +162,14 @@ internal static class SparseTrackingMaterializer
                     ? InterpolateSparseResult(
                         current,
                         nextPositive!,
-                        frame)
+                        frame,
+                        cancellationToken)
                     : current;
 
                 if (payload.Bounds.Length == 0)
                     continue;
 
+                cancellationToken.ThrowIfCancellationRequested();
                 maskProvider.SetFaceRects(
                     frame,
                     payload.Bounds,
@@ -213,10 +225,13 @@ internal static class SparseTrackingMaterializer
         int startIndex,
         int endExclusive,
         int currentKey,
-        int maxBridgeFrames)
+        int maxBridgeFrames,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         for (int i = startIndex; i < keys.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int key = keys[i];
             if (key >= endExclusive)
                 return null;
@@ -236,8 +251,10 @@ internal static class SparseTrackingMaterializer
         DetectionResult next,
         int maxBridgeFrames,
         bool guardSceneCuts,
-        double sceneCutThreshold)
+        double sceneCutThreshold,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (next.Index <= current.Index ||
             next.Index - current.Index > maxBridgeFrames)
         {
@@ -257,6 +274,7 @@ internal static class SparseTrackingMaterializer
         var used = new bool[next.Bounds.Length];
         for (int i = 0; i < current.Bounds.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int match = SparseTrackingMath.FindBestMatch(
                 current.Bounds[i],
                 next.Bounds,
@@ -274,8 +292,10 @@ internal static class SparseTrackingMaterializer
     private static DetectionResult InterpolateSparseResult(
         DetectionResult current,
         DetectionResult next,
-        int frameIndex)
+        int frameIndex,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (next.Index <= current.Index)
             return current;
 
@@ -290,6 +310,7 @@ internal static class SparseTrackingMaterializer
 
         for (int i = 0; i < current.Bounds.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Rect from = current.Bounds[i];
             int match = SparseTrackingMath.FindBestMatch(
                 from,

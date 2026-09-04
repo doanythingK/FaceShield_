@@ -237,7 +237,7 @@ namespace FaceShield.Services.Analysis
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // 취소는 정상 흐름으로 처리 (디버그 예외 노이즈 방지)
+                throw;
             }
 
             if (ShouldRestartAfterOutOfRangeResume(LastRunSummary, effectiveStartFrameIndex, ct))
@@ -618,6 +618,7 @@ namespace FaceShield.Services.Analysis
                 {
                     var payload = BuildMaskPayload(faces);
                     var tMask = Stopwatch.StartNew();
+                    ct.ThrowIfCancellationRequested();
                     _maskProvider.SetFaceRects(
                         idx,
                         payload.Bounds,
@@ -947,6 +948,7 @@ namespace FaceShield.Services.Analysis
 
                     if (result.Bounds.Length > 0)
                     {
+                        pipelineToken.ThrowIfCancellationRequested();
                         _maskProvider.SetFaceRects(
                             result.Index,
                             result.Bounds,
@@ -1439,6 +1441,7 @@ namespace FaceShield.Services.Analysis
                         onFrameProcessed?.Invoke(orderedResult.Index);
                         if (orderedResult.Bounds.Length > 0)
                         {
+                            pipelineToken.ThrowIfCancellationRequested();
                             _maskProvider.SetFaceRects(
                                 orderedResult.Index,
                                 orderedResult.Bounds,
@@ -1740,16 +1743,31 @@ namespace FaceShield.Services.Analysis
             int materializeEndExclusive = resumeWatermark >= start
                 ? resumeWatermark + 1
                 : start;
+            pipeline.ThrowIfFailedOrCanceled();
+            pipelineToken.ThrowIfCancellationRequested();
+            using var sparseMaterializationProvider = _maskProvider.CreateSnapshot(
+                out long sparseMaterializationSourceVersion,
+                pipelineToken);
             var materialized = SparseTrackingMaterializer.Materialize(
                 results,
-                _maskProvider,
+                sparseMaterializationProvider,
                 _options,
                 start,
-                materializeEndExclusive);
+                materializeEndExclusive,
+                pipelineToken);
+            pipelineToken.ThrowIfCancellationRequested();
+            _maskProvider.CommitFaceMasksFrom(
+                sparseMaterializationProvider,
+                sparseMaterializationSourceVersion,
+                pipelineToken);
             foreach (var transition in materialized.SceneCutTransitions)
             {
+                pipelineToken.ThrowIfCancellationRequested();
                 for (int frame = transition.SourceFrameIndex + 1; frame <= transition.NextFrameIndex; frame++)
+                {
+                    pipelineToken.ThrowIfCancellationRequested();
                     _sceneCutStarts.Add(frame);
+                }
             }
             int interpolated = materialized.Interpolated;
 
