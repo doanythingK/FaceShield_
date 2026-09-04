@@ -17,7 +17,19 @@ jobs:
           fetch-depth: 0
 
       - name: Apply timeline request extraction
-        run: python3 scripts/temporary_refactor_phase_c6.py
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/temporary_refactor_phase_c6.py')
+          text = p.read_text(encoding='utf-8')
+          old = "'''        private static void DrawGridLines(\\n'''"
+          new = "'''        private static void DrawGridLines('''"
+          if old not in text:
+              raise RuntimeError('C6 end marker patch target missing')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python3 scripts/temporary_refactor_phase_c6.py
 
       - name: Verify source invariants
         shell: bash
