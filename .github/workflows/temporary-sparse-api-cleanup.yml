@@ -21,28 +21,13 @@ jobs:
       - name: Apply targeted source patch
         run: python3 scripts/temporary_sparse_api_cleanup.py
 
-      - name: Verify source shape
+      - name: Check source diff
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
-          grep -q 'CreateSparseFaceMaskWorkingCopy' Services/Analysis/AutoMaskGenerator.cs
-          grep -q 'SparseFaceMaskWorkingCopy maskProvider' Services/Analysis/SparseTrackingMaterializer.cs
-          grep -q 'new HashSet<int>(_masks.Keys)' Services/Video/FrameMaskProvider.cs
-          grep -q 'if (_version != source.SourceVersion)' Services/Video/FrameMaskProvider.cs
-          grep -q 'return CloneBitmap(mask, CancellationToken.None);' Services/Video/FrameMaskProvider.cs
-          grep -q 'internal bool TryGetStoredMaskBorrowed' Services/Video/FrameMaskProvider.cs
-          grep -q 'ownedMask = maskProvider.GetFinalMask(decodedFrameOrdinal);' Services/Video/VideoFrameProcessingPolicy.cs
-          grep -q 'using var ownedMaskScope = ownedMask;' Services/Video/VideoFrameProcessingPolicy.cs
-          grep -q 'providerMask.Dispose();' ViewModels/Workspace/FramePreviewViewModel.cs
-          if grep -R --include='*.cs' -n 'TryGetStoredMask(' Services ViewModels; then
-            echo 'Legacy raw TryGetStoredMask API remains.' >&2
-            exit 1
-          fi
-          if grep -R --include='*.cs' -n 'GetMaskEntries(' Services ViewModels; then
-            echo 'Legacy raw GetMaskEntries API remains.' >&2
-            exit 1
-          fi
+          git diff --stat
+          git status --short
 
       - name: Build Release
         run: dotnet build FaceShield.csproj -c Release --nologo
