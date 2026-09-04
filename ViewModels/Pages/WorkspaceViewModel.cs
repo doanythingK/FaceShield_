@@ -35,6 +35,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspaceStateStore? _stateStore;
         private readonly WorkspacePersistenceCoordinator? _workspacePersistence;
         private readonly IssueReviewCoordinator _issueReview;
+        private readonly WorkspaceExportCoordinator _exportCoordinator;
         private const float LowConfidenceMargin = 0.05f;
         private const int AutoDetectionCompletionTailToleranceFrames = 0;
         private int _autoResumeIndex;
@@ -44,9 +45,6 @@ namespace FaceShield.ViewModels.Pages
         private int _autoLastProcessedFrame = -1;
         private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
         private bool _sessionInitialized;
-        private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();
-        private (DateTime Timestamp, int FrameIndex) _exportLastSample;
-
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
 
@@ -55,17 +53,7 @@ namespace FaceShield.ViewModels.Pages
         private long _autoLastPreviewTick;
         private bool _autoPreviewNeedsExactRefresh;
         private CancellationTokenSource? _autoCts;
-        private CancellationTokenSource? _exportCts;
         private CancellationTokenSource? _sessionInitCts;
-        private readonly SemaphoreSlim _exportGate = new(1, 1);
-        private bool _autoExportGateRequired;
-        private bool _autoExportGatePassed;
-        private string? _autoExportGateFailure;
-        private AutoMaskRunSummary? _lastCompletedAutoRunSummary;
-        private bool _autoExportHybridPolicyAvailable;
-        private const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";
-        private bool _autoExportAllowHybridCopy;
-        private string? _autoExportHybridDisableReasons;
         private readonly object _lifetimeSync = new();
         private int _activeLifetimeOperations;
         private bool _disposeRequested;
@@ -148,6 +136,14 @@ namespace FaceShield.ViewModels.Pages
                 TryBeginLifetimeOperation,
                 EndLifetimeOperation);
             _issueReview.StateChanged += ApplyIssueReviewState;
+            _exportCoordinator = new WorkspaceExportCoordinator(
+                _maskProvider,
+                ToolPanel,
+                () => _isAutoRunning,
+                TryBeginLifetimeOperation,
+                EndLifetimeOperation,
+                ResolveExportOutputPathAsync,
+                LogExportQualityGate);
             if (!deferSessionInit)
                 InitializeSession(loadProgress, initializationToken);
 
@@ -331,7 +327,7 @@ namespace FaceShield.ViewModels.Pages
         }
 
 
-        private async Task<bool> SaveVideoAsync(
+        private Task<bool> SaveVideoAsync(
             IProgress<ExportProgress>? exportProgress = null,
             CancellationToken cancellationToken = default,
             bool updateToolPanel = true,
@@ -339,173 +335,15 @@ namespace FaceShield.ViewModels.Pages
             AutoMaskRunSummary? autoRunSummary = null,
             AutoMaskOptions? autoRunOptions = null)
         {
-            if (!TryBeginLifetimeOperation())
-                return false;
-
-            bool enteredExportGate = false;
-            try
-            {
-                enteredExportGate = await _exportGate.WaitAsync(0);
-                if (!enteredExportGate)
-                    return false;
-
-                return await SaveVideoCoreAsync(
-                    exportProgress,
-                    cancellationToken,
-                    updateToolPanel,
-                    runId,
-                    autoRunSummary,
-                    autoRunOptions);
-            }
-            finally
-            {
-                if (enteredExportGate)
-                    _exportGate.Release();
-                EndLifetimeOperation();
-            }
-        }
-
-        private async Task<bool> SaveVideoCoreAsync(
-            IProgress<ExportProgress>? exportProgress = null,
-            CancellationToken cancellationToken = default,
-            bool updateToolPanel = true,
-            string? runId = null,
-            AutoMaskRunSummary? autoRunSummary = null,
-            AutoMaskOptions? autoRunOptions = null)
-        {
-            string input = FrameList.VideoPath;
-            string exportRunId = string.IsNullOrWhiteSpace(runId)
-                ? $"export-{Guid.NewGuid():N}"
-                : runId;
-            if (_isAutoRunning && autoRunOptions == null)
-            {
-                const string reason = "auto-analysis-in-progress";
-                string line = $"[ExportBlocked] runId={exportRunId}, reason={reason}";
-                System.Diagnostics.Debug.WriteLine(line);
-                RunMetricsLog.AppendRunLines(exportRunId, line);
-                throw new InvalidOperationException(
-                    "자동 분석이 진행 중이므로 내보내기를 중단했습니다. 분석 완료 후 다시 시도해 주세요.");
-            }
-
-            AutoMaskRunSummary? effectiveAutoRunSummary =
-                autoRunSummary ?? _lastCompletedAutoRunSummary;
-            string? cascadeFailure = null;
-            string cascadeError = "n/a";
-            if (autoRunOptions != null)
-            {
-                cascadeFailure = WorkspaceExportGatePolicy.GetRequiredYoloCascadeFailure(autoRunOptions, autoRunSummary);
-                cascadeError = autoRunSummary?.YoloCascadeError ?? "summary-missing";
-            }
-            if (cascadeFailure == null && _autoExportGateRequired && !_autoExportGatePassed)
-            {
-                cascadeFailure = string.IsNullOrWhiteSpace(_autoExportGateFailure)
-                    ? "persisted-auto-export-gate-failed"
-                    : _autoExportGateFailure;
-                cascadeError = "persisted-gate";
-            }
-            if (cascadeFailure != null)
-            {
-                string line =
-                    $"[ExportBlocked] runId={exportRunId}, reason={cascadeFailure}, cascadeError={cascadeError}";
-                System.Diagnostics.Debug.WriteLine(line);
-                RunMetricsLog.AppendRunLines(exportRunId, line);
-                throw new InvalidOperationException(
-                    $"자동 분석 품질 검증이 완료되지 않아 내보내기를 중단했습니다. " +
-                    $"reason={cascadeFailure}");
-            }
-
-            string output = BuildDefaultExportPath(input);
-
-            (string? resolvedOutput, bool allowOutputOverwrite) =
-                await ResolveExportOutputPathAsync(output);
-            if (string.IsNullOrWhiteSpace(resolvedOutput))
-                return false;
-            output = resolvedOutput;
-
-            using var exportMaskProvider = _maskProvider.CreateSnapshot();
-            var exporter = new VideoExportService(exportMaskProvider);
-
-            if (updateToolPanel)
-            {
-                ToolPanel.IsExportRunning = true;
-                ToolPanel.ExportProgress = 0;
-                ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
-                ToolPanel.ExportStatusText = null;
-            }
-            _exportEtaSamples.Clear();
-
-            var progress = new Progress<ExportProgress>(p =>
-            {
-                exportProgress?.Report(p);
-                if (updateToolPanel)
-                {
-                    int percent = Math.Clamp(p.Percent, 0, 100);
-                    ToolPanel.ExportProgress = percent;
-                    UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
-                    if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                        ToolPanel.ExportStatusText = p.StatusMessage;
-                }
-            });
-
-            var exportCts = cancellationToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : new CancellationTokenSource();
-            _exportCts = exportCts;
-            CancellationToken exportToken = exportCts.Token;
-
-            try
-            {
-                (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy = (
-                    false,
-                    new[] { HybridCopyDisabledReason });
-                System.Diagnostics.Debug.WriteLine(
-                    $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(effectiveAutoRunSummary?.RunId ?? "n/a")}, persistedPolicy={(_autoExportHybridPolicyAvailable && effectiveAutoRunSummary == null).ToString().ToLowerInvariant()}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
-                RunMetricsLog.AppendRunLines(
-                    exportRunId,
-                    $"[ExportRunConfig] runId={exportRunId}, blurRadius={ToolPanel.BlurRadius}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
-
-                await Task.Run(() =>
-                {
-                    exporter.Export(
-                        input,
-                        output,
-                        blurRadius: ToolPanel.BlurRadius,
-                        progress,
-                        exportToken,
-                        exportRunId,
-                        allowHybridCopy: hybridPolicy.allowHybridCopy,
-                        allowOutputOverwrite: allowOutputOverwrite);
-                }, exportToken);
-                if (exporter.LastExportSummary != null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
-                    LogExportQualityGate(
-                        effectiveAutoRunSummary,
-                        exporter.LastExportSummary,
-                        allowHybridCopy: hybridPolicy.allowHybridCopy,
-                        autoHybridDisableReasons: hybridPolicy.disableReasons);
-                }
-
-                return true;
-            }
-            catch (OperationCanceledException)
-            {
-                // 사용자 취소는 정상 흐름
-                return false;
-            }
-            finally
-            {
-                if (updateToolPanel)
-                {
-                    ToolPanel.IsExportRunning = false;
-                    ToolPanel.ExportProgress = 0;
-                    ToolPanel.ExportEtaText = null;
-                    ToolPanel.ExportStatusText = null;
-                }
-                if (ReferenceEquals(_exportCts, exportCts))
-                    _exportCts = null;
-                exportCts.Dispose();
-            }
+            return _exportCoordinator.ExportAsync(
+                FrameList.VideoPath,
+                ToolPanel.BlurRadius,
+                exportProgress,
+                cancellationToken,
+                updateToolPanel,
+                runId,
+                autoRunSummary,
+                autoRunOptions);
         }
 
         private static void LogExportQualityGate(
@@ -1017,21 +855,6 @@ namespace FaceShield.ViewModels.Pages
             throw new IOException("덮어쓰지 않는 고유한 내보내기 파일명을 만들 수 없습니다.");
         }
 
-        private static string BuildDefaultExportPath(string inputPath)
-        {
-            string extension = Path.GetExtension(inputPath);
-            string normalizedExtension = extension.ToLowerInvariant();
-            if (normalizedExtension is not (
-                ".mp4" or ".mov" or ".mkv" or ".avi" or ".wmv" or ".webm"))
-            {
-                extension = ".mp4";
-            }
-
-            string directory = Path.GetDirectoryName(inputPath) ?? string.Empty;
-            string baseName = Path.GetFileNameWithoutExtension(inputPath);
-            return Path.Combine(directory, $"{baseName}_blur{extension}");
-        }
-
         private IFaceDetectorFactory CreateFaceDetectorFactory()
         {
             return new FaceDetectorFactory(_detectorFactoryOptions);
@@ -1254,7 +1077,7 @@ namespace FaceShield.ViewModels.Pages
                     _autoResumeIndex = 0;
                 }
                 ApplyAutoExportGateState(
-                WorkspaceExportGatePolicy.Begin(HybridCopyDisabledReason));
+                WorkspaceExportGatePolicy.Begin(WorkspaceExportCoordinator.HybridCopyDisabledReason));
                 ResetAutoFaceMasksForRun(lastProcessed);
 
                 // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
@@ -1306,7 +1129,7 @@ namespace FaceShield.ViewModels.Pages
                     WorkspaceExportGatePolicy.Complete(
                         runOptions,
                         generator.LastRunSummary,
-                        HybridCopyDisabledReason));
+                        WorkspaceExportCoordinator.HybridCopyDisabledReason));
                 RefreshAutoPreviewAfterPostProcess(exportAfter);
 
                 if (!exportAfter)
@@ -1448,13 +1271,7 @@ namespace FaceShield.ViewModels.Pages
         private void ApplyAutoExportGateState(
             WorkspaceAutoExportGateState state)
         {
-            _autoExportGateRequired = state.Required;
-            _autoExportGatePassed = state.Passed;
-            _autoExportGateFailure = state.Failure;
-            _lastCompletedAutoRunSummary = state.CompletedRunSummary;
-            _autoExportHybridPolicyAvailable = state.HybridPolicyAvailable;
-            _autoExportAllowHybridCopy = state.AllowHybridCopy;
-            _autoExportHybridDisableReasons = state.HybridDisableReasons;
+            _exportCoordinator.ApplyGateState(state);
         }
 
         private void ResetAutoFaceMasksForRun(int startFrameIndex)
@@ -1540,7 +1357,7 @@ namespace FaceShield.ViewModels.Pages
 
         private void OnExportCancelRequested()
         {
-            _exportCts?.Cancel();
+            _exportCoordinator.Cancel();
         }
 
         private Task ShowAutoErrorAsync(Exception ex, bool isDuringRun)
@@ -1585,62 +1402,6 @@ namespace FaceShield.ViewModels.Pages
                 return $"{fnf.Message}\n누락 파일: {fnf.FileName}";
 
             return ex.Message;
-        }
-
-        private void UpdateExportEta(DateTime timestamp, int frameIndex, int totalFrames)
-        {
-            if (totalFrames <= 0 || frameIndex <= 0)
-            {
-                if (string.IsNullOrWhiteSpace(ToolPanel.ExportEtaText))
-                    ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
-                return;
-            }
-            if (frameIndex >= totalFrames)
-            {
-                ToolPanel.ExportEtaText = null;
-                return;
-            }
-
-            if (_exportEtaSamples.Count > 0 && frameIndex <= _exportLastSample.FrameIndex)
-                return;
-
-            _exportEtaSamples.Enqueue((timestamp, frameIndex));
-            _exportLastSample = (timestamp, frameIndex);
-
-            while (_exportEtaSamples.Count > 0 &&
-                   (timestamp - _exportEtaSamples.Peek().Timestamp).TotalSeconds > 10)
-                _exportEtaSamples.Dequeue();
-
-            if (_exportEtaSamples.Count < 2)
-            {
-                ToolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
-                return;
-            }
-
-            var first = _exportEtaSamples.Peek();
-            var last = _exportLastSample;
-            var elapsedSeconds = (last.Timestamp - first.Timestamp).TotalSeconds;
-            var progressed = last.FrameIndex - first.FrameIndex;
-
-            if (elapsedSeconds <= 0 || progressed <= 0)
-                return;
-
-            double ratePerSecond = progressed / elapsedSeconds;
-            double remainingFrames = (totalFrames - frameIndex);
-            double remaining = remainingFrames / ratePerSecond;
-            if (remaining < 0)
-                return;
-
-            ToolPanel.ExportEtaText = $"예상 남은 시간: {FormatEta(TimeSpan.FromSeconds(remaining))}";
-        }
-
-        private static string FormatEta(TimeSpan remaining)
-        {
-            if (remaining.TotalHours >= 1)
-                return $"{(int)remaining.TotalHours}시간 {Math.Max(0, remaining.Minutes)}분 {Math.Max(0, remaining.Seconds)}초";
-            if (remaining.TotalMinutes >= 1)
-                return $"{(int)remaining.TotalMinutes}분 {Math.Max(0, remaining.Seconds)}초";
-            return $"{Math.Max(0, (int)remaining.TotalSeconds)}초";
         }
 
         [RelayCommand]
@@ -1958,6 +1719,7 @@ namespace FaceShield.ViewModels.Pages
 
         private WorkspaceSnapshot BuildSnapshot()
         {
+            WorkspaceAutoExportGateState exportState = _exportCoordinator.GateState;
             var state = new WorkspaceStateCapture(
                 FrameList.VideoPath,
                 Mode,
@@ -1969,12 +1731,12 @@ namespace FaceShield.ViewModels.Pages
                 _autoCompleted,
                 _autoRunSignature,
                 _autoExecutionSignature,
-                _autoExportGateRequired,
-                _autoExportGatePassed,
-                _autoExportGateFailure,
-                _autoExportHybridPolicyAvailable,
-                _autoExportAllowHybridCopy,
-                _autoExportHybridDisableReasons);
+                exportState.Required,
+                exportState.Passed,
+                exportState.Failure,
+                exportState.HybridPolicyAvailable,
+                exportState.AllowHybridCopy,
+                exportState.HybridDisableReasons);
             return WorkspaceStateMapper.CreateSnapshot(state, DateTimeOffset.Now);
         }
 
@@ -1987,7 +1749,7 @@ namespace FaceShield.ViewModels.Pages
                 snapshot,
                 FrameList.SecondsPerScreen,
                 FrameList.TotalFrames,
-                HybridCopyDisabledReason);
+                WorkspaceExportCoordinator.HybridCopyDisabledReason);
 
             _autoResumeIndex = state.AutoResumeIndex;
             _autoCompleted = state.AutoCompleted;
@@ -2078,7 +1840,7 @@ namespace FaceShield.ViewModels.Pages
             _issueReview.Dispose();
             _workspacePersistence?.Dispose();
             _maskProvider.Dispose();
-            _exportGate.Dispose();
+            _exportCoordinator.Dispose();
         }
 
         public void Dispose()
@@ -2099,8 +1861,7 @@ namespace FaceShield.ViewModels.Pages
 
             try { _autoCts?.Cancel(); }
             catch { }
-            try { _exportCts?.Cancel(); }
-            catch { }
+            _exportCoordinator.Cancel();
             try { _sessionInitCts?.Cancel(); }
             catch { }
             CancelIssueTimeRefresh();

@@ -1,54 +1,11 @@
-from pathlib import Path
-
-
-def read_exact(p: Path) -> str:
-    with p.open('r', encoding='utf-8', newline='') as f:
-        return f.read()
-
-
-def write_exact(p: Path, text: str) -> None:
-    with p.open('w', encoding='utf-8', newline='') as f:
-        f.write(text)
-
-
-def replace_once(path: str, old: str, new: str) -> None:
-    p = Path(path)
-    text = read_exact(p)
-    candidates = [(old, new)]
-    if '\n' in old:
-        candidates.append((old.replace('\n', '\r\n'), new.replace('\n', '\r\n')))
-    for a, b in candidates:
-        count = text.count(a)
-        if count == 1:
-            write_exact(p, text.replace(a, b, 1))
-            return
-        if count > 1:
-            raise RuntimeError(f'Expected one match in {path}, found {count}')
-    raise RuntimeError(f'Patch target not found in {path}: {old[:120]!r}')
-
-
-def replace_between(path: str, start_marker: str, end_marker: str, replacement: str) -> None:
-    p = Path(path)
-    text = read_exact(p)
-    sep = '\r\n' if '\r\n' in text else '\n'
-    sm = start_marker.replace('\n', sep)
-    em = end_marker.replace('\n', sep)
-    start = text.find(sm)
-    if start < 0:
-        raise RuntimeError(f'Start marker not found in {path}: {start_marker!r}')
-    end = text.find(em, start)
-    if end < 0:
-        raise RuntimeError(f'End marker not found in {path}: {end_marker!r}')
-    write_exact(p, text[:start] + replacement.replace('\n', sep) + text[end:])
-
-
-write_exact(Path('ViewModels/Workspace/WorkspaceExportCoordinator.cs'), '''using FaceShield.Services.Analysis;
+using FaceShield.Services.Analysis;
 using FaceShield.Services.Diagnostics;
 using FaceShield.Services.Video;
 using FaceShield.Services.Workspace;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -119,7 +76,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         bool entered = false;
         try
         {
-            entered = await _gate.WaitAsync(0).ConfigureAwait(false);
+            entered = await _gate.WaitAsync(0);
             if (!entered)
                 return false;
 
@@ -131,7 +88,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 updateToolPanel,
                 runId,
                 autoRunSummary,
-                autoRunOptions).ConfigureAwait(false);
+                autoRunOptions);
         }
         finally
         {
@@ -251,7 +208,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                     exportRunId,
                     allowHybridCopy: hybridPolicy.allowHybridCopy,
                     allowOutputOverwrite: allowOutputOverwrite);
-            }, exportToken).ConfigureAwait(false);
+            }, exportToken);
 
             if (exporter.LastExportSummary != null)
             {
@@ -368,86 +325,3 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             throw new ObjectDisposedException(nameof(WorkspaceExportCoordinator));
     }
 }
-''')
-
-# Linq is needed by coordinator's log formatter.
-p = Path('ViewModels/Workspace/WorkspaceExportCoordinator.cs')
-text = read_exact(p)
-text = text.replace('using System.IO;\n', 'using System.IO;\nusing System.Linq;\n')
-write_exact(p, text)
-
-# Fields: add coordinator and remove export-owned state.
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private readonly IssueReviewCoordinator _issueReview;\n''',
-    '''        private readonly IssueReviewCoordinator _issueReview;\n        private readonly WorkspaceExportCoordinator _exportCoordinator;\n''')
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private readonly Queue<(DateTime Timestamp, int FrameIndex)> _exportEtaSamples = new();\n        private (DateTime Timestamp, int FrameIndex) _exportLastSample;\n\n''',
-    '')
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private CancellationTokenSource? _exportCts;\n''',
-    '')
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private readonly SemaphoreSlim _exportGate = new(1, 1);\n        private bool _autoExportGateRequired;\n        private bool _autoExportGatePassed;\n        private string? _autoExportGateFailure;\n        private AutoMaskRunSummary? _lastCompletedAutoRunSummary;\n        private bool _autoExportHybridPolicyAvailable;\n        private const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";\n        private bool _autoExportAllowHybridCopy;\n        private string? _autoExportHybridDisableReasons;\n''',
-    '')
-
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''            _issueReview.StateChanged += ApplyIssueReviewState;\n            if (!deferSessionInit)\n''',
-    '''            _issueReview.StateChanged += ApplyIssueReviewState;\n            _exportCoordinator = new WorkspaceExportCoordinator(\n                _maskProvider,\n                ToolPanel,\n                () => _isAutoRunning,\n                TryBeginLifetimeOperation,\n                EndLifetimeOperation,\n                ResolveExportOutputPathAsync,\n                LogExportQualityGate);\n            if (!deferSessionInit)\n''')
-
-# Replace export execution methods; keep static quality logging below.
-replace_between(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private async Task<bool> SaveVideoAsync(\n''',
-    '''        private static void LogExportQualityGate(\n''',
-    '''        private Task<bool> SaveVideoAsync(\n            IProgress<ExportProgress>? exportProgress = null,\n            CancellationToken cancellationToken = default,\n            bool updateToolPanel = true,\n            string? runId = null,\n            AutoMaskRunSummary? autoRunSummary = null,\n            AutoMaskOptions? autoRunOptions = null)\n        {\n            return _exportCoordinator.ExportAsync(\n                FrameList.VideoPath,\n                ToolPanel.BlurRadius,\n                exportProgress,\n                cancellationToken,\n                updateToolPanel,\n                runId,\n                autoRunSummary,\n                autoRunOptions);\n        }\n\n''')
-
-# Remove duplicate path builder now owned by coordinator; keep conflict dialog resolver and unique naming.
-replace_between(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private static string BuildDefaultExportPath(string inputPath)\n''',
-    '''        private IFaceDetectorFactory CreateFaceDetectorFactory()\n''',
-    '''''')
-
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private void OnExportCancelRequested()\n        {\n            _exportCts?.Cancel();\n        }\n''',
-    '''        private void OnExportCancelRequested()\n        {\n            _exportCoordinator.Cancel();\n        }\n''')
-
-# Remove ETA helpers from VM.
-replace_between(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private void UpdateExportEta(DateTime timestamp, int frameIndex, int totalFrames)\n''',
-    '''        [RelayCommand]\n        private async Task GoBack()\n''',
-    '''''')
-
-# Gate state now belongs to export coordinator.
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''        private void ApplyAutoExportGateState(\n            WorkspaceAutoExportGateState state)\n        {\n            _autoExportGateRequired = state.Required;\n            _autoExportGatePassed = state.Passed;\n            _autoExportGateFailure = state.Failure;\n            _lastCompletedAutoRunSummary = state.CompletedRunSummary;\n            _autoExportHybridPolicyAvailable = state.HybridPolicyAvailable;\n            _autoExportAllowHybridCopy = state.AllowHybridCopy;\n            _autoExportHybridDisableReasons = state.HybridDisableReasons;\n        }\n''',
-    '''        private void ApplyAutoExportGateState(\n            WorkspaceAutoExportGateState state)\n        {\n            _exportCoordinator.ApplyGateState(state);\n        }\n''')
-
-# Snapshot capture reads persisted export state from the coordinator.
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''            var state = new WorkspaceStateCapture(\n                FrameList.VideoPath,\n''',
-    '''            WorkspaceAutoExportGateState exportState = _exportCoordinator.GateState;\n            var state = new WorkspaceStateCapture(\n                FrameList.VideoPath,\n''')
-replace_once(
-    'ViewModels/Pages/WorkspaceViewModel.cs',
-    '''                _autoExportGateRequired,\n                _autoExportGatePassed,\n                _autoExportGateFailure,\n                _autoExportHybridPolicyAvailable,\n                _autoExportAllowHybridCopy,\n                _autoExportHybridDisableReasons);\n''',
-    '''                exportState.Required,\n                exportState.Passed,\n                exportState.Failure,\n                exportState.HybridPolicyAvailable,\n                exportState.AllowHybridCopy,\n                exportState.HybridDisableReasons);\n''')
-
-# Replace hybrid constant references throughout VM.
-p = Path('ViewModels/Pages/WorkspaceViewModel.cs')
-text = read_exact(p)
-text = text.replace('HybridCopyDisabledReason', 'WorkspaceExportCoordinator.HybridCopyDisabledReason')
-# Dispose/cancel ownership moves to coordinator.
-text = text.replace('            try { _exportCts?.Cancel(); }\n            catch { }\n', '            _exportCoordinator.Cancel();\n')
-text = text.replace('            _exportGate.Dispose();\n', '            _exportCoordinator.Dispose();\n')
-write_exact(p, text)
-
-print('Phase C3 export coordinator extraction applied.')
