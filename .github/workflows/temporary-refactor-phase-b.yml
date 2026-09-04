@@ -1,0 +1,48 @@
+name: Temporary Refactor Phase B
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply workspace persistence patch
+        run: python3 scripts/temporary_refactor_phase_b.py
+
+      - name: Verify source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config core.whitespace cr-at-eol
+          git diff --check
+          grep -q 'class WorkspacePersistenceCoordinator' Services/Workspace/WorkspacePersistenceCoordinator.cs
+          grep -q 'Task.Run(() => _store.SaveWorkspace' Services/Workspace/WorkspacePersistenceCoordinator.cs
+          grep -q 'private async Task GoBack()' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q 'PersistWorkspaceStateImmediate' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q 'vm.PersistWorkspaceStateImmediate()' ViewModels/Pages/HomePageViewModel.cs
+          grep -q '_workspacePersistence?.Dispose()' ViewModels/Pages/WorkspaceViewModel.cs
+
+      - name: Build Release
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/temporary_refactor_phase_b.py
+          rm -f .github/workflows/temporary-refactor-phase-b.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Move workspace persistence off the UI thread'
+          git push origin HEAD:refactor/ownership-workspace-hardening
