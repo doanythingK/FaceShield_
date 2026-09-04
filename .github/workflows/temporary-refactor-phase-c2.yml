@@ -17,7 +17,23 @@ jobs:
           fetch-depth: 0
 
       - name: Apply issue review extraction
-        run: python3 scripts/temporary_refactor_phase_c2.py
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/temporary_refactor_phase_c2.py > /tmp/phase-c2.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            cat /tmp/phase-c2.log
+            git reset --hard HEAD
+            cp /tmp/phase-c2.log temporary-refactor-phase-c2-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add temporary-refactor-phase-c2-error.txt
+            git commit -m 'chore: capture issue extraction patch failure'
+            git push origin HEAD:refactor/ownership-workspace-hardening
+            exit $status
+          fi
+          cat /tmp/phase-c2.log
 
       - name: Verify source invariants
         shell: bash
@@ -42,6 +58,7 @@ jobs:
           set -euo pipefail
           rm -f scripts/temporary_refactor_phase_c2.py
           rm -f .github/workflows/temporary-refactor-phase-c2.yml
+          rm -f temporary-refactor-phase-c2-error.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
