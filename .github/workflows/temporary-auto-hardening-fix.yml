@@ -27,30 +27,12 @@ jobs:
           text = path.read_text()
 
           replacements = [
-              (
-                  'catch_idx = find(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)")',
-                  'generate_async = find(lines, "public async Task GenerateAsync(")\ncatch_idx = find_next(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)", generate_async, 500)'
-              ),
-              (
-                  'bridge_call = find(lines, "CanBridgeSparseResults(")',
-                  'bridge_call = find_next(lines, "CanBridgeSparseResults(", next_call, 40)'
-              ),
-              (
-                  'find_loop = find_next(lines, "for (int i = startKeyIndex;", find_next_method, 50)',
-                  'find_loop = find_next(lines, "for (int i = startIndex;", find_next_method, 50)'
-              ),
-              (
-                  'can_sig_end = find_next(lines, "double sceneCutDifferenceThreshold)", can_bridge_method, 20)',
-                  'can_sig_end = find_next(lines, "double sceneCutThreshold)", can_bridge_method, 20)'
-              ),
-              (
-                  'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutDifferenceThreshold)", "double sceneCutDifferenceThreshold,")',
-                  'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutThreshold)", "double sceneCutThreshold,")'
-              ),
-              (
-                  'after_entries = find_next(lines, "public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()", get_entries, 80)',
-                  'after_entries = find_next(lines, "public FrameMaskProvider CreateSnapshot()", get_entries, 80)'
-              ),
+              ('catch_idx = find(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)")', 'generate_async = find(lines, "public async Task GenerateAsync(")\ncatch_idx = find_next(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)", generate_async, 500)'),
+              ('bridge_call = find(lines, "CanBridgeSparseResults(")', 'bridge_call = find_next(lines, "CanBridgeSparseResults(", next_call, 40)'),
+              ('find_loop = find_next(lines, "for (int i = startKeyIndex;", find_next_method, 50)', 'find_loop = find_next(lines, "for (int i = startIndex;", find_next_method, 50)'),
+              ('can_sig_end = find_next(lines, "double sceneCutDifferenceThreshold)", can_bridge_method, 20)', 'can_sig_end = find_next(lines, "double sceneCutThreshold)", can_bridge_method, 20)'),
+              ('lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutDifferenceThreshold)", "double sceneCutDifferenceThreshold,")', 'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutThreshold)", "double sceneCutThreshold,")'),
+              ('after_entries = find_next(lines, "public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()", get_entries, 80)', 'after_entries = find_next(lines, "public FrameMaskProvider CreateSnapshot()", get_entries, 80)'),
           ]
           for old, new in replacements:
               if text.count(old) != 1:
@@ -106,11 +88,21 @@ jobs:
           from pathlib import Path
           path = Path('scripts/verify-runtime-hardening.ps1')
           text = path.read_text()
-          old = "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'CloneBitmap\\([\\s\\S]{0,1200}catch[\\s\\S]{0,120}copy\\.Dispose\\(\\)[\\s\\S]{0,80}throw;'"
-          new = "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'private\\s+static\\s+WriteableBitmap\\s+CloneBitmap\\([\\s\\S]{0,1800}catch[\\s\\S]{0,160}copy\\.Dispose\\(\\)[\\s\\S]{0,120}throw;'"
-          if text.count(old) != 1:
-              raise RuntimeError(f'Expected one bitmap-copy verifier assertion, found {text.count(old)}')
-          path.write_text(text.replace(old, new))
+          replacements = [
+              (
+                  "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'CloneBitmap\\([\\s\\S]{0,1200}catch[\\s\\S]{0,120}copy\\.Dispose\\(\\)[\\s\\S]{0,80}throw;'",
+                  "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'private\\s+static\\s+WriteableBitmap\\s+CloneBitmap\\([\\s\\S]{0,1800}catch[\\s\\S]{0,160}copy\\.Dispose\\(\\)[\\s\\S]{0,120}throw;'"
+              ),
+              (
+                  "Assert-Match \"blocking frame reads use the shared AVIO interrupt guard\" ($extractor + $videoIoInterrupt) 'VideoIoInterruptGuard[\\s\\S]*ConfigureIoInterrupt\\([\\s\\S]*_ioInterrupt\\.Configure\\(format\\)[\\s\\S]*BeginIoInterrupt\\([\\s\\S]*_ioInterrupt\\.Begin\\(cancellationToken\\)'",
+                  "Assert-Match \"blocking frame reads use the shared AVIO interrupt guard\" ($extractor + $videoIoInterrupt) 'VideoIoInterruptGuard[\\s\\S]*ConfigureIoInterrupt\\([\\s\\S]{0,700}var\\s+ioInterrupt\\s*=\\s*_ioInterrupt[\\s\\S]{0,500}ioInterrupt\\.Configure\\(format\\)[\\s\\S]{0,1400}BeginIoInterrupt\\([\\s\\S]{0,700}var\\s+ioInterrupt\\s*=\\s*_ioInterrupt[\\s\\S]{0,500}ioInterrupt\\.Begin\\(cancellationToken\\)'"
+              ),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise RuntimeError(f'Expected one verifier assertion, found {text.count(old)} for: {old[:80]}')
+              text = text.replace(old, new)
+          path.write_text(text)
           PY
 
       - name: Check patch shape
