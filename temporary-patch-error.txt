@@ -1,7 +1,9 @@
+===== temporary-patch.log =====
 Traceback (most recent call last):
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 152, in <module>
-    stop_if = find(lines, "if (!canBridge &&")
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 159, in <module>
+    interp = find(lines, "? InterpolateSparseResult(current, nextPositive!, frame)")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 21, in find
     raise RuntimeError(f"Expected exactly one '{needle}' in range, found {len(hits)}")
-RuntimeError: Expected exactly one 'if (!canBridge &&' in range, found 0
+RuntimeError: Expected exactly one '? InterpolateSparseResult(current, nextPositive!, frame)' in range, found 0
+
