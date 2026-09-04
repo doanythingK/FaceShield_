@@ -1,0 +1,49 @@
+name: Temporary Refactor Phase A
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply ownership and diagnostics patch
+        run: python3 scripts/temporary_refactor_phase_a.py
+
+      - name: Verify source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config core.whitespace cr-at-eol
+          git diff --check
+          grep -q '소유권은 provider로 이전' Services/Video/IFrameMaskProvider.cs
+          grep -q 'allowsBorrowedBitmapReads: true' Services/Video/FrameMaskProvider.cs
+          grep -q 'Borrowed stored-mask reads are only allowed on detached provider snapshots' Services/Video/FrameMaskProvider.cs
+          grep -q 'Array.AsReadOnly' Services/Video/FrameMaskProvider.cs
+          grep -q 'IExecutionProviderDiagnostics diagnostics' Services/Analysis/AutoMaskGenerator.cs
+          grep -q 'FaceOnnxDetector : IBgraFaceDetector, IExecutionProviderDiagnostics' Services/FaceDetection/FaceOnnxDetector.cs
+          grep -q 'YoloFaceOnnxDetector : IBgraFaceDetector, IExecutionProviderDiagnostics' Services/FaceDetection/YoloFaceOnnxDetector.cs
+
+      - name: Build Release
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/temporary_refactor_phase_a.py
+          rm -f .github/workflows/temporary-refactor-phase-a.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Harden mask ownership and detector diagnostics'
+          git push origin HEAD:refactor/ownership-workspace-hardening
