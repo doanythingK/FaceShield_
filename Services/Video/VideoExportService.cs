@@ -42,63 +42,22 @@ public unsafe sealed class VideoExportService
         string stagedOutputPath = VideoExportStagingPolicy.BuildStagedOutputPath(finalOutputPath);
         try
         {
-            try
-            {
-                attemptCount++;
-                ExportInternal(
+            attemptCount = VideoExportAttemptCoordinator.Execute(
+                allowHybridCopy,
+                () => _staticHdrConfigured,
+                attempt => ExportInternal(
                     inputPath,
                     stagedOutputPath,
                     blurRadius,
                     progress,
                     cancellationToken,
                     runId,
-                    exportMode: "primary",
-                    forceSoftwareEncoder: false,
-                    allowHybridCopy: allowHybridCopy && VideoHybridCopyPolicy.EnableHybridCopyWindow,
-                    forceSafeEncoding: false,
-                    forceAudioTranscode: false,
-                    forceH264Fallback: false);
-            }
-            catch (InvalidOperationException ex) when (VideoExportRetryPolicy.ShouldRetryWithSafeEncoding(ex))
-            {
-                Debug.WriteLine($"[Export] mode=fallback-safe로 재시도: {ex.Message}");
-                try
-                {
-                    attemptCount++;
-                    ExportInternal(
-                        inputPath,
-                        stagedOutputPath,
-                        blurRadius,
-                        progress,
-                        cancellationToken,
-                        runId,
-                        exportMode: "fallback-safe",
-                        forceSoftwareEncoder: true,
-                        allowHybridCopy: false,
-                        forceSafeEncoding: true,
-                        forceAudioTranscode: false,
-                        forceH264Fallback: false);
-                }
-                catch (InvalidOperationException nestedEx) when (
-                    VideoExportRetryPolicy.ShouldRetryWithH264Fallback(nestedEx, _staticHdrConfigured))
-                {
-                    Debug.WriteLine($"[Export] mode=fallback-h264로 재시도: 안전 모드에서도 실패. {nestedEx.Message}");
-                    attemptCount++;
-                    ExportInternal(
-                        inputPath,
-                        stagedOutputPath,
-                        blurRadius,
-                        progress,
-                        cancellationToken,
-                        runId,
-                        exportMode: "fallback-h264",
-                        forceSoftwareEncoder: true,
-                        allowHybridCopy: false,
-                        forceSafeEncoding: true,
-                        forceAudioTranscode: false,
-                        forceH264Fallback: true);
-                }
-            }
+                    exportMode: attempt.ExportMode,
+                    forceSoftwareEncoder: attempt.ForceSoftwareEncoder,
+                    allowHybridCopy: attempt.AllowHybridCopy,
+                    forceSafeEncoding: attempt.ForceSafeEncoding,
+                    forceAudioTranscode: attempt.ForceAudioTranscode,
+                    forceH264Fallback: attempt.ForceH264Fallback));
 
             if (!File.Exists(stagedOutputPath))
                 throw new InvalidOperationException("검증된 임시 출력 파일이 생성되지 않았습니다.");
@@ -115,49 +74,23 @@ public unsafe sealed class VideoExportService
                 completedFrames,
                 "출력 파일을 적용하는 중..."));
 
-            var outputCommitTimer = Stopwatch.StartNew();
-            string commitMode;
-            if (!allowOutputOverwrite)
-            {
-                try
-                {
-                    File.Move(stagedOutputPath, finalOutputPath, overwrite: false);
-                    commitMode = "move-no-overwrite";
-                }
-                catch (IOException ex) when (File.Exists(finalOutputPath))
-                {
-                    throw new IOException(
-                        $"내보내기 대상 파일이 작업 중 생성되어 덮어쓰기를 중단했습니다: {finalOutputPath}",
-                        ex);
-                }
-            }
-            else if (File.Exists(finalOutputPath))
-            {
-                File.Replace(
+            VideoExportOutputCommitResult outputCommit =
+                VideoExportStagingPolicy.CommitStagedOutput(
                     stagedOutputPath,
                     finalOutputPath,
-                    destinationBackupFileName: null,
-                    ignoreMetadataErrors: true);
-                commitMode = "replace";
-            }
-            else
-            {
-                File.Move(stagedOutputPath, finalOutputPath);
-                commitMode = "move";
-            }
+                    allowOutputOverwrite);
 
-            outputCommitTimer.Stop();
             endToEndTimer.Stop();
             LastExportSummary = LastExportSummary with
             {
                 OutputCommitted = true,
                 FinalAttemptMs = LastExportSummary.TotalMs,
-                OutputCommitMs = outputCommitTimer.ElapsedMilliseconds,
+                OutputCommitMs = outputCommit.ElapsedMilliseconds,
                 AttemptCount = attemptCount,
                 TotalMs = endToEndTimer.ElapsedMilliseconds
             };
             string committedLine =
-                $"[ExportCommitted] runId={LastExportSummary.RunId ?? "n/a"}, mode={commitMode}";
+                $"[ExportCommitted] runId={LastExportSummary.RunId ?? "n/a"}, mode={outputCommit.Mode}";
             Debug.WriteLine(committedLine);
             Debug.WriteLine(LastExportSummary.ToLogLine());
             RunMetricsLog.AppendRunLines(
