@@ -17,7 +17,11 @@ jobs:
           fetch-depth: 0
 
       - name: Apply targeted patch
-        run: python3 scripts/temporary_apply_auto_hardening.py
+        id: apply_patch
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/temporary_apply_auto_hardening.py 2>&1 | tee temporary-patch.log
 
       - name: Check patch shape
         run: |
@@ -37,6 +41,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f temporary-patch.log temporary-patch-error.txt
           git rm .github/workflows/temporary-auto-hardening-fix.yml scripts/temporary_apply_auto_hardening.py
           git add Services/Analysis/AutoMaskGenerator.cs \
                   Services/Analysis/SparseTrackingMaterializer.cs \
@@ -50,3 +55,18 @@ jobs:
           git diff --cached --check
           git commit -m "Harden Auto cancellation and stored mask reads"
           git push origin HEAD:docs/manual-blur-player-architecture
+
+      - name: Publish patch diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -f temporary-patch.log ]; then
+            cp temporary-patch.log temporary-patch-error.txt
+          else
+            echo "Patch step did not produce a diagnostic log." > temporary-patch-error.txt
+          fi
+          git add temporary-patch-error.txt
+          git commit -m "chore: capture auto hardening patch failure" || true
+          git push origin HEAD:docs/manual-blur-player-architecture || true
