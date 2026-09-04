@@ -1,0 +1,2 @@
+Services/Video/IFrameMaskProvider.cs:10: trailing whitespace.
++        /// 반환된 bitmap은 호출자가 소유하며 사용 후 Dispose해야 합니다.
