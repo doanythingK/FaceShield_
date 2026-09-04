@@ -8,7 +8,6 @@ using FaceShield.Services.Analysis;
 using FaceShield.Services.Diagnostics;
 using FaceShield.Services.FaceDetection;
 using FaceShield.Services.Video;
-using FaceShield.Services.Video.Session;
 using FaceShield.Services.Workspace;
 using FaceShield.ViewModels.Workspace;
 using FaceShield.Views.Dialogs;
@@ -37,11 +36,10 @@ namespace FaceShield.ViewModels.Pages
         private readonly IssueReviewCoordinator _issueReview;
         private readonly WorkspaceExportCoordinator _exportCoordinator;
         private readonly AutoMaskRunCoordinator _autoRunCoordinator;
-        private bool _sessionInitialized;
+        private readonly WorkspaceSessionPlaybackCoordinator _sessionPlaybackCoordinator;
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
 
-        private CancellationTokenSource? _sessionInitCts;
         private readonly object _lifetimeSync = new();
         private int _activeLifetimeOperations;
         private bool _disposeRequested;
@@ -138,75 +136,20 @@ namespace FaceShield.ViewModels.Pages
                 TryBeginLifetimeOperation,
                 EndLifetimeOperation,
                 PersistWorkspaceState);
+            _sessionPlaybackCoordinator = new WorkspaceSessionPlaybackCoordinator(
+                Mode,
+                FrameList,
+                FramePreview,
+                () => _autoRunCoordinator.IsRunning,
+                _autoRunCoordinator.MarkPreviewNeedsExactRefresh,
+                TryBeginLifetimeOperation,
+                EndLifetimeOperation,
+                message => ShowErrorDialogAsync("재생 실패", message));
             if (!deferSessionInit)
-                InitializeSession(loadProgress, initializationToken);
+                _sessionPlaybackCoordinator.Initialize(loadProgress, initializationToken);
 
             // 🔹 자동/최종 마스크 provider 주입
             FramePreview.SetMaskProvider(_maskProvider);
-
-            FrameList.SelectedFrameIndexChanged += index =>
-            {
-                if (!FrameList.IsPlaying)
-                {
-                    if (_autoRunCoordinator.IsRunning && Mode == WorkspaceMode.Auto)
-                    {
-                        // 분석 중에는 타임라인 번호만 갱신합니다. 정확 프레임 seek는
-                        // 종료 시 한 번 수행하고, FramePreview의 편집 대상 인덱스는
-                        // 현재 표시 중인 exact 프레임에 그대로 유지합니다.
-                        _autoRunCoordinator.MarkPreviewNeedsExactRefresh();
-                    }
-                    else
-                    {
-                        FramePreview.OnFrameIndexChanged(index);
-                    }
-                }
-            };
-            FrameList.PlaybackStopped += () =>
-            {
-                if (FrameList.SelectedFrameIndex >= 0)
-                    FramePreview.OnPlaybackStopped(FrameList.SelectedFrameIndex);
-            };
-            FrameList.PlaybackStateChanged += isPlaying =>
-            {
-                if (isPlaying)
-                {
-                    int playbackTotalFrames = FrameList.IsTotalFramesEstimated
-                        ? 0
-                        : FrameList.TotalFrames;
-                    bool playbackDecodedFrame = false;
-                    FramePreview.StartPlayback(
-                        FrameList.VideoPath,
-                        FrameList.SelectedFrameIndex,
-                        FrameList.Fps,
-                        playbackTotalFrames,
-                        frameIndex =>
-                        {
-                            playbackDecodedFrame = true;
-                            FrameList.SetPlaybackFrameIndex(frameIndex);
-                        },
-                        () =>
-                        {
-                            if (FrameList.IsTotalFramesEstimated &&
-                                playbackDecodedFrame &&
-                                FrameList.SelectedFrameIndex >= 0)
-                            {
-                                FrameList.UpdateActualTotalFrames(
-                                    FrameList.SelectedFrameIndex + 1);
-                            }
-
-                            FrameList.NotifyPlaybackStopped();
-                        },
-                        message =>
-                        {
-                            FrameList.NotifyPlaybackStopped();
-                            _ = ShowErrorDialogAsync("재생 실패", message);
-                        });
-                }
-                else
-                {
-                    FramePreview.StopPlayback();
-                }
-            };
 
             ToolPanel.UndoRequested += () => FramePreview.Undo();
             FramePreview.MaskEdited += OnMaskEdited;
@@ -237,89 +180,15 @@ namespace FaceShield.ViewModels.Pages
             ToolPanel.AutoCancelRequested += OnAutoCancelRequested;
             ToolPanel.ExportCancelRequested += OnExportCancelRequested;
 
-            if (_sessionInitialized && FrameList.SelectedFrameIndex >= 0)
-            {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (_sessionInitialized && FrameList.SelectedFrameIndex >= 0)
-                        FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
-                });
-            }
+            _sessionPlaybackCoordinator.ScheduleInitialPreview();
         }
 
-        public async Task EnsureSessionInitializedAsync(
+        public Task EnsureSessionInitializedAsync(
             IProgress<int>? loadProgress,
             CancellationToken cancellationToken = default)
-        {
-            if (_sessionInitialized || !TryBeginLifetimeOperation())
-                return;
-
-            var sessionCts =
-                CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken);
-            CancellationTokenSource? previousSessionCts =
-                Interlocked.Exchange(ref _sessionInitCts, sessionCts);
-            if (previousSessionCts != null)
-            {
-                try { previousSessionCts.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
-
-            try
-            {
-                if (_sessionInitialized)
-                    return;
-
-                var session = await Task.Run(
-                    () => new VideoSession(
-                        FrameList.VideoPath,
-                        progress: loadProgress,
-                        cancellationToken: sessionCts.Token),
-                    sessionCts.Token);
-
-                lock (_lifetimeSync)
-                {
-                    if (_disposeRequested)
-                    {
-                        session.Dispose();
-                        return;
-                    }
-                }
-
-                FramePreview.InitializeSession(session);
-                FrameList.SetThumbnailProvider(session.ThumbnailProvider);
-                _sessionInitialized = true;
-
-                if (FrameList.SelectedFrameIndex >= 0)
-                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
-            }
-            catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    throw;
-            }
-            finally
-            {
-                Interlocked.CompareExchange(ref _sessionInitCts, null, sessionCts);
-                sessionCts.Dispose();
-                EndLifetimeOperation();
-            }
-        }
-
-        private void InitializeSession(
-            IProgress<int>? loadProgress,
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var session = new VideoSession(
-                FrameList.VideoPath,
-                progress: loadProgress,
-                cancellationToken: cancellationToken);
-            FramePreview.InitializeSession(session);
-            FrameList.SetThumbnailProvider(session.ThumbnailProvider);
-            _sessionInitialized = true;
-        }
-
+            => _sessionPlaybackCoordinator.EnsureInitializedAsync(
+                loadProgress,
+                cancellationToken);
 
         private Task<bool> SaveVideoAsync(
             IProgress<ExportProgress>? exportProgress = null,
@@ -1232,6 +1101,7 @@ namespace FaceShield.ViewModels.Pages
 
         private void DisposeOwnedResources()
         {
+            _sessionPlaybackCoordinator.Dispose();
             _autoRunCoordinator.Dispose();
             _exportCoordinator.Dispose();
             _issueReview.Dispose();
@@ -1259,8 +1129,7 @@ namespace FaceShield.ViewModels.Pages
 
             _autoRunCoordinator.Cancel();
             _exportCoordinator.Cancel();
-            try { _sessionInitCts?.Cancel(); }
-            catch { }
+            _sessionPlaybackCoordinator.CancelInitialization();
             CancelIssueTimeRefresh();
 
             if (disposeNow)
