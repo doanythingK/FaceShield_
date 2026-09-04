@@ -47,6 +47,10 @@ jobs:
                   'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutDifferenceThreshold)", "double sceneCutDifferenceThreshold,")',
                   'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutThreshold)", "double sceneCutThreshold,")'
               ),
+              (
+                  'after_entries = find_next(lines, "public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()", get_entries, 80)',
+                  'after_entries = find_next(lines, "public FrameMaskProvider CreateSnapshot()", get_entries, 80)'
+              ),
           ]
           for old, new in replacements:
               if text.count(old) != 1:
