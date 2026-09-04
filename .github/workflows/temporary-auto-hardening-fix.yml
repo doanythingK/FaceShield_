@@ -21,6 +21,16 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/temporary_apply_auto_hardening.py')
+          text = path.read_text()
+          old = 'catch_idx = find(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)")'
+          new = 'generate_async = find(lines, "public async Task GenerateAsync(")\ncatch_idx = find_next(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)", generate_async, 500)'
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one GenerateAsync catch locator, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+          PY
           python3 scripts/temporary_apply_auto_hardening.py 2>&1 | tee temporary-patch.log
 
       - name: Check patch shape
@@ -41,7 +51,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f temporary-patch.log temporary-patch-error.txt
+          rm -f temporary-patch.log
+          git rm -f --ignore-unmatch temporary-patch-error.txt
           git rm .github/workflows/temporary-auto-hardening-fix.yml scripts/temporary_apply_auto_hardening.py
           git add Services/Analysis/AutoMaskGenerator.cs \
                   Services/Analysis/SparseTrackingMaterializer.cs \
