@@ -1,4 +1,0 @@
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_refactor_phase_c2.py", line 695
-    replace_once(
-                ^
-SyntaxError: '(' was never closed
