@@ -1,0 +1,83 @@
+name: Temporary Refactor Phase C4
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply auto coordinator extraction
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/temporary_refactor_phase_c4.py > /tmp/phase-c4-apply.log 2>&1
+          status=$?
+          cat /tmp/phase-c4-apply.log
+          if [ $status -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/phase-c4-apply.log temporary-refactor-phase-c4-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add temporary-refactor-phase-c4-error.txt
+            git commit -m 'chore: capture auto coordinator patch failure'
+            git push origin HEAD:refactor/ownership-workspace-hardening
+            exit $status
+          fi
+
+      - name: Verify source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config core.whitespace cr-at-eol
+          git diff --check
+          grep -q 'class AutoMaskRunCoordinator' ViewModels/Workspace/AutoMaskRunCoordinator.cs
+          grep -q '_autoRunCoordinator = new AutoMaskRunCoordinator' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_autoRunCoordinator.RunAsync' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_autoRunCoordinator.RunSingleFrameAsync' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_autoRunCoordinator.Cancel()' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_autoRunCoordinator.CreateStateSnapshot' ViewModels/Pages/WorkspaceViewModel.cs
+          if grep -q '_autoCts' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q '_autoResumeIndex' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q '_isAutoRunning' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q 'DetectorAutoTuner.TryTune' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+
+      - name: Build Release
+        shell: bash
+        run: |
+          set +e
+          dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo > /tmp/phase-c4-build.log 2>&1
+          status=$?
+          cat /tmp/phase-c4-build.log
+          if [ $status -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/phase-c4-build.log temporary-refactor-phase-c4-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add temporary-refactor-phase-c4-error.txt
+            git commit -m 'chore: capture auto coordinator build failure'
+            git push origin HEAD:refactor/ownership-workspace-hardening
+            exit $status
+          fi
+
+      - name: Commit verified phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/temporary_refactor_phase_c4.py
+          rm -f .github/workflows/temporary-refactor-phase-c4.yml
+          rm -f temporary-refactor-phase-c4-error.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Extract workspace auto run coordination'
+          git push origin HEAD:refactor/ownership-workspace-hardening
