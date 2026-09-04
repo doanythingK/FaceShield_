@@ -1,9 +1,19 @@
 from pathlib import Path
 
 
+def read_exact(p: Path) -> str:
+    with p.open("r", encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_exact(p: Path, text: str) -> None:
+    with p.open("w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def replace_once(path: str, old: str, new: str) -> None:
     p = Path(path)
-    text = p.read_text(encoding="utf-8", newline="")
+    text = read_exact(p)
     candidates = [(old, new)]
     if "\n" in old:
         candidates.append((old.replace("\n", "\r\n"), new.replace("\n", "\r\n")))
@@ -11,7 +21,7 @@ def replace_once(path: str, old: str, new: str) -> None:
         if old_candidate in text:
             if text.count(old_candidate) != 1:
                 raise RuntimeError(f"Expected exactly one match in {path}, found {text.count(old_candidate)}")
-            p.write_text(text.replace(old_candidate, new_candidate, 1), encoding="utf-8", newline="")
+            write_exact(p, text.replace(old_candidate, new_candidate, 1))
             return
     raise RuntimeError(f"Patch target not found in {path}: {old[:120]!r}")
 
@@ -71,9 +81,9 @@ replace_once(
     """        private string GetDetectorName()\n        {\n            if (_detector is FaceOnnxDetector)\n            {\n                string provider = FaceOnnxDetector.GetLastExecutionProviderLabel();\n                string? error = FaceOnnxDetector.GetLastExecutionProviderError();\n                if (!string.IsNullOrWhiteSpace(error))\n                    return $\"{_detector.GetType().Name}/{provider}({error})\";\n\n                return $\"{_detector.GetType().Name}/{provider}\";\n            }\n\n            if (_detector is YoloFaceOnnxDetector)\n            {\n                string provider = YoloFaceOnnxDetector.GetLastExecutionProviderLabel();\n                string? error = YoloFaceOnnxDetector.GetLastExecutionProviderError();\n                if (!string.IsNullOrWhiteSpace(error))\n                    return $\"{_detector.GetType().Name}/{provider}({error})\";\n\n                return $\"{_detector.GetType().Name}/{provider}\";\n            }\n\n            return _detector.GetType().Name;\n        }\n""",
     """        private string GetDetectorName()\n        {\n            if (_detector is IExecutionProviderDiagnostics diagnostics)\n            {\n                string provider = diagnostics.ExecutionProviderLabel;\n                string? error = diagnostics.ExecutionProviderError;\n                if (!string.IsNullOrWhiteSpace(error))\n                    return $\"{_detector.GetType().Name}/{provider}({error})\";\n\n                return $\"{_detector.GetType().Name}/{provider}\";\n            }\n\n            return _detector.GetType().Name;\n        }\n""")
 
-Path("Services/FaceDetection/IExecutionProviderDiagnostics.cs").write_text(
-    """namespace FaceShield.Services.FaceDetection\n{\n    internal interface IExecutionProviderDiagnostics\n    {\n        string ExecutionProviderLabel { get; }\n        string? ExecutionProviderError { get; }\n    }\n}\n""",
-    encoding="utf-8",
-    newline="")
+interface_path = Path("Services/FaceDetection/IExecutionProviderDiagnostics.cs")
+write_exact(
+    interface_path,
+    """namespace FaceShield.Services.FaceDetection\n{\n    internal interface IExecutionProviderDiagnostics\n    {\n        string ExecutionProviderLabel { get; }\n        string? ExecutionProviderError { get; }\n    }\n}\n""")
 
 print("Phase A ownership and diagnostics patch applied.")
