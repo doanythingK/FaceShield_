@@ -26,24 +26,38 @@ jobs:
           path = Path('scripts/temporary_apply_auto_hardening.py')
           text = path.read_text()
 
-          old = 'catch_idx = find(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)")'
-          new = 'generate_async = find(lines, "public async Task GenerateAsync(")\ncatch_idx = find_next(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)", generate_async, 500)'
-          if text.count(old) != 1:
-              raise RuntimeError(f'Expected one GenerateAsync catch locator, found {text.count(old)}')
-          text = text.replace(old, new)
+          replacements = [
+              (
+                  'catch_idx = find(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)")',
+                  'generate_async = find(lines, "public async Task GenerateAsync(")\ncatch_idx = find_next(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)", generate_async, 500)'
+              ),
+              (
+                  'bridge_call = find(lines, "CanBridgeSparseResults(")',
+                  'bridge_call = find_next(lines, "CanBridgeSparseResults(", next_call, 40)'
+              ),
+              (
+                  'find_loop = find_next(lines, "for (int i = startKeyIndex;", find_next_method, 50)',
+                  'find_loop = find_next(lines, "for (int i = startIndex;", find_next_method, 50)'
+              ),
+              (
+                  'can_sig_end = find_next(lines, "double sceneCutDifferenceThreshold)", can_bridge_method, 20)',
+                  'can_sig_end = find_next(lines, "double sceneCutThreshold)", can_bridge_method, 20)'
+              ),
+              (
+                  'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutDifferenceThreshold)", "double sceneCutDifferenceThreshold,")',
+                  'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutThreshold)", "double sceneCutThreshold,")'
+              ),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise RuntimeError(f'Expected one patch locator, found {text.count(old)} for: {old}')
+              text = text.replace(old, new)
 
           start = text.index('if any(line.strip() for line in lines[brace_idx + 1 : close_idx]):')
           end = text.index('\n\nseq_start =', start)
-          replacement = '''if not any("throw;" in line for line in lines[brace_idx + 1 : close_idx]):
+          text = text[:start] + '''if not any("throw;" in line for line in lines[brace_idx + 1 : close_idx]):
               indent = lines[brace_idx][: len(lines[brace_idx]) - len(lines[brace_idx].lstrip())] + "    "
-              lines[brace_idx + 1 : close_idx] = [indent + "throw;" + eol(lines[brace_idx])]'''
-          text = text[:start] + replacement + text[end:]
-
-          old = 'bridge_call = find(lines, "CanBridgeSparseResults(")'
-          new = 'bridge_call = find_next(lines, "CanBridgeSparseResults(", next_call, 40)'
-          if text.count(old) != 1:
-              raise RuntimeError(f'Expected one CanBridge call locator, found {text.count(old)}')
-          text = text.replace(old, new)
+              lines[brace_idx + 1 : close_idx] = [indent + "throw;" + eol(lines[brace_idx])]''' + text[end:]
 
           old = '''stop_if = find(lines, "if (!canBridge &&")
           if "ThrowIfCancellationRequested" not in lines[stop_if - 1]:
@@ -70,21 +84,15 @@ jobs:
               raise RuntimeError(f'Expected one stale interpolation call block, found {text.count(old)}')
           text = text.replace(old, new)
 
-          old = 'can_sig_end = find_next(lines, "double sceneCutDifferenceThreshold)", can_bridge_method, 20)'
-          new = 'can_sig_end = find_next(lines, "double sceneCutThreshold)", can_bridge_method, 20)'
-          if text.count(old) != 1:
-              raise RuntimeError(f'Expected one CanBridge signature locator, found {text.count(old)}')
-          text = text.replace(old, new)
-          old = 'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutDifferenceThreshold)", "double sceneCutDifferenceThreshold,")'
-          new = 'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutThreshold)", "double sceneCutThreshold,")'
-          if text.count(old) != 1:
-              raise RuntimeError(f'Expected one CanBridge signature replacement, found {text.count(old)}')
-          text = text.replace(old, new)
-
           old = 'block_end = find_next(lines, "}", stored + 1, 12)'
-          new = 'stored_return = find_next(lines, "return CloneBitmap(stored);", stored, 16)\nblock_end = find_next(lines, "}", stored_return + 1, 4)'
+          new = 'face_data = find_next(lines, "if (provider.TryGetFaceMaskData(frameIndex, out var faceData))", stored, 24)\nblock_end = face_data'
           if text.count(old) != 1:
               raise RuntimeError(f'Expected one preview block locator, found {text.count(old)}')
+          text = text.replace(old, new)
+          old = 'lines[stored : block_end + 1] = replacement'
+          new = 'lines[stored:block_end] = replacement'
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one preview replacement slice, found {text.count(old)}')
           text = text.replace(old, new)
 
           path.write_text(text)
