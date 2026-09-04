@@ -36,23 +36,11 @@ namespace FaceShield.ViewModels.Pages
         private readonly WorkspacePersistenceCoordinator? _workspacePersistence;
         private readonly IssueReviewCoordinator _issueReview;
         private readonly WorkspaceExportCoordinator _exportCoordinator;
-        private const float LowConfidenceMargin = 0.05f;
-        private const int AutoDetectionCompletionTailToleranceFrames = 0;
-        private int _autoResumeIndex;
-        private bool _autoCompleted;
-        private string? _autoRunSignature;
-        private string? _autoExecutionSignature;
-        private int _autoLastProcessedFrame = -1;
-        private DateTime _autoLastProcessedAtUtc = DateTime.MinValue;
+        private readonly AutoMaskRunCoordinator _autoRunCoordinator;
         private bool _sessionInitialized;
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
 
-        // 🔹 자동 분석 상태 관리용 (최소한 재진입 방지)
-        private bool _isAutoRunning;
-        private long _autoLastPreviewTick;
-        private bool _autoPreviewNeedsExactRefresh;
-        private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _sessionInitCts;
         private readonly object _lifetimeSync = new();
         private int _activeLifetimeOperations;
@@ -78,21 +66,12 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private bool hideResolvedIssues = true;
 
-        public bool NeedsAutoResumePrompt =>
-            Mode == WorkspaceMode.Auto &&
-            !_autoCompleted &&
-            _autoResumeIndex > 0 &&
-            !AutoRunSignaturePolicy.RequiresCompleteTimeline(_autoOptions, _detectorFactoryOptions) &&
-            AutoMaskGenerator.CanResumeFromFrame(_autoOptions, _autoResumeIndex) &&
-            IsAutoResumeSignatureCurrent(AutoRunSignaturePolicy.BuildIntentSignature(
-                _autoOptions,
-                _detectorOptions,
-                _detectorFactoryOptions));
+        public bool NeedsAutoResumePrompt => _autoRunCoordinator.NeedsResumePrompt();
 
-        public int AutoLastProcessedFrame => _autoLastProcessedFrame;
-        public DateTime AutoLastProcessedAtUtc => _autoLastProcessedAtUtc;
-        public string? AutoExecutionProviderLabel { get; private set; }
-        public string? AutoExecutionProviderError { get; private set; }
+        public int AutoLastProcessedFrame => _autoRunCoordinator.LastProcessedFrame;
+        public DateTime AutoLastProcessedAtUtc => _autoRunCoordinator.LastProcessedAtUtc;
+        public string? AutoExecutionProviderLabel => _autoRunCoordinator.ExecutionProviderLabel;
+        public string? AutoExecutionProviderError => _autoRunCoordinator.ExecutionProviderError;
 
 
         public WorkspaceViewModel(string videoPath)
@@ -139,11 +118,26 @@ namespace FaceShield.ViewModels.Pages
             _exportCoordinator = new WorkspaceExportCoordinator(
                 _maskProvider,
                 ToolPanel,
-                () => _isAutoRunning,
+                () => _autoRunCoordinator?.IsRunning == true,
                 TryBeginLifetimeOperation,
                 EndLifetimeOperation,
                 ResolveExportOutputPathAsync,
                 LogExportQualityGate);
+            _autoRunCoordinator = new AutoMaskRunCoordinator(
+                Mode,
+                _maskProvider,
+                FrameList,
+                FramePreview,
+                ToolPanel,
+                _issueReview,
+                _exportCoordinator,
+                () => _autoOptions,
+                () => _detectorOptions,
+                () => _detectorFactoryOptions,
+                () => HideResolvedIssues,
+                TryBeginLifetimeOperation,
+                EndLifetimeOperation,
+                PersistWorkspaceState);
             if (!deferSessionInit)
                 InitializeSession(loadProgress, initializationToken);
 
@@ -154,12 +148,12 @@ namespace FaceShield.ViewModels.Pages
             {
                 if (!FrameList.IsPlaying)
                 {
-                    if (_isAutoRunning && Mode == WorkspaceMode.Auto)
+                    if (_autoRunCoordinator.IsRunning && Mode == WorkspaceMode.Auto)
                     {
                         // 분석 중에는 타임라인 번호만 갱신합니다. 정확 프레임 seek는
                         // 종료 시 한 번 수행하고, FramePreview의 편집 대상 인덱스는
                         // 현재 표시 중인 exact 프레임에 그대로 유지합니다.
-                        _autoPreviewNeedsExactRefresh = true;
+                        _autoRunCoordinator.MarkPreviewNeedsExactRefresh();
                     }
                     else
                     {
@@ -219,7 +213,7 @@ namespace FaceShield.ViewModels.Pages
 
             ToolPanel.SaveRequested += async () =>
             {
-                if (_isAutoRunning || ToolPanel.IsAutoRunning)
+                if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
                     return;
 
                 FramePreview.PersistCurrentMask();
@@ -855,439 +849,17 @@ namespace FaceShield.ViewModels.Pages
             throw new IOException("덮어쓰지 않는 고유한 내보내기 파일명을 만들 수 없습니다.");
         }
 
-        private IFaceDetectorFactory CreateFaceDetectorFactory()
-        {
-            return new FaceDetectorFactory(_detectorFactoryOptions);
-        }
-
-        private AutoMaskGenerator CreateAutoMaskGenerator(
-            IFaceDetector detector,
-            IFaceDetectorFactory detectorFactory)
-        {
-            return new AutoMaskGenerator(
-                detector,
-                _maskProvider,
-                _autoOptions,
-                detectorFactory);
-        }
-
-        private AutoMaskGenerator CreateAutoMaskGenerator(
-            IFaceDetector detector,
-            IFaceDetectorFactory detectorFactory,
-            AutoMaskOptions options)
-        {
-            return new AutoMaskGenerator(
-                detector,
-                _maskProvider,
-                options,
-                detectorFactory);
-        }
-
         public Task<bool> RunAutoAsync(
             bool exportAfter,
             IProgress<int>? progress = null,
             CancellationToken cancellationToken = default,
             IProgress<ExportProgress>? exportProgress = null)
         {
-            if (_isAutoRunning || !TryBeginLifetimeOperation())
-                return Task.FromResult(false);
-
-            try
-            {
-                // Settle any pending manual bitmap into the provider before Auto becomes
-                // the sole mask writer for the run.
-                FramePreview.PersistCurrentMask();
-                AutoExecutionProviderLabel = null;
-                AutoExecutionProviderError = null;
-                _isAutoRunning = true;
-                _autoCts = cancellationToken.CanBeCanceled
-                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                    : new CancellationTokenSource();
-
-                ToolPanel.IsAutoRunning = true;
-                if (!exportAfter)
-                    ToolPanel.AutoProgress = 0;
-
-                return RunTrackedAutoOperationAsync(exportAfter, progress, exportProgress);
-            }
-            catch
-            {
-                _autoCts?.Dispose();
-                _autoCts = null;
-                _isAutoRunning = false;
-                ToolPanel.IsAutoRunning = false;
-                EndLifetimeOperation();
-                throw;
-            }
-        }
-
-        private async Task<bool> RunTrackedAutoOperationAsync(
-            bool exportAfter,
-            IProgress<int>? progress,
-            IProgress<ExportProgress>? exportProgress)
-        {
-            try
-            {
-                return await RunAutoCoreAsync(exportAfter, progress, exportProgress);
-            }
-            finally
-            {
-                EndLifetimeOperation();
-            }
-        }
-
-        private async Task<bool> RunAutoCoreAsync(
-            bool exportAfter,
-            IProgress<int>? progress,
-            IProgress<ExportProgress>? exportProgress)
-        {
-            bool persisted = false;
-            bool postProcessCommitted = false;
-            bool autoAnalysisCompleted = false;
-            bool exactFrameOperationsSuspended = false;
-            bool timelineOperationsSuspended = false;
-            bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
-            string runId = $"auto-{Guid.NewGuid():N}";
-            FrameList.SetPlaybackEnabled(false);
-            try
-            {
-                await FramePreview.StopPlaybackAndWaitAsync();
-                await FramePreview.SuspendExactFrameOperationsAndWaitAsync();
-                exactFrameOperationsSuspended = true;
-                await FrameList.SuspendTimelineOperationsAndWaitAsync();
-                timelineOperationsSuspended = true;
-
-                // Progress updates no longer invoke the exact-frame path on every
-                // selection change, so preserve any pending manual edit once up front.
-                FramePreview.PersistCurrentMask();
-                _autoPreviewNeedsExactRefresh = false;
-
-                var detectorOptions = _detectorOptions;
-                var effectiveAutoOptions = _autoOptions.ResolveProcessingMode();
-                var detectorFactoryOptions = AutoRunSignaturePolicy.ResolveDetectorFactoryOptions(
-                    effectiveAutoOptions,
-                    detectorOptions,
-                    _detectorFactoryOptions,
-                    out FaceOnnxDetectorOptions? yoloSecondaryOptions);
-
-                string runSignature = AutoRunSignaturePolicy.BuildRunSignature(effectiveAutoOptions, detectorFactoryOptions);
-
-                int tunedSessions = Math.Max(1, effectiveAutoOptions.ParallelDetectorCount);
-                if (_detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
-                    _detectorOptions.AllowAutoTune != false)
-                {
-                    var tuneToken = _autoCts?.Token ?? CancellationToken.None;
-                    var tuneResult = await Task.Run(() =>
-                    {
-                        bool tuned = DetectorAutoTuner.TryTune(
-                            FrameList.VideoPath,
-                            effectiveAutoOptions.DownscaleRatio,
-                            effectiveAutoOptions.DownscaleQuality,
-                            _detectorOptions,
-                            tunedSessions,
-                            _detectorOptions.AllowAutoGpu == true,
-                            tuneToken,
-                            out var tunedOptions,
-                            out var tunedCount,
-                            out var tuneLabel);
-
-                        return (tuned, tunedOptions, tunedCount, tuneLabel);
-                    }, tuneToken);
-
-                    if (tuneToken.IsCancellationRequested)
-                        return false;
-
-                    if (tuneResult.tuned)
-                    {
-                        detectorOptions = tuneResult.tunedOptions;
-                        tunedSessions = Math.Max(1, tuneResult.tunedCount);
-                        System.Diagnostics.Debug.WriteLine($"[AutoTune] applied {tuneResult.tuneLabel}");
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine("[AutoTune] skipped; using configured detector options.");
-                    }
-
-                    detectorFactoryOptions = detectorFactoryOptions.WithFaceOnnxOptions(detectorOptions);
-                }
-
-                bool useAllPostProcessModules = effectiveAutoOptions.ProcessingMode == AutoMaskProcessingMode.Full;
-                var runOptions = new AutoMaskOptions
-                {
-                    ProcessingMode = effectiveAutoOptions.ProcessingMode,
-                    DownscaleRatio = effectiveAutoOptions.DownscaleRatio,
-                    DownscaleQuality = effectiveAutoOptions.DownscaleQuality,
-                    EnablePostProcessing = effectiveAutoOptions.EnablePostProcessing,
-                    EnableRoiPostProcess = useAllPostProcessModules || effectiveAutoOptions.EnableRoiPostProcess,
-                    EnableYoloWeakIsolatedCleanup = useAllPostProcessModules || effectiveAutoOptions.EnableYoloWeakIsolatedCleanup,
-                    EnableYoloGapFill = useAllPostProcessModules || effectiveAutoOptions.EnableYoloGapFill,
-                    EnableYoloSceneCutCarryCleanup = useAllPostProcessModules || effectiveAutoOptions.EnableYoloSceneCutCarryCleanup,
-                    EnableYoloTemporalSmoothing = useAllPostProcessModules || effectiveAutoOptions.EnableYoloTemporalSmoothing,
-                    EnableYoloRiskCascade = effectiveAutoOptions.EnableYoloRiskCascade,
-                    YoloStrongFullScanIntervalSeconds = effectiveAutoOptions.YoloStrongFullScanIntervalSeconds,
-                    YoloRiskLowConfidenceThreshold = effectiveAutoOptions.YoloRiskLowConfidenceThreshold,
-                    YoloRiskSmallFaceAreaRatio = effectiveAutoOptions.YoloRiskSmallFaceAreaRatio,
-                    YoloRiskEdgeMarginRatio = effectiveAutoOptions.YoloRiskEdgeMarginRatio,
-                    YoloRiskMaxTrackGapFrames = effectiveAutoOptions.YoloRiskMaxTrackGapFrames,
-                    YoloStrongConfirmationFrames = effectiveAutoOptions.YoloStrongConfirmationFrames,
-                    EnableYoloPrimaryRoiShortcut = effectiveAutoOptions.EnableYoloPrimaryRoiShortcut,
-                    YoloSecondaryDetectorOptions = yoloSecondaryOptions,
-                    RoiRefinerDetectorOptions = useAllPostProcessModules || effectiveAutoOptions.EnableRoiPostProcess
-                        ? detectorOptions
-                        : null,
-                    UseFaceOnnxRoiRefiner = detectorFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx,
-                    UseTracking = effectiveAutoOptions.UseTracking,
-                    DetectEveryNFrames = effectiveAutoOptions.DetectEveryNFrames,
-                    ParallelDetectorCount = tunedSessions,
-                    RunId = runId,
-                    FilterProfile = effectiveAutoOptions.FilterProfile,
-                    DumpDetectionDiagnostics = effectiveAutoOptions.DumpDetectionDiagnostics
-                }.ResolveProcessingMode();
-                var detectorFactory = new FaceDetectorFactory(detectorFactoryOptions);
-                using IFaceDetector detector = detectorFactory.CreateDetector();
-                AutoExecutionProviderLabel = AutoRunSignaturePolicy.GetExecutionProviderLabel(detector);
-                AutoExecutionProviderError = detector switch
-                {
-                    FaceOnnxDetector faceOnnx => faceOnnx.ExecutionProviderError,
-                    YoloFaceOnnxDetector yoloOnnx => yoloOnnx.ExecutionProviderError,
-                    _ => null
-                };
-                string sourceEvidenceId = AutoRunSignaturePolicy.BuildSourceEvidenceId(FrameList.VideoPath);
-                string executionSignature = AutoRunSignaturePolicy.BuildExecutionSignature(
-                    runOptions,
-                    detectorFactoryOptions,
-                    AutoRunSignaturePolicy.GetExecutionProviderLabel(detector),
-                    sourceEvidenceId);
-                RunMetricsLog.AppendRunLines(
-                    runId,
-                    $"[AutoRunConfig] runId={runId}, sourceId={sourceEvidenceId}, totalFrames={FrameList.TotalFrames}, signature={AutoRunSignaturePolicy.BuildEvidenceSignature(runOptions, detectorFactoryOptions)}, executionSignature={executionSignature}");
-                var generator = CreateAutoMaskGenerator(detector, detectorFactory, runOptions);
-                ResetStaleAutoResumeIfRunChanged(runSignature, executionSignature);
-                _autoRunSignature = runSignature;
-                _autoExecutionSignature = executionSignature;
-                _autoCompleted = false;
-                int lastProcessed = Math.Max(0, _autoResumeIndex);
-                if ((AutoRunSignaturePolicy.RequiresCompleteTimeline(runOptions, detectorFactoryOptions) ||
-                     !AutoMaskGenerator.CanResumeFromFrame(runOptions, lastProcessed)) &&
-                    lastProcessed > 0)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[AutoMaskResumeReset] reason=resume-requires-complete-timeline resumeIndex={lastProcessed}");
-                    lastProcessed = 0;
-                    _autoResumeIndex = 0;
-                }
-                ApplyAutoExportGateState(
-                WorkspaceExportGatePolicy.Begin(WorkspaceExportCoordinator.HybridCopyDisabledReason));
-                ResetAutoFaceMasksForRun(lastProcessed);
-
-                // TODO: 필요하면 IProgress<int>를 WorkspaceViewModel 프로퍼티로 노출해서
-                //       진행률 UI를 그릴 수 있습니다.
-                var effectiveProgress = new Progress<int>(p =>
-                {
-                    progress?.Report(p);
-                    if (!exportAfter)
-                        ToolPanel.AutoProgress = p;
-                });
-                var token = _autoCts?.Token ?? CancellationToken.None;
-                await generator.GenerateAsync(
-                    FrameList.VideoPath,
-                    effectiveProgress,
-                    token,
-                    startFrameIndex: lastProcessed,
-                    onFrameProcessed: idx =>
-                    {
-                        lastProcessed = idx;
-                        _autoResumeIndex = idx;
-                        _autoLastProcessedFrame = idx;
-                        _autoLastProcessedAtUtc = DateTime.UtcNow;
-                        if (!exportAfter)
-                            TryUpdateAutoPreview(idx);
-                    });
-                if (generator.LastRunSummary != null)
-                    System.Diagnostics.Debug.WriteLine($"[WorkspaceAuto] {generator.LastRunSummary.ToLogLine()}");
-                SynchronizeFrameListWithDecodedTimeline(generator.LastRunSummary);
-
-                if (!IsAutoDetectionRunComplete(generator.LastRunSummary, lastProcessed, FrameList.TotalFrames))
-                {
-                    _autoCompleted = false;
-                    _autoResumeIndex = Math.Clamp(lastProcessed, 0, Math.Max(0, FrameList.TotalFrames - 1));
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[AutoMaskPostProcessSkipped] reason=incomplete totalFrames={FrameList.TotalFrames} startFrame={generator.LastRunSummary?.StartFrameIndex ?? lastProcessed} processed={generator.LastRunSummary?.ProcessedFrames ?? 0} decoded={generator.LastRunSummary?.DecodedFrames ?? 0} decodeEof={generator.LastRunSummary?.ReachedDecoderEof.ToString().ToLowerInvariant() ?? "false"} decodeCancelled={generator.LastRunSummary?.DecodeCancelled.ToString().ToLowerInvariant() ?? "false"} decodeError={generator.LastRunSummary?.DecodeError ?? "summary-missing"} lastProcessed={lastProcessed} resumeIndex={_autoResumeIndex}");
-                    PersistWorkspaceState(includePreviewMask: !exportAfter);
-                    persisted = true;
-                    return false;
-                }
-
-                // GenerateAsync only returns a complete run after the staged risk-cascade
-                // and post-process transaction has committed. A cancellation observed
-                // after this point must not be persisted as a resumable partial detection.
-                postProcessCommitted = true;
-                _autoResumeIndex = 0;
-                token.ThrowIfCancellationRequested();
-
-                ApplyAutoExportGateState(
-                    WorkspaceExportGatePolicy.Complete(
-                        runOptions,
-                        generator.LastRunSummary,
-                        WorkspaceExportCoordinator.HybridCopyDisabledReason));
-                RefreshAutoPreviewAfterPostProcess(exportAfter);
-
-                if (!exportAfter)
-                    await BuildAutoAnomaliesAsync(token);
-
-                token.ThrowIfCancellationRequested();
-
-                // Detection and post-processing are complete at this point. If export is
-                // canceled afterwards, do not reopen as a partial detection resume.
-                _autoCompleted = true;
-                _autoResumeIndex = 0;
-                autoAnalysisCompleted = true;
-
-                if (exportAfter)
-                {
-                    string? cascadeFailure = WorkspaceExportGatePolicy.GetRequiredYoloCascadeFailure(
-                        runOptions,
-                        generator.LastRunSummary);
-                    if (cascadeFailure != null)
-                    {
-                        string cascadeError = generator.LastRunSummary?.YoloCascadeError ?? "summary-missing";
-                        string line =
-                            $"[AutoExportBlocked] runId={runId}, reason={cascadeFailure}, cascadeError={cascadeError}";
-                        System.Diagnostics.Debug.WriteLine(line);
-                        RunMetricsLog.AppendRunLines(runId, line);
-                        PersistWorkspaceState(includePreviewMask: false);
-                        persisted = true;
-                        return false;
-                    }
-
-                    bool exported = await SaveVideoAsync(
-                        exportProgress,
-                        _autoCts?.Token ?? CancellationToken.None,
-                        updateToolPanel: false,
-                        runId: runId,
-                        autoRunSummary: generator.LastRunSummary,
-                        autoRunOptions: runOptions);
-                    if (!exported)
-                    {
-                        PersistWorkspaceState(includePreviewMask: false);
-                        persisted = true;
-                        return false;
-                    }
-                }
-
-                PersistWorkspaceState(includePreviewMask: !exportAfter);
-                persisted = true;
-
-                return true;
-            }
-            catch (OperationCanceledException)
-            {
-                _autoCompleted = autoAnalysisCompleted;
-                if (postProcessCommitted)
-                    _autoResumeIndex = 0;
-                PersistWorkspaceState(includePreviewMask: !exportAfter);
-                persisted = true;
-                return false;
-            }
-            finally
-            {
-                _autoCts?.Dispose();
-                _autoCts = null;
-                _isAutoRunning = false;
-                ToolPanel.IsAutoRunning = false;
-                if (timelineOperationsSuspended)
-                {
-                    FrameList.ResumeTimelineOperations();
-                    if (!exportAfter)
-                        RefreshIssueTimesInBackground(FrameList.SelectedFrameIndex);
-                }
-                if (exactFrameOperationsSuspended)
-                    FramePreview.ResumeExactFrameOperations();
-                FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
-                if (!exportAfter &&
-                    _autoPreviewNeedsExactRefresh &&
-                    FrameList.SelectedFrameIndex >= 0)
-                {
-                    _autoPreviewNeedsExactRefresh = false;
-                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
-                }
-                if (!persisted)
-                    PersistWorkspaceState(includePreviewMask: !exportAfter);
-            }
-        }
-
-        private static bool IsAutoDetectionRunComplete(
-            AutoMaskRunSummary? summary,
-            int lastProcessedFrame,
-            int workspaceTotalFrames)
-        {
-            if (summary == null ||
-                !summary.ReachedDecoderEof ||
-                summary.DecodeCancelled ||
-                !string.Equals(summary.DecodeError, "none", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            AutoMaskRunSummary runSummary = summary;
-            int totalFrames = runSummary.TotalFrames > 0
-                ? runSummary.TotalFrames
-                : workspaceTotalFrames;
-            if (totalFrames <= 0)
-                return false;
-
-            int completionFrame = Math.Max(
-                0,
-                totalFrames - 1 - AutoDetectionCompletionTailToleranceFrames);
-            if (lastProcessedFrame >= completionFrame)
-                return true;
-
-            if (runSummary.ProcessedFrames <= 0)
-                return false;
-
-            int summaryLastFrame = runSummary.StartFrameIndex + runSummary.ProcessedFrames - 1;
-            return summaryLastFrame >= completionFrame;
-        }
-
-        private void SynchronizeFrameListWithDecodedTimeline(AutoMaskRunSummary? summary)
-        {
-            if (summary == null ||
-                !summary.ReachedDecoderEof ||
-                summary.DecodeCancelled ||
-                !string.Equals(summary.DecodeError, "none", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            int previousTotalFrames = FrameList.TotalFrames;
-            FrameList.UpdateActualTotalFrames(summary.TotalFrames);
-            if (previousTotalFrames != FrameList.TotalFrames)
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[AutoMaskTimelineAdjusted] reported={previousTotalFrames} actual={FrameList.TotalFrames}");
-            }
-        }
-
-        private void ApplyAutoExportGateState(
-            WorkspaceAutoExportGateState state)
-        {
-            _exportCoordinator.ApplyGateState(state);
-        }
-
-        private void ResetAutoFaceMasksForRun(int startFrameIndex)
-        {
-            if (startFrameIndex <= 0)
-            {
-                _maskProvider.ClearFaceMasks();
-                return;
-            }
-
-            int removed = _maskProvider.RemoveFaceMasksFrom(startFrameIndex);
-            if (removed > 0)
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[AutoMaskResumeReset] start={startFrameIndex} removedStaleFaceMasks={removed}");
-            }
+            return _autoRunCoordinator.RunAsync(
+                exportAfter,
+                progress,
+                cancellationToken,
+                exportProgress);
         }
 
         partial void OnAutoAnomalyCountChanged(int value)
@@ -1299,36 +871,6 @@ namespace FaceShield.ViewModels.Pages
         partial void OnHideResolvedIssuesChanged(bool value)
         {
             _issueReview.SetHideResolved(value);
-        }
-
-        private void TryUpdateAutoPreview(int frameIndex)
-        {
-            if (Mode != WorkspaceMode.Auto)
-                return;
-
-            long now = Environment.TickCount64;
-            if (now - _autoLastPreviewTick < 200)
-                return;
-            _autoLastPreviewTick = now;
-
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (!_isAutoRunning)
-                    return;
-                if (FrameList.SelectedFrameIndex == frameIndex)
-                    return;
-
-                FrameList.SelectedFrameIndex = frameIndex;
-            });
-        }
-
-        private void RefreshAutoPreviewAfterPostProcess(bool exportAfter)
-        {
-            if (exportAfter || FrameList.SelectedFrameIndex < 0)
-                return;
-
-            _autoPreviewNeedsExactRefresh = false;
-            FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
         }
 
         private async void OnAutoRequested()
@@ -1352,7 +894,7 @@ namespace FaceShield.ViewModels.Pages
 
         private void OnAutoCancelRequested()
         {
-            _autoCts?.Cancel();
+            _autoRunCoordinator.Cancel();
         }
 
         private void OnExportCancelRequested()
@@ -1407,7 +949,7 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private async Task GoBack()
         {
-            if (_isAutoRunning || ToolPanel.IsAutoRunning)
+            if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
                 return;
 
             FramePreview.PersistCurrentMask();
@@ -1430,97 +972,7 @@ namespace FaceShield.ViewModels.Pages
         }
 
         private Task<bool> RunAutoSingleFrameAsync()
-        {
-            int frameIndex = FrameList.SelectedFrameIndex;
-            if (frameIndex < 0 || !TryBeginLifetimeOperation())
-                return Task.FromResult(false);
-
-            return RunTrackedAutoSingleFrameAsync(frameIndex);
-        }
-
-        private async Task<bool> RunTrackedAutoSingleFrameAsync(int frameIndex)
-        {
-            try
-            {
-                return await RunAutoSingleFrameCoreAsync(frameIndex);
-            }
-            finally
-            {
-                EndLifetimeOperation();
-            }
-        }
-
-        private async Task<bool> RunAutoSingleFrameCoreAsync(int frameIndex)
-        {
-            if (_isAutoRunning)
-                return false;
-
-            FramePreview.PersistCurrentMask();
-            AutoExecutionProviderLabel = null;
-            AutoExecutionProviderError = null;
-            _isAutoRunning = true;
-            _autoCts = new CancellationTokenSource();
-            bool refreshPreviewAfterAuto = false;
-            bool exactFrameOperationsSuspended = false;
-            bool timelineOperationsSuspended = false;
-            bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
-
-            ToolPanel.IsAutoRunning = true;
-            ToolPanel.AutoProgress = 0;
-            FrameList.SetPlaybackEnabled(false);
-
-            try
-            {
-                await FramePreview.StopPlaybackAndWaitAsync();
-                await FramePreview.SuspendExactFrameOperationsAndWaitAsync();
-                exactFrameOperationsSuspended = true;
-                await FrameList.SuspendTimelineOperationsAndWaitAsync();
-                timelineOperationsSuspended = true;
-
-                var detectorFactory = CreateFaceDetectorFactory();
-                using IFaceDetector detector = detectorFactory.CreateDetector();
-                var generator = CreateAutoMaskGenerator(detector, detectorFactory);
-
-                var effectiveProgress = new Progress<int>(p =>
-                {
-                    ToolPanel.AutoProgress = p;
-                });
-
-                var token = _autoCts?.Token ?? CancellationToken.None;
-                bool generated = await generator.GenerateFrameAsync(FrameList.VideoPath, frameIndex, effectiveProgress, token);
-                if (!generated || token.IsCancellationRequested)
-                {
-                    PersistWorkspaceState();
-                    return false;
-                }
-
-                refreshPreviewAfterAuto = true;
-                _autoLastProcessedFrame = frameIndex;
-                _autoLastProcessedAtUtc = DateTime.UtcNow;
-                PersistWorkspaceState();
-                return true;
-            }
-            catch (OperationCanceledException)
-            {
-                PersistWorkspaceState();
-                return false;
-            }
-            finally
-            {
-                _autoCts?.Dispose();
-                _autoCts = null;
-                _isAutoRunning = false;
-                ToolPanel.IsAutoRunning = false;
-                if (timelineOperationsSuspended)
-                    FrameList.ResumeTimelineOperations();
-                if (exactFrameOperationsSuspended)
-                    FramePreview.ResumeExactFrameOperations();
-                FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
-                if (refreshPreviewAfterAuto)
-                    FramePreview.OnFrameIndexChanged(frameIndex);
-                PersistWorkspaceState();
-            }
-        }
+            => _autoRunCoordinator.RunSingleFrameAsync();
 
         [RelayCommand]
         private void NextAutoAnomaly()
@@ -1564,40 +1016,6 @@ namespace FaceShield.ViewModels.Pages
 
             FrameList.SelectedFrameIndex = targetFrame;
             RefreshIssueTimesInBackground(targetFrame);
-        }
-
-        private async Task BuildAutoAnomaliesAsync(
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await _issueReview.BuildAsync(
-                FrameList.TotalFrames,
-                GetLowConfidenceCutoff(),
-                _autoOptions.FilterProfile,
-                FrameList.ThumbnailProvider,
-                FrameList.SelectedFrameIndex,
-                FrameList.Fps,
-                FrameList.SecondsPerScreen,
-                HideResolvedIssues,
-                cancellationToken);
-        }
-
-        private float GetLowConfidenceCutoff()
-        {
-            var defaults = FaceOnnxDetector.GetDefaultThresholds();
-            float baseThreshold = _detectorFactoryOptions.Backend switch
-            {
-                FaceDetectorBackend.YoloFaceOnnx when _detectorFactoryOptions.YoloFaceOnnxOptions != null =>
-                    _detectorFactoryOptions.YoloFaceOnnxOptions.ConfidenceThreshold,
-                FaceDetectorBackend.ScrfdOnnx when _detectorFactoryOptions.ScrfdOnnxOptions != null =>
-                    _detectorFactoryOptions.ScrfdOnnxOptions.ConfidenceThreshold,
-                FaceDetectorBackend.YuNetOnnx when _detectorFactoryOptions.YuNetOnnxOptions != null =>
-                    _detectorFactoryOptions.YuNetOnnxOptions.ConfidenceThreshold,
-                FaceDetectorBackend.FaceOnnx when _detectorFactoryOptions.FaceOnnxOptions != null =>
-                    _detectorFactoryOptions.FaceOnnxOptions.ConfidenceThreshold ?? defaults.Confidence,
-                _ => _detectorOptions.ConfidenceThreshold ?? defaults.Confidence
-            };
-            return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);
         }
 
         private void RefreshIssueTimesInBackground(int? preferredFrameIndex = null)
@@ -1720,6 +1138,7 @@ namespace FaceShield.ViewModels.Pages
         private WorkspaceSnapshot BuildSnapshot()
         {
             WorkspaceAutoExportGateState exportState = _exportCoordinator.GateState;
+            AutoMaskRunStateSnapshot autoState = _autoRunCoordinator.CreateStateSnapshot();
             var state = new WorkspaceStateCapture(
                 FrameList.VideoPath,
                 Mode,
@@ -1727,10 +1146,10 @@ namespace FaceShield.ViewModels.Pages
                 FrameList.ViewStartSeconds,
                 FrameList.SecondsPerScreen,
                 FrameList.TimelineExtentSeconds,
-                _autoResumeIndex,
-                _autoCompleted,
-                _autoRunSignature,
-                _autoExecutionSignature,
+                autoState.ResumeIndex,
+                autoState.Completed,
+                autoState.RunSignature,
+                autoState.ExecutionSignature,
                 exportState.Required,
                 exportState.Passed,
                 exportState.Failure,
@@ -1751,11 +1170,12 @@ namespace FaceShield.ViewModels.Pages
                 FrameList.TotalFrames,
                 WorkspaceExportCoordinator.HybridCopyDisabledReason);
 
-            _autoResumeIndex = state.AutoResumeIndex;
-            _autoCompleted = state.AutoCompleted;
-            _autoRunSignature = state.AutoRunSignature;
-            _autoExecutionSignature = state.AutoExecutionSignature;
-            ApplyAutoExportGateState(state.ExportGateState);
+            _autoRunCoordinator.RestoreState(
+                state.AutoResumeIndex,
+                state.AutoCompleted,
+                state.AutoRunSignature,
+                state.AutoExecutionSignature);
+            _exportCoordinator.ApplyGateState(state.ExportGateState);
 
             FrameList.SecondsPerScreen = state.SecondsPerScreen;
             FrameList.RestoreTimelineExtentSeconds(state.TimelineExtentSeconds);
@@ -1764,29 +1184,6 @@ namespace FaceShield.ViewModels.Pages
                 FrameList.TimelineExtentSeconds,
                 FrameList.SecondsPerScreen);
             FrameList.SelectedFrameIndex = state.SelectedFrameIndex;
-        }
-
-        private bool IsAutoResumeSignatureCurrent(string currentSignature)
-            => !string.IsNullOrWhiteSpace(_autoRunSignature) &&
-                string.Equals(_autoRunSignature, currentSignature, StringComparison.Ordinal);
-
-        private void ResetStaleAutoResumeIfRunChanged(
-            string currentRunSignature,
-            string currentExecutionSignature)
-        {
-            string? reason = AutoRunSignaturePolicy.GetResumeResetReason(
-                _autoResumeIndex,
-                _autoRunSignature,
-                currentRunSignature,
-                _autoExecutionSignature,
-                currentExecutionSignature);
-            if (reason == null)
-                return;
-
-            System.Diagnostics.Debug.WriteLine(
-                $"[AutoMaskResumeReset] reason={reason} resumeIndex={_autoResumeIndex}");
-            _autoResumeIndex = 0;
-            _autoCompleted = false;
         }
 
         private bool TryBeginLifetimeOperation()
@@ -1835,12 +1232,13 @@ namespace FaceShield.ViewModels.Pages
 
         private void DisposeOwnedResources()
         {
-            FramePreview.Dispose();
-            FrameList.Dispose();
+            _autoRunCoordinator.Dispose();
+            _exportCoordinator.Dispose();
             _issueReview.Dispose();
             _workspacePersistence?.Dispose();
+            FramePreview.Dispose();
+            FrameList.Dispose();
             _maskProvider.Dispose();
-            _exportCoordinator.Dispose();
         }
 
         public void Dispose()
@@ -1859,8 +1257,7 @@ namespace FaceShield.ViewModels.Pages
                 }
             }
 
-            try { _autoCts?.Cancel(); }
-            catch { }
+            _autoRunCoordinator.Cancel();
             _exportCoordinator.Cancel();
             try { _sessionInitCts?.Cancel(); }
             catch { }
