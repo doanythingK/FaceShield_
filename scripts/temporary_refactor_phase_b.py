@@ -184,8 +184,8 @@ replace_once(
 
 replace_once(
     "ViewModels/Pages/WorkspaceViewModel.cs",
-    """        [RelayCommand]\n        private void GoBack()\n        {\n            FramePreview.PersistCurrentMask();\n            PersistWorkspaceState();\n            _onBack?.Invoke();\n        }\n""",
-    """        [RelayCommand]\n        private async Task GoBack()\n        {\n            FramePreview.PersistCurrentMask();\n            PersistWorkspaceState(includePreviewMask: false);\n\n            if (_workspacePersistence != null)\n            {\n                try\n                {\n                    await _workspacePersistence.FlushAsync();\n                }\n                catch (Exception ex)\n                {\n                    await ShowErrorDialogAsync(\"워크스페이스 저장 실패\", ex.Message);\n                    return;\n                }\n            }\n\n            _onBack?.Invoke();\n        }\n""")
+    """        [RelayCommand]\n        private void GoBack()\n        {\n            if (_isAutoRunning || ToolPanel.IsAutoRunning)\n                return;\n\n            FramePreview.PersistCurrentMask();\n            PersistWorkspaceState();\n            _onBack?.Invoke();\n        }\n""",
+    """        [RelayCommand]\n        private async Task GoBack()\n        {\n            if (_isAutoRunning || ToolPanel.IsAutoRunning)\n                return;\n\n            FramePreview.PersistCurrentMask();\n            PersistWorkspaceState(includePreviewMask: false);\n\n            if (_workspacePersistence != null)\n            {\n                try\n                {\n                    await _workspacePersistence.FlushAsync();\n                }\n                catch (Exception ex)\n                {\n                    await ShowErrorDialogAsync(\"워크스페이스 저장 실패\", ex.Message);\n                    return;\n                }\n            }\n\n            _onBack?.Invoke();\n        }\n""")
 
 replace_once(
     "ViewModels/Pages/WorkspaceViewModel.cs",
