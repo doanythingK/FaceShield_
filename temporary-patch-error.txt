@@ -1,9 +1,9 @@
 ===== temporary-patch.log =====
 Traceback (most recent call last):
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 178, in <module>
-    find_loop = find_next(lines, "for (int i = startKeyIndex;", find_next_method, 50)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 235, in <module>
+    after_entries = find_next(lines, "public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()", get_entries, 80)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 29, in find_next
     raise RuntimeError(f"Could not find '{needle}' after line index {start}")
-RuntimeError: Could not find 'for (int i = startKeyIndex;' after line index 221
+RuntimeError: Could not find 'public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()' after line index 236
 
