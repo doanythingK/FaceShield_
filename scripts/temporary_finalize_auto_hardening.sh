@@ -62,6 +62,14 @@ if text.count(old) != 1:
     raise RuntimeError(f'Expected one preview replacement slice, found {text.count(old)}')
 text = text.replace(old, new)
 
+# The confirmed production scope excludes the standard Workspace video-export path.
+# Stop the staged patch after Preview/Workspace persistence so VideoFrameProcessingPolicy
+# and verifier/harness files remain untouched by this source-fix commit.
+export_marker = '# Export owns the per-frame stored-mask clone via a using declaration.'
+if export_marker not in text:
+    raise RuntimeError('Expected export patch marker was not found.')
+text = text[:text.index(export_marker)].rstrip() + '\n'
+
 path.write_text(text)
 PY
 
@@ -69,28 +77,111 @@ python3 scripts/temporary_apply_auto_hardening.py
 
 python3 - <<'PY'
 from pathlib import Path
-path = Path('scripts/verify-runtime-hardening.ps1')
-text = path.read_text()
-replacements = [
-    (
-        "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'CloneBitmap\\([\\s\\S]{0,1200}catch[\\s\\S]{0,120}copy\\.Dispose\\(\\)[\\s\\S]{0,80}throw;'",
-        "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'private\\s+static\\s+WriteableBitmap\\s+CloneBitmap\\([\\s\\S]{0,1800}catch[\\s\\S]{0,160}copy\\.Dispose\\(\\)[\\s\\S]{0,120}throw;'"
-    ),
-    (
-        "Assert-Match \"blocking frame reads use the shared AVIO interrupt guard\" ($extractor + $videoIoInterrupt) 'VideoIoInterruptGuard[\\s\\S]*ConfigureIoInterrupt\\([\\s\\S]*_ioInterrupt\\.Configure\\(format\\)[\\s\\S]*BeginIoInterrupt\\([\\s\\S]*_ioInterrupt\\.Begin\\(cancellationToken\\)'",
-        "Assert-Match \"blocking frame reads use the shared AVIO interrupt guard\" ($extractor + $videoIoInterrupt) 'VideoIoInterruptGuard[\\s\\S]*ConfigureIoInterrupt\\([\\s\\S]{0,700}var\\s+ioInterrupt\\s*=\\s*_ioInterrupt[\\s\\S]{0,500}ioInterrupt\\.Configure\\(format\\)[\\s\\S]{0,1400}BeginIoInterrupt\\([\\s\\S]{0,700}var\\s+ioInterrupt\\s*=\\s*_ioInterrupt[\\s\\S]{0,500}ioInterrupt\\.Begin\\(cancellationToken\\)'"
-    ),
-]
-for old, new in replacements:
-    if text.count(old) != 1:
-        raise RuntimeError(f'Expected one verifier assertion, found {text.count(old)} for: {old[:80]}')
-    text = text.replace(old, new)
-path.write_text(text)
+
+
+def read_lines(path):
+    return Path(path).read_bytes().decode('utf-8-sig').splitlines(keepends=True)
+
+
+def write_lines(path, lines):
+    Path(path).write_bytes(''.join(lines).encode('utf-8'))
+
+
+def eol(line):
+    return '\r\n' if line.endswith('\r\n') else '\n'
+
+
+# Make sparse materialization transactional: work on an isolated provider snapshot,
+# then atomically commit face masks only after cancellation-free completion.
+path = 'Services/Analysis/AutoMaskGenerator.cs'
+lines = read_lines(path)
+call_hits = [i for i, line in enumerate(lines) if 'var materialized = SparseTrackingMaterializer.Materialize(' in line]
+if len(call_hits) != 1:
+    raise RuntimeError(f'Expected one sparse materialize call, found {len(call_hits)}')
+call = call_hits[0]
+indent = lines[call][:len(lines[call]) - len(lines[call].lstrip())]
+nl = eol(lines[call])
+
+if not any('sparseMaterializationProvider' in line for line in lines[max(0, call - 8):call]):
+    snapshot = [
+        indent + 'using var sparseMaterializationProvider = _maskProvider.CreateSnapshot(' + nl,
+        indent + '    out long sparseMaterializationSourceVersion,' + nl,
+        indent + '    pipelineToken);' + nl,
+    ]
+    lines[call:call] = snapshot
+    call += len(snapshot)
+
+provider_arg = None
+for i in range(call + 1, min(len(lines), call + 12)):
+    if lines[i].strip() == '_maskProvider,':
+        provider_arg = i
+        break
+if provider_arg is None:
+    if not any(line.strip() == 'sparseMaterializationProvider,' for line in lines[call + 1:call + 12]):
+        raise RuntimeError('Sparse materializer provider argument was not found.')
+else:
+    lines[provider_arg] = lines[provider_arg].replace('_maskProvider,', 'sparseMaterializationProvider,')
+
+close = None
+for i in range(call + 1, min(len(lines), call + 20)):
+    if lines[i].strip() == 'pipelineToken);':
+        close = i
+        break
+if close is None:
+    raise RuntimeError('Sparse materialize cancellation argument terminator was not found.')
+
+if not any('CommitFaceMasksFrom(' in line for line in lines[close + 1:close + 12]):
+    commit = [
+        indent + 'pipelineToken.ThrowIfCancellationRequested();' + nl,
+        indent + '_maskProvider.CommitFaceMasksFrom(' + nl,
+        indent + '    sparseMaterializationProvider,' + nl,
+        indent + '    sparseMaterializationSourceVersion,' + nl,
+        indent + '    pipelineToken);' + nl,
+    ]
+    lines[close + 1:close + 1] = commit
+
+write_lines(path, lines)
+
+# Record the confirmed production-code scope without claiming broader runtime coverage.
+doc = Path('QUALITY_STABILIZATION_REVIEW_FIXES.md')
+existing = doc.read_bytes().decode('utf-8-sig')
+heading = '## Follow-up: Auto cancellation and stored-mask ownership (2026-09-04)'
+if heading not in existing:
+    nl = '\r\n' if '\r\n' in existing[-2000:] else '\n'
+    section = f'''\n---\n\n{heading}\n\nConfirmed production-code fixes on `docs/manual-blur-player-architecture`:\n\n- `AutoMaskGenerator.GenerateAsync()` rethrows caller cancellation so Workspace cannot treat a cancelled Auto transaction as a successful return.\n- Sparse materialization accepts cancellation, performs work against an isolated `FrameMaskProvider` snapshot, and commits face masks to the live provider only after successful completion and version validation.\n- Sequential, single-pipeline, and parallel-pipeline bulk writers check cancellation immediately before `SetFaceRects()` provider writes.\n- `FrameMaskProvider` now provides state-gated independent stored-mask clone/snapshot APIs; Preview and Workspace persistence use those owned copies instead of live provider-owned bitmap references.\n- The standard Workspace video-export path is intentionally unchanged because it already exports from `FrameMaskProvider.CreateSnapshot()`.\n'''
+    doc.write_text(existing.rstrip() + section.replace('\n', nl) + nl, encoding='utf-8')
 PY
 
 git diff --check
-pwsh -File ./scripts/verify-runtime-hardening.ps1
-pwsh -File ./scripts/verify-automask-sparse-materialize-scene-cut.ps1
+
+python3 - <<'PY'
+from pathlib import Path
+
+def text(path):
+    return Path(path).read_text(encoding='utf-8-sig')
+
+auto = text('Services/Analysis/AutoMaskGenerator.cs')
+sparse = text('Services/Analysis/SparseTrackingMaterializer.cs')
+provider = text('Services/Video/FrameMaskProvider.cs')
+preview = text('ViewModels/Workspace/FramePreviewViewModel.cs')
+workspace = text('Services/Workspace/WorkspaceStateStore.cs')
+export_policy = text('Services/Video/VideoFrameProcessingPolicy.cs')
+
+assert 'catch (OperationCanceledException) when (ct.IsCancellationRequested)\n            {\n                throw;' in auto.replace('\r\n', '\n')
+assert 'CancellationToken cancellationToken = default)' in sparse
+assert 'sparseMaterializationProvider = _maskProvider.CreateSnapshot(' in auto
+assert '_maskProvider.CommitFaceMasksFrom(' in auto
+assert 'ct.ThrowIfCancellationRequested();\n                    _maskProvider.SetFaceRects(' in auto.replace('\r\n', '\n')
+assert auto.count('pipelineToken.ThrowIfCancellationRequested();') >= 3
+assert 'public bool TryCloneStoredMask(' in provider
+assert 'public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetStoredMaskSnapshot(' in provider
+assert 'provider.TryCloneStoredMask(frameIndex, out var stored)' in preview
+assert 'var entries = maskProvider.GetStoredMaskSnapshot();' in workspace
+assert 'provider.TryGetStoredMask(decodedFrameOrdinal, out var stored)' in export_policy
+assert 'TryCloneStoredMask(decodedFrameOrdinal' not in export_policy
+PY
+
+dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
 
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -99,12 +190,9 @@ git rm -f scripts/temporary_apply_auto_hardening.py scripts/temporary_finalize_a
 git add Services/Analysis/AutoMaskGenerator.cs \
         Services/Analysis/SparseTrackingMaterializer.cs \
         Services/Video/FrameMaskProvider.cs \
-        Services/Video/VideoFrameProcessingPolicy.cs \
         Services/Workspace/WorkspaceStateStore.cs \
         ViewModels/Workspace/FramePreviewViewModel.cs \
-        scripts/verify-runtime-hardening.ps1 \
-        scripts/verify-automask-sparse-materialize-scene-cut.ps1 \
         QUALITY_STABILIZATION_REVIEW_FIXES.md
 git diff --cached --check
-git commit -m "Harden Auto cancellation and stored mask reads"
+git commit -m "Harden Auto cancellation and stored mask ownership"
 git push origin HEAD:docs/manual-blur-player-architecture
