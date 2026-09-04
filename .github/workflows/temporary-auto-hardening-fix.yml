@@ -45,29 +45,63 @@ jobs:
               raise RuntimeError(f'Expected one CanBridge call locator, found {text.count(old)}')
           text = text.replace(old, new)
 
+          old = '''stop_if = find(lines, "if (!canBridge &&")
+          if "ThrowIfCancellationRequested" not in lines[stop_if - 1]:
+              insert_before(lines, stop_if, "cancellationToken.ThrowIfCancellationRequested();")'''
+          new = '''scene_cut_probe = find(lines, "int nextKey =")
+          if "ThrowIfCancellationRequested" not in lines[scene_cut_probe - 1]:
+              insert_before(lines, scene_cut_probe, "cancellationToken.ThrowIfCancellationRequested();")'''
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one stale scene-cut insertion block, found {text.count(old)}')
+          text = text.replace(old, new)
+
+          old = 'can_sig_end = find_next(lines, "double sceneCutDifferenceThreshold)", can_bridge_method, 20)'
+          new = 'can_sig_end = find_next(lines, "double sceneCutThreshold)", can_bridge_method, 20)'
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one CanBridge signature locator, found {text.count(old)}')
+          text = text.replace(old, new)
+          old = 'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutDifferenceThreshold)", "double sceneCutDifferenceThreshold,")'
+          new = 'lines[can_sig_end] = lines[can_sig_end].replace("double sceneCutThreshold)", "double sceneCutThreshold,")'
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one CanBridge signature replacement, found {text.count(old)}')
+          text = text.replace(old, new)
+
+          old = 'block_end = find_next(lines, "}", stored + 1, 12)'
+          new = 'stored_return = find_next(lines, "return CloneBitmap(stored);", stored, 16)\nblock_end = find_next(lines, "}", stored_return + 1, 4)'
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one preview block locator, found {text.count(old)}')
+          text = text.replace(old, new)
+
           path.write_text(text)
           PY
           python3 scripts/temporary_apply_auto_hardening.py 2>&1 | tee temporary-patch.log
 
       - name: Check patch shape
+        shell: bash
         run: |
           git diff --check
           git diff --stat
           git status --short
 
       - name: Run runtime hardening source verifier
-        shell: pwsh
-        run: ./scripts/verify-runtime-hardening.ps1
+        id: runtime_verify
+        shell: bash
+        run: |
+          set -o pipefail
+          pwsh -File ./scripts/verify-runtime-hardening.ps1 2>&1 | tee temporary-runtime-verify.log
 
       - name: Run sparse materialization harness
-        shell: pwsh
-        run: ./scripts/verify-automask-sparse-materialize-scene-cut.ps1
+        id: sparse_verify
+        shell: bash
+        run: |
+          set -o pipefail
+          pwsh -File ./scripts/verify-automask-sparse-materialize-scene-cut.ps1 2>&1 | tee temporary-sparse-verify.log
 
       - name: Commit verified patch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f temporary-patch.log
+          rm -f temporary-patch.log temporary-runtime-verify.log temporary-sparse-verify.log
           git rm -f --ignore-unmatch temporary-patch-error.txt
           git rm .github/workflows/temporary-auto-hardening-fix.yml scripts/temporary_apply_auto_hardening.py
           git add Services/Analysis/AutoMaskGenerator.cs \
@@ -83,17 +117,23 @@ jobs:
           git commit -m "Harden Auto cancellation and stored mask reads"
           git push origin HEAD:docs/manual-blur-player-architecture
 
-      - name: Publish patch diagnostics
+      - name: Publish diagnostics
         if: failure()
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -f temporary-patch.log ]; then
-            cp temporary-patch.log temporary-patch-error.txt
-          else
-            echo "Patch step did not produce a diagnostic log." > temporary-patch-error.txt
+          : > temporary-patch-error.txt
+          for file in temporary-patch.log temporary-runtime-verify.log temporary-sparse-verify.log; do
+            if [ -f "$file" ]; then
+              echo "===== $file =====" >> temporary-patch-error.txt
+              cat "$file" >> temporary-patch-error.txt
+              echo >> temporary-patch-error.txt
+            fi
+          done
+          if [ ! -s temporary-patch-error.txt ]; then
+            echo "Workflow failed before producing a diagnostic log." > temporary-patch-error.txt
           fi
           git add temporary-patch-error.txt
-          git commit -m "chore: capture auto hardening patch failure" || true
+          git commit -m "chore: capture auto hardening verification failure" || true
           git push origin HEAD:docs/manual-blur-player-architecture || true
