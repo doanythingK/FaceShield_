@@ -1,9 +1,9 @@
 ===== temporary-patch.log =====
-Traceback (most recent call last):
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 235, in <module>
-    after_entries = find_next(lines, "public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()", get_entries, 80)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 29, in find_next
-    raise RuntimeError(f"Could not find '{needle}' after line index {start}")
-RuntimeError: Could not find 'public IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> GetFaceMaskEntries()' after line index 236
+
+===== temporary-runtime-verify.log =====
+[31;1mException: [0m/home/runner/work/FaceShield_/FaceShield_/scripts/verify-runtime-hardening.ps1:17[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  17 | [0m         [36;1mthrow "FAILED: $label"[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m         ~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mFAILED: aborted bitmap snapshot copy disposes its uncommitted bitmap[0m
 
