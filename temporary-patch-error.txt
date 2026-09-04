@@ -1,7 +1,4 @@
 Traceback (most recent call last):
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 49, in <module>
-    catch_idx = find(lines, "catch (OperationCanceledException) when (ct.IsCancellationRequested)")
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 21, in find
-    raise RuntimeError(f"Expected exactly one '{needle}' in range, found {len(hits)}")
-RuntimeError: Expected exactly one 'catch (OperationCanceledException) when (ct.IsCancellationRequested)' in range, found 2
+  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 55, in <module>
+    raise RuntimeError("GenerateAsync cancellation catch is not empty and does not rethrow.")
+RuntimeError: GenerateAsync cancellation catch is not empty and does not rethrow.
