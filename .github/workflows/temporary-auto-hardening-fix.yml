@@ -55,6 +55,21 @@ jobs:
               raise RuntimeError(f'Expected one stale scene-cut insertion block, found {text.count(old)}')
           text = text.replace(old, new)
 
+          old = '''interp = find(lines, "? InterpolateSparseResult(current, nextPositive!, frame)")
+          lines[interp] = lines[interp].replace(
+              "InterpolateSparseResult(current, nextPositive!, frame)",
+              "InterpolateSparseResult(current, nextPositive!, frame, cancellationToken)",
+          )'''
+          new = '''interp_call = find(lines, "? InterpolateSparseResult(")
+          interp_frame = find_next(lines, "frame)", interp_call, 8)
+          nl = eol(lines[interp_frame])
+          indent = lines[interp_frame][: len(lines[interp_frame]) - len(lines[interp_frame].lstrip())]
+          lines[interp_frame] = lines[interp_frame].replace("frame)", "frame,")
+          lines.insert(interp_frame + 1, indent + "cancellationToken)" + nl)'''
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one stale interpolation call block, found {text.count(old)}')
+          text = text.replace(old, new)
+
           old = 'can_sig_end = find_next(lines, "double sceneCutDifferenceThreshold)", can_bridge_method, 20)'
           new = 'can_sig_end = find_next(lines, "double sceneCutThreshold)", can_bridge_method, 20)'
           if text.count(old) != 1:
