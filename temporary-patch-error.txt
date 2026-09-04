@@ -5,5 +5,5 @@
 [31;1m[0m[36;1mLine |[0m
 [31;1m[0m[36;1m[36;1m  17 | [0m         [36;1mthrow "FAILED: $label"[0m
 [31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m         ~~~~~~~~~~~~~~~~~~~~~~[0m
-[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mFAILED: aborted bitmap snapshot copy disposes its uncommitted bitmap[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mFAILED: blocking frame reads use the shared AVIO interrupt guard[0m
 
