@@ -24,13 +24,11 @@ jobs:
       - name: Check source diff
         shell: bash
         run: |
-          set +e
-          git diff --check > temporary-sparse-diff-check.txt 2>&1
-          code=$?
-          cat temporary-sparse-diff-check.txt
+          set -euo pipefail
+          git config core.whitespace cr-at-eol
+          git diff --check
           git diff --stat
           git status --short
-          exit $code
 
       - name: Build Release
         run: dotnet build FaceShield.csproj -c Release --nologo
@@ -41,7 +39,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f temporary-sparse-diff-check.txt
+          git config core.whitespace cr-at-eol
           git rm .github/workflows/temporary-sparse-api-cleanup.yml
           git rm scripts/temporary_sparse_api_cleanup.py
           git rm -f --ignore-unmatch temporary-sparse-cleanup-error.txt
@@ -55,20 +53,3 @@ jobs:
           git diff --cached --check
           git commit -m "Optimize sparse staging and bitmap ownership"
           git push origin HEAD:docs/manual-blur-player-architecture
-
-      - name: Publish diff diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -s temporary-sparse-diff-check.txt ]; then
-            cp temporary-sparse-diff-check.txt temporary-sparse-cleanup-error.txt
-          else
-            echo "Sparse cleanup failed before or after diff check; no diff diagnostic was produced." > temporary-sparse-cleanup-error.txt
-          fi
-          git reset --hard HEAD
-          git add -f temporary-sparse-cleanup-error.txt
-          git commit -m "chore: capture sparse cleanup failure" || true
-          git push origin HEAD:docs/manual-blur-player-architecture || true
