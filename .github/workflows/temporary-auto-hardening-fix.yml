@@ -102,6 +102,16 @@ jobs:
           path.write_text(text)
           PY
           python3 scripts/temporary_apply_auto_hardening.py 2>&1 | tee temporary-patch.log
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/verify-runtime-hardening.ps1')
+          text = path.read_text()
+          old = "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'CloneBitmap\\([\\s\\S]{0,1200}catch[\\s\\S]{0,120}copy\\.Dispose\\(\\)[\\s\\S]{0,80}throw;'"
+          new = "Assert-Match \"aborted bitmap snapshot copy disposes its uncommitted bitmap\" $frameMaskProvider 'private\\s+static\\s+WriteableBitmap\\s+CloneBitmap\\([\\s\\S]{0,1800}catch[\\s\\S]{0,160}copy\\.Dispose\\(\\)[\\s\\S]{0,120}throw;'"
+          if text.count(old) != 1:
+              raise RuntimeError(f'Expected one bitmap-copy verifier assertion, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+          PY
 
       - name: Check patch shape
         shell: bash
