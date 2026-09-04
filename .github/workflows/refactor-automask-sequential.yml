@@ -1,0 +1,106 @@
+name: Refactor AutoMask Sequential
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Extract sequential strategy body
+        shell: python
+        run: |
+          from pathlib import Path
+          import codecs
+
+          source_path = Path('Services/Analysis/AutoMaskGenerator.cs')
+          target_path = Path('Services/Analysis/AutoMaskGenerator.Sequential.cs')
+
+          raw = source_path.read_bytes()
+          has_bom = raw.startswith(codecs.BOM_UTF8)
+          text = raw[len(codecs.BOM_UTF8):].decode('utf-8') if has_bom else raw.decode('utf-8')
+
+          method_marker = '        private void GenerateSequential('
+          next_marker = '        private sealed class BgraBuffer'
+          class_marker = 'public sealed class AutoMaskGenerator'
+
+          if text.count(method_marker) != 1:
+              raise SystemExit(f'expected one sequential method, found {text.count(method_marker)}')
+          if text.count(class_marker) != 1:
+              raise SystemExit(f'expected one non-partial class declaration, found {text.count(class_marker)}')
+          if target_path.exists():
+              raise SystemExit(f'{target_path} already exists')
+
+          start = text.index(method_marker)
+          end = text.index(next_marker, start)
+          method_text = text[start:end].rstrip('\r\n')
+          main_text = text[:start] + text[end:]
+          main_text = main_text.replace(
+              class_marker,
+              'public sealed partial class AutoMaskGenerator',
+              1)
+
+          target_text = '''using Avalonia;
+          using Avalonia.Media.Imaging;
+          using FaceShield.Services.FaceDetection;
+          using FaceShield.Services.Video;
+          using System;
+          using System.Collections.Generic;
+          using System.Diagnostics;
+          using System.Threading;
+
+          namespace FaceShield.Services.Analysis
+          {
+              public sealed partial class AutoMaskGenerator
+              {
+          ''' + method_text + '''
+              }
+          }
+          '''
+
+          output = main_text.encode('utf-8')
+          if has_bom:
+              output = codecs.BOM_UTF8 + output
+          source_path.write_bytes(output)
+          target_path.write_text(target_text, encoding='utf-8', newline='\n')
+
+      - name: Source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "public sealed partial class AutoMaskGenerator" Services/Analysis/AutoMaskGenerator.cs
+          grep -q "public sealed partial class AutoMaskGenerator" Services/Analysis/AutoMaskGenerator.Sequential.cs
+          grep -q "GenerateSequential(videoPath" Services/Analysis/AutoMaskGenerator.cs
+          test "$(grep -R --include='AutoMaskGenerator*.cs' -F 'private void GenerateSequential(' Services/Analysis | wc -l)" -eq 1
+          ! grep -q -F 'private void GenerateSequential(' Services/Analysis/AutoMaskGenerator.cs
+          ! grep -R -E 'public[[:space:]].*TryGetStoredMaskBorrowed' Services
+          git diff --check
+
+      - name: Release build
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/refactor-automask-sequential.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Services/Analysis/AutoMaskGenerator.cs Services/Analysis/AutoMaskGenerator.Sequential.cs .github/workflows/refactor-automask-sequential.yml
+          git commit -m "Extract sequential auto mask strategy body"
+          git push origin HEAD:refactor/ownership-workspace-hardening
