@@ -19,7 +19,9 @@ jobs:
           fetch-depth: 0
 
       - name: Apply targeted source patch
-        run: python3 scripts/temporary_sparse_api_cleanup.py
+        run: |
+          python3 scripts/temporary_sparse_api_cleanup.py
+          python3 scripts/temporary_sparse_api_followup.py
 
       - name: Check source diff
         shell: bash
@@ -49,10 +51,12 @@ jobs:
           rm -f temporary-sparse-build.txt
           git rm .github/workflows/temporary-sparse-api-cleanup.yml
           git rm scripts/temporary_sparse_api_cleanup.py
+          git rm scripts/temporary_sparse_api_followup.py
           git rm -f --ignore-unmatch temporary-sparse-cleanup-error.txt
           git add Services/Video/FrameMaskProvider.cs \
                   Services/Analysis/SparseTrackingMaterializer.cs \
                   Services/Analysis/AutoMaskGenerator.cs \
+                  Services/Analysis/YoloRiskCascadeStep.cs \
                   Services/Video/IFrameMaskProvider.cs \
                   Services/Video/VideoFrameProcessingPolicy.cs \
                   ViewModels/Workspace/FramePreviewViewModel.cs \
