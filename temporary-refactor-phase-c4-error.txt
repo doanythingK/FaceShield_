@@ -1,0 +1,3 @@
+FAIL absent: _isAutoRunning in ViewModels/Pages/WorkspaceViewModel.cs
+216:                if (_isAutoRunning || ToolPanel.IsAutoRunning)
+888:                if (!_isAutoRunning)
