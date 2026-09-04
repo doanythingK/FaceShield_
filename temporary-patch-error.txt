@@ -1,9 +1,9 @@
 ===== temporary-patch.log =====
 Traceback (most recent call last):
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 159, in <module>
-    interp = find(lines, "? InterpolateSparseResult(current, nextPositive!, frame)")
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 21, in find
-    raise RuntimeError(f"Expected exactly one '{needle}' in range, found {len(hits)}")
-RuntimeError: Expected exactly one '? InterpolateSparseResult(current, nextPositive!, frame)' in range, found 0
+  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 178, in <module>
+    find_loop = find_next(lines, "for (int i = startKeyIndex;", find_next_method, 50)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/FaceShield_/FaceShield_/scripts/temporary_apply_auto_hardening.py", line 29, in find_next
+    raise RuntimeError(f"Could not find '{needle}' after line index {start}")
+RuntimeError: Could not find 'for (int i = startKeyIndex;' after line index 221
 
