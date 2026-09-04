@@ -69,11 +69,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -s temporary-sparse-build.txt ]; then
-            cp temporary-sparse-build.txt temporary-sparse-cleanup-error.txt
+            cp temporary-sparse-build.txt /tmp/temporary-sparse-cleanup-error.txt
           else
-            echo "Sparse cleanup failed before build diagnostics were produced." > temporary-sparse-cleanup-error.txt
+            echo "Sparse cleanup failed before build diagnostics were produced." > /tmp/temporary-sparse-cleanup-error.txt
           fi
           git reset --hard HEAD
+          cp /tmp/temporary-sparse-cleanup-error.txt temporary-sparse-cleanup-error.txt
           git add -f temporary-sparse-cleanup-error.txt
           git commit -m "chore: capture sparse cleanup build failure" || true
           git push origin HEAD:docs/manual-blur-player-architecture || true
