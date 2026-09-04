@@ -1745,20 +1745,17 @@ namespace FaceShield.Services.Analysis
                 : start;
             pipeline.ThrowIfFailedOrCanceled();
             pipelineToken.ThrowIfCancellationRequested();
-            using var sparseMaterializationProvider = _maskProvider.CreateSnapshot(
-                out long sparseMaterializationSourceVersion,
-                pipelineToken);
+            var sparseWorkingCopy = _maskProvider.CreateSparseFaceMaskWorkingCopy(pipelineToken);
             var materialized = SparseTrackingMaterializer.Materialize(
                 results,
-                sparseMaterializationProvider,
+                sparseWorkingCopy,
                 _options,
                 start,
                 materializeEndExclusive,
                 pipelineToken);
             pipelineToken.ThrowIfCancellationRequested();
             _maskProvider.CommitFaceMasksFrom(
-                sparseMaterializationProvider,
-                sparseMaterializationSourceVersion,
+                sparseWorkingCopy,
                 pipelineToken);
             foreach (var transition in materialized.SceneCutTransitions)
             {

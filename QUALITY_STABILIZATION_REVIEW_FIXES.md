@@ -630,3 +630,12 @@ Confirmed production-code fixes on `docs/manual-blur-player-architecture`:
 - `FrameMaskProvider` now provides state-gated independent stored-mask clone/snapshot APIs; Preview and Workspace persistence use those owned copies instead of live provider-owned bitmap references.
 - The standard Workspace video-export path is intentionally unchanged because it already exports from `FrameMaskProvider.CreateSnapshot()`.
 
+---
+
+## Follow-up: Sparse working-copy cost and bitmap ownership (2026-09-04)
+
+- Sparse materialization now uses a lightweight transactional working copy containing cloned face-mask data, stored-mask frame presence, and the source provider version. Stored `WriteableBitmap` pixels are not copied for sparse staging.
+- Sparse commit still rejects a changed source version before mutation, so concurrent/manual edits cannot be silently overwritten.
+- Public final-mask reads now have one ownership contract: `GetFinalMask()` returns a caller-owned bitmap that must be disposed.
+- Raw stored-bitmap access was reduced to an internal, explicitly borrowed export path; `GetMaskEntries()` was removed. Safe public reads use clone/snapshot APIs.
+- Commit cancellation semantics are unchanged: cancellation is checked before mutation, then the atomic commit section completes without mid-commit cancellation checks.

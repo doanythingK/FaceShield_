@@ -224,7 +224,7 @@ namespace FaceShield.Services.Analysis
                         if (!riskFrames.ContainsKey(frameIndex))
                             continue;
 
-                        if (maskProvider.TryGetStoredMask(frameIndex, out _))
+                        if (maskProvider.HasStoredMask(frameIndex))
                         {
                             protectedStoredMaskFrames++;
                             continue;

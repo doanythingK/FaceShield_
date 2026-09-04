@@ -15,6 +15,66 @@ namespace FaceShield.Services.Video
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
     private long _version;
 
+    internal sealed class SparseFaceMaskWorkingCopy
+    {
+        private readonly HashSet<int> _storedMaskFrames;
+        private readonly Dictionary<int, FaceMaskData> _faceMasks;
+
+        internal SparseFaceMaskWorkingCopy(
+            long sourceVersion,
+            HashSet<int> storedMaskFrames,
+            Dictionary<int, FaceMaskData> faceMasks)
+        {
+            SourceVersion = sourceVersion;
+            _storedMaskFrames = storedMaskFrames;
+            _faceMasks = faceMasks;
+        }
+
+        internal long SourceVersion { get; }
+
+        internal bool HasEntry(int frameIndex)
+            => _storedMaskFrames.Contains(frameIndex) || _faceMasks.ContainsKey(frameIndex);
+
+        internal void SetFaceRects(
+            int frameIndex,
+            IReadOnlyList<Rect> faces,
+            PixelSize size,
+            float? minConfidence = null,
+            IReadOnlyList<float>? confidences = null)
+        {
+            if (_storedMaskFrames.Contains(frameIndex))
+                return;
+
+            Rect[] faceArray = faces == null ? Array.Empty<Rect>() : faces.ToArray();
+            if (faceArray.Length == 0 || size.Width <= 0 || size.Height <= 0)
+            {
+                _faceMasks.Remove(frameIndex);
+                return;
+            }
+
+            _faceMasks[frameIndex] = new FaceMaskData(
+                size,
+                faceArray,
+                minConfidence,
+                NormalizeConfidences(faceArray.Length, minConfidence, confidences));
+        }
+
+        internal Dictionary<int, FaceMaskData> ExportFaceMaskSnapshot(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = new Dictionary<int, FaceMaskData>(_faceMasks.Count);
+            foreach (var entry in _faceMasks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                snapshot[entry.Key] = CloneFaceMaskData(entry.Value);
+            }
+
+            return snapshot;
+        }
+    }
+
+
     public void SetMask(int frameIndex, WriteableBitmap mask)
     {
         if (mask == null)
@@ -96,7 +156,7 @@ namespace FaceShield.Services.Video
         lock (_stateGate)
         {
             if (_masks.TryGetValue(frameIndex, out var mask))
-                return mask;
+                return CloneBitmap(mask, CancellationToken.None);
 
             if (_faceMasks.TryGetValue(frameIndex, out var faces))
                 return CreateMaskFromFaceRects(faces.Size, faces.Faces);
@@ -111,10 +171,20 @@ namespace FaceShield.Services.Video
             return _masks.ContainsKey(frameIndex) || _faceMasks.ContainsKey(frameIndex);
     }
 
-    public bool TryGetStoredMask(int frameIndex, out WriteableBitmap mask)
+    /// <summary>
+    /// Returns a provider-owned bitmap reference for read-stable internal paths only.
+    /// The caller must not dispose it and must ensure the provider is not mutated while it is in use.
+    /// </summary>
+    internal bool TryGetStoredMaskBorrowed(int frameIndex, out WriteableBitmap mask)
     {
         lock (_stateGate)
             return _masks.TryGetValue(frameIndex, out mask!);
+    }
+
+    internal bool HasStoredMask(int frameIndex)
+    {
+        lock (_stateGate)
+            return _masks.ContainsKey(frameIndex);
     }
 
     public bool TryCloneStoredMask(
@@ -234,12 +304,6 @@ namespace FaceShield.Services.Video
             return _faceMasks.ToArray();
     }
 
-    public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
-    {
-        lock (_stateGate)
-            return _masks.ToArray();
-    }
-
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetStoredMaskSnapshot(
         CancellationToken cancellationToken = default)
     {
@@ -266,6 +330,29 @@ namespace FaceShield.Services.Video
                     entry.Value.Dispose();
                 throw;
             }
+        }
+    }
+
+    internal SparseFaceMaskWorkingCopy CreateSparseFaceMaskWorkingCopy(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long sourceVersion = _version;
+            var storedMaskFrames = new HashSet<int>(_masks.Keys);
+            var faceMasks = new Dictionary<int, FaceMaskData>(_faceMasks.Count);
+            foreach (var entry in _faceMasks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                faceMasks[entry.Key] = CloneFaceMaskData(entry.Value);
+            }
+
+            return new SparseFaceMaskWorkingCopy(
+                sourceVersion,
+                storedMaskFrames,
+                faceMasks);
         }
     }
 
@@ -308,6 +395,39 @@ namespace FaceShield.Services.Video
                 snapshot.Dispose();
                 throw;
             }
+        }
+    }
+
+    internal void CommitFaceMasksFrom(
+        SparseFaceMaskWorkingCopy source,
+        CancellationToken cancellationToken = default)
+    {
+        if (source == null)
+            throw new ArgumentNullException(nameof(source));
+
+        var committedFaces = source.ExportFaceMaskSnapshot(cancellationToken);
+
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_version != source.SourceVersion)
+            {
+                throw new InvalidOperationException(
+                    "Mask provider changed while sparse Auto materialization was staged.");
+            }
+
+            _faceMasks.Clear();
+            foreach (var entry in committedFaces)
+            {
+                // Stored/manual bitmap entries remain authoritative.
+                if (_masks.ContainsKey(entry.Key))
+                    continue;
+
+                _faceMasks[entry.Key] = entry.Value;
+            }
+
+            // Once commit mutation starts, finish atomically rather than observing cancellation mid-commit.
+            _version++;
         }
     }
 

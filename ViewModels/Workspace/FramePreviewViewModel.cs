@@ -1027,14 +1027,17 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         var providerMask = _maskProvider?.GetFinalMask(frameIndex);
-        if (providerMask == null ||
-            providerMask.PixelSize.Width != frame.PixelSize.Width ||
+        if (providerMask == null)
+            return null;
+
+        if (providerMask.PixelSize.Width != frame.PixelSize.Width ||
             providerMask.PixelSize.Height != frame.PixelSize.Height)
         {
+            providerMask.Dispose();
             return null;
         }
 
-        return CloneBitmap(providerMask);
+        return providerMask;
     }
 
     public void PersistCurrentMask()

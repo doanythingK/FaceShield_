@@ -35,7 +35,7 @@ internal static class SparseTrackingMaterializer
 
     internal static SparseMaterializeResult Materialize(
         ConcurrentDictionary<int, DetectionResult> results,
-        FrameMaskProvider maskProvider,
+        FrameMaskProvider.SparseFaceMaskWorkingCopy maskProvider,
         AutoMaskOptions options,
         int start,
         int endExclusive,

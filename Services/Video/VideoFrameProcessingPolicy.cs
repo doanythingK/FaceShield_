@@ -128,6 +128,7 @@ internal static unsafe class VideoFrameProcessingPolicy
         }
 
         WriteableBitmap? mask = null;
+        WriteableBitmap? ownedMask = null;
         IReadOnlyList<Rect>? faceRects = null;
         bool mightHaveMask = blurRanges == null ||
             VideoExportFrameRangePolicy.IsFrameInBlurRanges(decodedFrameOrdinal, blurRanges, ref blurRangeCursor);
@@ -135,7 +136,7 @@ internal static unsafe class VideoFrameProcessingPolicy
 
         if (mightHaveMask && maskProvider is FrameMaskProvider provider)
         {
-            if (provider.TryGetStoredMask(decodedFrameOrdinal, out var stored))
+            if (provider.TryGetStoredMaskBorrowed(decodedFrameOrdinal, out var stored))
             {
                 mask = stored;
             }
@@ -146,9 +147,11 @@ internal static unsafe class VideoFrameProcessingPolicy
         }
         else if (mightHaveMask)
         {
-            mask = maskProvider.GetFinalMask(decodedFrameOrdinal);
+            ownedMask = maskProvider.GetFinalMask(decodedFrameOrdinal);
+            mask = ownedMask;
         }
 
+        using var ownedMaskScope = ownedMask;
         bool nativeYuvApplied = false;
         AVFrame* nativeYuvFrame = null;
         if (mask != null || (faceRects != null && faceRects.Count > 0))

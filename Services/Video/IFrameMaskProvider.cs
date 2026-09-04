@@ -7,6 +7,7 @@ namespace FaceShield.Services.Video
         /// <summary>
         /// Export 시 사용할 최종 마스크.
         /// 프레임마다 없을 수도 있음(null).
+        /// 반환된 bitmap은 호출자가 소유하며 사용 후 Dispose해야 합니다.
         /// </summary>
         WriteableBitmap? GetFinalMask(int frameIndex);
 
