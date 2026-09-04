@@ -1,2 +1,11 @@
-Services/Video/IFrameMaskProvider.cs:10: trailing whitespace.
-+        /// 반환된 bitmap은 호출자가 소유하며 사용 후 Dispose해야 합니다.
+  Determining projects to restore...
+  Restored /home/runner/work/FaceShield_/FaceShield_/FaceShield.csproj (in 13.03 sec).
+/home/runner/work/FaceShield_/FaceShield_/Services/Analysis/YoloRiskCascadeStep.cs(227,42): error CS1061: 'FrameMaskProvider' does not contain a definition for 'TryGetStoredMask' and no accessible extension method 'TryGetStoredMask' accepting a first argument of type 'FrameMaskProvider' could be found (are you missing a using directive or an assembly reference?) [/home/runner/work/FaceShield_/FaceShield_/FaceShield.csproj]
+
+Build FAILED.
+
+/home/runner/work/FaceShield_/FaceShield_/Services/Analysis/YoloRiskCascadeStep.cs(227,42): error CS1061: 'FrameMaskProvider' does not contain a definition for 'TryGetStoredMask' and no accessible extension method 'TryGetStoredMask' accepting a first argument of type 'FrameMaskProvider' could be found (are you missing a using directive or an assembly reference?) [/home/runner/work/FaceShield_/FaceShield_/FaceShield.csproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:24.64
