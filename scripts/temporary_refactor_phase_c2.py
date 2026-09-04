@@ -1,0 +1,749 @@
+from pathlib import Path
+
+
+def read_exact(p: Path) -> str:
+    with p.open("r", encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_exact(p: Path, text: str) -> None:
+    with p.open("w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
+def replace_once(path: str, old: str, new: str) -> None:
+    p = Path(path)
+    text = read_exact(p)
+    candidates = [(old, new)]
+    if "\n" in old:
+        candidates.append((old.replace("\n", "\r\n"), new.replace("\n", "\r\n")))
+    for old_candidate, new_candidate in candidates:
+        count = text.count(old_candidate)
+        if count == 1:
+            write_exact(p, text.replace(old_candidate, new_candidate, 1))
+            return
+        if count > 1:
+            raise RuntimeError(f"Expected one match in {path}, found {count}")
+    raise RuntimeError(f"Patch target not found in {path}: {old[:120]!r}")
+
+
+def replace_between(path: str, start_marker: str, end_marker: str, replacement: str) -> None:
+    p = Path(path)
+    text = read_exact(p)
+    line_sep = "\r\n" if "\r\n" in text else "\n"
+    sm = start_marker.replace("\n", line_sep)
+    em = end_marker.replace("\n", line_sep)
+    start = text.find(sm)
+    if start < 0:
+        raise RuntimeError(f"Start marker not found in {path}: {start_marker!r}")
+    end = text.find(em, start)
+    if end < 0:
+        raise RuntimeError(f"End marker not found in {path}: {end_marker!r}")
+    repl = replacement.replace("\n", line_sep)
+    write_exact(p, text[:start] + repl + text[end:])
+
+
+write_exact(Path("ViewModels/Workspace/IssueReviewCoordinator.cs"), """using Avalonia.Threading;
+using FaceShield.Services.Analysis;
+using FaceShield.Services.Video;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FaceShield.ViewModels.Workspace;
+
+public sealed class IssueReviewCoordinator : IDisposable
+{
+    private const int SuspiciousNoFaceMaxGap = 8;
+    private const int NoDetectionReviewSampleCount = 12;
+    private const int SparseNoFaceReviewSampleCount = 12;
+    private const double SparseNoFaceReviewMaxCoverageRatio = 0.20;
+    private const int IssueTimeResolveBudget = 96;
+    private const int IssueTimeCacheProbeBudget = 192;
+
+    private readonly FrameMaskProvider _maskProvider;
+    private readonly Func<bool> _tryBeginLifetimeOperation;
+    private readonly Action _endLifetimeOperation;
+    private readonly ObservableCollection<IssueEntryViewModel> _noFaceIssueEntries = new();
+    private readonly ObservableCollection<IssueEntryViewModel> _lowConfidenceIssueEntries = new();
+    private readonly ObservableCollection<IssueEntryViewModel> _flickerIssueEntries = new();
+    private HashSet<int> _noFaceIssueSet = new();
+    private HashSet<int> _lowConfidenceIssueSet = new();
+    private HashSet<int> _flickerIssueSet = new();
+    private int[] _anomalies = Array.Empty<int>();
+    private CancellationTokenSource? _timeCts;
+    private bool _disposed;
+
+    public IssueReviewCoordinator(
+        FrameMaskProvider maskProvider,
+        Func<bool> tryBeginLifetimeOperation,
+        Action endLifetimeOperation)
+    {
+        _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
+        _tryBeginLifetimeOperation = tryBeginLifetimeOperation ?? throw new ArgumentNullException(nameof(tryBeginLifetimeOperation));
+        _endLifetimeOperation = endLifetimeOperation ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
+    }
+
+    public ObservableCollection<IssueEntryViewModel> NoFaceIssueEntries => _noFaceIssueEntries;
+    public ObservableCollection<IssueEntryViewModel> LowConfidenceIssueEntries => _lowConfidenceIssueEntries;
+    public ObservableCollection<IssueEntryViewModel> FlickerIssueEntries => _flickerIssueEntries;
+
+    public event Action? StateChanged;
+
+    public async Task BuildAsync(
+        int totalFrames,
+        float lowConfidenceCutoff,
+        FaceFilterProfile filterProfile,
+        TimelineThumbnailProvider? timestampProvider,
+        int anchorFrame,
+        double fps,
+        double secondsPerScreen,
+        bool hideResolved,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IssueAnalysisResult result = totalFrames <= 0
+            ? IssueAnalysisResult.Empty
+            : await Task.Run(
+                () => Analyze(totalFrames, lowConfidenceCutoff, filterProfile, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ApplyResult(result, timestampProvider, hideResolved);
+            StateChanged?.Invoke();
+        });
+
+        if (totalFrames <= 0)
+        {
+            CancelTimeRefresh();
+            return;
+        }
+
+        RefreshTimes(timestampProvider, anchorFrame, fps, secondsPerScreen);
+    }
+
+    private IssueAnalysisResult Analyze(
+        int totalFrames,
+        float lowConfidenceCutoff,
+        FaceFilterProfile filterProfile,
+        CancellationToken cancellationToken)
+    {
+        var noFace = new List<int>();
+        var lowConfidence = new List<int>();
+        var flicker = new List<int>();
+        var faceFrames = new SortedSet<int>();
+
+        foreach (var entry in _maskProvider.GetFaceMaskEntries())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int frameIndex = entry.Key;
+            if (frameIndex < 0 || frameIndex >= totalFrames)
+                continue;
+
+            var data = entry.Value;
+            if (data.Faces.Count == 0)
+                continue;
+
+            faceFrames.Add(frameIndex);
+            if (data.MinConfidence.HasValue && data.MinConfidence.Value < lowConfidenceCutoff)
+                lowConfidence.Add(frameIndex);
+        }
+
+        int[] faceFrameIndices = faceFrames.ToArray();
+        if (filterProfile == FaceFilterProfile.Yolo)
+        {
+            if (faceFrameIndices.Length == 0)
+                AddNoDetectionReviewFrames(totalFrames, noFace, cancellationToken);
+            else
+            {
+                AddSuspiciousNoFaceGaps(faceFrameIndices, totalFrames, noFace, cancellationToken);
+                AddSparseNoFaceReviewFrames(faceFrameIndices, totalFrames, noFace, cancellationToken);
+            }
+        }
+        else
+        {
+            AddSuspiciousNoFaceGaps(faceFrameIndices, totalFrames, noFace, cancellationToken);
+        }
+
+        for (int i = 1; i < faceFrameIndices.Length; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int previous = faceFrameIndices[i - 1];
+            int current = faceFrameIndices[i];
+            if (current - previous == 2)
+                flicker.Add(previous + 1);
+        }
+
+        noFace.Sort();
+        lowConfidence.Sort();
+        flicker.Sort();
+        return new IssueAnalysisResult(noFace.ToArray(), lowConfidence.ToArray(), flicker.ToArray());
+    }
+
+    private void ApplyResult(
+        IssueAnalysisResult result,
+        TimelineThumbnailProvider? timestampProvider,
+        bool hideResolved)
+    {
+        _noFaceIssueSet = new HashSet<int>(result.NoFaceFrames);
+        _lowConfidenceIssueSet = new HashSet<int>(result.LowConfidenceFrames);
+        _flickerIssueSet = new HashSet<int>(result.FlickerFrames);
+        _anomalies = MergeSortedFrames(
+            MergeSortedFrames(result.NoFaceFrames, result.LowConfidenceFrames),
+            result.FlickerFrames);
+
+        ResetIssueList(_noFaceIssueEntries, result.NoFaceFrames, "얼굴 없음", timestampProvider, hideResolved);
+        ResetIssueList(_lowConfidenceIssueEntries, result.LowConfidenceFrames, "신뢰도 낮음", timestampProvider, hideResolved);
+        ResetIssueList(_flickerIssueEntries, result.FlickerFrames, "연속 끊김", timestampProvider, hideResolved);
+    }
+
+    public IssueReviewStateSnapshot CreateStateSnapshot()
+    {
+        return new IssueReviewStateSnapshot(
+            _noFaceIssueSet.OrderBy(static x => x).ToArray(),
+            _lowConfidenceIssueSet.OrderBy(static x => x).ToArray(),
+            _flickerIssueSet.OrderBy(static x => x).ToArray(),
+            (int[])_anomalies.Clone());
+    }
+
+    public bool TryGetAdjacentAnomaly(int currentFrame, bool forward, out int targetFrame)
+    {
+        targetFrame = -1;
+        if (_anomalies.Length == 0)
+            return false;
+
+        int idx = Array.BinarySearch(_anomalies, currentFrame);
+        if (forward)
+        {
+            idx = idx >= 0 ? idx + 1 : ~idx;
+            if (idx >= _anomalies.Length)
+                idx = 0;
+        }
+        else
+        {
+            idx = idx >= 0 ? idx - 1 : ~idx - 1;
+            if (idx < 0)
+                idx = _anomalies.Length - 1;
+        }
+
+        targetFrame = _anomalies[idx];
+        return true;
+    }
+
+    public bool TryGetFirstAnomaly(out int targetFrame)
+    {
+        targetFrame = _anomalies.Length > 0 ? _anomalies[0] : -1;
+        return targetFrame >= 0;
+    }
+
+    public void ResolveIssueForFrame(int frameIndex)
+    {
+        bool changed = _noFaceIssueSet.Remove(frameIndex);
+        changed |= _lowConfidenceIssueSet.Remove(frameIndex);
+        changed |= _flickerIssueSet.Remove(frameIndex);
+        if (!changed)
+            return;
+
+        RemoveIssueEntry(_noFaceIssueEntries, frameIndex);
+        RemoveIssueEntry(_lowConfidenceIssueEntries, frameIndex);
+        RemoveIssueEntry(_flickerIssueEntries, frameIndex);
+        _anomalies = MergeSortedFrames(
+            MergeSortedFrames(
+                _noFaceIssueSet.OrderBy(static x => x).ToArray(),
+                _lowConfidenceIssueSet.OrderBy(static x => x).ToArray()),
+            _flickerIssueSet.OrderBy(static x => x).ToArray());
+        StateChanged?.Invoke();
+    }
+
+    public void SetHideResolved(bool hideResolved)
+    {
+        SetIssueVisibility(_noFaceIssueEntries, hideResolved);
+        SetIssueVisibility(_lowConfidenceIssueEntries, hideResolved);
+        SetIssueVisibility(_flickerIssueEntries, hideResolved);
+    }
+
+    public void RefreshTimes(
+        TimelineThumbnailProvider? provider,
+        int anchorFrame,
+        double fps,
+        double secondsPerScreen)
+    {
+        if (_disposed || provider == null || provider.OperationsSuspended)
+            return;
+
+        double safeFps = double.IsFinite(fps) && fps > 0 ? fps : 30.0;
+        double safeSpan = double.IsFinite(secondsPerScreen) && secondsPerScreen > 0
+            ? secondsPerScreen
+            : 10.0;
+        int nearFrameDistance = (int)Math.Clamp(
+            Math.Ceiling(safeFps * safeSpan * 2.0),
+            120,
+            50_000);
+
+        var cts = new CancellationTokenSource();
+        CancellationTokenSource? previous = Interlocked.Exchange(ref _timeCts, cts);
+        if (previous != null)
+        {
+            try { previous.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        _ = RefreshTimesAsync(provider, cts, anchorFrame, nearFrameDistance);
+    }
+
+    private async Task RefreshTimesAsync(
+        TimelineThumbnailProvider provider,
+        CancellationTokenSource cts,
+        int anchorFrame,
+        int nearFrameDistance)
+    {
+        if (!_tryBeginLifetimeOperation())
+        {
+            Interlocked.CompareExchange(ref _timeCts, null, cts);
+            cts.Dispose();
+            return;
+        }
+
+        try
+        {
+            IssueEntryViewModel[] entries = await Dispatcher.UIThread.InvokeAsync(
+                () => CollectIssueEntriesNearAnchor(anchorFrame, IssueTimeCacheProbeBudget));
+            if (entries.Length == 0)
+                return;
+
+            CancellationToken token = cts.Token;
+            Dictionary<int, double> resolved = await Task.Run(() =>
+            {
+                var times = new Dictionary<int, double>();
+                var unresolved = new HashSet<int>();
+                foreach (int frameIndex in entries.Select(static entry => entry.FrameIndex).Distinct())
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (provider.TryGetFrameTimestampSeconds(frameIndex, out double timestampSeconds))
+                        times[frameIndex] = timestampSeconds;
+                    else
+                        unresolved.Add(frameIndex);
+                }
+
+                if (provider.OperationsSuspended || unresolved.Count == 0)
+                    return times;
+
+                int effectiveAnchor = anchorFrame >= 0 ? anchorFrame : unresolved.Min();
+                int[] candidates = unresolved
+                    .Where(frameIndex => frameIndex == effectiveAnchor || Math.Abs((long)frameIndex - effectiveAnchor) <= nearFrameDistance)
+                    .OrderBy(frameIndex => Math.Abs((long)frameIndex - effectiveAnchor))
+                    .Take(IssueTimeResolveBudget)
+                    .OrderBy(static frameIndex => frameIndex)
+                    .ToArray();
+
+                foreach (int frameIndex in candidates)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (provider.OperationsSuspended)
+                        break;
+                    if (provider.TryResolveFrameTimestampSeconds(frameIndex, token, out double timestampSeconds))
+                        times[frameIndex] = timestampSeconds;
+                }
+
+                return times;
+            }, token).ConfigureAwait(false);
+
+            token.ThrowIfCancellationRequested();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (token.IsCancellationRequested || !ReferenceEquals(_timeCts, cts))
+                    return;
+
+                foreach (IssueEntryViewModel entry in entries)
+                {
+                    if (resolved.TryGetValue(entry.FrameIndex, out double timestampSeconds))
+                        entry.TimeText = FormatIssueTime(timestampSeconds);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _timeCts, null, cts);
+            cts.Dispose();
+            _endLifetimeOperation();
+        }
+    }
+
+    public void CancelTimeRefresh()
+    {
+        CancellationTokenSource? cts = Interlocked.Exchange(ref _timeCts, null);
+        if (cts == null)
+            return;
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void ResetIssueList(
+        ObservableCollection<IssueEntryViewModel> target,
+        IReadOnlyList<int> frames,
+        string label,
+        TimelineThumbnailProvider? provider,
+        bool hideResolved)
+    {
+        target.Clear();
+        for (int i = 0; i < frames.Count; i++)
+        {
+            string timeText = "--:--.--";
+            if (provider?.TryGetFrameTimestampSeconds(frames[i], out double timestampSeconds) == true)
+                timeText = FormatIssueTime(timestampSeconds);
+
+            var entry = new IssueEntryViewModel(frames[i], label, timeText)
+            {
+                HideResolved = hideResolved
+            };
+            entry.Resolved += OnIssueResolved;
+            target.Add(entry);
+        }
+    }
+
+    private void OnIssueResolved(IssueEntryViewModel entry)
+        => ResolveIssueForFrame(entry.FrameIndex);
+
+    private IssueEntryViewModel[] CollectIssueEntriesNearAnchor(int anchorFrame, int maxEntries)
+    {
+        if (maxEntries <= 0)
+            return Array.Empty<IssueEntryViewModel>();
+
+        int safeAnchor = Math.Max(0, anchorFrame);
+        int perCollectionBudget = Math.Max(1, (maxEntries + 2) / 3);
+        var candidates = new List<IssueEntryViewModel>(Math.Min(maxEntries * 2, 512));
+        AddIssueEntriesNearAnchor(_noFaceIssueEntries, safeAnchor, perCollectionBudget, candidates);
+        AddIssueEntriesNearAnchor(_lowConfidenceIssueEntries, safeAnchor, perCollectionBudget, candidates);
+        AddIssueEntriesNearAnchor(_flickerIssueEntries, safeAnchor, perCollectionBudget, candidates);
+
+        return candidates
+            .OrderBy(entry => Math.Abs((long)entry.FrameIndex - safeAnchor))
+            .ThenBy(static entry => entry.FrameIndex)
+            .Take(maxEntries)
+            .ToArray();
+    }
+
+    private static void AddIssueEntriesNearAnchor(
+        ObservableCollection<IssueEntryViewModel> source,
+        int anchorFrame,
+        int maxEntries,
+        List<IssueEntryViewModel> target)
+    {
+        if (source.Count == 0 || maxEntries <= 0)
+            return;
+
+        int low = 0;
+        int high = source.Count;
+        while (low < high)
+        {
+            int mid = low + ((high - low) / 2);
+            if (source[mid].FrameIndex < anchorFrame)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+
+        int left = low - 1;
+        int right = low;
+        int added = 0;
+        while (added < maxEntries && (left >= 0 || right < source.Count))
+        {
+            if (left < 0)
+                target.Add(source[right++]);
+            else if (right >= source.Count)
+                target.Add(source[left--]);
+            else
+            {
+                long leftDistance = Math.Abs((long)source[left].FrameIndex - anchorFrame);
+                long rightDistance = Math.Abs((long)source[right].FrameIndex - anchorFrame);
+                if (leftDistance <= rightDistance)
+                    target.Add(source[left--]);
+                else
+                    target.Add(source[right++]);
+            }
+            added++;
+        }
+    }
+
+    private static void RemoveIssueEntry(ObservableCollection<IssueEntryViewModel> target, int frameIndex)
+    {
+        for (int i = target.Count - 1; i >= 0; i--)
+        {
+            if (target[i].FrameIndex == frameIndex)
+                target.RemoveAt(i);
+        }
+    }
+
+    private static void SetIssueVisibility(ObservableCollection<IssueEntryViewModel> entries, bool hideResolved)
+    {
+        for (int i = 0; i < entries.Count; i++)
+            entries[i].HideResolved = hideResolved;
+    }
+
+    private static string FormatIssueTime(double timestampSeconds)
+    {
+        if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+            return "--:--.--";
+        TimeSpan time = TimeSpan.FromSeconds(timestampSeconds);
+        long minutes = (long)Math.Floor(time.TotalMinutes);
+        int hundredths = time.Milliseconds / 10;
+        return $"{minutes:D2}:{time.Seconds:D2}.{hundredths:D2}";
+    }
+
+    private static void AddSuspiciousNoFaceGaps(
+        IReadOnlyList<int> faceFrames,
+        int totalFrames,
+        List<int> noFace,
+        CancellationToken cancellationToken)
+    {
+        if (faceFrames.Count < 2 || totalFrames <= 0)
+            return;
+        for (int i = 1; i < faceFrames.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int previous = faceFrames[i - 1];
+            int current = faceFrames[i];
+            int length = current - previous - 1;
+            if (length <= 0 || length > SuspiciousNoFaceMaxGap)
+                continue;
+            for (int frame = previous + 1; frame < Math.Min(current, totalFrames); frame++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                noFace.Add(frame);
+            }
+        }
+    }
+
+    private static void AddNoDetectionReviewFrames(
+        int totalFrames,
+        List<int> noFace,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (totalFrames <= 0)
+            return;
+        int sampleCount = Math.Min(NoDetectionReviewSampleCount, totalFrames);
+        if (sampleCount <= 0)
+            return;
+
+        var frames = new SortedSet<int>();
+        if (sampleCount == 1)
+            frames.Add(0);
+        else
+        {
+            for (int i = 0; i < sampleCount; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int frame = (int)Math.Round(i * (totalFrames - 1) / (double)(sampleCount - 1));
+                frames.Add(Math.Clamp(frame, 0, totalFrames - 1));
+            }
+        }
+        noFace.AddRange(frames);
+        System.Diagnostics.Debug.WriteLine($"[AutoMaskNoDetectionReview] frames={string.Join(",", frames)} totalFrames={totalFrames}");
+    }
+
+    private static void AddSparseNoFaceReviewFrames(
+        IReadOnlyList<int> faceFrames,
+        int totalFrames,
+        List<int> noFace,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int faceFrameCount = faceFrames.Count;
+        if (totalFrames <= 0 || faceFrameCount <= 0)
+            return;
+        double coverage = faceFrameCount / (double)totalFrames;
+        if (coverage > SparseNoFaceReviewMaxCoverageRatio || faceFrameCount < 2)
+            return;
+
+        var candidateFrames = new List<int>();
+        for (int i = 1; i < faceFrames.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int previous = faceFrames[i - 1];
+            int current = faceFrames[i];
+            int length = current - previous - 1;
+            if (length <= SuspiciousNoFaceMaxGap)
+                continue;
+            int start = previous + 1;
+            candidateFrames.Add(start);
+            if (length > 2)
+                candidateFrames.Add(start + length / 2);
+            candidateFrames.Add(current - 1);
+        }
+
+        if (candidateFrames.Count == 0)
+            return;
+        var frames = new SortedSet<int>(noFace);
+        int sampleCount = Math.Min(SparseNoFaceReviewSampleCount, candidateFrames.Count);
+        if (sampleCount == 1)
+            frames.Add(candidateFrames[0]);
+        else
+        {
+            for (int sample = 0; sample < sampleCount; sample++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int index = (int)Math.Round(sample * (candidateFrames.Count - 1) / (double)(sampleCount - 1));
+                frames.Add(Math.Clamp(candidateFrames[index], 0, totalFrames - 1));
+            }
+        }
+        noFace.Clear();
+        noFace.AddRange(frames);
+        System.Diagnostics.Debug.WriteLine($"[AutoMaskSparseNoFaceReview] faceFrames={faceFrameCount} totalFrames={totalFrames} coverage={coverage:0.000} frames={string.Join(",", frames)}");
+    }
+
+    private static int[] MergeSortedFrames(IReadOnlyList<int> first, IReadOnlyList<int> second)
+    {
+        if (first.Count == 0)
+            return CopyFrames(second);
+        if (second.Count == 0)
+            return CopyFrames(first);
+        var merged = new int[first.Count + second.Count];
+        int i = 0, j = 0, k = 0;
+        while (i < first.Count && j < second.Count)
+        {
+            int a = first[i];
+            int b = second[j];
+            if (a == b)
+            {
+                merged[k++] = a;
+                i++;
+                j++;
+            }
+            else if (a < b)
+                merged[k++] = first[i++];
+            else
+                merged[k++] = second[j++];
+        }
+        while (i < first.Count)
+            merged[k++] = first[i++];
+        while (j < second.Count)
+            merged[k++] = second[j++];
+        if (k == merged.Length)
+            return merged;
+        var trimmed = new int[k];
+        Array.Copy(merged, trimmed, k);
+        return trimmed;
+    }
+
+    private static int[] CopyFrames(IReadOnlyList<int> source)
+    {
+        if (source is int[] arr)
+            return (int[])arr.Clone();
+        var copy = new int[source.Count];
+        for (int i = 0; i < source.Count; i++)
+            copy[i] = source[i];
+        return copy;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        CancelTimeRefresh();
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(IssueReviewCoordinator));
+    }
+
+    private sealed record IssueAnalysisResult(
+        int[] NoFaceFrames,
+        int[] LowConfidenceFrames,
+        int[] FlickerFrames)
+    {
+        internal static IssueAnalysisResult Empty { get; } = new(
+            Array.Empty<int>(),
+            Array.Empty<int>(),
+            Array.Empty<int>());
+    }
+}
+
+public sealed record IssueReviewStateSnapshot(
+    int[] NoFaceFrames,
+    int[] LowConfidenceFrames,
+    int[] FlickerFrames,
+    int[] Anomalies);
+""")
+
+# Remove issue state and constants from WorkspaceViewModel fields.
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        private readonly WorkspacePersistenceCoordinator? _workspacePersistence;\n        private int[] _autoAnomalies = Array.Empty<int>();\n        private const float LowConfidenceMargin = 0.05f;\n        private const int SuspiciousNoFaceMaxGap = 8;\n        private const int NoDetectionReviewSampleCount = 12;\n        private const int SparseNoFaceReviewSampleCount = 12;\n        private const double SparseNoFaceReviewMaxCoverageRatio = 0.20;\n        private const int AutoDetectionCompletionTailToleranceFrames = 0;\n""",
+    """        private readonly WorkspacePersistenceCoordinator? _workspacePersistence;\n        private readonly IssueReviewCoordinator _issueReview;\n        private const float LowConfidenceMargin = 0.05f;\n        private const int AutoDetectionCompletionTailToleranceFrames = 0;\n""")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        private readonly ObservableCollection<IssueEntryViewModel> _noFaceIssueEntries = new();\n        private readonly ObservableCollection<IssueEntryViewModel> _lowConfidenceIssueEntries = new();\n        private readonly ObservableCollection<IssueEntryViewModel> _flickerIssueEntries = new();\n        private HashSet<int> _noFaceIssueSet = new();\n        private HashSet<int> _lowConfidenceIssueSet = new();\n        private HashSet<int> _flickerIssueSet = new();\n\n""",
+    """
+""")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        private CancellationTokenSource? _issueTimeCts;\n""",
+    """")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        private const int IssueTimeResolveBudget = 96;\n        private const int IssueTimeCacheProbeBudget = 192;\n""",
+    """")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        public ObservableCollection<IssueEntryViewModel> NoFaceIssueEntries => _noFaceIssueEntries;\n        public ObservableCollection<IssueEntryViewModel> LowConfidenceIssueEntries => _lowConfidenceIssueEntries;\n        public ObservableCollection<IssueEntryViewModel> FlickerIssueEntries => _flickerIssueEntries;\n""",
+    """        public ObservableCollection<IssueEntryViewModel> NoFaceIssueEntries => _issueReview.NoFaceIssueEntries;\n        public ObservableCollection<IssueEntryViewModel> LowConfidenceIssueEntries => _issueReview.LowConfidenceIssueEntries;\n        public ObservableCollection<IssueEntryViewModel> FlickerIssueEntries => _issueReview.FlickerIssueEntries;\n""")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """            FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);\n            if (!deferSessionInit)\n""",
+    """            FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);\n            _issueReview = new IssueReviewCoordinator(\n                _maskProvider,\n                TryBeginLifetimeOperation,\n                EndLifetimeOperation);\n            _issueReview.StateChanged += ApplyIssueReviewState;\n            if (!deferSessionInit)\n""")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        partial void OnHideResolvedIssuesChanged(bool value)\n        {\n            UpdateIssueVisibility(value);\n        }\n""",
+    """        partial void OnHideResolvedIssuesChanged(bool value)\n        {\n            _issueReview.SetHideResolved(value);\n        }\n""")
+
+replace_between(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        private void JumpAutoAnomaly(bool forward)\n""",
+    """        [RelayCommand]\n        private void JumpToIssue(int frameIndex)\n""",
+    """        private void JumpAutoAnomaly(bool forward)\n        {\n            if (!_issueReview.TryGetAdjacentAnomaly(\n                    FrameList.SelectedFrameIndex,\n                    forward,\n                    out int targetFrame))\n            {\n                return;\n            }\n\n            FrameList.SelectedFrameIndex = targetFrame;\n            RefreshIssueTimesInBackground(targetFrame);\n        }\n\n""")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        [RelayCommand]\n        private void ReviewAutoAnomalies()\n        {\n            if (_autoAnomalies.Length == 0)\n                return;\n\n            int targetFrame = _autoAnomalies[0];\n            FrameList.SelectedFrameIndex = targetFrame;\n            RefreshIssueTimesInBackground(targetFrame);\n        }\n""",
+    """        [RelayCommand]\n        private void ReviewAutoAnomalies()\n        {\n            if (!_issueReview.TryGetFirstAnomaly(out int targetFrame))\n                return;\n\n            FrameList.SelectedFrameIndex = targetFrame;\n            RefreshIssueTimesInBackground(targetFrame);\n        }\n""")
+
+# Replace the large issue implementation block but retain low-confidence cutoff in the VM.
+replace_between(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """        private async Task BuildAutoAnomaliesAsync(\n""",
+    """        public void RestoreFromStore(WorkspaceStateStore store)\n""",
+    """        private async Task BuildAutoAnomaliesAsync(\n            CancellationToken cancellationToken)\n        {\n            cancellationToken.ThrowIfCancellationRequested();\n            await _issueReview.BuildAsync(\n                FrameList.TotalFrames,\n                GetLowConfidenceCutoff(),\n                _autoOptions.FilterProfile,\n                FrameList.ThumbnailProvider,\n                FrameList.SelectedFrameIndex,\n                FrameList.Fps,\n                FrameList.SecondsPerScreen,\n                HideResolvedIssues,\n                cancellationToken);\n        }\n\n        private float GetLowConfidenceCutoff()\n        {\n            var defaults = FaceOnnxDetector.GetDefaultThresholds();\n            float baseThreshold = _detectorFactoryOptions.Backend switch\n            {\n                FaceDetectorBackend.YoloFaceOnnx when _detectorFactoryOptions.YoloFaceOnnxOptions != null =>\n                    _detectorFactoryOptions.YoloFaceOnnxOptions.ConfidenceThreshold,\n                FaceDetectorBackend.ScrfdOnnx when _detectorFactoryOptions.ScrfdOnnxOptions != null =>\n                    _detectorFactoryOptions.ScrfdOnnxOptions.ConfidenceThreshold,\n                FaceDetectorBackend.YuNetOnnx when _detectorFactoryOptions.YuNetOnnxOptions != null =>\n                    _detectorFactoryOptions.YuNetOnnxOptions.ConfidenceThreshold,\n                FaceDetectorBackend.FaceOnnx when _detectorFactoryOptions.FaceOnnxOptions != null =>\n                    _detectorFactoryOptions.FaceOnnxOptions.ConfidenceThreshold ?? defaults.Confidence,\n                _ => _detectorOptions.ConfidenceThreshold ?? defaults.Confidence\n            };\n            return Math.Clamp(baseThreshold + LowConfidenceMargin, 0.0f, 0.99f);\n        }\n\n        private void RefreshIssueTimesInBackground(int? preferredFrameIndex = null)\n        {\n            _issueReview.RefreshTimes(\n                FrameList.ThumbnailProvider,\n                preferredFrameIndex ?? FrameList.SelectedFrameIndex,\n                FrameList.Fps,\n                FrameList.SecondsPerScreen);\n        }\n\n        private void CancelIssueTimeRefresh()\n            => _issueReview.CancelTimeRefresh();\n\n        private void OnMaskEdited(int frameIndex)\n            => _issueReview.ResolveIssueForFrame(frameIndex);\n\n        private void ApplyIssueReviewState()\n        {\n            IssueReviewStateSnapshot state = _issueReview.CreateStateSnapshot();\n            FrameList.NoFaceIssueFrames = state.NoFaceFrames;\n            FrameList.LowConfidenceIssueFrames = state.LowConfidenceFrames;\n            FrameList.FlickerIssueFrames = state.FlickerFrames;\n            AutoAnomalyCount = state.Anomalies.Length;\n            HasAutoAnomalies = state.Anomalies.Length > 0;\n        }\n\n""")
+
+# Existing explicit subscription is no longer needed; coordinator owns entry resolve events.
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """            FramePreview.MaskEdited += OnMaskEdited;\n""",
+    """            FramePreview.MaskEdited += OnMaskEdited;\n""")
+
+replace_once(
+    "ViewModels/Pages/WorkspaceViewModel.cs",
+    """            _workspacePersistence?.Dispose();\n            _maskProvider.Dispose();\n""",
+    """            _issueReview.Dispose();\n            _workspacePersistence?.Dispose();\n            _maskProvider.Dispose();\n""")
+
+print("Phase C2 issue review coordinator extraction applied.")
