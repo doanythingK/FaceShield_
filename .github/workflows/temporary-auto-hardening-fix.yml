@@ -42,30 +42,30 @@ jobs:
           start = text.index('if any(line.strip() for line in lines[brace_idx + 1 : close_idx]):')
           end = text.index('\n\nseq_start =', start)
           text = text[:start] + '''if not any("throw;" in line for line in lines[brace_idx + 1 : close_idx]):
-              indent = lines[brace_idx][: len(lines[brace_idx]) - len(lines[brace_idx].lstrip())] + "    "
-              lines[brace_idx + 1 : close_idx] = [indent + "throw;" + eol(lines[brace_idx])]''' + text[end:]
+    indent = lines[brace_idx][: len(lines[brace_idx]) - len(lines[brace_idx].lstrip())] + "    "
+    lines[brace_idx + 1 : close_idx] = [indent + "throw;" + eol(lines[brace_idx])]''' + text[end:]
 
           old = '''stop_if = find(lines, "if (!canBridge &&")
-          if "ThrowIfCancellationRequested" not in lines[stop_if - 1]:
-              insert_before(lines, stop_if, "cancellationToken.ThrowIfCancellationRequested();")'''
+if "ThrowIfCancellationRequested" not in lines[stop_if - 1]:
+    insert_before(lines, stop_if, "cancellationToken.ThrowIfCancellationRequested();")'''
           new = '''scene_cut_probe = find(lines, "int nextKey =")
-          if "ThrowIfCancellationRequested" not in lines[scene_cut_probe - 1]:
-              insert_before(lines, scene_cut_probe, "cancellationToken.ThrowIfCancellationRequested();")'''
+if "ThrowIfCancellationRequested" not in lines[scene_cut_probe - 1]:
+    insert_before(lines, scene_cut_probe, "cancellationToken.ThrowIfCancellationRequested();")'''
           if text.count(old) != 1:
               raise RuntimeError(f'Expected one stale scene-cut insertion block, found {text.count(old)}')
           text = text.replace(old, new)
 
           old = '''interp = find(lines, "? InterpolateSparseResult(current, nextPositive!, frame)")
-          lines[interp] = lines[interp].replace(
-              "InterpolateSparseResult(current, nextPositive!, frame)",
-              "InterpolateSparseResult(current, nextPositive!, frame, cancellationToken)",
-          )'''
+lines[interp] = lines[interp].replace(
+    "InterpolateSparseResult(current, nextPositive!, frame)",
+    "InterpolateSparseResult(current, nextPositive!, frame, cancellationToken)",
+)'''
           new = '''interp_call = find(lines, "? InterpolateSparseResult(")
-          interp_frame = find_next(lines, "frame)", interp_call, 8)
-          nl = eol(lines[interp_frame])
-          indent = lines[interp_frame][: len(lines[interp_frame]) - len(lines[interp_frame].lstrip())]
-          lines[interp_frame] = lines[interp_frame].replace("frame)", "frame,")
-          lines.insert(interp_frame + 1, indent + "cancellationToken)" + nl)'''
+interp_frame = find_next(lines, "frame)", interp_call, 8)
+nl = eol(lines[interp_frame])
+indent = lines[interp_frame][: len(lines[interp_frame]) - len(lines[interp_frame].lstrip())]
+lines[interp_frame] = lines[interp_frame].replace("frame)", "frame,")
+lines.insert(interp_frame + 1, indent + "cancellationToken)" + nl)'''
           if text.count(old) != 1:
               raise RuntimeError(f'Expected one stale interpolation call block, found {text.count(old)}')
           text = text.replace(old, new)
@@ -132,7 +132,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -f temporary-patch.log temporary-runtime-verify.log temporary-sparse-verify.log
           git rm -f --ignore-unmatch temporary-patch-error.txt
-          git rm .github/workflows/temporary-auto-hardening-fix.yml scripts/temporary_apply_auto_hardening.py
+          git rm -f scripts/temporary_apply_auto_hardening.py
           git add Services/Analysis/AutoMaskGenerator.cs \
                   Services/Analysis/SparseTrackingMaterializer.cs \
                   Services/Video/FrameMaskProvider.cs \
