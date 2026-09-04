@@ -1,0 +1,78 @@
+name: Temporary Refactor Phase C3
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply export coordinator extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/temporary_refactor_phase_c3.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('ViewModels/Workspace/WorkspaceExportCoordinator.cs')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('.ConfigureAwait(false)', '')
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config core.whitespace cr-at-eol
+          git diff --check
+          grep -q 'class WorkspaceExportCoordinator' ViewModels/Workspace/WorkspaceExportCoordinator.cs
+          grep -q '_exportCoordinator = new WorkspaceExportCoordinator' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_exportCoordinator.ExportAsync' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_exportCoordinator.Cancel()' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q '_exportCoordinator.ApplyGateState' ViewModels/Pages/WorkspaceViewModel.cs
+          grep -q 'WorkspaceAutoExportGateState exportState = _exportCoordinator.GateState' ViewModels/Pages/WorkspaceViewModel.cs
+          if grep -q '_exportCts' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q '_exportGate' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q '_autoExportGateRequired' ViewModels/Pages/WorkspaceViewModel.cs; then exit 1; fi
+          if grep -q 'ConfigureAwait(false)' ViewModels/Workspace/WorkspaceExportCoordinator.cs; then exit 1; fi
+
+      - name: Build Release
+        shell: bash
+        run: |
+          set +e
+          dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo > /tmp/phase-c3-build.log 2>&1
+          status=$?
+          cat /tmp/phase-c3-build.log
+          if [ $status -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/phase-c3-build.log temporary-refactor-phase-c3-error.txt
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add temporary-refactor-phase-c3-error.txt
+            git commit -m 'chore: capture export coordinator build failure'
+            git push origin HEAD:refactor/ownership-workspace-hardening
+            exit $status
+          fi
+
+      - name: Commit verified phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/temporary_refactor_phase_c3.py
+          rm -f .github/workflows/temporary-refactor-phase-c3.yml
+          rm -f temporary-refactor-phase-c3-error.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Extract workspace export coordination'
+          git push origin HEAD:refactor/ownership-workspace-hardening
