@@ -166,69 +166,80 @@ namespace FaceShield.Services.Analysis
             {
                 await Task.Run(() =>
                 {
-                    bool canPipeline = _options.DetectEveryNFrames <= 1;
-                    bool canSparsePipeline = _options.UseTracking &&
-                        _options.DetectEveryNFrames > 1 &&
-                        _detector is IBgraFaceDetector &&
-                        _detectorFactory != null &&
-                        _options.ParallelDetectorCount >= 1;
+                    AutoMaskGenerationStrategyKind strategy =
+                        AutoMaskGenerationStrategyPlanner.Resolve(
+                            _options,
+                            _detector,
+                            _detectorFactory);
 
-                    if (canPipeline && _detector is IBgraFaceDetector bgraDetector)
+                    switch (strategy)
                     {
-                        if (_detectorFactory != null && _options.ParallelDetectorCount > 1)
+                        case AutoMaskGenerationStrategyKind.PipelinedParallel:
                         {
-                            Debug.WriteLine($"[AutoMask] mode=pipe-parallel({_options.ParallelDetectorCount})");
-                            var detectors = new List<IBgraFaceDetector> { bgraDetector };
-                            try
+                            var primary = (IBgraFaceDetector)_detector;
+                            using var pool = AutoMaskGenerationStrategyPlanner.CreateCompatibleDetectorPool(
+                                primary,
+                                _detectorFactory!,
+                                _options.ParallelDetectorCount);
+                            if (pool.Detectors.Count > 1)
                             {
-                                int toCreate = Math.Max(1, _options.ParallelDetectorCount) - 1;
-                                for (int i = 0; i < toCreate; i++)
-                                {
-                                    var created = _detectorFactory.CreateDetector();
-                                    if (!TryAddCompatibleParallelDetector(detectors, bgraDetector, created))
-                                        break;
-                                }
-
-                                if (detectors.Count > 1)
-                                {
-                                    GeneratePipelinedDetectAllParallel(videoPath, detectors, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
-                                    return;
-                                }
-                            }
-                            finally
-                            {
-                                for (int i = 1; i < detectors.Count; i++)
-                                    detectors[i].Dispose();
-                            }
-                        }
-
-                        Debug.WriteLine("[AutoMask] mode=pipe-single");
-                        GeneratePipelinedDetectAll(videoPath, bgraDetector, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
-                        return;
-                    }
-
-                    if (canSparsePipeline && _detector is IBgraFaceDetector sparseBgraDetector)
-                    {
-                        Debug.WriteLine($"[AutoMask] mode=sparse-pipe-parallel({_options.ParallelDetectorCount})");
-                        var detectors = new List<IBgraFaceDetector> { sparseBgraDetector };
-                        try
-                        {
-                            int toCreate = Math.Max(1, _options.ParallelDetectorCount) - 1;
-                            for (int i = 0; i < toCreate; i++)
-                            {
-                                var created = _detectorFactory!.CreateDetector();
-                                if (!TryAddCompatibleParallelDetector(detectors, sparseBgraDetector, created))
-                                    break;
+                                Debug.WriteLine($"[AutoMask] mode=pipe-parallel({pool.Detectors.Count})");
+                                GeneratePipelinedDetectAllParallel(
+                                    videoPath,
+                                    pool.Detectors,
+                                    progress,
+                                    ct,
+                                    effectiveStartFrameIndex,
+                                    totalFrames,
+                                    onFrameProcessed);
+                                return;
                             }
 
-                            GenerateSparsePipelinedTrackingParallel(videoPath, detectors, progress, ct, effectiveStartFrameIndex, totalFrames, onFrameProcessed);
+                            Debug.WriteLine("[AutoMask] mode=pipe-single");
+                            GeneratePipelinedDetectAll(
+                                videoPath,
+                                primary,
+                                progress,
+                                ct,
+                                effectiveStartFrameIndex,
+                                totalFrames,
+                                onFrameProcessed);
                             return;
                         }
-                        finally
+
+                        case AutoMaskGenerationStrategyKind.PipelinedSingle:
+                            Debug.WriteLine("[AutoMask] mode=pipe-single");
+                            GeneratePipelinedDetectAll(
+                                videoPath,
+                                (IBgraFaceDetector)_detector,
+                                progress,
+                                ct,
+                                effectiveStartFrameIndex,
+                                totalFrames,
+                                onFrameProcessed);
+                            return;
+
+                        case AutoMaskGenerationStrategyKind.SparsePipelinedParallel:
                         {
-                            for (int i = 1; i < detectors.Count; i++)
-                                detectors[i].Dispose();
+                            var primary = (IBgraFaceDetector)_detector;
+                            using var pool = AutoMaskGenerationStrategyPlanner.CreateCompatibleDetectorPool(
+                                primary,
+                                _detectorFactory!,
+                                _options.ParallelDetectorCount);
+                            Debug.WriteLine($"[AutoMask] mode=sparse-pipe-parallel({pool.Detectors.Count})");
+                            GenerateSparsePipelinedTrackingParallel(
+                                videoPath,
+                                pool.Detectors,
+                                progress,
+                                ct,
+                                effectiveStartFrameIndex,
+                                totalFrames,
+                                onFrameProcessed);
+                            return;
                         }
+
+                        default:
+                            break;
                     }
 
                     Debug.WriteLine("[AutoMask] mode=sequential");
@@ -259,11 +270,12 @@ namespace FaceShield.Services.Analysis
         private int ResolveDecodeStartFrameIndex(int requestedStartFrameIndex)
         {
             int start = Math.Max(0, requestedStartFrameIndex);
-            bool sparsePipelineAvailable = _options.UseTracking &&
-                _options.DetectEveryNFrames > 1 &&
-                _detector is IBgraFaceDetector &&
-                _detectorFactory != null &&
-                _options.ParallelDetectorCount >= 1;
+            bool sparsePipelineAvailable =
+                AutoMaskGenerationStrategyPlanner.Resolve(
+                    _options,
+                    _detector,
+                    _detectorFactory) ==
+                AutoMaskGenerationStrategyKind.SparsePipelinedParallel;
             bool requiresFullTimeline = start > 0 &&
                 (!CanResumeFromFrame(_options, start) ||
                  (_options.UseTracking && !sparsePipelineAvailable));
@@ -317,29 +329,6 @@ namespace FaceShield.Services.Analysis
                 !summary.DecodeCancelled &&
                 string.Equals(summary.DecodeError, "none", StringComparison.OrdinalIgnoreCase) &&
                 summary.DecodedFrames == 0;
-        }
-
-        private static bool TryAddCompatibleParallelDetector(
-            ICollection<IBgraFaceDetector> detectors,
-            IFaceDetector primary,
-            IFaceDetector candidate)
-        {
-            if (candidate is not IBgraFaceDetector bgraCandidate)
-            {
-                candidate.Dispose();
-                return false;
-            }
-
-            if (!DetectorExecutionProviderIdentity.AreCompatible(primary, candidate))
-            {
-                Debug.WriteLine(
-                    $"[AutoMask] parallel detector provider mismatch; expected={DetectorExecutionProviderIdentity.GetCanonicalLabel(primary)}, actual={DetectorExecutionProviderIdentity.GetCanonicalLabel(candidate)}, usingSessions={detectors.Count}");
-                candidate.Dispose();
-                return false;
-            }
-
-            detectors.Add(bgraCandidate);
-            return true;
         }
 
         private void GenerateSequential(
