@@ -8,9 +8,6 @@ using FaceShield.ViewModels.Workspace;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Threading;
-using System.Threading.Tasks;
-using Avalonia.Threading;
 
 namespace FaceShield.Controls
 {
@@ -161,24 +158,16 @@ namespace FaceShield.Controls
         }
 
         private double _hoverSeconds = double.NaN;
-        private readonly object _pendingThumbnailSync = new();
-        private readonly HashSet<long> _pendingThumbnails = new();
-        private CancellationTokenSource _thumbnailRequestCts = new();
-        private CancellationTokenSource? _selectionRequestCts;
-        private CancellationTokenSource? _selectedPtsRequestCts;
-        private TimelineThumbnailProvider? _selectedPtsRequestProvider;
-        private int _selectedPtsRequestFrame = -1;
-        private CancellationTokenSource? _issueViewportRequestCts;
-        private TimelineThumbnailProvider? _issueViewportRequestProvider;
-        private double _issueViewportRequestSeconds = double.NaN;
-        private double _issueViewportFailedSeconds = double.NaN;
-        private CancellationTokenSource? _issueFrameRequestCts;
-        private TimelineThumbnailProvider? _issueFrameRequestProvider;
-        private int _issueFrameRequestIndex = -1;
-        private int _issueFrameFailedIndex = -1;
-        private TimelineThumbnailProvider? _thumbnailRequestProvider;
-        private double _thumbnailRequestStart = double.NaN;
-        private double _thumbnailRequestEnd = double.NaN;
+        private readonly TimelineFrameStripRequestCoordinator _requests;
+
+        public TimelineFrameStrip()
+        {
+            _requests = new TimelineFrameStripRequestCoordinator(
+                () => ThumbnailProvider,
+                () => SelectedFrameIndex,
+                frameIndex => SetCurrentValue(SelectedFrameIndexProperty, frameIndex),
+                InvalidateVisual);
+        }
 
         static TimelineFrameStrip()
         {
@@ -236,11 +225,12 @@ namespace FaceShield.Controls
             }
             else
             {
-                RequestExactFrameSelection(
+                _requests.RequestExactFrameSelection(
                     provider,
                     seconds,
                     total,
-                    SelectedFrameIndex);
+                    SelectedFrameIndex,
+                    frameIndex => NormalizeResolvedFrameIndex(frameIndex, total));
             }
 
             e.Handled = true;
@@ -350,7 +340,7 @@ namespace FaceShield.Controls
                 }
                 else
                 {
-                    RequestSelectedFrameTimestamp(
+                    _requests.RequestSelectedFrameTimestamp(
                         timelineProvider,
                         SelectedFrameIndex);
                 }
@@ -379,7 +369,7 @@ namespace FaceShield.Controls
             var provider = ThumbnailProvider;
             if (provider == null) return;
 
-            EnsureThumbnailRequestScope(provider, startSec, endSec);
+            _requests.EnsureThumbnailRequestScope(provider, startSec, endSec);
             double range = Math.Max(0.0001, endSec - startSec);
 
             // 화면에 보여줄 썸네일 개수 먼저 결정
@@ -403,7 +393,7 @@ namespace FaceShield.Controls
                 {
                     if (!provider.TryGetCachedThumbnailAtTime(sec, out bmp))
                     {
-                        RequestThumbnail(provider, sec);
+                        _requests.RequestThumbnail(provider, sec);
                         continue;
                     }
                 }
@@ -418,417 +408,6 @@ namespace FaceShield.Controls
                 var dst = new Rect(x, 0, thumbW, stripH);
 
                 ctx.DrawImage(bmp, src, dst);
-            }
-        }
-
-        private void EnsureThumbnailRequestScope(
-            TimelineThumbnailProvider provider,
-            double startSec,
-            double endSec)
-        {
-            CancellationTokenSource previous;
-            lock (_pendingThumbnailSync)
-            {
-                bool changed =
-                    !ReferenceEquals(_thumbnailRequestProvider, provider) ||
-                    !double.IsFinite(_thumbnailRequestStart) ||
-                    Math.Abs(_thumbnailRequestStart - startSec) > 0.001 ||
-                    Math.Abs(_thumbnailRequestEnd - endSec) > 0.001;
-                if (!changed)
-                    return;
-
-                previous = _thumbnailRequestCts;
-                _thumbnailRequestCts = new CancellationTokenSource();
-                _thumbnailRequestProvider = provider;
-                _thumbnailRequestStart = startSec;
-                _thumbnailRequestEnd = endSec;
-                _pendingThumbnails.Clear();
-            }
-
-            previous.Cancel();
-            previous.Dispose();
-        }
-
-        private void RequestThumbnail(
-            TimelineThumbnailProvider provider,
-            double timestampSeconds)
-        {
-            long requestKey = Math.Max(
-                0,
-                (long)Math.Round(timestampSeconds * 1000.0));
-            CancellationToken token;
-            lock (_pendingThumbnailSync)
-            {
-                if (!_pendingThumbnails.Add(requestKey))
-                    return;
-
-                token = _thumbnailRequestCts.Token;
-            }
-
-            _ = Task.Run(() =>
-                {
-                    try
-                    {
-                        return provider.GetThumbnailAtTime(
-                            timestampSeconds,
-                            token) != null;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        return false;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                }, token)
-                .ContinueWith(task =>
-                {
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        lock (_pendingThumbnailSync)
-                            _pendingThumbnails.Remove(requestKey);
-
-                        if (!token.IsCancellationRequested &&
-                            task.Status == TaskStatus.RanToCompletion &&
-                            task.Result)
-                        {
-                            InvalidateVisual();
-                        }
-                    });
-                }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
-        }
-
-        private void RequestExactFrameSelection(
-            TimelineThumbnailProvider provider,
-            double timestampSeconds,
-            int totalFrames,
-            int baselineSelectedFrameIndex)
-        {
-            var cts = new CancellationTokenSource();
-            CancellationTokenSource? previous =
-                Interlocked.Exchange(ref _selectionRequestCts, cts);
-            if (previous != null)
-            {
-                try { previous.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
-
-            _ = ResolveExactFrameSelectionAsync(
-                provider,
-                timestampSeconds,
-                totalFrames,
-                baselineSelectedFrameIndex,
-                cts);
-        }
-
-        private async Task ResolveExactFrameSelectionAsync(
-            TimelineThumbnailProvider provider,
-            double timestampSeconds,
-            int totalFrames,
-            int baselineSelectedFrameIndex,
-            CancellationTokenSource cts)
-        {
-            try
-            {
-                (bool resolved, int frameIndex) = await Task.Run(() =>
-                {
-                    bool ok = provider.TryResolveFrameIndexAtTimestamp(
-                        timestampSeconds,
-                        cts.Token,
-                        out int resolvedIndex);
-                    return (ok, resolvedIndex);
-                }, cts.Token);
-
-                if (cts.IsCancellationRequested)
-                    return;
-
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    if (cts.IsCancellationRequested ||
-                        !ReferenceEquals(_selectionRequestCts, cts) ||
-                        !ReferenceEquals(ThumbnailProvider, provider) ||
-                        SelectedFrameIndex != baselineSelectedFrameIndex)
-                    {
-                        return;
-                    }
-
-                    if (!resolved)
-                        return;
-
-                    SetCurrentValue(
-                        SelectedFrameIndexProperty,
-                        NormalizeResolvedFrameIndex(frameIndex, totalFrames));
-                    InvalidateVisual();
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                if (ReferenceEquals(_selectionRequestCts, cts))
-                    Interlocked.CompareExchange(ref _selectionRequestCts, null, cts);
-                cts.Dispose();
-            }
-        }
-
-        private void RequestSelectedFrameTimestamp(
-            TimelineThumbnailProvider provider,
-            int frameIndex)
-        {
-            if (provider.OperationsSuspended)
-                return;
-            if (ReferenceEquals(_selectedPtsRequestProvider, provider) &&
-                _selectedPtsRequestFrame == frameIndex &&
-                _selectedPtsRequestCts != null)
-            {
-                return;
-            }
-
-            var cts = new CancellationTokenSource();
-            CancellationTokenSource? previous =
-                Interlocked.Exchange(ref _selectedPtsRequestCts, cts);
-            if (previous != null)
-            {
-                try { previous.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
-
-            _selectedPtsRequestProvider = provider;
-            _selectedPtsRequestFrame = frameIndex;
-            _ = ResolveSelectedFrameTimestampAsync(provider, frameIndex, cts);
-        }
-
-        private async Task ResolveSelectedFrameTimestampAsync(
-            TimelineThumbnailProvider provider,
-            int frameIndex,
-            CancellationTokenSource cts)
-        {
-            try
-            {
-                bool resolved = await Task.Run(
-                    () => provider.TryResolveFrameTimestampSeconds(
-                        frameIndex,
-                        cts.Token,
-                        out _),
-                    cts.Token);
-
-                if (!resolved || cts.IsCancellationRequested)
-                    return;
-
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    if (cts.IsCancellationRequested ||
-                        !ReferenceEquals(_selectedPtsRequestCts, cts) ||
-                        !ReferenceEquals(ThumbnailProvider, provider) ||
-                        SelectedFrameIndex != frameIndex)
-                    {
-                        return;
-                    }
-
-                    InvalidateVisual();
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                if (ReferenceEquals(_selectedPtsRequestCts, cts))
-                {
-                    Interlocked.CompareExchange(
-                        ref _selectedPtsRequestCts,
-                        null,
-                        cts);
-                    _selectedPtsRequestProvider = null;
-                    _selectedPtsRequestFrame = -1;
-                }
-
-                cts.Dispose();
-            }
-        }
-
-        private bool RequestIssueViewportMapping(
-            TimelineThumbnailProvider provider,
-            double timestampSeconds)
-        {
-            if (provider.OperationsSuspended ||
-                !double.IsFinite(timestampSeconds) ||
-                timestampSeconds < 0)
-            {
-                return false;
-            }
-
-            if (ReferenceEquals(_issueViewportRequestProvider, provider))
-            {
-                if (_issueViewportRequestCts != null &&
-                    Math.Abs(
-                        _issueViewportRequestSeconds -
-                        timestampSeconds) <= 0.001)
-                {
-                    return true;
-                }
-
-                if (double.IsFinite(_issueViewportFailedSeconds) &&
-                    Math.Abs(
-                        _issueViewportFailedSeconds -
-                        timestampSeconds) <= 0.001)
-                {
-                    return false;
-                }
-            }
-
-            var cts = new CancellationTokenSource();
-            CancellationTokenSource? previous =
-                Interlocked.Exchange(ref _issueViewportRequestCts, cts);
-            if (previous != null)
-            {
-                try { previous.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
-
-            _issueViewportRequestProvider = provider;
-            _issueViewportRequestSeconds = timestampSeconds;
-            _issueViewportFailedSeconds = double.NaN;
-            _ = ResolveIssueViewportMappingAsync(
-                provider,
-                timestampSeconds,
-                cts);
-            return true;
-        }
-
-        private async Task ResolveIssueViewportMappingAsync(
-            TimelineThumbnailProvider provider,
-            double timestampSeconds,
-            CancellationTokenSource cts)
-        {
-            bool resolved = false;
-            try
-            {
-                resolved = await Task.Run(
-                    () => provider.TryResolveFrameIndexAtTimestamp(
-                        timestampSeconds,
-                        cts.Token,
-                        out _),
-                    cts.Token);
-
-                if (cts.IsCancellationRequested)
-                    return;
-
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    if (cts.IsCancellationRequested ||
-                        !ReferenceEquals(_issueViewportRequestCts, cts) ||
-                        !ReferenceEquals(ThumbnailProvider, provider))
-                    {
-                        return;
-                    }
-
-                    if (!resolved && !provider.OperationsSuspended)
-                        _issueViewportFailedSeconds = timestampSeconds;
-
-                    InvalidateVisual();
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                if (ReferenceEquals(_issueViewportRequestCts, cts))
-                {
-                    Interlocked.CompareExchange(
-                        ref _issueViewportRequestCts,
-                        null,
-                        cts);
-                }
-
-                cts.Dispose();
-            }
-        }
-
-        private void RequestIssueFrameMapping(
-            TimelineThumbnailProvider provider,
-            int frameIndex)
-        {
-            if (provider.OperationsSuspended || frameIndex < 0)
-                return;
-
-            if (ReferenceEquals(_issueFrameRequestProvider, provider))
-            {
-                if (_issueFrameRequestCts != null &&
-                    _issueFrameRequestIndex == frameIndex)
-                {
-                    return;
-                }
-
-                if (_issueFrameFailedIndex == frameIndex)
-                    return;
-            }
-
-            var cts = new CancellationTokenSource();
-            CancellationTokenSource? previous =
-                Interlocked.Exchange(ref _issueFrameRequestCts, cts);
-            if (previous != null)
-            {
-                try { previous.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
-
-            _issueFrameRequestProvider = provider;
-            _issueFrameRequestIndex = frameIndex;
-            _issueFrameFailedIndex = -1;
-            _ = ResolveIssueFrameMappingAsync(provider, frameIndex, cts);
-        }
-
-        private async Task ResolveIssueFrameMappingAsync(
-            TimelineThumbnailProvider provider,
-            int frameIndex,
-            CancellationTokenSource cts)
-        {
-            bool resolved = false;
-            try
-            {
-                resolved = await Task.Run(
-                    () => provider.TryResolveFrameTimestampSeconds(
-                        frameIndex,
-                        cts.Token,
-                        out _),
-                    cts.Token);
-
-                if (cts.IsCancellationRequested)
-                    return;
-
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    if (cts.IsCancellationRequested ||
-                        !ReferenceEquals(_issueFrameRequestCts, cts) ||
-                        !ReferenceEquals(ThumbnailProvider, provider))
-                    {
-                        return;
-                    }
-
-                    if (!resolved && !provider.OperationsSuspended)
-                        _issueFrameFailedIndex = frameIndex;
-
-                    InvalidateVisual();
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                if (ReferenceEquals(_issueFrameRequestCts, cts))
-                {
-                    Interlocked.CompareExchange(
-                        ref _issueFrameRequestCts,
-                        null,
-                        cts);
-                }
-
-                cts.Dispose();
             }
         }
 
@@ -889,7 +468,7 @@ namespace FaceShield.Controls
                         centerSec,
                         out anchorFrame))
                 {
-                    if (RequestIssueViewportMapping(provider, centerSec))
+                    if (_requests.RequestIssueViewportMapping(provider, centerSec))
                         return;
 
                     anchorFrame = Math.Max(0, SelectedFrameIndex);
@@ -955,7 +534,7 @@ namespace FaceShield.Controls
                 }
 
                 if (nextMissingFrame >= 0)
-                    RequestIssueFrameMapping(provider, nextMissingFrame);
+                    _requests.RequestIssueFrameMapping(provider, nextMissingFrame);
                 return;
             }
 
