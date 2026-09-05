@@ -272,11 +272,13 @@ namespace FaceShield.Services.Analysis
             foreach (var track in tracks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                bool couldBePartialFace = CouldBePartialFace(track, tracks, options);
                 bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&
-                    track.MaxConfidence < options.ShortTrackMaxConfidence;
+                    track.MaxConfidence < options.ShortTrackMaxConfidence &&
+                    !couldBePartialFace;
                 bool removeShortSmall = track.DetectionCount <= options.DropShortSmallTrackMaxDetections &&
                     IsSmallTrack(track, options) &&
-                    !CouldBePartialFace(track, tracks, options);
+                    !couldBePartialFace;
 
                 if (!removeShortWeak && !removeShortSmall)
                     continue;
@@ -733,7 +735,7 @@ namespace FaceShield.Services.Analysis
                         Math.Max(1.0, last.Bounds.Width + dw * offset),
                         Math.Max(1.0, last.Bounds.Height + dh * offset));
 
-                    if (!IsMostlyInside(predicted, last.Size))
+                    if (!IntersectsFrame(predicted, last.Size))
                         break;
 
                     predicted = ClampToSize(predicted, last.Size);
@@ -939,6 +941,15 @@ namespace FaceShield.Services.Analysis
             }
 
             return false;
+        }
+
+        private static bool IntersectsFrame(Rect rect, PixelSize size)
+        {
+            if (size.Width <= 0 || size.Height <= 0 || rect.Width <= 0 || rect.Height <= 0)
+                return false;
+
+            return rect.Right > 0 && rect.Bottom > 0 &&
+                rect.X < size.Width && rect.Y < size.Height;
         }
 
         private static bool IsMostlyInside(Rect rect, PixelSize size)
