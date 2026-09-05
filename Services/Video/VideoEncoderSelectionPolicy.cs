@@ -32,16 +32,17 @@ internal static unsafe class VideoEncoderSelectionPolicy
                encoderName.Contains("aom-av1", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static bool ShouldApplySoftwareRateGuardrail(
+    internal static bool ShouldUseSourceRelativeRateControl(
         string encoderName,
         long sourceBitrate)
     {
         if (sourceBitrate <= 0 || string.IsNullOrWhiteSpace(encoderName))
             return false;
-        if (string.Equals(encoderName, "libx264rgb", StringComparison.OrdinalIgnoreCase))
-            return false;
 
-        return UsesSoftwareConstantQuality(encoderName);
+        return !string.Equals(
+            encoderName,
+            "libx264rgb",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     internal static bool RequiresSoftwareEncoderForChromaLocation(

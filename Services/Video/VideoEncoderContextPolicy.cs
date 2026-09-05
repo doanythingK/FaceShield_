@@ -313,29 +313,24 @@ internal static unsafe class VideoEncoderContextPolicy
         bool usesSoftwareConstantQuality =
             VideoEncoderSelectionPolicy.UsesSoftwareConstantQuality(
                 encoderName);
-        bool applySoftwareRateGuardrail =
-            VideoEncoderSelectionPolicy.ShouldApplySoftwareRateGuardrail(
+        bool useSourceRelativeRateControl =
+            VideoEncoderSelectionPolicy.ShouldUseSourceRelativeRateControl(
                 encoderName,
                 sourceBitrate);
-        if (usesSoftwareConstantQuality)
+        if (useSourceRelativeRateControl)
         {
-            if (applySoftwareRateGuardrail)
-            {
-                // Keep CRF quality selection, but cap sustained rate to the
-                // source-relative target so re-encoding cannot grow without bound.
-                ctx->bit_rate = targetBitrate;
-                ctx->rc_max_rate = targetBitrate;
-                ctx->rc_buffer_size =
-                    VideoExportFidelityPolicy.ClampBitrate(
-                        (long)targetBitrate * 2L);
-            }
-            else
-            {
-                // Unknown source rate and RGB H.264 retain the existing quality path.
-                ctx->bit_rate = 0;
-                ctx->rc_max_rate = 0;
-                ctx->rc_buffer_size = 0;
-            }
+            ctx->bit_rate = targetBitrate;
+            ctx->rc_max_rate = targetBitrate;
+            ctx->rc_buffer_size =
+                VideoExportFidelityPolicy.ClampBitrate(
+                    (long)targetBitrate * 2L);
+        }
+        else if (usesSoftwareConstantQuality)
+        {
+            // Unknown source rate and RGB H.264 retain their existing quality path.
+            ctx->bit_rate = 0;
+            ctx->rc_max_rate = 0;
+            ctx->rc_buffer_size = 0;
         }
         else
         {
@@ -470,6 +465,7 @@ internal static unsafe class VideoEncoderContextPolicy
             ctx,
             encoder,
             forceSafeEncoding,
+            useSourceRelativeRateControl,
             hdrMetadata?.HasStaticMetadata == true,
             hdrMetadata?.ToX265Params());
 

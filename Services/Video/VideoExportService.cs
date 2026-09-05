@@ -249,6 +249,10 @@ public unsafe sealed class VideoExportService
 
             AVStream* inStream = inFmt->streams[videoStreamIndex];
             AVStream* inAudioStream = audioStreamIndex >= 0 ? inFmt->streams[audioStreamIndex] : null;
+            long sourceContainerBitrate =
+                VideoExportFidelityPolicy.ResolveContainerBitrateFallback(
+                    inFmt,
+                    inputPath);
             totalFrames = (int)inStream->nb_frames;
             sourceFps =
                 inStream->avg_frame_rate.num != 0
@@ -349,8 +353,8 @@ public unsafe sealed class VideoExportService
                         OutputPixelFormat: VideoExportFidelityPolicy.GetPixelFormatName((AVPixelFormat)inStream->codecpar->format),
                         SourceBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
                         OutputBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth((AVPixelFormat)inStream->codecpar->format),
-                        SourceVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null),
-                        TargetVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null),
+                        SourceVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null, sourceContainerBitrate),
+                        TargetVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null, sourceContainerBitrate),
                         OutputCloseMs: remuxCounts.OutputCloseMs);
                     Debug.WriteLine(LastExportSummary.ToLogLine());
                     RunMetricsLog.AppendRunLines(LastExportSummary.RunId, LastExportSummary.ToLogLine());
@@ -444,7 +448,7 @@ public unsafe sealed class VideoExportService
                 encoderInputCodecId,
                 inStream,
                 dec,
-                inFmt->bit_rate,
+                sourceContainerBitrate,
                 outFmt,
                 out encoder,
                 out var encoderQualityConfiguration,
@@ -481,7 +485,7 @@ public unsafe sealed class VideoExportService
                     fallbackCodecId,
                     inStream,
                     dec,
-                    inFmt->bit_rate,
+                    sourceContainerBitrate,
                     outFmt,
                     out encoder,
                     out encoderQualityConfiguration,
@@ -1571,7 +1575,7 @@ public unsafe sealed class VideoExportService
                 OutputPixelFormat: VideoExportFidelityPolicy.GetPixelFormatName(enc->pix_fmt),
                 SourceBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth(dec->pix_fmt),
                 OutputBitDepth: VideoExportFidelityPolicy.GetPixelFormatBitDepth(enc->pix_fmt),
-                SourceVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, dec),
+                SourceVideoBitrate: VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, dec, sourceContainerBitrate),
                 TargetVideoBitrate: VideoExportFidelityPolicy.ResolveTargetVideoBitrateForSummary(encoder, inStream, dec, enc),
                 NativeYuvBlurFrames: _nativeYuvBlurFrames,
                 EncoderFlushMs: encoderFlushTimer.ElapsedMilliseconds,

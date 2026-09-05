@@ -22,6 +22,7 @@ internal static unsafe class VideoEncoderQualityPolicy
         AVCodecContext* ctx,
         AVCodec* encoder,
         bool forceSafeEncoding,
+        bool useSourceRelativeRateControl,
         bool hasStaticHdrMetadata,
         string? x265Params)
     {
@@ -73,15 +74,21 @@ internal static unsafe class VideoEncoderQualityPolicy
         else if (isX264)
         {
             SetOption("preset", "fast", required: true);
-            SetOption("crf", "19", required: true);
-            mode = forceSafeEncoding ? "crf19-fast-safe" : "crf19-fast";
+            if (useSourceRelativeRateControl)
+                mode = forceSafeEncoding ? "source-bitrate-fast-safe" : "source-bitrate-fast";
+            else
+            {
+                SetOption("crf", "19", required: true);
+                mode = forceSafeEncoding ? "crf19-fast-safe" : "crf19-fast";
+            }
         }
         else if (isX265)
         {
             SetOption("preset", "fast", required: true);
             if (hasStaticHdrMetadata)
             {
-                SetOption("crf", "18", required: true);
+                if (!useSourceRelativeRateControl)
+                    SetOption("crf", "18", required: true);
                 if (string.IsNullOrWhiteSpace(x265Params))
                 {
                     const string failure = "x265-params=empty:missing-hdr-parameters";
@@ -92,8 +99,12 @@ internal static unsafe class VideoEncoderQualityPolicy
                 {
                     SetOption("x265-params", x265Params, required: true);
                 }
-                mode = forceSafeEncoding ? "crf18-fast-safe-hdr" : "crf18-fast-hdr";
+                mode = useSourceRelativeRateControl
+                    ? forceSafeEncoding ? "source-bitrate-fast-safe-hdr" : "source-bitrate-fast-hdr"
+                    : forceSafeEncoding ? "crf18-fast-safe-hdr" : "crf18-fast-hdr";
             }
+            else if (useSourceRelativeRateControl)
+                mode = forceSafeEncoding ? "source-bitrate-fast-safe" : "source-bitrate-fast";
             else
             {
                 SetOption("crf", "20", required: true);
@@ -103,31 +114,40 @@ internal static unsafe class VideoEncoderQualityPolicy
         else if (isSvtAv1)
         {
             SetOption("preset", "6", required: true);
-            SetOption("crf", "20", required: true);
+            if (!useSourceRelativeRateControl)
+                SetOption("crf", "20", required: true);
             SetOption("svtav1-params", "tune=0", required: true);
-            mode = forceSafeEncoding ? "crf20-preset6-vq-safe" : "crf20-preset6-vq";
+            mode = useSourceRelativeRateControl
+                ? forceSafeEncoding ? "source-bitrate-preset6-safe" : "source-bitrate-preset6"
+                : forceSafeEncoding ? "crf20-preset6-vq-safe" : "crf20-preset6-vq";
         }
         else if (isAomAv1)
         {
             SetOption("usage", "good", required: true);
             SetOption("cpu-used", "4", required: true);
-            SetOption("crf", "20", required: true);
+            if (!useSourceRelativeRateControl)
+                SetOption("crf", "20", required: true);
             SetOption("row-mt", "1", required: false);
             SetOption("tune", "psnr", required: false);
-            mode = forceSafeEncoding ? "crf20-cpu4-good-safe" : "crf20-cpu4-good";
+            mode = useSourceRelativeRateControl
+                ? forceSafeEncoding ? "source-bitrate-cpu4-good-safe" : "source-bitrate-cpu4-good"
+                : forceSafeEncoding ? "crf20-cpu4-good-safe" : "crf20-cpu4-good";
         }
         else if (isNvenc)
         {
             SetOption("preset", "p6", required: true);
             SetOption("tune", "hq", required: true);
             SetOption("rc", "vbr", required: true);
-            SetOption("cq", "18", required: true);
+            if (!useSourceRelativeRateControl)
+                SetOption("cq", "18", required: true);
             SetOption("multipass", "qres", required: false);
             SetOption("spatial_aq", "1", required: false);
             SetOption("temporal_aq", "1", required: false);
             SetOption("rc-lookahead", "20", required: false);
             SetOption("extra_sei", "1", required: false);
-            mode = forceSafeEncoding ? "p6-hq-vbr-cq18-safe" : "p6-hq-vbr-cq18";
+            mode = useSourceRelativeRateControl
+                ? forceSafeEncoding ? "p6-hq-source-bitrate-safe" : "p6-hq-source-bitrate"
+                : forceSafeEncoding ? "p6-hq-vbr-cq18-safe" : "p6-hq-vbr-cq18";
         }
         else if (isQsv)
         {

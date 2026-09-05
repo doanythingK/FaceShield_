@@ -1,5 +1,6 @@
 using FFmpeg.AutoGen;
 using System;
+using System.IO;
 
 namespace FaceShield.Services.Video;
 
@@ -130,15 +131,9 @@ internal static unsafe class VideoExportFidelityPolicy
         long sourceBitrate,
         int resolutionFloor)
     {
-        int boundedSourceBitrate = ClampBitrate(sourceBitrate);
-        if (boundedSourceBitrate <= 0)
-            return 0;
-
-        int sourceRelativeGuardrail = ClampBitrate(
-            Math.Min(
-                Math.Max(0L, resolutionFloor),
-                (long)boundedSourceBitrate * 5L / 4L));
-        return Math.Max(boundedSourceBitrate, sourceRelativeGuardrail);
+        // Once the source video rate is known, keep it authoritative. Raising the
+        // target above the source made re-encoded blur exports unnecessarily large.
+        return ClampBitrate(sourceBitrate);
     }
 
     internal static int ClampBitrate(long value)
@@ -272,6 +267,47 @@ internal static unsafe class VideoExportFidelityPolicy
         }
 
         return null;
+    }
+
+    internal static long EstimateContainerBitrateFromFile(
+        long fileLengthBytes,
+        long durationMicroseconds)
+    {
+        if (fileLengthBytes <= 0 || durationMicroseconds <= 0)
+            return 0;
+
+        double bitsPerSecond =
+            fileLengthBytes * 8.0 * ffmpeg.AV_TIME_BASE / durationMicroseconds;
+        if (double.IsNaN(bitsPerSecond) ||
+            double.IsInfinity(bitsPerSecond) ||
+            bitsPerSecond <= 0)
+        {
+            return 0;
+        }
+
+        return bitsPerSecond >= long.MaxValue
+            ? long.MaxValue
+            : (long)Math.Round(bitsPerSecond);
+    }
+
+    internal static long ResolveContainerBitrateFallback(
+        AVFormatContext* formatContext,
+        string inputPath)
+    {
+        if (formatContext != null && formatContext->bit_rate > 0)
+            return formatContext->bit_rate;
+
+        if (formatContext == null ||
+            formatContext->duration <= 0 ||
+            string.IsNullOrWhiteSpace(inputPath) ||
+            !File.Exists(inputPath))
+        {
+            return 0;
+        }
+
+        return EstimateContainerBitrateFromFile(
+            new FileInfo(inputPath).Length,
+            formatContext->duration);
     }
 
     internal static long ResolveSourceVideoBitrate(
