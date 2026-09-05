@@ -121,18 +121,24 @@ internal static unsafe class VideoExportFidelityPolicy
         int resolutionFloor = EstimateHighQualityBitrate(width, height, framerate);
         int boundedSourceBitrate = ClampBitrate(sourceBitrate);
         if (boundedSourceBitrate > 0)
-        {
-            int sourceRelativeGuardrail = ClampBitrate(
-                Math.Min(
-                    (long)resolutionFloor,
-                    (long)boundedSourceBitrate * 5L / 4L));
-            int targetBitrate = Math.Max(
-                boundedSourceBitrate,
-                sourceRelativeGuardrail);
-            return Math.Max(targetBitrate, 2_000_000);
-        }
+            return ResolveKnownSourceTargetBitrate(boundedSourceBitrate, resolutionFloor);
 
         return Math.Max(resolutionFloor, 2_000_000);
+    }
+
+    internal static int ResolveKnownSourceTargetBitrate(
+        long sourceBitrate,
+        int resolutionFloor)
+    {
+        int boundedSourceBitrate = ClampBitrate(sourceBitrate);
+        if (boundedSourceBitrate <= 0)
+            return 0;
+
+        int sourceRelativeGuardrail = ClampBitrate(
+            Math.Min(
+                Math.Max(0L, resolutionFloor),
+                (long)boundedSourceBitrate * 5L / 4L));
+        return Math.Max(boundedSourceBitrate, sourceRelativeGuardrail);
     }
 
     internal static int ClampBitrate(long value)
@@ -270,13 +276,16 @@ internal static unsafe class VideoExportFidelityPolicy
 
     internal static long ResolveSourceVideoBitrate(
         AVStream* stream,
-        AVCodecContext* decoder)
+        AVCodecContext* decoder,
+        long containerBitrateFallback = 0)
     {
         if (stream != null && stream->codecpar != null && stream->codecpar->bit_rate > 0)
             return stream->codecpar->bit_rate;
         if (decoder != null && decoder->bit_rate > 0)
             return decoder->bit_rate;
-        return 0;
+        return containerBitrateFallback > 0
+            ? containerBitrateFallback
+            : 0;
     }
 
     internal static long ResolveTargetVideoBitrateForSummary(

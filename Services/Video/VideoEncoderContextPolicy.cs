@@ -12,6 +12,7 @@ internal static unsafe class VideoEncoderContextPolicy
         AVCodecID codecId,
         AVStream* inStream,
         AVCodecContext* dec,
+        long sourceContainerBitrate,
         AVFormatContext* outFmt,
         out AVCodec* encoder,
         out EncoderQualityConfiguration qualityConfiguration,
@@ -135,6 +136,7 @@ internal static unsafe class VideoEncoderContextPolicy
                 candidate,
                 inStream,
                 dec,
+                sourceContainerBitrate,
                 outFmt,
                 out EncoderQualityConfiguration candidateQualityConfiguration,
                 out string? openError,
@@ -192,6 +194,7 @@ internal static unsafe class VideoEncoderContextPolicy
                 fallback,
                 inStream,
                 dec,
+                sourceContainerBitrate,
                 outFmt,
                 out EncoderQualityConfiguration fallbackQualityConfiguration,
                 out string? fallbackError,
@@ -217,6 +220,7 @@ internal static unsafe class VideoEncoderContextPolicy
         AVCodec* encoder,
         AVStream* inStream,
         AVCodecContext* dec,
+        long sourceContainerBitrate,
         AVFormatContext* outFmt,
         out EncoderQualityConfiguration qualityConfiguration,
         out string? error,
@@ -296,7 +300,8 @@ internal static unsafe class VideoEncoderContextPolicy
         long sourceBitrate =
             VideoExportFidelityPolicy.ResolveSourceVideoBitrate(
                 inStream,
-                dec);
+                dec,
+                sourceContainerBitrate);
         int targetBitrate =
             VideoExportFidelityPolicy.ResolveHighQualityTargetBitrate(
                 sourceBitrate,
@@ -308,11 +313,29 @@ internal static unsafe class VideoEncoderContextPolicy
         bool usesSoftwareConstantQuality =
             VideoEncoderSelectionPolicy.UsesSoftwareConstantQuality(
                 encoderName);
+        bool applySoftwareRateGuardrail =
+            VideoEncoderSelectionPolicy.ShouldApplySoftwareRateGuardrail(
+                encoderName,
+                sourceBitrate);
         if (usesSoftwareConstantQuality)
         {
-            ctx->bit_rate = 0;
-            ctx->rc_max_rate = 0;
-            ctx->rc_buffer_size = 0;
+            if (applySoftwareRateGuardrail)
+            {
+                // Keep CRF quality selection, but cap sustained rate to the
+                // source-relative target so re-encoding cannot grow without bound.
+                ctx->bit_rate = targetBitrate;
+                ctx->rc_max_rate = targetBitrate;
+                ctx->rc_buffer_size =
+                    VideoExportFidelityPolicy.ClampBitrate(
+                        (long)targetBitrate * 2L);
+            }
+            else
+            {
+                // Unknown source rate and RGB H.264 retain the existing quality path.
+                ctx->bit_rate = 0;
+                ctx->rc_max_rate = 0;
+                ctx->rc_buffer_size = 0;
+            }
         }
         else
         {
