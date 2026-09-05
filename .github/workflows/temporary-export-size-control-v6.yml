@@ -1,0 +1,186 @@
+name: Temporary Export Size Control V6
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Prepare FFmpeg 8 Windows bundle
+        shell: pwsh
+        run: |
+          $bundle = "FFmpeg/win-x64-binaries.tar.gz"
+          if (!(Test-Path $bundle)) { throw "FFmpeg bundle missing: $bundle" }
+          New-Item -ItemType Directory -Path "FFmpeg/win-x64" -Force | Out-Null
+          tar -xzf $bundle -C "FFmpeg/win-x64"
+          foreach ($name in @("avcodec-62.dll", "avformat-62.dll", "avutil-60.dll", "swscale-9.dll", "swresample-6.dll")) {
+            if (!(Test-Path (Join-Path "FFmpeg/win-x64" $name))) { throw "Missing native DLL: $name" }
+          }
+
+      - name: Resolve fixture ffmpeg CLI
+        shell: pwsh
+        run: |
+          $cmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if (!$cmd) {
+            choco install ffmpeg -y --no-progress
+            $cmd = Get-Command ffmpeg -ErrorAction Stop
+          }
+          "FFMPEG_CLI=$($cmd.Source)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $cmd.Source -version | Select-Object -First 1
+
+      - name: Apply export size patch
+        run: python scripts/temporary-export-size-control-v4.py
+
+      - name: Source invariants
+        shell: python
+        run: |
+          from pathlib import Path
+          selection = Path('Services/Video/VideoEncoderSelectionPolicy.cs').read_text(encoding='utf-8')
+          quality = Path('Services/Video/VideoEncoderQualityPolicy.cs').read_text(encoding='utf-8')
+          context = Path('Services/Video/VideoEncoderContextPolicy.cs').read_text(encoding='utf-8')
+          fidelity = Path('Services/Video/VideoExportFidelityPolicy.cs').read_text(encoding='utf-8')
+          service = Path('Services/Video/VideoExportService.cs').read_text(encoding='utf-8')
+          for marker, text in [
+              ('ShouldUseSourceRelativeRateControl', selection),
+              ('bool useSourceRelativeRateControl', quality),
+              ('ctx->rc_max_rate = targetBitrate;', context),
+              ('EstimateContainerBitrateFromFile', fidelity),
+              ('ResolveContainerBitrateFallback', fidelity),
+              ('return ClampBitrate(sourceBitrate);', fidelity),
+              ('long sourceContainerBitrate =', service),
+          ]:
+              if marker not in text:
+                  raise SystemExit(f'missing invariant: {marker}')
+          if 'ShouldApplySoftwareRateGuardrail' in selection or 'applySoftwareRateGuardrail' in context:
+              raise SystemExit('old software-only rate guardrail remains')
+          if service.count('sourceContainerBitrate,') < 2:
+              raise SystemExit('resolved source rate not passed to both encoder init calls')
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Rate policy harness
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "export-rate-v6"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $project = Join-Path $work "Test.csproj"
+          $program = Join-Path $work "Program.cs"
+          @"
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><RuntimeIdentifier>win-x64</RuntimeIdentifier></PropertyGroup>
+            <ItemGroup><ProjectReference Include="$env:GITHUB_WORKSPACE\FaceShield.csproj" /></ItemGroup>
+          </Project>
+          "@ | Set-Content -Encoding UTF8 $project
+          @'
+          using System;
+          using System.Reflection;
+          using FaceShield.Services.Video;
+          var asm = typeof(VideoExportService).Assembly;
+          var fidelity = asm.GetType("FaceShield.Services.Video.VideoExportFidelityPolicy")!;
+          var target = fidelity.GetMethod("ResolveKnownSourceTargetBitrate", BindingFlags.NonPublic | BindingFlags.Static)!;
+          int Target(long rate, int floor) => (int)target.Invoke(null, new object[] { rate, floor })!;
+          if (Target(800_000, 6_000_000) != 800_000 || Target(4_000_000, 10_000_000) != 4_000_000)
+              throw new Exception("known source rate is not authoritative");
+          var estimate = fidelity.GetMethod("EstimateContainerBitrateFromFile", BindingFlags.NonPublic | BindingFlags.Static)!;
+          if ((long)estimate.Invoke(null, new object[] { 750_000L, 6_000_000L })! != 1_000_000L)
+              throw new Exception("file bitrate fallback mismatch");
+          var selection = asm.GetType("FaceShield.Services.Video.VideoEncoderSelectionPolicy")!;
+          var should = selection.GetMethod("ShouldUseSourceRelativeRateControl", BindingFlags.NonPublic | BindingFlags.Static)!;
+          bool Use(string name, long rate) => (bool)should.Invoke(null, new object[] { name, rate })!;
+          foreach (var name in new[] { "libx264", "libx265", "libsvtav1", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox" })
+              if (!Use(name, 1_000_000)) throw new Exception($"source-rate mode missing: {name}");
+          if (Use("libx264rgb", 1_000_000) || Use("libx264", 0)) throw new Exception("source-rate scope mismatch");
+          Console.WriteLine("[ExportRatePolicyV6] PASS");
+          '@ | Set-Content -Encoding UTF8 $program
+          dotnet run --project $project -c Release -r win-x64 -p:UseAppHost=false --nologo
+          if ($LASTEXITCODE -ne 0) { throw "Rate policy harness failed: $LASTEXITCODE" }
+
+      - name: End-to-end export size harness
+        shell: pwsh
+        run: |
+          $source = "export-size-source.mp4"
+          $output = "export-size-output.mp4"
+          Remove-Item $source,$output -Force -ErrorAction SilentlyContinue
+          & $env:FFMPEG_CLI -hide_banner -loglevel error -f lavfi -i "testsrc2=size=640x360:rate=30" -t 6 -c:v libx264 -preset veryfast -b:v 800k -maxrate 800k -bufsize 1600k -pix_fmt yuv420p -an -y $source
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $source)) { throw "Fixture generation failed" }
+          Write-Host "[ExportSizeFixture] cwd=$PWD source=$source exists=$(Test-Path $source) bytes=$((Get-Item $source).Length)"
+
+          $work = Join-Path $env:GITHUB_WORKSPACE ".tmp-export-size-e2e"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $project = Join-Path $work "Test.csproj"
+          $program = Join-Path $work "Program.cs"
+          @"
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><RuntimeIdentifier>win-x64</RuntimeIdentifier></PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="$env:GITHUB_WORKSPACE\FaceShield.csproj" />
+              <None Include="$env:GITHUB_WORKSPACE\FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+            </ItemGroup>
+          </Project>
+          "@ | Set-Content -Encoding UTF8 $project
+          @'
+          using System;
+          using System.IO;
+          using Avalonia;
+          using FaceShield.Services.Video;
+          Console.WriteLine($"[ExportSizeHarness] cwd={Environment.CurrentDirectory}");
+          string source = args[0], output = args[1];
+          Console.WriteLine($"[ExportSizeHarness] source={source} full={Path.GetFullPath(source)} exists={File.Exists(source)}");
+          if (!File.Exists(source)) throw new Exception("fixture not visible to harness");
+          FFmpegBootstrap.Initialize();
+          using var provider = new FrameMaskProvider();
+          var size = new PixelSize(640, 360);
+          for (int i = 0; i < 180; i++)
+              provider.SetFaceRects(i, new[] { new Rect(180 + (i % 30), 100, 120, 120) }, size, 0.9f, new[] { 0.9f });
+          var service = new VideoExportService(provider);
+          service.Export(source, output, blurRadius: 8, allowHybridCopy: false);
+          long sourceBytes = new FileInfo(source).Length;
+          long outputBytes = new FileInfo(output).Length;
+          double ratio = outputBytes / (double)sourceBytes;
+          var summary = service.LastExportSummary ?? throw new Exception("missing export summary");
+          Console.WriteLine($"[ExportSizeE2E] sourceBytes={sourceBytes} outputBytes={outputBytes} ratio={ratio:0.000} encoder={summary.EncoderName} mode={summary.EncoderQualityMode} sourceRate={summary.SourceVideoBitrate} targetRate={summary.TargetVideoBitrate}");
+          if (ratio > 1.35) throw new Exception($"export size ratio too high: {ratio:0.000}");
+          if (summary.SourceVideoBitrate <= 0 || summary.TargetVideoBitrate <= 0) throw new Exception("missing bitrate summary");
+          '@ | Set-Content -Encoding UTF8 $program
+
+          dotnet run --project $project -c Release -r win-x64 -p:UseAppHost=false --nologo -- $source $output
+          if ($LASTEXITCODE -ne 0) { throw "Actual export harness failed: $LASTEXITCODE" }
+          if (!(Test-Path $output)) { throw "Export output missing" }
+          & $env:FFMPEG_CLI -hide_banner -loglevel error -i $output -f null -
+          if ($LASTEXITCODE -ne 0) { throw "Output decode verification failed: $LASTEXITCODE" }
+          Remove-Item $source,$output -Force
+          Remove-Item $work -Recurse -Force
+
+      - name: Release build
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified source only
+        shell: pwsh
+        run: |
+          Remove-Item scripts/temporary-export-size-control-v4.py -Force
+          Remove-Item .github/workflows/temporary-export-size-control-v6.yml -Force
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw "git diff check failed" }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Services/Video/VideoEncoderSelectionPolicy.cs Services/Video/VideoEncoderQualityPolicy.cs Services/Video/VideoEncoderContextPolicy.cs Services/Video/VideoExportFidelityPolicy.cs Services/Video/VideoExportService.cs scripts/temporary-export-size-control-v4.py .github/workflows/temporary-export-size-control-v6.yml
+          git commit -m "Make source bitrate authoritative for export size"
+          if ($LASTEXITCODE -ne 0) { throw "commit failed" }
+          git push origin HEAD:refactor/ownership-workspace-hardening
+          if ($LASTEXITCODE -ne 0) { throw "push failed" }
