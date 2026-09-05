@@ -2,6 +2,7 @@ using Avalonia;
 using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 
@@ -70,8 +71,9 @@ namespace FaceShield.Services.Analysis
             int removedUnstableTailFaces = TrimUnstableLowConfidenceTails(tracks, facesByFrame, confByFrame, options, cancellationToken);
             int removedEdgeTailFaces = TrimEdgeLowConfidenceTails(tracks, facesByFrame, confByFrame, options, cancellationToken);
             int removedLowerFrameFaces = RemoveLowerFrameLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
+            int removedLowEvidenceFaces = RemoveLowEvidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
             int removedSparseFaces = RemoveSparseLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
-            int removedFaces = RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
+            int removedFaces = removedLowEvidenceFaces + RemoveShortLowConfidenceTracks(tracks, facesByFrame, confByFrame, options, removedTrackIds, cancellationToken);
             int filledFrames = FillShortTrackGaps(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, gapFilledFaces, blockedSceneCutStarts, firstMutableFrame, cancellationToken);
             int lostFilledFrames = FillConfirmedLostFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, lostFillFrameIndices, lostFilledFaces, blockedSceneCutStarts, firstMutableFrame, cancellationToken);
             int initialFilledFrames = FillConfirmedInitialFrames(tracks, facesByFrame, confByFrame, sizeByFrame, hasStoredMask, options, removedTrackIds, initialFilledFaces, blockedSceneCutStarts, firstMutableFrame, out int blockedInitialFillTracks, cancellationToken);
@@ -260,6 +262,53 @@ namespace FaceShield.Services.Analysis
             }
         }
 
+        private static int RemoveLowEvidenceTracks(
+            IReadOnlyList<FaceTrack> tracks,
+            SparseFrameMap<List<Rect>?> facesByFrame,
+            SparseFrameMap<List<float>?> confByFrame,
+            FaceTrackPostProcessOptions options,
+            ISet<int> removedTrackIds,
+            CancellationToken cancellationToken)
+        {
+            if (!options.EnableWeightedTrackEvidence ||
+                options.LowEvidenceRejectMaxDetections <= 0 ||
+                options.LowEvidenceRejectMaxConfidence <= 0 ||
+                options.LowEvidenceRejectScore <= 0)
+            {
+                return 0;
+            }
+
+            int removed = 0;
+            foreach (var track in tracks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (removedTrackIds.Contains(track.Id) ||
+                    track.DetectionCount <= 0 ||
+                    track.DetectionCount > options.LowEvidenceRejectMaxDetections ||
+                    track.MaxConfidence > options.LowEvidenceRejectMaxConfidence ||
+                    CouldBePartialFace(track, tracks, options))
+                {
+                    continue;
+                }
+
+                var evidence = FaceTrackEvidenceScorer.Evaluate(track, options);
+                if (evidence.Score >= options.LowEvidenceRejectScore)
+                    continue;
+
+                removedTrackIds.Add(track.Id);
+                int removedOnTrack = RemoveTrackDetections(
+                    track,
+                    facesByFrame,
+                    confByFrame,
+                    cancellationToken);
+                removed += removedOnTrack;
+                Debug.WriteLine(
+                    $"[FaceTrackEvidence] track={track.Id} action=reject detections={track.DetectionCount} score={evidence.Score:0.000} meanConfidence={evidence.MeanConfidence:0.000} density={evidence.DetectionDensity:0.000} continuity={evidence.Continuity:0.000} persistence={evidence.Persistence:0.000} removedFaces={removedOnTrack}");
+            }
+
+            return removed;
+        }
+
         private static int RemoveShortLowConfidenceTracks(
             IReadOnlyList<FaceTrack> tracks,
             SparseFrameMap<List<Rect>?> facesByFrame,
@@ -272,6 +321,9 @@ namespace FaceShield.Services.Analysis
             foreach (var track in tracks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (removedTrackIds.Contains(track.Id))
+                    continue;
+
                 bool couldBePartialFace = CouldBePartialFace(track, tracks, options);
                 bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&
                     track.MaxConfidence < options.ShortTrackMaxConfidence &&
@@ -695,6 +747,10 @@ namespace FaceShield.Services.Analysis
                 if (!options.AllowSmallTrackLostFill && IsSmallTrack(track, options))
                     continue;
 
+                int maxLostFillFrames = ResolveLostFillFrames(track, options);
+                if (maxLostFillFrames <= 0)
+                    continue;
+
                 var detections = track.Detections;
                 var last = detections[^1];
                 int lastFrame = last.FrameIndex;
@@ -716,7 +772,7 @@ namespace FaceShield.Services.Analysis
                 double dw = (last.Bounds.Width - previous.Bounds.Width) / frameDelta;
                 double dh = (last.Bounds.Height - previous.Bounds.Height) / frameDelta;
 
-                for (int offset = 1; offset <= options.MaxLostFillFrames; offset++)
+                for (int offset = 1; offset <= maxLostFillFrames; offset++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     int frameIndex = lastFrame + offset;
@@ -789,8 +845,43 @@ namespace FaceShield.Services.Analysis
         }
 
         private static bool IsConfirmedTrack(FaceTrack track, FaceTrackPostProcessOptions options)
-            => track.DetectionCount >= options.ConfirmedTrackMinDetections &&
-                track.MaxConfidence >= options.StrongConfidence;
+        {
+            if (track.DetectionCount < options.ConfirmedTrackMinDetections ||
+                track.MaxConfidence < options.StrongConfidence)
+            {
+                return false;
+            }
+
+            if (!options.EnableWeightedTrackEvidence ||
+                options.MinConfirmedTrackEvidenceScore <= 0)
+            {
+                return true;
+            }
+
+            return FaceTrackEvidenceScorer.Evaluate(track, options).Score >=
+                options.MinConfirmedTrackEvidenceScore;
+        }
+
+        private static int ResolveLostFillFrames(
+            FaceTrack track,
+            FaceTrackPostProcessOptions options)
+        {
+            int baseFrames = Math.Max(0, options.MaxLostFillFrames);
+            if (!options.EnableWeightedTrackEvidence ||
+                options.MaxStrongTrackLostFillFrames <= baseFrames ||
+                options.StrongTrackEvidenceScore <= 0)
+            {
+                return baseFrames;
+            }
+
+            var evidence = FaceTrackEvidenceScorer.Evaluate(track, options);
+            if (evidence.Score < options.StrongTrackEvidenceScore)
+                return baseFrames;
+
+            Debug.WriteLine(
+                $"[FaceTrackEvidence] track={track.Id} action=extend-hold score={evidence.Score:0.000} baseFrames={baseFrames} strongFrames={options.MaxStrongTrackLostFillFrames}");
+            return options.MaxStrongTrackLostFillFrames;
+        }
 
         private static bool CanBridge(Rect previous, Rect next, int gap, FaceTrackPostProcessOptions options)
         {

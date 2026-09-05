@@ -486,7 +486,15 @@ namespace FaceShield.Services.Analysis
                     MinTrackMatchScore = 0.35,
                     MinCenterContinuity = 0.30,
                     EdgePartialFaceMarginRatio = 0.06,
-                    ConfirmedTrackMinDetections = 3
+                    ConfirmedTrackMinDetections = 3,
+                    EnableWeightedTrackEvidence = cleanupYoloFalsePositives,
+                    MinConfirmedTrackEvidenceScore = cleanupYoloFalsePositives ? 0.66 : 0.0,
+                    LowEvidenceRejectScore = cleanupYoloFalsePositives ? 0.64 : 0.0,
+                    LowEvidenceRejectMaxConfidence = cleanupYoloFalsePositives ? 0.60f : 0f,
+                    LowEvidenceRejectMaxDetections = cleanupYoloFalsePositives ? 3 : 0,
+                    EvidencePersistenceDetections = 5,
+                    StrongTrackEvidenceScore = cleanupYoloFalsePositives ? 0.80 : 1.01,
+                    MaxStrongTrackLostFillFrames = cleanupYoloFalsePositives ? 12 : 0
                 };
             }
 
@@ -572,7 +580,16 @@ namespace FaceShield.Services.Analysis
                     LowerFrameTrackMaxConfidence = 0.50f,
                     LowerFrameTrackMinCenterYRatio = 0.58,
                     LowerFrameTrackMinAreaRatio = 0.015,
-                    LowerFrameTrackMaxAreaRatio = 0.045
+                    LowerFrameTrackMaxAreaRatio = 0.045,
+                    ConfirmedTrackMinDetections = 3,
+                    EnableWeightedTrackEvidence = true,
+                    MinConfirmedTrackEvidenceScore = 0.66,
+                    LowEvidenceRejectScore = 0.64,
+                    LowEvidenceRejectMaxConfidence = 0.60f,
+                    LowEvidenceRejectMaxDetections = 3,
+                    EvidencePersistenceDetections = 5,
+                    StrongTrackEvidenceScore = 0.80,
+                    MaxStrongTrackLostFillFrames = 10
                 };
             }
 

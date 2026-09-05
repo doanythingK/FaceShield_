@@ -136,6 +136,118 @@ namespace FaceShield.Services.Analysis
         }
     }
 
+    internal readonly record struct FaceTrackEvidence(
+        double Score,
+        float MeanConfidence,
+        double DetectionDensity,
+        double Continuity,
+        double Persistence);
+
+    internal static class FaceTrackEvidenceScorer
+    {
+        internal static FaceTrackEvidence Evaluate(
+            FaceTrack track,
+            FaceTrackPostProcessOptions options)
+        {
+            if (track.DetectionCount <= 0)
+                return default;
+
+            double confidenceSum = 0.0;
+            foreach (var detection in track.Detections)
+                confidenceSum += Math.Clamp(detection.Confidence, 0.0f, 1.0f);
+
+            float meanConfidence = (float)(confidenceSum / track.DetectionCount);
+            int span = Math.Max(
+                1,
+                track.Detections[^1].FrameIndex -
+                track.Detections[0].FrameIndex + 1);
+            double density = Math.Clamp(
+                track.DetectionCount / (double)span,
+                0.0,
+                1.0);
+            double persistence = Math.Clamp(
+                track.DetectionCount /
+                (double)Math.Max(1, options.EvidencePersistenceDetections),
+                0.0,
+                1.0);
+            double continuity = ComputeContinuity(track, options);
+
+            // Privacy-oriented evidence: detector confidence is the largest term,
+            // while temporal stability must still support weak/moderate detections.
+            double score = Math.Clamp(
+                meanConfidence * 0.50 +
+                density * 0.15 +
+                continuity * 0.20 +
+                persistence * 0.15,
+                0.0,
+                1.0);
+
+            return new FaceTrackEvidence(
+                score,
+                meanConfidence,
+                density,
+                continuity,
+                persistence);
+        }
+
+        private static double ComputeContinuity(
+            FaceTrack track,
+            FaceTrackPostProcessOptions options)
+        {
+            if (track.DetectionCount < 2)
+                return 0.0;
+
+            double sum = 0.0;
+            int transitions = 0;
+            double areaLimit = Math.Max(1.01, options.MaxAreaChangeRatio);
+            double areaLogLimit = Math.Log(areaLimit);
+            double iouTarget = Math.Max(0.20, options.MinTrackIou * 2.0);
+
+            for (int i = 1; i < track.Detections.Count; i++)
+            {
+                var previous = track.Detections[i - 1];
+                var current = track.Detections[i];
+                int gap = Math.Max(1, current.FrameIndex - previous.FrameIndex);
+                double allowedShift = Math.Max(
+                    0.001,
+                    options.MaxCenterShiftRatio * gap);
+                double centerShift = FaceTrackBuilder.GetNormalizedCenterShift(
+                    previous.Bounds,
+                    current.Bounds);
+                double centerScore = Math.Clamp(
+                    1.0 - centerShift / allowedShift,
+                    0.0,
+                    1.0);
+
+                double rawAreaRatio = FaceTrackBuilder.GetAreaRatio(
+                    previous.Bounds,
+                    current.Bounds);
+                double symmetricAreaRatio = rawAreaRatio <= 0.0
+                    ? areaLimit
+                    : Math.Max(rawAreaRatio, 1.0 / rawAreaRatio);
+                double areaScore = Math.Clamp(
+                    1.0 - Math.Log(Math.Max(1.0, symmetricAreaRatio)) / areaLogLimit,
+                    0.0,
+                    1.0);
+
+                double iouScore = Math.Clamp(
+                    FaceTrackBuilder.IoU(previous.Bounds, current.Bounds) / iouTarget,
+                    0.0,
+                    1.0);
+                double gapWeight = 0.75 + 0.25 / gap;
+                sum += (
+                    centerScore * 0.45 +
+                    areaScore * 0.30 +
+                    iouScore * 0.25) * gapWeight;
+                transitions++;
+            }
+
+            return transitions == 0
+                ? 0.0
+                : Math.Clamp(sum / transitions, 0.0, 1.0);
+        }
+    }
+
     public sealed record FaceTrackPostProcessOptions
     {
         public int MaxTrackGap { get; init; } = 8;
@@ -145,6 +257,14 @@ namespace FaceShield.Services.Analysis
         public bool InitialFillRequiresInwardMotion { get; init; } = false;
         public int MaxConfirmedTrackHoldFrames { get; init; } = 3;
         public int ConfirmedTrackMinDetections { get; init; } = 3;
+        public bool EnableWeightedTrackEvidence { get; init; } = false;
+        public double MinConfirmedTrackEvidenceScore { get; init; } = 0.0;
+        public double LowEvidenceRejectScore { get; init; } = 0.0;
+        public float LowEvidenceRejectMaxConfidence { get; init; } = 0.0f;
+        public int LowEvidenceRejectMaxDetections { get; init; } = 0;
+        public int EvidencePersistenceDetections { get; init; } = 5;
+        public double StrongTrackEvidenceScore { get; init; } = 1.01;
+        public int MaxStrongTrackLostFillFrames { get; init; } = 0;
         public bool AllowSmallTrackLostFill { get; init; } = false;
         public int DropShortTrackMaxDetections { get; init; } = 1;
         public int DropShortSmallTrackMaxDetections { get; init; } = 2;
