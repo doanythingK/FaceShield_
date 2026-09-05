@@ -25,50 +25,70 @@ jobs:
           from pathlib import Path
 
           temporal = Path('Services/Analysis/AutoMaskTemporalPostProcessor.cs')
-          text = temporal.read_text(encoding='utf-8-sig')
+          text = temporal.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          start = text.index('            if (continuityOnly)')
+          end = text.index('            if (profile == FaceFilterProfile.Yolo)', start)
+          block = text[start:end]
 
-          old = '''            if (continuityOnly)\n            {\n                return new FaceTrackPostProcessOptions\n                {\n                    MaxTrackGap = 9,\n                    MaxFillGap = 4,\n                    MaxLostFillFrames = 3,\n                    MaxInitialFillFrames = 0,\n                    InitialFillRequiresInwardMotion = false,\n                    MaxConfirmedTrackHoldFrames = 8,\n                    AllowSmallTrackLostFill = false,\n                    WeakConfidence = 0.18f,\n                    StrongConfidence = 0.50f,\n                    SyntheticFillConfidenceMax = YoloSyntheticFillConfidenceMax,\n                    DropShortTrackMaxDetections = 0,\n                    DropShortSmallTrackMaxDetections = 0,\n                    ShortTrackMaxConfidence = 0f,\n                    DropSparseTrackMaxDetections = 0,\n                    DropSparseTrackMinSpanFrames = 8,\n                    DropSparseTrackMaxDensity = 0f,\n                    SparseTrackMaxConfidence = 0f,\n                    EdgeTailMaxConfidence = 0f,\n                    EdgeTailMinStableDetections = 3,\n                    EdgeLostFillMaxConfidence = 0.60f,\n                    SmallTrackMaxAreaRatio = 0.00070,\n                    MinTrackIou = 0.08,\n                    MaxCenterShiftRatio = 0.55,\n                    MaxConfirmedTrackBridgeCenterShiftRatio = 0.90,\n                    MaxAreaChangeRatio = 4.0,\n                    DuplicateIou = TemporalDuplicateIouMin,\n                    UnstableTailMaxConfidence = 0f,\n                    UnstableTailMinStableDetections = 3,\n                    UnstableTailMinIou = 0.45,\n                    UnstableTailMaxAreaChangeRatio = 1.8,\n                    LowerFrameTrackMaxConfidence = 0f,\n                    LowerFrameTrackMinCenterYRatio = 0.58,\n                    LowerFrameTrackMinAreaRatio = 0.015,\n                    LowerFrameTrackMaxAreaRatio = 0.045,\n                    MinTrackMatchScore = 0.35,\n                    MinCenterContinuity = 0.30,\n                    EdgePartialFaceMarginRatio = 0.06,\n                    ConfirmedTrackMinDetections = 3\n                };\n            }'''
-          new = '''            if (continuityOnly)\n            {\n                bool cleanupYoloFalsePositives = profile == FaceFilterProfile.Yolo;\n                return new FaceTrackPostProcessOptions\n                {\n                    MaxTrackGap = 9,\n                    MaxFillGap = 4,\n                    // Privacy-first continuity: keep a confirmed face alive through a short\n                    // detector miss, including the final frames while it exits the picture.\n                    MaxLostFillFrames = 8,\n                    MaxInitialFillFrames = 0,\n                    InitialFillRequiresInwardMotion = false,\n                    MaxConfirmedTrackHoldFrames = 8,\n                    AllowSmallTrackLostFill = true,\n                    WeakConfidence = 0.18f,\n                    StrongConfidence = 0.50f,\n                    SyntheticFillConfidenceMax = YoloSyntheticFillConfidenceMax,\n                    // Tracked mode used to disable all false-positive track cleanup. Keep\n                    // the established Full-mode YOLO cleanup thresholds, while the\n                    // interpolator protects partial edge faces from short-track removal.\n                    DropShortTrackMaxDetections = cleanupYoloFalsePositives ? 2 : 0,\n                    DropShortSmallTrackMaxDetections = cleanupYoloFalsePositives ? 3 : 0,\n                    ShortTrackMaxConfidence = cleanupYoloFalsePositives ? 0.48f : 0f,\n                    DropSparseTrackMaxDetections = cleanupYoloFalsePositives ? 3 : 0,\n                    DropSparseTrackMinSpanFrames = 8,\n                    DropSparseTrackMaxDensity = cleanupYoloFalsePositives ? 0.42 : 0.0,\n                    SparseTrackMaxConfidence = cleanupYoloFalsePositives ? 0.56f : 0f,\n                    EdgeTailMaxConfidence = 0f,\n                    EdgeTailMinStableDetections = 3,\n                    // Do not suppress lost-fill merely because the final detector result\n                    // is low-confidence at the frame edge; that is the privacy-critical\n                    // point where partial faces commonly stop detecting.\n                    EdgeLostFillMaxConfidence = 0f,\n                    SmallTrackMaxAreaRatio = 0.00070,\n                    MinTrackIou = 0.08,\n                    MaxCenterShiftRatio = cleanupYoloFalsePositives ? 0.72 : 0.55,\n                    MaxConfirmedTrackBridgeCenterShiftRatio = cleanupYoloFalsePositives ? 1.20 : 0.90,\n                    MaxAreaChangeRatio = 4.0,\n                    DuplicateIou = TemporalDuplicateIouMin,\n                    UnstableTailMaxConfidence = 0f,\n                    UnstableTailMinStableDetections = 3,\n                    UnstableTailMinIou = 0.45,\n                    UnstableTailMaxAreaChangeRatio = 1.8,\n                    LowerFrameTrackMaxConfidence = 0f,\n                    LowerFrameTrackMinCenterYRatio = 0.58,\n                    LowerFrameTrackMinAreaRatio = 0.015,\n                    LowerFrameTrackMaxAreaRatio = 0.045,\n                    MinTrackMatchScore = 0.35,\n                    MinCenterContinuity = 0.30,\n                    EdgePartialFaceMarginRatio = 0.06,\n                    ConfirmedTrackMinDetections = 3\n                };\n            }'''
-          if old not in text:
-              raise SystemExit('continuity-only options block not found exactly once')
-          text = text.replace(old, new, 1)
+          replacements = {
+              '                return new FaceTrackPostProcessOptions\n': '                bool cleanupYoloFalsePositives = profile == FaceFilterProfile.Yolo;\n                return new FaceTrackPostProcessOptions\n',
+              '                    MaxLostFillFrames = 3,': '                    MaxLostFillFrames = 8,',
+              '                    AllowSmallTrackLostFill = false,': '                    AllowSmallTrackLostFill = true,',
+              '                    DropShortTrackMaxDetections = 0,': '                    DropShortTrackMaxDetections = cleanupYoloFalsePositives ? 2 : 0,',
+              '                    DropShortSmallTrackMaxDetections = 0,': '                    DropShortSmallTrackMaxDetections = cleanupYoloFalsePositives ? 3 : 0,',
+              '                    ShortTrackMaxConfidence = 0f,': '                    ShortTrackMaxConfidence = cleanupYoloFalsePositives ? 0.48f : 0f,',
+              '                    DropSparseTrackMaxDetections = 0,': '                    DropSparseTrackMaxDetections = cleanupYoloFalsePositives ? 3 : 0,',
+              '                    DropSparseTrackMaxDensity = 0f,': '                    DropSparseTrackMaxDensity = cleanupYoloFalsePositives ? 0.42 : 0.0,',
+              '                    SparseTrackMaxConfidence = 0f,': '                    SparseTrackMaxConfidence = cleanupYoloFalsePositives ? 0.56f : 0f,',
+              '                    EdgeLostFillMaxConfidence = 0.60f,': '                    EdgeLostFillMaxConfidence = 0f,',
+              '                    MaxCenterShiftRatio = 0.55,': '                    MaxCenterShiftRatio = cleanupYoloFalsePositives ? 0.72 : 0.55,',
+              '                    MaxConfirmedTrackBridgeCenterShiftRatio = 0.90,': '                    MaxConfirmedTrackBridgeCenterShiftRatio = cleanupYoloFalsePositives ? 1.20 : 0.90,'
+          }
+          for old, new in replacements.items():
+              if block.count(old) != 1:
+                  raise SystemExit(f'continuity marker count mismatch: {old!r} count={block.count(old)}')
+              block = block.replace(old, new, 1)
+          text = text[:start] + block + text[end:]
 
-          old2 = '''                    MaxLostFillFrames = 0,\n                    MaxInitialFillFrames = 3,'''
-          new2 = '''                    MaxLostFillFrames = YoloConfirmedTrackHoldFrames,\n                    MaxInitialFillFrames = 3,'''
-          if text.count(old2) != 1:
-              raise SystemExit(f'expected one full YOLO lost-fill block, found {text.count(old2)}')
-          text = text.replace(old2, new2, 1)
-
-          old3 = '''                    EdgeLostFillMaxConfidence = 0.60f,\n                    SmallTrackMaxAreaRatio = 0.00070,'''
-          new3 = '''                    EdgeLostFillMaxConfidence = 0f,\n                    SmallTrackMaxAreaRatio = 0.00070,'''
-          if text.count(old3) != 1:
-              raise SystemExit(f'expected one full YOLO edge lost-fill setting, found {text.count(old3)}')
-          text = text.replace(old3, new3, 1)
+          yolo_start = text.index('            if (profile == FaceFilterProfile.Yolo)')
+          yolo_end = text.index('            return new FaceTrackPostProcessOptions', yolo_start + 1)
+          yolo = text[yolo_start:yolo_end]
+          if yolo.count('                    MaxLostFillFrames = 0,') != 1:
+              raise SystemExit('full YOLO MaxLostFillFrames marker mismatch')
+          yolo = yolo.replace(
+              '                    MaxLostFillFrames = 0,',
+              '                    MaxLostFillFrames = YoloConfirmedTrackHoldFrames,', 1)
+          if yolo.count('                    EdgeLostFillMaxConfidence = 0.60f,') != 1:
+              raise SystemExit('full YOLO EdgeLostFill marker mismatch')
+          yolo = yolo.replace(
+              '                    EdgeLostFillMaxConfidence = 0.60f,',
+              '                    EdgeLostFillMaxConfidence = 0f,', 1)
+          text = text[:yolo_start] + yolo + text[yolo_end:]
           temporal.write_text(text, encoding='utf-8', newline='\n')
 
           interpolator = Path('Services/Analysis/FaceTrackInterpolator.cs')
-          text = interpolator.read_text(encoding='utf-8-sig')
-          old4 = '''                bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&\n                    track.MaxConfidence < options.ShortTrackMaxConfidence;\n                bool removeShortSmall = track.DetectionCount <= options.DropShortSmallTrackMaxDetections &&\n                    IsSmallTrack(track, options) &&\n                    !CouldBePartialFace(track, tracks, options);'''
-          new4 = '''                bool couldBePartialFace = CouldBePartialFace(track, tracks, options);\n                bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&\n                    track.MaxConfidence < options.ShortTrackMaxConfidence &&\n                    !couldBePartialFace;\n                bool removeShortSmall = track.DetectionCount <= options.DropShortSmallTrackMaxDetections &&\n                    IsSmallTrack(track, options) &&\n                    !couldBePartialFace;'''
-          if text.count(old4) != 1:
-              raise SystemExit(f'expected one short-track cleanup block, found {text.count(old4)}')
-          text = text.replace(old4, new4, 1)
+          text = interpolator.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          old = '''                bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&\n                    track.MaxConfidence < options.ShortTrackMaxConfidence;\n                bool removeShortSmall = track.DetectionCount <= options.DropShortSmallTrackMaxDetections &&\n                    IsSmallTrack(track, options) &&\n                    !CouldBePartialFace(track, tracks, options);'''
+          new = '''                bool couldBePartialFace = CouldBePartialFace(track, tracks, options);\n                bool removeShortWeak = track.DetectionCount <= options.DropShortTrackMaxDetections &&\n                    track.MaxConfidence < options.ShortTrackMaxConfidence &&\n                    !couldBePartialFace;\n                bool removeShortSmall = track.DetectionCount <= options.DropShortSmallTrackMaxDetections &&\n                    IsSmallTrack(track, options) &&\n                    !couldBePartialFace;'''
+          if text.count(old) != 1:
+              raise SystemExit(f'short cleanup marker mismatch count={text.count(old)}')
+          text = text.replace(old, new, 1)
 
-          # Only lost-fill should continue while any predicted part remains visible.\n          # Initial backfill keeps its existing mostly-inside guard.\n          marker = '        private static int FillConfirmedLostFrames('
-          start = text.index(marker)
-          end = text.index('        private static bool CrossesSceneCut(', start)
-          section = text[start:end]
-          old5 = '''                    if (!IsMostlyInside(predicted, last.Size))\n                        break;'''
-          new5 = '''                    if (!IntersectsFrame(predicted, last.Size))\n                        break;'''
-          if section.count(old5) != 1:
-              raise SystemExit(f'expected one lost-fill inside guard, found {section.count(old5)}')
-          section = section.replace(old5, new5, 1)
-          text = text[:start] + section + text[end:]
+          lost_start = text.index('        private static int FillConfirmedLostFrames(')
+          lost_end = text.index('        private static bool CrossesSceneCut(', lost_start)
+          lost = text[lost_start:lost_end]
+          old_guard = '''                    if (!IsMostlyInside(predicted, last.Size))\n                        break;'''
+          if lost.count(old_guard) != 1:
+              raise SystemExit(f'lost-fill guard mismatch count={lost.count(old_guard)}')
+          lost = lost.replace(
+              old_guard,
+              '''                    if (!IntersectsFrame(predicted, last.Size))\n                        break;''', 1)
+          text = text[:lost_start] + lost + text[lost_end:]
 
-          helper_marker = '''        private static bool IsMostlyInside(Rect rect, PixelSize size)\n        {'''
-          helper = '''        private static bool IntersectsFrame(Rect rect, PixelSize size)\n        {\n            if (size.Width <= 0 || size.Height <= 0 || rect.Width <= 0 || rect.Height <= 0)\n                return false;\n\n            return rect.Right > 0 &&\n                rect.Bottom > 0 &&\n                rect.X < size.Width &&\n                rect.Y < size.Height;\n        }\n\n'''
+          helper_marker = '        private static bool IsMostlyInside(Rect rect, PixelSize size)\n'
           if text.count(helper_marker) != 1:
-              raise SystemExit('IsMostlyInside helper marker not found exactly once')
+              raise SystemExit(f'IsMostlyInside marker mismatch count={text.count(helper_marker)}')
+          helper = '''        private static bool IntersectsFrame(Rect rect, PixelSize size)\n        {\n            if (size.Width <= 0 || size.Height <= 0 || rect.Width <= 0 || rect.Height <= 0)\n                return false;\n\n            return rect.Right > 0 &&\n                rect.Bottom > 0 &&\n                rect.X < size.Width &&\n                rect.Y < size.Height;\n        }\n\n'''
           text = text.replace(helper_marker, helper + helper_marker, 1)
           interpolator.write_text(text, encoding='utf-8', newline='\n')
 
@@ -77,9 +97,9 @@ jobs:
         run: |
           set -euo pipefail
           grep -q 'MaxLostFillFrames = 8' Services/Analysis/AutoMaskTemporalPostProcessor.cs
-          grep -q 'EdgeLostFillMaxConfidence = 0f' Services/Analysis/AutoMaskTemporalPostProcessor.cs
-          grep -q 'cleanupYoloFalsePositives ? 2 : 0' Services/Analysis/AutoMaskTemporalPostProcessor.cs
           grep -q 'MaxLostFillFrames = YoloConfirmedTrackHoldFrames' Services/Analysis/AutoMaskTemporalPostProcessor.cs
+          test "$(grep -c 'EdgeLostFillMaxConfidence = 0f' Services/Analysis/AutoMaskTemporalPostProcessor.cs)" -ge 2
+          grep -q 'cleanupYoloFalsePositives ? 2 : 0' Services/Analysis/AutoMaskTemporalPostProcessor.cs
           grep -q 'bool couldBePartialFace = CouldBePartialFace' Services/Analysis/FaceTrackInterpolator.cs
           grep -q 'if (!IntersectsFrame(predicted, last.Size))' Services/Analysis/FaceTrackInterpolator.cs
           grep -q 'if (!IsMostlyInside(predicted, first.Size))' Services/Analysis/FaceTrackInterpolator.cs
@@ -117,14 +137,11 @@ jobs:
           var options = AutoMaskTemporalPostProcessor.BuildTrackPostProcessOptions(
               FaceFilterProfile.Yolo,
               continuityOnly: true);
+          if (options.MaxLostFillFrames != 8 || options.EdgeLostFillMaxConfidence != 0)
+              throw new InvalidOperationException("Tracked privacy tail policy mismatch.");
+          if (options.DropShortTrackMaxDetections != 2 || options.DropSparseTrackMaxDetections != 3)
+              throw new InvalidOperationException("Tracked YOLO cleanup policy mismatch.");
 
-          if (options.MaxLostFillFrames < 5 || options.EdgeLostFillMaxConfidence > 0)
-              throw new InvalidOperationException("Tracked privacy tail policy is not enabled.");
-          if (options.DropShortTrackMaxDetections <= 0 || options.DropSparseTrackMaxDetections <= 0)
-              throw new InvalidOperationException("Tracked YOLO false-positive cleanup is not enabled.");
-
-          // Low-confidence confirmed face reaches the right edge. The old policy stopped here
-          // because confidence <= 0.60; the new policy must keep blur until prediction is outside.
           var exitProvider = new FrameMaskProvider();
           exitProvider.SetFaceRects(10, new[] { new Rect(460, 120, 100, 100) }, size, 0.74f, new[] { 0.74f });
           exitProvider.SetFaceRects(11, new[] { new Rect(500, 120, 100, 100) }, size, 0.62f, new[] { 0.62f });
@@ -133,28 +150,26 @@ jobs:
           foreach (int frame in new[] { 13, 14 })
           {
               if (!exitProvider.TryGetFaceMaskData(frame, out var data) || data.Faces.Count != 1)
-                  throw new InvalidOperationException($"Expected partial exit face to remain blurred at frame {frame}.");
+                  throw new InvalidOperationException($"Partial exit face lost at frame {frame}.");
           }
           if (exitProvider.TryGetFaceMaskData(15, out var outside) && outside.Faces.Count > 0)
-              throw new InvalidOperationException("Expected exit prediction to stop after the face is fully outside.");
+              throw new InvalidOperationException("Exit fill continued after face prediction left frame.");
 
-          // Central, weak two-frame candidate is eligible for cleanup.
           var fpProvider = new FrameMaskProvider();
           fpProvider.SetFaceRects(5, new[] { new Rect(260, 150, 70, 70) }, size, 0.42f, new[] { 0.42f });
           fpProvider.SetFaceRects(6, new[] { new Rect(263, 151, 70, 70) }, size, 0.43f, new[] { 0.43f });
           var fpResult = new FaceTrackInterpolator().Apply(fpProvider, 12, options);
           if ((fpProvider.TryGetFaceMaskData(5, out var fp5) && fp5.Faces.Count > 0) ||
               (fpProvider.TryGetFaceMaskData(6, out var fp6) && fp6.Faces.Count > 0))
-              throw new InvalidOperationException("Expected weak central short track to be removed.");
+              throw new InvalidOperationException("Weak central short false-positive track remained.");
 
-          // The same weak short track at an edge is privacy-sensitive and must be retained.
           var edgeProvider = new FrameMaskProvider();
           edgeProvider.SetFaceRects(5, new[] { new Rect(0, 150, 70, 70) }, size, 0.42f, new[] { 0.42f });
           edgeProvider.SetFaceRects(6, new[] { new Rect(3, 151, 70, 70) }, size, 0.43f, new[] { 0.43f });
           new FaceTrackInterpolator().Apply(edgeProvider, 12, options);
           if (!edgeProvider.TryGetFaceMaskData(5, out var edge5) || edge5.Faces.Count != 1 ||
               !edgeProvider.TryGetFaceMaskData(6, out var edge6) || edge6.Faces.Count != 1)
-              throw new InvalidOperationException("Expected edge partial-face short track to be protected from cleanup.");
+              throw new InvalidOperationException("Edge partial-face short track was removed.");
 
           Console.WriteLine($"[PrivacyContinuity] PASS exitLost={exitResult.FilledLostFaces} fpRemoved={fpResult.RemovedShortFaces}");
           EOF
