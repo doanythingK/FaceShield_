@@ -1,0 +1,240 @@
+name: Temporary Export Size Control V2
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Patch strict source-relative export rate control
+        shell: python
+        run: |
+          from pathlib import Path
+
+          # 1) Generalize source-relative rate-control decision to all non-RGB encoders.
+          p = Path('Services/Video/VideoEncoderSelectionPolicy.cs')
+          text = p.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          old = '''    internal static bool ShouldApplySoftwareRateGuardrail(\n        string encoderName,\n        long sourceBitrate)\n    {\n        if (sourceBitrate <= 0 || string.IsNullOrWhiteSpace(encoderName))\n            return false;\n        if (string.Equals(encoderName, "libx264rgb", StringComparison.OrdinalIgnoreCase))\n            return false;\n\n        return UsesSoftwareConstantQuality(encoderName);\n    }'''
+          new = '''    internal static bool ShouldUseSourceRelativeRateControl(\n        string encoderName,\n        long sourceBitrate)\n    {\n        if (sourceBitrate <= 0 || string.IsNullOrWhiteSpace(encoderName))\n            return false;\n\n        // RGB H.264 has a separate fidelity contract. All other encoders use the\n        // known source rate as the authoritative size-control signal.\n        return !string.Equals(\n            encoderName,\n            "libx264rgb",\n            StringComparison.OrdinalIgnoreCase);\n    }'''
+          if text.count(old) != 1:
+              raise SystemExit(f'selection guardrail block mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+          p.write_text(text, encoding='utf-8', newline='\n')
+
+          # 2) Make quality options conditional: source-known paths must not layer CRF/CQ
+          #    on top of bitrate control, because that made the previous target non-authoritative.
+          p = Path('Services/Video/VideoEncoderQualityPolicy.cs')
+          text = p.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          old_sig = '''        AVCodecContext* ctx,\n        AVCodec* encoder,\n        bool forceSafeEncoding,\n        bool hasStaticHdrMetadata,'''
+          new_sig = '''        AVCodecContext* ctx,\n        AVCodec* encoder,\n        bool forceSafeEncoding,\n        bool useSourceRelativeRateControl,\n        bool hasStaticHdrMetadata,'''
+          if text.count(old_sig) != 1:
+              raise SystemExit('quality Apply signature mismatch')
+          text = text.replace(old_sig, new_sig, 1)
+
+          replacements = [
+          ('''        else if (isX264)\n        {\n            SetOption("preset", "fast", required: true);\n            SetOption("crf", "19", required: true);\n            mode = forceSafeEncoding ? "crf19-fast-safe" : "crf19-fast";\n        }''',
+           '''        else if (isX264)\n        {\n            SetOption("preset", "fast", required: true);\n            if (useSourceRelativeRateControl)\n            {\n                mode = forceSafeEncoding ? "source-vbr-fast-safe" : "source-vbr-fast";\n            }\n            else\n            {\n                SetOption("crf", "19", required: true);\n                mode = forceSafeEncoding ? "crf19-fast-safe" : "crf19-fast";\n            }\n        }'''),
+          ('''            if (hasStaticHdrMetadata)\n            {\n                SetOption("crf", "18", required: true);\n                if (string.IsNullOrWhiteSpace(x265Params))''',
+           '''            if (hasStaticHdrMetadata)\n            {\n                if (!useSourceRelativeRateControl)\n                    SetOption("crf", "18", required: true);\n                if (string.IsNullOrWhiteSpace(x265Params))'''),
+          ('''                mode = forceSafeEncoding ? "crf18-fast-safe-hdr" : "crf18-fast-hdr";\n            }\n            else\n            {\n                SetOption("crf", "20", required: true);\n                mode = forceSafeEncoding ? "crf20-fast-safe" : "crf20-fast";\n            }''',
+           '''                mode = useSourceRelativeRateControl\n                    ? forceSafeEncoding ? "source-vbr-fast-safe-hdr" : "source-vbr-fast-hdr"\n                    : forceSafeEncoding ? "crf18-fast-safe-hdr" : "crf18-fast-hdr";\n            }\n            else if (useSourceRelativeRateControl)\n            {\n                mode = forceSafeEncoding ? "source-vbr-fast-safe" : "source-vbr-fast";\n            }\n            else\n            {\n                SetOption("crf", "20", required: true);\n                mode = forceSafeEncoding ? "crf20-fast-safe" : "crf20-fast";\n            }'''),
+          ('''        else if (isSvtAv1)\n        {\n            SetOption("preset", "6", required: true);\n            SetOption("crf", "20", required: true);\n            SetOption("svtav1-params", "tune=0", required: true);\n            mode = forceSafeEncoding ? "crf20-preset6-vq-safe" : "crf20-preset6-vq";\n        }''',
+           '''        else if (isSvtAv1)\n        {\n            SetOption("preset", "6", required: true);\n            if (!useSourceRelativeRateControl)\n                SetOption("crf", "20", required: true);\n            SetOption("svtav1-params", "tune=0", required: true);\n            mode = useSourceRelativeRateControl\n                ? forceSafeEncoding ? "source-vbr-preset6-safe" : "source-vbr-preset6"\n                : forceSafeEncoding ? "crf20-preset6-vq-safe" : "crf20-preset6-vq";\n        }'''),
+          ('''        else if (isAomAv1)\n        {\n            SetOption("usage", "good", required: true);\n            SetOption("cpu-used", "4", required: true);\n            SetOption("crf", "20", required: true);\n            SetOption("row-mt", "1", required: false);\n            SetOption("tune", "psnr", required: false);\n            mode = forceSafeEncoding ? "crf20-cpu4-good-safe" : "crf20-cpu4-good";\n        }''',
+           '''        else if (isAomAv1)\n        {\n            SetOption("usage", "good", required: true);\n            SetOption("cpu-used", "4", required: true);\n            if (!useSourceRelativeRateControl)\n                SetOption("crf", "20", required: true);\n            SetOption("row-mt", "1", required: false);\n            SetOption("tune", "psnr", required: false);\n            mode = useSourceRelativeRateControl\n                ? forceSafeEncoding ? "source-vbr-cpu4-good-safe" : "source-vbr-cpu4-good"\n                : forceSafeEncoding ? "crf20-cpu4-good-safe" : "crf20-cpu4-good";\n        }'''),
+          ('''        else if (isNvenc)\n        {\n            SetOption("preset", "p6", required: true);\n            SetOption("tune", "hq", required: true);\n            SetOption("rc", "vbr", required: true);\n            SetOption("cq", "18", required: true);''',
+           '''        else if (isNvenc)\n        {\n            SetOption("preset", "p6", required: true);\n            SetOption("tune", "hq", required: true);\n            SetOption("rc", "vbr", required: true);\n            if (!useSourceRelativeRateControl)\n                SetOption("cq", "18", required: true);'''),
+          ('''            mode = forceSafeEncoding ? "p6-hq-vbr-cq18-safe" : "p6-hq-vbr-cq18";''',
+           '''            mode = useSourceRelativeRateControl\n                ? forceSafeEncoding ? "p6-hq-source-vbr-safe" : "p6-hq-source-vbr"\n                : forceSafeEncoding ? "p6-hq-vbr-cq18-safe" : "p6-hq-vbr-cq18";''')]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'quality block mismatch: {old[:60]!r} count={text.count(old)}')
+              text = text.replace(old, new, 1)
+          p.write_text(text, encoding='utf-8', newline='\n')
+
+          # 3) Use one strict target/max rate when source rate is known, regardless of encoder family.
+          p = Path('Services/Video/VideoEncoderContextPolicy.cs')
+          text = p.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          old = '''        bool usesSoftwareConstantQuality =\n            VideoEncoderSelectionPolicy.UsesSoftwareConstantQuality(\n                encoderName);\n        bool applySoftwareRateGuardrail =\n            VideoEncoderSelectionPolicy.ShouldApplySoftwareRateGuardrail(\n                encoderName,\n                sourceBitrate);\n        if (usesSoftwareConstantQuality)\n        {\n            if (applySoftwareRateGuardrail)\n            {\n                // Keep CRF quality selection, but cap sustained rate to the\n                // source-relative target so re-encoding cannot grow without bound.\n                ctx->bit_rate = targetBitrate;\n                ctx->rc_max_rate = targetBitrate;\n                ctx->rc_buffer_size =\n                    VideoExportFidelityPolicy.ClampBitrate(\n                        (long)targetBitrate * 2L);\n            }\n            else\n            {\n                // Unknown source rate and RGB H.264 retain the existing quality path.\n                ctx->bit_rate = 0;\n                ctx->rc_max_rate = 0;\n                ctx->rc_buffer_size = 0;\n            }\n        }\n        else\n        {\n            ctx->bit_rate = targetBitrate;\n            ctx->rc_max_rate =\n                VideoExportFidelityPolicy.ClampBitrate(\n                    (long)targetBitrate * 2L);\n            ctx->rc_buffer_size =\n                VideoExportFidelityPolicy.ClampBitrate(\n                    (long)targetBitrate * 4L);\n        }'''
+          new = '''        bool usesSoftwareConstantQuality =\n            VideoEncoderSelectionPolicy.UsesSoftwareConstantQuality(\n                encoderName);\n        bool useSourceRelativeRateControl =\n            VideoEncoderSelectionPolicy.ShouldUseSourceRelativeRateControl(\n                encoderName,\n                sourceBitrate);\n        if (useSourceRelativeRateControl)\n        {\n            // A known source rate is authoritative for output-size control.\n            // Do not allow a separate constant-quality mode or a 2x max-rate ceiling\n            // to override this target.\n            ctx->bit_rate = targetBitrate;\n            ctx->rc_max_rate = targetBitrate;\n            ctx->rc_buffer_size =\n                VideoExportFidelityPolicy.ClampBitrate(\n                    (long)targetBitrate * 2L);\n        }\n        else if (usesSoftwareConstantQuality)\n        {\n            // Unknown source rate and RGB H.264 retain the existing quality path.\n            ctx->bit_rate = 0;\n            ctx->rc_max_rate = 0;\n            ctx->rc_buffer_size = 0;\n        }\n        else\n        {\n            ctx->bit_rate = targetBitrate;\n            ctx->rc_max_rate =\n                VideoExportFidelityPolicy.ClampBitrate(\n                    (long)targetBitrate * 2L);\n            ctx->rc_buffer_size =\n                VideoExportFidelityPolicy.ClampBitrate(\n                    (long)targetBitrate * 4L);\n        }'''
+          if text.count(old) != 1:
+              raise SystemExit(f'context rate block mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+          old_apply = '''        qualityConfiguration = VideoEncoderQualityPolicy.Apply(\n            ctx,\n            encoder,\n            forceSafeEncoding,\n            hdrMetadata?.HasStaticMetadata == true,'''
+          new_apply = '''        qualityConfiguration = VideoEncoderQualityPolicy.Apply(\n            ctx,\n            encoder,\n            forceSafeEncoding,\n            useSourceRelativeRateControl,\n            hdrMetadata?.HasStaticMetadata == true,'''
+          if text.count(old_apply) != 1:
+              raise SystemExit('quality Apply call mismatch')
+          text = text.replace(old_apply, new_apply, 1)
+          p.write_text(text, encoding='utf-8', newline='\n')
+
+          # 4) Add file-size/duration fallback when stream/container bitrate metadata is absent.
+          p = Path('Services/Video/VideoExportFidelityPolicy.cs')
+          text = p.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          if 'using System.IO;\n' not in text:
+              text = text.replace('using System;\n', 'using System;\nusing System.IO;\n', 1)
+          marker = '''    internal static long ResolveSourceVideoBitrate(\n        AVStream* stream,'''
+          helper = '''    internal static long EstimateContainerBitrateFromFile(\n        long fileLengthBytes,\n        long durationMicroseconds)\n    {\n        if (fileLengthBytes <= 0 || durationMicroseconds <= 0)\n            return 0;\n\n        double bitsPerSecond =\n            fileLengthBytes * 8.0 * ffmpeg.AV_TIME_BASE / durationMicroseconds;\n        if (double.IsNaN(bitsPerSecond) ||\n            double.IsInfinity(bitsPerSecond) ||\n            bitsPerSecond <= 0)\n        {\n            return 0;\n        }\n\n        return bitsPerSecond >= long.MaxValue\n            ? long.MaxValue\n            : (long)Math.Round(bitsPerSecond);\n    }\n\n    internal static long ResolveContainerBitrateFallback(\n        AVFormatContext* formatContext,\n        string inputPath)\n    {\n        if (formatContext != null && formatContext->bit_rate > 0)\n            return formatContext->bit_rate;\n\n        if (formatContext == null ||\n            formatContext->duration <= 0 ||\n            string.IsNullOrWhiteSpace(inputPath) ||\n            !File.Exists(inputPath))\n        {\n            return 0;\n        }\n\n        long fileLengthBytes = new FileInfo(inputPath).Length;\n        return EstimateContainerBitrateFromFile(\n            fileLengthBytes,\n            formatContext->duration);\n    }\n\n'''
+          if text.count(marker) != 1:
+              raise SystemExit('source bitrate insertion marker mismatch')
+          text = text.replace(marker, helper + marker, 1)
+          p.write_text(text, encoding='utf-8', newline='\n')
+
+          # 5) Resolve fallback once after input stream discovery and use it consistently.
+          p = Path('Services/Video/VideoExportService.cs')
+          text = p.read_text(encoding='utf-8-sig').replace('\r\n', '\n')
+          marker = '''            AVStream* inStream = inFmt->streams[videoStreamIndex];\n            AVStream* inAudioStream = audioStreamIndex >= 0 ? inFmt->streams[audioStreamIndex] : null;\n            totalFrames = (int)inStream->nb_frames;'''
+          replacement = '''            AVStream* inStream = inFmt->streams[videoStreamIndex];\n            AVStream* inAudioStream = audioStreamIndex >= 0 ? inFmt->streams[audioStreamIndex] : null;\n            long sourceContainerBitrate =\n                VideoExportFidelityPolicy.ResolveContainerBitrateFallback(\n                    inFmt,\n                    inputPath);\n            totalFrames = (int)inStream->nb_frames;'''
+          if text.count(marker) != 1:
+              raise SystemExit('service source bitrate insertion marker mismatch')
+          text = text.replace(marker, replacement, 1)
+          if text.count('inFmt->bit_rate,') != 2:
+              raise SystemExit(f'expected two encoder bitrate args, got {text.count("inFmt->bit_rate,")}')
+          text = text.replace('inFmt->bit_rate,', 'sourceContainerBitrate,')
+          text = text.replace(
+              'VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null)',
+              'VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, null, sourceContainerBitrate)')
+          text = text.replace(
+              'VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, dec)',
+              'VideoExportFidelityPolicy.ResolveSourceVideoBitrate(inStream, dec, sourceContainerBitrate)')
+          p.write_text(text, encoding='utf-8', newline='\n')
+
+      - name: Source invariants
+        shell: python
+        run: |
+          from pathlib import Path
+          selection = Path('Services/Video/VideoEncoderSelectionPolicy.cs').read_text(encoding='utf-8')
+          quality = Path('Services/Video/VideoEncoderQualityPolicy.cs').read_text(encoding='utf-8')
+          context = Path('Services/Video/VideoEncoderContextPolicy.cs').read_text(encoding='utf-8')
+          fidelity = Path('Services/Video/VideoExportFidelityPolicy.cs').read_text(encoding='utf-8')
+          service = Path('Services/Video/VideoExportService.cs').read_text(encoding='utf-8')
+
+          required = {
+              'selection source-rate decision': ('ShouldUseSourceRelativeRateControl', selection),
+              'quality source-rate arg': ('bool useSourceRelativeRateControl', quality),
+              'context strict max rate': ('ctx->rc_max_rate = targetBitrate;', context),
+              'file bitrate fallback': ('EstimateContainerBitrateFromFile', fidelity),
+              'container bitrate resolver': ('ResolveContainerBitrateFallback', fidelity),
+              'service resolved bitrate': ('long sourceContainerBitrate =', service),
+          }
+          for name, (marker, text) in required.items():
+              if marker not in text:
+                  raise SystemExit(f'missing {name}: {marker}')
+          if 'ShouldApplySoftwareRateGuardrail' in selection or 'applySoftwareRateGuardrail' in context:
+              raise SystemExit('old software-only rate guardrail remains')
+          if 'ctx->rc_max_rate =\n                VideoExportFidelityPolicy.ClampBitrate(\n                    (long)targetBitrate * 2L);' not in context:
+              raise SystemExit('unknown-source fallback rate policy unexpectedly removed')
+          # In source-relative mode x264/x265/AV1 and NVENC must not unconditionally force CRF/CQ.
+          for marker in ['if (!useSourceRelativeRateControl)\n                SetOption("crf", "20"',
+                         'if (!useSourceRelativeRateControl)\n                SetOption("cq", "18"']:
+              if marker not in quality:
+                  raise SystemExit(f'missing conditional quality marker: {marker}')
+          if 'VideoEncoderQualityPolicy.Apply(\n            ctx,\n            encoder,\n            forceSafeEncoding,\n            useSourceRelativeRateControl,' not in context:
+              raise SystemExit('source rate mode not passed to quality policy')
+          if service.count('sourceContainerBitrate,') < 4:
+              raise SystemExit('resolved source bitrate not threaded through encoder/summary paths')
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Rate policy harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/export-rate-v2"
+          mkdir -p "$work"
+          cat > "$work/Test.csproj" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include="$GITHUB_WORKSPACE/FaceShield.csproj" /></ItemGroup></Project>
+          EOF
+          cat > "$work/Program.cs" <<'EOF'
+          using System;
+          using System.Reflection;
+          using FaceShield.Services.Video;
+
+          var asm = typeof(VideoExportService).Assembly;
+          var fidelity = asm.GetType("FaceShield.Services.Video.VideoExportFidelityPolicy")!;
+          var estimate = fidelity.GetMethod("EstimateContainerBitrateFromFile", BindingFlags.NonPublic | BindingFlags.Static)!;
+          long Estimate(long bytes, long durationUs) => (long)estimate.Invoke(null, new object[] { bytes, durationUs })!;
+          if (Estimate(750_000, 6_000_000) != 1_000_000) throw new Exception("file bitrate fallback mismatch");
+
+          var selection = asm.GetType("FaceShield.Services.Video.VideoEncoderSelectionPolicy")!;
+          var should = selection.GetMethod("ShouldUseSourceRelativeRateControl", BindingFlags.NonPublic | BindingFlags.Static)!;
+          bool Use(string name, long bitrate) => (bool)should.Invoke(null, new object[] { name, bitrate })!;
+          foreach (var name in new[] { "libx264", "libx265", "libsvtav1", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox" })
+              if (!Use(name, 1_000_000)) throw new Exception($"source-rate control missing: {name}");
+          if (Use("libx264rgb", 1_000_000) || Use("libx264", 0)) throw new Exception("source-rate scope mismatch");
+          Console.WriteLine("[ExportRatePolicyV2] PASS");
+          EOF
+          dotnet run --project "$work/Test.csproj" -c Release -p:UseAppHost=false --nologo
+
+      - name: End-to-end export size harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/export-size-e2e"
+          mkdir -p "$work"
+          ffmpeg -hide_banner -loglevel error \
+            -f lavfi -i 'testsrc2=size=640x360:rate=30' \
+            -t 6 -c:v libx264 -preset veryfast -b:v 800k -maxrate 800k -bufsize 1600k \
+            -pix_fmt yuv420p -an -y "$work/source.mp4"
+          cat > "$work/Test.csproj" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include="$GITHUB_WORKSPACE/FaceShield.csproj" /></ItemGroup></Project>
+          EOF
+          cat > "$work/Program.cs" <<'EOF'
+          using System;
+          using System.IO;
+          using Avalonia;
+          using FaceShield.Services.Video;
+
+          var source = args[0];
+          var output = args[1];
+          FFmpegBootstrap.Initialize();
+          using var provider = new FrameMaskProvider();
+          var size = new PixelSize(640, 360);
+          for (int i = 0; i < 180; i++)
+              provider.SetFaceRects(i, new[] { new Rect(180 + (i % 30), 100, 120, 120) }, size, 0.9f, new[] { 0.9f });
+
+          var service = new VideoExportService(provider);
+          service.Export(source, output, blurRadius: 8, allowHybridCopy: false);
+          if (!File.Exists(output)) throw new Exception("export output missing");
+          long sourceBytes = new FileInfo(source).Length;
+          long outputBytes = new FileInfo(output).Length;
+          double ratio = outputBytes / (double)sourceBytes;
+          var summary = service.LastExportSummary ?? throw new Exception("export summary missing");
+          Console.WriteLine($"[ExportSizeE2E] sourceBytes={sourceBytes} outputBytes={outputBytes} ratio={ratio:0.000} encoder={summary.EncoderName} mode={summary.EncoderQualityMode} sourceRate={summary.SourceVideoBitrate} targetRate={summary.TargetVideoBitrate}");
+          if (ratio > 1.60)
+              throw new Exception($"export size ratio too high: {ratio:0.000}");
+          if (summary.SourceVideoBitrate <= 0 || summary.TargetVideoBitrate <= 0)
+              throw new Exception("effective source/target bitrate was not recorded");
+          EOF
+          dotnet run --project "$work/Test.csproj" -c Release -p:UseAppHost=false --nologo -- "$work/source.mp4" "$work/output.mp4"
+          ffmpeg -hide_banner -loglevel error -i "$work/output.mp4" -f null -
+
+      - name: Release build
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/temporary-export-size-control-v2.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Services/Video/VideoEncoderSelectionPolicy.cs Services/Video/VideoEncoderQualityPolicy.cs Services/Video/VideoEncoderContextPolicy.cs Services/Video/VideoExportFidelityPolicy.cs Services/Video/VideoExportService.cs .github/workflows/temporary-export-size-control-v2.yml
+          git commit -m "Make source bitrate authoritative for export size"
+          git push origin HEAD:refactor/ownership-workspace-hardening
