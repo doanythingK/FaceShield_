@@ -75,3 +75,4 @@ jobs:
           name: FaceShield-win-x64
           path: |
             bin/Release/net8.0/win-x64/publish/FaceShield-win-x64-v*-*.zip
+          retention-days: 1
