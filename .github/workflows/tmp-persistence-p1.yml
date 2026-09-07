@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - refactor/ownership-workspace-hardening
+    paths:
+      - '.github/workflows/tmp-persistence-p1.yml'
 
 permissions:
   contents: write
 
 jobs:
-  windows-verify:
-    if: github.event.head_commit.message == 'chore: run persistence P1 verification'
+  windows_verify:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -49,8 +50,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-  macos-verify:
-    if: github.event.head_commit.message == 'chore: run persistence P1 verification'
+  macos_verify:
     runs-on: macos-latest
     timeout-minutes: 35
     steps:
@@ -72,11 +72,8 @@ jobs:
       - name: Release build
         run: dotnet build FaceShield.csproj -c Release --no-restore
 
-  commit-fix:
-    if: github.event.head_commit.message == 'chore: run persistence P1 verification'
-    needs:
-      - windows-verify
-      - macos-verify
+  commit_fix:
+    needs: [windows_verify, macos_verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
