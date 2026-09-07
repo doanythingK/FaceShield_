@@ -1,9 +1,6 @@
 name: Actions History Cleanup
 
 on:
-  push:
-    paths:
-      - ".github/workflows/actions-history-cleanup.yml"
   workflow_dispatch:
 
 permissions:
@@ -12,7 +9,7 @@ permissions:
 
 jobs:
   cleanup:
-    name: Keep latest 2 runs per workflow
+    name: Clean old runs and caches
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -30,20 +27,49 @@ jobs:
           gh api --paginate "repos/$REPO/actions/runs?per_page=100" \
             --jq '.workflow_runs[] | [.workflow_id, .id, .name, .created_at] | @tsv' \
             > "$tmp_file"
+
           declare -A seen=()
           deleted=0
           kept=0
+
           while IFS=$'\t' read -r workflow_id run_id workflow_name created_at; do
             [[ -z "${workflow_id:-}" || -z "${run_id:-}" ]] && continue
             count=${seen[$workflow_id]:-0}
             seen[$workflow_id]=$((count + 1))
+
             if [[ "$run_id" == "$CURRENT_RUN_ID" || "$count" -lt "$KEEP_PER_WORKFLOW" ]]; then
               echo "KEEP   workflow=$workflow_name run=$run_id created=$created_at"
               kept=$((kept + 1))
               continue
             fi
+
             echo "DELETE workflow=$workflow_name run=$run_id created=$created_at"
             gh api --method DELETE "repos/$REPO/actions/runs/$run_id"
             deleted=$((deleted + 1))
           done < "$tmp_file"
+
           echo "Kept $kept run(s), deleted $deleted old run(s)."
+
+      - name: Delete Actions caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_ids="$(gh api --paginate "repos/$REPO/actions/caches?per_page=100" --jq '.actions_caches[].id' || true)"
+
+          if [[ -z "$cache_ids" ]]; then
+            echo "No Actions caches to delete."
+            exit 0
+          fi
+
+          deleted=0
+          while IFS= read -r cache_id; do
+            [[ -z "$cache_id" ]] && continue
+            echo "DELETE cache=$cache_id"
+            gh api --method DELETE "repos/$REPO/actions/caches/$cache_id"
+            deleted=$((deleted + 1))
+          done <<< "$cache_ids"
+
+          echo "Deleted $deleted Actions cache(s)."
