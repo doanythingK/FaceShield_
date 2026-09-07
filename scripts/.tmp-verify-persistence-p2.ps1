@@ -63,12 +63,15 @@ static bool ReadBoolField(object target, string name)
     return (bool)(field.GetValue(target) ?? false);
 }
 
-static object InvokeNonPublic(object target, string name, params object?[] args)
+static WriteableBitmap GetStoredBitmap(FrameMaskProvider provider, int frameIndex)
 {
-    MethodInfo method = target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException($"Missing method {name}");
-    return method.Invoke(target, args)
-        ?? throw new InvalidOperationException($"Method {name} returned null");
+    object masks = InstanceField(provider, "_masks");
+    MethodInfo tryGetValue = masks.GetType().GetMethod("TryGetValue")
+        ?? throw new InvalidOperationException("Missing stored-mask TryGetValue");
+    object?[] args = { frameIndex, null };
+    if (!(bool)(tryGetValue.Invoke(masks, args) ?? false) || args[1] is not WriteableBitmap bitmap)
+        throw new InvalidOperationException($"Missing stored bitmap for frame {frameIndex}");
+    return bitmap;
 }
 
 static unsafe WriteableBitmap CreateMask(int seed, int width = 512, int height = 320)
@@ -203,7 +206,6 @@ string token = Guid.NewGuid().ToString("N");
 // 3) Directory read reservations are reference-counted. One reader releasing a
 // shared generation must not remove another reader/save's protection.
 {
-    var store = new WorkspaceStateStore();
     Type type = typeof(WorkspaceStateStore);
     MethodInfo register = type.GetMethod("RegisterActiveWorkspaceDirectory", BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new Exception("Missing RegisterActiveWorkspaceDirectory");
@@ -245,7 +247,7 @@ string token = Guid.NewGuid().ToString("N");
 
     for (int iteration = 0; iteration < 8; iteration++)
     {
-        WriteableBitmap stored = provider.GetMaskEntries().Single(entry => entry.Key == 0).Value;
+        WriteableBitmap stored = GetStoredBitmap(provider, 0);
         using var lease = (IDisposable)(createPersistenceSnapshot.Invoke(
             provider,
             new object[] { CancellationToken.None })
@@ -276,8 +278,6 @@ string token = Guid.NewGuid().ToString("N");
             }
         });
 
-        // QueueSaveAsync has already captured its lease. Retire the same bitmap while
-        // persistence/direct reads are active, then install a new immutable bitmap.
         provider.SetMask(0, CreateMask(100 + iteration));
         await Task.WhenAll(save, directReads, providerReads).WaitAsync(TimeSpan.FromSeconds(30));
     }
