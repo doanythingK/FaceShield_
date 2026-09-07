@@ -384,7 +384,114 @@ if text.count(old) != 1:
 text = text.replace(old, new)
 store_path.write_text(text, encoding='utf-8', newline='')
 
-# Structural invariants for the two P1 fixes.
+guard_path = Path('Services/Application/SingleInstanceGuard.cs')
+guard = '''using System;
+using System.Threading;
+
+namespace FaceShield.Services.Application;
+
+internal sealed class SingleInstanceGuard : IDisposable
+{
+    private const string MutexName = "FaceShield_SingleInstance_8D52D4C9EAB34AF0";
+    private static int _processLeaseHeld;
+
+    private readonly Mutex _mutex;
+    private int _disposed;
+
+    private SingleInstanceGuard(Mutex mutex)
+    {
+        _mutex = mutex;
+    }
+
+    internal static bool TryAcquire(out SingleInstanceGuard? guard)
+    {
+        guard = null;
+        if (Interlocked.CompareExchange(ref _processLeaseHeld, 1, 0) != 0)
+            return false;
+
+        Mutex? mutex = null;
+        bool ownsMutex = false;
+        try
+        {
+            mutex = new Mutex(
+                initiallyOwned: true,
+                name: MutexName,
+                createdNew: out bool createdNew);
+            ownsMutex = createdNew;
+
+            if (!ownsMutex)
+            {
+                try
+                {
+                    ownsMutex = mutex.WaitOne(0);
+                }
+                catch (AbandonedMutexException)
+                {
+                    // The previous process died while owning the mutex. WaitOne grants
+                    // ownership to this process in the abandoned-mutex case.
+                    ownsMutex = true;
+                }
+            }
+
+            if (!ownsMutex)
+            {
+                mutex.Dispose();
+                mutex = null;
+                Interlocked.Exchange(ref _processLeaseHeld, 0);
+                return false;
+            }
+
+            guard = new SingleInstanceGuard(mutex);
+            mutex = null;
+            return true;
+        }
+        catch
+        {
+            if (ownsMutex && mutex != null)
+            {
+                try
+                {
+                    mutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                    // Ownership was already lost; disposal below is sufficient.
+                }
+            }
+
+            mutex?.Dispose();
+            Interlocked.Exchange(ref _processLeaseHeld, 0);
+            throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        try
+        {
+            try
+            {
+                _mutex.ReleaseMutex();
+            }
+            catch (ApplicationException)
+            {
+                // If ownership was lost during shutdown, disposing the handle is enough.
+            }
+        }
+        finally
+        {
+            _mutex.Dispose();
+            Interlocked.Exchange(ref _processLeaseHeld, 0);
+        }
+    }
+}
+'''
+guard_path.write_text(guard, encoding='utf-8', newline='')
+
+# Structural invariants for the P1 fixes and cross-platform single-instance guard.
 coord = coordinator_path.read_text(encoding='utf-8')
 if 'QueueSaveAsync(snapshot).GetAwaiter().GetResult();' in coord:
     raise SystemExit('SaveNow still delegates directly to QueueSaveAsync')
@@ -408,5 +515,13 @@ for token in [
 ]:
     if token not in store:
         raise SystemExit(f'missing store invariant: {token}')
+
+guard_text = guard_path.read_text(encoding='utf-8')
+for forbidden in ['FileStream.Lock(', 'FileStream.Unlock(', '.Lock(0, 1)', '.Unlock(0, 1)']:
+    if forbidden in guard_text:
+        raise SystemExit(f'unsupported single-instance primitive remains: {forbidden}')
+for token in ['new Mutex(', 'WaitOne(0)', 'ReleaseMutex()', '_processLeaseHeld']:
+    if token not in guard_text:
+        raise SystemExit(f'missing single-instance invariant: {token}')
 
 print('[PersistenceP1Patch] PASS')
