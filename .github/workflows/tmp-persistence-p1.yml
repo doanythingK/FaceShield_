@@ -35,7 +35,7 @@ jobs:
         run: dotnet restore FaceShield.csproj
       - name: Release build
         run: dotnet build FaceShield.csproj -c Release --no-restore
-      - name: Persistence race harness
+      - name: Persistence and single-instance harness
         shell: pwsh
         run: pwsh -NoProfile -File scripts/.tmp-verify-persistence-p1.ps1
       - name: Existing focused regressions
@@ -71,6 +71,9 @@ jobs:
         run: dotnet restore FaceShield.csproj
       - name: Release build
         run: dotnet build FaceShield.csproj -c Release --no-restore
+      - name: Persistence and single-instance harness
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/.tmp-verify-persistence-p1.ps1
 
   commit_fix:
     needs: [windows_verify, macos_verify]
