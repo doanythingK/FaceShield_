@@ -353,6 +353,18 @@ namespace FaceShield.Services.Video
         }
     }
 
+    internal IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetStoredMaskBorrowedSnapshot()
+    {
+        if (!_allowsBorrowedBitmapReads)
+        {
+            throw new InvalidOperationException(
+                "Borrowed stored-mask snapshots are only allowed on detached provider snapshots.");
+        }
+
+        lock (_stateGate)
+            return _masks.ToArray();
+    }
+
     internal SparseFaceMaskWorkingCopy CreateSparseFaceMaskWorkingCopy(
         CancellationToken cancellationToken = default)
     {

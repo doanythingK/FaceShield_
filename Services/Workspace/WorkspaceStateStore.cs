@@ -24,6 +24,7 @@ namespace FaceShield.Services.Workspace
             OperatingSystem.IsWindows()
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal;
+        private static readonly object GlobalStateGate = new();
         private readonly string _rootDir;
         private readonly string _stateFile;
         private readonly string _stateBackupFile;
@@ -36,39 +37,62 @@ namespace FaceShield.Services.Workspace
                 "FaceShield");
             _stateFile = Path.Combine(_rootDir, "state.json");
             _stateBackupFile = Path.Combine(_rootDir, "state.json.bak");
-            _state = LoadState();
+            lock (GlobalStateGate)
+                _state = LoadState();
         }
 
         public IReadOnlyList<RecentItem> GetRecents()
         {
-            return _state.Recents
-                .Select(r => new RecentItem(r.Title, r.Path, r.LastOpened))
-                .ToList();
+            lock (GlobalStateGate)
+            {
+                RefreshStateLocked();
+                return _state.Recents
+                    .Select(r => new RecentItem(r.Title, r.Path, r.LastOpened))
+                    .ToList();
+            }
         }
 
         public AutoSettingsState? GetAutoSettings()
         {
-            return _state.AutoSettings;
+            lock (GlobalStateGate)
+            {
+                RefreshStateLocked();
+                return _state.AutoSettings;
+            }
         }
 
         public void SaveAutoSettings(AutoSettingsState settings)
         {
-            _state.AutoSettings = settings;
-            SaveState();
+            if (settings == null)
+                throw new ArgumentNullException(nameof(settings));
+
+            lock (GlobalStateGate)
+            {
+                RefreshStateLocked();
+                _state.AutoSettings = settings;
+                SaveState();
+            }
         }
 
         public void SaveRecents(IEnumerable<RecentItem> recents)
         {
-            _state.Recents = recents
-                .Select(r => new RecentItemState
-                {
-                    Title = r.Title,
-                    Path = r.Path,
-                    LastOpened = r.LastOpened
-                })
-                .ToList();
+            if (recents == null)
+                throw new ArgumentNullException(nameof(recents));
 
-            SaveState();
+            lock (GlobalStateGate)
+            {
+                RefreshStateLocked();
+                _state.Recents = recents
+                    .Select(r => new RecentItemState
+                    {
+                        Title = r.Title,
+                        Path = r.Path,
+                        LastOpened = r.LastOpened
+                    })
+                    .ToList();
+
+                SaveState();
+            }
         }
 
         public void RemoveWorkspacesForPath(string videoPath)
@@ -76,32 +100,36 @@ namespace FaceShield.Services.Workspace
             if (string.IsNullOrWhiteSpace(videoPath))
                 return;
 
-            var previousWorkspaces = _state.Workspaces.ToList();
-            try
+            lock (GlobalStateGate)
             {
-                _state.Workspaces.RemoveAll(w =>
-                    string.Equals(
-                        w.VideoPath,
-                        videoPath,
-                        StringComparison.OrdinalIgnoreCase));
+                RefreshStateLocked();
+                var previousWorkspaces = _state.Workspaces.ToList();
+                try
+                {
+                    _state.Workspaces.RemoveAll(w =>
+                        string.Equals(
+                            w.VideoPath,
+                            videoPath,
+                            StringComparison.OrdinalIgnoreCase));
 
-                // Commit the reference removal first. The old state remains in the
-                // backup until we explicitly synchronize it below.
-                SaveState();
+                    // Commit the reference removal first. The old state remains in the
+                    // backup until we explicitly synchronize it below.
+                    SaveState();
+                }
+                catch
+                {
+                    _state.Workspaces = previousWorkspaces;
+                    throw;
+                }
+
+                // Never delete workspace payloads while the backup can still reference
+                // them. If backup synchronization fails, leaving orphaned files is safer
+                // than creating a backup that points at missing data.
+                if (!TrySyncBackupToCurrentState())
+                    return;
+
+                TryDeleteWorkspaceBaseDirectory(videoPath);
             }
-            catch
-            {
-                _state.Workspaces = previousWorkspaces;
-                throw;
-            }
-
-            // Never delete workspace payloads while the backup can still reference
-            // them. If backup synchronization fails, leaving orphaned files is safer
-            // than creating a backup that points at missing data.
-            if (!TrySyncBackupToCurrentState())
-                return;
-
-            TryDeleteWorkspaceBaseDirectory(videoPath);
         }
 
         public bool TryLoadWorkspace(
@@ -110,51 +138,58 @@ namespace FaceShield.Services.Workspace
             FrameMaskProvider maskProvider,
             out WorkspaceSnapshot? snapshot)
         {
-            snapshot = null;
-            WorkspaceState? primaryState = FindWorkspaceState(_state, videoPath, mode);
-            if (primaryState == null)
-                return false;
+            if (maskProvider == null)
+                throw new ArgumentNullException(nameof(maskProvider));
 
-            WorkspaceState stateToUse = primaryState;
-            bool loadedComplete = TryLoadWorkspacePayload(
-                videoPath,
-                mode,
-                primaryState,
-                maskProvider,
-                requireComplete: true);
-
-            if (!loadedComplete)
+            lock (GlobalStateGate)
             {
-                AppState? backupAppState = TryLoadStateFile(_stateBackupFile);
-                WorkspaceState? backupState = FindWorkspaceState(backupAppState, videoPath, mode);
-                if (backupState != null &&
-                    TryLoadWorkspacePayload(
-                        videoPath,
-                        mode,
-                        backupState,
-                        maskProvider,
-                        requireComplete: true))
-                {
-                    stateToUse = backupState;
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[WorkspaceStateStore] recovered workspace payload from backup generation " +
-                        $"'{backupState.StorageGeneration ?? "legacy"}'.");
-                }
-                else
-                {
-                    // Preserve the old best-effort behavior when neither generation is complete,
-                    // but never delete unreadable payload files while attempting recovery.
-                    TryLoadWorkspacePayload(
-                        videoPath,
-                        mode,
-                        primaryState,
-                        maskProvider,
-                        requireComplete: false);
-                }
-            }
+                RefreshStateLocked();
+                snapshot = null;
+                WorkspaceState? primaryState = FindWorkspaceState(_state, videoPath, mode);
+                if (primaryState == null)
+                    return false;
 
-            snapshot = CreateWorkspaceSnapshot(stateToUse, mode);
-            return true;
+                WorkspaceState stateToUse = primaryState;
+                bool loadedComplete = TryLoadWorkspacePayload(
+                    videoPath,
+                    mode,
+                    primaryState,
+                    maskProvider,
+                    requireComplete: true);
+
+                if (!loadedComplete)
+                {
+                    AppState? backupAppState = TryLoadStateFile(_stateBackupFile);
+                    WorkspaceState? backupState = FindWorkspaceState(backupAppState, videoPath, mode);
+                    if (backupState != null &&
+                        TryLoadWorkspacePayload(
+                            videoPath,
+                            mode,
+                            backupState,
+                            maskProvider,
+                            requireComplete: true))
+                    {
+                        stateToUse = backupState;
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[WorkspaceStateStore] recovered workspace payload from backup generation " +
+                            $"'{backupState.StorageGeneration ?? "legacy"}'.");
+                    }
+                    else
+                    {
+                        // Preserve the old best-effort behavior when neither generation is complete,
+                        // but never delete unreadable payload files while attempting recovery.
+                        TryLoadWorkspacePayload(
+                            videoPath,
+                            mode,
+                            primaryState,
+                            maskProvider,
+                            requireComplete: false);
+                    }
+                }
+
+                snapshot = CreateWorkspaceSnapshot(stateToUse, mode);
+                return true;
+            }
         }
 
         private static WorkspaceState? FindWorkspaceState(
@@ -277,120 +312,143 @@ namespace FaceShield.Services.Workspace
         }
 
         public void SaveWorkspace(WorkspaceSnapshot snapshot, FrameMaskProvider maskProvider)
+            => SaveWorkspaceCore(snapshot, maskProvider, useBorrowedStoredMasks: false);
+
+        internal void SaveWorkspaceSnapshot(
+            WorkspaceSnapshot snapshot,
+            FrameMaskProvider maskProviderSnapshot)
+            => SaveWorkspaceCore(snapshot, maskProviderSnapshot, useBorrowedStoredMasks: true);
+
+        private void SaveWorkspaceCore(
+            WorkspaceSnapshot snapshot,
+            FrameMaskProvider maskProvider,
+            bool useBorrowedStoredMasks)
         {
             if (snapshot == null)
                 return;
+            if (maskProvider == null)
+                throw new ArgumentNullException(nameof(maskProvider));
 
-            string generation = Guid.NewGuid().ToString("N");
-            string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode, generation);
-            WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
-                string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
-                string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
-
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
-            Directory.CreateDirectory(dir);
-
-            try
+            lock (GlobalStateGate)
             {
-                var entries = maskProvider.GetStoredMaskSnapshot();
-                var indices = new List<int>(entries.Count);
-                var indexSet = new HashSet<int>();
-
-                try
-                {
-                    foreach (var entry in entries)
-                    {
-                        indices.Add(entry.Key);
-                        indexSet.Add(entry.Key);
-                        string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
-                        SaveMask(filePath, entry.Value);
-                    }
-                }
-                finally
-                {
-                    foreach (var entry in entries)
-                        entry.Value.Dispose();
-                }
-
-                var faceMasks = maskProvider.GetFaceMaskEntries()
-                    .Where(entry => !indexSet.Contains(entry.Key))
-                    .OrderBy(entry => entry.Key)
-                    .Select(entry => new FaceMaskState
-                    {
-                        FrameIndex = entry.Key,
-                        Width = entry.Value.Size.Width,
-                        Height = entry.Value.Size.Height,
-                        MinConfidence = entry.Value.MinConfidence,
-                        Faces = entry.Value.Faces
-                            .Select(r => new RectState
-                            {
-                                X = r.X,
-                                Y = r.Y,
-                                Width = r.Width,
-                                Height = r.Height
-                            })
-                            .ToList(),
-                        Confidences = entry.Value.Confidences.ToList()
-                    })
-                    .ToList();
-
-                var newState = new WorkspaceState
-                {
-                    VideoPath = snapshot.VideoPath,
-                    Mode = snapshot.Mode.ToString(),
-                    StorageGeneration = generation,
-                    SelectedFrameIndex = snapshot.SelectedFrameIndex,
-                    ViewStartSeconds = snapshot.ViewStartSeconds,
-                    SecondsPerScreen = snapshot.SecondsPerScreen,
-                    TimelineExtentSeconds = snapshot.TimelineExtentSeconds,
-                    LastOpened = snapshot.LastOpened,
-                    MaskIndices = indices,
-                    FaceMasks = faceMasks,
-                    AutoResumeIndex = snapshot.AutoResumeIndex,
-                    AutoCompleted = snapshot.AutoCompleted,
-                    AutoRunSignature = snapshot.AutoRunSignature,
-                    AutoExecutionSignature = snapshot.AutoExecutionSignature,
-                    AutoExportGateRequired = snapshot.AutoExportGateRequired,
-                    AutoExportGatePassed = snapshot.AutoExportGatePassed,
-                    AutoExportGateFailure = snapshot.AutoExportGateFailure,
-                    AutoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable,
-                    AutoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy,
-                    AutoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons
-                };
-
-                _state.Workspaces.RemoveAll(w =>
+                RefreshStateLocked();
+                string generation = Guid.NewGuid().ToString("N");
+                string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode, generation);
+                WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
                     string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
                     string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
-                _state.Workspaces.Add(newState);
+
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
+                Directory.CreateDirectory(dir);
 
                 try
                 {
-                    SaveState();
+                    IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> entries =
+                        useBorrowedStoredMasks
+                            ? maskProvider.GetStoredMaskBorrowedSnapshot()
+                            : maskProvider.GetStoredMaskSnapshot();
+                    var indices = new List<int>(entries.Count);
+                    var indexSet = new HashSet<int>();
+
+                    try
+                    {
+                        foreach (var entry in entries)
+                        {
+                            indices.Add(entry.Key);
+                            indexSet.Add(entry.Key);
+                            string filePath = Path.Combine(dir, $"mask_{entry.Key}.png");
+                            SaveMask(filePath, entry.Value);
+                        }
+                    }
+                    finally
+                    {
+                        if (!useBorrowedStoredMasks)
+                        {
+                            foreach (var entry in entries)
+                                entry.Value.Dispose();
+                        }
+                    }
+
+                    var faceMasks = maskProvider.GetFaceMaskEntries()
+                        .Where(entry => !indexSet.Contains(entry.Key))
+                        .OrderBy(entry => entry.Key)
+                        .Select(entry => new FaceMaskState
+                        {
+                            FrameIndex = entry.Key,
+                            Width = entry.Value.Size.Width,
+                            Height = entry.Value.Size.Height,
+                            MinConfidence = entry.Value.MinConfidence,
+                            Faces = entry.Value.Faces
+                                .Select(r => new RectState
+                                {
+                                    X = r.X,
+                                    Y = r.Y,
+                                    Width = r.Width,
+                                    Height = r.Height
+                                })
+                                .ToList(),
+                            Confidences = entry.Value.Confidences.ToList()
+                        })
+                        .ToList();
+
+                    var newState = new WorkspaceState
+                    {
+                        VideoPath = snapshot.VideoPath,
+                        Mode = snapshot.Mode.ToString(),
+                        StorageGeneration = generation,
+                        SelectedFrameIndex = snapshot.SelectedFrameIndex,
+                        ViewStartSeconds = snapshot.ViewStartSeconds,
+                        SecondsPerScreen = snapshot.SecondsPerScreen,
+                        TimelineExtentSeconds = snapshot.TimelineExtentSeconds,
+                        LastOpened = snapshot.LastOpened,
+                        MaskIndices = indices,
+                        FaceMasks = faceMasks,
+                        AutoResumeIndex = snapshot.AutoResumeIndex,
+                        AutoCompleted = snapshot.AutoCompleted,
+                        AutoRunSignature = snapshot.AutoRunSignature,
+                        AutoExecutionSignature = snapshot.AutoExecutionSignature,
+                        AutoExportGateRequired = snapshot.AutoExportGateRequired,
+                        AutoExportGatePassed = snapshot.AutoExportGatePassed,
+                        AutoExportGateFailure = snapshot.AutoExportGateFailure,
+                        AutoExportHybridPolicyAvailable = snapshot.AutoExportHybridPolicyAvailable,
+                        AutoExportAllowHybridCopy = snapshot.AutoExportAllowHybridCopy,
+                        AutoExportHybridDisableReasons = snapshot.AutoExportHybridDisableReasons
+                    };
+
+                    _state.Workspaces.RemoveAll(w =>
+                        string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
+                        string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
+                    _state.Workspaces.Add(newState);
+
+                    try
+                    {
+                        SaveState();
+                    }
+                    catch
+                    {
+                        _state.Workspaces.Remove(newState);
+                        if (previousState != null)
+                            _state.Workspaces.Add(previousState);
+                        throw;
+                    }
+
+                    CleanupUnreferencedWorkspaceDirectories(snapshot.VideoPath, snapshot.Mode);
                 }
                 catch
                 {
-                    _state.Workspaces.Remove(newState);
-                    if (previousState != null)
-                        _state.Workspaces.Add(previousState);
+                    try
+                    {
+                        if (Directory.Exists(dir))
+                            Directory.Delete(dir, recursive: true);
+                    }
+                    catch
+                    {
+                        // Keep the failed generation for diagnostics if cleanup itself fails.
+                    }
+
                     throw;
                 }
-
-                CleanupUnreferencedWorkspaceDirectories(snapshot.VideoPath, snapshot.Mode);
-            }
-            catch
-            {
-                try
-                {
-                    if (Directory.Exists(dir))
-                        Directory.Delete(dir, recursive: true);
-                }
-                catch
-                {
-                    // Keep the failed generation for diagnostics if cleanup itself fails.
-                }
-
-                throw;
             }
         }
 
@@ -476,6 +534,11 @@ namespace FaceShield.Services.Workspace
                     $"[WorkspaceStateStore] failed to load mask '{path}': {ex.Message}");
                 return null;
             }
+        }
+
+        private void RefreshStateLocked()
+        {
+            _state = LoadState();
         }
 
         private AppState LoadState()

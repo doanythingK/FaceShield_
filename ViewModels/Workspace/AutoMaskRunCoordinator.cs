@@ -384,7 +384,8 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                     updateToolPanel: false,
                     runId: runId,
                     autoRunSummary: generator.LastRunSummary,
-                    autoRunOptions: runOptions);
+                    autoRunOptions: runOptions,
+                    qualityPreset: _toolPanel.ExportQualityPreset);
                 if (!exported)
                 {
                     _persistWorkspaceState(false);

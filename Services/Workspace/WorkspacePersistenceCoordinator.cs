@@ -33,8 +33,19 @@ namespace FaceShield.Services.Workspace
                 return Task.CompletedTask;
             ThrowIfDisposed();
 
+            FrameMaskProvider maskSnapshot = _maskProvider.CreateSnapshot();
             long requestId = Interlocked.Increment(ref _latestRequestId);
-            Task task = SaveQueuedAsync(snapshot, requestId);
+            Task task;
+            try
+            {
+                task = SaveQueuedAsync(snapshot, maskSnapshot, requestId);
+            }
+            catch
+            {
+                maskSnapshot.Dispose();
+                throw;
+            }
+
             lock (_taskGate)
                 _latestTask = task;
             return task;
@@ -42,20 +53,25 @@ namespace FaceShield.Services.Workspace
 
         private async Task SaveQueuedAsync(
             WorkspaceSnapshot snapshot,
+            FrameMaskProvider maskSnapshot,
             long requestId)
         {
-            await _saveGate.WaitAsync().ConfigureAwait(false);
+            bool entered = false;
             try
             {
+                await _saveGate.WaitAsync().ConfigureAwait(false);
+                entered = true;
                 if (requestId != Volatile.Read(ref _latestRequestId))
                     return;
 
-                await Task.Run(() => _store.SaveWorkspace(snapshot, _maskProvider))
+                await Task.Run(() => _store.SaveWorkspaceSnapshot(snapshot, maskSnapshot))
                     .ConfigureAwait(false);
             }
             finally
             {
-                _saveGate.Release();
+                if (entered)
+                    _saveGate.Release();
+                maskSnapshot.Dispose();
             }
         }
 
@@ -95,6 +111,7 @@ namespace FaceShield.Services.Workspace
                 return;
             ThrowIfDisposed();
 
+            using FrameMaskProvider maskSnapshot = _maskProvider.CreateSnapshot();
             try
             {
                 FlushAsync().GetAwaiter().GetResult();
@@ -107,7 +124,7 @@ namespace FaceShield.Services.Workspace
             _saveGate.Wait();
             try
             {
-                _store.SaveWorkspace(snapshot, _maskProvider);
+                _store.SaveWorkspaceSnapshot(snapshot, maskSnapshot);
             }
             finally
             {

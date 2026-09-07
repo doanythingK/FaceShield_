@@ -60,28 +60,54 @@ internal static class AutoMaskGenerationStrategyPlanner
             primary
         };
 
-        for (int i = 1; i < targetCount; i++)
+        try
         {
-            IFaceDetector candidate = factory.CreateDetector();
-            if (candidate is not IBgraFaceDetector bgraCandidate)
+            for (int i = 1; i < targetCount; i++)
             {
-                candidate.Dispose();
-                break;
+                IFaceDetector candidate = factory.CreateDetector();
+                if (candidate is not IBgraFaceDetector bgraCandidate)
+                {
+                    candidate.Dispose();
+                    break;
+                }
+
+                if (!DetectorExecutionProviderIdentity.AreCompatible(primary, candidate))
+                {
+                    Debug.WriteLine(
+                        $"[AutoMask] parallel detector provider mismatch; expected={DetectorExecutionProviderIdentity.GetCanonicalLabel(primary)}, actual={DetectorExecutionProviderIdentity.GetCanonicalLabel(candidate)}, usingSessions={detectors.Count}");
+                    candidate.Dispose();
+                    break;
+                }
+
+                detectors.Add(bgraCandidate);
             }
 
-            if (!DetectorExecutionProviderIdentity.AreCompatible(primary, candidate))
+            return new AutoMaskDetectorPool(detectors);
+        }
+        catch
+        {
+            DisposeCreatedSecondaryDetectors(detectors);
+            throw;
+        }
+    }
+
+    private static void DisposeCreatedSecondaryDetectors(IReadOnlyList<IBgraFaceDetector> detectors)
+    {
+        // Index 0 is caller-owned. Roll back only detectors created by this planner.
+        for (int i = 1; i < detectors.Count; i++)
+        {
+            try
+            {
+                detectors[i].Dispose();
+            }
+            catch (Exception ex)
             {
                 Debug.WriteLine(
-                    $"[AutoMask] parallel detector provider mismatch; expected={DetectorExecutionProviderIdentity.GetCanonicalLabel(primary)}, actual={DetectorExecutionProviderIdentity.GetCanonicalLabel(candidate)}, usingSessions={detectors.Count}");
-                candidate.Dispose();
-                break;
+                    $"[AutoMask] detector-pool rollback dispose failed at index={i}: {ex.Message}");
             }
-
-            detectors.Add(bgraCandidate);
         }
-
-        return new AutoMaskDetectorPool(detectors);
     }
+
 }
 
 internal sealed class AutoMaskDetectorPool : IDisposable

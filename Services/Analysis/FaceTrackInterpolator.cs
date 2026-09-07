@@ -504,6 +504,7 @@ namespace FaceShield.Services.Analysis
                 if (removedTrackIds.Contains(track.Id))
                     continue;
 
+                bool confirmedTrack = IsConfirmedTrack(track, options);
                 var detections = track.Detections;
                 for (int i = 1; i < detections.Count; i++)
                 {
@@ -516,7 +517,7 @@ namespace FaceShield.Services.Analysis
                         continue;
 
                     int maxFillGap = options.MaxFillGap;
-                    if (IsConfirmedTrack(track, options))
+                    if (confirmedTrack)
                         maxFillGap = Math.Max(maxFillGap, options.MaxConfirmedTrackHoldFrames);
 
                     if (gap > maxFillGap)
