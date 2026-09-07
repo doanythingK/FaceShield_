@@ -1,10 +1,20 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FaceShield.Enums.Workspace;
+using FaceShield.Services.Video;
 using System;
+using System.Collections.Generic;
 
 namespace FaceShield.ViewModels.Workspace
 {
+    public sealed record ExportQualityChoice(
+        VideoExportQualityPreset Preset,
+        string Label,
+        string Description)
+    {
+        public override string ToString() => Label;
+    }
+
     public partial class ToolPanelViewModel : ViewModelBase
     {
         private const int DefaultBrushDiameter = 16;
@@ -12,6 +22,31 @@ namespace FaceShield.ViewModels.Workspace
         private const int DefaultBlurRadius = 28;
         private const int MinBlurRadiusValue = 6;
         private const int MaxBlurRadiusValue = 40;
+
+        private static readonly ExportQualityChoice SizePriorityExportQuality = new(
+            VideoExportQualityPreset.SizePriority,
+            "용량 우선",
+            "원본 영상 bitrate와 비슷한 수준(1.00×)으로 제한합니다.");
+        private static readonly ExportQualityChoice BalancedExportQuality = new(
+            VideoExportQualityPreset.Balanced,
+            "균형 (권장)",
+            "재인코딩 화질 여유를 위해 원본 영상 bitrate의 최대 1.20×를 사용합니다.");
+        private static readonly ExportQualityChoice QualityPriorityExportQuality = new(
+            VideoExportQualityPreset.QualityPriority,
+            "화질 우선",
+            "복잡한 장면의 재인코딩 손실을 줄이기 위해 원본 영상 bitrate의 최대 1.40×를 사용합니다.");
+
+        public IReadOnlyList<ExportQualityChoice> ExportQualityChoices { get; } = new[]
+        {
+            SizePriorityExportQuality,
+            BalancedExportQuality,
+            QualityPriorityExportQuality
+        };
+
+        [ObservableProperty]
+        private ExportQualityChoice selectedExportQuality = BalancedExportQuality;
+
+        public VideoExportQualityPreset ExportQualityPreset => SelectedExportQuality.Preset;
 
         [ObservableProperty]
         private EditMode currentMode = EditMode.None;
@@ -67,6 +102,11 @@ namespace FaceShield.ViewModels.Workspace
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
             OnPropertyChanged(nameof(CanEditWorkspace));
+        }
+
+        partial void OnSelectedExportQualityChanged(ExportQualityChoice value)
+        {
+            OnPropertyChanged(nameof(ExportQualityPreset));
         }
 
 

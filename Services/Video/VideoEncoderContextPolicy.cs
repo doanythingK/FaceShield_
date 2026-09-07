@@ -19,7 +19,8 @@ internal static unsafe class VideoEncoderContextPolicy
         out string? error,
         bool forceSoftwareEncoder,
         bool forceSafeEncoding,
-        VideoHdrMetadata? hdrMetadata)
+        VideoHdrMetadata? hdrMetadata,
+        VideoExportQualityPreset qualityPreset)
     {
         encoder = null;
         qualityConfiguration = EncoderQualityConfiguration.Unconfigured;
@@ -141,7 +142,8 @@ internal static unsafe class VideoEncoderContextPolicy
                 out EncoderQualityConfiguration candidateQualityConfiguration,
                 out string? openError,
                 forceSafeEncoding,
-                hdrMetadata);
+                hdrMetadata,
+                qualityPreset);
             if (ctx != null)
             {
                 encoder = candidate;
@@ -199,7 +201,8 @@ internal static unsafe class VideoEncoderContextPolicy
                 out EncoderQualityConfiguration fallbackQualityConfiguration,
                 out string? fallbackError,
                 forceSafeEncoding,
-                hdrMetadata);
+                hdrMetadata,
+                qualityPreset);
             if (ctx != null)
             {
                 encoder = fallback;
@@ -225,7 +228,8 @@ internal static unsafe class VideoEncoderContextPolicy
         out EncoderQualityConfiguration qualityConfiguration,
         out string? error,
         bool forceSafeEncoding,
-        VideoHdrMetadata? hdrMetadata)
+        VideoHdrMetadata? hdrMetadata,
+        VideoExportQualityPreset qualityPreset)
     {
         qualityConfiguration = EncoderQualityConfiguration.Unconfigured;
         error = null;
@@ -308,7 +312,8 @@ internal static unsafe class VideoEncoderContextPolicy
                 ctx->width,
                 ctx->height,
                 ctx->framerate,
-                encoder->id);
+                encoder->id,
+                qualityPreset);
 
         bool usesSoftwareConstantQuality =
             VideoEncoderSelectionPolicy.UsesSoftwareConstantQuality(

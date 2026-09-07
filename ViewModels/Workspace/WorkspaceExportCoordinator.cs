@@ -67,7 +67,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         bool updateToolPanel = true,
         string? runId = null,
         AutoMaskRunSummary? autoRunSummary = null,
-        AutoMaskOptions? autoRunOptions = null)
+        AutoMaskOptions? autoRunOptions = null,
+        VideoExportQualityPreset qualityPreset = VideoExportQualityPreset.Balanced)
     {
         ThrowIfDisposed();
         if (!_tryBeginLifetimeOperation())
@@ -88,7 +89,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 updateToolPanel,
                 runId,
                 autoRunSummary,
-                autoRunOptions);
+                autoRunOptions,
+                qualityPreset);
         }
         finally
         {
@@ -106,7 +108,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         bool updateToolPanel,
         string? runId,
         AutoMaskRunSummary? autoRunSummary,
-        AutoMaskOptions? autoRunOptions)
+        AutoMaskOptions? autoRunOptions,
+        VideoExportQualityPreset qualityPreset)
     {
         string exportRunId = string.IsNullOrWhiteSpace(runId)
             ? $"export-{Guid.NewGuid():N}"
@@ -195,7 +198,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(effectiveAutoRunSummary?.RunId ?? "n/a")}, persistedPolicy={(_gateState.HybridPolicyAvailable && effectiveAutoRunSummary == null).ToString().ToLowerInvariant()}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
             RunMetricsLog.AppendRunLines(
                 exportRunId,
-                $"[ExportRunConfig] runId={exportRunId}, blurRadius={blurRadius}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
+                $"[ExportRunConfig] runId={exportRunId}, blurRadius={blurRadius}, qualityPreset={qualityPreset}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
 
             await Task.Run(() =>
             {
@@ -207,7 +210,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                     exportToken,
                     exportRunId,
                     allowHybridCopy: hybridPolicy.allowHybridCopy,
-                    allowOutputOverwrite: allowOutputOverwrite);
+                    allowOutputOverwrite: allowOutputOverwrite,
+                    qualityPreset: qualityPreset);
             }, exportToken);
 
             if (exporter.LastExportSummary != null)

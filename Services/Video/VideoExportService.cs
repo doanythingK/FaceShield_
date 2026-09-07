@@ -34,7 +34,8 @@ public unsafe sealed class VideoExportService
         System.Threading.CancellationToken cancellationToken = default,
         string? runId = null,
         bool allowHybridCopy = false,
-        bool allowOutputOverwrite = true)
+        bool allowOutputOverwrite = true,
+        VideoExportQualityPreset qualityPreset = VideoExportQualityPreset.SizePriority)
     {
         var endToEndTimer = Stopwatch.StartNew();
         int attemptCount = 0;
@@ -57,7 +58,8 @@ public unsafe sealed class VideoExportService
                     allowHybridCopy: attempt.AllowHybridCopy,
                     forceSafeEncoding: attempt.ForceSafeEncoding,
                     forceAudioTranscode: attempt.ForceAudioTranscode,
-                    forceH264Fallback: attempt.ForceH264Fallback));
+                    forceH264Fallback: attempt.ForceH264Fallback,
+                    qualityPreset: qualityPreset));
 
             if (!File.Exists(stagedOutputPath))
                 throw new InvalidOperationException("검증된 임시 출력 파일이 생성되지 않았습니다.");
@@ -120,6 +122,7 @@ public unsafe sealed class VideoExportService
         bool forceSafeEncoding,
         bool forceAudioTranscode,
         bool forceH264Fallback,
+        VideoExportQualityPreset qualityPreset,
         bool allowPacketDropRetry = true)
     {
         ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
@@ -455,7 +458,8 @@ public unsafe sealed class VideoExportService
                 out var encoderError,
                 forceSoftwareEncoder,
                 forceSafeEncoding,
-                hdrMetadata);
+                hdrMetadata,
+                qualityPreset);
 
             string? exportNotice = null;
             if (enc == null)
@@ -492,7 +496,8 @@ public unsafe sealed class VideoExportService
                     out var fallbackError,
                     forceSoftwareEncoder,
                     forceSafeEncoding,
-                    hdrMetadata);
+                    hdrMetadata,
+                qualityPreset);
                 if (enc == null)
                     throw new InvalidOperationException($"대체 인코더 초기화 실패: {fallbackError}");
             }
@@ -1647,6 +1652,7 @@ public unsafe sealed class VideoExportService
                 forceSafeEncoding: forceSafeEncoding,
                 forceAudioTranscode: forceAudioTranscode,
                 forceH264Fallback: forceH264Fallback,
+                qualityPreset: qualityPreset,
                 allowPacketDropRetry: false);
         }
     }

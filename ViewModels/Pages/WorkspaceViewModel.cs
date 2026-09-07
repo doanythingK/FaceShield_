@@ -206,7 +206,8 @@ namespace FaceShield.ViewModels.Pages
                 updateToolPanel,
                 runId,
                 autoRunSummary,
-                autoRunOptions);
+                autoRunOptions,
+                qualityPreset: ToolPanel.ExportQualityPreset);
         }
 
         private static void LogExportQualityGate(

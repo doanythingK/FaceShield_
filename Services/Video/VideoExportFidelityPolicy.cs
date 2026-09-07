@@ -118,22 +118,58 @@ internal static unsafe class VideoExportFidelityPolicy
         int height,
         AVRational framerate,
         AVCodecID codecId)
+        => ResolveHighQualityTargetBitrate(
+            sourceBitrate,
+            width,
+            height,
+            framerate,
+            codecId,
+            VideoExportQualityPreset.SizePriority);
+
+    internal static int ResolveHighQualityTargetBitrate(
+        long sourceBitrate,
+        int width,
+        int height,
+        AVRational framerate,
+        AVCodecID codecId,
+        VideoExportQualityPreset qualityPreset)
     {
         int resolutionFloor = EstimateHighQualityBitrate(width, height, framerate);
         int boundedSourceBitrate = ClampBitrate(sourceBitrate);
         if (boundedSourceBitrate > 0)
-            return ResolveKnownSourceTargetBitrate(boundedSourceBitrate, resolutionFloor);
+        {
+            return ResolveKnownSourceTargetBitrate(
+                boundedSourceBitrate,
+                resolutionFloor,
+                qualityPreset);
+        }
 
-        return Math.Max(resolutionFloor, 2_000_000);
+        int fallback = Math.Max(resolutionFloor, 2_000_000);
+        return VideoExportQualityPresetPolicy.ApplyBitrateMultiplier(
+            fallback,
+            qualityPreset);
     }
 
     internal static int ResolveKnownSourceTargetBitrate(
         long sourceBitrate,
         int resolutionFloor)
+        => ResolveKnownSourceTargetBitrate(
+            sourceBitrate,
+            resolutionFloor,
+            VideoExportQualityPreset.SizePriority);
+
+    internal static int ResolveKnownSourceTargetBitrate(
+        long sourceBitrate,
+        int resolutionFloor,
+        VideoExportQualityPreset qualityPreset)
     {
-        // Once the source video rate is known, keep it authoritative. Raising the
-        // target above the source made re-encoded blur exports unnecessarily large.
-        return ClampBitrate(sourceBitrate);
+        // The source rate remains the baseline. The user-selected preset may grant
+        // bounded headroom for a second lossy encode, while rc_max_rate keeps the
+        // old multi-x file-size regression from returning.
+        int boundedSourceBitrate = ClampBitrate(sourceBitrate);
+        return VideoExportQualityPresetPolicy.ApplyBitrateMultiplier(
+            boundedSourceBitrate,
+            qualityPreset);
     }
 
     internal static int ClampBitrate(long value)
