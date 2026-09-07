@@ -1,6 +1,5 @@
 $ErrorActionPreference = 'Stop'
 
-$root = Split-Path -Parent $PSScriptRoot
 $temp = Join-Path $PSScriptRoot '.tmp-persistence-p1-harness'
 Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $temp | Out-Null
@@ -14,7 +13,7 @@ $csproj = @'
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\FaceShield.csproj" />
+    <ProjectReference Include="../../FaceShield.csproj" />
   </ItemGroup>
 </Project>
 '@
@@ -52,8 +51,11 @@ static object StaticField(Type type, string name)
         ?? throw new InvalidOperationException($"Missing static field {name}");
 
 static object? InvokeInstance(object target, string name, params object?[] args)
-    => target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(target, args)
+{
+    MethodInfo method = target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException($"Missing instance method {name}");
+    return method.Invoke(target, args);
+}
 
 static void InvokeStatic(Type type, string name, params object?[] args)
 {
@@ -67,6 +69,46 @@ static bool ReadBoolField(object target, string name)
     var field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException($"Missing bool field {name}");
     return (bool)(field.GetValue(target) ?? false);
+}
+
+static (bool Acquired, IDisposable? Guard) AcquireSingleInstance(Type guardType)
+{
+    MethodInfo method = guardType.GetMethod("TryAcquire", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Missing SingleInstanceGuard.TryAcquire");
+    object?[] args = [null];
+    bool acquired = (bool)(method.Invoke(null, args) ?? false);
+    return (acquired, args[0] as IDisposable);
+}
+
+// Cross-platform runtime check for the single-instance primitive. This catches
+// platform-unsupported primitives such as FileStream.Lock on macOS.
+{
+    Type guardType = typeof(WorkspaceStateStore).Assembly.GetType(
+        "FaceShield.Services.Application.SingleInstanceGuard")
+        ?? throw new Exception("SingleInstanceGuard type not found.");
+
+    var first = AcquireSingleInstance(guardType);
+    if (!first.Acquired || first.Guard == null)
+        throw new Exception("First single-instance acquisition failed.");
+
+    try
+    {
+        var second = AcquireSingleInstance(guardType);
+        if (second.Acquired)
+        {
+            second.Guard?.Dispose();
+            throw new Exception("Second single-instance acquisition unexpectedly succeeded.");
+        }
+    }
+    finally
+    {
+        first.Guard.Dispose();
+    }
+
+    var third = AcquireSingleInstance(guardType);
+    if (!third.Acquired || third.Guard == null)
+        throw new Exception("Single-instance acquisition did not recover after release.");
+    third.Guard.Dispose();
 }
 
 string token = Guid.NewGuid().ToString("N");
@@ -192,18 +234,34 @@ string videoPath = Path.Combine(Path.GetTempPath(), $"faceshield-persistence-{to
     if (!deletedAfterInactive || Directory.Exists(activeCandidate))
         throw new Exception("Cleanup failed to delete an unreferenced inactive directory.");
 
-    // Deterministically prove the deletion boundary holds WorkspaceDirectoryGate
-    // while waiting for the final GlobalStateGate reference check. A new active
-    // registration cannot cross that boundary.
+    // Deterministically prove that cleanup reserves WorkspaceDirectoryGate while
+    // blocked on the final GlobalStateGate reference check. A new active registration
+    // must not cross that deletion boundary.
     string reservedCandidate = Path.GetFullPath(Path.Combine(baseDir, "Manual-reservation-test"));
     Directory.CreateDirectory(reservedCandidate);
     object globalGate = StaticField(storeType, "GlobalStateGate");
     object directoryGate = StaticField(storeType, "WorkspaceDirectoryGate");
-    bool globalHeld = false;
+    using var globalLocked = new ManualResetEventSlim(false);
+    using var releaseGlobal = new ManualResetEventSlim(false);
+
+    Task globalHolder = Task.Run(() =>
+    {
+        lock (globalGate)
+        {
+            globalLocked.Set();
+            if (!releaseGlobal.Wait(TimeSpan.FromSeconds(10)))
+                throw new Exception("Timed out waiting to release GlobalStateGate test hold.");
+        }
+    });
+
+    if (!globalLocked.Wait(TimeSpan.FromSeconds(5)))
+        throw new Exception("Could not establish GlobalStateGate test hold.");
+
+    Task<bool>? deleteTask = null;
+    Task? registerTask = null;
     try
     {
-        Monitor.Enter(globalGate, ref globalHeld);
-        Task<bool> deleteTask = Task.Run(() => (bool)(InvokeInstance(
+        deleteTask = Task.Run(() => (bool)(InvokeInstance(
             store,
             "TryDeleteWorkspaceDirectoryIfUnreferenced",
             cleanupVideo,
@@ -224,7 +282,7 @@ string videoPath = Path.Combine(Path.GetTempPath(), $"faceshield-persistence-{to
         if (!observedDirectoryReservation)
             throw new Exception("Cleanup did not reserve WorkspaceDirectoryGate before state recheck.");
 
-        Task registerTask = Task.Run(() => InvokeStatic(
+        registerTask = Task.Run(() => InvokeStatic(
             storeType,
             "RegisterActiveWorkspaceDirectory",
             reservedCandidate));
@@ -232,8 +290,8 @@ string videoPath = Path.Combine(Path.GetTempPath(), $"faceshield-persistence-{to
         if (registerTask.IsCompleted)
             throw new Exception("Active registration crossed the cleanup deletion reservation.");
 
-        Monitor.Exit(globalGate);
-        globalHeld = false;
+        releaseGlobal.Set();
+        await globalHolder.WaitAsync(TimeSpan.FromSeconds(10));
         if (!await deleteTask.WaitAsync(TimeSpan.FromSeconds(10)))
             throw new Exception("Reserved cleanup did not delete the unreferenced candidate.");
         await registerTask.WaitAsync(TimeSpan.FromSeconds(10));
@@ -243,8 +301,12 @@ string videoPath = Path.Combine(Path.GetTempPath(), $"faceshield-persistence-{to
     }
     finally
     {
-        if (globalHeld)
-            Monitor.Exit(globalGate);
+        releaseGlobal.Set();
+        try { await globalHolder.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+        if (registerTask != null)
+        {
+            try { await registerTask.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+        }
         try { InvokeStatic(storeType, "UnregisterActiveWorkspaceDirectory", reservedCandidate); } catch { }
     }
 }
