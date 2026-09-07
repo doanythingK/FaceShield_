@@ -711,12 +711,73 @@ namespace FaceShield.Services.Workspace
             foreach (string baseDir in candidates)
             {
                 string fullBaseDir = Path.GetFullPath(baseDir);
-                if (!TryDeleteDirectoryIfInactive(fullBaseDir))
+                if (!TryDeleteWorkspaceBaseDirectoryIfUnreferenced(videoPath, fullBaseDir))
                 {
                     System.Diagnostics.Debug.WriteLine(
-                        $"[WorkspaceStateStore] workspace cleanup deferred because a save is preparing '{fullBaseDir}'.");
+                        $"[WorkspaceStateStore] workspace base cleanup deferred because '{fullBaseDir}' became active or referenced.");
                 }
             }
+        }
+
+        private bool TryDeleteWorkspaceBaseDirectoryIfUnreferenced(
+            string videoPath,
+            string directory)
+        {
+            // WorkspaceDirectoryGate is the deletion reservation for the whole base
+            // directory. A save must register its generation under this gate before
+            // preparing payloads, so it cannot cross the final reference check/delete
+            // boundary while this reservation is held.
+            lock (WorkspaceDirectoryGate)
+            {
+                if (HasActiveWorkspaceDirectoryUnderLocked(directory))
+                    return false;
+
+                bool referenced;
+                lock (GlobalStateGate)
+                {
+                    RefreshStateLocked();
+                    referenced =
+                        IsWorkspacePathReferencedByState(_state, videoPath) ||
+                        IsWorkspacePathReferencedByState(
+                            TryLoadStateFile(_stateBackupFile),
+                            videoPath);
+                }
+
+                if (referenced)
+                    return false;
+
+                if (!Directory.Exists(directory))
+                    return true;
+
+                try
+                {
+                    // Keep GlobalStateGate out of filesystem deletion. Holding the
+                    // directory reservation is sufficient to stop save registration
+                    // from crossing this boundary.
+                    Directory.Delete(directory, recursive: true);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[WorkspaceStateStore] workspace base cleanup deferred: {ex.Message}");
+                    return false;
+                }
+            }
+        }
+
+        private bool IsWorkspacePathReferencedByState(
+            AppState? state,
+            string videoPath)
+        {
+            if (state == null)
+                return false;
+
+            return state.Workspaces.Any(workspace =>
+                string.Equals(
+                    workspace.VideoPath,
+                    videoPath,
+                    FilePathComparison));
         }
 
         private void CleanupUnreferencedWorkspaceDirectories(string videoPath, WorkspaceMode mode)
