@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace FaceShield.Services.Video
@@ -13,6 +14,10 @@ namespace FaceShield.Services.Video
     private readonly object _stateGate = new();
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
+    private readonly Dictionary<WriteableBitmap, int> _bitmapLeaseCounts =
+        new(BitmapReferenceComparer.Instance);
+    private readonly HashSet<WriteableBitmap> _retiredBitmaps =
+        new(BitmapReferenceComparer.Instance);
     private long _version;
     private readonly bool _allowsBorrowedBitmapReads;
 
@@ -84,6 +89,43 @@ namespace FaceShield.Services.Video
         }
     }
 
+    internal readonly record struct PersistenceStoredMask(
+        int FrameIndex,
+        WriteableBitmap Bitmap);
+
+    internal sealed class PersistenceSnapshot : IDisposable
+    {
+        private readonly FrameMaskProvider _owner;
+        private readonly IReadOnlyList<PersistenceStoredMask> _storedMasks;
+        private readonly IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> _faceMasks;
+        private int _disposed;
+
+        internal PersistenceSnapshot(
+            FrameMaskProvider owner,
+            long sourceVersion,
+            IReadOnlyList<PersistenceStoredMask> storedMasks,
+            IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> faceMasks)
+        {
+            _owner = owner;
+            SourceVersion = sourceVersion;
+            _storedMasks = storedMasks;
+            _faceMasks = faceMasks;
+        }
+
+        internal long SourceVersion { get; }
+        internal IReadOnlyList<PersistenceStoredMask> StoredMasks => _storedMasks;
+        internal IReadOnlyCollection<KeyValuePair<int, FaceMaskData>> FaceMasks => _faceMasks;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            foreach (var entry in _storedMasks)
+                _owner.ReleaseBitmapLease(entry.Bitmap);
+        }
+    }
+
 
     /// <summary>
     /// Stores the supplied bitmap and takes ownership of it.
@@ -99,7 +141,7 @@ namespace FaceShield.Services.Video
             if (_masks.TryRemove(frameIndex, out var previous) &&
                 !ReferenceEquals(previous, mask))
             {
-                previous.Dispose();
+                RetireBitmapLocked(previous);
             }
 
             _masks[frameIndex] = mask;
@@ -276,7 +318,7 @@ namespace FaceShield.Services.Video
                     removedFaceMasks++;
                 if (_masks.TryRemove(frameIndex, out var storedMask))
                 {
-                    storedMask.Dispose();
+                    RetireBitmapLocked(storedMask);
                     removedStoredMasks++;
                 }
             }
@@ -353,18 +395,6 @@ namespace FaceShield.Services.Video
         }
     }
 
-    internal IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetStoredMaskBorrowedSnapshot()
-    {
-        if (!_allowsBorrowedBitmapReads)
-        {
-            throw new InvalidOperationException(
-                "Borrowed stored-mask snapshots are only allowed on detached provider snapshots.");
-        }
-
-        lock (_stateGate)
-            return _masks.ToArray();
-    }
-
     internal SparseFaceMaskWorkingCopy CreateSparseFaceMaskWorkingCopy(
         CancellationToken cancellationToken = default)
     {
@@ -425,6 +455,47 @@ namespace FaceShield.Services.Video
             catch
             {
                 snapshot.Dispose();
+                throw;
+            }
+        }
+    }
+
+    internal PersistenceSnapshot CreatePersistenceSnapshot(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var storedMasks = new List<PersistenceStoredMask>(_masks.Count);
+            try
+            {
+                foreach (var entry in _masks)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    AcquireBitmapLeaseLocked(entry.Value);
+                    storedMasks.Add(new PersistenceStoredMask(entry.Key, entry.Value));
+                }
+
+                var faceMasks = new List<KeyValuePair<int, FaceMaskData>>(_faceMasks.Count);
+                foreach (var entry in _faceMasks)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    faceMasks.Add(new KeyValuePair<int, FaceMaskData>(
+                        entry.Key,
+                        CloneFaceMaskData(entry.Value)));
+                }
+
+                return new PersistenceSnapshot(
+                    this,
+                    _version,
+                    storedMasks,
+                    faceMasks);
+            }
+            catch
+            {
+                foreach (var entry in storedMasks)
+                    ReleaseBitmapLeaseLocked(entry.Bitmap);
                 throw;
             }
         }
@@ -525,7 +596,7 @@ namespace FaceShield.Services.Video
             foreach (var entry in _masks.ToArray())
             {
                 if (_masks.TryRemove(entry.Key, out var mask))
-                    mask.Dispose();
+                    RetireBitmapLocked(mask);
             }
 
             _faceMasks.Clear();
@@ -583,7 +654,46 @@ namespace FaceShield.Services.Video
     private void RemoveStoredMaskLocked(int frameIndex)
     {
         if (_masks.TryRemove(frameIndex, out var mask))
-            mask.Dispose();
+            RetireBitmapLocked(mask);
+    }
+
+    private void AcquireBitmapLeaseLocked(WriteableBitmap bitmap)
+    {
+        _bitmapLeaseCounts.TryGetValue(bitmap, out int count);
+        _bitmapLeaseCounts[bitmap] = count + 1;
+    }
+
+    private void ReleaseBitmapLease(WriteableBitmap bitmap)
+    {
+        lock (_stateGate)
+            ReleaseBitmapLeaseLocked(bitmap);
+    }
+
+    private void ReleaseBitmapLeaseLocked(WriteableBitmap bitmap)
+    {
+        if (!_bitmapLeaseCounts.TryGetValue(bitmap, out int count))
+            return;
+
+        if (count > 1)
+        {
+            _bitmapLeaseCounts[bitmap] = count - 1;
+            return;
+        }
+
+        _bitmapLeaseCounts.Remove(bitmap);
+        if (_retiredBitmaps.Remove(bitmap))
+            bitmap.Dispose();
+    }
+
+    private void RetireBitmapLocked(WriteableBitmap bitmap)
+    {
+        if (_bitmapLeaseCounts.ContainsKey(bitmap))
+        {
+            _retiredBitmaps.Add(bitmap);
+            return;
+        }
+
+        bitmap.Dispose();
     }
 
     private static FaceMaskData CloneFaceMaskData(FaceMaskData data)
@@ -613,6 +723,17 @@ namespace FaceShield.Services.Video
         public IReadOnlyList<Rect> Faces { get; }
         public float? MinConfidence { get; }
         public IReadOnlyList<float> Confidences { get; }
+    }
+
+    private sealed class BitmapReferenceComparer : IEqualityComparer<WriteableBitmap>
+    {
+        internal static readonly BitmapReferenceComparer Instance = new();
+
+        public bool Equals(WriteableBitmap? x, WriteableBitmap? y)
+            => ReferenceEquals(x, y);
+
+        public int GetHashCode(WriteableBitmap obj)
+            => RuntimeHelpers.GetHashCode(obj);
     }
 
     private static IReadOnlyList<float> NormalizeConfidences(

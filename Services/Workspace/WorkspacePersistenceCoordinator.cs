@@ -6,8 +6,9 @@ using System.Threading.Tasks;
 namespace FaceShield.Services.Workspace
 {
     /// <summary>
-    /// Serializes workspace persistence and moves bitmap cloning / PNG encoding / file I/O
-    /// off the UI thread. Queued stale requests are skipped before expensive work starts.
+    /// Serializes workspace persistence and keeps bitmap pixel work off the caller
+    /// thread. A queued request is published before its worker starts so FlushAsync
+    /// and Dispose always observe a complete request/task pair.
     /// </summary>
     public sealed class WorkspacePersistenceCoordinator : IDisposable
     {
@@ -31,47 +32,83 @@ namespace FaceShield.Services.Workspace
         {
             if (snapshot == null)
                 return Task.CompletedTask;
+
             ThrowIfDisposed();
+            FrameMaskProvider.PersistenceSnapshot maskSnapshot =
+                _maskProvider.CreatePersistenceSnapshot();
 
-            FrameMaskProvider maskSnapshot = _maskProvider.CreateSnapshot();
-            long requestId = Interlocked.Increment(ref _latestRequestId);
-            Task task;
-            try
-            {
-                task = SaveQueuedAsync(snapshot, maskSnapshot, requestId);
-            }
-            catch
-            {
-                maskSnapshot.Dispose();
-                throw;
-            }
-
+            PendingSave pending;
             lock (_taskGate)
-                _latestTask = task;
-            return task;
+            {
+                if (_disposed)
+                {
+                    maskSnapshot.Dispose();
+                    throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+                }
+
+                pending = new PendingSave(
+                    ++_latestRequestId,
+                    snapshot,
+                    maskSnapshot);
+
+                // Publish before starting the worker. This makes the request visible
+                // to FlushAsync/Dispose as one atomic (id, task) pair.
+                _latestTask = pending.Completion.Task;
+            }
+
+            _ = ExecutePendingSaveAsync(pending);
+            return pending.Completion.Task;
         }
 
-        private async Task SaveQueuedAsync(
-            WorkspaceSnapshot snapshot,
-            FrameMaskProvider maskSnapshot,
-            long requestId)
+        private async Task ExecutePendingSaveAsync(PendingSave pending)
         {
             bool entered = false;
+            Exception? failure = null;
             try
             {
                 await _saveGate.WaitAsync().ConfigureAwait(false);
                 entered = true;
-                if (requestId != Volatile.Read(ref _latestRequestId))
-                    return;
 
-                await Task.Run(() => _store.SaveWorkspaceSnapshot(snapshot, maskSnapshot))
-                    .ConfigureAwait(false);
+                bool stale;
+                lock (_taskGate)
+                    stale = pending.RequestId != _latestRequestId;
+
+                if (!stale)
+                {
+                    await Task.Run(() => _store.SaveWorkspaceSnapshot(
+                        pending.Snapshot,
+                        pending.MaskSnapshot)).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
             }
             finally
             {
-                if (entered)
-                    _saveGate.Release();
-                maskSnapshot.Dispose();
+                try
+                {
+                    if (entered)
+                        _saveGate.Release();
+                }
+                catch (Exception ex)
+                {
+                    failure ??= ex;
+                }
+
+                try
+                {
+                    pending.MaskSnapshot.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    failure ??= ex;
+                }
+
+                if (failure == null)
+                    pending.Completion.TrySetResult(null);
+                else
+                    pending.Completion.TrySetException(failure);
             }
         }
 
@@ -109,51 +146,60 @@ namespace FaceShield.Services.Workspace
         {
             if (snapshot == null)
                 return;
-            ThrowIfDisposed();
 
-            using FrameMaskProvider maskSnapshot = _maskProvider.CreateSnapshot();
-            try
-            {
-                FlushAsync().GetAwaiter().GetResult();
-            }
-            catch
-            {
-                // A fresh synchronous save below supersedes a failed queued save.
-            }
-
-            _saveGate.Wait();
-            try
-            {
-                _store.SaveWorkspaceSnapshot(snapshot, maskSnapshot);
-            }
-            finally
-            {
-                _saveGate.Release();
-            }
+            QueueSaveAsync(snapshot).GetAwaiter().GetResult();
         }
 
         public void Dispose()
         {
-            if (_disposed)
-                return;
+            Task latestTask;
+            lock (_taskGate)
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                latestTask = _latestTask;
+            }
 
             try
             {
-                FlushAsync().GetAwaiter().GetResult();
+                latestTask.GetAwaiter().GetResult();
             }
             catch
             {
                 // Persistence errors are observed by the owning view model.
             }
 
-            _disposed = true;
             _saveGate.Dispose();
         }
 
         private void ThrowIfDisposed()
         {
-            if (_disposed)
-                throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+            lock (_taskGate)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+            }
+        }
+
+        private sealed class PendingSave
+        {
+            internal PendingSave(
+                long requestId,
+                WorkspaceSnapshot snapshot,
+                FrameMaskProvider.PersistenceSnapshot maskSnapshot)
+            {
+                RequestId = requestId;
+                Snapshot = snapshot;
+                MaskSnapshot = maskSnapshot;
+            }
+
+            internal long RequestId { get; }
+            internal WorkspaceSnapshot Snapshot { get; }
+            internal FrameMaskProvider.PersistenceSnapshot MaskSnapshot { get; }
+            internal TaskCompletionSource<object?> Completion { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
     }
 }
