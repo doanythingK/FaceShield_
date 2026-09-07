@@ -167,9 +167,11 @@ namespace FaceShield.Services.Workspace
             if (snapshot == null)
                 return;
 
-            PendingSave? pending = null;
             Task predecessor = Task.CompletedTask;
             Task finalTask;
+            TaskCompletionSource<object?>? finalCompletion = null;
+            long finalRequestId = 0;
+            bool ownsFinalization = false;
 
             lock (_taskGate)
             {
@@ -182,24 +184,50 @@ namespace FaceShield.Services.Workspace
                 }
                 else
                 {
-                    // Capture the persistence lease while publication is blocked so a
-                    // concurrent QueueSaveAsync cannot slip in after the final boundary.
-                    FrameMaskProvider.PersistenceSnapshot maskSnapshot =
-                        _maskProvider.CreatePersistenceSnapshot();
-
+                    // Publish a terminal placeholder before releasing the task gate.
+                    // QueueSaveAsync observes _finalizing and cannot cross this boundary,
+                    // while Dispose/another SaveNow can already wait on the placeholder.
                     _finalizing = true;
                     predecessor = _latestTask;
-                    pending = new PendingSave(
-                        ++_latestRequestId,
-                        snapshot,
-                        maskSnapshot);
-                    _latestTask = pending.Completion.Task;
+                    finalRequestId = ++_latestRequestId;
+                    finalCompletion = new TaskCompletionSource<object?>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    _latestTask = finalCompletion.Task;
                     finalTask = _latestTask;
+                    ownsFinalization = true;
                 }
             }
 
-            if (pending != null)
-                _ = ExecutePendingSaveAsync(pending, predecessor);
+            if (ownsFinalization)
+            {
+                FrameMaskProvider.PersistenceSnapshot? maskSnapshot = null;
+                try
+                {
+                    // Metadata/lease capture may be proportional to the number of masks.
+                    // Keep it outside _taskGate after the final boundary is published.
+                    maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
+                    var pending = new PendingSave(
+                        finalRequestId,
+                        snapshot,
+                        maskSnapshot,
+                        finalCompletion!);
+                    maskSnapshot = null; // PendingSave owns the persistence lease.
+                    _ = ExecutePendingSaveAsync(pending, predecessor);
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        maskSnapshot?.Dispose();
+                    }
+                    catch
+                    {
+                        // Preserve the snapshot-capture failure as the terminal error.
+                    }
+
+                    finalCompletion!.TrySetException(ex);
+                }
+            }
 
             finalTask.GetAwaiter().GetResult();
         }
@@ -256,18 +284,20 @@ namespace FaceShield.Services.Workspace
             internal PendingSave(
                 long requestId,
                 WorkspaceSnapshot snapshot,
-                FrameMaskProvider.PersistenceSnapshot maskSnapshot)
+                FrameMaskProvider.PersistenceSnapshot maskSnapshot,
+                TaskCompletionSource<object?>? completion = null)
             {
                 RequestId = requestId;
                 Snapshot = snapshot;
                 MaskSnapshot = maskSnapshot;
+                Completion = completion ?? new TaskCompletionSource<object?>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
             }
 
             internal long RequestId { get; }
             internal WorkspaceSnapshot Snapshot { get; }
             internal FrameMaskProvider.PersistenceSnapshot MaskSnapshot { get; }
-            internal TaskCompletionSource<object?> Completion { get; } =
-                new(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal TaskCompletionSource<object?> Completion { get; }
         }
     }
 }

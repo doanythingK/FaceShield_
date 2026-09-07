@@ -26,7 +26,9 @@ namespace FaceShield.Services.Workspace
                 : StringComparer.Ordinal;
         private static readonly object GlobalStateGate = new();
         private static readonly object WorkspaceDirectoryGate = new();
-        private static readonly HashSet<string> ActiveWorkspacePreparationDirectories =
+        // A directory can be reserved by more than one reader/save concurrently.
+        // Reference counts prevent one load from releasing another load's protection.
+        private static readonly Dictionary<string, int> ActiveWorkspacePreparationDirectories =
             new(FilePathComparer);
         private readonly string _rootDir;
         private readonly string _stateFile;
@@ -147,55 +149,64 @@ namespace FaceShield.Services.Workspace
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
 
+            snapshot = null;
+            WorkspaceState primaryState;
+            WorkspaceState? backupState;
+
+            // Capture immutable metadata while the state gate is held, but keep PNG
+            // existence checks, reads, and decoding outside the process-wide gate.
             lock (GlobalStateGate)
             {
                 RefreshStateLocked();
-                snapshot = null;
-                WorkspaceState? primaryState = FindWorkspaceState(_state, videoPath, mode);
-                if (primaryState == null)
+                WorkspaceState? primary = FindWorkspaceState(_state, videoPath, mode);
+                if (primary == null)
                     return false;
 
-                WorkspaceState stateToUse = primaryState;
-                bool loadedComplete = TryLoadWorkspacePayload(
-                    videoPath,
-                    mode,
-                    primaryState,
-                    maskProvider,
-                    requireComplete: true);
-
-                if (!loadedComplete)
-                {
-                    AppState? backupAppState = TryLoadStateFile(_stateBackupFile);
-                    WorkspaceState? backupState = FindWorkspaceState(backupAppState, videoPath, mode);
-                    if (backupState != null &&
-                        TryLoadWorkspacePayload(
-                            videoPath,
-                            mode,
-                            backupState,
-                            maskProvider,
-                            requireComplete: true))
-                    {
-                        stateToUse = backupState;
-                        System.Diagnostics.Debug.WriteLine(
-                            $"[WorkspaceStateStore] recovered workspace payload from backup generation " +
-                            $"'{backupState.StorageGeneration ?? "legacy"}'.");
-                    }
-                    else
-                    {
-                        // Preserve the old best-effort behavior when neither generation is complete,
-                        // but never delete unreadable payload files while attempting recovery.
-                        TryLoadWorkspacePayload(
-                            videoPath,
-                            mode,
-                            primaryState,
-                            maskProvider,
-                            requireComplete: false);
-                    }
-                }
-
-                snapshot = CreateWorkspaceSnapshot(stateToUse, mode);
-                return true;
+                primaryState = CloneWorkspaceState(primary);
+                AppState? backupAppState = TryLoadStateFile(_stateBackupFile);
+                WorkspaceState? backup = FindWorkspaceState(backupAppState, videoPath, mode);
+                backupState = backup == null ? null : CloneWorkspaceState(backup);
             }
+
+            WorkspaceState stateToUse = primaryState;
+            bool loadedComplete = TryLoadWorkspacePayload(
+                videoPath,
+                mode,
+                primaryState,
+                maskProvider,
+                requireComplete: true);
+
+            if (!loadedComplete)
+            {
+                if (backupState != null &&
+                    TryLoadWorkspacePayload(
+                        videoPath,
+                        mode,
+                        backupState,
+                        maskProvider,
+                        requireComplete: true))
+                {
+                    stateToUse = backupState;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[WorkspaceStateStore] recovered workspace payload from backup generation " +
+                        $"'{backupState.StorageGeneration ?? "legacy"}'.");
+                }
+                else
+                {
+                    // Preserve the old best-effort behavior when neither captured
+                    // generation is complete. Directory reservations below prevent
+                    // cleanup/removal from deleting a payload while it is being read.
+                    TryLoadWorkspacePayload(
+                        videoPath,
+                        mode,
+                        primaryState,
+                        maskProvider,
+                        requireComplete: false);
+                }
+            }
+
+            snapshot = CreateWorkspaceSnapshot(stateToUse, mode);
+            return true;
         }
 
         private static WorkspaceState? FindWorkspaceState(
@@ -211,6 +222,53 @@ namespace FaceShield.Services.Workspace
                 string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase));
         }
 
+        private static WorkspaceState CloneWorkspaceState(WorkspaceState source)
+        {
+            return new WorkspaceState
+            {
+                VideoPath = source.VideoPath,
+                Mode = source.Mode,
+                StorageGeneration = source.StorageGeneration,
+                SelectedFrameIndex = source.SelectedFrameIndex,
+                ViewStartSeconds = source.ViewStartSeconds,
+                SecondsPerScreen = source.SecondsPerScreen,
+                TimelineExtentSeconds = source.TimelineExtentSeconds,
+                LastOpened = source.LastOpened,
+                MaskIndices = source.MaskIndices?.ToList() ?? new List<int>(),
+                FaceMasks = source.FaceMasks?
+                    .Where(face => face != null)
+                    .Select(face => new FaceMaskState
+                    {
+                        FrameIndex = face.FrameIndex,
+                        Width = face.Width,
+                        Height = face.Height,
+                        MinConfidence = face.MinConfidence,
+                        Faces = face.Faces?
+                            .Where(rect => rect != null)
+                            .Select(rect => new RectState
+                            {
+                                X = rect.X,
+                                Y = rect.Y,
+                                Width = rect.Width,
+                                Height = rect.Height
+                            })
+                            .ToList() ?? new List<RectState>(),
+                        Confidences = face.Confidences?.ToList() ?? new List<float>()
+                    })
+                    .ToList() ?? new List<FaceMaskState>(),
+                AutoResumeIndex = source.AutoResumeIndex,
+                AutoCompleted = source.AutoCompleted,
+                AutoRunSignature = source.AutoRunSignature,
+                AutoExecutionSignature = source.AutoExecutionSignature,
+                AutoExportGateRequired = source.AutoExportGateRequired,
+                AutoExportGatePassed = source.AutoExportGatePassed,
+                AutoExportGateFailure = source.AutoExportGateFailure,
+                AutoExportHybridPolicyAvailable = source.AutoExportHybridPolicyAvailable,
+                AutoExportAllowHybridCopy = source.AutoExportAllowHybridCopy,
+                AutoExportHybridDisableReasons = source.AutoExportHybridDisableReasons
+            };
+        }
+
         private bool TryLoadWorkspacePayload(
             string videoPath,
             WorkspaceMode mode,
@@ -222,7 +280,9 @@ namespace FaceShield.Services.Workspace
                 videoPath,
                 mode,
                 state.StorageGeneration);
+            string fullDir = Path.GetFullPath(dir);
             var loadedMasks = new List<KeyValuePair<int, WriteableBitmap>>();
+            RegisterActiveWorkspaceDirectory(fullDir);
 
             try
             {
@@ -260,6 +320,7 @@ namespace FaceShield.Services.Workspace
             {
                 foreach (var entry in loadedMasks)
                     entry.Value.Dispose();
+                UnregisterActiveWorkspaceDirectory(fullDir);
             }
         }
 
@@ -894,13 +955,24 @@ namespace FaceShield.Services.Workspace
         private static void RegisterActiveWorkspaceDirectory(string directory)
         {
             lock (WorkspaceDirectoryGate)
-                ActiveWorkspacePreparationDirectories.Add(directory);
+            {
+                ActiveWorkspacePreparationDirectories.TryGetValue(directory, out int count);
+                ActiveWorkspacePreparationDirectories[directory] = checked(count + 1);
+            }
         }
 
         private static void UnregisterActiveWorkspaceDirectory(string directory)
         {
             lock (WorkspaceDirectoryGate)
-                ActiveWorkspacePreparationDirectories.Remove(directory);
+            {
+                if (!ActiveWorkspacePreparationDirectories.TryGetValue(directory, out int count))
+                    return;
+
+                if (count <= 1)
+                    ActiveWorkspacePreparationDirectories.Remove(directory);
+                else
+                    ActiveWorkspacePreparationDirectories[directory] = count - 1;
+            }
         }
 
         private static bool TryDeleteDirectoryIfInactive(string directory)
@@ -929,14 +1001,17 @@ namespace FaceShield.Services.Workspace
 
         private static bool HasActiveWorkspaceDirectoryUnderLocked(string directory)
         {
-            if (ActiveWorkspacePreparationDirectories.Contains(directory))
+            if (ActiveWorkspacePreparationDirectories.TryGetValue(directory, out int count) &&
+                count > 0)
+            {
                 return true;
+            }
 
             string prefix = directory.TrimEnd(
                 Path.DirectorySeparatorChar,
                 Path.AltDirectorySeparatorChar) +
                 Path.DirectorySeparatorChar;
-            return ActiveWorkspacePreparationDirectories.Any(path =>
+            return ActiveWorkspacePreparationDirectories.Keys.Any(path =>
                 path.StartsWith(prefix, FilePathComparison));
         }
 
