@@ -1,4 +1,4 @@
-name: Temporary Export Quality Presets V4
+name: Temporary Export Quality Presets V5
 
 on:
   push:
@@ -32,13 +32,38 @@ jobs:
       - name: Apply corrected patch
         run: python scripts/temporary-export-quality-presets-patch-v4.py
 
-      - name: Static and diff verification
-        shell: pwsh
+      - name: Static verification
+        shell: python
         run: |
-          python -c "from pathlib import Path; p=Path('Services/Video/VideoExportQualityPreset.cs').read_text(encoding='utf-8'); assert all(x in p for x in ['1.00','1.20','1.40']); s=Path('Services/Video/VideoEncoderContextPolicy.cs').read_text(encoding='utf-8'); assert 'ctx->rc_max_rate = targetBitrate;' in s; q=Path('Services/Video/VideoEncoderQualityPolicy.cs').read_text(encoding='utf-8'); assert 'SetOption(\"crf\", \"18\", required: true);' in q; u=Path('Views/Workspace/ToolPanelView.axaml').read_text(encoding='utf-8'); assert '내보내기 화질/용량' in u"
-          if ($LASTEXITCODE -ne 0) { throw "source invariant failed" }
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { throw "diff check failed" }
+          from pathlib import Path
+          preset = Path('Services/Video/VideoExportQualityPreset.cs').read_text(encoding='utf-8')
+          context = Path('Services/Video/VideoEncoderContextPolicy.cs').read_text(encoding='utf-8')
+          quality = Path('Services/Video/VideoEncoderQualityPolicy.cs').read_text(encoding='utf-8')
+          view = Path('Views/Workspace/ToolPanelView.axaml').read_text(encoding='utf-8')
+          service = Path('Services/Video/VideoExportService.cs').read_text(encoding='utf-8')
+          coordinator = Path('ViewModels/Workspace/WorkspaceExportCoordinator.cs').read_text(encoding='utf-8')
+          workspace = Path('ViewModels/Pages/WorkspaceViewModel.cs').read_text(encoding='utf-8')
+          panel = Path('ViewModels/Workspace/ToolPanelViewModel.cs').read_text(encoding='utf-8')
+          for marker, text in [
+              ('1.00', preset),
+              ('1.20', preset),
+              ('1.40', preset),
+              ('ctx->rc_max_rate = targetBitrate;', context),
+              ('SetOption("crf", "18", required: true);', quality),
+              ('내보내기 화질/용량', view),
+              ('VideoExportQualityPreset.SizePriority', service),
+              ('qualityPreset: qualityPreset', service),
+              ('qualityPreset={qualityPreset}', coordinator),
+              ('qualityPreset: ToolPanel.ExportQualityPreset', workspace),
+              ('균형 (권장)', panel),
+          ]:
+              if marker not in text:
+                  raise SystemExit(f'missing invariant: {marker}')
+          if not Path('scripts/verify-export-quality-presets.ps1').exists():
+              raise SystemExit('preset verifier missing')
+
+      - name: Diff check
+        run: git diff --check
 
       - name: Policy regressions
         shell: pwsh
