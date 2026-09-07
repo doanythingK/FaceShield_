@@ -1,0 +1,171 @@
+name: Temporary Export Quality Presets V2
+
+on:
+  push:
+    branches: [refactor/ownership-workspace-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Prepare FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "FFmpeg/win-x64" -Force | Out-Null
+          tar -xzf "FFmpeg/win-x64-binaries.tar.gz" -C "FFmpeg/win-x64"
+          foreach ($name in @("avcodec-62.dll", "avformat-62.dll", "avutil-60.dll", "swscale-9.dll", "swresample-6.dll")) {
+            if (!(Test-Path (Join-Path "FFmpeg/win-x64" $name))) { throw "Missing native DLL: $name" }
+          }
+          $cmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if (!$cmd) {
+            choco install ffmpeg -y --no-progress
+            $cmd = Get-Command ffmpeg -ErrorAction Stop
+          }
+          "FFMPEG_CLI=$($cmd.Source)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Apply patch V2
+        run: python scripts/temporary-export-quality-presets-patch-v2.py
+
+      - name: Static verification
+        shell: python
+        run: |
+          from pathlib import Path
+          files = {p: Path(p).read_text(encoding='utf-8') for p in [
+              'Services/Video/VideoExportQualityPreset.cs',
+              'Services/Video/VideoExportFidelityPolicy.cs',
+              'Services/Video/VideoEncoderContextPolicy.cs',
+              'Services/Video/VideoExportService.cs',
+              'ViewModels/Workspace/ToolPanelViewModel.cs',
+              'ViewModels/Workspace/WorkspaceExportCoordinator.cs',
+              'ViewModels/Pages/WorkspaceViewModel.cs',
+              'Views/Workspace/ToolPanelView.axaml',
+              'Services/Video/VideoEncoderQualityPolicy.cs']}
+          checks = [
+              ('1.00', files['Services/Video/VideoExportQualityPreset.cs']),
+              ('1.20', files['Services/Video/VideoExportQualityPreset.cs']),
+              ('1.40', files['Services/Video/VideoExportQualityPreset.cs']),
+              ('VideoExportQualityPreset qualityPreset', files['Services/Video/VideoExportFidelityPolicy.cs']),
+              ('encoder->id,\n                qualityPreset);', files['Services/Video/VideoEncoderContextPolicy.cs']),
+              ('ctx->rc_max_rate = targetBitrate;', files['Services/Video/VideoEncoderContextPolicy.cs']),
+              ('VideoExportQualityPreset.SizePriority', files['Services/Video/VideoExportService.cs']),
+              ('qualityPreset: qualityPreset', files['Services/Video/VideoExportService.cs']),
+              ('qualityPreset={qualityPreset}', files['ViewModels/Workspace/WorkspaceExportCoordinator.cs']),
+              ('qualityPreset: ToolPanel.ExportQualityPreset', files['ViewModels/Pages/WorkspaceViewModel.cs']),
+              ('균형 (권장)', files['ViewModels/Workspace/ToolPanelViewModel.cs']),
+              ('내보내기 화질/용량', files['Views/Workspace/ToolPanelView.axaml']),
+              ('SetOption("crf", "18", required: true);', files['Services/Video/VideoEncoderQualityPolicy.cs'])]
+          for marker, text in checks:
+              if marker not in text: raise SystemExit(f'missing invariant: {marker}')
+          if not Path('scripts/verify-export-quality-presets.ps1').exists():
+              raise SystemExit('preset verifier missing')
+          service = files['Services/Video/VideoExportService.cs']
+          if service.count('VideoEncoderContextPolicy.TryCreateEncoderContext(') != 2:
+              raise SystemExit('unexpected encoder context call count')
+          context = files['Services/Video/VideoEncoderContextPolicy.cs']
+          if context.count('TryOpenEncoderContext(') != 3:
+              raise SystemExit('unexpected encoder open symbol count')
+
+      - name: Diff and policy regressions
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw "diff check failed" }
+          ./scripts/verify-export-quality-presets.ps1
+          if ($LASTEXITCODE -ne 0) { throw "preset policy verification failed" }
+          ./scripts/verify-encoder-quality-options.ps1
+          if ($LASTEXITCODE -ne 0) { throw "encoder baseline verification failed" }
+
+      - name: Three-preset Windows export E2E
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE "export-quality-source.mp4"
+          & $env:FFMPEG_CLI -hide_banner -loglevel error -f lavfi -i "testsrc2=size=640x360:rate=30" -t 6 -c:v libx264 -preset veryfast -b:v 800k -maxrate 800k -bufsize 1600k -pix_fmt yuv420p -an -y $source
+          if ($LASTEXITCODE -ne 0) { throw "fixture generation failed" }
+          $work = Join-Path $env:GITHUB_WORKSPACE ".tmp-export-quality-e2e"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          @"
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><RuntimeIdentifier>win-x64</RuntimeIdentifier></PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="$env:GITHUB_WORKSPACE\FaceShield.csproj" />
+              <None Include="$env:GITHUB_WORKSPACE\FFmpeg\win-x64\*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+            </ItemGroup>
+          </Project>
+          "@ | Set-Content -Encoding UTF8 (Join-Path $work "Test.csproj")
+          @'
+          using System;
+          using System.Collections.Generic;
+          using System.IO;
+          using Avalonia;
+          using FaceShield.Services.Video;
+          string source = args[0], dir = args[1];
+          FFmpegBootstrap.Initialize();
+          using var live = new FrameMaskProvider();
+          var size = new PixelSize(640, 360);
+          for (int i = 0; i < 180; i++) live.SetFaceRects(i, new[] { new Rect(180 + i % 30, 100, 120, 120) }, size, 0.9f, new[] { 0.9f });
+          var cases = new[] {
+              (VideoExportQualityPreset.SizePriority, "size", 1.00, 1.35),
+              (VideoExportQualityPreset.Balanced, "balanced", 1.20, 1.55),
+              (VideoExportQualityPreset.QualityPriority, "quality", 1.40, 1.80) };
+          long sourceBytes = new FileInfo(source).Length, previousTarget = 0;
+          var outputs = new List<string>();
+          foreach (var c in cases) {
+              string output = Path.Combine(dir, $"export-quality-{c.Item2}.mp4");
+              File.Delete(output);
+              using var snapshot = live.CreateSnapshot();
+              var exporter = new VideoExportService(snapshot);
+              exporter.Export(source, output, 8, allowHybridCopy: false, qualityPreset: c.Item1);
+              var s = exporter.LastExportSummary ?? throw new Exception("missing export summary");
+              long bytes = new FileInfo(output).Length;
+              double fileRatio = bytes / (double)sourceBytes;
+              double targetRatio = s.SourceVideoBitrate > 0 ? s.TargetVideoBitrate / (double)s.SourceVideoBitrate : 0;
+              Console.WriteLine($"[ExportQualityE2E] preset={c.Item1} sourceBytes={sourceBytes} outputBytes={bytes} fileRatio={fileRatio:0.000} encoder={s.EncoderName} mode={s.EncoderQualityMode} sourceRate={s.SourceVideoBitrate} targetRate={s.TargetVideoBitrate} targetRatio={targetRatio:0.000}");
+              if (Math.Abs(targetRatio - c.Item3) > 0.035) throw new Exception($"target ratio mismatch: {c.Item1} {targetRatio:0.000}");
+              if (fileRatio > c.Item4) throw new Exception($"file ratio too high: {c.Item1} {fileRatio:0.000}");
+              if (s.TargetVideoBitrate <= previousTarget) throw new Exception($"target did not increase: {c.Item1}");
+              previousTarget = s.TargetVideoBitrate;
+              outputs.Add(output);
+          }
+          File.WriteAllLines(Path.Combine(dir, "export-quality-outputs.txt"), outputs);
+          '@ | Set-Content -Encoding UTF8 (Join-Path $work "Program.cs")
+          dotnet run --project (Join-Path $work "Test.csproj") -c Release -r win-x64 -p:UseAppHost=false -- $source $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { throw "three-preset export harness failed" }
+          foreach ($output in Get-Content (Join-Path $env:GITHUB_WORKSPACE "export-quality-outputs.txt")) {
+            & $env:FFMPEG_CLI -hide_banner -loglevel error -i $output -f null -
+            if ($LASTEXITCODE -ne 0) { throw "decode failed: $output" }
+            Remove-Item $output -Force
+          }
+          Remove-Item (Join-Path $env:GITHUB_WORKSPACE "export-quality-outputs.txt") -Force
+          Remove-Item $source -Force
+          Remove-Item $work -Recurse -Force
+
+      - name: Release build
+        run: dotnet build FaceShield.csproj -c Release -p:UseAppHost=false --nologo
+
+      - name: Commit verified product source
+        shell: pwsh
+        run: |
+          Remove-Item scripts/temporary-export-quality-presets-patch.py -Force
+          Remove-Item scripts/temporary-export-quality-presets-patch-v2.py -Force
+          Remove-Item .github/workflows/temporary-export-quality-presets.yml -Force
+          Remove-Item .github/workflows/temporary-export-quality-presets-v2.yml -Force
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw "final diff check failed" }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Services/Video/VideoExportQualityPreset.cs Services/Video/VideoExportFidelityPolicy.cs Services/Video/VideoEncoderContextPolicy.cs Services/Video/VideoExportService.cs ViewModels/Workspace/ToolPanelViewModel.cs ViewModels/Workspace/WorkspaceExportCoordinator.cs ViewModels/Pages/WorkspaceViewModel.cs Views/Workspace/ToolPanelView.axaml scripts/verify-export-quality-presets.ps1 scripts/temporary-export-quality-presets-patch.py scripts/temporary-export-quality-presets-patch-v2.py .github/workflows/temporary-export-quality-presets.yml .github/workflows/temporary-export-quality-presets-v2.yml
+          git commit -m "Add user-selectable export quality presets"
+          if ($LASTEXITCODE -ne 0) { throw "commit failed" }
+          git push origin HEAD:refactor/ownership-workspace-hardening
+          if ($LASTEXITCODE -ne 0) { throw "push failed" }
