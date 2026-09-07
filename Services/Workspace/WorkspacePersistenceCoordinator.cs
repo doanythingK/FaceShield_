@@ -7,8 +7,8 @@ namespace FaceShield.Services.Workspace
 {
     /// <summary>
     /// Serializes workspace persistence and keeps bitmap pixel work off the caller
-    /// thread. A queued request is published before its worker starts so FlushAsync
-    /// and Dispose always observe a complete request/task pair.
+    /// thread. Published requests form an ordered completion chain so FlushAsync,
+    /// SaveNow, and Dispose observe all prior persistence work.
     /// </summary>
     public sealed class WorkspacePersistenceCoordinator : IDisposable
     {
@@ -18,6 +18,7 @@ namespace FaceShield.Services.Workspace
         private readonly object _taskGate = new();
         private Task _latestTask = Task.CompletedTask;
         private long _latestRequestId;
+        private bool _finalizing;
         private bool _disposed;
 
         public WorkspacePersistenceCoordinator(
@@ -33,39 +34,57 @@ namespace FaceShield.Services.Workspace
             if (snapshot == null)
                 return Task.CompletedTask;
 
-            ThrowIfDisposed();
+            ThrowIfQueueClosed();
             FrameMaskProvider.PersistenceSnapshot maskSnapshot =
                 _maskProvider.CreatePersistenceSnapshot();
 
             PendingSave pending;
+            Task predecessor;
             lock (_taskGate)
             {
-                if (_disposed)
+                if (_disposed || _finalizing)
                 {
                     maskSnapshot.Dispose();
-                    throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+                    if (_disposed)
+                        throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+
+                    throw new InvalidOperationException(
+                        "Workspace persistence is finalizing and no longer accepts queued saves.");
                 }
 
+                predecessor = _latestTask;
                 pending = new PendingSave(
                     ++_latestRequestId,
                     snapshot,
                     maskSnapshot);
 
-                // Publish before starting the worker. This makes the request visible
-                // to FlushAsync/Dispose as one atomic (id, task) pair.
+                // Publish the completion tail before starting this worker. The worker
+                // also awaits its predecessor, so the tail drains every prior request.
                 _latestTask = pending.Completion.Task;
             }
 
-            _ = ExecutePendingSaveAsync(pending);
+            _ = ExecutePendingSaveAsync(pending, predecessor);
             return pending.Completion.Task;
         }
 
-        private async Task ExecutePendingSaveAsync(PendingSave pending)
+        private async Task ExecutePendingSaveAsync(
+            PendingSave pending,
+            Task predecessor)
         {
             bool entered = false;
             Exception? failure = null;
             try
             {
+                try
+                {
+                    await predecessor.ConfigureAwait(false);
+                }
+                catch
+                {
+                    // A newer request is still allowed to persist after an older
+                    // request failed; callers awaiting the older task observe its error.
+                }
+
                 await _saveGate.WaitAsync().ConfigureAwait(false);
                 entered = true;
 
@@ -139,15 +158,50 @@ namespace FaceShield.Services.Workspace
         }
 
         /// <summary>
-        /// Used during application shutdown when persistence must finish before
-        /// workspace resources are disposed and the process exits.
+        /// Performs the terminal application-shutdown save. Once finalization starts,
+        /// new queued saves are rejected. The returned boundary drains all previously
+        /// published work and commits this final snapshot before returning.
         /// </summary>
         public void SaveNow(WorkspaceSnapshot snapshot)
         {
             if (snapshot == null)
                 return;
 
-            QueueSaveAsync(snapshot).GetAwaiter().GetResult();
+            PendingSave? pending = null;
+            Task predecessor = Task.CompletedTask;
+            Task finalTask;
+
+            lock (_taskGate)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+
+                if (_finalizing)
+                {
+                    finalTask = _latestTask;
+                }
+                else
+                {
+                    // Capture the persistence lease while publication is blocked so a
+                    // concurrent QueueSaveAsync cannot slip in after the final boundary.
+                    FrameMaskProvider.PersistenceSnapshot maskSnapshot =
+                        _maskProvider.CreatePersistenceSnapshot();
+
+                    _finalizing = true;
+                    predecessor = _latestTask;
+                    pending = new PendingSave(
+                        ++_latestRequestId,
+                        snapshot,
+                        maskSnapshot);
+                    _latestTask = pending.Completion.Task;
+                    finalTask = _latestTask;
+                }
+            }
+
+            if (pending != null)
+                _ = ExecutePendingSaveAsync(pending, predecessor);
+
+            finalTask.GetAwaiter().GetResult();
         }
 
         public void Dispose()
@@ -172,6 +226,20 @@ namespace FaceShield.Services.Workspace
             }
 
             _saveGate.Dispose();
+        }
+
+        private void ThrowIfQueueClosed()
+        {
+            lock (_taskGate)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+                if (_finalizing)
+                {
+                    throw new InvalidOperationException(
+                        "Workspace persistence is finalizing and no longer accepts queued saves.");
+                }
+            }
         }
 
         private void ThrowIfDisposed()

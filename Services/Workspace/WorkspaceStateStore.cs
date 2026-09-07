@@ -737,10 +737,10 @@ namespace FaceShield.Services.Workspace
                 foreach (string candidate in candidates)
                 {
                     string fullCandidate = Path.GetFullPath(candidate);
-                    if (IsWorkspaceDirectoryReferenced(videoPath, mode, fullCandidate))
-                        continue;
-
-                    TryDeleteDirectoryIfInactive(fullCandidate);
+                    TryDeleteWorkspaceDirectoryIfUnreferenced(
+                        videoPath,
+                        mode,
+                        fullCandidate);
                 }
             }
             catch
@@ -749,20 +749,56 @@ namespace FaceShield.Services.Workspace
             }
         }
 
-        private bool IsWorkspaceDirectoryReferenced(
+        private bool TryDeleteWorkspaceDirectoryIfUnreferenced(
             string videoPath,
             WorkspaceMode mode,
             string directory)
         {
-            lock (GlobalStateGate)
+            // WorkspaceDirectoryGate acts as a deletion reservation. A preparing save
+            // must remain registered until after commit, so holding this gate across
+            // the final state-reference check prevents the old check/delete TOCTOU.
+            lock (WorkspaceDirectoryGate)
             {
-                RefreshStateLocked();
-                return IsWorkspaceDirectoryReferencedByState(_state, videoPath, mode, directory) ||
-                    IsWorkspaceDirectoryReferencedByState(
-                        TryLoadStateFile(_stateBackupFile),
-                        videoPath,
-                        mode,
-                        directory);
+                if (HasActiveWorkspaceDirectoryUnderLocked(directory))
+                    return false;
+
+                bool referenced;
+                lock (GlobalStateGate)
+                {
+                    RefreshStateLocked();
+                    referenced =
+                        IsWorkspaceDirectoryReferencedByState(
+                            _state,
+                            videoPath,
+                            mode,
+                            directory) ||
+                        IsWorkspaceDirectoryReferencedByState(
+                            TryLoadStateFile(_stateBackupFile),
+                            videoPath,
+                            mode,
+                            directory);
+                }
+
+                if (referenced)
+                    return false;
+
+                if (!Directory.Exists(directory))
+                    return true;
+
+                try
+                {
+                    // Do not hold GlobalStateGate during filesystem deletion. The
+                    // directory lifecycle gate alone keeps save prepare/unregister
+                    // transitions from crossing this deletion boundary.
+                    Directory.Delete(directory, recursive: true);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[WorkspaceStateStore] orphan workspace cleanup deferred: {ex.Message}");
+                    return false;
+                }
             }
         }
 

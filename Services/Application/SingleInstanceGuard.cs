@@ -1,80 +1,103 @@
 using System;
-using System.IO;
+using System.Threading;
 
 namespace FaceShield.Services.Application;
 
 internal sealed class SingleInstanceGuard : IDisposable
 {
-    private readonly FileStream _lockStream;
-    private bool _disposed;
+    private const string MutexName = "FaceShield_SingleInstance_8D52D4C9EAB34AF0";
+    private static int _processLeaseHeld;
 
-    private SingleInstanceGuard(FileStream lockStream)
+    private readonly Mutex _mutex;
+    private int _disposed;
+
+    private SingleInstanceGuard(Mutex mutex)
     {
-        _lockStream = lockStream;
+        _mutex = mutex;
     }
 
     internal static bool TryAcquire(out SingleInstanceGuard? guard)
     {
-        string rootDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "FaceShield");
-        Directory.CreateDirectory(rootDir);
+        guard = null;
+        if (Interlocked.CompareExchange(ref _processLeaseHeld, 1, 0) != 0)
+            return false;
 
-        string lockPath = Path.Combine(rootDir, "FaceShield.instance.lock");
-        FileStream? stream = null;
+        Mutex? mutex = null;
+        bool ownsMutex = false;
         try
         {
-            stream = new FileStream(
-                lockPath,
-                FileMode.OpenOrCreate,
-                FileAccess.ReadWrite,
-                FileShare.None,
-                bufferSize: 1,
-                options: FileOptions.None);
+            mutex = new Mutex(
+                initiallyOwned: true,
+                name: MutexName,
+                createdNew: out bool createdNew);
+            ownsMutex = createdNew;
 
-            if (stream.Length == 0)
+            if (!ownsMutex)
             {
-                stream.SetLength(1);
-                stream.Flush(flushToDisk: true);
+                try
+                {
+                    ownsMutex = mutex.WaitOne(0);
+                }
+                catch (AbandonedMutexException)
+                {
+                    // The previous process died while owning the mutex. WaitOne grants
+                    // ownership to this process in the abandoned-mutex case.
+                    ownsMutex = true;
+                }
             }
 
-            // The OS releases this lock automatically when the process exits,
-            // including an abnormal process termination.
-            stream.Lock(0, 1);
-            guard = new SingleInstanceGuard(stream);
-            stream = null;
+            if (!ownsMutex)
+            {
+                mutex.Dispose();
+                mutex = null;
+                Interlocked.Exchange(ref _processLeaseHeld, 0);
+                return false;
+            }
+
+            guard = new SingleInstanceGuard(mutex);
+            mutex = null;
             return true;
-        }
-        catch (IOException)
-        {
-            stream?.Dispose();
-            guard = null;
-            return false;
         }
         catch
         {
-            stream?.Dispose();
+            if (ownsMutex && mutex != null)
+            {
+                try
+                {
+                    mutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                    // Ownership was already lost; disposal below is sufficient.
+                }
+            }
+
+            mutex?.Dispose();
+            Interlocked.Exchange(ref _processLeaseHeld, 0);
             throw;
         }
     }
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _disposed = true;
         try
         {
-            _lockStream.Unlock(0, 1);
-        }
-        catch (IOException)
-        {
-            // The OS releases the lock during stream/process cleanup.
+            try
+            {
+                _mutex.ReleaseMutex();
+            }
+            catch (ApplicationException)
+            {
+                // If ownership was lost during shutdown, disposing the handle is enough.
+            }
         }
         finally
         {
-            _lockStream.Dispose();
+            _mutex.Dispose();
+            Interlocked.Exchange(ref _processLeaseHeld, 0);
         }
     }
 }
