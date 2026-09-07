@@ -1,27 +1,18 @@
 $ErrorActionPreference = 'Stop'
-
-$root = Split-Path -Parent $PSScriptRoot
 $temp = Join-Path $PSScriptRoot '.tmp-persistence-p2-harness'
 Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $temp | Out-Null
-
-$csproj = @'
+@'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\FaceShield.csproj" />
-  </ItemGroup>
+  <ItemGroup><ProjectReference Include="..\..\FaceShield.csproj" /></ItemGroup>
 </Project>
-'@
-Set-Content -Path (Join-Path $temp 'Harness.csproj') -Value $csproj -Encoding utf8
+'@ | Set-Content -Path (Join-Path $temp 'Harness.csproj') -Encoding utf8
 
-$program = @'
+@'
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -31,280 +22,166 @@ using FaceShield.Services.Video;
 using FaceShield.Services.Workspace;
 using System.Reflection;
 
-static WorkspaceSnapshot Snapshot(string videoPath, int selectedFrame) => new(
-    videoPath,
-    WorkspaceMode.Manual,
-    selectedFrame,
-    viewStartSeconds: 0,
-    secondsPerScreen: 10,
-    lastOpened: DateTimeOffset.UtcNow,
-    autoResumeIndex: 0,
-    autoCompleted: false,
-    autoRunSignature: null,
-    autoExportGateRequired: false,
-    autoExportGatePassed: false,
-    autoExportGateFailure: null,
-    autoExportHybridPolicyAvailable: false,
-    autoExportAllowHybridCopy: false,
-    autoExportHybridDisableReasons: null);
+static WorkspaceSnapshot Snap(string path, int frame) => new(
+    path, WorkspaceMode.Manual, frame, 0, 10, DateTimeOffset.UtcNow,
+    0, false, null, false, false, null, false, false, null);
 
-static object InstanceField(object target, string name)
-    => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(target)
-        ?? throw new InvalidOperationException($"Missing instance field {name}");
+static object IField(object target, string name) =>
+    target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(target)
+    ?? throw new Exception($"Missing field {name}");
+static object SField(Type type, string name) =>
+    type.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null)
+    ?? throw new Exception($"Missing static field {name}");
+static bool BoolField(object target, string name) =>
+    (bool)(target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(target)
+    ?? throw new Exception($"Missing bool field {name}"));
 
-static object StaticField(Type type, string name)
-    => type.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null)
-        ?? throw new InvalidOperationException($"Missing static field {name}");
-
-static bool ReadBoolField(object target, string name)
+static WriteableBitmap Stored(FrameMaskProvider provider, int frame)
 {
-    FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException($"Missing bool field {name}");
-    return (bool)(field.GetValue(target) ?? false);
-}
-
-static WriteableBitmap GetStoredBitmap(FrameMaskProvider provider, int frameIndex)
-{
-    object masks = InstanceField(provider, "_masks");
-    MethodInfo tryGetValue = masks.GetType().GetMethod("TryGetValue")
-        ?? throw new InvalidOperationException("Missing stored-mask TryGetValue");
-    object?[] args = { frameIndex, null };
-    if (!(bool)(tryGetValue.Invoke(masks, args) ?? false) || args[1] is not WriteableBitmap bitmap)
-        throw new InvalidOperationException($"Missing stored bitmap for frame {frameIndex}");
+    object masks = IField(provider, "_masks");
+    MethodInfo tryGet = masks.GetType().GetMethod("TryGetValue") ?? throw new Exception("Missing TryGetValue");
+    object?[] args = { frame, null };
+    if (!(bool)(tryGet.Invoke(masks, args) ?? false) || args[1] is not WriteableBitmap bitmap)
+        throw new Exception("Stored bitmap not found");
     return bitmap;
 }
 
-static unsafe WriteableBitmap CreateMask(int seed, int width = 512, int height = 320)
+static unsafe WriteableBitmap Mask(int seed)
 {
-    var bitmap = new WriteableBitmap(
-        new PixelSize(width, height),
-        new Vector(96, 96),
-        PixelFormat.Bgra8888,
-        AlphaFormat.Premul);
-    using var fb = bitmap.Lock();
-    byte* basePtr = (byte*)fb.Address;
-    for (int y = 0; y < height; y++)
+    const int w = 512, h = 320;
+    var bmp = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
+    using var fb = bmp.Lock();
+    byte* p = (byte*)fb.Address;
+    for (int y = 0; y < h; y++)
     {
-        byte* row = basePtr + y * fb.RowBytes;
-        for (int x = 0; x < width; x++)
+        byte* row = p + y * fb.RowBytes;
+        for (int x = 0; x < w; x++)
         {
-            int p = x * 4;
-            byte alpha = (byte)(((x + y + seed) % 7) == 0 ? 255 : 0);
-            row[p + 0] = 0;
-            row[p + 1] = 0;
-            row[p + 2] = 0;
-            row[p + 3] = alpha;
+            int o = x * 4;
+            row[o] = row[o + 1] = row[o + 2] = 0;
+            row[o + 3] = (byte)(((x + y + seed) % 7) == 0 ? 255 : 0);
         }
     }
-    return bitmap;
+    return bmp;
 }
 
 AppBuilder.Configure<App>().UsePlatformDetect().SetupWithoutStarting();
 string token = Guid.NewGuid().ToString("N");
 
-// 1) SaveNow must publish its terminal boundary before mask snapshot capture, and
-// must not hold _taskGate while waiting for FrameMaskProvider._stateGate.
+// SaveNow: final placeholder is published before provider snapshot capture, without
+// holding _taskGate during the potentially proportional metadata copy.
 {
-    string video = Path.Combine(Path.GetTempPath(), $"faceshield-p2-final-{token}.mp4");
+    string path = Path.Combine(Path.GetTempPath(), $"fs-p2-final-{token}.mp4");
     var store = new WorkspaceStateStore();
     using var provider = new FrameMaskProvider();
     provider.SetFaceRects(0, new[] { new Rect(1, 1, 4, 4) }, new PixelSize(16, 16));
     var coordinator = new WorkspacePersistenceCoordinator(store, provider);
-
-    object providerGate = InstanceField(provider, "_stateGate");
-    object taskGate = InstanceField(coordinator, "_taskGate");
-    bool providerHeld = false;
+    object providerGate = IField(provider, "_stateGate");
+    object taskGate = IField(coordinator, "_taskGate");
+    bool held = false;
     try
     {
-        Monitor.Enter(providerGate, ref providerHeld);
-        Task final = Task.Run(() => coordinator.SaveNow(Snapshot(video, 101)));
-        if (!SpinWait.SpinUntil(() => ReadBoolField(coordinator, "_finalizing"), TimeSpan.FromSeconds(5)))
-            throw new Exception("SaveNow did not publish finalization while provider snapshot was blocked.");
-
-        bool taskGateEntered = Monitor.TryEnter(taskGate, 1000);
-        if (!taskGateEntered)
-            throw new Exception("SaveNow held _taskGate while blocked on persistence snapshot capture.");
+        Monitor.Enter(providerGate, ref held);
+        Task final = Task.Run(() => coordinator.SaveNow(Snap(path, 101)));
+        if (!SpinWait.SpinUntil(() => BoolField(coordinator, "_finalizing"), TimeSpan.FromSeconds(5)))
+            throw new Exception("Final boundary was not published");
+        if (!Monitor.TryEnter(taskGate, 1000))
+            throw new Exception("SaveNow held _taskGate during provider snapshot capture");
         Monitor.Exit(taskGate);
-
-        if (final.IsCompleted)
-            throw new Exception("SaveNow completed while provider snapshot capture was deliberately blocked.");
-
-        Task<bool> rejected = Task.Run(() =>
-        {
-            try
-            {
-                _ = coordinator.QueueSaveAsync(Snapshot(video, 102));
-                return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return true;
-            }
-        });
-        if (!await rejected.WaitAsync(TimeSpan.FromSeconds(5)))
-            throw new Exception("QueueSaveAsync was not rejected after terminal boundary publication.");
-
-        Monitor.Exit(providerGate);
-        providerHeld = false;
-        await final.WaitAsync(TimeSpan.FromSeconds(20));
+        if (final.IsCompleted) throw new Exception("SaveNow completed while provider gate was blocked");
+        Task<bool> reject = Task.Run(() => { try { coordinator.QueueSaveAsync(Snap(path, 102)); return false; } catch (InvalidOperationException) { return true; } });
+        if (!reject.Wait(TimeSpan.FromSeconds(5)) || !reject.Result)
+            throw new Exception("Queue was not rejected after final boundary");
+        Monitor.Exit(providerGate); held = false;
+        final.Wait(TimeSpan.FromSeconds(20));
+        if (!final.IsCompletedSuccessfully) throw new Exception("Final save did not complete");
     }
     finally
     {
-        if (providerHeld)
-            Monitor.Exit(providerGate);
+        if (held) Monitor.Exit(providerGate);
         coordinator.Dispose();
     }
 }
 
-// 2) TryLoadWorkspace must release GlobalStateGate before entering directory/payload
-// work. Holding WorkspaceDirectoryGate forces the load to pause at its read reservation;
-// the global state gate must remain independently available.
+// TryLoadWorkspace: hold directory lifecycle gate so load pauses after metadata
+// capture; GlobalStateGate must already be free.
 {
-    string video = Path.Combine(Path.GetTempPath(), $"faceshield-p2-load-{token}.mp4");
+    string path = Path.Combine(Path.GetTempPath(), $"fs-p2-load-{token}.mp4");
     var store = new WorkspaceStateStore();
     using (var source = new FrameMaskProvider())
     {
         source.SetFaceRects(3, new[] { new Rect(2, 2, 8, 8) }, new PixelSize(32, 32));
-        store.SaveWorkspace(Snapshot(video, 303), source);
+        store.SaveWorkspace(Snap(path, 303), source);
     }
-
-    object directoryGate = StaticField(typeof(WorkspaceStateStore), "WorkspaceDirectoryGate");
-    object globalGate = StaticField(typeof(WorkspaceStateStore), "GlobalStateGate");
-    bool directoryHeld = false;
+    object dirGate = SField(typeof(WorkspaceStateStore), "WorkspaceDirectoryGate");
+    object globalGate = SField(typeof(WorkspaceStateStore), "GlobalStateGate");
     using var loadedProvider = new FrameMaskProvider();
+    bool held = false;
+    Task<(bool Ok, WorkspaceSnapshot? State)>? load = null;
     try
     {
-        Monitor.Enter(directoryGate, ref directoryHeld);
-        Task<(bool Ok, WorkspaceSnapshot? Snapshot)> load = Task.Run(() =>
-        {
-            bool ok = store.TryLoadWorkspace(video, WorkspaceMode.Manual, loadedProvider, out WorkspaceSnapshot? state);
-            return (ok, state);
-        });
-
-        await Task.Delay(200);
-        if (load.IsCompleted)
-            throw new Exception("TryLoadWorkspace did not wait for its directory read reservation.");
-
-        bool globalEntered = Monitor.TryEnter(globalGate, 1000);
-        if (!globalEntered)
-            throw new Exception("TryLoadWorkspace held GlobalStateGate while blocked before payload load.");
+        Monitor.Enter(dirGate, ref held);
+        load = Task.Run(() => { bool ok = store.TryLoadWorkspace(path, WorkspaceMode.Manual, loadedProvider, out var state); return (ok, state); });
+        Thread.Sleep(250);
+        if (load.IsCompleted) throw new Exception("Load did not wait for directory reservation");
+        if (!Monitor.TryEnter(globalGate, 1000)) throw new Exception("Load held GlobalStateGate during payload phase");
         Monitor.Exit(globalGate);
-
-        Monitor.Exit(directoryGate);
-        directoryHeld = false;
-        var result = await load.WaitAsync(TimeSpan.FromSeconds(20));
-        if (!result.Ok || result.Snapshot?.SelectedFrameIndex != 303)
-            throw new Exception("TryLoadWorkspace failed after releasing the directory reservation.");
+        Monitor.Exit(dirGate); held = false;
     }
-    finally
-    {
-        if (directoryHeld)
-            Monitor.Exit(directoryGate);
-    }
+    finally { if (held) Monitor.Exit(dirGate); }
+    if (load == null || !load.Wait(TimeSpan.FromSeconds(20)) || !load.Result.Ok || load.Result.State?.SelectedFrameIndex != 303)
+        throw new Exception("Load failed after reservation release");
 }
 
-// 3) Directory read reservations are reference-counted. One reader releasing a
-// shared generation must not remove another reader/save's protection.
+// Directory reservations must be reference counted for overlapping readers.
 {
-    Type type = typeof(WorkspaceStateStore);
-    MethodInfo register = type.GetMethod("RegisterActiveWorkspaceDirectory", BindingFlags.Static | BindingFlags.NonPublic)
-        ?? throw new Exception("Missing RegisterActiveWorkspaceDirectory");
-    MethodInfo unregister = type.GetMethod("UnregisterActiveWorkspaceDirectory", BindingFlags.Static | BindingFlags.NonPublic)
-        ?? throw new Exception("Missing UnregisterActiveWorkspaceDirectory");
-    MethodInfo hasActive = type.GetMethod("HasActiveWorkspaceDirectoryUnderLocked", BindingFlags.Static | BindingFlags.NonPublic)
-        ?? throw new Exception("Missing HasActiveWorkspaceDirectoryUnderLocked");
-    object directoryGate = StaticField(type, "WorkspaceDirectoryGate");
-    string dir = Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"faceshield-p2-reservation-{token}"));
-    register.Invoke(null, new object[] { dir });
-    register.Invoke(null, new object[] { dir });
-    unregister.Invoke(null, new object[] { dir });
-    lock (directoryGate)
-    {
-        if (!(bool)(hasActive.Invoke(null, new object[] { dir }) ?? false))
-            throw new Exception("One unregister released a still-shared directory reservation.");
-    }
-    unregister.Invoke(null, new object[] { dir });
-    lock (directoryGate)
-    {
-        if ((bool)(hasActive.Invoke(null, new object[] { dir }) ?? false))
-            throw new Exception("Directory reservation remained active after final release.");
-    }
+    Type t = typeof(WorkspaceStateStore);
+    MethodInfo reg = t.GetMethod("RegisterActiveWorkspaceDirectory", BindingFlags.Static | BindingFlags.NonPublic)!;
+    MethodInfo unreg = t.GetMethod("UnregisterActiveWorkspaceDirectory", BindingFlags.Static | BindingFlags.NonPublic)!;
+    MethodInfo active = t.GetMethod("HasActiveWorkspaceDirectoryUnderLocked", BindingFlags.Static | BindingFlags.NonPublic)!;
+    object gate = SField(t, "WorkspaceDirectoryGate");
+    string dir = Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"fs-p2-ref-{token}"));
+    reg.Invoke(null, new object[] { dir }); reg.Invoke(null, new object[] { dir }); unreg.Invoke(null, new object[] { dir });
+    lock (gate) if (!(bool)active.Invoke(null, new object[] { dir })!) throw new Exception("Shared reservation released early");
+    unreg.Invoke(null, new object[] { dir });
+    lock (gate) if ((bool)active.Invoke(null, new object[] { dir })!) throw new Exception("Final reservation was not released");
 }
 
-// 4) Cross-platform runtime stress for persistence WriteableBitmap.Save while the
-// same immutable stored bitmap is concurrently read and then retired/replaced.
+// Actual platform stress: persistence Save, direct immutable Save, provider clone,
+// retirement/replacement, then persisted PNG decode/reload.
 {
-    string video = Path.Combine(Path.GetTempPath(), $"faceshield-p2-bitmap-{token}.mp4");
+    string path = Path.Combine(Path.GetTempPath(), $"fs-p2-bitmap-{token}.mp4");
     var store = new WorkspaceStateStore();
     using var provider = new FrameMaskProvider();
     var coordinator = new WorkspacePersistenceCoordinator(store, provider);
-    provider.SetMask(0, CreateMask(1));
-
-    MethodInfo createPersistenceSnapshot = typeof(FrameMaskProvider).GetMethod(
-        "CreatePersistenceSnapshot",
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new Exception("Missing CreatePersistenceSnapshot");
-
+    provider.SetMask(0, Mask(1));
+    MethodInfo createLease = typeof(FrameMaskProvider).GetMethod("CreatePersistenceSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
     for (int iteration = 0; iteration < 8; iteration++)
     {
-        WriteableBitmap stored = GetStoredBitmap(provider, 0);
-        using var lease = (IDisposable)(createPersistenceSnapshot.Invoke(
-            provider,
-            new object[] { CancellationToken.None })
-            ?? throw new Exception("Could not acquire persistence lease"));
-
-        Task save = coordinator.QueueSaveAsync(Snapshot(video, 400 + iteration));
-        Task directReads = Task.Run(() =>
-        {
-            for (int i = 0; i < 8; i++)
-            {
-                using var ms = new MemoryStream();
-                stored.Save(ms);
-                if (ms.Length <= 8)
-                    throw new Exception("Concurrent stored bitmap Save produced an empty image.");
-            }
-        });
-        Task providerReads = Task.Run(() =>
-        {
-            for (int i = 0; i < 8; i++)
-            {
-                using WriteableBitmap? clone = provider.GetFinalMask(0);
-                if (clone == null)
-                    throw new Exception("Concurrent provider read lost the stored mask.");
-                using var ms = new MemoryStream();
-                clone.Save(ms);
-                if (ms.Length <= 8)
-                    throw new Exception("Concurrent cloned bitmap Save produced an empty image.");
-            }
-        });
-
-        provider.SetMask(0, CreateMask(100 + iteration));
-        await Task.WhenAll(save, directReads, providerReads).WaitAsync(TimeSpan.FromSeconds(30));
+        WriteableBitmap stored = Stored(provider, 0);
+        using var lease = (IDisposable)createLease.Invoke(provider, new object[] { CancellationToken.None })!;
+        Task save = coordinator.QueueSaveAsync(Snap(path, 400 + iteration));
+        Task direct = Task.Run(() => { for (int i = 0; i < 8; i++) { using var ms = new MemoryStream(); stored.Save(ms); if (ms.Length <= 8) throw new Exception("empty direct PNG"); } });
+        Task clones = Task.Run(() => { for (int i = 0; i < 8; i++) { using var clone = provider.GetFinalMask(0) ?? throw new Exception("missing clone"); using var ms = new MemoryStream(); clone.Save(ms); if (ms.Length <= 8) throw new Exception("empty clone PNG"); } });
+        provider.SetMask(0, Mask(100 + iteration));
+        Task all = Task.WhenAll(save, direct, clones);
+        if (!all.Wait(TimeSpan.FromSeconds(30))) throw new Exception("bitmap concurrency stress timed out");
+        all.GetAwaiter().GetResult();
     }
-
-    await coordinator.FlushAsync();
+    coordinator.FlushAsync().GetAwaiter().GetResult();
     coordinator.Dispose();
-
     using var reloaded = new FrameMaskProvider();
-    if (!store.TryLoadWorkspace(video, WorkspaceMode.Manual, reloaded, out WorkspaceSnapshot? state) || state == null)
-        throw new Exception("Could not reload bitmap persistence stress workspace.");
-    using WriteableBitmap? finalMask = reloaded.GetFinalMask(0);
-    if (finalMask == null)
-        throw new Exception("Reloaded bitmap persistence stress workspace has no mask.");
-    using var finalPng = new MemoryStream();
-    finalMask.Save(finalPng);
-    if (finalPng.Length <= 8)
-        throw new Exception("Reloaded persisted bitmap is not encodable.");
+    if (!store.TryLoadWorkspace(path, WorkspaceMode.Manual, reloaded, out var state) || state == null) throw new Exception("reload failed");
+    using var finalMask = reloaded.GetFinalMask(0) ?? throw new Exception("reloaded mask missing");
+    using var finalPng = new MemoryStream(); finalMask.Save(finalPng);
+    if (finalPng.Length <= 8) throw new Exception("reloaded PNG empty");
 }
 
 Console.WriteLine("[PersistenceP2Harness] PASS saveNowGateHold=false loadGlobalGateReleased=true refCountedReservations=true bitmapConcurrentSave=true");
-'@
-Set-Content -Path (Join-Path $temp 'Program.cs') -Value $program -Encoding utf8
+'@ | Set-Content -Path (Join-Path $temp 'Program.cs') -Encoding utf8
 
 try {
     dotnet run --project (Join-Path $temp 'Harness.csproj') -c Release
     if ($LASTEXITCODE -ne 0) { throw "Persistence P2 harness failed with exit code $LASTEXITCODE" }
 }
-finally {
-    Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
-}
+finally { Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue }
