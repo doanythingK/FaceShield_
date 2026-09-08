@@ -29,6 +29,7 @@ with tempfile.TemporaryDirectory(prefix="faceshield-removal-epoch-") as tmp:
             <OutputType>Exe</OutputType>
             <TargetFramework>net8.0</TargetFramework>
             <Nullable>enable</Nullable>
+            <ImplicitUsings>enable</ImplicitUsings>
           </PropertyGroup>
           <ItemGroup>
             <ProjectReference Include="{project_ref}" />
