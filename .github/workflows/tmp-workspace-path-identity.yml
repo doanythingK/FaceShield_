@@ -1,0 +1,172 @@
+name: Temporary Workspace Path Identity Verification
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+    paths:
+      - scripts/tmp-fix-workspace-path-identity.py
+      - .github/workflows/tmp-workspace-path-identity.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Apply product patch
+        shell: pwsh
+        run: python scripts/tmp-fix-workspace-path-identity.py
+      - name: Verify changed paths
+        shell: pwsh
+        run: |
+          $changed = git diff --name-only
+          $expected = @(
+            'Services/Workspace/WorkspacePathIdentity.cs',
+            'Services/Workspace/WorkspaceStateStore.cs',
+            'Services/Workspace/WorkspacePersistenceCoordinator.cs',
+            'ViewModels/Pages/HomePageViewModel.cs'
+          )
+          $unexpected = $changed | Where-Object { $_ -notin $expected }
+          if ($unexpected) { throw "Unexpected changed paths: $unexpected" }
+          foreach ($path in $expected) {
+            if ($path -notin $changed) { throw "Expected product change missing: $path" }
+          }
+      - name: Restore
+        run: dotnet restore FaceShield.sln
+      - name: Release build
+        run: dotnet build FaceShield.sln -c Release --no-restore
+      - name: Run path identity and save lease harness
+        shell: pwsh
+        run: |
+          $harness = Join-Path $env:RUNNER_TEMP 'WorkspaceIdentityHarness'
+          New-Item -ItemType Directory -Force -Path $harness | Out-Null
+          @'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net8.0</TargetFramework>
+              <ImplicitUsings>enable</ImplicitUsings>
+              <Nullable>enable</Nullable>
+            </PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="REPO/FaceShield.csproj" />
+            </ItemGroup>
+          </Project>
+          '@.Replace('REPO', $env:GITHUB_WORKSPACE.Replace('\','/')) | Set-Content (Join-Path $harness 'WorkspaceIdentityHarness.csproj')
+          @'
+          using System.Reflection;
+          using FaceShield.Services.Workspace;
+
+          static object Invoke(MethodInfo method, object? target, params object?[] args)
+          {
+              try { return method.Invoke(target, args)!; }
+              catch (TargetInvocationException ex) when (ex.InnerException != null) { throw ex.InnerException; }
+          }
+
+          var storeType = typeof(WorkspaceStateStore);
+          var assembly = storeType.Assembly;
+          var identityType = assembly.GetType("FaceShield.Services.Workspace.WorkspacePathIdentity", throwOnError: true)!;
+          var normalize = identityType.GetMethod("Normalize", BindingFlags.Static | BindingFlags.NonPublic)!;
+          var equals = identityType.GetMethod("Equals", BindingFlags.Static | BindingFlags.NonPublic)!;
+          var acquire = storeType.GetMethod("AcquireWorkspaceSaveLease", BindingFlags.Instance | BindingFlags.NonPublic)!;
+          var reopen = storeType.GetMethod("ReopenWorkspacePath", BindingFlags.Instance | BindingFlags.NonPublic)!;
+          var current = storeType.GetMethod("IsWorkspaceSaveLeaseCurrent", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+          string root = Path.Combine(Path.GetTempPath(), "FaceShieldIdentityHarness", Guid.NewGuid().ToString("N"));
+          string lexical = Path.Combine(root, "folder", "..", "Video.MP4");
+          string absolute = Path.GetFullPath(Path.Combine(root, "Video.MP4"));
+          string normalizedLexical = (string)Invoke(normalize, null, lexical);
+          string normalizedAbsolute = (string)Invoke(normalize, null, absolute);
+          if (!string.Equals(normalizedLexical, normalizedAbsolute, StringComparison.Ordinal))
+              throw new Exception("lexical path normalization mismatch");
+
+          string caseVariant = Path.Combine(root, "video.mp4");
+          bool caseEqual = (bool)Invoke(equals, null, absolute, caseVariant);
+          if (OperatingSystem.IsWindows() ? !caseEqual : caseEqual)
+              throw new Exception("path case policy mismatch");
+
+          var store = new WorkspaceStateStore();
+          var staleLease = (IDisposable)Invoke(acquire, store, lexical);
+          if (!(bool)Invoke(current, store, staleLease))
+              throw new Exception("fresh save lease should be current");
+
+          store.RemoveWorkspacesForPath(absolute);
+          if ((bool)Invoke(current, store, staleLease))
+              throw new Exception("removal failed to invalidate an existing save lease");
+
+          bool blocked = false;
+          try { _ = Invoke(acquire, store, absolute); }
+          catch (InvalidOperationException) { blocked = true; }
+          if (!blocked)
+              throw new Exception("removed path accepted a save without explicit reopen");
+
+          _ = Invoke(reopen, store, absolute);
+          var reopenedLease = (IDisposable)Invoke(acquire, store, absolute);
+          if (!(bool)Invoke(current, store, reopenedLease))
+              throw new Exception("reopened save lease should be current");
+          if ((bool)Invoke(current, store, staleLease))
+              throw new Exception("reopen caused an ABA acceptance of the stale lease");
+
+          reopenedLease.Dispose();
+          if ((bool)Invoke(current, store, staleLease))
+              throw new Exception("stale lease became current after newer lease release");
+          staleLease.Dispose();
+
+          var afterDrain = (IDisposable)Invoke(acquire, store, absolute);
+          if (!(bool)Invoke(current, store, afterDrain))
+              throw new Exception("lease state was not reclaimable after all leases drained");
+          afterDrain.Dispose();
+
+          store.RemoveWorkspacesForPath(absolute);
+          Console.WriteLine($"[WorkspaceIdentityHarness] PASS os={Environment.OSVersion.Platform} caseEqual={caseEqual} lexicalNormalized=true staleRejected=true reopen=true abaRejected=true");
+          '@ | Set-Content (Join-Path $harness 'Program.cs')
+          dotnet run --project (Join-Path $harness 'WorkspaceIdentityHarness.csproj') -c Release
+
+  commit_fix:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply verified patch and remove temporary verification files
+        run: |
+          python scripts/tmp-fix-workspace-path-identity.py
+          rm scripts/tmp-fix-workspace-path-identity.py
+          rm .github/workflows/tmp-workspace-path-identity.yml
+      - name: Verify final diff
+        run: |
+          git diff --check
+          python - <<'PY'
+          import subprocess
+          expected = {
+              'Services/Workspace/WorkspacePathIdentity.cs',
+              'Services/Workspace/WorkspaceStateStore.cs',
+              'Services/Workspace/WorkspacePersistenceCoordinator.cs',
+              'ViewModels/Pages/HomePageViewModel.cs',
+              'scripts/tmp-fix-workspace-path-identity.py',
+              '.github/workflows/tmp-workspace-path-identity.yml',
+          }
+          changed = set(subprocess.check_output(['git','diff','--name-only'], text=True).splitlines())
+          if changed != expected:
+              raise SystemExit(f'Unexpected final diff: {sorted(changed)}')
+          PY
+      - name: Commit verified product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: unify workspace path identity and save leases"
+          git push origin HEAD:refactor/ownership-workspace-hardening
