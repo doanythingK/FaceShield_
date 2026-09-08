@@ -1,0 +1,75 @@
+name: Temporary Persistence Removal Epoch Verification
+
+on:
+  push:
+    branches:
+      - refactor/ownership-workspace-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  windows_verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Apply removal epoch patch
+        run: python scripts/tmp-fix-persistence-removal-epoch.py
+      - name: Diff check
+        run: git diff --check
+      - name: Restore
+        run: dotnet restore FaceShield.csproj
+      - name: Release build
+        run: dotnet build FaceShield.csproj -c Release --no-restore
+      - name: Persistence removal epoch harness
+        run: python scripts/tmp-verify-persistence-removal-epoch.py
+
+  macos_verify:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Apply removal epoch patch
+        run: python3 scripts/tmp-fix-persistence-removal-epoch.py
+      - name: Diff check
+        run: git diff --check
+      - name: Restore
+        run: dotnet restore FaceShield.csproj
+      - name: Release build
+        run: dotnet build FaceShield.csproj -c Release --no-restore
+      - name: Persistence removal epoch harness
+        run: python3 scripts/tmp-verify-persistence-removal-epoch.py
+
+  commit_fix:
+    needs:
+      - windows_verify
+      - macos_verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/ownership-workspace-hardening
+          fetch-depth: 0
+      - name: Apply verified patch
+        run: python3 scripts/tmp-fix-persistence-removal-epoch.py
+      - name: Remove temporary verification files
+        run: |
+          rm scripts/tmp-fix-persistence-removal-epoch.py
+          rm scripts/tmp-verify-persistence-removal-epoch.py
+          rm .github/workflows/tmp-persistence-removal-epoch.yml
+      - name: Verify final diff
+        run: |
+          git diff --check
+          git status --short
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Services/Workspace/WorkspaceStateStore.cs Services/Workspace/WorkspacePersistenceCoordinator.cs scripts/tmp-fix-persistence-removal-epoch.py scripts/tmp-verify-persistence-removal-epoch.py .github/workflows/tmp-persistence-removal-epoch.yml
+          git commit -m "Prevent stale saves from reviving removed workspaces"
+          git push origin HEAD:refactor/ownership-workspace-hardening
