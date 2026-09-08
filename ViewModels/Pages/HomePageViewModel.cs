@@ -471,7 +471,7 @@ namespace FaceShield.ViewModels.Pages
                 AutoYoloModelPath = options.YoloModelPath;
 
             if (!string.IsNullOrWhiteSpace(options.VideoPath))
-                SelectedVideoPath = options.VideoPath;
+                SelectedVideoPath = WorkspacePathIdentity.NormalizeAccessPath(options.VideoPath);
 
             if (options.AutoExportAfter.HasValue)
                 AutoExportAfter = options.AutoExportAfter.Value;
@@ -1466,7 +1466,7 @@ namespace FaceShield.ViewModels.Pages
             if (string.IsNullOrWhiteSpace(localPath))
                 return;
 
-            SelectedVideoPath = WorkspacePathIdentity.Normalize(localPath);
+            SelectedVideoPath = WorkspacePathIdentity.NormalizeAccessPath(localPath);
             TouchRecent(SelectedVideoPath);
         }
 
@@ -2120,7 +2120,7 @@ namespace FaceShield.ViewModels.Pages
 
         private static IEnumerable<string> EnumerateDefaultYoloModelDirectories()
         {
-            var seen = new HashSet<string>(WorkspacePathIdentity.Comparer);
+            var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             var downloadDirectory = YoloModelDownloadService.GetDownloadDirectory();
             if (seen.Add(downloadDirectory))
                 yield return downloadDirectory;
@@ -2297,8 +2297,9 @@ namespace FaceShield.ViewModels.Pages
             if (string.IsNullOrWhiteSpace(SelectedVideoPath))
                 throw new InvalidOperationException("SelectedVideoPath is empty.");
 
-            string workspacePath = WorkspacePathIdentity.Normalize(SelectedVideoPath);
-            string key = $"{mode}:{workspacePath}";
+            string accessPath = WorkspacePathIdentity.NormalizeAccessPath(SelectedVideoPath);
+            string identityKey = WorkspacePathIdentity.CreateIdentityKey(accessPath);
+            string key = $"{mode}:{identityKey}";
             if (_workspaceCache.TryGetValue(key, out var cached))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2309,7 +2310,7 @@ namespace FaceShield.ViewModels.Pages
             }
 
             var vm = new WorkspaceViewModel(
-                workspacePath,
+                accessPath,
                 mode,
                 loadProgress,
                 _onBackHome,
@@ -2324,7 +2325,7 @@ namespace FaceShield.ViewModels.Pages
             // Reopen only after a fresh workspace instance has been constructed and
             // restored successfully. Constructor/restore failure must leave the
             // removal tombstone intact.
-            _stateStore.ReopenWorkspacePath(workspacePath);
+            _stateStore.ReopenWorkspacePath(accessPath);
             vm.ToolPanel.BlurRadius = BlurRadius;
 
             _workspaceCache[key] = vm;
@@ -2336,11 +2337,11 @@ namespace FaceShield.ViewModels.Pages
             if (string.IsNullOrWhiteSpace(videoPath))
                 return;
 
-            string identity = WorkspacePathIdentity.Normalize(videoPath);
+            string accessPath = WorkspacePathIdentity.NormalizeAccessPath(videoPath);
             int existingIndex = -1;
             for (int i = 0; i < Recents.Count; i++)
             {
-                if (WorkspacePathIdentity.Equals(Recents[i].Path, identity))
+                if (WorkspacePathIdentity.Equals(Recents[i].Path, accessPath))
                 {
                     existingIndex = i;
                     break;
@@ -2351,8 +2352,8 @@ namespace FaceShield.ViewModels.Pages
                 Recents.RemoveAt(existingIndex);
 
             Recents.Insert(0, new RecentItem(
-                Path.GetFileName(identity),
-                identity,
+                Path.GetFileName(accessPath),
+                accessPath,
                 DateTimeOffset.Now));
             TrimRecents();
             _stateStore.SaveRecents(Recents);
