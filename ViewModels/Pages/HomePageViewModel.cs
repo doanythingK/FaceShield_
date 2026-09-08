@@ -2297,9 +2297,10 @@ namespace FaceShield.ViewModels.Pages
             if (string.IsNullOrWhiteSpace(SelectedVideoPath))
                 throw new InvalidOperationException("SelectedVideoPath is empty.");
 
-            string accessPath = WorkspacePathIdentity.NormalizeAccessPath(SelectedVideoPath);
-            string identityKey = WorkspacePathIdentity.CreateIdentityKey(accessPath);
-            string key = $"{mode}:{identityKey}";
+            WorkspacePathIdentity.PathContext pathContext =
+                WorkspacePathIdentity.CreatePathContext(SelectedVideoPath);
+            string accessPath = pathContext.AccessPath;
+            string key = $"{mode}:{pathContext.IdentityKey}";
             if (_workspaceCache.TryGetValue(key, out var cached))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2337,11 +2338,13 @@ namespace FaceShield.ViewModels.Pages
             if (string.IsNullOrWhiteSpace(videoPath))
                 return;
 
-            string accessPath = WorkspacePathIdentity.NormalizeAccessPath(videoPath);
+            WorkspacePathIdentity.PathContext pathContext =
+                WorkspacePathIdentity.CreatePathContext(videoPath);
+            string accessPath = pathContext.AccessPath;
             int existingIndex = -1;
             for (int i = 0; i < Recents.Count; i++)
             {
-                if (WorkspacePathIdentity.Equals(Recents[i].Path, accessPath))
+                if (pathContext.MatchesAccessPath(Recents[i].Path))
                 {
                     existingIndex = i;
                     break;
@@ -2385,12 +2388,13 @@ namespace FaceShield.ViewModels.Pages
             if (string.IsNullOrWhiteSpace(videoPath))
                 return;
 
+            WorkspacePathIdentity.PathContext pathContext =
+                WorkspacePathIdentity.CreatePathContext(videoPath);
             var keys = new List<string>();
             foreach (var entry in _workspaceCache)
             {
-                if (WorkspacePathIdentity.Equals(
-                        entry.Value.FrameList.VideoPath,
-                        videoPath))
+                if (pathContext.MatchesAccessPath(
+                        entry.Value.FrameList.VideoPath))
                 {
                     keys.Add(entry.Key);
                 }
