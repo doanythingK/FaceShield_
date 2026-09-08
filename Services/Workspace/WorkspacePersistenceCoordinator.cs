@@ -35,9 +35,18 @@ namespace FaceShield.Services.Workspace
                 return Task.CompletedTask;
 
             ThrowIfQueueClosed();
-            long removalEpoch = _store.CaptureWorkspaceRemovalEpoch(snapshot.VideoPath);
-            FrameMaskProvider.PersistenceSnapshot maskSnapshot =
-                _maskProvider.CreatePersistenceSnapshot();
+            WorkspaceStateStore.SaveLease saveLease =
+                _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
+            FrameMaskProvider.PersistenceSnapshot maskSnapshot;
+            try
+            {
+                maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
+            }
+            catch
+            {
+                saveLease.Dispose();
+                throw;
+            }
 
             PendingSave pending;
             Task predecessor;
@@ -46,6 +55,7 @@ namespace FaceShield.Services.Workspace
                 if (_disposed || _finalizing)
                 {
                     maskSnapshot.Dispose();
+                    saveLease.Dispose();
                     if (_disposed)
                         throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
 
@@ -58,7 +68,7 @@ namespace FaceShield.Services.Workspace
                     ++_latestRequestId,
                     snapshot,
                     maskSnapshot,
-                    removalEpoch);
+                    saveLease);
 
                 // Publish the completion tail before starting this worker. The worker
                 // also awaits its predecessor, so the tail drains every prior request.
@@ -99,7 +109,7 @@ namespace FaceShield.Services.Workspace
                     await Task.Run(() => _store.SaveWorkspaceSnapshot(
                         pending.Snapshot,
                         pending.MaskSnapshot,
-                        pending.RemovalEpoch)).ConfigureAwait(false);
+                        pending.SaveLease)).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -121,6 +131,15 @@ namespace FaceShield.Services.Workspace
                 try
                 {
                     pending.MaskSnapshot.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    failure ??= ex;
+                }
+
+                try
+                {
+                    pending.SaveLease.Dispose();
                 }
                 catch (Exception ex)
                 {
@@ -170,7 +189,6 @@ namespace FaceShield.Services.Workspace
             if (snapshot == null)
                 return;
 
-            long removalEpoch = _store.CaptureWorkspaceRemovalEpoch(snapshot.VideoPath);
             Task predecessor = Task.CompletedTask;
             Task finalTask;
             TaskCompletionSource<object?>? finalCompletion = null;
@@ -204,19 +222,22 @@ namespace FaceShield.Services.Workspace
 
             if (ownsFinalization)
             {
+                WorkspaceStateStore.SaveLease? saveLease = null;
                 FrameMaskProvider.PersistenceSnapshot? maskSnapshot = null;
                 try
                 {
-                    // Metadata/lease capture may be proportional to the number of masks.
-                    // Keep it outside _taskGate after the final boundary is published.
+                    // The save lease starts before snapshot capture and remains owned by
+                    // PendingSave through commit, stale skip, or failure.
+                    saveLease = _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
                     maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
                     var pending = new PendingSave(
                         finalRequestId,
                         snapshot,
                         maskSnapshot,
-                        removalEpoch,
+                        saveLease,
                         finalCompletion!);
-                    maskSnapshot = null; // PendingSave owns the persistence lease.
+                    maskSnapshot = null;
+                    saveLease = null;
                     _ = ExecutePendingSaveAsync(pending, predecessor);
                 }
                 catch (Exception ex)
@@ -224,10 +245,11 @@ namespace FaceShield.Services.Workspace
                     try
                     {
                         maskSnapshot?.Dispose();
+                        saveLease?.Dispose();
                     }
                     catch
                     {
-                        // Preserve the snapshot-capture failure as the terminal error.
+                        // Preserve the lease/snapshot-capture failure as the terminal error.
                     }
 
                     finalCompletion!.TrySetException(ex);
@@ -290,13 +312,13 @@ namespace FaceShield.Services.Workspace
                 long requestId,
                 WorkspaceSnapshot snapshot,
                 FrameMaskProvider.PersistenceSnapshot maskSnapshot,
-                long removalEpoch,
+                WorkspaceStateStore.SaveLease saveLease,
                 TaskCompletionSource<object?>? completion = null)
             {
                 RequestId = requestId;
                 Snapshot = snapshot;
                 MaskSnapshot = maskSnapshot;
-                RemovalEpoch = removalEpoch;
+                SaveLease = saveLease;
                 Completion = completion ?? new TaskCompletionSource<object?>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
             }
@@ -304,7 +326,7 @@ namespace FaceShield.Services.Workspace
             internal long RequestId { get; }
             internal WorkspaceSnapshot Snapshot { get; }
             internal FrameMaskProvider.PersistenceSnapshot MaskSnapshot { get; }
-            internal long RemovalEpoch { get; }
+            internal WorkspaceStateStore.SaveLease SaveLease { get; }
             internal TaskCompletionSource<object?> Completion { get; }
         }
     }

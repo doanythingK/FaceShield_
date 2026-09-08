@@ -11,29 +11,27 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace FaceShield.Services.Workspace
 {
     public sealed class WorkspaceStateStore
     {
+        private const int CurrentWorkspaceStoragePathVersion = 2;
         private static readonly StringComparison FilePathComparison =
-            OperatingSystem.IsWindows()
-                ? StringComparison.OrdinalIgnoreCase
-                : StringComparison.Ordinal;
+            WorkspacePathIdentity.Comparison;
         private static readonly StringComparer FilePathComparer =
-            OperatingSystem.IsWindows()
-                ? StringComparer.OrdinalIgnoreCase
-                : StringComparer.Ordinal;
+            WorkspacePathIdentity.Comparer;
         private static readonly object GlobalStateGate = new();
         private static readonly object WorkspaceDirectoryGate = new();
         // A directory can be reserved by more than one reader/save concurrently.
         // Reference counts prevent one load from releasing another load's protection.
         private static readonly Dictionary<string, int> ActiveWorkspacePreparationDirectories =
             new(FilePathComparer);
-        // Logical deletion epochs are process-local because pending saves are also
-        // process-local. A save captures the epoch when it is requested and may commit
-        // only if no removal for that video path has happened since then.
-        private static readonly Dictionary<string, long> WorkspaceRemovalEpochs =
+        // Save lifetime state is process-local because pending saves are process-local.
+        // Removed paths keep a tombstone until an explicit reopen. Non-removed entries
+        // are reclaimed as soon as their last save lease is released.
+        private static readonly Dictionary<string, WorkspacePathLifetimeState> WorkspacePathLifetimes =
             new(FilePathComparer);
         private readonly string _rootDir;
         private readonly string _stateFile;
@@ -105,28 +103,73 @@ namespace FaceShield.Services.Workspace
             }
         }
 
-        internal long CaptureWorkspaceRemovalEpoch(string videoPath)
+        internal SaveLease AcquireWorkspaceSaveLease(string videoPath)
         {
-            if (string.IsNullOrWhiteSpace(videoPath))
-                throw new ArgumentException("A workspace video path is required.", nameof(videoPath));
-
+            string identity = WorkspacePathIdentity.Normalize(videoPath);
             lock (GlobalStateGate)
-                return GetWorkspaceRemovalEpochLocked(videoPath);
+            {
+                if (!WorkspacePathLifetimes.TryGetValue(identity, out var lifetime))
+                {
+                    lifetime = new WorkspacePathLifetimeState();
+                    WorkspacePathLifetimes.Add(identity, lifetime);
+                }
+
+                if (lifetime.Removed)
+                {
+                    throw new InvalidOperationException(
+                        "The workspace path was removed and must be reopened before it can be saved again.");
+                }
+
+                lifetime.ActiveSaveCount = checked(lifetime.ActiveSaveCount + 1);
+                return new SaveLease(identity, lifetime.Epoch);
+            }
         }
 
-        private static long GetWorkspaceRemovalEpochLocked(string videoPath)
-            => WorkspaceRemovalEpochs.TryGetValue(videoPath, out long epoch)
-                ? epoch
-                : 0L;
-
-        private static void RestoreWorkspaceRemovalEpochLocked(
-            string videoPath,
-            long previousEpoch)
+        internal void ReopenWorkspacePath(string videoPath)
         {
-            if (previousEpoch == 0)
-                WorkspaceRemovalEpochs.Remove(videoPath);
-            else
-                WorkspaceRemovalEpochs[videoPath] = previousEpoch;
+            string identity = WorkspacePathIdentity.Normalize(videoPath);
+            lock (GlobalStateGate)
+            {
+                if (!WorkspacePathLifetimes.TryGetValue(identity, out var lifetime) ||
+                    !lifetime.Removed)
+                {
+                    return;
+                }
+
+                lifetime.Removed = false;
+                if (lifetime.ActiveSaveCount == 0)
+                    WorkspacePathLifetimes.Remove(identity);
+            }
+        }
+
+        internal bool IsWorkspaceSaveLeaseCurrent(SaveLease saveLease)
+        {
+            if (saveLease == null)
+                throw new ArgumentNullException(nameof(saveLease));
+
+            lock (GlobalStateGate)
+                return IsWorkspaceSaveLeaseCurrentLocked(saveLease);
+        }
+
+        private static bool IsWorkspaceSaveLeaseCurrentLocked(SaveLease saveLease)
+            => WorkspacePathLifetimes.TryGetValue(saveLease.PathIdentity, out var lifetime) &&
+               !lifetime.Removed &&
+               lifetime.Epoch == saveLease.Epoch;
+
+        private static void ReleaseWorkspaceSaveLease(string identity)
+        {
+            lock (GlobalStateGate)
+            {
+                if (!WorkspacePathLifetimes.TryGetValue(identity, out var lifetime))
+                    return;
+
+                if (lifetime.ActiveSaveCount <= 0)
+                    throw new InvalidOperationException("Workspace save lease count underflow.");
+
+                lifetime.ActiveSaveCount--;
+                if (lifetime.ActiveSaveCount == 0 && !lifetime.Removed)
+                    WorkspacePathLifetimes.Remove(identity);
+            }
         }
 
         public void RemoveWorkspacesForPath(string videoPath)
@@ -134,46 +177,67 @@ namespace FaceShield.Services.Workspace
             if (string.IsNullOrWhiteSpace(videoPath))
                 return;
 
+            string identity = WorkspacePathIdentity.Normalize(videoPath);
             bool deletePayloads;
+            List<string> removedStoragePaths;
             lock (GlobalStateGate)
             {
                 RefreshStateLocked();
                 var previousWorkspaces = _state.Workspaces.ToList();
-                long previousRemovalEpoch = GetWorkspaceRemovalEpochLocked(videoPath);
+                bool lifetimeExisted = WorkspacePathLifetimes.TryGetValue(identity, out var lifetime);
+                lifetime ??= new WorkspacePathLifetimeState();
+                if (!lifetimeExisted)
+                    WorkspacePathLifetimes.Add(identity, lifetime);
+
+                long previousEpoch = lifetime.Epoch;
+                bool previousRemoved = lifetime.Removed;
+                removedStoragePaths = _state.Workspaces
+                    .Where(w => WorkspacePathIdentity.Equals(w.VideoPath, identity))
+                    .Select(w => w.VideoPath)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
                 try
                 {
-                    // Publish logical removal under the same state gate used by save
-                    // commit. Any save requested before this point keeps the previous
-                    // epoch and is rejected if it reaches commit later.
-                    WorkspaceRemovalEpochs[videoPath] = checked(previousRemovalEpoch + 1);
+                    // Removal and save-lease validation are linearized by the same
+                    // state gate. Every lease acquired before this point becomes stale.
+                    lifetime.Epoch = checked(previousEpoch + 1);
+                    lifetime.Removed = true;
 
                     _state.Workspaces.RemoveAll(w =>
-                        string.Equals(
-                            w.VideoPath,
-                            videoPath,
-                            StringComparison.OrdinalIgnoreCase));
+                        WorkspacePathIdentity.Equals(w.VideoPath, identity));
 
-                    // Commit the reference removal first. The old state remains in the
-                    // backup until we explicitly synchronize it below.
                     SaveState();
                 }
                 catch
                 {
                     _state.Workspaces = previousWorkspaces;
-                    RestoreWorkspaceRemovalEpochLocked(videoPath, previousRemovalEpoch);
+                    lifetime.Epoch = previousEpoch;
+                    lifetime.Removed = previousRemoved;
+                    if (!lifetimeExisted &&
+                        lifetime.ActiveSaveCount == 0 &&
+                        !lifetime.Removed)
+                    {
+                        WorkspacePathLifetimes.Remove(identity);
+                    }
                     throw;
                 }
 
-                // Never delete workspace payloads while the backup can still reference
-                // them. If backup synchronization fails, leaving orphaned files is safer
-                // than creating a backup that points at missing data.
+                // Keep payloads while backup state can still reference them.
                 if (!TrySyncBackupToCurrentState())
                     return;
                 deletePayloads = true;
             }
 
             if (deletePayloads)
-                TryDeleteWorkspaceBaseDirectory(videoPath);
+            {
+                foreach (string storagePath in removedStoragePaths
+                    .Append(identity)
+                    .Distinct(StringComparer.Ordinal))
+                {
+                    TryDeleteWorkspaceBaseDirectory(storagePath);
+                }
+            }
         }
 
         public bool TryLoadWorkspace(
@@ -254,7 +318,7 @@ namespace FaceShield.Services.Workspace
                 return null;
 
             return appState.Workspaces.FirstOrDefault(w =>
-                string.Equals(w.VideoPath, videoPath, FilePathComparison) &&
+                WorkspacePathIdentity.Equals(w.VideoPath, videoPath) &&
                 string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase));
         }
 
@@ -264,6 +328,7 @@ namespace FaceShield.Services.Workspace
             {
                 VideoPath = source.VideoPath,
                 Mode = source.Mode,
+                StoragePathVersion = source.StoragePathVersion,
                 StorageGeneration = source.StorageGeneration,
                 SelectedFrameIndex = source.SelectedFrameIndex,
                 ViewStartSeconds = source.ViewStartSeconds,
@@ -315,7 +380,7 @@ namespace FaceShield.Services.Workspace
             string dir = ResolveWorkspaceDirForRead(
                 videoPath,
                 mode,
-                state.StorageGeneration);
+                state);
             string fullDir = Path.GetFullPath(dir);
             var loadedMasks = new List<KeyValuePair<int, WriteableBitmap>>();
             RegisterActiveWorkspaceDirectory(fullDir);
@@ -421,34 +486,38 @@ namespace FaceShield.Services.Workspace
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
 
-            long removalEpoch = CaptureWorkspaceRemovalEpoch(snapshot.VideoPath);
+            using SaveLease saveLease = AcquireWorkspaceSaveLease(snapshot.VideoPath);
             using FrameMaskProvider.PersistenceSnapshot persistenceSnapshot =
                 maskProvider.CreatePersistenceSnapshot();
-            SaveWorkspaceSnapshot(snapshot, persistenceSnapshot, removalEpoch);
+            SaveWorkspaceSnapshot(snapshot, persistenceSnapshot, saveLease);
         }
 
         internal void SaveWorkspaceSnapshot(
             WorkspaceSnapshot snapshot,
             FrameMaskProvider.PersistenceSnapshot persistenceSnapshot,
-            long removalEpoch)
-            => SaveWorkspaceCore(snapshot, persistenceSnapshot, removalEpoch);
+            SaveLease saveLease)
+            => SaveWorkspaceCore(snapshot, persistenceSnapshot, saveLease);
 
         private void SaveWorkspaceCore(
             WorkspaceSnapshot snapshot,
             FrameMaskProvider.PersistenceSnapshot persistenceSnapshot,
-            long removalEpoch)
+            SaveLease saveLease)
         {
             if (snapshot == null)
                 return;
             if (persistenceSnapshot == null)
                 throw new ArgumentNullException(nameof(persistenceSnapshot));
+            if (saveLease == null)
+                throw new ArgumentNullException(nameof(saveLease));
 
+            string identity = saveLease.PathIdentity;
             string generation = Guid.NewGuid().ToString("N");
-            string dir = GetWorkspaceDir(snapshot.VideoPath, snapshot.Mode, generation);
+            string dir = GetWorkspaceDir(identity, snapshot.Mode, generation);
             string fullDir = Path.GetFullPath(dir);
             RegisterActiveWorkspaceDirectory(fullDir);
             bool committed = false;
             bool invalidatedByRemoval = false;
+            var cleanupStoragePaths = new List<string>();
 
             try
             {
@@ -489,8 +558,9 @@ namespace FaceShield.Services.Workspace
 
                 var newState = new WorkspaceState
                 {
-                    VideoPath = snapshot.VideoPath,
+                    VideoPath = identity,
                     Mode = snapshot.Mode.ToString(),
+                    StoragePathVersion = CurrentWorkspaceStoragePathVersion,
                     StorageGeneration = generation,
                     SelectedFrameIndex = snapshot.SelectedFrameIndex,
                     ViewStartSeconds = snapshot.ViewStartSeconds,
@@ -516,7 +586,7 @@ namespace FaceShield.Services.Workspace
                 lock (GlobalStateGate)
                 {
                     RefreshStateLocked();
-                    if (GetWorkspaceRemovalEpochLocked(snapshot.VideoPath) != removalEpoch)
+                    if (!IsWorkspaceSaveLeaseCurrentLocked(saveLease))
                     {
                         // The user removed this workspace after the save was requested.
                         // Do not let an older pending save recreate the deleted state.
@@ -525,11 +595,22 @@ namespace FaceShield.Services.Workspace
                     else
                     {
                         WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
-                            string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
+                            WorkspacePathIdentity.Equals(w.VideoPath, identity) &&
                             string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
 
+                        if (previousState != null)
+                            cleanupStoragePaths.Add(previousState.VideoPath);
+
+                        AppState? backupBeforeCommit = TryLoadStateFile(_stateBackupFile);
+                        if (backupBeforeCommit != null)
+                        {
+                            cleanupStoragePaths.AddRange(backupBeforeCommit.Workspaces
+                                .Where(w => WorkspacePathIdentity.Equals(w.VideoPath, identity))
+                                .Select(w => w.VideoPath));
+                        }
+
                         _state.Workspaces.RemoveAll(w =>
-                            string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
+                            WorkspacePathIdentity.Equals(w.VideoPath, identity) &&
                             string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
                         _state.Workspaces.Add(newState);
 
@@ -567,11 +648,13 @@ namespace FaceShield.Services.Workspace
                 DeleteDirectoryBestEffort(dir);
                 // Removal may have deferred base cleanup while this generation was
                 // reserved. Retry after unregistering the stale preparation directory.
-                TryDeleteWorkspaceBaseDirectory(snapshot.VideoPath);
+                TryDeleteWorkspaceBaseDirectory(identity);
                 return;
             }
 
-            CleanupUnreferencedWorkspaceDirectories(snapshot.VideoPath, snapshot.Mode);
+            CleanupUnreferencedWorkspaceDirectories(identity, snapshot.Mode);
+            foreach (string storagePath in cleanupStoragePaths.Distinct(StringComparer.Ordinal))
+                TryDeleteWorkspaceBaseDirectory(storagePath);
         }
 
         private string GetWorkspaceBaseDir(string videoPath)
@@ -580,45 +663,121 @@ namespace FaceShield.Services.Workspace
             return Path.Combine(_rootDir, "workspaces", hash);
         }
 
-        private string GetWorkspaceDir(
-            string videoPath,
-            WorkspaceMode mode,
-            string? storageGeneration = null)
+        private string GetPreIdentityWorkspaceBaseDir(string videoPath)
         {
-            string directoryName = string.IsNullOrWhiteSpace(storageGeneration)
-                ? mode.ToString()
-                : $"{mode}-{storageGeneration}";
-            return Path.Combine(GetWorkspaceBaseDir(videoPath), directoryName);
-        }
-
-        private string ResolveWorkspaceDirForRead(
-            string videoPath,
-            WorkspaceMode mode,
-            string? storageGeneration)
-        {
-            string current = GetWorkspaceDir(videoPath, mode, storageGeneration);
-            if (Directory.Exists(current))
-                return current;
-
-            string legacy = GetLegacyWorkspaceDir(videoPath, mode, storageGeneration);
-            return Directory.Exists(legacy) ? legacy : current;
-        }
-
-        private string GetLegacyWorkspaceDir(
-            string videoPath,
-            WorkspaceMode mode,
-            string? storageGeneration)
-        {
-            string directoryName = string.IsNullOrWhiteSpace(storageGeneration)
-                ? mode.ToString()
-                : $"{mode}-{storageGeneration}";
-            return Path.Combine(GetLegacyWorkspaceBaseDir(videoPath), directoryName);
+            string hash = PreIdentityHashPath(videoPath);
+            return Path.Combine(_rootDir, "workspaces", hash);
         }
 
         private string GetLegacyWorkspaceBaseDir(string videoPath)
         {
             string hash = LegacyHashPath(videoPath);
             return Path.Combine(_rootDir, "workspaces", hash);
+        }
+
+        private static string GetWorkspaceDirectoryName(
+            WorkspaceMode mode,
+            string? storageGeneration)
+            => string.IsNullOrWhiteSpace(storageGeneration)
+                ? mode.ToString()
+                : $"{mode}-{storageGeneration}";
+
+        private string GetWorkspaceDir(
+            string videoPath,
+            WorkspaceMode mode,
+            string? storageGeneration = null)
+            => Path.Combine(
+                GetWorkspaceBaseDir(videoPath),
+                GetWorkspaceDirectoryName(mode, storageGeneration));
+
+        private string GetPreIdentityWorkspaceDir(
+            string videoPath,
+            WorkspaceMode mode,
+            string? storageGeneration)
+            => Path.Combine(
+                GetPreIdentityWorkspaceBaseDir(videoPath),
+                GetWorkspaceDirectoryName(mode, storageGeneration));
+
+        private string GetLegacyWorkspaceDir(
+            string videoPath,
+            WorkspaceMode mode,
+            string? storageGeneration)
+            => Path.Combine(
+                GetLegacyWorkspaceBaseDir(videoPath),
+                GetWorkspaceDirectoryName(mode, storageGeneration));
+
+        private string ResolveWorkspaceDirForRead(
+            string videoPath,
+            WorkspaceMode mode,
+            WorkspaceState state)
+        {
+            List<string> candidates = GetWorkspaceDirectoryCandidates(
+                videoPath,
+                mode,
+                state);
+
+            foreach (string candidate in candidates)
+            {
+                if (Directory.Exists(candidate))
+                    return candidate;
+            }
+
+            return candidates[0];
+        }
+
+        private List<string> GetWorkspaceDirectoryCandidates(
+            string videoPath,
+            WorkspaceMode mode,
+            WorkspaceState state)
+        {
+            string identity = WorkspacePathIdentity.Normalize(videoPath);
+            var candidates = new List<string>();
+
+            if (state.StoragePathVersion >= CurrentWorkspaceStoragePathVersion)
+            {
+                candidates.Add(GetWorkspaceDir(identity, mode, state.StorageGeneration));
+            }
+            else
+            {
+                candidates.Add(GetPreIdentityWorkspaceDir(
+                    state.VideoPath,
+                    mode,
+                    state.StorageGeneration));
+                candidates.Add(GetLegacyWorkspaceDir(
+                    state.VideoPath,
+                    mode,
+                    state.StorageGeneration));
+                candidates.Add(GetWorkspaceDir(identity, mode, state.StorageGeneration));
+            }
+
+            return candidates
+                .Select(Path.GetFullPath)
+                .Distinct(FilePathComparer)
+                .ToList();
+        }
+
+        private List<string> GetWorkspaceBaseDirectoryCandidates(
+            string videoPath,
+            WorkspaceState state)
+        {
+            string identity = WorkspacePathIdentity.Normalize(videoPath);
+            var candidates = new List<string>();
+
+            if (state.StoragePathVersion >= CurrentWorkspaceStoragePathVersion)
+            {
+                candidates.Add(GetWorkspaceBaseDir(identity));
+            }
+            else
+            {
+                candidates.Add(GetPreIdentityWorkspaceBaseDir(state.VideoPath));
+                candidates.Add(GetLegacyWorkspaceBaseDir(state.VideoPath));
+                candidates.Add(GetWorkspaceBaseDir(identity));
+            }
+
+            return candidates
+                .Select(Path.GetFullPath)
+                .Distinct(FilePathComparer)
+                .ToList();
         }
 
         private static void SaveMask(string path, WriteableBitmap mask)
@@ -824,6 +983,7 @@ namespace FaceShield.Services.Workspace
             var candidates = new HashSet<string>(FilePathComparer)
             {
                 GetWorkspaceBaseDir(videoPath),
+                GetPreIdentityWorkspaceBaseDir(videoPath),
                 GetLegacyWorkspaceBaseDir(videoPath)
             };
 
@@ -856,10 +1016,11 @@ namespace FaceShield.Services.Workspace
                 {
                     RefreshStateLocked();
                     referenced =
-                        IsWorkspacePathReferencedByState(_state, videoPath) ||
-                        IsWorkspacePathReferencedByState(
+                        IsWorkspaceBaseDirectoryReferencedByState(_state, videoPath, directory) ||
+                        IsWorkspaceBaseDirectoryReferencedByState(
                             TryLoadStateFile(_stateBackupFile),
-                            videoPath);
+                            videoPath,
+                            directory);
                 }
 
                 if (referenced)
@@ -885,18 +1046,29 @@ namespace FaceShield.Services.Workspace
             }
         }
 
-        private bool IsWorkspacePathReferencedByState(
+        private bool IsWorkspaceBaseDirectoryReferencedByState(
             AppState? state,
-            string videoPath)
+            string videoPath,
+            string directory)
         {
             if (state == null)
                 return false;
 
-            return state.Workspaces.Any(workspace =>
-                string.Equals(
-                    workspace.VideoPath,
+            foreach (var workspace in state.Workspaces)
+            {
+                if (!WorkspacePathIdentity.Equals(workspace.VideoPath, videoPath))
+                    continue;
+
+                foreach (string referenced in GetWorkspaceBaseDirectoryCandidates(
                     videoPath,
-                    FilePathComparison));
+                    workspace))
+                {
+                    if (string.Equals(referenced, directory, FilePathComparison))
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         private void CleanupUnreferencedWorkspaceDirectories(string videoPath, WorkspaceMode mode)
@@ -993,18 +1165,20 @@ namespace FaceShield.Services.Workspace
 
             foreach (var workspace in state.Workspaces)
             {
-                if (!string.Equals(workspace.VideoPath, videoPath, FilePathComparison) ||
+                if (!WorkspacePathIdentity.Equals(workspace.VideoPath, videoPath) ||
                     !string.Equals(workspace.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                string referenced = Path.GetFullPath(GetWorkspaceDir(
+                foreach (string referenced in GetWorkspaceDirectoryCandidates(
                     videoPath,
                     mode,
-                    workspace.StorageGeneration));
-                if (string.Equals(referenced, directory, FilePathComparison))
-                    return true;
+                    workspace))
+                {
+                    if (string.Equals(referenced, directory, FilePathComparison))
+                        return true;
+                }
             }
 
             return false;
@@ -1091,6 +1265,14 @@ namespace FaceShield.Services.Workspace
 
         private static string HashPath(string value)
         {
+            string identity = WorkspacePathIdentity.Normalize(value);
+            using var sha1 = SHA1.Create();
+            byte[] bytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(identity));
+            return Convert.ToHexString(bytes).ToLowerInvariant();
+        }
+
+        private static string PreIdentityHashPath(string value)
+        {
             string identity = OperatingSystem.IsWindows()
                 ? value.ToLowerInvariant()
                 : value;
@@ -1106,6 +1288,33 @@ namespace FaceShield.Services.Workspace
             byte[] bytes = sha1.ComputeHash(
                 Encoding.UTF8.GetBytes(value.ToLowerInvariant()));
             return Convert.ToHexString(bytes).ToLowerInvariant();
+        }
+
+        private sealed class WorkspacePathLifetimeState
+        {
+            internal long Epoch { get; set; }
+            internal int ActiveSaveCount { get; set; }
+            internal bool Removed { get; set; }
+        }
+
+        internal sealed class SaveLease : IDisposable
+        {
+            private int _disposed;
+
+            internal SaveLease(string pathIdentity, long epoch)
+            {
+                PathIdentity = pathIdentity;
+                Epoch = epoch;
+            }
+
+            internal string PathIdentity { get; }
+            internal long Epoch { get; }
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                    ReleaseWorkspaceSaveLease(PathIdentity);
+            }
         }
 
         private sealed class AppState
@@ -1126,6 +1335,7 @@ namespace FaceShield.Services.Workspace
         {
             public string VideoPath { get; set; } = string.Empty;
             public string Mode { get; set; } = string.Empty;
+            public int StoragePathVersion { get; set; }
             public string? StorageGeneration { get; set; }
             public int SelectedFrameIndex { get; set; }
             public double ViewStartSeconds { get; set; }
