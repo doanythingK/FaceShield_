@@ -21,7 +21,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     private readonly Func<bool> _tryBeginLifetimeOperation;
     private readonly Action _endLifetimeOperation;
     private readonly Func<string, Task<(string? Path, bool AllowOverwrite)>> _resolveOutputPathAsync;
-    private readonly Action<AutoMaskRunSummary?, ExportRunSummary, bool, IReadOnlyList<string>?> _logQualityGate;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Queue<(DateTime Timestamp, int FrameIndex)> _etaSamples = new();
     private (DateTime Timestamp, int FrameIndex) _lastEtaSample;
@@ -42,8 +41,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         Func<bool> isAutoRunning,
         Func<bool> tryBeginLifetimeOperation,
         Action endLifetimeOperation,
-        Func<string, Task<(string? Path, bool AllowOverwrite)>> resolveOutputPathAsync,
-        Action<AutoMaskRunSummary?, ExportRunSummary, bool, IReadOnlyList<string>?> logQualityGate)
+        Func<string, Task<(string? Path, bool AllowOverwrite)>> resolveOutputPathAsync)
     {
         _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
         _toolPanel = toolPanel ?? throw new ArgumentNullException(nameof(toolPanel));
@@ -51,7 +49,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         _tryBeginLifetimeOperation = tryBeginLifetimeOperation ?? throw new ArgumentNullException(nameof(tryBeginLifetimeOperation));
         _endLifetimeOperation = endLifetimeOperation ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
         _resolveOutputPathAsync = resolveOutputPathAsync ?? throw new ArgumentNullException(nameof(resolveOutputPathAsync));
-        _logQualityGate = logQualityGate ?? throw new ArgumentNullException(nameof(logQualityGate));
     }
 
     internal WorkspaceAutoExportGateState GateState => _gateState;
@@ -217,7 +214,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             if (exporter.LastExportSummary != null)
             {
                 System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
-                _logQualityGate(
+                RunMetricsLog.AppendExportQualityGate(
                     effectiveAutoRunSummary,
                     exporter.LastExportSummary,
                     hybridPolicy.allowHybridCopy,

@@ -37,6 +37,10 @@ These are documented limitations rather than the next active implementation bloc
 
 ## Next active block
 
-Status: **IN PROGRESS**
+Status: **COMPLETED — export quality-gate diagnostics extracted**
 
-Resume the historical ownership/workspace hardening sequence by continuing responsibility/policy extraction from `WorkspaceViewModel` and its coordinators. The next concrete target is export quality-gate diagnostics: export result risk calculation/logging belongs with export diagnostics rather than in the page ViewModel and should not be injected back into `WorkspaceExportCoordinator` as a ViewModel callback.
+- [x] Move export quality/risk calculation and logging out of `WorkspaceViewModel` into `RunMetricsLog`.
+- [x] Remove the quality-log callback dependency from `WorkspaceExportCoordinator`; the coordinator now calls the diagnostics service directly.
+- [x] Keep export behavior and log payloads unchanged while reducing page ViewModel responsibility.
+
+Next: continue the historical responsibility/policy-boundary hardening sequence without reopening deferred PATH edge cases unless a reproduced failure requires it.
