@@ -30,6 +30,11 @@ namespace FaceShield.Services.Workspace
         // Reference counts prevent one load from releasing another load's protection.
         private static readonly Dictionary<string, int> ActiveWorkspacePreparationDirectories =
             new(FilePathComparer);
+        // Logical deletion epochs are process-local because pending saves are also
+        // process-local. A save captures the epoch when it is requested and may commit
+        // only if no removal for that video path has happened since then.
+        private static readonly Dictionary<string, long> WorkspaceRemovalEpochs =
+            new(FilePathComparer);
         private readonly string _rootDir;
         private readonly string _stateFile;
         private readonly string _stateBackupFile;
@@ -100,6 +105,30 @@ namespace FaceShield.Services.Workspace
             }
         }
 
+        internal long CaptureWorkspaceRemovalEpoch(string videoPath)
+        {
+            if (string.IsNullOrWhiteSpace(videoPath))
+                throw new ArgumentException("A workspace video path is required.", nameof(videoPath));
+
+            lock (GlobalStateGate)
+                return GetWorkspaceRemovalEpochLocked(videoPath);
+        }
+
+        private static long GetWorkspaceRemovalEpochLocked(string videoPath)
+            => WorkspaceRemovalEpochs.TryGetValue(videoPath, out long epoch)
+                ? epoch
+                : 0L;
+
+        private static void RestoreWorkspaceRemovalEpochLocked(
+            string videoPath,
+            long previousEpoch)
+        {
+            if (previousEpoch == 0)
+                WorkspaceRemovalEpochs.Remove(videoPath);
+            else
+                WorkspaceRemovalEpochs[videoPath] = previousEpoch;
+        }
+
         public void RemoveWorkspacesForPath(string videoPath)
         {
             if (string.IsNullOrWhiteSpace(videoPath))
@@ -110,8 +139,14 @@ namespace FaceShield.Services.Workspace
             {
                 RefreshStateLocked();
                 var previousWorkspaces = _state.Workspaces.ToList();
+                long previousRemovalEpoch = GetWorkspaceRemovalEpochLocked(videoPath);
                 try
                 {
+                    // Publish logical removal under the same state gate used by save
+                    // commit. Any save requested before this point keeps the previous
+                    // epoch and is rejected if it reaches commit later.
+                    WorkspaceRemovalEpochs[videoPath] = checked(previousRemovalEpoch + 1);
+
                     _state.Workspaces.RemoveAll(w =>
                         string.Equals(
                             w.VideoPath,
@@ -125,6 +160,7 @@ namespace FaceShield.Services.Workspace
                 catch
                 {
                     _state.Workspaces = previousWorkspaces;
+                    RestoreWorkspaceRemovalEpochLocked(videoPath, previousRemovalEpoch);
                     throw;
                 }
 
@@ -385,19 +421,22 @@ namespace FaceShield.Services.Workspace
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
 
+            long removalEpoch = CaptureWorkspaceRemovalEpoch(snapshot.VideoPath);
             using FrameMaskProvider.PersistenceSnapshot persistenceSnapshot =
                 maskProvider.CreatePersistenceSnapshot();
-            SaveWorkspaceSnapshot(snapshot, persistenceSnapshot);
+            SaveWorkspaceSnapshot(snapshot, persistenceSnapshot, removalEpoch);
         }
 
         internal void SaveWorkspaceSnapshot(
             WorkspaceSnapshot snapshot,
-            FrameMaskProvider.PersistenceSnapshot persistenceSnapshot)
-            => SaveWorkspaceCore(snapshot, persistenceSnapshot);
+            FrameMaskProvider.PersistenceSnapshot persistenceSnapshot,
+            long removalEpoch)
+            => SaveWorkspaceCore(snapshot, persistenceSnapshot, removalEpoch);
 
         private void SaveWorkspaceCore(
             WorkspaceSnapshot snapshot,
-            FrameMaskProvider.PersistenceSnapshot persistenceSnapshot)
+            FrameMaskProvider.PersistenceSnapshot persistenceSnapshot,
+            long removalEpoch)
         {
             if (snapshot == null)
                 return;
@@ -409,6 +448,7 @@ namespace FaceShield.Services.Workspace
             string fullDir = Path.GetFullPath(dir);
             RegisterActiveWorkspaceDirectory(fullDir);
             bool committed = false;
+            bool invalidatedByRemoval = false;
 
             try
             {
@@ -476,26 +516,35 @@ namespace FaceShield.Services.Workspace
                 lock (GlobalStateGate)
                 {
                     RefreshStateLocked();
-                    WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
-                        string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
-                        string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
-
-                    _state.Workspaces.RemoveAll(w =>
-                        string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
-                        string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
-                    _state.Workspaces.Add(newState);
-
-                    try
+                    if (GetWorkspaceRemovalEpochLocked(snapshot.VideoPath) != removalEpoch)
                     {
-                        SaveState();
-                        committed = true;
+                        // The user removed this workspace after the save was requested.
+                        // Do not let an older pending save recreate the deleted state.
+                        invalidatedByRemoval = true;
                     }
-                    catch
+                    else
                     {
-                        _state.Workspaces.Remove(newState);
-                        if (previousState != null)
-                            _state.Workspaces.Add(previousState);
-                        throw;
+                        WorkspaceState? previousState = _state.Workspaces.FirstOrDefault(w =>
+                            string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
+                            string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
+
+                        _state.Workspaces.RemoveAll(w =>
+                            string.Equals(w.VideoPath, snapshot.VideoPath, FilePathComparison) &&
+                            string.Equals(w.Mode, snapshot.Mode.ToString(), StringComparison.OrdinalIgnoreCase));
+                        _state.Workspaces.Add(newState);
+
+                        try
+                        {
+                            SaveState();
+                            committed = true;
+                        }
+                        catch
+                        {
+                            _state.Workspaces.Remove(newState);
+                            if (previousState != null)
+                                _state.Workspaces.Add(previousState);
+                            throw;
+                        }
                     }
                 }
             }
@@ -511,6 +560,15 @@ namespace FaceShield.Services.Workspace
             finally
             {
                 UnregisterActiveWorkspaceDirectory(fullDir);
+            }
+
+            if (invalidatedByRemoval)
+            {
+                DeleteDirectoryBestEffort(dir);
+                // Removal may have deferred base cleanup while this generation was
+                // reserved. Retry after unregistering the stale preparation directory.
+                TryDeleteWorkspaceBaseDirectory(snapshot.VideoPath);
+                return;
             }
 
             CleanupUnreferencedWorkspaceDirectories(snapshot.VideoPath, snapshot.Mode);

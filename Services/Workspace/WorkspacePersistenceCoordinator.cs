@@ -35,6 +35,7 @@ namespace FaceShield.Services.Workspace
                 return Task.CompletedTask;
 
             ThrowIfQueueClosed();
+            long removalEpoch = _store.CaptureWorkspaceRemovalEpoch(snapshot.VideoPath);
             FrameMaskProvider.PersistenceSnapshot maskSnapshot =
                 _maskProvider.CreatePersistenceSnapshot();
 
@@ -56,7 +57,8 @@ namespace FaceShield.Services.Workspace
                 pending = new PendingSave(
                     ++_latestRequestId,
                     snapshot,
-                    maskSnapshot);
+                    maskSnapshot,
+                    removalEpoch);
 
                 // Publish the completion tail before starting this worker. The worker
                 // also awaits its predecessor, so the tail drains every prior request.
@@ -96,7 +98,8 @@ namespace FaceShield.Services.Workspace
                 {
                     await Task.Run(() => _store.SaveWorkspaceSnapshot(
                         pending.Snapshot,
-                        pending.MaskSnapshot)).ConfigureAwait(false);
+                        pending.MaskSnapshot,
+                        pending.RemovalEpoch)).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -167,6 +170,7 @@ namespace FaceShield.Services.Workspace
             if (snapshot == null)
                 return;
 
+            long removalEpoch = _store.CaptureWorkspaceRemovalEpoch(snapshot.VideoPath);
             Task predecessor = Task.CompletedTask;
             Task finalTask;
             TaskCompletionSource<object?>? finalCompletion = null;
@@ -210,6 +214,7 @@ namespace FaceShield.Services.Workspace
                         finalRequestId,
                         snapshot,
                         maskSnapshot,
+                        removalEpoch,
                         finalCompletion!);
                     maskSnapshot = null; // PendingSave owns the persistence lease.
                     _ = ExecutePendingSaveAsync(pending, predecessor);
@@ -285,11 +290,13 @@ namespace FaceShield.Services.Workspace
                 long requestId,
                 WorkspaceSnapshot snapshot,
                 FrameMaskProvider.PersistenceSnapshot maskSnapshot,
+                long removalEpoch,
                 TaskCompletionSource<object?>? completion = null)
             {
                 RequestId = requestId;
                 Snapshot = snapshot;
                 MaskSnapshot = maskSnapshot;
+                RemovalEpoch = removalEpoch;
                 Completion = completion ?? new TaskCompletionSource<object?>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
             }
@@ -297,6 +304,7 @@ namespace FaceShield.Services.Workspace
             internal long RequestId { get; }
             internal WorkspaceSnapshot Snapshot { get; }
             internal FrameMaskProvider.PersistenceSnapshot MaskSnapshot { get; }
+            internal long RemovalEpoch { get; }
             internal TaskCompletionSource<object?> Completion { get; }
         }
     }
