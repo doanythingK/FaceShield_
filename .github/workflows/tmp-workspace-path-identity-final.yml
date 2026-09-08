@@ -35,7 +35,7 @@ jobs:
       - name: Verify changed paths
         shell: pwsh
         run: |
-          $changed = git diff --name-only
+          $changed = @(git status --porcelain=v1 --untracked-files=all | ForEach-Object { $_.Substring(3) })
           $allowed = @(
             'Services/Workspace/WorkspacePathIdentity.cs',
             'Services/Workspace/WorkspaceStateStore.cs',
@@ -178,7 +178,10 @@ jobs:
               '.github/workflows/tmp-workspace-path-identity-diagnose.yml',
               '.github/workflows/tmp-workspace-path-identity-final.yml',
           }
-          changed = set(subprocess.check_output(['git','diff','--name-only'], text=True).splitlines())
+          status = subprocess.check_output(
+              ['git', 'status', '--porcelain=v1', '--untracked-files=all'],
+              text=True)
+          changed = {line[3:] for line in status.splitlines() if line}
           if changed != expected:
               raise SystemExit(f'Unexpected final diff: {sorted(changed)}')
           PY
@@ -193,6 +196,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for id in 34179176357 34179250042 34179330750; do
+          for id in 34179176357 34179250042 34179330750 34179490859; do
             gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/runs/${id}" || true
           done
