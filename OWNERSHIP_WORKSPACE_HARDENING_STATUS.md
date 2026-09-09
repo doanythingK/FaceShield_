@@ -142,7 +142,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Keep analysis `FrameTimingSample` values on the same relative timeline used by playback/timeline navigation.
 - [x] If the first decoded frame has no trustworthy PTS origin, remain on deterministic ordinal/FPS fallback rather than switching origins mid-stream.
 
+### Manual edit frame ownership guard
+
+- [x] Persist the current dirty mask before a normal frame-selection transition, then invalidate the editable frame until the requested exact frame and matching mask are applied.
+- [x] Do not let the previous frame's `MaskBitmap` remain editable after `_currentFrameIndex` has moved to a different requested ordinal.
+- [x] Block brush/eraser/undo mutation while sequential playback is active so playback frame replacement cannot silently discard a manual stroke.
+- [x] Invalidate editable mask state immediately when playback stops; editing resumes only after the exact stopped frame is reloaded.
+
 ## Next active block
 
-The decoder / seek / PTS correctness audit is complete for the code-confirmed wrong-frame and timing issues found in this pass. Continue with the next user-visible correctness block, prioritizing manual mask/edit persistence and save/export handoff over low-impact decoder/cache cleanup.
+Continue manual-mask persistence correctness through persistence serialization/restore and export snapshot handoff. Focus on code-confirmed cases that can lose a stored manual override or apply it to the wrong frame; keep UI-only polish and low-impact resource cleanup deferred.
 

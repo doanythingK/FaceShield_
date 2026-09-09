@@ -135,6 +135,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public bool ShowBrushCursor => _toolPanel.ShowBrushSize;
 
+    private bool CanMutateCurrentMask()
+        => _toolPanel.CanEditWorkspace &&
+           !_isPlaying &&
+           _currentFrameIndex >= 0 &&
+           _frameBitmap != null &&
+           _maskBitmap != null;
+
     public IReadOnlyList<Rect> DetectionRects
     {
         get => _detectionRects;
@@ -203,7 +210,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void Undo()
     {
-        if (!_toolPanel.CanEditWorkspace) return;
+        if (!CanMutateCurrentMask()) return;
         if (_maskBitmap == null) return;
         if (_maskUndo.Count == 0) return;
 
@@ -216,7 +223,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void OnPointerPressed(Point point)
     {
-        if (!_toolPanel.CanEditWorkspace) return;
+        if (!CanMutateCurrentMask()) return;
         if (CurrentMode is not EditMode.Brush and not EditMode.Eraser) return;
         if (_maskBitmap == null || _frameBitmap == null) return;
 
@@ -229,7 +236,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void OnPointerMoved(Point point)
     {
-        if (!_toolPanel.CanEditWorkspace)
+        if (!CanMutateCurrentMask())
         {
             _isDrawing = false;
             _lastDrawPoint = null;
@@ -250,7 +257,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public void OnPointerReleased(Point point)
     {
-        if (!_toolPanel.CanEditWorkspace)
+        if (!CanMutateCurrentMask())
         {
             _isDrawing = false;
             _lastDrawPoint = null;
@@ -528,7 +535,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         PersistCurrentMask();
-        _currentFrameIndex = index;
+        InvalidateEditableFrameState();
 
         if (_isPlaying)
         {
@@ -626,6 +633,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         PersistCurrentMask();
+        InvalidateEditableFrameState();
         Interlocked.Increment(ref _changeStamp);
 
         Task? previousPlaybackTask = _playbackTask;
@@ -727,6 +735,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         _isPlaying = false;
+        InvalidateEditableFrameState();
         Interlocked.Increment(ref _playbackRunId);
 
         CancellationTokenSource? playbackCts = _playbackCts;
@@ -1068,6 +1077,18 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         _maskProvider.SetMask(_currentFrameIndex, CloneBitmap(_maskBitmap));
         _maskDirty = false;
+    }
+
+    private void InvalidateEditableFrameState()
+    {
+        _isDrawing = false;
+        _lastDrawPoint = null;
+        _maskUndo.Clear();
+        _maskDirty = false;
+        _hasDirtyRegion = false;
+        _currentFrameIndex = -1;
+        MaskBitmap = null;
+        DetectionRects = Array.Empty<Rect>();
     }
 
     private async Task TryLoadExactFallbackAsync(
