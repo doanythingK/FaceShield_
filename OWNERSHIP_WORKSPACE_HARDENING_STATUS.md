@@ -62,7 +62,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Move queued persistence lifetime admission ahead of preview/snapshot capture so a closed/disposed workspace does not touch owned resources before being rejected.
 - [x] Preserve the final ordering as: close admission/cancel -> terminal save -> dispose/drain.
 
+### Late UI callback / dialog lifetime hardening
+
+- [x] Audit workspace-owned dispatcher posts and fire-and-forget callbacks for owner-lifetime checks.
+- [x] Register error dialogs with `WorkspaceOperationLifetime`, suppressing late playback/auto error UI once shutdown admission is closed and keeping resources alive while an accepted dialog is active.
+- [x] Reject queued playback starts after `FramePreviewViewModel` disposal.
+- [x] Dispose exact/playback bitmaps instead of applying them if a queued bitmap callback reaches the UI after preview disposal.
+
 ## Next active block
 
-Continue resource/ownership hardening by auditing remaining callbacks and fire-and-forget UI dispatches for work that can outlive their owning workspace.
+Continue the ownership audit around event subscriptions and delegate captures, especially subscriptions whose publisher can outlive the subscriber or retain workspace view models after navigation/cache eviction.
 

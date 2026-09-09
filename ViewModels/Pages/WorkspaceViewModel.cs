@@ -313,15 +313,25 @@ namespace FaceShield.ViewModels.Pages
             return ShowErrorDialogAsync(title, message);
         }
 
-        private Task ShowErrorDialogAsync(string title, string message)
+        private async Task ShowErrorDialogAsync(string title, string message)
         {
-            var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
-            var owner = lifetime?.MainWindow;
-            if (owner == null)
-                return Task.CompletedTask;
+            if (!_operationLifetime.TryBegin())
+                return;
 
-            var dialog = new ErrorDialog(title, message);
-            return dialog.ShowDialog(owner);
+            try
+            {
+                var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+                var owner = lifetime?.MainWindow;
+                if (owner == null)
+                    return;
+
+                var dialog = new ErrorDialog(title, message);
+                await dialog.ShowDialog(owner);
+            }
+            finally
+            {
+                _operationLifetime.End();
+            }
         }
 
         private async Task<ExportConflictResult> ShowExportConflictDialogAsync(string outputPath)

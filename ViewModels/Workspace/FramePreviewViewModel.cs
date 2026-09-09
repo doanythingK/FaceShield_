@@ -610,6 +610,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        if (_disposed)
+            return;
+
         if (string.IsNullOrWhiteSpace(videoPath) || startFrameIndex < 0)
         {
             onPlaybackEnded();
@@ -713,6 +716,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             Dispatcher.UIThread.Post(StopPlayback);
             return;
         }
+
+        if (_disposed)
+            return;
 
         _isPlaying = false;
         Interlocked.Increment(ref _playbackRunId);
@@ -930,7 +936,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (expectedStamp.HasValue && expectedStamp.Value != _changeStamp)
+        if (_disposed ||
+            (expectedStamp.HasValue && expectedStamp.Value != _changeStamp))
         {
             exact.Dispose();
             return;
@@ -966,6 +973,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (!Dispatcher.UIThread.CheckAccess())
         {
             Dispatcher.UIThread.Post(() => ApplyPlaybackFrame(exact, index));
+            return;
+        }
+
+        if (_disposed)
+        {
+            exact.Dispose();
             return;
         }
 
