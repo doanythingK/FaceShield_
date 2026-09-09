@@ -69,7 +69,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Reject queued playback starts after `FramePreviewViewModel` disposal.
 - [x] Dispose exact/playback bitmaps instead of applying them if a queued bitmap callback reaches the UI after preview disposal.
 
+### Owned event subscription cleanup
+
+- [x] Replace anonymous `ToolPanel` workspace command subscriptions with named handlers so they can be detached deterministically.
+- [x] Detach `ToolPanel`, `FramePreview`, and issue-review event handlers when shutdown admission closes and again idempotently at resource disposal.
+- [x] Replace the anonymous `ToolPanel.PropertyChanged` subscription in `FramePreviewViewModel` with a named handler and unsubscribe on preview disposal.
+- [x] Guard the property-change handler against disposed preview state.
+
 ## Next active block
 
-Continue the ownership audit around event subscriptions and delegate captures, especially subscriptions whose publisher can outlive the subscriber or retain workspace view models after navigation/cache eviction.
+Audit Home/workspace cache eviction and navigation ownership so a cached workspace cannot be disposed while still reachable as the current page, and verify that failed/aborted workspace initialization does not leave a disposed instance cached.
 

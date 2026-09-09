@@ -39,6 +39,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly FrameMaskProvider _maskProvider = new();
 
         private readonly WorkspaceOperationLifetime _operationLifetime;
+        private int _ownedEventHandlersDetached;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -146,29 +147,9 @@ namespace FaceShield.ViewModels.Pages
             // 🔹 자동/최종 마스크 provider 주입
             FramePreview.SetMaskProvider(_maskProvider);
 
-            ToolPanel.UndoRequested += () => FramePreview.Undo();
+            ToolPanel.UndoRequested += OnUndoRequested;
             FramePreview.MaskEdited += OnMaskEdited;
-
-            ToolPanel.SaveRequested += async () =>
-            {
-                if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
-                    return;
-
-                FramePreview.PersistCurrentMask();
-
-                try
-                {
-                    await SaveVideoAsync();
-                }
-                catch (Exception ex)
-                {
-                    await ShowExportErrorAsync(ex);
-                }
-                finally
-                {
-                    PersistWorkspaceState();
-                }
-            };
+            ToolPanel.SaveRequested += OnSaveRequested;
 
             // 🔹 자동 모드 버튼 → 자동 마스크 생성 연결
             ToolPanel.AutoRequested += OnAutoRequested;
@@ -268,6 +249,30 @@ namespace FaceShield.ViewModels.Pages
         partial void OnHideResolvedIssuesChanged(bool value)
         {
             _issueReview.SetHideResolved(value);
+        }
+
+        private void OnUndoRequested()
+            => FramePreview.Undo();
+
+        private async void OnSaveRequested()
+        {
+            if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
+                return;
+
+            FramePreview.PersistCurrentMask();
+
+            try
+            {
+                await SaveVideoAsync();
+            }
+            catch (Exception ex)
+            {
+                await ShowExportErrorAsync(ex);
+            }
+            finally
+            {
+                PersistWorkspaceState();
+            }
         }
 
         private async void OnAutoRequested()
@@ -591,6 +596,20 @@ namespace FaceShield.ViewModels.Pages
         }
 
 
+        private void DetachOwnedEventHandlers()
+        {
+            if (Interlocked.Exchange(ref _ownedEventHandlersDetached, 1) != 0)
+                return;
+
+            _issueReview.StateChanged -= ApplyIssueReviewState;
+            ToolPanel.UndoRequested -= OnUndoRequested;
+            ToolPanel.SaveRequested -= OnSaveRequested;
+            ToolPanel.AutoRequested -= OnAutoRequested;
+            ToolPanel.AutoCancelRequested -= OnAutoCancelRequested;
+            ToolPanel.ExportCancelRequested -= OnExportCancelRequested;
+            FramePreview.MaskEdited -= OnMaskEdited;
+        }
+
         private void ScheduleOwnedResourceDispose()
         {
             if (Dispatcher.UIThread.CheckAccess())
@@ -604,6 +623,7 @@ namespace FaceShield.ViewModels.Pages
 
         private void DisposeOwnedResources()
         {
+            DetachOwnedEventHandlers();
             _sessionPlaybackCoordinator.Dispose();
             _autoRunCoordinator.Dispose();
             _exportCoordinator.Dispose();
@@ -616,6 +636,7 @@ namespace FaceShield.ViewModels.Pages
 
         public void PrepareForAppShutdown()
         {
+            DetachOwnedEventHandlers();
             if (_operationLifetime.CloseAdmission())
                 CancelOwnedOperations();
         }
@@ -630,6 +651,7 @@ namespace FaceShield.ViewModels.Pages
 
         public void Dispose()
         {
+            DetachOwnedEventHandlers();
             if (!_operationLifetime.RequestDispose(out bool disposeNow))
                 return;
 

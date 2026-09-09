@@ -8,6 +8,7 @@ using FaceShield.Services.Video;
 using FaceShield.Services.Video.Session;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -175,24 +176,29 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _maskProvider = maskProvider;
         PreviewBlurRadius = toolPanel.BlurRadius;
 
-        _toolPanel.PropertyChanged += (_, e) =>
+        _toolPanel.PropertyChanged += OnToolPanelPropertyChanged;
+    }
+
+    private void OnToolPanelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_disposed)
+            return;
+
+        if (e.PropertyName == nameof(ToolPanelViewModel.CurrentMode))
         {
-            if (e.PropertyName == nameof(ToolPanelViewModel.CurrentMode))
-            {
-                OnPropertyChanged(nameof(CurrentCursor));
-                OnPropertyChanged(nameof(ShowBrushCursor));
-            }
-            else if (e.PropertyName == nameof(ToolPanelViewModel.BrushDiameter))
-            {
-                OnPropertyChanged(nameof(BrushDiameter));
-            }
-            else if (e.PropertyName == nameof(ToolPanelViewModel.BlurRadius))
-            {
-                PreviewBlurRadius = _toolPanel.BlurRadius;
-                ResetBlurredFrame();
-                RefreshPreview(force: true);
-            }
-        };
+            OnPropertyChanged(nameof(CurrentCursor));
+            OnPropertyChanged(nameof(ShowBrushCursor));
+        }
+        else if (e.PropertyName == nameof(ToolPanelViewModel.BrushDiameter))
+        {
+            OnPropertyChanged(nameof(BrushDiameter));
+        }
+        else if (e.PropertyName == nameof(ToolPanelViewModel.BlurRadius))
+        {
+            PreviewBlurRadius = _toolPanel.BlurRadius;
+            ResetBlurredFrame();
+            RefreshPreview(force: true);
+        }
     }
 
     public void Undo()
@@ -1112,6 +1118,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         _disposed = true;
+        _toolPanel.PropertyChanged -= OnToolPanelPropertyChanged;
         Interlocked.Increment(ref _changeStamp);
         Interlocked.Increment(ref _playbackRunId);
         _isPlaying = false;
