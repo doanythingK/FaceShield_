@@ -65,11 +65,13 @@ internal static unsafe class VideoEncoderQualityPolicy
 
         if (isX264Rgb)
         {
+            // RGB H.264 is admitted only through the fidelity-preserving libx264rgb
+            // path. Keep it lossless; a lossy CRF would contradict that contract.
             SetOption("preset", "fast", required: true);
-            SetOption("crf", "18", required: true);
+            SetOption("crf", "0", required: true);
             mode = forceSafeEncoding
-                ? "crf18-fast-rgb-safe"
-                : "crf18-fast-rgb";
+                ? "lossless-crf0-fast-rgb-safe"
+                : "lossless-crf0-fast-rgb";
         }
         else if (isX264)
         {

@@ -111,7 +111,17 @@ These are documented limitations rather than the next active implementation bloc
 
 - [ ] **DEFERRED:** Home/application-root cleanup for the final blur-example bitmap set, timer detachment, and exit idempotency. These are shutdown/resource hygiene items and are not currently tied to incorrect analysis/export results, data loss, or a reproduced crash.
 
+### Export correctness audit
+
+- [x] Confirm export works from a detached mask-provider snapshot so editing cannot change masks mid-export.
+- [x] Confirm analysis/preview/export use sequential decoded-frame ordinals for frame-mask lookup, while presentation timestamps remain a separate encoding-timing concern.
+- [x] Keep expected blur-frame coverage fail-closed: any mask frame not actually blurred aborts the staged output before final commit.
+- [x] Keep cancellation/failure output isolated in a same-directory staging file; expose the final path only after successful staging commit.
+- [x] Keep final packet/frame/timestamp integrity fail-closed through `VideoExportIntegrityPolicy`.
+- [x] Restore the RGB H.264 fidelity contract: compatible RGB H.264 sources use `libx264rgb` with required `crf=0` lossless encoding rather than lossy CRF 18.
+- [x] Preserve required encoder-option failure handling so an unavailable `crf=0`/preset contract rejects that encoder path rather than silently degrading quality.
+
 ## Next active block
 
-Audit export correctness: frame/mask alignment, cancellation and partial-output handling, codec/lossless contracts, and quality-gate behavior. Only reproduced or code-confirmed correctness failures should be changed; low-impact cleanup remains deferred.
+Audit decoder / seek / PTS correctness: decoded ordinal-to-timestamp mapping, seek target selection, VFR behavior, cancellation state, and any path that can return the wrong frame or leave the decoder permanently degraded. Only code-confirmed correctness failures should be changed.
 
