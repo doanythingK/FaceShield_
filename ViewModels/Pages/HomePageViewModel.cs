@@ -1614,9 +1614,7 @@ namespace FaceShield.ViewModels.Pages
             WorkspaceLoadingProgress = 0;
             IsWorkspaceLoadingIndeterminate = false;
 
-            WorkspaceViewModel vm;
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
-            bool loadAccepted = false;
             try
             {
                 var progress = new Progress<int>(p =>
@@ -1630,7 +1628,7 @@ namespace FaceShield.ViewModels.Pages
                 TouchRecent(SelectedVideoPath);
 
                 string videoPath = SelectedVideoPath!;
-                vm = await Task.Run(
+                WorkspaceViewModel vm = await Task.Run(
                     () => GetOrCreateWorkspace(
                         videoPath,
                         WorkspaceMode.Manual,
@@ -1655,7 +1653,10 @@ namespace FaceShield.ViewModels.Pages
                 if (!optionsApplied || !CanApplyWorkspaceLoadProgress(loadCts))
                     return;
 
-                loadAccepted = true;
+                // Keep the generation owner alive until navigation consumes this load.
+                // Releasing the slot before this callback would leave only a stale bool
+                // and allow a newer request to race with the old workspace handoff.
+                _onStartWorkspace(vm);
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -1663,15 +1664,10 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                bool wasCancelled = loadCts.IsCancellationRequested;
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
-                loadAccepted = loadAccepted && wasCurrentLoad && !wasCancelled;
                 if (wasCurrentLoad && !IsShutdownRequested)
                     IsWorkspaceLoading = false;
             }
-
-            if (loadAccepted && !IsShutdownRequested)
-                _onStartWorkspace(vm);
         }
 
         [RelayCommand]
@@ -1697,7 +1693,7 @@ namespace FaceShield.ViewModels.Pages
 
             WorkspaceViewModel vm;
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
-            bool loadAccepted = false;
+            bool autoHandoffStarted = false;
             try
             {
                 var autoOptions = BuildAutoOptions();
@@ -1730,7 +1726,39 @@ namespace FaceShield.ViewModels.Pages
                 if (!optionsApplied || !CanApplyWorkspaceLoadProgress(loadCts))
                     return;
 
-                loadAccepted = true;
+                if (vm.NeedsAutoResumePrompt)
+                {
+                    bool resume = await ShowResumeAutoDialogAsync();
+                    if (!CanApplyWorkspaceLoadProgress(loadCts))
+                        return;
+                    if (!resume)
+                    {
+                        if (await EnsureWorkspaceReadyAsync(vm, loadCts) &&
+                            CanApplyWorkspaceLoadProgress(loadCts))
+                        {
+                            // Deferred initialization and navigation are part of the
+                            // same accepted load generation. Do not release ownership
+                            // between them.
+                            _onStartWorkspace(vm);
+                        }
+                        return;
+                    }
+                }
+
+                if (IsAutoRunning || !CanApplyWorkspaceLoadProgress(loadCts))
+                    return;
+
+                // Atomically hand the UI from load ownership to Auto ownership: once
+                // IsAutoRunning is true, CanStartWorkspace is false, so a newer load
+                // cannot enter after this generation is released in finally.
+                IsAutoRunning = true;
+                autoHandoffStarted = true;
+                AutoProgress = 0;
+                _activeAutoWorkspace = vm;
+                AutoStatusText = "진행 상태 확인 중...";
+                AutoAccelStatus = "가속 상태: 확인 중...";
+                StartAutoStatusTimer();
+                AutoEtaText = "예상 남은 시간 계산 중...";
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -1738,39 +1766,13 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                bool wasCancelled = loadCts.IsCancellationRequested;
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
-                loadAccepted = loadAccepted && wasCurrentLoad && !wasCancelled;
                 if (wasCurrentLoad && !IsShutdownRequested)
                     IsWorkspaceLoading = false;
             }
 
-            if (!loadAccepted || IsShutdownRequested)
+            if (!autoHandoffStarted)
                 return;
-
-            if (vm.NeedsAutoResumePrompt)
-            {
-                bool resume = await ShowResumeAutoDialogAsync();
-                if (!loadAccepted || IsShutdownRequested)
-                    return;
-                if (!resume)
-                {
-                    if (await EnsureWorkspaceReadyAsync(vm) && !IsShutdownRequested)
-                        _onStartWorkspace(vm);
-                    return;
-                }
-            }
-
-            if (IsAutoRunning || IsShutdownRequested)
-                return;
-
-            IsAutoRunning = true;
-            AutoProgress = 0;
-            _activeAutoWorkspace = vm;
-            AutoStatusText = "진행 상태 확인 중...";
-            AutoAccelStatus = "가속 상태: 확인 중...";
-            StartAutoStatusTimer();
-            AutoEtaText = "예상 남은 시간 계산 중...";
 
             bool completed = false;
             try
@@ -2358,15 +2360,19 @@ namespace FaceShield.ViewModels.Pages
         }
 
         private async Task<bool> EnsureWorkspaceReadyAsync(
-            WorkspaceViewModel vm)
+            WorkspaceViewModel vm,
+            CancellationTokenSource? retainedLoadCts = null)
         {
-            IsWorkspaceLoading = true;
-            WorkspaceLoadingMessage = "워크스페이스 준비 중...";
-            WorkspaceLoadingProgress = 0;
-            IsWorkspaceLoadingIndeterminate = false;
+            bool ownsLoad = retainedLoadCts == null;
+            CancellationTokenSource loadCts = retainedLoadCts ?? BeginWorkspaceLoad();
+            if (ownsLoad)
+            {
+                IsWorkspaceLoading = true;
+                WorkspaceLoadingMessage = "워크스페이스 준비 중...";
+                WorkspaceLoadingProgress = 0;
+                IsWorkspaceLoadingIndeterminate = false;
+            }
 
-            CancellationTokenSource loadCts = BeginWorkspaceLoad();
-            bool loadAccepted = false;
             try
             {
                 var loadProgress = new Progress<int>(p =>
@@ -2378,7 +2384,7 @@ namespace FaceShield.ViewModels.Pages
                     loadProgress,
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                loadAccepted = IsCurrentWorkspaceLoad(loadCts);
+                return CanApplyWorkspaceLoadProgress(loadCts);
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -2386,14 +2392,13 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                bool wasCancelled = loadCts.IsCancellationRequested;
-                bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
-                loadAccepted = loadAccepted && wasCurrentLoad && !wasCancelled;
-                if (wasCurrentLoad && !IsShutdownRequested)
-                    IsWorkspaceLoading = false;
+                if (ownsLoad)
+                {
+                    bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                    if (wasCurrentLoad && !IsShutdownRequested)
+                        IsWorkspaceLoading = false;
+                }
             }
-
-            return loadAccepted && !IsShutdownRequested;
         }
 
         private async Task<bool> ShowResumeAutoDialogAsync()

@@ -210,12 +210,13 @@ These are documented limitations rather than the next active implementation bloc
 ### P1 stale-load / Auto-completion follow-up
 
 - [x] Keep Manual and Auto workspace option application conditional on the exact current, non-cancelled workspace-load CTS generation before and inside the Dispatcher callback.
-- [x] Require the initial workspace-load generation to still own completion before Manual navigation or before Auto proceeds to resume/start handling.
-- [x] Apply the same current-generation completion rule to deferred Auto session initialization before navigation.
+- [x] Retain the Manual load-generation owner until `_onStartWorkspace(vm)` consumes the accepted workspace; do not reduce ownership to a bool before navigation.
+- [x] Retain the Auto load-generation owner through the resume dialog and, when needed, deferred session initialization and navigation.
+- [x] Hand Auto load ownership to run ownership without an interleaving window by setting `IsAutoRunning=true` while the accepted load CTS is still current, then releasing the load slot.
 - [x] Do not equate detection EOF with Auto completion: persist `Completed=true` only after the required finalization/export gate passes.
 - [x] Keep a YOLO risk-cascade soft failure as `Completed=false`, preserve the detection result without committing staged post-processing, persist the failed gate state, and require a later full Auto rerun.
 
 ## Hardening pass status
 
-The current high-priority ownership/workspace correctness pass is complete after the P1 stale-load and Auto-finalization follow-up. No additional active code block remains from this pass. Resume only for a reproduced user-visible correctness failure or one of the explicitly deferred architectural items above.
+The current high-priority ownership/workspace correctness pass is complete after closing the final stale-load handoff race and the Auto-finalization contract. No additional active code block remains from this pass. Resume only for a reproduced user-visible correctness failure or one of the explicitly deferred architectural items above.
 
