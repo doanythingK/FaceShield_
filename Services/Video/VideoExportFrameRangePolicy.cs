@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace FaceShield.Services.Video;
 
 internal static class VideoExportFrameRangePolicy
 {
-    internal static HashSet<int> BuildBlurFrameSet(FrameMaskProvider provider)
+    internal static HashSet<int> BuildBlurFrameSet(
+        FrameMaskProvider provider,
+        CancellationToken cancellationToken = default)
     {
         var result = new HashSet<int>();
         if (provider == null || !provider.HasAnyMaskEntries())
@@ -13,16 +16,24 @@ internal static class VideoExportFrameRangePolicy
 
         foreach (int index in provider.GetStoredMaskFrameIndices())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (index < 0)
             {
                 throw new VideoExportIntegrityException(
                     $"음수 프레임 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
             }
-            result.Add(index);
+
+            // An all-transparent stored bitmap is a valid explicit manual override:
+            // the user removed blur from this frame. Keep the bitmap in persistence
+            // so that override remains authoritative, but do not require the exporter
+            // to report a blur operation for a mask with no covered pixels.
+            if (provider.StoredMaskHasCoverage(index, cancellationToken))
+                result.Add(index);
         }
 
         foreach (int index in provider.GetFaceMaskFrameIndices())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (index < 0)
             {
                 throw new VideoExportIntegrityException(

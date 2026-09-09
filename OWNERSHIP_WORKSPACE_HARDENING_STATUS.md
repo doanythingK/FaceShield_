@@ -173,7 +173,15 @@ These are documented limitations rather than the next active implementation bloc
 
 - [ ] **DEFERRED:** restore the exact completed issue-review list across process restart. Current workspace persistence stores masks and Auto completion/gate state, but not the historical issue classifier inputs or resolved issue sets. Recomputing unconditionally with current detector/filter settings can produce a different list, so exact issue-state persistence needs an explicit snapshot contract rather than an inferred rebuild.
 
+### Empty manual-mask export semantics
+
+- [x] Preserve an all-transparent stored bitmap as an explicit manual override instead of deleting it from workspace state.
+- [x] Exclude stored masks with zero alpha coverage from the export blur-frame expectation set so an intentional fully-erased frame does not fail the blur-coverage integrity gate.
+- [x] Keep malformed stored bitmap layouts fail-closed rather than silently treating corrupt mask data as an empty override.
+- [x] Forward export cancellation while scanning stored-mask coverage.
+- [x] If all stored/manual masks are empty and there are no face-rect masks, allow the existing lossless remux/no-blur path instead of forcing a failing encode.
+
 ## Next active block
 
-Continue user-visible workspace state correctness outside the deferred exact issue-review snapshot contract. Prioritize saved navigation/edit/export behavior and avoid low-impact cleanup or speculative state reconstruction.
+Continue user-visible edit/export correctness, focusing on manual mask geometry/size transitions and persistence compatibility. Keep exact issue-review snapshot restoration deferred and avoid low-impact cleanup.
 

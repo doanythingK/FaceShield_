@@ -290,7 +290,9 @@ public unsafe sealed class VideoExportService
             int hybridModeTimestampSyncCount = 0;
             if (_maskProvider is FrameMaskProvider frameMaskProvider)
             {
-                blurFrameSet = VideoExportFrameRangePolicy.BuildBlurFrameSet(frameMaskProvider);
+                blurFrameSet = VideoExportFrameRangePolicy.BuildBlurFrameSet(
+                    frameMaskProvider,
+                    cancellationToken);
                 if (blurFrameSet.Count == 0)
                 {
                     progress?.Report(new ExportProgress(0, totalFrames, "블러 대상이 없어 원본 스트림을 고속 복사합니다..."));

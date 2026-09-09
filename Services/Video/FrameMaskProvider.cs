@@ -249,6 +249,50 @@ namespace FaceShield.Services.Video
             return _masks.ContainsKey(frameIndex);
     }
 
+    internal bool StoredMaskHasCoverage(
+        int frameIndex,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_stateGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_masks.TryGetValue(frameIndex, out WriteableBitmap? mask))
+                return false;
+
+            using var framebuffer = mask.Lock();
+            int width = framebuffer.Size.Width;
+            int height = framebuffer.Size.Height;
+            if (width <= 0 ||
+                height <= 0 ||
+                framebuffer.Address == IntPtr.Zero ||
+                framebuffer.RowBytes < width * 4)
+            {
+                throw new InvalidOperationException(
+                    $"Stored mask {frameIndex} has an invalid BGRA bitmap layout.");
+            }
+
+            unsafe
+            {
+                byte* data = (byte*)framebuffer.Address;
+                for (int y = 0; y < height; y++)
+                {
+                    if ((y & 63) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                    byte* row = data + y * framebuffer.RowBytes;
+                    for (int x = 0; x < width; x++)
+                    {
+                        if (row[x * 4 + 3] != 0)
+                            return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+    }
+
     public bool TryCloneStoredMask(
         int frameIndex,
         out WriteableBitmap mask,
