@@ -270,6 +270,8 @@ namespace FaceShield.Services.Workspace
 
             WorkspacePathIdentity.PathContext pathContext =
                 WorkspacePathIdentity.CreatePathContext(videoPath);
+            string currentSourceEvidenceId =
+                AutoRunSignaturePolicy.BuildSourceEvidenceId(pathContext.AccessPath);
             snapshot = null;
             WorkspaceState primaryState;
             WorkspaceState? backupState;
@@ -279,13 +281,21 @@ namespace FaceShield.Services.Workspace
             lock (GlobalStateGate)
             {
                 RefreshStateLocked();
-                WorkspaceState? primary = FindWorkspaceState(_state, pathContext, mode);
+                WorkspaceState? primary = FindWorkspaceState(
+                    _state,
+                    pathContext,
+                    mode,
+                    currentSourceEvidenceId);
                 if (primary == null)
                     return false;
 
                 primaryState = CloneWorkspaceState(primary);
                 AppState? backupAppState = TryLoadStateFile(_stateBackupFile);
-                WorkspaceState? backup = FindWorkspaceState(backupAppState, pathContext, mode);
+                WorkspaceState? backup = FindWorkspaceState(
+                    backupAppState,
+                    pathContext,
+                    mode,
+                    currentSourceEvidenceId);
                 backupState = backup == null ? null : CloneWorkspaceState(backup);
             }
 
@@ -330,14 +340,40 @@ namespace FaceShield.Services.Workspace
         private static WorkspaceState? FindWorkspaceState(
             AppState? appState,
             WorkspacePathIdentity.PathContext pathContext,
-            WorkspaceMode mode)
+            WorkspaceMode mode,
+            string currentSourceEvidenceId)
         {
             if (appState == null)
                 return null;
 
             return appState.Workspaces.FirstOrDefault(w =>
                 WorkspaceStateMatchesPath(w, pathContext) &&
-                string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase));
+                string.Equals(w.Mode, mode.ToString(), StringComparison.OrdinalIgnoreCase) &&
+                WorkspaceStateMatchesSource(w, currentSourceEvidenceId));
+        }
+
+        private static bool WorkspaceStateMatchesSource(
+            WorkspaceState state,
+            string currentSourceEvidenceId)
+        {
+            // Legacy workspace states predate source evidence. Keep them readable so
+            // the next successful save can upgrade them to the guarded contract.
+            if (string.IsNullOrWhiteSpace(state.SourceEvidenceId))
+                return true;
+
+            if (string.IsNullOrWhiteSpace(currentSourceEvidenceId) ||
+                string.Equals(
+                    currentSourceEvidenceId,
+                    "unavailable",
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                state.SourceEvidenceId,
+                currentSourceEvidenceId,
+                StringComparison.Ordinal);
         }
 
         private static bool WorkspaceStateMatchesPath(
@@ -392,6 +428,7 @@ namespace FaceShield.Services.Workspace
                 Mode = source.Mode,
                 StoragePathVersion = source.StoragePathVersion,
                 StorageGeneration = source.StorageGeneration,
+                SourceEvidenceId = source.SourceEvidenceId,
                 SelectedFrameIndex = source.SelectedFrameIndex,
                 ViewStartSeconds = source.ViewStartSeconds,
                 SecondsPerScreen = source.SecondsPerScreen,
@@ -539,7 +576,8 @@ namespace FaceShield.Services.Workspace
                 state.AutoExportAllowHybridCopy,
                 state.AutoExportHybridDisableReasons,
                 state.AutoExecutionSignature,
-                state.TimelineExtentSeconds);
+                state.TimelineExtentSeconds,
+                sourceEvidenceId: state.SourceEvidenceId);
         }
 
         public void SaveWorkspace(WorkspaceSnapshot snapshot, FrameMaskProvider maskProvider)
@@ -629,6 +667,7 @@ namespace FaceShield.Services.Workspace
                     Mode = snapshot.Mode.ToString(),
                     StoragePathVersion = CurrentWorkspaceStoragePathVersion,
                     StorageGeneration = generation,
+                    SourceEvidenceId = snapshot.SourceEvidenceId,
                     SelectedFrameIndex = snapshot.SelectedFrameIndex,
                     ViewStartSeconds = snapshot.ViewStartSeconds,
                     SecondsPerScreen = snapshot.SecondsPerScreen,
@@ -1479,6 +1518,7 @@ namespace FaceShield.Services.Workspace
             public string Mode { get; set; } = string.Empty;
             public int StoragePathVersion { get; set; }
             public string? StorageGeneration { get; set; }
+            public string? SourceEvidenceId { get; set; }
             public int SelectedFrameIndex { get; set; }
             public double ViewStartSeconds { get; set; }
             public double SecondsPerScreen { get; set; }
@@ -1605,6 +1645,7 @@ namespace FaceShield.Services.Workspace
         public bool AutoExportHybridPolicyAvailable { get; }
         public bool AutoExportAllowHybridCopy { get; }
         public string? AutoExportHybridDisableReasons { get; }
+        public string? SourceEvidenceId { get; }
 
         public WorkspaceSnapshot(
             string videoPath,
@@ -1623,7 +1664,8 @@ namespace FaceShield.Services.Workspace
             bool autoExportAllowHybridCopy,
             string? autoExportHybridDisableReasons,
             string? autoExecutionSignature = null,
-            double timelineExtentSeconds = 0)
+            double timelineExtentSeconds = 0,
+            string? sourceEvidenceId = null)
         {
             VideoPath = videoPath;
             Mode = mode;
@@ -1644,6 +1686,7 @@ namespace FaceShield.Services.Workspace
             AutoExportHybridPolicyAvailable = autoExportHybridPolicyAvailable;
             AutoExportAllowHybridCopy = autoExportAllowHybridCopy;
             AutoExportHybridDisableReasons = autoExportHybridDisableReasons;
+            SourceEvidenceId = sourceEvidenceId;
         }
     }
 }

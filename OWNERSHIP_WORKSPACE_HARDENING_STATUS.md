@@ -181,7 +181,19 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Forward export cancellation while scanning stored-mask coverage.
 - [x] If all stored/manual masks are empty and there are no face-rect masks, allow the existing lossless remux/no-blur path instead of forcing a failing encode.
 
+### Workspace source-evidence restore guard
+
+- [x] Capture the existing source-evidence identity (`full path + file length + last-write ticks`, hashed by `AutoRunSignaturePolicy`) when a workspace is created.
+- [x] Persist that evidence with newly saved workspace state and propagate it through snapshot/clone/backup loading.
+- [x] Reject an evidence-bearing workspace state before loading mask payloads when the current source file evidence is different.
+- [x] Keep pre-evidence legacy workspace states readable; their next successful save upgrades them to the guarded state format.
+- [x] Fail closed for an evidence-bearing state if the current source evidence cannot be obtained.
+
+### Source mutation while workspace is open
+
+- [ ] **DEFERRED:** detect/reconcile a source file that is replaced while the same workspace instance remains open. The restore guard prevents stale state on the next open, but live-session source replacement needs a separate session invalidation contract across preview, analysis, and export.
+
 ## Next active block
 
-Continue user-visible edit/export correctness, focusing on manual mask geometry/size transitions and persistence compatibility. Keep exact issue-review snapshot restoration deferred and avoid low-impact cleanup.
+Continue user-visible correctness without reopening deferred source-session mutation or exact issue-review snapshot work. Prefer concrete save/export/navigation failures over low-impact cleanup.
 

@@ -19,7 +19,8 @@ namespace FaceShield.Services.Workspace
         string? AutoExportGateFailure,
         bool AutoExportHybridPolicyAvailable,
         bool AutoExportAllowHybridCopy,
-        string? AutoExportHybridDisableReasons);
+        string? AutoExportHybridDisableReasons,
+        string? SourceEvidenceId);
 
     internal sealed record WorkspaceRestoreState(
         int AutoResumeIndex,
@@ -58,7 +59,8 @@ namespace FaceShield.Services.Workspace
                 state.AutoExportAllowHybridCopy,
                 state.AutoExportHybridDisableReasons,
                 state.AutoExecutionSignature,
-                state.TimelineExtentSeconds);
+                state.TimelineExtentSeconds,
+                sourceEvidenceId: state.SourceEvidenceId);
         }
 
         internal static WorkspaceRestoreState CreateRestoreState(

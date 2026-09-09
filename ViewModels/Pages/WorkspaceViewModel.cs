@@ -31,6 +31,7 @@ namespace FaceShield.ViewModels.Pages
         private FaceDetectorFactoryOptions _detectorFactoryOptions;
         private readonly WorkspaceStateStore? _stateStore;
         private readonly WorkspacePersistenceCoordinator? _workspacePersistence;
+        private readonly string? _sourceEvidenceId;
         private readonly IssueReviewCoordinator _issueReview;
         private readonly WorkspaceExportCoordinator _exportCoordinator;
         private readonly AutoMaskRunCoordinator _autoRunCoordinator;
@@ -92,6 +93,13 @@ namespace FaceShield.ViewModels.Pages
         {
             Mode = mode;
             _onBack = onBack;
+            string sourceEvidenceId = AutoRunSignaturePolicy.BuildSourceEvidenceId(videoPath);
+            _sourceEvidenceId = string.Equals(
+                sourceEvidenceId,
+                "unavailable",
+                StringComparison.Ordinal)
+                ? null
+                : sourceEvidenceId;
             _autoOptions = autoOptions ?? new AutoMaskOptions();
             _detectorOptions = detectorOptions ?? new FaceOnnxDetectorOptions();
             _detectorFactoryOptions = detectorFactoryOptions ?? FaceDetectorFactoryOptions.ForOnnx(_detectorOptions);
@@ -564,7 +572,8 @@ namespace FaceShield.ViewModels.Pages
                 exportState.Failure,
                 exportState.HybridPolicyAvailable,
                 exportState.AllowHybridCopy,
-                exportState.HybridDisableReasons);
+                exportState.HybridDisableReasons,
+                _sourceEvidenceId);
             return WorkspaceStateMapper.CreateSnapshot(state, DateTimeOffset.Now);
         }
 
