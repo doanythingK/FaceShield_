@@ -1546,8 +1546,15 @@ namespace FaceShield.Services.Video
         private void PrepareSequentialDecodeFromBeginning(
             CancellationToken cancellationToken)
         {
-            if (SeekMainDecoderToBeginning(cancellationToken) < 0)
+            int seekResult = SeekMainDecoderToBeginning(cancellationToken);
+            if (seekResult < 0)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    _sequentialCancelled = true;
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 throw new InvalidOperationException(
                     $"Could not seek to the beginning for exact frame {_sequentialRequestedIndex}.");
             }
@@ -1567,6 +1574,12 @@ namespace FaceShield.Services.Video
             int seekResult = SeekMainDecoderToBeginning(cancellationToken);
             if (seekResult < 0)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    _sequentialCancelled = true;
+                    return false;
+                }
+
                 SetSequentialDecodeError(
                     $"exact timestamp did not resolve and beginning fallback seek failed",
                     seekResult);

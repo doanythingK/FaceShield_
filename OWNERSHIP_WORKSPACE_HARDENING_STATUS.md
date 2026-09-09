@@ -121,7 +121,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Restore the RGB H.264 fidelity contract: compatible RGB H.264 sources use `libx264rgb` with required `crf=0` lossless encoding rather than lossy CRF 18.
 - [x] Preserve required encoder-option failure handling so an unavailable `crf=0`/preset contract rejects that encoder path rather than silently degrading quality.
 
+### Decoder seek cancellation classification
+
+- [x] Keep ordinal-index cancellation separate from `_ordinalDecoderFailed`; cancellation does not permanently degrade later timestamp/ordinal resolution.
+- [x] Treat cancellation that wins during the initial exact-frame seek as cancellation rather than converting the interrupted seek into an `InvalidOperationException`.
+- [x] Treat cancellation that wins during exact-timestamp fallback-to-beginning as cancellation rather than recording a sequential decode error.
+- [x] Preserve genuine seek failures as decode errors; only cancellation-requested failures take the cancellation path.
+
 ## Next active block
 
-Audit decoder / seek / PTS correctness: decoded ordinal-to-timestamp mapping, seek target selection, VFR behavior, cancellation state, and any path that can return the wrong frame or leave the decoder permanently degraded. Only code-confirmed correctness failures should be changed.
+Continue decoder / seek / PTS correctness audit, focusing on VFR exact-frame selection, decoded ordinal-to-timestamp mapping, EOF/flush behavior, and paths that can return a wrong frame. Low-impact cache-capacity/resource cleanup remains deferred.
 
