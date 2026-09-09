@@ -92,6 +92,13 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Suppress file-picker, resume/error/blur-dialog, clipboard, startup-continuation, and workspace-navigation mutations after shutdown begins.
 - [x] Stop the Home auto-status timer during shutdown and detach the current-page reference from a workspace before terminal persistence/disposal.
 
+### Cached workspace UI-thread ownership
+
+- [x] Keep cache lookup/adoption under the cache gate free of UI-observable workspace mutations.
+- [x] Apply cached/new workspace runtime options only after background construction returns and marshal the update explicitly to the Avalonia UI thread.
+- [x] Guard the option application itself against shutdown and fail fast if a future caller attempts it off the UI thread.
+- [x] Prevent `ToolPanel.BlurRadius` from triggering preview bitmap reset/recomposition on a `Task.Run` worker thread.
+
 ## Next active block
 
 Audit Home/application-root resource disposal (generated blur-preview bitmaps, timer/event lifetime, and app-exit idempotency) and fix only resources that remain rooted or can be disposed twice across shutdown paths.

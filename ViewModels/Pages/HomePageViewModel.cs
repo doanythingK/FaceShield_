@@ -1639,8 +1639,10 @@ namespace FaceShield.ViewModels.Pages
                         loadCts.Token),
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                if (Volatile.Read(ref _shutdownRequested) != 0)
+                if (IsShutdownRequested)
                     return;
+                await Dispatcher.UIThread.InvokeAsync(
+                    () => ApplyWorkspaceOptions(vm, autoOptions, detectorFactoryOptions));
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -1697,8 +1699,10 @@ namespace FaceShield.ViewModels.Pages
                         loadCts.Token),
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                if (Volatile.Read(ref _shutdownRequested) != 0)
+                if (IsShutdownRequested)
                     return;
+                await Dispatcher.UIThread.InvokeAsync(
+                    () => ApplyWorkspaceOptions(vm, autoOptions, detectorFactoryOptions));
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -2463,10 +2467,7 @@ namespace FaceShield.ViewModels.Pages
                 cancellationToken.ThrowIfCancellationRequested();
                 ThrowIfWorkspaceCacheClosed(cancellationToken);
                 if (_workspaceCache.TryGetValue(key, out var cached))
-                {
-                    ApplyWorkspaceOptions(cached, autoOptions, detectorFactoryOptions);
                     return cached;
-                }
             }
 
             WorkspaceViewModel? created = new WorkspaceViewModel(
@@ -2491,17 +2492,13 @@ namespace FaceShield.ViewModels.Pages
                     cancellationToken.ThrowIfCancellationRequested();
                     ThrowIfWorkspaceCacheClosed(cancellationToken);
                     if (_workspaceCache.TryGetValue(key, out var cached))
-                    {
-                        ApplyWorkspaceOptions(cached, autoOptions, detectorFactoryOptions);
                         return cached;
-                    }
 
                     // Reopen only when the fully restored candidate is atomically
                     // accepted by the cache. An aborted/shutdown candidate therefore
                     // cannot revive a removed workspace path.
                     _stateStore.ReopenWorkspacePath(accessPath);
                     WorkspaceViewModel candidate = created!;
-                    ApplyWorkspaceOptions(candidate, autoOptions, detectorFactoryOptions);
                     _workspaceCache[key] = candidate;
                     created = null;
                     return candidate;
@@ -2524,6 +2521,12 @@ namespace FaceShield.ViewModels.Pages
             AutoMaskOptions autoOptions,
             FaceDetectorFactoryOptions detectorFactoryOptions)
         {
+            if (IsShutdownRequested)
+                return;
+            if (!Dispatcher.UIThread.CheckAccess())
+                throw new InvalidOperationException(
+                    "Workspace UI options must be applied on the UI thread.");
+
             workspace.UpdateAutoOptions(autoOptions);
             workspace.UpdateDetectorFactoryOptions(detectorFactoryOptions);
             workspace.ToolPanel.BlurRadius = BlurRadius;
