@@ -76,7 +76,15 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Replace the anonymous `ToolPanel.PropertyChanged` subscription in `FramePreviewViewModel` with a named handler and unsubscribe on preview disposal.
 - [x] Guard the property-change handler against disposed preview state.
 
+### Home workspace cache / navigation ownership
+
+- [x] Serialize Home workspace-cache lookup, adoption, eviction, shutdown snapshot, persistence snapshot, and drain operations behind one ownership gate.
+- [x] Close cache admission before shutdown cancellation and reject/dispose a newly constructed candidate if shutdown or cancellation wins before adoption.
+- [x] Capture the requested video path before background construction so a later Home selection change cannot redirect an in-flight workspace creation.
+- [x] Prevent recent-list trimming from disposing the workspace that is still the current page; defer that eviction and persistent-state removal until navigation returns Home.
+- [x] Recheck cancellation/shutdown before manual/auto navigation and after deferred session initialization.
+
 ## Next active block
 
-Audit Home/workspace cache eviction and navigation ownership so a cached workspace cannot be disposed while still reachable as the current page, and verify that failed/aborted workspace initialization does not leave a disposed instance cached.
+Audit Home-owned asynchronous UI work (model download, preview dialog, startup/open continuations, and progress callbacks) for callbacks that can mutate Home state after application shutdown begins.
 

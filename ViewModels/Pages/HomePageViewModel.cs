@@ -51,6 +51,10 @@ namespace FaceShield.ViewModels.Pages
         private readonly Action _onBackHome;
         private readonly WorkspaceStateStore _stateStore;
         private readonly Dictionary<string, WorkspaceViewModel> _workspaceCache = new(StringComparer.Ordinal);
+        private readonly object _workspaceCacheGate = new();
+        private readonly Func<WorkspaceViewModel, bool> _isWorkspaceCurrent;
+        private readonly Dictionary<string, string> _deferredWorkspaceEvictions = new(StringComparer.Ordinal);
+        private int _shutdownRequested;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _workspaceLoadCts;
         private CancellationTokenSource? _yoloDownloadCts;
@@ -414,11 +418,13 @@ namespace FaceShield.ViewModels.Pages
         public HomePageViewModel(
             Action<WorkspaceViewModel> onStartWorkspace,
             Action onBackHome,
-            WorkspaceStateStore stateStore)
+            WorkspaceStateStore stateStore,
+            Func<WorkspaceViewModel, bool>? isWorkspaceCurrent = null)
         {
             _onStartWorkspace = onStartWorkspace;
             _onBackHome = onBackHome;
             _stateStore = stateStore;
+            _isWorkspaceCurrent = isWorkspaceCurrent ?? (_ => false);
             selectedDownscaleOption = DownscaleOptions[0];
             selectedDownscaleQualityOption = DownscaleQualityOptions[1];
 
@@ -480,7 +486,11 @@ namespace FaceShield.ViewModels.Pages
         }
 
         public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
-        public bool CanStartWorkspace => CanOpenWorkspace && !IsAutoRunning && !IsWorkspaceLoading;
+        public bool CanStartWorkspace =>
+            CanOpenWorkspace &&
+            !IsAutoRunning &&
+            !IsWorkspaceLoading &&
+            Volatile.Read(ref _shutdownRequested) == 0;
         public string SelectedVideoDisplayName => string.IsNullOrWhiteSpace(SelectedVideoPath)
             ? "영상을 선택해 주세요"
             : Path.GetFileName(SelectedVideoPath);
@@ -1585,14 +1595,19 @@ namespace FaceShield.ViewModels.Pages
                 var detectorFactoryOptions = BuildDetectorFactoryOptions();
                 TouchRecent(SelectedVideoPath);
 
+                string videoPath = SelectedVideoPath!;
                 vm = await Task.Run(
                     () => GetOrCreateWorkspace(
+                        videoPath,
                         WorkspaceMode.Manual,
                         progress,
                         autoOptions,
                         detectorFactoryOptions,
                         loadCts.Token),
                     loadCts.Token);
+                loadCts.Token.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _shutdownRequested) != 0)
+                    return;
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -1636,14 +1651,19 @@ namespace FaceShield.ViewModels.Pages
                 var detectorFactoryOptions = BuildDetectorFactoryOptions();
                 TouchRecent(SelectedVideoPath);
 
+                string videoPath = SelectedVideoPath!;
                 vm = await Task.Run(
                     () => GetOrCreateWorkspace(
+                        videoPath,
                         WorkspaceMode.Auto,
                         loadProgress: null,
                         autoOptions,
                         detectorFactoryOptions,
                         loadCts.Token),
                     loadCts.Token);
+                loadCts.Token.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _shutdownRequested) != 0)
+                    return;
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -2196,7 +2216,8 @@ namespace FaceShield.ViewModels.Pages
                 await vm.EnsureSessionInitializedAsync(
                     loadProgress,
                     loadCts.Token);
-                return true;
+                loadCts.Token.ThrowIfCancellationRequested();
+                return Volatile.Read(ref _shutdownRequested) == 0;
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -2287,6 +2308,7 @@ namespace FaceShield.ViewModels.Pages
         }
 
         private WorkspaceViewModel GetOrCreateWorkspace(
+            string videoPath,
             WorkspaceMode mode,
             IProgress<int>? loadProgress,
             AutoMaskOptions autoOptions,
@@ -2294,23 +2316,26 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(SelectedVideoPath))
-                throw new InvalidOperationException("SelectedVideoPath is empty.");
+            if (string.IsNullOrWhiteSpace(videoPath))
+                throw new InvalidOperationException("A video path is required.");
 
             WorkspacePathIdentity.PathContext pathContext =
-                WorkspacePathIdentity.CreatePathContext(SelectedVideoPath);
+                WorkspacePathIdentity.CreatePathContext(videoPath);
             string accessPath = pathContext.AccessPath;
             string key = $"{mode}:{pathContext.IdentityKey}";
-            if (_workspaceCache.TryGetValue(key, out var cached))
+
+            lock (_workspaceCacheGate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                cached.UpdateAutoOptions(autoOptions);
-                cached.UpdateDetectorFactoryOptions(detectorFactoryOptions);
-                cached.ToolPanel.BlurRadius = BlurRadius;
-                return cached;
+                ThrowIfWorkspaceCacheClosed(cancellationToken);
+                if (_workspaceCache.TryGetValue(key, out var cached))
+                {
+                    ApplyWorkspaceOptions(cached, autoOptions, detectorFactoryOptions);
+                    return cached;
+                }
             }
 
-            var vm = new WorkspaceViewModel(
+            WorkspaceViewModel? created = new WorkspaceViewModel(
                 accessPath,
                 mode,
                 loadProgress,
@@ -2322,15 +2347,52 @@ namespace FaceShield.ViewModels.Pages
                 deferSessionInit: mode == WorkspaceMode.Auto,
                 initializationToken: cancellationToken);
 
-            vm.RestoreFromStore(_stateStore);
-            // Reopen only after a fresh workspace instance has been constructed and
-            // restored successfully. Constructor/restore failure must leave the
-            // removal tombstone intact.
-            _stateStore.ReopenWorkspacePath(accessPath);
-            vm.ToolPanel.BlurRadius = BlurRadius;
+            try
+            {
+                created.RestoreFromStore(_stateStore);
+                cancellationToken.ThrowIfCancellationRequested();
 
-            _workspaceCache[key] = vm;
-            return vm;
+                lock (_workspaceCacheGate)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ThrowIfWorkspaceCacheClosed(cancellationToken);
+                    if (_workspaceCache.TryGetValue(key, out var cached))
+                    {
+                        ApplyWorkspaceOptions(cached, autoOptions, detectorFactoryOptions);
+                        return cached;
+                    }
+
+                    // Reopen only when the fully restored candidate is atomically
+                    // accepted by the cache. An aborted/shutdown candidate therefore
+                    // cannot revive a removed workspace path.
+                    _stateStore.ReopenWorkspacePath(accessPath);
+                    WorkspaceViewModel candidate = created!;
+                    ApplyWorkspaceOptions(candidate, autoOptions, detectorFactoryOptions);
+                    _workspaceCache[key] = candidate;
+                    created = null;
+                    return candidate;
+                }
+            }
+            finally
+            {
+                created?.Dispose();
+            }
+        }
+
+        private void ThrowIfWorkspaceCacheClosed(CancellationToken cancellationToken)
+        {
+            if (_shutdownRequested != 0)
+                throw new OperationCanceledException("Workspace cache is shutting down.", null, cancellationToken);
+        }
+
+        private void ApplyWorkspaceOptions(
+            WorkspaceViewModel workspace,
+            AutoMaskOptions autoOptions,
+            FaceDetectorFactoryOptions detectorFactoryOptions)
+        {
+            workspace.UpdateAutoOptions(autoOptions);
+            workspace.UpdateDetectorFactoryOptions(detectorFactoryOptions);
+            workspace.ToolPanel.BlurRadius = BlurRadius;
         }
 
         private void TouchRecent(string? videoPath)
@@ -2366,6 +2428,13 @@ namespace FaceShield.ViewModels.Pages
 
         public void PrepareAllWorkspacesForShutdown()
         {
+            WorkspaceViewModel[] workspaces;
+            lock (_workspaceCacheGate)
+            {
+                _shutdownRequested = 1;
+                workspaces = _workspaceCache.Values.Distinct().ToArray();
+            }
+
             try { Volatile.Read(ref _autoCts)?.Cancel(); }
             catch (ObjectDisposedException) { }
             try { Volatile.Read(ref _workspaceLoadCts)?.Cancel(); }
@@ -2373,13 +2442,17 @@ namespace FaceShield.ViewModels.Pages
             try { Volatile.Read(ref _yoloDownloadCts)?.Cancel(); }
             catch (ObjectDisposedException) { }
 
-            foreach (var workspace in _workspaceCache.Values.Distinct())
+            foreach (var workspace in workspaces)
                 workspace.PrepareForAppShutdown();
         }
 
         public void PersistAllWorkspaces()
         {
-            foreach (var vm in _workspaceCache.Values)
+            WorkspaceViewModel[] workspaces;
+            lock (_workspaceCacheGate)
+                workspaces = _workspaceCache.Values.Distinct().ToArray();
+
+            foreach (var vm in workspaces)
                 vm.PersistWorkspaceStateImmediate();
 
             _stateStore.SaveRecents(Recents);
@@ -2391,32 +2464,71 @@ namespace FaceShield.ViewModels.Pages
             {
                 var removed = Recents[^1];
                 Recents.RemoveAt(Recents.Count - 1);
-                RemoveCachedWorkspaces(removed.Path);
-                _stateStore.RemoveWorkspacesForPath(removed.Path);
+                if (RemoveCachedWorkspaces(removed.Path, deferIfCurrent: true))
+                    _stateStore.RemoveWorkspacesForPath(removed.Path);
             }
         }
 
-        private void RemoveCachedWorkspaces(string videoPath)
+        private bool RemoveCachedWorkspaces(
+            string videoPath,
+            bool deferIfCurrent)
         {
             if (string.IsNullOrWhiteSpace(videoPath))
-                return;
+                return true;
 
             WorkspacePathIdentity.PathContext pathContext =
                 WorkspacePathIdentity.CreatePathContext(videoPath);
-            var keys = new List<string>();
-            foreach (var entry in _workspaceCache)
+            var removed = new List<WorkspaceViewModel>();
+            bool currentWorkspaceRetained = false;
+
+            lock (_workspaceCacheGate)
             {
-                if (pathContext.MatchesAccessPath(
-                        entry.Value.FrameList.VideoPath))
+                foreach (var entry in _workspaceCache.ToArray())
                 {
-                    keys.Add(entry.Key);
+                    WorkspaceViewModel workspace = entry.Value;
+                    if (!pathContext.MatchesAccessPath(workspace.FrameList.VideoPath))
+                        continue;
+
+                    if (_isWorkspaceCurrent(workspace))
+                    {
+                        currentWorkspaceRetained = true;
+                        continue;
+                    }
+
+                    if (_workspaceCache.Remove(entry.Key, out var removedWorkspace))
+                        removed.Add(removedWorkspace);
                 }
+
+                if (currentWorkspaceRetained && deferIfCurrent)
+                    _deferredWorkspaceEvictions[pathContext.IdentityKey] = pathContext.AccessPath;
+                else if (!currentWorkspaceRetained)
+                    _deferredWorkspaceEvictions.Remove(pathContext.IdentityKey);
             }
 
-            foreach (var key in keys)
+            foreach (var workspace in removed.Distinct())
+                workspace.Dispose();
+
+            return !currentWorkspaceRetained;
+        }
+
+        public void PruneDeferredWorkspaceEvictions()
+        {
+            KeyValuePair<string, string>[] deferred;
+            lock (_workspaceCacheGate)
             {
-                if (_workspaceCache.Remove(key, out var workspace))
-                    workspace.Dispose();
+                if (_shutdownRequested != 0 || _deferredWorkspaceEvictions.Count == 0)
+                    return;
+                deferred = _deferredWorkspaceEvictions.ToArray();
+            }
+
+            foreach (var entry in deferred)
+            {
+                if (!RemoveCachedWorkspaces(entry.Value, deferIfCurrent: false))
+                    continue;
+
+                _stateStore.RemoveWorkspacesForPath(entry.Value);
+                lock (_workspaceCacheGate)
+                    _deferredWorkspaceEvictions.Remove(entry.Key);
             }
         }
 
@@ -2424,10 +2536,16 @@ namespace FaceShield.ViewModels.Pages
         {
             PrepareAllWorkspacesForShutdown();
 
-            foreach (var workspace in _workspaceCache.Values.Distinct())
-                workspace.Dispose();
+            WorkspaceViewModel[] workspaces;
+            lock (_workspaceCacheGate)
+            {
+                workspaces = _workspaceCache.Values.Distinct().ToArray();
+                _workspaceCache.Clear();
+                _deferredWorkspaceEvictions.Clear();
+            }
 
-            _workspaceCache.Clear();
+            foreach (var workspace in workspaces)
+                workspace.Dispose();
         }
 
     }

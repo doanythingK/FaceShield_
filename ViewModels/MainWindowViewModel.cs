@@ -29,8 +29,13 @@ namespace FaceShield.ViewModels
             // 앱 시작 시 첫 화면: Home
             _home = new HomePageViewModel(
                 onStartWorkspace: vm => CurrentPage = vm,
-                onBackHome: () => CurrentPage = _home,
-                stateStore: _stateStore
+                onBackHome: () =>
+                {
+                    CurrentPage = _home;
+                    _home.PruneDeferredWorkspaceEvictions();
+                },
+                stateStore: _stateStore,
+                isWorkspaceCurrent: vm => ReferenceEquals(CurrentPage, vm)
             );
 
             var startupOptions = AppStartupOptions.Parse(startupArgs);
