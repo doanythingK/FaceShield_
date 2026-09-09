@@ -245,7 +245,9 @@ namespace FaceShield.Services.Video
                             ? ffmpeg.av_q2d(stream->r_frame_rate)
                             : 30.0;
 
-                _fps = Math.Max(1.0, fpsValue);
+                _fps = double.IsFinite(fpsValue) && fpsValue > 0
+                    ? fpsValue
+                    : 30.0;
 
                 AVCodec* codec = ffmpeg.avcodec_find_decoder(stream->codecpar->codec_id);
                 if (codec == null)
@@ -896,7 +898,11 @@ namespace FaceShield.Services.Video
                         if (receiveResult == 0)
                         {
                             long pts = GetDecodedPresentationTimestamp(decodedFrame);
-                            if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
+                            // A timestamp thumbnail must only accept a frame whose
+                            // presentation time can actually be compared with the target.
+                            // Treat a missing PTS as unresolvable instead of returning an
+                            // arbitrary post-seek frame for the requested timestamp.
+                            if (pts == ffmpeg.AV_NOPTS_VALUE || pts < targetPts)
                                 continue;
 
                             if (!ConvertDecodedFrameToBgraScaled(

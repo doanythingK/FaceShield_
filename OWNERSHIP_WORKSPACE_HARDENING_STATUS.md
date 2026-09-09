@@ -128,7 +128,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Treat cancellation that wins during exact-timestamp fallback-to-beginning as cancellation rather than recording a sequential decode error.
 - [x] Preserve genuine seek failures as decode errors; only cancellation-requested failures take the cancellation path.
 
+### VFR / missing-PTS frame selection
+
+- [x] Preserve valid source frame rates below 1 fps instead of clamping the extractor fallback rate to 1 fps; missing-PTS fallback timestamps therefore retain the source cadence.
+- [x] Reject decoded frames with `AV_NOPTS_VALUE` while resolving a timestamp thumbnail instead of treating an uncomparable post-seek frame as a match for the requested time.
+- [x] Keep duplicate/non-monotonic PTS fail-closed: exact timestamp seek remains disabled and ordinal selection falls back to decode-from-beginning.
+- [x] Keep exact-frame callers ordinal-based; the missing-PTS change applies only to timestamp-targeted thumbnail selection.
+
 ## Next active block
 
-Continue decoder / seek / PTS correctness audit, focusing on VFR exact-frame selection, decoded ordinal-to-timestamp mapping, EOF/flush behavior, and paths that can return a wrong frame. Low-impact cache-capacity/resource cleanup remains deferred.
+Finish the decoder / seek / PTS correctness audit around EOF/flush, frame-count discovery, and playback/preview use of resolved ordinals. If no additional code-confirmed wrong-frame issue remains, move to the next user-visible correctness block instead of extending low-impact decoder cleanup.
 
