@@ -95,6 +95,9 @@ public sealed class IssueReviewCoordinator : IDisposable
         var lowConfidence = new List<int>();
         var flicker = new List<int>();
         var faceFrames = new SortedSet<int>();
+        var resolvedManualFrames = new HashSet<int>(
+            _maskProvider.GetStoredMaskFrameIndices()
+                .Where(frameIndex => frameIndex >= 0 && frameIndex < totalFrames));
 
         foreach (var entry in _maskProvider.GetFaceMaskEntries())
         {
@@ -135,6 +138,17 @@ public sealed class IssueReviewCoordinator : IDisposable
             int current = faceFrameIndices[i];
             if (current - previous == 2)
                 flicker.Add(previous + 1);
+        }
+
+        if (resolvedManualFrames.Count > 0)
+        {
+            // A stored bitmap is a persisted manual override. ResolveIssueForFrame
+            // removes the issue in-memory when the user edits it; keep that decision
+            // stable across a later auto re-run by not recreating an anomaly for the
+            // same manually-owned frame.
+            noFace.RemoveAll(resolvedManualFrames.Contains);
+            lowConfidence.RemoveAll(resolvedManualFrames.Contains);
+            flicker.RemoveAll(resolvedManualFrames.Contains);
         }
 
         noFace.Sort();

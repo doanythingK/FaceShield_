@@ -163,7 +163,17 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Confirm persistence snapshots exclude face-rect rows for stored-mask frame indices and commit payloads through a generation directory before state commit.
 - [x] Confirm manual Save persists the dirty preview mask before export creates its detached provider snapshot.
 
+### Manual issue-resolution persistence through stored masks
+
+- [x] Treat a stored manual bitmap as an already-resolved issue frame when rebuilding anomaly lists from provider state.
+- [x] Prevent a later Auto analysis/review rebuild from recreating no-face, low-confidence, or flicker issues on a frame the user has manually overridden.
+- [x] Keep unresolved neighboring frames eligible for review; stored-mask frames are filtered individually rather than being converted into synthetic detector anchors.
+
+### Issue-review restore limitation
+
+- [ ] **DEFERRED:** restore the exact completed issue-review list across process restart. Current workspace persistence stores masks and Auto completion/gate state, but not the historical issue classifier inputs or resolved issue sets. Recomputing unconditionally with current detector/filter settings can produce a different list, so exact issue-state persistence needs an explicit snapshot contract rather than an inferred rebuild.
+
 ## Next active block
 
-Continue with user-visible workspace state correctness around restored navigation/timeline state and issue-review selection. Do not reopen PATH or low-impact cache/resource cleanup without a reproduced correctness failure.
+Continue user-visible workspace state correctness outside the deferred exact issue-review snapshot contract. Prioritize saved navigation/edit/export behavior and avoid low-impact cleanup or speculative state reconstruction.
 
