@@ -297,6 +297,20 @@ namespace FaceShield.Services.Workspace
                     mode,
                     currentSourceEvidenceId);
                 backupState = backup == null ? null : CloneWorkspaceState(backup);
+
+                // Once the primary generation is source-evidence guarded, do not
+                // recover its payload from a legacy or differently evidenced backup.
+                // A backup without the same evidence can belong to an older source
+                // file that occupied the same path before the guarded save.
+                if (backupState != null &&
+                    !string.IsNullOrWhiteSpace(primaryState.SourceEvidenceId) &&
+                    !string.Equals(
+                        primaryState.SourceEvidenceId,
+                        backupState.SourceEvidenceId,
+                        StringComparison.Ordinal))
+                {
+                    backupState = null;
+                }
             }
 
             WorkspaceState stateToUse = primaryState;

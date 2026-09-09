@@ -189,11 +189,25 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Keep pre-evidence legacy workspace states readable; their next successful save upgrades them to the guarded state format.
 - [x] Fail closed for an evidence-bearing state if the current source evidence cannot be obtained.
 
+### Source-evidence backup fallback guard
+
+- [x] When the primary workspace generation carries source evidence, allow backup-payload recovery only from a backup carrying the exact same evidence.
+- [x] Prevent a legacy backup from reintroducing masks for an older file that previously occupied the same path after the primary generation has already upgraded to the guarded contract.
+- [x] Keep legacy-primary recovery compatibility unchanged until that workspace is successfully saved with source evidence.
+
+### Manual mask geometry / persistence compatibility audit
+
+- [x] Confirm preview rejects a stored bitmap whose dimensions do not match the decoded frame and does not stretch or apply it to the wrong geometry.
+- [x] Confirm face-rect geometry is likewise rejected when its recorded source size differs from the decoded frame.
+- [x] Confirm export remains fail-closed for a non-empty stored mask that cannot be applied to the decoded frame dimensions; it is not silently treated as successfully blurred.
+- [x] Confirm corrupt/undecodable primary mask payloads first attempt a complete backup-generation recovery.
+- [ ] **DEFERRED:** replace the final `requireComplete:false` partial workspace recovery with an explicit user-visible recovery contract. When both primary and backup payloads are incomplete, the current policy keeps the recoverable subset instead of failing the entire workspace; changing this safely requires surfacing partial-recovery state to the UI rather than silently discarding all remaining valid masks.
+
 ### Source mutation while workspace is open
 
 - [ ] **DEFERRED:** detect/reconcile a source file that is replaced while the same workspace instance remains open. The restore guard prevents stale state on the next open, but live-session source replacement needs a separate session invalidation contract across preview, analysis, and export.
 
-## Next active block
+## Hardening pass status
 
-Continue user-visible correctness without reopening deferred source-session mutation or exact issue-review snapshot work. Prefer concrete save/export/navigation failures over low-impact cleanup.
+The current high-priority ownership/workspace correctness pass is complete. No additional active code block remains from this pass. Resume only for a reproduced user-visible correctness failure or one of the explicitly deferred architectural items above.
 
