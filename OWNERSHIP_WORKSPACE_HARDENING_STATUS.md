@@ -49,6 +49,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Remove the unused `EvaluateAutoExportHybridPolicy` implementation instead of preserving a policy that is no longer reachable.
 - [x] Keep the active export contract unchanged: hybrid copy remains disabled by `WorkspaceExportCoordinator.HybridCopyDisabledReason` until bitstream compatibility is verified.
 
+### Workspace operation lifetime extraction
+
+- [x] Move operation admission/drain/dispose-claim synchronization out of `WorkspaceViewModel` into `WorkspaceOperationLifetime`.
+- [x] Preserve the existing disposal ordering: close admission first, request cancellation second, and dispose shared resources only after active operations drain.
+- [x] Keep coordinator lifetime callbacks on the same boolean begin / void end contract.
+
 ## Next active block
 
-Continue the historical responsibility/policy-boundary hardening sequence without reopening deferred PATH edge cases unless a reproduced failure requires it.
+Review terminal application-shutdown persistence ordering while auto/export operations are active. `SaveNow` closes the persistence queue before workspace disposal requests cancellation, so the shutdown boundary needs an explicit policy rather than relying on timing.
+
+

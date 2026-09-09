@@ -38,10 +38,7 @@ namespace FaceShield.ViewModels.Pages
         // 프레임별 최종 마스크 저장소
         private readonly FrameMaskProvider _maskProvider = new();
 
-        private readonly object _lifetimeSync = new();
-        private int _activeLifetimeOperations;
-        private bool _disposeRequested;
-        private bool _resourcesDisposed;
+        private readonly WorkspaceOperationLifetime _operationLifetime;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -101,6 +98,7 @@ namespace FaceShield.ViewModels.Pages
             _workspacePersistence = stateStore == null
                 ? null
                 : new WorkspacePersistenceCoordinator(stateStore, _maskProvider);
+            _operationLifetime = new WorkspaceOperationLifetime(ScheduleOwnedResourceDispose);
             initializationToken.ThrowIfCancellationRequested();
             FrameList = new FrameListViewModel(
                 videoPath,
@@ -108,15 +106,15 @@ namespace FaceShield.ViewModels.Pages
             FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);
             _issueReview = new IssueReviewCoordinator(
                 _maskProvider,
-                TryBeginLifetimeOperation,
-                EndLifetimeOperation);
+                _operationLifetime.TryBegin,
+                _operationLifetime.End);
             _issueReview.StateChanged += ApplyIssueReviewState;
             _exportCoordinator = new WorkspaceExportCoordinator(
                 _maskProvider,
                 ToolPanel,
                 () => _autoRunCoordinator?.IsRunning == true,
-                TryBeginLifetimeOperation,
-                EndLifetimeOperation,
+                _operationLifetime.TryBegin,
+                _operationLifetime.End,
                 ResolveExportOutputPathAsync);
             _autoRunCoordinator = new AutoMaskRunCoordinator(
                 Mode,
@@ -130,8 +128,8 @@ namespace FaceShield.ViewModels.Pages
                 () => _detectorOptions,
                 () => _detectorFactoryOptions,
                 () => HideResolvedIssues,
-                TryBeginLifetimeOperation,
-                EndLifetimeOperation,
+                _operationLifetime.TryBegin,
+                _operationLifetime.End,
                 PersistWorkspaceState);
             _sessionPlaybackCoordinator = new WorkspaceSessionPlaybackCoordinator(
                 Mode,
@@ -139,8 +137,8 @@ namespace FaceShield.ViewModels.Pages
                 FramePreview,
                 () => _autoRunCoordinator.IsRunning,
                 _autoRunCoordinator.MarkPreviewNeedsExactRefresh,
-                TryBeginLifetimeOperation,
-                EndLifetimeOperation,
+                _operationLifetime.TryBegin,
+                _operationLifetime.End,
                 message => ShowErrorDialogAsync("재생 실패", message));
             if (!deferSessionInit)
                 _sessionPlaybackCoordinator.Initialize(loadProgress, initializationToken);
@@ -500,7 +498,7 @@ namespace FaceShield.ViewModels.Pages
                 FramePreview.PersistCurrentMask();
 
             WorkspaceSnapshot snapshot = BuildSnapshot();
-            if (!TryBeginLifetimeOperation())
+            if (!_operationLifetime.TryBegin())
                 return;
 
             Task saveTask;
@@ -510,7 +508,7 @@ namespace FaceShield.ViewModels.Pages
             }
             catch
             {
-                EndLifetimeOperation();
+                _operationLifetime.End();
                 throw;
             }
 
@@ -530,7 +528,7 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                EndLifetimeOperation();
+                _operationLifetime.End();
             }
         }
 
@@ -585,38 +583,6 @@ namespace FaceShield.ViewModels.Pages
             FrameList.SelectedFrameIndex = state.SelectedFrameIndex;
         }
 
-        private bool TryBeginLifetimeOperation()
-        {
-            lock (_lifetimeSync)
-            {
-                if (_disposeRequested)
-                    return false;
-
-                _activeLifetimeOperations++;
-                return true;
-            }
-        }
-
-        private void EndLifetimeOperation()
-        {
-            bool disposeNow = false;
-            lock (_lifetimeSync)
-            {
-                if (_activeLifetimeOperations > 0)
-                    _activeLifetimeOperations--;
-
-                if (_disposeRequested &&
-                    _activeLifetimeOperations == 0 &&
-                    !_resourcesDisposed)
-                {
-                    _resourcesDisposed = true;
-                    disposeNow = true;
-                }
-            }
-
-            if (disposeNow)
-                ScheduleOwnedResourceDispose();
-        }
 
         private void ScheduleOwnedResourceDispose()
         {
@@ -643,19 +609,8 @@ namespace FaceShield.ViewModels.Pages
 
         public void Dispose()
         {
-            bool disposeNow = false;
-            lock (_lifetimeSync)
-            {
-                if (_disposeRequested)
-                    return;
-
-                _disposeRequested = true;
-                if (_activeLifetimeOperations == 0 && !_resourcesDisposed)
-                {
-                    _resourcesDisposed = true;
-                    disposeNow = true;
-                }
-            }
+            if (!_operationLifetime.RequestDispose(out bool disposeNow))
+                return;
 
             _autoRunCoordinator.Cancel();
             _exportCoordinator.Cancel();
