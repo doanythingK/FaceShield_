@@ -491,19 +491,16 @@ namespace FaceShield.ViewModels.Pages
 
         private void PersistWorkspaceState(bool includePreviewMask)
         {
-            if (_workspacePersistence == null)
-                return;
-
-            if (includePreviewMask)
-                FramePreview.PersistCurrentMask();
-
-            WorkspaceSnapshot snapshot = BuildSnapshot();
-            if (!_operationLifetime.TryBegin())
+            if (_workspacePersistence == null || !_operationLifetime.TryBegin())
                 return;
 
             Task saveTask;
             try
             {
+                if (includePreviewMask)
+                    FramePreview.PersistCurrentMask();
+
+                WorkspaceSnapshot snapshot = BuildSnapshot();
                 saveTask = _workspacePersistence.QueueSaveAsync(snapshot);
             }
             catch
@@ -607,15 +604,26 @@ namespace FaceShield.ViewModels.Pages
             _maskProvider.Dispose();
         }
 
+        public void PrepareForAppShutdown()
+        {
+            if (_operationLifetime.CloseAdmission())
+                CancelOwnedOperations();
+        }
+
+        private void CancelOwnedOperations()
+        {
+            _autoRunCoordinator.Cancel();
+            _exportCoordinator.Cancel();
+            _sessionPlaybackCoordinator.CancelInitialization();
+            CancelIssueTimeRefresh();
+        }
+
         public void Dispose()
         {
             if (!_operationLifetime.RequestDispose(out bool disposeNow))
                 return;
 
-            _autoRunCoordinator.Cancel();
-            _exportCoordinator.Cancel();
-            _sessionPlaybackCoordinator.CancelInitialization();
-            CancelIssueTimeRefresh();
+            CancelOwnedOperations();
 
             if (disposeNow)
                 ScheduleOwnedResourceDispose();

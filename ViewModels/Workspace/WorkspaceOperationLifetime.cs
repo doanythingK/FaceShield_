@@ -12,6 +12,7 @@ internal sealed class WorkspaceOperationLifetime
     private readonly object _sync = new();
     private readonly Action _onOperationsDrained;
     private int _activeOperations;
+    private bool _admissionClosed;
     private bool _disposeRequested;
     private bool _disposeClaimed;
 
@@ -25,10 +26,27 @@ internal sealed class WorkspaceOperationLifetime
     {
         lock (_sync)
         {
-            if (_disposeRequested)
+            if (_admissionClosed)
                 return false;
 
             _activeOperations++;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Stops new lifetime operations without claiming resource disposal. This is
+    /// used by terminal shutdown so cancellation and final persistence can run
+    /// while already-started operations drain.
+    /// </summary>
+    internal bool CloseAdmission()
+    {
+        lock (_sync)
+        {
+            if (_admissionClosed)
+                return false;
+
+            _admissionClosed = true;
             return true;
         }
     }
@@ -69,6 +87,7 @@ internal sealed class WorkspaceOperationLifetime
                 return false;
             }
 
+            _admissionClosed = true;
             _disposeRequested = true;
             disposeNow = _activeOperations == 0 && !_disposeClaimed;
             if (disposeNow)

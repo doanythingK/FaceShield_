@@ -55,8 +55,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Preserve the existing disposal ordering: close admission first, request cancellation second, and dispose shared resources only after active operations drain.
 - [x] Keep coordinator lifetime callbacks on the same boolean begin / void end contract.
 
+### Terminal shutdown persistence boundary
+
+- [x] Close workspace operation admission and request cancellation before terminal `SaveNow` persistence starts.
+- [x] Cancel Home-owned auto/load/model-download tokens before the workspace terminal-save loop.
+- [x] Move queued persistence lifetime admission ahead of preview/snapshot capture so a closed/disposed workspace does not touch owned resources before being rejected.
+- [x] Preserve the final ordering as: close admission/cancel -> terminal save -> dispose/drain.
+
 ## Next active block
 
-Review terminal application-shutdown persistence ordering while auto/export operations are active. `SaveNow` closes the persistence queue before workspace disposal requests cancellation, so the shutdown boundary needs an explicit policy rather than relying on timing.
-
+Continue resource/ownership hardening by auditing remaining callbacks and fire-and-forget UI dispatches for work that can outlive their owning workspace.
 

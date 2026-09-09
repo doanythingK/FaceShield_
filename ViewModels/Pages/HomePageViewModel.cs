@@ -2364,6 +2364,19 @@ namespace FaceShield.ViewModels.Pages
             OnPropertyChanged(nameof(HasNoRecents));
         }
 
+        public void PrepareAllWorkspacesForShutdown()
+        {
+            try { Volatile.Read(ref _autoCts)?.Cancel(); }
+            catch (ObjectDisposedException) { }
+            try { Volatile.Read(ref _workspaceLoadCts)?.Cancel(); }
+            catch (ObjectDisposedException) { }
+            try { Volatile.Read(ref _yoloDownloadCts)?.Cancel(); }
+            catch (ObjectDisposedException) { }
+
+            foreach (var workspace in _workspaceCache.Values.Distinct())
+                workspace.PrepareForAppShutdown();
+        }
+
         public void PersistAllWorkspaces()
         {
             foreach (var vm in _workspaceCache.Values)
@@ -2409,7 +2422,7 @@ namespace FaceShield.ViewModels.Pages
 
         public void DisposeAllWorkspaces()
         {
-            _yoloDownloadCts?.Cancel();
+            PrepareAllWorkspacesForShutdown();
 
             foreach (var workspace in _workspaceCache.Values.Distinct())
                 workspace.Dispose();
