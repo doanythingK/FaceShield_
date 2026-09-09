@@ -485,12 +485,13 @@ namespace FaceShield.ViewModels.Pages
             PersistAutoSettings();
         }
 
+        public bool IsShutdownRequested => Volatile.Read(ref _shutdownRequested) != 0;
         public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
         public bool CanStartWorkspace =>
             CanOpenWorkspace &&
             !IsAutoRunning &&
             !IsWorkspaceLoading &&
-            Volatile.Read(ref _shutdownRequested) == 0;
+            !IsShutdownRequested;
         public string SelectedVideoDisplayName => string.IsNullOrWhiteSpace(SelectedVideoPath)
             ? "영상을 선택해 주세요"
             : Path.GetFileName(SelectedVideoPath);
@@ -1455,6 +1456,9 @@ namespace FaceShield.ViewModels.Pages
 
         public async Task PickVideoAsync(IStorageProvider storageProvider)
         {
+            if (IsShutdownRequested)
+                return;
+
             var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = "영상 파일 선택",
@@ -1468,12 +1472,15 @@ namespace FaceShield.ViewModels.Pages
                 ]
             });
 
+            if (IsShutdownRequested)
+                return;
+
             var file = files.Count > 0 ? files[0] : null;
             if (file is null)
                 return;
 
             var localPath = file.TryGetLocalPath();
-            if (string.IsNullOrWhiteSpace(localPath))
+            if (string.IsNullOrWhiteSpace(localPath) || IsShutdownRequested)
                 return;
 
             SelectedVideoPath = WorkspacePathIdentity.NormalizeAccessPath(localPath);
@@ -1482,6 +1489,9 @@ namespace FaceShield.ViewModels.Pages
 
         public async Task PickYoloModelAsync(IStorageProvider storageProvider)
         {
+            if (IsShutdownRequested)
+                return;
+
             var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = "YOLO ONNX 모델 선택",
@@ -1495,12 +1505,15 @@ namespace FaceShield.ViewModels.Pages
                 ]
             });
 
+            if (IsShutdownRequested)
+                return;
+
             var file = files.Count > 0 ? files[0] : null;
             if (file is null)
                 return;
 
             var localPath = file.TryGetLocalPath();
-            if (string.IsNullOrWhiteSpace(localPath))
+            if (string.IsNullOrWhiteSpace(localPath) || IsShutdownRequested)
                 return;
 
             AutoYoloModelPath = localPath;
@@ -1509,28 +1522,36 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand(CanExecute = nameof(CanCancelYoloModelDownload))]
         private void CancelYoloModelDownload()
         {
-            _yoloDownloadCts?.Cancel();
+            try { Volatile.Read(ref _yoloDownloadCts)?.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         [RelayCommand(CanExecute = nameof(CanDownloadYoloModel))]
         private async Task DownloadYoloModelAsync()
         {
+            if (IsShutdownRequested)
+                return;
+
             var modelType = SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.Yolo5Face;
             var downloadInfo = YoloModelDownloadService.GetInfo(modelType);
             string destinationPath = YoloModelDownloadService.GetDestinationPath(modelType);
 
             if (YoloModelDownloadService.IsDownloaded(modelType))
             {
+                if (IsShutdownRequested)
+                    return;
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
                 YoloModelDownloadStatus = $"이미 다운로드됨: {downloadInfo.FileName}";
                 return;
             }
 
-            _yoloDownloadCts?.Cancel();
-            _yoloDownloadCts?.Dispose();
-            var downloadCts = new CancellationTokenSource();
-            _yoloDownloadCts = downloadCts;
+            CancellationTokenSource downloadCts = BeginYoloDownload();
+            if (!IsCurrentYoloDownload(downloadCts))
+            {
+                EndYoloDownload(downloadCts);
+                return;
+            }
 
             IsYoloModelDownloading = true;
             YoloModelDownloadProgress = 0;
@@ -1538,32 +1559,40 @@ namespace FaceShield.ViewModels.Pages
 
             try
             {
-                var progress = new Progress<int>(value => YoloModelDownloadProgress = value);
+                var progress = new Progress<int>(value =>
+                {
+                    if (CanApplyYoloDownloadProgress(downloadCts))
+                        YoloModelDownloadProgress = value;
+                });
                 destinationPath = await YoloModelDownloadService.DownloadAsync(
                     modelType,
                     progress,
                     downloadCts.Token);
 
+                if (!CanApplyYoloDownloadProgress(downloadCts))
+                    return;
                 AutoYoloModelPath = destinationPath;
                 YoloModelDownloadProgress = 100;
                 YoloModelDownloadStatus = $"다운로드 완료: {downloadInfo.FileName}";
             }
             catch (OperationCanceledException)
             {
-                YoloModelDownloadProgress = 0;
-                YoloModelDownloadStatus = $"다운로드 취소됨: {downloadInfo.FileName}";
+                if (IsCurrentYoloDownload(downloadCts))
+                {
+                    YoloModelDownloadProgress = 0;
+                    YoloModelDownloadStatus = $"다운로드 취소됨: {downloadInfo.FileName}";
+                }
             }
             catch (Exception ex)
             {
-                YoloModelDownloadStatus = $"다운로드 실패: {ex.Message}";
+                if (IsCurrentYoloDownload(downloadCts))
+                    YoloModelDownloadStatus = $"다운로드 실패: {ex.Message}";
             }
             finally
             {
-                if (ReferenceEquals(_yoloDownloadCts, downloadCts))
-                    _yoloDownloadCts = null;
-
-                downloadCts.Dispose();
-                IsYoloModelDownloading = false;
+                bool wasCurrent = EndYoloDownload(downloadCts);
+                if (wasCurrent && !IsShutdownRequested)
+                    IsYoloModelDownloading = false;
             }
         }
 
@@ -1589,7 +1618,11 @@ namespace FaceShield.ViewModels.Pages
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
             try
             {
-                var progress = new Progress<int>(p => WorkspaceLoadingProgress = p);
+                var progress = new Progress<int>(p =>
+                {
+                    if (CanApplyWorkspaceLoadProgress(loadCts))
+                        WorkspaceLoadingProgress = p;
+                });
 
                 var autoOptions = BuildAutoOptions();
                 var detectorFactoryOptions = BuildDetectorFactoryOptions();
@@ -1615,11 +1648,13 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                EndWorkspaceLoad(loadCts);
-                IsWorkspaceLoading = false;
+                bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                if (wasCurrentLoad && !IsShutdownRequested)
+                    IsWorkspaceLoading = false;
             }
 
-            _onStartWorkspace(vm);
+            if (!IsShutdownRequested)
+                _onStartWorkspace(vm);
         }
 
         [RelayCommand]
@@ -1671,22 +1706,28 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                EndWorkspaceLoad(loadCts);
-                IsWorkspaceLoading = false;
+                bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                if (wasCurrentLoad && !IsShutdownRequested)
+                    IsWorkspaceLoading = false;
             }
+
+            if (IsShutdownRequested)
+                return;
 
             if (vm.NeedsAutoResumePrompt)
             {
                 bool resume = await ShowResumeAutoDialogAsync();
+                if (IsShutdownRequested)
+                    return;
                 if (!resume)
                 {
-                    if (await EnsureWorkspaceReadyAsync(vm))
+                    if (await EnsureWorkspaceReadyAsync(vm) && !IsShutdownRequested)
                         _onStartWorkspace(vm);
                     return;
                 }
             }
 
-            if (IsAutoRunning)
+            if (IsAutoRunning || IsShutdownRequested)
                 return;
 
             IsAutoRunning = true;
@@ -1703,74 +1744,94 @@ namespace FaceShield.ViewModels.Pages
                 do
                 {
                     _autoRestartRequested = false;
-                    _autoCts?.Dispose();
-                    _autoCts = new CancellationTokenSource();
-                    _autoStartTimeUtc = DateTime.UtcNow;
-                    _autoLastProgressAtUtc = _autoStartTimeUtc;
-
-                    var progress = new Progress<int>(p =>
+                    CancellationTokenSource runCts = BeginAutoRun();
+                    try
                     {
-                        AutoProgress = p;
-                        _autoLastProgressAtUtc = DateTime.UtcNow;
-                    });
-
-                    int lastExportPercent = -1;
-                    string? lastExportStatus = null;
-                    long lastExportUiTick = 0;
-                    var exportProgress = new Progress<ExportProgress>(p =>
-                    {
-                        int percent = Math.Clamp(p.Percent, 0, 100);
-                        string? status = string.IsNullOrWhiteSpace(p.StatusMessage) ? null : p.StatusMessage;
-                        bool percentChanged = percent != lastExportPercent;
-                        bool statusChanged = status != null &&
-                            !string.Equals(status, lastExportStatus, StringComparison.Ordinal);
-                        long nowTick = Environment.TickCount64;
-                        bool etaDue = nowTick - lastExportUiTick >= 250;
-                        if (!percentChanged && !statusChanged && !etaDue)
+                        if (!CanApplyAutoRunProgress(runCts))
                             return;
 
-                        lastExportPercent = percent;
-                        if (statusChanged)
-                            lastExportStatus = status;
-                        lastExportUiTick = nowTick;
+                        _autoStartTimeUtc = DateTime.UtcNow;
+                        _autoLastProgressAtUtc = _autoStartTimeUtc;
 
-                        IsExportRunning = true;
-                        ExportProgress = percent;
-                        UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
-                        if (statusChanged)
-                            ExportStatusText = status;
-                        if (ExportProgress == 0 && string.IsNullOrWhiteSpace(ExportEtaText))
-                            ExportEtaText = "예상 남은 시간 계산 중...";
-                    });
+                        var progress = new Progress<int>(p =>
+                        {
+                            if (!CanApplyAutoRunProgress(runCts))
+                                return;
+                            AutoProgress = p;
+                            _autoLastProgressAtUtc = DateTime.UtcNow;
+                        });
 
-                    completed = await vm.RunAutoAsync(
-                        exportAfter: AutoExportAfter,
-                        progress,
-                        _autoCts.Token,
-                        exportProgress);
+                        int lastExportPercent = -1;
+                        string? lastExportStatus = null;
+                        long lastExportUiTick = 0;
+                        var exportProgress = new Progress<ExportProgress>(p =>
+                        {
+                            if (!CanApplyAutoRunProgress(runCts))
+                                return;
+
+                            int percent = Math.Clamp(p.Percent, 0, 100);
+                            string? status = string.IsNullOrWhiteSpace(p.StatusMessage) ? null : p.StatusMessage;
+                            bool percentChanged = percent != lastExportPercent;
+                            bool statusChanged = status != null &&
+                                !string.Equals(status, lastExportStatus, StringComparison.Ordinal);
+                            long nowTick = Environment.TickCount64;
+                            bool etaDue = nowTick - lastExportUiTick >= 250;
+                            if (!percentChanged && !statusChanged && !etaDue)
+                                return;
+
+                            lastExportPercent = percent;
+                            if (statusChanged)
+                                lastExportStatus = status;
+                            lastExportUiTick = nowTick;
+
+                            IsExportRunning = true;
+                            ExportProgress = percent;
+                            UpdateExportEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
+                            if (statusChanged)
+                                ExportStatusText = status;
+                            if (ExportProgress == 0 && string.IsNullOrWhiteSpace(ExportEtaText))
+                                ExportEtaText = "예상 남은 시간 계산 중...";
+                        });
+
+                        completed = await vm.RunAutoAsync(
+                            exportAfter: AutoExportAfter,
+                            progress,
+                            runCts.Token,
+                            exportProgress);
+                    }
+                    finally
+                    {
+                        EndAutoRun(runCts);
+                    }
                 }
-                while (_autoRestartRequested);
+                while (_autoRestartRequested && !IsShutdownRequested);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
             }
             catch (Exception ex)
             {
-                await ShowAutoErrorAsync(ex, isDuringRun: true);
+                if (!IsShutdownRequested)
+                    await ShowAutoErrorAsync(ex, isDuringRun: true);
                 return;
             }
             finally
             {
-                _autoCts?.Dispose();
-                _autoCts = null;
-                IsAutoRunning = false;
-                IsExportRunning = false;
-                StopAutoStatusTimer();
+                if (!IsShutdownRequested)
+                {
+                    IsAutoRunning = false;
+                    IsExportRunning = false;
+                }
+                StopAutoStatusTimer(clearUi: !IsShutdownRequested);
                 _activeAutoWorkspace = null;
             }
 
-            if (completed)
+            if (completed && !IsShutdownRequested)
             {
                 if (!AutoExportAfter)
                 {
-                    if (await EnsureWorkspaceReadyAsync(vm))
+                    if (await EnsureWorkspaceReadyAsync(vm) && !IsShutdownRequested)
                         _onStartWorkspace(vm);
                 }
             }
@@ -1783,29 +1844,79 @@ namespace FaceShield.ViewModels.Pages
         private void OpenAbout() { }
 
         private CancellationTokenSource BeginWorkspaceLoad()
+            => BeginOwnedOperation(ref _workspaceLoadCts);
+
+        private bool EndWorkspaceLoad(CancellationTokenSource cts)
+            => EndOwnedOperation(ref _workspaceLoadCts, cts);
+
+        private CancellationTokenSource BeginAutoRun()
+            => BeginOwnedOperation(ref _autoCts);
+
+        private bool EndAutoRun(CancellationTokenSource cts)
+            => EndOwnedOperation(ref _autoCts, cts);
+
+        private CancellationTokenSource BeginYoloDownload()
+            => BeginOwnedOperation(ref _yoloDownloadCts);
+
+        private bool EndYoloDownload(CancellationTokenSource cts)
+            => EndOwnedOperation(ref _yoloDownloadCts, cts);
+
+        private CancellationTokenSource BeginOwnedOperation(
+            ref CancellationTokenSource? slot)
         {
             var cts = new CancellationTokenSource();
-            CancellationTokenSource? previous =
-                Interlocked.Exchange(ref _workspaceLoadCts, cts);
+            CancellationTokenSource? previous = null;
+            lock (_workspaceCacheGate)
+            {
+                if (_shutdownRequested != 0)
+                {
+                    cts.Cancel();
+                    return cts;
+                }
+
+                previous = Interlocked.Exchange(ref slot, cts);
+            }
+
             if (previous != null)
             {
                 try { previous.Cancel(); }
                 catch (ObjectDisposedException) { }
-                previous.Dispose();
             }
 
             return cts;
         }
 
-        private void EndWorkspaceLoad(
+        private static bool EndOwnedOperation(
+            ref CancellationTokenSource? slot,
             CancellationTokenSource cts)
         {
-            Interlocked.CompareExchange(
-                ref _workspaceLoadCts,
-                null,
+            bool wasCurrent = ReferenceEquals(
+                Interlocked.CompareExchange(ref slot, null, cts),
                 cts);
             cts.Dispose();
+            return wasCurrent;
         }
+
+        private bool IsCurrentWorkspaceLoad(CancellationTokenSource cts)
+            => !IsShutdownRequested &&
+               ReferenceEquals(Volatile.Read(ref _workspaceLoadCts), cts);
+
+        private bool CanApplyWorkspaceLoadProgress(CancellationTokenSource cts)
+            => IsCurrentWorkspaceLoad(cts) && !cts.IsCancellationRequested;
+
+        private bool IsCurrentAutoRun(CancellationTokenSource cts)
+            => !IsShutdownRequested &&
+               ReferenceEquals(Volatile.Read(ref _autoCts), cts);
+
+        private bool CanApplyAutoRunProgress(CancellationTokenSource cts)
+            => IsCurrentAutoRun(cts) && !cts.IsCancellationRequested;
+
+        private bool IsCurrentYoloDownload(CancellationTokenSource cts)
+            => !IsShutdownRequested &&
+               ReferenceEquals(Volatile.Read(ref _yoloDownloadCts), cts);
+
+        private bool CanApplyYoloDownloadProgress(CancellationTokenSource cts)
+            => IsCurrentYoloDownload(cts) && !cts.IsCancellationRequested;
 
         [RelayCommand]
         private void CancelWorkspaceLoading()
@@ -1817,21 +1928,26 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private void CancelAuto()
         {
-            _autoCts?.Cancel();
+            try { Volatile.Read(ref _autoCts)?.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         [RelayCommand]
         private void CancelExport()
         {
-            _autoCts?.Cancel();
+            try { Volatile.Read(ref _autoCts)?.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         [RelayCommand]
         private async Task ShowBlurPreviewAsync()
         {
+            if (IsShutdownRequested)
+                return;
+
             var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
             var owner = lifetime?.MainWindow;
-            if (owner == null)
+            if (owner == null || IsShutdownRequested)
                 return;
 
             var dialog = new BlurPreviewDialog(this);
@@ -1861,6 +1977,9 @@ namespace FaceShield.ViewModels.Pages
 
         private void StartAutoStatusTimer()
         {
+            if (IsShutdownRequested)
+                return;
+
             if (_autoStatusTimer == null)
             {
                 _autoStatusTimer = new DispatcherTimer
@@ -1873,18 +1992,22 @@ namespace FaceShield.ViewModels.Pages
             _autoStatusTimer.Start();
         }
 
-        private void StopAutoStatusTimer()
+        private void StopAutoStatusTimer(bool clearUi = true)
         {
             if (_autoStatusTimer == null)
                 return;
 
             _autoStatusTimer.Stop();
-            UpdateAutoStatusText(clear: true);
+            if (clearUi && !IsShutdownRequested)
+                UpdateAutoStatusText(clear: true);
             _etaFrameSamples.Clear();
         }
 
         private void UpdateAutoStatusText(bool clear = false)
         {
+            if (IsShutdownRequested)
+                return;
+
             if (clear)
             {
                 AutoStatusText = null;
@@ -2211,8 +2334,11 @@ namespace FaceShield.ViewModels.Pages
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
             try
             {
-                var loadProgress =
-                    new Progress<int>(p => WorkspaceLoadingProgress = p);
+                var loadProgress = new Progress<int>(p =>
+                {
+                    if (CanApplyWorkspaceLoadProgress(loadCts))
+                        WorkspaceLoadingProgress = p;
+                });
                 await vm.EnsureSessionInitializedAsync(
                     loadProgress,
                     loadCts.Token);
@@ -2225,27 +2351,35 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                EndWorkspaceLoad(loadCts);
-                IsWorkspaceLoading = false;
+                bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                if (wasCurrentLoad && !IsShutdownRequested)
+                    IsWorkspaceLoading = false;
             }
         }
 
         private async Task<bool> ShowResumeAutoDialogAsync()
         {
+            if (IsShutdownRequested)
+                return false;
+
             var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
             var owner = lifetime?.MainWindow;
-            if (owner == null)
+            if (owner == null || IsShutdownRequested)
                 return false;
 
             var dialog = new ResumeAutoDialog();
-            return await dialog.ShowDialog<bool>(owner);
+            bool resume = await dialog.ShowDialog<bool>(owner);
+            return !IsShutdownRequested && resume;
         }
 
         private Task ShowErrorDialogAsync(string title, string message)
         {
+            if (IsShutdownRequested)
+                return Task.CompletedTask;
+
             var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
             var owner = lifetime?.MainWindow;
-            if (owner == null)
+            if (owner == null || IsShutdownRequested)
                 return Task.CompletedTask;
 
             var dialog = new ErrorDialog(title, message);
@@ -2255,7 +2389,7 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private async Task CopyAccelStatusAsync()
         {
-            if (string.IsNullOrWhiteSpace(AutoAccelStatus))
+            if (IsShutdownRequested || string.IsNullOrWhiteSpace(AutoAccelStatus))
                 return;
 
             var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
@@ -2397,7 +2531,7 @@ namespace FaceShield.ViewModels.Pages
 
         private void TouchRecent(string? videoPath)
         {
-            if (string.IsNullOrWhiteSpace(videoPath))
+            if (IsShutdownRequested || string.IsNullOrWhiteSpace(videoPath))
                 return;
 
             WorkspacePathIdentity.PathContext pathContext =
@@ -2441,6 +2575,7 @@ namespace FaceShield.ViewModels.Pages
             catch (ObjectDisposedException) { }
             try { Volatile.Read(ref _yoloDownloadCts)?.Cancel(); }
             catch (ObjectDisposedException) { }
+            StopAutoStatusTimer(clearUi: false);
 
             foreach (var workspace in workspaces)
                 workspace.PrepareForAppShutdown();

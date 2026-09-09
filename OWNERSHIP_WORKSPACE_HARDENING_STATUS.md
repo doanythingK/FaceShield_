@@ -84,7 +84,15 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Prevent recent-list trimming from disposing the workspace that is still the current page; defer that eviction and persistent-state removal until navigation returns Home.
 - [x] Recheck cancellation/shutdown before manual/auto navigation and after deferred session initialization.
 
+### Home asynchronous UI lifetime
+
+- [x] Register Home-owned load/auto/download cancellation sources under the same shutdown gate so no new operation can escape cancellation after shutdown admission closes.
+- [x] Gate queued workspace-load, auto-run, export, and model-download progress callbacks by the exact operation generation before mutating Home UI state.
+- [x] Prevent stale operation finalizers from clearing busy/download state owned by a newer operation.
+- [x] Suppress file-picker, resume/error/blur-dialog, clipboard, startup-continuation, and workspace-navigation mutations after shutdown begins.
+- [x] Stop the Home auto-status timer during shutdown and detach the current-page reference from a workspace before terminal persistence/disposal.
+
 ## Next active block
 
-Audit Home-owned asynchronous UI work (model download, preview dialog, startup/open continuations, and progress callbacks) for callbacks that can mutate Home state after application shutdown begins.
+Audit Home/application-root resource disposal (generated blur-preview bitmaps, timer/event lifetime, and app-exit idempotency) and fix only resources that remain rooted or can be disposed twice across shutdown paths.
 

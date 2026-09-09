@@ -61,6 +61,9 @@ namespace FaceShield.ViewModels
                 else
                     await _home.OpenManualWorkspaceCommand.ExecuteAsync(null);
 
+                if (_home.IsShutdownRequested)
+                    return;
+
                 if (_startupFrameIndex.HasValue &&
                     CurrentPage is WorkspaceViewModel workspace &&
                     workspace.FrameList.TotalFrames > 0)
@@ -73,13 +76,15 @@ namespace FaceShield.ViewModels
             }
             catch (Exception ex)
             {
-                _home.WorkspaceLoadingMessage = $"시작 옵션 처리 실패: {ex.Message}";
+                if (!_home.IsShutdownRequested)
+                    _home.WorkspaceLoadingMessage = $"시작 옵션 처리 실패: {ex.Message}";
             }
         }
 
         public void PersistAppState()
         {
             _home.PrepareAllWorkspacesForShutdown();
+            CurrentPage = _home;
             try
             {
                 _home.PersistAllWorkspaces();
