@@ -149,7 +149,21 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Block brush/eraser/undo mutation while sequential playback is active so playback frame replacement cannot silently discard a manual stroke.
 - [x] Invalidate editable mask state immediately when playback stops; editing resumes only after the exact stopped frame is reloaded.
 
+### Estimated frame-count workspace restore
+
+- [x] Preserve a saved selected frame ordinal when the current container frame count is only an estimate; an estimate is not treated as a hard upper bound during restore.
+- [x] Let `FrameListViewModel` extend its provisional `TotalFrames` when the restored selection lies beyond the fresh metadata estimate.
+- [x] Keep the existing hard clamp when the frame count is known exactly.
+- [x] Bound the preserved estimated ordinal below `int.MaxValue` so provisional `selected + 1` expansion cannot overflow.
+
+### Manual mask persistence / export handoff audit
+
+- [x] Confirm stored bitmap masks remain authoritative over face-rect masks in `FrameMaskProvider`.
+- [x] Confirm workspace restore applies face rectangles first and stored bitmap masks second, preserving manual overrides.
+- [x] Confirm persistence snapshots exclude face-rect rows for stored-mask frame indices and commit payloads through a generation directory before state commit.
+- [x] Confirm manual Save persists the dirty preview mask before export creates its detached provider snapshot.
+
 ## Next active block
 
-Continue manual-mask persistence correctness through persistence serialization/restore and export snapshot handoff. Focus on code-confirmed cases that can lose a stored manual override or apply it to the wrong frame; keep UI-only polish and low-impact resource cleanup deferred.
+Continue with user-visible workspace state correctness around restored navigation/timeline state and issue-review selection. Do not reopen PATH or low-impact cache/resource cleanup without a reproduced correctness failure.
 

@@ -65,6 +65,7 @@ namespace FaceShield.Services.Workspace
             WorkspaceSnapshot snapshot,
             double currentSecondsPerScreen,
             int totalFrames,
+            bool isTotalFramesEstimated,
             string hybridDisabledReason)
         {
             if (snapshot == null)
@@ -73,9 +74,25 @@ namespace FaceShield.Services.Workspace
             double secondsPerScreen = snapshot.SecondsPerScreen > 0
                 ? snapshot.SecondsPerScreen
                 : currentSecondsPerScreen;
-            int selectedFrameIndex = totalFrames <= 0
-                ? -1
-                : Math.Clamp(snapshot.SelectedFrameIndex, 0, totalFrames - 1);
+            int selectedFrameIndex;
+            if (isTotalFramesEstimated)
+            {
+                // An estimated container count is not an upper bound. A previous
+                // session may already have navigated past that estimate, so preserve
+                // the saved ordinal and let FrameListViewModel extend its provisional
+                // range when the selection is restored. Keep one slot below int.MaxValue
+                // because the estimated-range setter may expand to selected + 1.
+                selectedFrameIndex = Math.Clamp(
+                    snapshot.SelectedFrameIndex,
+                    0,
+                    int.MaxValue - 1);
+            }
+            else
+            {
+                selectedFrameIndex = totalFrames <= 0
+                    ? -1
+                    : Math.Clamp(snapshot.SelectedFrameIndex, 0, totalFrames - 1);
+            }
 
             return new WorkspaceRestoreState(
                 snapshot.AutoResumeIndex,

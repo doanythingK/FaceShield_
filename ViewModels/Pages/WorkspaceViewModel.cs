@@ -577,6 +577,7 @@ namespace FaceShield.ViewModels.Pages
                 snapshot,
                 FrameList.SecondsPerScreen,
                 FrameList.TotalFrames,
+                FrameList.IsTotalFramesEstimated,
                 WorkspaceExportCoordinator.HybridCopyDisabledReason);
 
             _autoRunCoordinator.RestoreState(
