@@ -1616,6 +1616,7 @@ namespace FaceShield.ViewModels.Pages
 
             WorkspaceViewModel vm;
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
+            bool loadAccepted = false;
             try
             {
                 var progress = new Progress<int>(p =>
@@ -1639,10 +1640,22 @@ namespace FaceShield.ViewModels.Pages
                         loadCts.Token),
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                if (IsShutdownRequested)
+                if (!IsCurrentWorkspaceLoad(loadCts))
                     return;
-                await Dispatcher.UIThread.InvokeAsync(
-                    () => ApplyWorkspaceOptions(vm, autoOptions, detectorFactoryOptions));
+
+                bool optionsApplied = false;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (!CanApplyWorkspaceLoadProgress(loadCts))
+                        return;
+
+                    ApplyWorkspaceOptions(vm, autoOptions, detectorFactoryOptions);
+                    optionsApplied = true;
+                });
+                if (!optionsApplied || !CanApplyWorkspaceLoadProgress(loadCts))
+                    return;
+
+                loadAccepted = true;
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -1650,12 +1663,14 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
+                bool wasCancelled = loadCts.IsCancellationRequested;
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                loadAccepted = loadAccepted && wasCurrentLoad && !wasCancelled;
                 if (wasCurrentLoad && !IsShutdownRequested)
                     IsWorkspaceLoading = false;
             }
 
-            if (!IsShutdownRequested)
+            if (loadAccepted && !IsShutdownRequested)
                 _onStartWorkspace(vm);
         }
 
@@ -1682,6 +1697,7 @@ namespace FaceShield.ViewModels.Pages
 
             WorkspaceViewModel vm;
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
+            bool loadAccepted = false;
             try
             {
                 var autoOptions = BuildAutoOptions();
@@ -1699,10 +1715,22 @@ namespace FaceShield.ViewModels.Pages
                         loadCts.Token),
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                if (IsShutdownRequested)
+                if (!IsCurrentWorkspaceLoad(loadCts))
                     return;
-                await Dispatcher.UIThread.InvokeAsync(
-                    () => ApplyWorkspaceOptions(vm, autoOptions, detectorFactoryOptions));
+
+                bool optionsApplied = false;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (!CanApplyWorkspaceLoadProgress(loadCts))
+                        return;
+
+                    ApplyWorkspaceOptions(vm, autoOptions, detectorFactoryOptions);
+                    optionsApplied = true;
+                });
+                if (!optionsApplied || !CanApplyWorkspaceLoadProgress(loadCts))
+                    return;
+
+                loadAccepted = true;
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -1710,18 +1738,20 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
+                bool wasCancelled = loadCts.IsCancellationRequested;
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                loadAccepted = loadAccepted && wasCurrentLoad && !wasCancelled;
                 if (wasCurrentLoad && !IsShutdownRequested)
                     IsWorkspaceLoading = false;
             }
 
-            if (IsShutdownRequested)
+            if (!loadAccepted || IsShutdownRequested)
                 return;
 
             if (vm.NeedsAutoResumePrompt)
             {
                 bool resume = await ShowResumeAutoDialogAsync();
-                if (IsShutdownRequested)
+                if (!loadAccepted || IsShutdownRequested)
                     return;
                 if (!resume)
                 {
@@ -2336,6 +2366,7 @@ namespace FaceShield.ViewModels.Pages
             IsWorkspaceLoadingIndeterminate = false;
 
             CancellationTokenSource loadCts = BeginWorkspaceLoad();
+            bool loadAccepted = false;
             try
             {
                 var loadProgress = new Progress<int>(p =>
@@ -2347,7 +2378,7 @@ namespace FaceShield.ViewModels.Pages
                     loadProgress,
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                return Volatile.Read(ref _shutdownRequested) == 0;
+                loadAccepted = IsCurrentWorkspaceLoad(loadCts);
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
@@ -2355,10 +2386,14 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
+                bool wasCancelled = loadCts.IsCancellationRequested;
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
+                loadAccepted = loadAccepted && wasCurrentLoad && !wasCancelled;
                 if (wasCurrentLoad && !IsShutdownRequested)
                     IsWorkspaceLoading = false;
             }
+
+            return loadAccepted && !IsShutdownRequested;
         }
 
         private async Task<bool> ShowResumeAutoDialogAsync()

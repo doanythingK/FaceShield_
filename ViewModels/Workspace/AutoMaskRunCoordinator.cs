@@ -342,14 +342,33 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 return false;
             }
 
-            postProcessCommitted = true;
             ResumeIndex = 0;
             token.ThrowIfCancellationRequested();
-            _exportCoordinator.ApplyGateState(
+            WorkspaceAutoExportGateState completedGateState =
                 WorkspaceExportGatePolicy.Complete(
                     runOptions,
                     generator.LastRunSummary,
-                    WorkspaceExportCoordinator.HybridCopyDisabledReason));
+                    WorkspaceExportCoordinator.HybridCopyDisabledReason);
+            _exportCoordinator.ApplyGateState(completedGateState);
+
+            // Detection EOF alone is not an Auto-completion contract. A required
+            // finalization stage (currently the YOLO risk cascade) must also have
+            // completed successfully before the workspace can persist Completed=true.
+            if (!completedGateState.Passed)
+            {
+                Completed = false;
+                string failure = completedGateState.Failure ?? "auto-finalization-failed";
+                string cascadeError = generator.LastRunSummary?.YoloCascadeError ?? "summary-missing";
+                string line =
+                    $"[AutoRunIncomplete] runId={runId}, reason={failure}, cascadeError={cascadeError}";
+                System.Diagnostics.Debug.WriteLine(line);
+                RunMetricsLog.AppendRunLines(runId, line);
+                _persistWorkspaceState(!exportAfter);
+                persisted = true;
+                return false;
+            }
+
+            postProcessCommitted = true;
             RefreshPreviewAfterPostProcess(exportAfter);
 
             if (!exportAfter)
@@ -362,20 +381,6 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
 
             if (exportAfter)
             {
-                string? cascadeFailure = WorkspaceExportGatePolicy.GetRequiredYoloCascadeFailure(
-                    runOptions,
-                    generator.LastRunSummary);
-                if (cascadeFailure != null)
-                {
-                    string cascadeError = generator.LastRunSummary?.YoloCascadeError ?? "summary-missing";
-                    string line = $"[AutoExportBlocked] runId={runId}, reason={cascadeFailure}, cascadeError={cascadeError}";
-                    System.Diagnostics.Debug.WriteLine(line);
-                    RunMetricsLog.AppendRunLines(runId, line);
-                    _persistWorkspaceState(false);
-                    persisted = true;
-                    return false;
-                }
-
                 bool exported = await _exportCoordinator.ExportAsync(
                     _frameList.VideoPath,
                     _toolPanel.BlurRadius,
