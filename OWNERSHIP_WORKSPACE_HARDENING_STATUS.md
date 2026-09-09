@@ -99,7 +99,19 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Guard the option application itself against shutdown and fail fast if a future caller attempts it off the UI thread.
 - [x] Prevent `ToolPanel.BlurRadius` from triggering preview bitmap reset/recomposition on a `Task.Run` worker thread.
 
+### Auto analysis staged post-processing transaction
+
+- [x] Verify sequential, single-pipeline, parallel-pipeline, and sparse-pipeline strategies all converge on `FinalizeRunAfterDecode` before final risk-cascade/post-processing.
+- [x] Keep completed detection/resume results on the live `FrameMaskProvider` while risk cascade and post-processing operate on a detached provider snapshot.
+- [x] Keep version-checked `CommitFaceMasksFrom` as the single live-provider commit after the staged post-processing phase succeeds.
+- [x] Treat a `YoloRiskCascadeStep` soft failure (`Enabled=true` with a non-empty `Error`) as a failed staged transaction: record the cascade diagnostics, skip downstream post-processing, and discard the working provider without committing it.
+- [x] Preserve cancellation/exception behavior: staged mutations remain isolated and the live provider is unchanged unless the final commit is reached.
+
+## Deferred low-priority follow-up
+
+- [ ] **DEFERRED:** Home/application-root cleanup for the final blur-example bitmap set, timer detachment, and exit idempotency. These are shutdown/resource hygiene items and are not currently tied to incorrect analysis/export results, data loss, or a reproduced crash.
+
 ## Next active block
 
-Audit Home/application-root resource disposal (generated blur-preview bitmaps, timer/event lifetime, and app-exit idempotency) and fix only resources that remain rooted or can be disposed twice across shutdown paths.
+Audit export correctness: frame/mask alignment, cancellation and partial-output handling, codec/lossless contracts, and quality-gate behavior. Only reproduced or code-confirmed correctness failures should be changed; low-impact cleanup remains deferred.
 

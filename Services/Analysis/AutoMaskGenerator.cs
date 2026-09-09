@@ -715,6 +715,17 @@ namespace FaceShield.Services.Analysis
 
             ct.ThrowIfCancellationRequested();
 
+            if (cascadeResult.Enabled && !string.IsNullOrWhiteSpace(cascadeResult.Error))
+            {
+                // A required risk-cascade stage reported a soft failure. Keep the
+                // completed detection results on the live provider, but discard the
+                // staged cascade copy and do not run/commit post-processing from it.
+                ApplyYoloRiskCascadeResultToRunSummary(cascadeResult);
+                Debug.WriteLine(
+                    $"[AutoMaskPostProcessSkipped] runId={LastRunSummary?.RunId ?? "n/a"}, reason=yolo-risk-cascade-error, error={cascadeResult.Error}");
+                return AutoMaskPostProcessResult.Empty;
+            }
+
             var postProcess = new AutoMaskPostProcessPipeline(
                 workingProvider,
                 _options,
