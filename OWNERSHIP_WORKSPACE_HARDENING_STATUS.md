@@ -35,12 +35,20 @@ These are documented limitations rather than the next active implementation bloc
 - [ ] **DEFERRED:** cancel an already-running synchronous FaceONNX `FaceDetector.Forward()` call. The current detector interface does not expose a safe mid-inference cancellation contract; pre/post-call cooperative cancellation remains in place.
 - [ ] **DEFERRED:** replace the global 1,000,000 decoded-PTS resident-frame limit with paging/persistent indexing. This requires a different cache architecture rather than another cap adjustment.
 
-## Next active block
+## Completed responsibility / policy-boundary blocks
 
-Status: **COMPLETED — export quality-gate diagnostics extracted**
+### Export quality-gate diagnostics extraction
 
 - [x] Move export quality/risk calculation and logging out of `WorkspaceViewModel` into `RunMetricsLog`.
 - [x] Remove the quality-log callback dependency from `WorkspaceExportCoordinator`; the coordinator now calls the diagnostics service directly.
 - [x] Keep export behavior and log payloads unchanged while reducing page ViewModel responsibility.
 
-Next: continue the historical responsibility/policy-boundary hardening sequence without reopening deferred PATH edge cases unless a reproduced failure requires it.
+### Dead hybrid export policy cleanup
+
+- [x] Remove unused hybrid-policy serialization/parsing helpers from `WorkspaceViewModel`.
+- [x] Remove the unused `EvaluateAutoExportHybridPolicy` implementation instead of preserving a policy that is no longer reachable.
+- [x] Keep the active export contract unchanged: hybrid copy remains disabled by `WorkspaceExportCoordinator.HybridCopyDisabledReason` until bitstream compatibility is verified.
+
+## Next active block
+
+Continue the historical responsibility/policy-boundary hardening sequence without reopening deferred PATH edge cases unless a reproduced failure requires it.
