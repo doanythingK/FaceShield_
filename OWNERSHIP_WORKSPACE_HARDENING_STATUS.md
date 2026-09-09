@@ -135,7 +135,14 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Keep duplicate/non-monotonic PTS fail-closed: exact timestamp seek remains disabled and ordinal selection falls back to decode-from-beginning.
 - [x] Keep exact-frame callers ordinal-based; the missing-PTS change applies only to timestamp-targeted thumbnail selection.
 
+### Decoded timestamp origin normalization
+
+- [x] Keep `LastDecodedTimestampSeconds` on the same video-relative origin as decoded timeline lookups instead of exposing raw absolute stream PTS seconds.
+- [x] Prevent playback from mixing absolute PTS time with zero-origin FPS fallback when a decoded frame is missing PTS.
+- [x] Keep analysis `FrameTimingSample` values on the same relative timeline used by playback/timeline navigation.
+- [x] If the first decoded frame has no trustworthy PTS origin, remain on deterministic ordinal/FPS fallback rather than switching origins mid-stream.
+
 ## Next active block
 
-Finish the decoder / seek / PTS correctness audit around EOF/flush, frame-count discovery, and playback/preview use of resolved ordinals. If no additional code-confirmed wrong-frame issue remains, move to the next user-visible correctness block instead of extending low-impact decoder cleanup.
+The decoder / seek / PTS correctness audit is complete for the code-confirmed wrong-frame and timing issues found in this pass. Continue with the next user-visible correctness block, prioritizing manual mask/edit persistence and save/export handoff over low-impact decoder/cache cleanup.
 

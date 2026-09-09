@@ -2478,17 +2478,31 @@ namespace FaceShield.Services.Video
         private void CaptureDecodedTimestamp(int frameIndex, long pts)
         {
             double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
-            if (pts != ffmpeg.AV_NOPTS_VALUE && timeBaseSeconds > 0 && double.IsFinite(timeBaseSeconds))
+            if (pts != ffmpeg.AV_NOPTS_VALUE &&
+                timeBaseSeconds > 0 &&
+                double.IsFinite(timeBaseSeconds))
             {
-                double timestampSeconds = pts * timeBaseSeconds;
-                if (double.IsFinite(timestampSeconds))
+                // LastDecodedTimestampSeconds is consumed as a video-relative timeline
+                // value by playback and analysis. Keep PTS-backed samples on the same
+                // origin as TryGetCachedFrameTimestampSeconds instead of exposing raw
+                // stream PTS seconds and mixing them with zero-origin FPS fallbacks.
+                long originPts = GetFirstKnownPresentationTimestamp();
+                if (originPts != ffmpeg.AV_NOPTS_VALUE)
                 {
-                    _lastDecodedTimestampSeconds = timestampSeconds;
-                    _lastDecodedTimestampSource = "pts";
-                    return;
+                    double timestampSeconds =
+                        ((double)pts - originPts) * timeBaseSeconds;
+                    if (double.IsFinite(timestampSeconds))
+                    {
+                        _lastDecodedTimestampSeconds = Math.Max(0, timestampSeconds);
+                        _lastDecodedTimestampSource = "pts";
+                        return;
+                    }
                 }
             }
 
+            // If the decoded timeline has no trustworthy first-frame PTS, there is no
+            // safe absolute-to-relative origin. Stay entirely on the deterministic
+            // ordinal/FPS fallback rather than switching origins mid-stream.
             _lastDecodedTimestampSeconds = _fps > 0
                 ? frameIndex / _fps
                 : double.NaN;
