@@ -109,8 +109,16 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
 
     internal bool NeedsResumePrompt()
     {
-        if (_mode != WorkspaceMode.Auto || Completed || ResumeIndex <= 0)
+        if (!HasInterruptedAutoRunForResume())
             return false;
+
+        return GetResumeUnavailableReason() == null;
+    }
+
+    internal string? GetResumeUnavailableReason()
+    {
+        if (!HasInterruptedAutoRunForResume())
+            return null;
 
         AutoMaskOptions options = _getAutoOptions();
         FaceOnnxDetectorOptions detectorOptions = _getDetectorOptions();
@@ -119,10 +127,41 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             options,
             detectorOptions,
             factoryOptions);
-        return !AutoRunSignaturePolicy.RequiresCompleteTimeline(options, factoryOptions) &&
-               AutoMaskGenerator.CanResumeFromFrame(options, ResumeIndex) &&
-               IsResumeSignatureCurrent(intentSignature);
+
+        if (!IsResumeSignatureCurrent(intentSignature))
+        {
+            return "이전 자동 작업과 현재 자동 분석 설정이 달라 중단 지점에서 안전하게 이어할 수 없습니다.";
+        }
+
+        if (string.IsNullOrWhiteSpace(ExecutionSignature))
+        {
+            return "이전 자동 작업의 실행 환경 정보를 확인할 수 없어 동일한 조건으로 이어하기를 보장할 수 없습니다.";
+        }
+
+        AutoMaskOptions effectiveOptions = options.ResolveProcessingMode();
+        if (AutoRunSignaturePolicy.RequiresCompleteTimeline(options, factoryOptions))
+        {
+            return effectiveOptions.ProcessingMode switch
+            {
+                AutoMaskProcessingMode.Full =>
+                    "현재 '전체 보정' 모드는 후처리와 프레임 간 연결을 위해 전체 타임라인을 다시 계산해야 하므로 중단 지점부터 이어할 수 없습니다.",
+                AutoMaskProcessingMode.Tracked =>
+                    "현재 '자동 안정화' 설정은 프레임 간 연속성을 다시 계산해야 하므로 중단 지점부터 안전하게 이어할 수 없습니다.",
+                _ =>
+                    "현재 자동 분석 설정은 전체 타임라인 연속성을 다시 계산해야 하므로 중단 지점부터 이어할 수 없습니다."
+            };
+        }
+
+        if (!AutoMaskGenerator.CanResumeFromFrame(options, ResumeIndex))
+        {
+            return "저장된 중단 지점이 현재 검출 간격의 안전한 재개 경계와 맞지 않아 해당 위치부터 이어할 수 없습니다.";
+        }
+
+        return null;
     }
+
+    private bool HasInterruptedAutoRunForResume()
+        => _mode == WorkspaceMode.Auto && !Completed && ResumeIndex > 0;
 
     internal void MarkPreviewNeedsExactRefresh()
         => _previewNeedsExactRefresh = true;

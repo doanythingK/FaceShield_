@@ -216,6 +216,12 @@ These are documented limitations rather than the next active implementation bloc
 - [x] Do not equate detection EOF with Auto completion: persist `Completed=true` only after the required finalization/export gate passes.
 - [x] Keep a YOLO risk-cascade soft failure as `Completed=false`, preserve the detection result without committing staged post-processing, persist the failed gate state, and require a later full Auto rerun.
 
+### Runtime Auto-resume UX follow-up
+
+- [x] Preserve the existing resume-confirmation dialog when the interrupted Auto state is safe to resume.
+- [x] When an interrupted Auto state exists but current settings, execution evidence, full-timeline requirements, or the saved resume boundary make resumption unsafe, surface the concrete reason instead of silently restarting from frame 0.
+- [x] Keep the accepted workspace-load generation alive while the unavailable-resume notice is displayed, then re-check the generation before handing off to Auto.
+
 ## Hardening pass status
 
 The current high-priority ownership/workspace correctness pass is complete after closing the final stale-load handoff race and the Auto-finalization contract. No additional active code block remains from this pass. Resume only for a reproduced user-visible correctness failure or one of the explicitly deferred architectural items above.

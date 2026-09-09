@@ -62,6 +62,7 @@ namespace FaceShield.ViewModels.Pages
         private bool hideResolvedIssues = true;
 
         public bool NeedsAutoResumePrompt => _autoRunCoordinator.NeedsResumePrompt();
+        public string? AutoResumeUnavailableReason => _autoRunCoordinator.GetResumeUnavailableReason();
 
         public int AutoLastProcessedFrame => _autoRunCoordinator.LastProcessedFrame;
         public DateTime AutoLastProcessedAtUtc => _autoRunCoordinator.LastProcessedAtUtc;
@@ -292,6 +293,14 @@ namespace FaceShield.ViewModels.Pages
                     await RunAutoSingleFrameAsync();
                     ToolPanel.CurrentMode = EditMode.Manual;
                     return;
+                }
+
+                string? resumeUnavailableReason = AutoResumeUnavailableReason;
+                if (!string.IsNullOrWhiteSpace(resumeUnavailableReason))
+                {
+                    await ShowErrorDialogAsync(
+                        "자동 작업 이어하기 불가",
+                        $"{resumeUnavailableReason}\n\n현재 자동 작업은 처음부터 다시 시작됩니다.");
                 }
 
                 await RunAutoAsync(exportAfter: false);
