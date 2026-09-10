@@ -68,7 +68,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         var session = new VideoSession(
             _frameList.VideoPath,
             progress: loadProgress,
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken,
+            enableManualPlayer: _mode == WorkspaceMode.Manual);
         AdoptSession(session);
     }
 
@@ -97,7 +98,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 () => new VideoSession(
                     _frameList.VideoPath,
                     progress: loadProgress,
-                    cancellationToken: sessionCts.Token),
+                    cancellationToken: sessionCts.Token,
+                    enableManualPlayer: _mode == WorkspaceMode.Manual),
                 sessionCts.Token);
 
             if (sessionCts.IsCancellationRequested ||
@@ -120,7 +122,19 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
 
             AdoptSession(session);
             if (_frameList.SelectedFrameIndex >= 0)
-                _framePreview.OnFrameIndexChanged(_frameList.SelectedFrameIndex);
+            {
+                if (_mode == WorkspaceMode.Manual)
+                {
+                    await _framePreview.LoadManualFrameAsync(
+                        _frameList.SelectedFrameIndex,
+                        sessionCts.Token);
+                }
+                else
+                {
+                    _framePreview.OnFrameIndexChanged(
+                        _frameList.SelectedFrameIndex);
+                }
+            }
         }
         catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
         {
@@ -174,7 +188,9 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             }
         }
 
-        _framePreview.InitializeSession(session);
+        _framePreview.InitializeSession(
+            session,
+            useManualPlayer: _mode == WorkspaceMode.Manual);
         _frameList.SetThumbnailProvider(session.ThumbnailProvider);
         lock (_stateGate)
             _initialized = true;

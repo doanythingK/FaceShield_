@@ -22,6 +22,20 @@
             IsHitTestVisible="False"
             IsVisible="{Binding ShowDetectionOverlay}"/>
 
+        <Border Background="#66000000"
+                IsVisible="{Binding IsFrameLoading}"
+                IsHitTestVisible="True"
+                ZIndex="10">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8">
+                <ProgressBar Width="200"
+                             IsIndeterminate="True"/>
+                <TextBlock Text="{Binding FrameLoadingMessage}"
+                           HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
         <!-- 🔹 입력 레이어 -->
         <Canvas
             Background="Transparent"

@@ -61,6 +61,15 @@ namespace FaceShield.ViewModels.Pages
         [ObservableProperty]
         private bool hideResolvedIssues = true;
 
+        [ObservableProperty]
+        private bool isSessionLoading;
+
+        [ObservableProperty]
+        private int sessionLoadingProgress;
+
+        [ObservableProperty]
+        private string? sessionLoadingMessage;
+
         public bool NeedsAutoResumePrompt => _autoRunCoordinator.NeedsResumePrompt();
         public string? AutoResumeUnavailableReason => _autoRunCoordinator.GetResumeUnavailableReason();
 
@@ -168,12 +177,42 @@ namespace FaceShield.ViewModels.Pages
             _sessionPlaybackCoordinator.ScheduleInitialPreview();
         }
 
-        public Task EnsureSessionInitializedAsync(
+        public async Task EnsureSessionInitializedAsync(
             IProgress<int>? loadProgress,
             CancellationToken cancellationToken = default)
-            => _sessionPlaybackCoordinator.EnsureInitializedAsync(
-                loadProgress,
-                cancellationToken);
+        {
+            bool showManualLoading =
+                Mode == WorkspaceMode.Manual &&
+                !_sessionPlaybackCoordinator.IsInitialized;
+            IProgress<int>? effectiveProgress = loadProgress;
+
+            if (showManualLoading)
+            {
+                IsSessionLoading = true;
+                SessionLoadingProgress = 0;
+                SessionLoadingMessage = "수동 편집용 영상 플레이어 준비 중...";
+                effectiveProgress = new Progress<int>(p =>
+                {
+                    SessionLoadingProgress = Math.Clamp(p, 0, 100);
+                    loadProgress?.Report(p);
+                });
+            }
+
+            try
+            {
+                await _sessionPlaybackCoordinator.EnsureInitializedAsync(
+                    effectiveProgress,
+                    cancellationToken);
+            }
+            finally
+            {
+                if (showManualLoading)
+                {
+                    IsSessionLoading = false;
+                    SessionLoadingMessage = null;
+                }
+            }
+        }
 
         private Task<bool> SaveVideoAsync(
             IProgress<ExportProgress>? exportProgress = null,
@@ -397,6 +436,7 @@ namespace FaceShield.ViewModels.Pages
                 }
             }
 
+            await FramePreview.StopManualOperationsAndWaitAsync();
             _onBack?.Invoke();
         }
 

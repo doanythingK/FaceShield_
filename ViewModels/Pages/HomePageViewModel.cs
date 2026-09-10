@@ -1653,14 +1653,29 @@ namespace FaceShield.ViewModels.Pages
                 if (!optionsApplied || !CanApplyWorkspaceLoadProgress(loadCts))
                     return;
 
-                // Keep the generation owner alive until navigation consumes this load.
-                // Releasing the slot before this callback would leave only a stale bool
-                // and allow a newer request to race with the old workspace handoff.
+                // Manual workspace becomes visible before player/session initialization.
+                // Keep this load generation alive through the deferred initialization so
+                // an older request cannot finish into a newer workspace.
                 _onStartWorkspace(vm);
+                await vm.EnsureSessionInitializedAsync(
+                    progress,
+                    loadCts.Token);
+                loadCts.Token.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
                 return;
+            }
+            catch (Exception ex)
+            {
+                if (!IsShutdownRequested &&
+                    CanApplyWorkspaceLoadProgress(loadCts))
+                {
+                    _onBackHome();
+                    await ShowErrorDialogAsync(
+                        "수동 모드 준비 실패",
+                        ex.Message);
+                }
             }
             finally
             {
@@ -2531,7 +2546,7 @@ namespace FaceShield.ViewModels.Pages
                 detectorFactoryOptions.FaceOnnxOptions ?? new FaceOnnxDetectorOptions(),
                 _stateStore,
                 detectorFactoryOptions: detectorFactoryOptions,
-                deferSessionInit: mode == WorkspaceMode.Auto,
+                deferSessionInit: true,
                 initializationToken: cancellationToken);
 
             try

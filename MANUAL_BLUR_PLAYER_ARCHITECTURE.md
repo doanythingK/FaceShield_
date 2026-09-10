@@ -2,9 +2,22 @@
 
 ## Status
 
-- 상태: **설계 제안**
-- 기준 브랜치: `fix/quality-stabilization-debug`
-- 기준 커밋: `37a2717a924a78c3849512fa5905a49bb34239c1`
+- 상태: **Phase 1/2 핵심 경로 구현 중**
+- 현재 적용 브랜치: `refactor/ownership-workspace-hardening`
+- 최초 설계 기준 커밋: `37a2717a924a78c3849512fa5905a49bb34239c1`
+- 구현된 핵심:
+  - Manual workspace를 먼저 표시하고 player/session 초기화를 뒤에서 수행
+  - Manual 표시용 decoder를 timeline thumbnail/exact decoder와 분리
+  - sequential decode frame에 ordinal + raw PTS + timestamp occurrence identity 보관
+  - Manual 타임라인 프레임 요청은 thumbnail-first await 대신 전용 sequential player를 우선 사용
+  - Pause 시 현재 decoded bitmap을 유지하고 같은 프레임을 exact seek/decode하지 않음
+  - 연속 forward 프레임 요청과 Pause 후 Resume는 전용 sequential decoder 위치를 재사용
+- 남은 단계: byte-budget ring buffer, far-seek pending playhead 세분화, background prefetch priority, export identity 검증
+- lifetime invariant:
+  - 새 manual decode 작업은 closing 이후 진입 불가
+  - admitted load/playback decode operation이 모두 종료된 뒤에만 extractor와 decode gate를 Dispose
+  - 일반 뒤로가기 경로는 playback/load cancellation 후 비동기 종료 대기
+  - 동기 Dispose는 legacy/app-shutdown fallback이며 동일 drain invariant를 지킴
 - 목적: 순수 수동 블러 작업의 프레임 선택/로딩 지연을 제거하고, 사용자가 실제로 본 프레임과 export에서 블러가 적용되는 프레임을 일치시키는 구조 정의
 - 적용 범위:
   - **순수 수동 블러**: 새 플레이어형 편집 구조
