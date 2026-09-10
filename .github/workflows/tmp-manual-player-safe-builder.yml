@@ -40,9 +40,7 @@ jobs:
           from pathlib import Path
 
           required = {
-              'Services/Video/FfFrameExtractor.cs': [
-                  'TryGetLastDecodedPresentationIdentity',
-              ],
+              'Services/Video/FfFrameExtractor.cs': ['TryGetLastDecodedPresentationIdentity'],
               'Services/Video/Session/ManualFramePlayer.cs': [
                   'ManualFrameIdentity',
                   'TimestampOccurrence',
@@ -74,12 +72,8 @@ jobs:
                   'IsSessionLoading = true',
                   'await FramePreview.StopManualOperationsAndWaitAsync();',
               ],
-              'Views/Pages/WorkspaceView.axaml': [
-                  'IsSessionLoading',
-              ],
-              'Views/Workspace/FramePreviewView.axaml': [
-                  'IsFrameLoading',
-              ],
+              'Views/Pages/WorkspaceView.axaml': ['IsSessionLoading'],
+              'Views/Workspace/FramePreviewView.axaml': ['IsFrameLoading'],
           }
 
           for path, needles in required.items():
@@ -139,10 +133,7 @@ jobs:
                   'using OperationLease operation = EnterOperation();',
                   'internal async ValueTask StopAndWaitAsync()',
               ],
-              'Services/Video/Session/VideoSession.cs': [
-                  'enableManualPlayer',
-                  'IAsyncDisposable',
-              ],
+              'Services/Video/Session/VideoSession.cs': ['enableManualPlayer', 'IAsyncDisposable'],
               'ViewModels/Workspace/FramePreviewViewModel.cs': [
                   'LoadManualFrameAsync',
                   'RunManualSequentialPlaybackAsync',
@@ -160,7 +151,6 @@ jobs:
                       raise SystemExit(f'{path}: missing {needle!r}')
           print('source contract ok')
           PY
-          git diff --check
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -202,7 +192,6 @@ jobs:
         run: |
           python scripts/tmp-manual-player-phase12-runner.py
           python scripts/tmp-manual-player-lifetime-fix.py
-          git diff --check
 
       - name: Remove temporary builder material
         shell: bash
@@ -218,6 +207,7 @@ jobs:
         run: |
           python - <<'PY'
           import subprocess
+          from pathlib import Path
 
           expected = {
               '.github/workflows/tmp-manual-player-safe-builder.yml',
@@ -239,13 +229,26 @@ jobs:
               ['git', 'diff', '--name-only', 'HEAD'], text=True).splitlines()))
           if actual != expected:
               raise SystemExit(f'unexpected final diff: {sorted(actual)}')
+
+          text_paths = [p for p in actual if Path(p).exists()]
+          for path in text_paths:
+              data = Path(path).read_bytes()
+              for lineno, line in enumerate(data.splitlines(), 1):
+                  if line.endswith((b' ', b'\t')):
+                      raise SystemExit(f'{path}:{lineno}: trailing space/tab')
+
+          for path in (
+              'scripts/tmp-manual-player-phase12.py',
+              'scripts/tmp-manual-player-phase12-runner.py',
+              'scripts/tmp-manual-player-lifetime-fix.py',
+              '.github/workflows/tmp-manual-player-safe-builder.yml',
+              '.github/workflows/tmp-manual-player-phase12.yml',
+          ):
+              if Path(path).exists():
+                  raise SystemExit(f'temporary file remains: {path}')
+
+          print('final tree contract ok')
           PY
-          git diff --check
-          test ! -e scripts/tmp-manual-player-phase12.py
-          test ! -e scripts/tmp-manual-player-phase12-runner.py
-          test ! -e scripts/tmp-manual-player-lifetime-fix.py
-          test ! -e .github/workflows/tmp-manual-player-safe-builder.yml
-          test ! -e .github/workflows/tmp-manual-player-phase12.yml
 
       - name: Commit validated product tree
         shell: bash
