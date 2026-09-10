@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$Failures = [System.Collections.Generic.List[string]]::new()
 
 function Read-RepoFile([string]$relativePath) {
     $path = Join-Path $RepoRoot $relativePath
@@ -14,13 +15,13 @@ function Read-RepoFile([string]$relativePath) {
 
 function Assert-Match([string]$label, [string]$text, [string]$pattern) {
     if ($text -notmatch $pattern) {
-        throw "FAILED: $label"
+        $script:Failures.Add($label)
     }
 }
 
 function Assert-NotMatch([string]$label, [string]$text, [string]$pattern) {
     if ($text -match $pattern) {
-        throw "FAILED: $label"
+        $script:Failures.Add($label)
     }
 }
 
@@ -71,7 +72,7 @@ $yoloOnnxDetector = Read-RepoFile "Services/FaceDetection/YoloFaceOnnxDetector.c
 # Native I/O and cancellation boundaries.
 Assert-Match "export input uses cancellable native io guard" ($exportService + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]{0,1000}Begin\(cancellationToken\)[\s\S]{0,1800}avformat_open_input[\s\S]{0,1200}avformat_find_stream_info'
 Assert-Match "HDR probe accepts cancellation and uses native io guard" ($hdrProbe + $videoIoInterrupt) 'ProbeVideoHdrMetadata\([\s\S]{0,220}CancellationToken\s+cancellationToken[\s\S]{0,1400}VideoIoInterruptGuard[\s\S]{0,1800}avformat_open_input'
-Assert-Match "blocking frame reads use shared AVIO interrupt guard" ($extractor + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]*ConfigureIoInterrupt\([\s\S]*_ioInterrupt\.Configure\(format\)[\s\S]*BeginIoInterrupt\([\s\S]*_ioInterrupt\.Begin\(cancellationToken\)'
+Assert-Match "extractor wraps shared AVIO interrupt guard" $extractor 'private\s+void\s+ConfigureIoInterrupt\([\s\S]{0,500}ioInterrupt\.Configure\(format\)[\s\S]{0,500}private\s+VideoIoInterruptGuard\.InterruptScope\s+BeginIoInterrupt\([\s\S]{0,500}return\s+ioInterrupt\.Begin\(cancellationToken\)'
 Assert-NotMatch "extractor no longer owns duplicate AVIO callback" $extractor '_ioInterruptHandle|_ioInterruptRequested|HandleIoInterrupt|IoInterruptCallback'
 Assert-Match "ffmpeg input installs interrupt callback before open" $extractor 'avformat_alloc_context\(\)[\s\S]{0,900}ConfigureIoInterrupt\(_fmt\)[\s\S]{0,900}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,900}avformat_open_input'
 Assert-Match "ffmpeg seeks use cancellable native io scope" $extractor 'SeekMainDecoder\([\s\S]{0,1200}BeginIoInterrupt\(cancellationToken\)[\s\S]{0,800}av_seek_frame'
@@ -146,7 +147,7 @@ Assert-Match "async session initialization links caller cancellation" $sessionCo
 Assert-Match "workspace attaches session-owned thumbnail provider" $sessionCoordinator '_frameList\.SetThumbnailProvider\(session\.ThumbnailProvider\)'
 Assert-Match "manual shutdown waits playback then frame load" $framePreview 'StopManualOperationsAndWaitAsync\(\)[\s\S]{0,180}StopPlaybackAndWaitAsync\(\)[\s\S]{0,180}CancelManualFrameLoadAndWaitAsync\(\)'
 Assert-Match "preview edit gate blocks playback and loading" $framePreview 'CanMutateCurrentMask\(\)[\s\S]{0,260}_toolPanel\.CanEditWorkspace[\s\S]{0,120}!_isPlaying[\s\S]{0,120}!IsFrameLoading'
-Assert-Match "pointer mutation methods use the shared edit gate" $framePreview 'OnPointerPressed\([\s\S]{0,160}!CanMutateCurrentMask\(\)[\s\S]*OnPointerMoved\([\s\S]{0,180}!CanMutateCurrentMask\(\)[\s\S]*OnPointerReleased\([\s\S]{0,180}!CanMutateCurrentMask\(\)'
+Assert-Match "pointer mutation methods use shared edit gate" $framePreview 'OnPointerPressed\([\s\S]{0,160}!CanMutateCurrentMask\(\)[\s\S]*OnPointerMoved\([\s\S]{0,180}!CanMutateCurrentMask\(\)[\s\S]*OnPointerReleased\([\s\S]{0,180}!CanMutateCurrentMask\(\)'
 Assert-Match "manual pointer capture stays on input layer" $framePreviewView 'CapturePointerToInputLayer\(sender,\s*e\)[\s\S]*sender\s+is\s+IInputElement\s+inputLayer[\s\S]{0,120}e\.Pointer\.Capture\(inputLayer\)'
 Assert-NotMatch "manual pointer capture does not target parent user control" $framePreviewView 'e\.Pointer\.Capture\(this\)'
 Assert-Match "workspace exposes blur-radius control" $toolPanelView 'Minimum="\{Binding MinBlurRadius\}"[\s\S]{0,180}Maximum="\{Binding MaxBlurRadius\}"[\s\S]{0,180}Value="\{Binding BlurRadius, Mode=TwoWay\}"'
@@ -174,7 +175,12 @@ Assert-NotMatch "dispatcher does not blanket swallow logged UI exceptions" $app 
 
 $legacyThumbnailCache = Join-Path $RepoRoot "Services/Video/Session/ThumbnailCache.cs"
 if (Test-Path $legacyThumbnailCache) {
-    throw "FAILED: legacy ThumbnailCache.cs still exists"
+    $Failures.Add("legacy ThumbnailCache.cs still exists")
+}
+
+if ($Failures.Count -gt 0) {
+    $details = ($Failures | ForEach-Object { " - $_" }) -join [Environment]::NewLine
+    throw "Runtime hardening verification failed:`n$details"
 }
 
 Write-Host "Runtime hardening verification passed."
