@@ -180,10 +180,18 @@ jobs:
               'scripts/tmp-manual-player-phase12-runner.py',
               'scripts/tmp-manual-player-phase12.py',
           }
-          actual = set(filter(None, subprocess.check_output(
-              ['git', 'diff', '--name-only', 'HEAD'], text=True).splitlines()))
+          status = subprocess.check_output(
+              ['git', 'status', '--porcelain=v1', '--untracked-files=all'], text=True)
+          actual = set()
+          for raw in status.splitlines():
+              if not raw:
+                  continue
+              path = raw[3:]
+              if ' -> ' in path:
+                  path = path.split(' -> ', 1)[1]
+              actual.add(path)
           if actual != expected:
-              raise SystemExit(f'unexpected final diff: {sorted(actual)}')
+              raise SystemExit(f'unexpected final status paths: {sorted(actual)}')
           for path in [p for p in actual if Path(p).exists()]:
               for lineno, line in enumerate(Path(path).read_bytes().splitlines(), 1):
                   if line.endswith((b' ', b'\t')):
