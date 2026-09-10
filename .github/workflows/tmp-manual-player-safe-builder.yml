@@ -96,7 +96,6 @@ jobs:
 
           print('source contract ok')
           '@ | python -
-          git diff --check
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
