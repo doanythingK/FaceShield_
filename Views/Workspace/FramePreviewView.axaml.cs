@@ -31,7 +31,7 @@ public partial class FramePreviewView : UserControl
         if (Forward(e, isPressed: true))
         {
             _isStrokeActive = true;
-            e.Pointer.Capture(this);
+            CapturePointerToInputLayer(sender, e);
         }
     }
 
@@ -53,7 +53,7 @@ public partial class FramePreviewView : UserControl
         if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && Forward(e, isPressed: true))
         {
             _isStrokeActive = true;
-            e.Pointer.Capture(this);
+            CapturePointerToInputLayer(sender, e);
         }
     }
 
@@ -80,6 +80,12 @@ public partial class FramePreviewView : UserControl
             e.Pointer.Capture(null);
         }
         SetBrushCursorVisible(false);
+    }
+
+    private static void CapturePointerToInputLayer(object? sender, PointerEventArgs e)
+    {
+        if (sender is IInputElement inputLayer)
+            e.Pointer.Capture(inputLayer);
     }
 
     private bool Forward(
