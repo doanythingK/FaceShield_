@@ -53,6 +53,7 @@ $app = Read-RepoFile "App.axaml.cs"
 $homeViewModel = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
 $homeView = Read-RepoFile "Views/Pages/HomePageView.axaml"
 $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
+$exportStaging = Read-RepoFile "Services/Video/VideoExportStagingPolicy.cs"
 $exportFidelity = Read-RepoFile "Services/Video/VideoExportFidelityPolicy.cs"
 $exportQualityPreset = Read-RepoFile "Services/Video/VideoExportQualityPreset.cs"
 $hdrProbe = Read-RepoFile "Services/Video/VideoHdrProbePolicy.cs"
@@ -114,9 +115,10 @@ Assert-Match "decoded PTS cache tracks live owners" $extractor 'LiveOwnerCount[\
 Assert-Match "decoded PTS cache enforces resident budget" $extractor 'GetResidentTimelineFrameCountLocked\(\)\s*>?=\s*MaxCachedTimelineFramesTotal'
 
 # Auto pipeline staging and cancellation semantics.
-Assert-Match "risk cascade and postprocess use one staged provider" $autoMask 'CreateSnapshot\([\s\S]{0,180}providerVersion[\s\S]{0,500}YoloRiskCascadeStep\(\)\.Apply\([\s\S]{0,180}workingProvider[\s\S]{0,900}AutoMaskPostProcessPipeline\([\s\S]{0,180}workingProvider'
+Assert-Match "risk cascade and postprocess use one staged provider" $autoMask 'CreateSnapshot\(\s*out\s+long\s+providerVersion,\s*ct\)[\s\S]*YoloRiskCascadeStep\(\)\.Apply\(\s*workingProvider,[\s\S]*AutoMaskPostProcessPipeline\(\s*workingProvider,'
 Assert-Match "staged auto state commits only after postprocess succeeds" $autoMask 'postProcess\.Apply\([\s\S]{0,700}ThrowIfCancellationRequested\(\)[\s\S]{0,320}CommitFaceMasksFrom\([\s\S]{0,260}providerVersion'
-Assert-Match "mask provider serializes cross-store state changes" $frameMaskProvider 'private\s+readonly\s+object\s+_stateGate\s*=\s*new\(\)[\s\S]{0,1000}SetMask\([\s\S]{0,500}lock\s*\(_stateGate\)[\s\S]*SetFaceRects\([\s\S]{0,500}lock\s*\(_stateGate\)'
+Assert-Match "stored-mask writes serialize both stores" $frameMaskProvider 'public\s+void\s+SetMask\([\s\S]{0,300}lock\s*\(_stateGate\)[\s\S]{0,700}_masks[\s\S]{0,300}_faceMasks'
+Assert-Match "face-rect writes serialize through state gate" $frameMaskProvider 'public\s+void\s+SetFaceRects\([\s\S]{0,400}lock\s*\(_stateGate\)[\s\S]{0,300}SetFaceRectsLocked\('
 Assert-Match "mask provider staged commit validates live version" $frameMaskProvider 'CommitFaceMasksFrom\([\s\S]{0,280}expectedVersion[\s\S]{0,700}_version\s*!=\s*expectedVersion[\s\S]{0,600}_faceMasks\.Clear\(\)'
 Assert-Match "mask provider staged commit preserves manual masks" $frameMaskProvider 'CommitFaceMasksFrom\([\s\S]{0,1200}_masks\.ContainsKey\(entry\.Key\)[\s\S]{0,220}continue'
 Assert-Match "bitmap snapshot copy checks cancellation per row" $frameMaskProvider 'CloneBitmap\([\s\S]{0,140}CancellationToken\s+cancellationToken[\s\S]{0,900}for\s*\(int\s+y[\s\S]{0,140}ThrowIfCancellationRequested\(\)'
@@ -134,7 +136,7 @@ Assert-Match "export enters workspace lifetime gate" $exportCoordinator 'ExportA
 Assert-Match "export cancellation is normal false result" $exportCoordinator 'catch\s*\(OperationCanceledException\)[\s\S]{0,80}return\s+false'
 Assert-Match "workspace carries explicit overwrite policy" $exportCoordinator 'allowOutputOverwrite'
 Assert-Match "save-as unique path never falls back to original" $workspace 'Guid\.NewGuid\(\)[\s\S]*고유한 내보내기 파일명'
-Assert-Match "export non-overwrite commit uses atomic move" $exportService '!allowOutputOverwrite[\s\S]*File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)'
+Assert-Match "export non-overwrite commit uses atomic move" $exportStaging 'if\s*\(!allowOverwrite\)[\s\S]{0,500}File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)'
 
 # Manual player lifetime, session ownership, and UI editability.
 Assert-Match "manual player blocks new operations while closing" $manualPlayer 'EnterOperation\(\)[\s\S]{0,500}_closing\s*\|\|[\s\S]{0,180}ObjectDisposedException'
