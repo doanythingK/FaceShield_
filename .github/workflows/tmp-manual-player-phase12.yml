@@ -1,0 +1,179 @@
+name: Temporary Manual Player Phase 1-2 Validation
+
+on:
+  push:
+    branches:
+      - "refactor/ownership-workspace-hardening"
+
+permissions:
+  contents: write
+
+env:
+  BASE_SHA: 496dd88766f4180759bca7157cf2786bd5b9adcc
+  BRANCH_NAME: refactor/ownership-workspace-hardening
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Apply manual player phase 1-2 patch
+        run: python scripts/tmp-manual-player-phase12.py
+
+      - name: Verify source contract
+        shell: pwsh
+        run: |
+          $extractor = Get-Content Services/Video/FfFrameExtractor.cs -Raw
+          $player = Get-Content Services/Video/Session/ManualFramePlayer.cs -Raw
+          $preview = Get-Content ViewModels/Workspace/FramePreviewViewModel.cs -Raw
+          $home = Get-Content ViewModels/Pages/HomePageViewModel.cs -Raw
+          $workspace = Get-Content ViewModels/Pages/WorkspaceViewModel.cs -Raw
+          $session = Get-Content Services/Video/Session/VideoSession.cs -Raw
+          $coord = Get-Content ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs -Raw
+          $workspaceView = Get-Content Views/Pages/WorkspaceView.axaml -Raw
+          $previewView = Get-Content Views/Workspace/FramePreviewView.axaml -Raw
+
+          if ($extractor -notmatch 'TryGetLastDecodedPresentationIdentity') { throw 'decoded PTS identity API missing' }
+          if ($player -notmatch 'ManualFrameIdentity' -or $player -notmatch 'TimestampOccurrence') { throw 'manual frame identity missing' }
+          if ($session -notmatch 'enableManualPlayer') { throw 'manual player session ownership missing' }
+          if ($coord -notmatch 'enableManualPlayer: _mode == WorkspaceMode.Manual') { throw 'manual coordinator player selection missing' }
+          if ($home -notmatch '_onStartWorkspace\(vm\);[\s\S]*EnsureSessionInitializedAsync') { throw 'manual navigation must precede deferred session init' }
+          if ($home -notmatch 'deferSessionInit: true') { throw 'manual session is not deferred' }
+          if ($workspace -notmatch 'IsSessionLoading = true') { throw 'workspace loading state missing' }
+          if ($preview -notmatch 'LoadManualFrameAsync') { throw 'manual direct frame load missing' }
+          if ($preview -notmatch 'RunManualSequentialPlaybackAsync') { throw 'manual sequential playback missing' }
+          if ($preview -notmatch 'EnsureCurrentManualFrameEditable') { throw 'pause current-frame edit handoff missing' }
+          if ($workspaceView -notmatch 'IsSessionLoading') { throw 'workspace session loading overlay missing' }
+          if ($previewView -notmatch 'IsFrameLoading') { throw 'manual frame loading overlay missing' }
+
+          git diff --check
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore FaceShield.csproj -r win-x64
+
+      - name: Build
+        run: dotnet build FaceShield.csproj -c Release -r win-x64 --no-restore -p:ContinuousIntegrationBuild=true
+
+  build-macos:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Apply manual player phase 1-2 patch
+        run: python scripts/tmp-manual-player-phase12.py
+
+      - name: Verify source contract
+        shell: pwsh
+        run: |
+          $extractor = Get-Content Services/Video/FfFrameExtractor.cs -Raw
+          $player = Get-Content Services/Video/Session/ManualFramePlayer.cs -Raw
+          $preview = Get-Content ViewModels/Workspace/FramePreviewViewModel.cs -Raw
+          $home = Get-Content ViewModels/Pages/HomePageViewModel.cs -Raw
+          $workspace = Get-Content ViewModels/Pages/WorkspaceViewModel.cs -Raw
+          $session = Get-Content Services/Video/Session/VideoSession.cs -Raw
+          $coord = Get-Content ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs -Raw
+          if ($extractor -notmatch 'TryGetLastDecodedPresentationIdentity') { throw 'decoded PTS identity API missing' }
+          if ($player -notmatch 'ManualFrameIdentity' -or $player -notmatch 'TimestampOccurrence') { throw 'manual frame identity missing' }
+          if ($session -notmatch 'enableManualPlayer') { throw 'manual player session ownership missing' }
+          if ($coord -notmatch 'enableManualPlayer: _mode == WorkspaceMode.Manual') { throw 'manual coordinator player selection missing' }
+          if ($home -notmatch '_onStartWorkspace\(vm\);[\s\S]*EnsureSessionInitializedAsync') { throw 'manual navigation must precede deferred session init' }
+          if ($preview -notmatch 'RunManualSequentialPlaybackAsync') { throw 'manual sequential playback missing' }
+          git diff --check
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore FaceShield.csproj -r osx-arm64
+
+      - name: Build
+        run: dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
+
+  finalize:
+    needs:
+      - build-windows
+      - build-macos
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BRANCH_NAME }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Rebuild clean final commit from base
+        shell: bash
+        run: |
+          cp scripts/tmp-manual-player-phase12.py /tmp/manual-player-phase12.py
+          git reset --hard "$BASE_SHA"
+          python /tmp/manual-player-phase12.py
+
+      - name: Verify final diff
+        shell: bash
+        run: |
+          python - <<'PY'
+          import subprocess
+          expected = {
+              'MANUAL_BLUR_PLAYER_ARCHITECTURE.md',
+              'Services/Video/FfFrameExtractor.cs',
+              'Services/Video/Session/ManualFramePlayer.cs',
+              'Services/Video/Session/VideoSession.cs',
+              'ViewModels/Pages/HomePageViewModel.cs',
+              'ViewModels/Pages/WorkspaceViewModel.cs',
+              'ViewModels/Workspace/FramePreviewViewModel.cs',
+              'ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs',
+              'Views/Pages/WorkspaceView.axaml',
+              'Views/Workspace/FramePreviewView.axaml',
+          }
+          actual = set(filter(None, subprocess.check_output(
+              ['git', 'diff', '--name-only', 'HEAD'], text=True).splitlines()))
+          if actual != expected:
+              raise SystemExit(f'unexpected final diff: {sorted(actual)}')
+          PY
+          git diff --check
+          test ! -e scripts/tmp-manual-player-phase12.py
+          test ! -e .github/workflows/tmp-manual-player-phase12.yml
+
+      - name: Commit final source
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MANUAL_BLUR_PLAYER_ARCHITECTURE.md \
+            Services/Video/FfFrameExtractor.cs \
+            Services/Video/Session/ManualFramePlayer.cs \
+            Services/Video/Session/VideoSession.cs \
+            ViewModels/Pages/HomePageViewModel.cs \
+            ViewModels/Pages/WorkspaceViewModel.cs \
+            ViewModels/Workspace/FramePreviewViewModel.cs \
+            ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs \
+            Views/Pages/WorkspaceView.axaml \
+            Views/Workspace/FramePreviewView.axaml
+          git commit -m "feat: switch manual workspace to player loading"
+          git push --force-with-lease=refs/heads/$BRANCH_NAME:$GITHUB_SHA origin HEAD:refs/heads/$BRANCH_NAME
