@@ -2,17 +2,19 @@
 using FaceShield.Services.Video;
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace FaceShield.Services.Video.Session;
 
-public sealed class VideoSession : IDisposable
+public sealed class VideoSession : IDisposable, IAsyncDisposable
 {
     public readonly ExactFrameProvider ExactProvider;
     public readonly TimelineController Timeline;
     public TimelineThumbnailProvider ThumbnailProvider { get; }
+    internal ManualFramePlayer? ManualPlayer { get; }
 
     private readonly FfFrameExtractor _extractor;
-    private bool _disposed;
+    private int _disposeState;
 
     public VideoSession(
         string videoPath,
@@ -20,16 +22,25 @@ public sealed class VideoSession : IDisposable
         int thumbHeight = 135,
         IProgress<int>? progress = null,
         int maxThumbnailCacheEntries = 256,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool enableManualPlayer = false)
     {
         _extractor = new FfFrameExtractor(
             videoPath,
             enableHardware: false,
             cancellationToken: cancellationToken);
         ExactProvider = new ExactFrameProvider(_extractor, ownsExtractor: false);
+        ManualPlayer = null;
 
         try
         {
+            if (enableManualPlayer)
+            {
+                ManualPlayer = new ManualFramePlayer(
+                    videoPath,
+                    cancellationToken);
+            }
+
             ThumbnailProvider = new TimelineThumbnailProvider(
                 _extractor,
                 thumbWidth,
@@ -41,6 +52,7 @@ public sealed class VideoSession : IDisposable
         }
         catch
         {
+            ManualPlayer?.Dispose();
             ExactProvider.Dispose();
             _extractor.Dispose();
             throw;
@@ -49,10 +61,41 @@ public sealed class VideoSession : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
             return;
 
-        _disposed = true;
+        try
+        {
+            ManualPlayer?.Dispose();
+        }
+        finally
+        {
+            DisposeSessionResources();
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+            return;
+
+        try
+        {
+            if (ManualPlayer != null)
+                await ManualPlayer.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            DisposeSessionResources();
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    private void DisposeSessionResources()
+    {
         Timeline.Dispose();
         ExactProvider.Dispose();
         ThumbnailProvider.Dispose();

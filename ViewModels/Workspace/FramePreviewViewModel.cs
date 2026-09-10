@@ -28,6 +28,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private int _blurredRadius;
 
     private VideoSession? _session;
+    private bool _useManualPlayer;
+    private CancellationTokenSource? _manualFrameLoadCts;
+    private Task? _manualFrameLoadTask;
+    private int _manualFrameLoadGeneration;
+    private ManualFrameIdentity? _currentManualFrameIdentity;
+    private bool _isFrameLoading;
+    private string? _frameLoadingMessage;
 
     private bool _isDrawing;
     private readonly Stack<byte[]> _maskUndo = new();
@@ -88,6 +95,33 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     public WriteableBitmap? PreviewBitmap => _previewBitmap;
 
+    public bool IsFrameLoading
+    {
+        get => _isFrameLoading;
+        private set
+        {
+            if (_isFrameLoading == value)
+                return;
+            _isFrameLoading = value;
+            OnPropertyChanged(nameof(IsFrameLoading));
+        }
+    }
+
+    public string? FrameLoadingMessage
+    {
+        get => _frameLoadingMessage;
+        private set
+        {
+            if (string.Equals(_frameLoadingMessage, value, StringComparison.Ordinal))
+                return;
+            _frameLoadingMessage = value;
+            OnPropertyChanged(nameof(FrameLoadingMessage));
+        }
+    }
+
+    internal ManualFrameIdentity? CurrentManualFrameIdentity =>
+        _currentManualFrameIdentity;
+
     private void SetPreviewBitmap(WriteableBitmap? value, bool ownsBitmap)
     {
         if (ReferenceEquals(_previewBitmap, value))
@@ -138,6 +172,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private bool CanMutateCurrentMask()
         => _toolPanel.CanEditWorkspace &&
            !_isPlaying &&
+           !IsFrameLoading &&
            _currentFrameIndex >= 0 &&
            _frameBitmap != null &&
            _maskBitmap != null;
@@ -497,7 +532,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     }
 
     // WorkspaceViewModel에서 FramePreview 초기화 시 세션 주입
-    public void InitializeSession(VideoSession session)
+    public void InitializeSession(
+        VideoSession session,
+        bool useManualPlayer = false)
     {
         if (session == null)
             throw new ArgumentNullException(nameof(session));
@@ -507,9 +544,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        CancelManualFrameLoad();
         PreviewBlurProcessor.ReleaseCachedRenderer();
         _session?.Dispose();
         _session = session;
+        _useManualPlayer = useManualPlayer && session.ManualPlayer != null;
+        _currentManualFrameIdentity = null;
     }
     public void SetMaskProvider(IFrameMaskProvider maskProvider)
     {
@@ -533,6 +573,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         if (index < 0)
             return;
+
+        if (_useManualPlayer)
+        {
+            await LoadManualFrameAsync(index);
+            return;
+        }
 
         PersistCurrentMask();
         InvalidateEditableFrameState();
@@ -582,6 +628,209 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         ApplyExactFrame(exact, index, stamp);
     }
 
+    internal async Task LoadManualFrameAsync(
+        int index,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            var completion = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            Dispatcher.UIThread.Post(async () =>
+            {
+                try
+                {
+                    await LoadManualFrameAsync(index, cancellationToken);
+                    completion.TrySetResult(true);
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            });
+            await completion.Task.ConfigureAwait(false);
+            return;
+        }
+
+        var session = _session;
+        var player = session?.ManualPlayer;
+        if (_disposed || !_useManualPlayer || session == null || player == null)
+            return;
+        if (index < 0 || _isPlaying)
+            return;
+
+        if (_currentFrameIndex == index &&
+            _frameBitmap != null &&
+            _currentManualFrameIdentity?.FrameOrdinal == index)
+        {
+            EnsureCurrentManualFrameEditable(index);
+            return;
+        }
+
+        PersistCurrentMask();
+        _isDrawing = false;
+        _lastDrawPoint = null;
+        _maskUndo.Clear();
+
+        await CancelManualFrameLoadAndWaitAsync();
+
+        int generation = Interlocked.Increment(ref _manualFrameLoadGeneration);
+        var requestCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        Interlocked.Exchange(ref _manualFrameLoadCts, requestCts);
+
+        IsFrameLoading = true;
+        FrameLoadingMessage = "프레임 불러오는 중...";
+
+        try
+        {
+            Task<ManualPlayerFrame?> loadTask = Task.Run(
+                () => player.LoadFrame(index, requestCts.Token),
+                requestCts.Token);
+            Volatile.Write(ref _manualFrameLoadTask, loadTask);
+            ManualPlayerFrame? loaded = await loadTask;
+
+            if (loaded == null)
+            {
+                if (!requestCts.IsCancellationRequested &&
+                    generation == _manualFrameLoadGeneration &&
+                    ReferenceEquals(_session, session))
+                {
+                    int stamp = Interlocked.Increment(ref _changeStamp);
+                    await TryLoadExactFallbackAsync(session, index, stamp);
+                }
+                return;
+            }
+
+            WriteableBitmap bitmap = loaded.Bitmap;
+            if (_disposed ||
+                requestCts.IsCancellationRequested ||
+                generation != _manualFrameLoadGeneration ||
+                !ReferenceEquals(_session, session))
+            {
+                bitmap.Dispose();
+                return;
+            }
+
+            ApplyManualFrame(bitmap, loaded.Identity);
+        }
+        catch (OperationCanceledException) when (requestCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[FramePreview] manual player frame load failed (frame={index}): {ex}");
+            if (!_disposed &&
+                generation == _manualFrameLoadGeneration &&
+                ReferenceEquals(_session, session))
+            {
+                int stamp = Interlocked.Increment(ref _changeStamp);
+                await TryLoadExactFallbackAsync(session, index, stamp);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(
+                    Interlocked.CompareExchange(
+                        ref _manualFrameLoadCts,
+                        null,
+                        requestCts),
+                    requestCts))
+            {
+                if (!_disposed && generation == _manualFrameLoadGeneration)
+                {
+                    IsFrameLoading = false;
+                    FrameLoadingMessage = null;
+                }
+            }
+
+            Task? currentLoadTask = Volatile.Read(ref _manualFrameLoadTask);
+            if (currentLoadTask?.IsCompleted == true)
+            {
+                Interlocked.CompareExchange(
+                    ref _manualFrameLoadTask,
+                    null,
+                    currentLoadTask);
+            }
+            requestCts.Dispose();
+        }
+    }
+
+    private async Task CancelManualFrameLoadAndWaitAsync()
+    {
+        Interlocked.Increment(ref _manualFrameLoadGeneration);
+        CancellationTokenSource? cts =
+            Interlocked.Exchange(ref _manualFrameLoadCts, null);
+        Task? loadTask = Volatile.Read(ref _manualFrameLoadTask);
+
+        if (cts != null)
+        {
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        if (loadTask == null)
+            return;
+
+        try
+        {
+            await loadTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[FramePreview] manual frame load shutdown completed with error: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _manualFrameLoadTask, null, loadTask);
+        }
+    }
+
+    internal async Task StopManualOperationsAndWaitAsync()
+    {
+        await StopPlaybackAndWaitAsync().ConfigureAwait(false);
+        await CancelManualFrameLoadAndWaitAsync().ConfigureAwait(false);
+    }
+
+    private void CancelManualFrameLoad()
+    {
+        Interlocked.Increment(ref _manualFrameLoadGeneration);
+        CancellationTokenSource? cts =
+            Interlocked.Exchange(ref _manualFrameLoadCts, null);
+        if (cts == null)
+            return;
+
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void EnsureCurrentManualFrameEditable(int index)
+    {
+        if (_frameBitmap == null || _currentFrameIndex != index)
+            return;
+
+        if (_maskBitmap == null)
+        {
+            MaskBitmap = CreateEditableMask(index, _frameBitmap)
+                ?? CreateEmptyMask(
+                    _frameBitmap.PixelSize.Width,
+                    _frameBitmap.PixelSize.Height);
+        }
+
+        UpdateDetectionRects(index);
+        _maskUndo.Clear();
+        _maskDirty = false;
+        RefreshPreview(force: true);
+    }
+
     public async void OnPlaybackStopped(int index)
     {
         if (!Dispatcher.UIThread.CheckAccess())
@@ -596,8 +845,19 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (index < 0)
             return;
 
-        int stamp = Interlocked.Increment(ref _changeStamp);
+        if (_useManualPlayer)
+        {
+            if (_currentFrameIndex == index && _frameBitmap != null)
+            {
+                EnsureCurrentManualFrameEditable(index);
+                return;
+            }
 
+            await LoadManualFrameAsync(index);
+            return;
+        }
+
+        int stamp = Interlocked.Increment(ref _changeStamp);
         await TryLoadExactFallbackAsync(session, index, stamp);
     }
 
@@ -633,7 +893,32 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         PersistCurrentMask();
-        InvalidateEditableFrameState();
+        bool useManualPlayback =
+            _useManualPlayer && _session?.ManualPlayer != null;
+        bool continueManualFromCurrentFrame =
+            useManualPlayback &&
+            _frameBitmap != null &&
+            _currentFrameIndex == startFrameIndex &&
+            _currentManualFrameIdentity?.FrameOrdinal == startFrameIndex;
+        double? manualOriginTimestampSeconds =
+            continueManualFromCurrentFrame &&
+            _currentManualFrameIdentity.HasValue &&
+            double.IsFinite(_currentManualFrameIdentity.Value.TimelineSeconds)
+                ? _currentManualFrameIdentity.Value.TimelineSeconds
+                : null;
+
+        CancelManualFrameLoad();
+        if (useManualPlayback)
+        {
+            _isDrawing = false;
+            _lastDrawPoint = null;
+            _maskUndo.Clear();
+            _hasDirtyRegion = false;
+        }
+        else
+        {
+            InvalidateEditableFrameState();
+        }
         Interlocked.Increment(ref _changeStamp);
 
         Task? previousPlaybackTask = _playbackTask;
@@ -664,7 +949,10 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             playbackCts,
             onFrameAdvanced,
             onPlaybackEnded,
-            onPlaybackFailed);
+            onPlaybackFailed,
+            useManualPlayback,
+            continueManualFromCurrentFrame,
+            manualOriginTimestampSeconds);
     }
 
     private async Task StartPlaybackAfterPreviousAsync(
@@ -677,7 +965,10 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         CancellationTokenSource playbackCts,
         Action<int> onFrameAdvanced,
         Action onPlaybackEnded,
-        Action<string>? onPlaybackFailed)
+        Action<string>? onPlaybackFailed,
+        bool useManualPlayback,
+        bool continueManualFromCurrentFrame,
+        double? manualOriginTimestampSeconds)
     {
         try
         {
@@ -704,16 +995,33 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            await RunSequentialPlaybackAsync(
-                runId,
-                videoPath,
-                startFrameIndex,
-                fps,
-                totalFrames,
-                playbackCts.Token,
-                onFrameAdvanced,
-                onPlaybackEnded,
-                onPlaybackFailed).ConfigureAwait(false);
+            if (useManualPlayback)
+            {
+                await RunManualSequentialPlaybackAsync(
+                    runId,
+                    startFrameIndex,
+                    fps,
+                    totalFrames,
+                    playbackCts.Token,
+                    onFrameAdvanced,
+                    onPlaybackEnded,
+                    onPlaybackFailed,
+                    continueManualFromCurrentFrame,
+                    manualOriginTimestampSeconds).ConfigureAwait(false);
+            }
+            else
+            {
+                await RunSequentialPlaybackAsync(
+                    runId,
+                    videoPath,
+                    startFrameIndex,
+                    fps,
+                    totalFrames,
+                    playbackCts.Token,
+                    onFrameAdvanced,
+                    onPlaybackEnded,
+                    onPlaybackFailed).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -735,7 +1043,17 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         _isPlaying = false;
-        InvalidateEditableFrameState();
+        if (_useManualPlayer)
+        {
+            _isDrawing = false;
+            _lastDrawPoint = null;
+            _maskUndo.Clear();
+            _hasDirtyRegion = false;
+        }
+        else
+        {
+            InvalidateEditableFrameState();
+        }
         Interlocked.Increment(ref _playbackRunId);
 
         CancellationTokenSource? playbackCts = _playbackCts;
@@ -801,6 +1119,169 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             if (ReferenceEquals(_playbackTask, playbackTask))
                 _playbackTask = null;
         }
+    }
+
+    private Task RunManualSequentialPlaybackAsync(
+        int runId,
+        int startFrameIndex,
+        double fps,
+        int totalFrames,
+        CancellationToken ct,
+        Action<int> onFrameAdvanced,
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed,
+        bool continueFromCurrentFrame,
+        double? originTimestampSeconds)
+    {
+        var session = _session;
+        var player = session?.ManualPlayer;
+        if (player == null)
+        {
+            return Task.Run(() =>
+            {
+                Dispatcher.UIThread.Post(() =>
+                    onPlaybackFailed?.Invoke(
+                        "수동 재생 디코더가 준비되지 않았습니다."));
+            });
+        }
+
+        return Task.Run(async () =>
+        {
+            bool endedNaturally = false;
+            string? playbackError = null;
+            double frameMs = fps > 0 ? 1000.0 / fps : 33.333;
+            double? playbackOriginTimestampSeconds = originTimestampSeconds;
+            double lastTargetMs = 0;
+            int fallbackIndex = continueFromCurrentFrame
+                ? startFrameIndex == int.MaxValue
+                    ? int.MaxValue
+                    : startFrameIndex + 1
+                : startFrameIndex;
+            bool firstRead = true;
+            var clock = Stopwatch.StartNew();
+
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    ManualPlayerFrame? decoded = firstRead && !continueFromCurrentFrame
+                        ? player.LoadFrame(fallbackIndex, ct)
+                        : player.ReadNext(fallbackIndex, ct);
+                    firstRead = false;
+                    if (decoded == null)
+                    {
+                        if (!ct.IsCancellationRequested && !player.ReadCancelled)
+                        {
+                            playbackError = player.DecodeError;
+                            endedNaturally =
+                                string.IsNullOrWhiteSpace(playbackError) &&
+                                player.ReachedEndOfStream;
+                        }
+                        break;
+                    }
+
+                    WriteableBitmap frame = decoded.Bitmap;
+                    int frameIndex = decoded.Identity.FrameOrdinal;
+                    fallbackIndex = frameIndex == int.MaxValue
+                        ? int.MaxValue
+                        : frameIndex + 1;
+
+                    if (totalFrames > 0 && frameIndex >= totalFrames)
+                    {
+                        frame.Dispose();
+                        endedNaturally = true;
+                        break;
+                    }
+
+                    double decodedTimestampSeconds =
+                        decoded.Identity.TimelineSeconds;
+                    double targetMs;
+                    if (double.IsFinite(decodedTimestampSeconds))
+                    {
+                        playbackOriginTimestampSeconds ??=
+                            decodedTimestampSeconds;
+                        targetMs = Math.Max(
+                            0,
+                            (decodedTimestampSeconds -
+                             playbackOriginTimestampSeconds.Value) * 1000.0);
+                    }
+                    else
+                    {
+                        targetMs =
+                            Math.Max(0, frameIndex - startFrameIndex) * frameMs;
+                    }
+
+                    targetMs = Math.Max(lastTargetMs, targetMs);
+                    lastTargetMs = targetMs;
+                    double delayMs =
+                        targetMs - clock.Elapsed.TotalMilliseconds;
+                    if (delayMs > 1)
+                        await Task.Delay(
+                            TimeSpan.FromMilliseconds(delayMs),
+                            ct).ConfigureAwait(false);
+
+                    bool frameAccepted = false;
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (ct.IsCancellationRequested ||
+                            runId != _playbackRunId ||
+                            !_isPlaying)
+                        {
+                            return;
+                        }
+
+                        ApplyPlaybackFrame(
+                            frame,
+                            frameIndex,
+                            decoded.Identity);
+                        frameAccepted = true;
+                        onFrameAdvanced(frameIndex);
+                    });
+
+                    if (!frameAccepted)
+                        frame.Dispose();
+
+                    if (totalFrames > 0 &&
+                        frameIndex >= totalFrames - 1)
+                    {
+                        endedNaturally = true;
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                endedNaturally = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"[FramePreview] manual sequential playback failed: {ex}");
+                playbackError = ex.Message;
+                endedNaturally = false;
+            }
+
+            if (ct.IsCancellationRequested)
+                return;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (runId != _playbackRunId || !_isPlaying)
+                    return;
+
+                if (!string.IsNullOrWhiteSpace(playbackError))
+                {
+                    if (onPlaybackFailed != null)
+                        onPlaybackFailed(playbackError);
+                    else
+                        onPlaybackEnded();
+                    return;
+                }
+
+                if (endedNaturally)
+                    onPlaybackEnded();
+            });
+        }, CancellationToken.None);
     }
 
     private Task RunSequentialPlaybackAsync(
@@ -958,6 +1439,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        _currentManualFrameIdentity = null;
         _currentFrameIndex = index;
         PrepareFrameReplacement();
         FrameBitmap = exact;
@@ -969,21 +1451,16 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _maskUndo.Clear();
         _maskDirty = false;
 
-        if (_maskProvider is FrameMaskProvider faceProvider &&
-            faceProvider.TryGetFaceMaskData(index, out var faceData))
-        {
-            DetectionRects = faceData.Faces;
-        }
-        else
-        {
-            DetectionRects = Array.Empty<Rect>();
-        }
+        UpdateDetectionRects(index);
 
         // 3) 프리뷰 갱신
         RefreshPreview(force: true);
     }
 
-    private void ApplyPlaybackFrame(WriteableBitmap exact, int index)
+    private void ApplyPlaybackFrame(
+        WriteableBitmap exact,
+        int index,
+        ManualFrameIdentity? manualIdentity = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
@@ -997,6 +1474,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        _currentManualFrameIdentity = manualIdentity;
         _currentFrameIndex = index;
         PrepareFrameReplacement();
         FrameBitmap = exact;
@@ -1012,8 +1490,46 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        UpdateDetectionRects(index);
+
+        RefreshPreview(force: true);
+    }
+
+    private void ApplyManualFrame(
+        WriteableBitmap frame,
+        ManualFrameIdentity identity)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() =>
+                ApplyManualFrame(frame, identity));
+            return;
+        }
+
+        if (_disposed)
+        {
+            frame.Dispose();
+            return;
+        }
+
+        _currentManualFrameIdentity = identity;
+        _currentFrameIndex = identity.FrameOrdinal;
+        PrepareFrameReplacement();
+        FrameBitmap = frame;
+        MaskBitmap = CreateEditableMask(identity.FrameOrdinal, frame)
+            ?? CreateEmptyMask(
+                frame.PixelSize.Width,
+                frame.PixelSize.Height);
+        _maskUndo.Clear();
+        _maskDirty = false;
+        UpdateDetectionRects(identity.FrameOrdinal);
+        RefreshPreview(force: true);
+    }
+
+    private void UpdateDetectionRects(int frameIndex)
+    {
         if (_maskProvider is FrameMaskProvider faceProvider &&
-            faceProvider.TryGetFaceMaskData(index, out var faceData))
+            faceProvider.TryGetFaceMaskData(frameIndex, out var faceData))
         {
             DetectionRects = faceData.Faces;
         }
@@ -1021,8 +1537,6 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         {
             DetectionRects = Array.Empty<Rect>();
         }
-
-        RefreshPreview(force: true);
     }
 
     private WriteableBitmap? CreateEditableMask(int frameIndex, WriteableBitmap frame)
@@ -1086,6 +1600,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _maskUndo.Clear();
         _maskDirty = false;
         _hasDirtyRegion = false;
+        _currentManualFrameIdentity = null;
         _currentFrameIndex = -1;
         MaskBitmap = null;
         DetectionRects = Array.Empty<Rect>();
@@ -1139,6 +1654,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         _disposed = true;
+        CancelManualFrameLoad();
         _toolPanel.PropertyChanged -= OnToolPanelPropertyChanged;
         Interlocked.Increment(ref _changeStamp);
         Interlocked.Increment(ref _playbackRunId);

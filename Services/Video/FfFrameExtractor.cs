@@ -162,6 +162,8 @@ namespace FaceShield.Services.Video
         private string? _sequentialDecodeError;
         private double _lastDecodedTimestampSeconds = double.NaN;
         private string _lastDecodedTimestampSource = "none";
+        private long _lastDecodedPresentationTimestamp = ffmpeg.AV_NOPTS_VALUE;
+        private int _lastDecodedTimestampOccurrence;
 
         private AVFrame* _bgraReusable;
         private int _bgraReusableWidth;
@@ -653,6 +655,23 @@ namespace FaceShield.Services.Video
             }
         }
 
+        /// <summary>
+        /// Returns the raw decoded presentation identity for the most recent
+        /// sequential frame. The occurrence disambiguates repeated PTS values.
+        /// </summary>
+        public bool TryGetLastDecodedPresentationIdentity(
+            out long presentationTimestamp,
+            out int timestampOccurrence)
+        {
+            lock (_sync)
+            {
+                presentationTimestamp = _lastDecodedPresentationTimestamp;
+                timestampOccurrence = _lastDecodedTimestampOccurrence;
+                return presentationTimestamp != ffmpeg.AV_NOPTS_VALUE &&
+                    timestampOccurrence > 0;
+            }
+        }
+
         public bool SequentialReachedEndOfStream
         {
             get
@@ -1057,6 +1076,8 @@ namespace FaceShield.Services.Video
             _hardwareTransferFailed = false;
             _lastDecodedTimestampSeconds = double.NaN;
             _lastDecodedTimestampSource = "none";
+            _lastDecodedPresentationTimestamp = ffmpeg.AV_NOPTS_VALUE;
+            _lastDecodedTimestampOccurrence = 0;
             _sequentialActive = true;
             _sequentialRequestedIndex = startFrameIndex;
             _sequentialStarted = false;
@@ -2477,6 +2498,23 @@ namespace FaceShield.Services.Video
 
         private void CaptureDecodedTimestamp(int frameIndex, long pts)
         {
+            _lastDecodedPresentationTimestamp = pts;
+            _lastDecodedTimestampOccurrence = 0;
+            if (pts != ffmpeg.AV_NOPTS_VALUE)
+            {
+                lock (_decodedFrameTimeline.SyncRoot)
+                {
+                    if (frameIndex >= 0 &&
+                        frameIndex < _decodedFrameTimeline.Entries.Count)
+                    {
+                        DecodedFrameTimelineEntry entry =
+                            _decodedFrameTimeline.Entries[frameIndex];
+                        if (entry.PresentationTimestamp == pts)
+                            _lastDecodedTimestampOccurrence = entry.TimestampOccurrence;
+                    }
+                }
+            }
+
             double timeBaseSeconds = ffmpeg.av_q2d(_timeBase);
             if (pts != ffmpeg.AV_NOPTS_VALUE &&
                 timeBaseSeconds > 0 &&

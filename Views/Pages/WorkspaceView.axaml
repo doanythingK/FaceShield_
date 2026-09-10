@@ -55,6 +55,22 @@
             Grid.Column="0"
             DataContext="{Binding FrameList}" />
 
+        <Border Grid.Row="1"
+                Grid.RowSpan="2"
+                Grid.Column="0"
+                Background="#B0000000"
+                IsVisible="{Binding IsSessionLoading}"
+                ZIndex="20">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="10">
+                <ProgressBar Width="240"
+                             IsIndeterminate="True"/>
+                <TextBlock Text="{Binding SessionLoadingMessage}"
+                           HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
         <!-- Issues -->
         <Border Grid.Row="1"
                 Grid.Column="1"
