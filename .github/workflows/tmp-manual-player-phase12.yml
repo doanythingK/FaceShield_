@@ -25,7 +25,7 @@ jobs:
           python-version: "3.x"
 
       - name: Apply manual player phase 1-2 patch
-        run: python scripts/tmp-manual-player-phase12.py
+        run: python scripts/tmp-manual-player-phase12-runner.py
 
       - name: Verify source contract
         shell: pwsh
@@ -78,7 +78,7 @@ jobs:
           python-version: "3.x"
 
       - name: Apply manual player phase 1-2 patch
-        run: python scripts/tmp-manual-player-phase12.py
+        run: python scripts/tmp-manual-player-phase12-runner.py
 
       - name: Verify source contract
         shell: pwsh
@@ -131,8 +131,13 @@ jobs:
         shell: bash
         run: |
           cp scripts/tmp-manual-player-phase12.py /tmp/manual-player-phase12.py
+          cp scripts/tmp-manual-player-phase12-runner.py /tmp/manual-player-phase12-runner.py
           git reset --hard "$BASE_SHA"
-          python /tmp/manual-player-phase12.py
+          mkdir -p scripts
+          cp /tmp/manual-player-phase12.py scripts/tmp-manual-player-phase12.py
+          cp /tmp/manual-player-phase12-runner.py scripts/tmp-manual-player-phase12-runner.py
+          python scripts/tmp-manual-player-phase12-runner.py
+          rm -f scripts/tmp-manual-player-phase12.py scripts/tmp-manual-player-phase12-runner.py
 
       - name: Verify final diff
         shell: bash
@@ -158,6 +163,7 @@ jobs:
           PY
           git diff --check
           test ! -e scripts/tmp-manual-player-phase12.py
+          test ! -e scripts/tmp-manual-player-phase12-runner.py
           test ! -e .github/workflows/tmp-manual-player-phase12.yml
 
       - name: Commit final source
