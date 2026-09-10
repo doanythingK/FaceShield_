@@ -30,28 +30,28 @@ jobs:
       - name: Verify source contract
         shell: pwsh
         run: |
-          $extractor = Get-Content Services/Video/FfFrameExtractor.cs -Raw
-          $player = Get-Content Services/Video/Session/ManualFramePlayer.cs -Raw
-          $preview = Get-Content ViewModels/Workspace/FramePreviewViewModel.cs -Raw
-          $home = Get-Content ViewModels/Pages/HomePageViewModel.cs -Raw
-          $workspace = Get-Content ViewModels/Pages/WorkspaceViewModel.cs -Raw
-          $session = Get-Content Services/Video/Session/VideoSession.cs -Raw
-          $coord = Get-Content ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs -Raw
-          $workspaceView = Get-Content Views/Pages/WorkspaceView.axaml -Raw
-          $previewView = Get-Content Views/Workspace/FramePreviewView.axaml -Raw
+          $extractorText = Get-Content Services/Video/FfFrameExtractor.cs -Raw
+          $playerText = Get-Content Services/Video/Session/ManualFramePlayer.cs -Raw
+          $previewText = Get-Content ViewModels/Workspace/FramePreviewViewModel.cs -Raw
+          $homeText = Get-Content ViewModels/Pages/HomePageViewModel.cs -Raw
+          $workspaceText = Get-Content ViewModels/Pages/WorkspaceViewModel.cs -Raw
+          $sessionText = Get-Content Services/Video/Session/VideoSession.cs -Raw
+          $coordText = Get-Content ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs -Raw
+          $workspaceViewText = Get-Content Views/Pages/WorkspaceView.axaml -Raw
+          $previewViewText = Get-Content Views/Workspace/FramePreviewView.axaml -Raw
 
-          if ($extractor -notmatch 'TryGetLastDecodedPresentationIdentity') { throw 'decoded PTS identity API missing' }
-          if ($player -notmatch 'ManualFrameIdentity' -or $player -notmatch 'TimestampOccurrence') { throw 'manual frame identity missing' }
-          if ($session -notmatch 'enableManualPlayer') { throw 'manual player session ownership missing' }
-          if ($coord -notmatch 'enableManualPlayer: _mode == WorkspaceMode.Manual') { throw 'manual coordinator player selection missing' }
-          if ($home -notmatch '_onStartWorkspace\(vm\);[\s\S]*EnsureSessionInitializedAsync') { throw 'manual navigation must precede deferred session init' }
-          if ($home -notmatch 'deferSessionInit: true') { throw 'manual session is not deferred' }
-          if ($workspace -notmatch 'IsSessionLoading = true') { throw 'workspace loading state missing' }
-          if ($preview -notmatch 'LoadManualFrameAsync') { throw 'manual direct frame load missing' }
-          if ($preview -notmatch 'RunManualSequentialPlaybackAsync') { throw 'manual sequential playback missing' }
-          if ($preview -notmatch 'EnsureCurrentManualFrameEditable') { throw 'pause current-frame edit handoff missing' }
-          if ($workspaceView -notmatch 'IsSessionLoading') { throw 'workspace session loading overlay missing' }
-          if ($previewView -notmatch 'IsFrameLoading') { throw 'manual frame loading overlay missing' }
+          if ($extractorText -notmatch 'TryGetLastDecodedPresentationIdentity') { throw 'decoded PTS identity API missing' }
+          if ($playerText -notmatch 'ManualFrameIdentity' -or $playerText -notmatch 'TimestampOccurrence') { throw 'manual frame identity missing' }
+          if ($sessionText -notmatch 'enableManualPlayer') { throw 'manual player session ownership missing' }
+          if ($coordText -notmatch 'enableManualPlayer: _mode == WorkspaceMode.Manual') { throw 'manual coordinator player selection missing' }
+          if ($homeText -notmatch '_onStartWorkspace\(vm\);[\s\S]*EnsureSessionInitializedAsync') { throw 'manual navigation must precede deferred session init' }
+          if ($homeText -notmatch 'deferSessionInit: true') { throw 'manual session is not deferred' }
+          if ($workspaceText -notmatch 'IsSessionLoading = true') { throw 'workspace loading state missing' }
+          if ($previewText -notmatch 'LoadManualFrameAsync') { throw 'manual direct frame load missing' }
+          if ($previewText -notmatch 'RunManualSequentialPlaybackAsync') { throw 'manual sequential playback missing' }
+          if ($previewText -notmatch 'EnsureCurrentManualFrameEditable') { throw 'pause current-frame edit handoff missing' }
+          if ($workspaceViewText -notmatch 'IsSessionLoading') { throw 'workspace session loading overlay missing' }
+          if ($previewViewText -notmatch 'IsFrameLoading') { throw 'manual frame loading overlay missing' }
 
           git diff --check
 
@@ -83,19 +83,18 @@ jobs:
       - name: Verify source contract
         shell: pwsh
         run: |
-          $extractor = Get-Content Services/Video/FfFrameExtractor.cs -Raw
-          $player = Get-Content Services/Video/Session/ManualFramePlayer.cs -Raw
-          $preview = Get-Content ViewModels/Workspace/FramePreviewViewModel.cs -Raw
-          $home = Get-Content ViewModels/Pages/HomePageViewModel.cs -Raw
-          $workspace = Get-Content ViewModels/Pages/WorkspaceViewModel.cs -Raw
-          $session = Get-Content Services/Video/Session/VideoSession.cs -Raw
-          $coord = Get-Content ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs -Raw
-          if ($extractor -notmatch 'TryGetLastDecodedPresentationIdentity') { throw 'decoded PTS identity API missing' }
-          if ($player -notmatch 'ManualFrameIdentity' -or $player -notmatch 'TimestampOccurrence') { throw 'manual frame identity missing' }
-          if ($session -notmatch 'enableManualPlayer') { throw 'manual player session ownership missing' }
-          if ($coord -notmatch 'enableManualPlayer: _mode == WorkspaceMode.Manual') { throw 'manual coordinator player selection missing' }
-          if ($home -notmatch '_onStartWorkspace\(vm\);[\s\S]*EnsureSessionInitializedAsync') { throw 'manual navigation must precede deferred session init' }
-          if ($preview -notmatch 'RunManualSequentialPlaybackAsync') { throw 'manual sequential playback missing' }
+          $extractorText = Get-Content Services/Video/FfFrameExtractor.cs -Raw
+          $playerText = Get-Content Services/Video/Session/ManualFramePlayer.cs -Raw
+          $previewText = Get-Content ViewModels/Workspace/FramePreviewViewModel.cs -Raw
+          $homeText = Get-Content ViewModels/Pages/HomePageViewModel.cs -Raw
+          $sessionText = Get-Content Services/Video/Session/VideoSession.cs -Raw
+          $coordText = Get-Content ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs -Raw
+          if ($extractorText -notmatch 'TryGetLastDecodedPresentationIdentity') { throw 'decoded PTS identity API missing' }
+          if ($playerText -notmatch 'ManualFrameIdentity' -or $playerText -notmatch 'TimestampOccurrence') { throw 'manual frame identity missing' }
+          if ($sessionText -notmatch 'enableManualPlayer') { throw 'manual player session ownership missing' }
+          if ($coordText -notmatch 'enableManualPlayer: _mode == WorkspaceMode.Manual') { throw 'manual coordinator player selection missing' }
+          if ($homeText -notmatch '_onStartWorkspace\(vm\);[\s\S]*EnsureSessionInitializedAsync') { throw 'manual navigation must precede deferred session init' }
+          if ($previewText -notmatch 'RunManualSequentialPlaybackAsync') { throw 'manual sequential playback missing' }
           git diff --check
 
       - name: Setup .NET
