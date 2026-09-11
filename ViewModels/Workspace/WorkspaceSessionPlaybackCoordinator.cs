@@ -42,6 +42,12 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         _endLifetimeOperation = endLifetimeOperation ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
         _showPlaybackErrorAsync = showPlaybackErrorAsync ?? throw new ArgumentNullException(nameof(showPlaybackErrorAsync));
 
+        // A workspace may become visible before the deferred VideoSession exists.
+        // Keep both keyboard playback and edit commands gated until AdoptSession
+        // completes, then enable them atomically from the UI's point of view.
+        _frameList.SetPlaybackEnabled(false);
+        _framePreview.SetSessionReady(false);
+
         _frameList.SelectedFrameIndexChanged += OnSelectedFrameIndexChanged;
         _frameList.PlaybackStopped += OnPlaybackStopped;
         _frameList.PlaybackStateChanged += OnPlaybackStateChanged;
@@ -194,6 +200,9 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         _frameList.SetThumbnailProvider(session.ThumbnailProvider);
         lock (_stateGate)
             _initialized = true;
+
+        _frameList.SetPlaybackEnabled(true);
+        _framePreview.SetSessionReady(true);
     }
 
     private void OnSelectedFrameIndexChanged(int frameIndex)
@@ -221,6 +230,15 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         if (!isPlaying)
         {
             _framePreview.StopPlayback();
+            return;
+        }
+
+        // Defense in depth: SetPlaybackEnabled(false) should prevent this state,
+        // but never allow the legacy sequential path to start before the session
+        // (and, in manual mode, ManualFramePlayer) has been adopted.
+        if (!IsInitialized)
+        {
+            _frameList.NotifyPlaybackStopped();
             return;
         }
 
@@ -276,6 +294,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         }
 
         CancelInitialization();
+        _frameList.SetPlaybackEnabled(false);
+        _framePreview.SetSessionReady(false);
         _frameList.SelectedFrameIndexChanged -= OnSelectedFrameIndexChanged;
         _frameList.PlaybackStopped -= OnPlaybackStopped;
         _frameList.PlaybackStateChanged -= OnPlaybackStateChanged;

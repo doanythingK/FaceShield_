@@ -61,6 +61,9 @@ namespace FaceShield.ViewModels.Workspace
         private bool isExportRunning;
 
         [ObservableProperty]
+        private bool isSessionReady;
+
+        [ObservableProperty]
         private int exportProgress;
 
         [ObservableProperty]
@@ -84,8 +87,8 @@ namespace FaceShield.ViewModels.Workspace
             CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
 
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
-        public bool CanEditWorkspace => !IsExportRunning && !IsAutoRunning;
-
+        public bool CanEditWorkspace =>
+            IsSessionReady && !IsExportRunning && !IsAutoRunning;
 
         partial void OnCurrentModeChanged(EditMode value)
         {
@@ -104,11 +107,15 @@ namespace FaceShield.ViewModels.Workspace
             OnPropertyChanged(nameof(CanEditWorkspace));
         }
 
+        partial void OnIsSessionReadyChanged(bool value)
+        {
+            OnPropertyChanged(nameof(CanEditWorkspace));
+        }
+
         partial void OnSelectedExportQualityChanged(ExportQualityChoice value)
         {
             OnPropertyChanged(nameof(ExportQualityPreset));
         }
-
 
         public event Action? UndoRequested;
         public event Action? SaveRequested;
@@ -121,6 +128,7 @@ namespace FaceShield.ViewModels.Workspace
         [RelayCommand]
         private void SetAuto()
         {
+            if (!CanEditWorkspace) return;
             CurrentMode = EditMode.Auto;
             AutoRequested?.Invoke();
         }
@@ -165,6 +173,5 @@ namespace FaceShield.ViewModels.Workspace
 
         [RelayCommand]
         private void CancelExport() => ExportCancelRequested?.Invoke();
-
     }
 }

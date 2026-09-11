@@ -77,10 +77,16 @@ public sealed class TimelineController : IDisposable
         }
     }
 
-    public async Task<WriteableBitmap?> GetExactNowAsync(int frameIndex)
+    public async Task<WriteableBitmap?> GetExactNowAsync(
+        int frameIndex,
+        CancellationToken cancellationToken = default)
     {
         int requestId = Interlocked.Increment(ref _exactRequestId);
-        CancellationToken token = ReplaceRequestToken(ref _exactCts);
+        CancellationToken requestToken = ReplaceRequestToken(ref _exactCts);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            requestToken,
+            cancellationToken);
+        CancellationToken token = linkedCts.Token;
         try
         {
             var exact = await _exact.GetExactAsync(frameIndex, token);

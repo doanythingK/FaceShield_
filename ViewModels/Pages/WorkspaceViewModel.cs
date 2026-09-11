@@ -304,8 +304,12 @@ namespace FaceShield.ViewModels.Pages
 
         private async void OnSaveRequested()
         {
-            if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
+            if (!ToolPanel.IsSessionReady ||
+                _autoRunCoordinator.IsRunning ||
+                ToolPanel.IsAutoRunning)
+            {
                 return;
+            }
 
             FramePreview.PersistCurrentMask();
 
@@ -325,6 +329,9 @@ namespace FaceShield.ViewModels.Pages
 
         private async void OnAutoRequested()
         {
+            if (!ToolPanel.IsSessionReady)
+                return;
+
             try
             {
                 if (Mode == WorkspaceMode.Manual)
@@ -420,6 +427,11 @@ namespace FaceShield.ViewModels.Pages
             if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
                 return;
 
+            _sessionPlaybackCoordinator.CancelInitialization();
+            if (FrameList.IsPlaying)
+                FrameList.NotifyPlaybackStopped();
+            await FramePreview.StopManualOperationsAndWaitAsync();
+
             FramePreview.PersistCurrentMask();
             PersistWorkspaceState(includePreviewMask: false);
 
@@ -436,7 +448,6 @@ namespace FaceShield.ViewModels.Pages
                 }
             }
 
-            await FramePreview.StopManualOperationsAndWaitAsync();
             _onBack?.Invoke();
         }
 
@@ -719,7 +730,5 @@ namespace FaceShield.ViewModels.Pages
             if (disposeNow)
                 ScheduleOwnedResourceDispose();
         }
-
-
     }
 }

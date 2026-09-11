@@ -129,6 +129,23 @@ internal sealed class ManualFramePlayer : IDisposable, IAsyncDisposable
         }
     }
 
+    internal void InvalidateSequentialPosition()
+    {
+        using OperationLease operation = EnterOperation();
+        _decodeGate.Wait();
+        try
+        {
+            // A decoded frame is not considered committed until the UI accepts it.
+            // If the UI cancels before that point, force the next read to seek from
+            // the caller's visible frame index instead of continuing past it.
+            _hasSequentialPosition = false;
+        }
+        finally
+        {
+            _decodeGate.Release();
+        }
+    }
+
     private ManualPlayerFrame? ReadNextLocked(
         CancellationToken cancellationToken)
     {
