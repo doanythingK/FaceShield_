@@ -138,22 +138,31 @@ Assert-Match "workspace carries explicit overwrite policy" $exportCoordinator 'a
 Assert-Match "save-as unique path never falls back to original" $workspace 'Guid\.NewGuid\(\)[\s\S]*고유한 내보내기 파일명'
 Assert-Match "export non-overwrite commit uses atomic move" $exportStaging 'if\s*\(!allowOverwrite\)[\s\S]{0,500}File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)'
 
-# Manual player lifetime, session ownership, and UI editability.
+# Manual player lifetime, session ownership, cancellation, and UI editability.
 Assert-Match "manual player blocks new operations while closing" $manualPlayer 'EnterOperation\(\)[\s\S]{0,500}_closing\s*\|\|[\s\S]{0,180}ObjectDisposedException'
 Assert-Match "manual player counts operations before decode gate wait" $manualPlayer 'using\s+OperationLease\s+operation\s*=\s*EnterOperation\(\);[\s\S]{0,180}_decodeGate\.Wait\(cancellationToken\)'
 Assert-Match "manual player async disposal drains operations before resource disposal" $manualPlayer 'StopAndWaitAsync\(\)[\s\S]{0,180}Task\s+drainTask\s*=\s*BeginClose\(\);[\s\S]{0,160}await\s+drainTask\.ConfigureAwait\(false\);[\s\S]{0,100}DisposeResources\(\)'
 Assert-Match "manual player disposes extractor before decode gate" $manualPlayer '_extractor\.Dispose\(\);[\s\S]{0,80}_decodeGate\.Dispose\(\);'
+Assert-Match "manual player can invalidate uncommitted sequential position" $manualPlayer 'InvalidateSequentialPosition\(\)[\s\S]{0,500}_decodeGate\.Wait\(\)[\s\S]{0,350}_hasSequentialPosition\s*=\s*false'
 Assert-Match "video session asynchronously disposes manual player before shared session resources" $videoSession 'DisposeAsync\(\)[\s\S]{0,500}await\s+ManualPlayer\.DisposeAsync\(\)\.ConfigureAwait\(false\)[\s\S]{0,220}DisposeSessionResources\(\)'
 Assert-Match "manual session enables dedicated player" $sessionCoordinator 'enableManualPlayer:\s*_mode\s*==\s*WorkspaceMode\.Manual'
 Assert-Match "async session initialization links caller cancellation" $sessionCoordinator 'EnsureInitializedAsync\([\s\S]{0,800}CreateLinkedTokenSource\(cancellationToken\)[\s\S]{0,1800}sessionCts\.Token'
 Assert-Match "workspace attaches session-owned thumbnail provider" $sessionCoordinator '_frameList\.SetThumbnailProvider\(session\.ThumbnailProvider\)'
+Assert-Match "session readiness gates playback before adoption" $sessionCoordinator '_frameList\.SetPlaybackEnabled\(false\)[\s\S]*AdoptSession\([\s\S]*_initialized\s*=\s*true;[\s\S]{0,260}_frameList\.SetPlaybackEnabled\(true\)'
+Assert-Match "session readiness gates workspace edit commands" $sessionCoordinator '_framePreview\.SetSessionReady\(false\)[\s\S]*AdoptSession\([\s\S]*_framePreview\.SetSessionReady\(true\)'
+Assert-Match "preview playback requires an adopted session" $framePreview 'StartPlayback\([\s\S]{0,900}var\s+playbackSession\s*=\s*_session;[\s\S]{0,220}playbackSession\s*==\s*null'
 Assert-Match "manual shutdown waits playback then frame load" $framePreview 'StopManualOperationsAndWaitAsync\(\)[\s\S]{0,180}StopPlaybackAndWaitAsync\(\)[\s\S]{0,180}CancelManualFrameLoadAndWaitAsync\(\)'
+Assert-Match "manual playback disposes and invalidates unaccepted decoded frame" $framePreview 'RunManualSequentialPlaybackAsync\([\s\S]*if\s*\(!frameAccepted\)[\s\S]{0,180}frame\?\.Dispose\(\);[\s\S]{0,180}TryInvalidateManualSequentialPosition\(player\)'
+Assert-Match "general playback disposes unaccepted decoded frame" $framePreview 'RunSequentialPlaybackAsync\([\s\S]*finally[\s\S]{0,160}!frameAccepted[\s\S]{0,120}frame\?\.Dispose\(\)'
+Assert-Match "manual loading cleanup is generation guarded" $framePreview 'ClearManualFrameLoadingState\(int\s+generation\)[\s\S]{0,300}generation\s*!=\s*_manualFrameLoadGeneration[\s\S]{0,220}IsFrameLoading\s*=\s*false'
+Assert-Match "manual fallback propagates cancellation" ($framePreview + $timelineController) 'TryLoadExactFallbackAsync\([\s\S]{0,220}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]*GetExactNowAsync\([\s\S]{0,120}cancellationToken[\s\S]*CreateLinkedTokenSource\([\s\S]{0,120}cancellationToken'
 Assert-Match "preview edit gate blocks playback and loading" $framePreview 'CanMutateCurrentMask\(\)[\s\S]{0,260}_toolPanel\.CanEditWorkspace[\s\S]{0,120}!_isPlaying[\s\S]{0,120}!IsFrameLoading'
 Assert-Match "pointer mutation methods use shared edit gate" $framePreview 'OnPointerPressed\([\s\S]{0,160}!CanMutateCurrentMask\(\)[\s\S]*OnPointerMoved\([\s\S]{0,180}!CanMutateCurrentMask\(\)[\s\S]*OnPointerReleased\([\s\S]{0,180}!CanMutateCurrentMask\(\)'
 Assert-Match "manual pointer capture stays on input layer" $framePreviewView 'CapturePointerToInputLayer\(sender,\s*e\)[\s\S]*sender\s+is\s+IInputElement\s+inputLayer[\s\S]{0,120}e\.Pointer\.Capture\(inputLayer\)'
 Assert-NotMatch "manual pointer capture does not target parent user control" $framePreviewView 'e\.Pointer\.Capture\(this\)'
 Assert-Match "workspace exposes blur-radius control" $toolPanelView 'Minimum="\{Binding MinBlurRadius\}"[\s\S]{0,180}Maximum="\{Binding MaxBlurRadius\}"[\s\S]{0,180}Value="\{Binding BlurRadius, Mode=TwoWay\}"'
-Assert-Match "workspace edit gate blocks auto and export" $toolPanel 'CanEditWorkspace\s*=>\s*!IsExportRunning\s*&&\s*!IsAutoRunning'
+Assert-Match "workspace edit gate blocks unready session auto and export" $toolPanel 'CanEditWorkspace\s*=>[\s\S]{0,120}IsSessionReady\s*&&\s*!IsExportRunning\s*&&\s*!IsAutoRunning'
+Assert-Match "workspace back normalizes logical playback state" $workspace 'GoBack\(\)[\s\S]{0,420}FrameList\.IsPlaying[\s\S]{0,160}FrameList\.NotifyPlaybackStopped\(\)[\s\S]{0,180}StopManualOperationsAndWaitAsync\(\)'
 
 # Timeline, diagnostics, and persistence hardening.
 Assert-Match "timeline cache has hard entry bound" $thumbnailProvider '_maxCacheEntries[\s\S]*TrimCacheIfNeeded'
