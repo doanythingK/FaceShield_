@@ -675,6 +675,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         await CancelManualFrameLoadAndWaitAsync();
 
+        // Track the entire manual-load operation, not only the decoder Task.Run.
+        // Shutdown must also wait for fallback exact-load and UI ownership transfer.
+        var operationCompletion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task operationTask = operationCompletion.Task;
+        Volatile.Write(ref _manualFrameLoadTask, operationTask);
+
         int generation = Interlocked.Increment(ref _manualFrameLoadGeneration);
         var requestCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
@@ -685,11 +692,10 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         try
         {
-            Task<ManualPlayerFrame?> loadTask = Task.Run(
+            Task<ManualPlayerFrame?> decodeTask = Task.Run(
                 () => player.LoadFrame(index, requestCts.Token),
                 requestCts.Token);
-            Volatile.Write(ref _manualFrameLoadTask, loadTask);
-            ManualPlayerFrame? loaded = await loadTask;
+            ManualPlayerFrame? loaded = await decodeTask;
 
             if (loaded == null)
             {
@@ -717,7 +723,19 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            ApplyManualFrame(bitmap, loaded.Identity);
+            bool frameOwnershipTransferred = false;
+            try
+            {
+                ApplyManualFrame(
+                    bitmap,
+                    loaded.Identity,
+                    out frameOwnershipTransferred);
+            }
+            finally
+            {
+                if (!frameOwnershipTransferred)
+                    bitmap.Dispose();
+            }
         }
         catch (OperationCanceledException) when (requestCts.IsCancellationRequested)
         {
@@ -747,14 +765,11 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 requestCts);
             ClearManualFrameLoadingState(generation);
 
-            Task? currentLoadTask = Volatile.Read(ref _manualFrameLoadTask);
-            if (currentLoadTask?.IsCompleted == true)
-            {
-                _ = Interlocked.CompareExchange(
-                    ref _manualFrameLoadTask,
-                    null,
-                    currentLoadTask);
-            }
+            operationCompletion.TrySetResult(true);
+            _ = Interlocked.CompareExchange(
+                ref _manualFrameLoadTask,
+                null,
+                operationTask);
             requestCts.Dispose();
         }
     }
@@ -1219,7 +1234,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
 
                     WriteableBitmap? frame = decoded.Bitmap;
-                    bool frameAccepted = false;
+                    bool frameCommittedToPreview = false;
                     try
                     {
                         int frameIndex = decoded.Identity.FrameOrdinal;
@@ -1275,12 +1290,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                             ApplyPlaybackFrame(
                                 frameToApply,
                                 frameIndex,
-                                decoded.Identity);
-                            frameAccepted = true;
-                            onFrameAdvanced(frameIndex);
+                                decoded.Identity,
+                                out frameCommittedToPreview);
+                            if (frameCommittedToPreview)
+                                onFrameAdvanced(frameIndex);
                         });
 
-                        if (!frameAccepted)
+                        if (!frameCommittedToPreview)
                             break;
 
                         frame = null;
@@ -1293,7 +1309,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
                     finally
                     {
-                        if (!frameAccepted)
+                        if (!frameCommittedToPreview)
                         {
                             frame?.Dispose();
                             TryInvalidateManualSequentialPosition(player);
@@ -1385,7 +1401,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                         continue;
 
                     WriteableBitmap? frame = decodedFrame;
-                    bool frameAccepted = false;
+                    bool frameCommittedToPreview = false;
                     try
                     {
                         if (frameIndex < startFrameIndex)
@@ -1430,12 +1446,16 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                                 return;
                             }
 
-                            ApplyPlaybackFrame(frameToApply, frameIndex);
-                            frameAccepted = true;
-                            onFrameAdvanced(frameIndex);
+                            ApplyPlaybackFrame(
+                                frameToApply,
+                                frameIndex,
+                                manualIdentity: null,
+                                out frameCommittedToPreview);
+                            if (frameCommittedToPreview)
+                                onFrameAdvanced(frameIndex);
                         });
 
-                        if (!frameAccepted)
+                        if (!frameCommittedToPreview)
                             break;
 
                         frame = null;
@@ -1447,7 +1467,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
                     finally
                     {
-                        if (!frameAccepted)
+                        if (!frameCommittedToPreview)
                             frame?.Dispose();
                     }
                 }
@@ -1535,25 +1555,22 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private void ApplyPlaybackFrame(
         WriteableBitmap exact,
         int index,
-        ManualFrameIdentity? manualIdentity = null)
+        ManualFrameIdentity? manualIdentity,
+        out bool ownershipTransferred)
     {
+        ownershipTransferred = false;
         if (!Dispatcher.UIThread.CheckAccess())
-        {
-            Dispatcher.UIThread.Post(() =>
-                ApplyPlaybackFrame(exact, index, manualIdentity));
-            return;
-        }
+            throw new InvalidOperationException(
+                "Playback frame ownership can only transfer on the UI thread.");
 
         if (_disposed)
-        {
-            exact.Dispose();
             return;
-        }
 
         _currentManualFrameIdentity = manualIdentity;
         _currentFrameIndex = index;
         PrepareFrameReplacement();
         FrameBitmap = exact;
+        ownershipTransferred = true;
         _maskUndo.Clear();
         _maskDirty = false;
 
@@ -1572,25 +1589,22 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     private void ApplyManualFrame(
         WriteableBitmap frame,
-        ManualFrameIdentity identity)
+        ManualFrameIdentity identity,
+        out bool ownershipTransferred)
     {
+        ownershipTransferred = false;
         if (!Dispatcher.UIThread.CheckAccess())
-        {
-            Dispatcher.UIThread.Post(() =>
-                ApplyManualFrame(frame, identity));
-            return;
-        }
+            throw new InvalidOperationException(
+                "Manual frame ownership can only transfer on the UI thread.");
 
         if (_disposed)
-        {
-            frame.Dispose();
             return;
-        }
 
         _currentManualFrameIdentity = identity;
         _currentFrameIndex = identity.FrameOrdinal;
         PrepareFrameReplacement();
         FrameBitmap = frame;
+        ownershipTransferred = true;
         MaskBitmap = CreateEditableMask(identity.FrameOrdinal, frame)
             ?? CreateEmptyMask(
                 frame.PixelSize.Width,
