@@ -152,7 +152,7 @@ public sealed class TimelineController : IDisposable
 
         lock (_requestSync)
         {
-            requestId = checked(requestIdCounter + 1);
+            requestId = unchecked(requestIdCounter + 1);
             requestIdCounter = requestId;
             reject = _disposed;
             previous = reject ? null : slot;

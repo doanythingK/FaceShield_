@@ -122,6 +122,7 @@ namespace FaceShield.ViewModels.Pages
             FrameList = new FrameListViewModel(
                 videoPath,
                 initializationToken);
+            FrameList.SetUserNavigationGuard(() => ToolPanel.CanEditWorkspace);
             FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);
             _issueReview = new IssueReviewCoordinator(
                 _maskProvider,
