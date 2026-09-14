@@ -521,8 +521,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 TimelineRenderVersion++;
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[FrameList] timeline navigation resolution failed: {ex}");
         }
         finally
         {
@@ -590,8 +595,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 TimelineRenderVersion++;
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[FrameList] selected timestamp resolution failed: {ex}");
         }
         finally
         {
