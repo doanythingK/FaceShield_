@@ -40,7 +40,7 @@ public sealed class TimelineController : IDisposable
             thumbnail?.Dispose();
             return null;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return null;
         }
@@ -66,7 +66,7 @@ public sealed class TimelineController : IDisposable
             exact?.Dispose();
             return null;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return null;
         }
@@ -97,7 +97,7 @@ public sealed class TimelineController : IDisposable
             exact?.Dispose();
             return null;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return null;
         }
