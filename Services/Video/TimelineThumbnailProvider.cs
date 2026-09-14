@@ -453,8 +453,13 @@ namespace FaceShield.Services.Video
                 if (_ownsExtractor)
                     _extractor.Dispose();
 
+                // Cached thumbnails can still be referenced by the timeline render
+                // for the current UI turn. Eviction already disposes them through the
+                // UI dispatcher; full provider disposal must obey the same ownership
+                // rule so a background session teardown cannot invalidate a bitmap
+                // while the UI is drawing it.
                 foreach (var entry in _cache)
-                    entry.Value.Dispose();
+                    DisposeOnUiThread(entry.Value);
 
                 _cache.Clear();
                 _operationCts.Dispose();
