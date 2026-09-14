@@ -476,6 +476,9 @@ namespace FaceShield.ViewModels.Pages
 
         private void JumpAutoAnomaly(bool forward)
         {
+            if (!ToolPanel.CanEditWorkspace || _autoRunCoordinator.IsRunning)
+                return;
+
             if (!_issueReview.TryGetAdjacentAnomaly(
                     FrameList.SelectedFrameIndex,
                     forward,
@@ -491,6 +494,9 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private void JumpToIssue(int frameIndex)
         {
+            if (!ToolPanel.CanEditWorkspace || _autoRunCoordinator.IsRunning)
+                return;
+
             int targetFrame = Math.Clamp(frameIndex, 0, FrameList.TotalFrames - 1);
             FrameList.SelectedFrameIndex = targetFrame;
             RefreshIssueTimesInBackground(targetFrame);
@@ -499,6 +505,9 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private void ReviewAutoAnomalies()
         {
+            if (!ToolPanel.CanEditWorkspace || _autoRunCoordinator.IsRunning)
+                return;
+
             if (!_issueReview.TryGetFirstAnomaly(out int targetFrame))
                 return;
 
