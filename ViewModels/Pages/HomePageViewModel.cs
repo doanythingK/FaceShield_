@@ -852,6 +852,12 @@ namespace FaceShield.ViewModels.Pages
 
         partial void OnSelectedAutoDetectorBackendOptionChanged(AutoDetectorBackendOption? value)
         {
+            if (value?.Backend != FaceDetectorBackend.YoloFaceOnnx &&
+                IsYoloModelDownloading)
+            {
+                CancelYoloModelDownload();
+            }
+
             PersistAutoSettings();
             OnPropertyChanged(nameof(IsYoloDetectorSelected));
             OnPropertyChanged(nameof(IsFaceOnnxDetectorSelected));
@@ -870,6 +876,9 @@ namespace FaceShield.ViewModels.Pages
                 _activeYoloModelType = modelType;
                 return;
             }
+
+            if (IsYoloModelDownloading)
+                CancelYoloModelDownload();
 
             StoreCurrentYoloProfile();
             _activeYoloModelType = modelType;
@@ -1575,7 +1584,7 @@ namespace FaceShield.ViewModels.Pages
                 YoloModelDownloadProgress = 100;
                 YoloModelDownloadStatus = $"다운로드 완료: {downloadInfo.FileName}";
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (downloadCts.IsCancellationRequested)
             {
                 if (IsCurrentYoloDownload(downloadCts))
                 {

@@ -125,6 +125,7 @@ internal sealed class TimelineFrameStripRequestCoordinator
             0,
             (long)Math.Round(timestampSeconds * 1000.0));
         CancellationTokenSource requestScope;
+        CancellationTokenSource requestCts;
         CancellationToken token;
         lock (_pendingThumbnailSync)
         {
@@ -132,7 +133,8 @@ internal sealed class TimelineFrameStripRequestCoordinator
                 return;
 
             requestScope = _thumbnailRequestCts;
-            token = requestScope.Token;
+            requestCts = CancellationTokenSource.CreateLinkedTokenSource(requestScope.Token);
+            token = requestCts.Token;
         }
 
         _ = Task.Run(() =>
@@ -156,6 +158,9 @@ internal sealed class TimelineFrameStripRequestCoordinator
             }, token)
             .ContinueWith(task =>
             {
+                bool requestCanceled = token.IsCancellationRequested;
+                requestCts.Dispose();
+
                 Dispatcher.UIThread.Post(() =>
                 {
                     bool isCurrentScope;
@@ -169,7 +174,7 @@ internal sealed class TimelineFrameStripRequestCoordinator
                     }
 
                     if (isCurrentScope &&
-                        !token.IsCancellationRequested &&
+                        !requestCanceled &&
                         task.Status == TaskStatus.RanToCompletion &&
                         task.Result)
                     {
