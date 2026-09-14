@@ -19,6 +19,9 @@ public partial class FrameListView : UserControl
     {
         base.OnKeyDown(e);
 
+        if (e.Handled || !IsEnabled)
+            return;
+
         if (DataContext is not FrameListViewModel vm)
             return;
 
