@@ -100,7 +100,14 @@ namespace FaceShield
             if (ex is AggregateException aggregate)
                 ex = aggregate.Flatten().InnerException ?? ex;
 
-            return ex is OperationCanceledException;
+            // Expected cancellation should normally be consumed at the operation
+            // boundary that owns the token. If one reaches the UI dispatcher, only
+            // suppress it when the exception itself carries a token that is actually
+            // canceled. A tokenless/unrequested OperationCanceledException is a fault
+            // signal and must reach the global error path instead of disappearing.
+            return ex is OperationCanceledException canceled &&
+                canceled.CancellationToken.CanBeCanceled &&
+                canceled.CancellationToken.IsCancellationRequested;
         }
 
         private void HandleUnhandledException(Exception ex)
