@@ -26,8 +26,8 @@ public sealed class TimelineController : IDisposable
 
     public async Task<WriteableBitmap?> OnFrameChangingExactAsync(int frameIndex)
     {
-        int requestId = Interlocked.Increment(ref _thumbRequestId);
-        CancellationTokenSource requestCts = BeginRequest(ref _thumbCts);
+        (int requestId, CancellationTokenSource requestCts) =
+            BeginRequest(ref _thumbCts, ref _thumbRequestId);
         CancellationToken token = requestCts.Token;
         try
         {
@@ -60,8 +60,8 @@ public sealed class TimelineController : IDisposable
 
     public async Task<WriteableBitmap?> OnFrameChangedAsync(int frameIndex)
     {
-        int requestId = Interlocked.Increment(ref _exactRequestId);
-        CancellationTokenSource requestCts = BeginRequest(ref _exactCts);
+        (int requestId, CancellationTokenSource requestCts) =
+            BeginRequest(ref _exactCts, ref _exactRequestId);
         CancellationToken token = requestCts.Token;
         try
         {
@@ -95,15 +95,12 @@ public sealed class TimelineController : IDisposable
         int frameIndex,
         CancellationToken cancellationToken = default)
     {
-        int requestId = Interlocked.Increment(ref _exactRequestId);
-        CancellationTokenSource requestCts = BeginRequest(ref _exactCts);
+        (int requestId, CancellationTokenSource requestCts) =
+            BeginRequest(ref _exactCts, ref _exactRequestId);
         CancellationTokenSource? linkedCts = null;
         CancellationToken token = requestCts.Token;
         try
         {
-            // The request owns requestCts until this method completes. A newer
-            // request may cancel it, but cannot dispose it while linked-token
-            // registration or exact decoding is still using the token.
             linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 requestCts.Token,
                 cancellationToken);
@@ -144,15 +141,19 @@ public sealed class TimelineController : IDisposable
             $"[TimelineController] operation={operation} frame={frameIndex} error={exception.GetType().Name}: {exception.Message}");
     }
 
-    private CancellationTokenSource BeginRequest(
-        ref CancellationTokenSource? slot)
+    private (int RequestId, CancellationTokenSource Cts) BeginRequest(
+        ref CancellationTokenSource? slot,
+        ref int requestIdCounter)
     {
         var current = new CancellationTokenSource();
         CancellationTokenSource? previous;
+        int requestId;
         bool reject;
 
         lock (_requestSync)
         {
+            requestId = checked(requestIdCounter + 1);
+            requestIdCounter = requestId;
             reject = _disposed;
             previous = reject ? null : slot;
             if (!reject)
@@ -162,11 +163,11 @@ public sealed class TimelineController : IDisposable
         if (reject)
         {
             current.Cancel();
-            return current;
+            return (requestId, current);
         }
 
         CancelRequest(previous);
-        return current;
+        return (requestId, current);
     }
 
     private void CompleteRequest(
@@ -214,9 +215,6 @@ public sealed class TimelineController : IDisposable
             _thumbCts = null;
         }
 
-        // Active requests own disposal of their CTS. Controller shutdown only
-        // cancels them so no source is disposed while an in-flight request is
-        // still registering callbacks or consuming its token.
         CancelRequest(exact);
         CancelRequest(thumb);
     }
