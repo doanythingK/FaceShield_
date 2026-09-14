@@ -80,13 +80,15 @@ internal sealed class TimelineFrameStripRequestCoordinator
         long requestKey = Math.Max(
             0,
             (long)Math.Round(timestampSeconds * 1000.0));
+        CancellationTokenSource requestScope;
         CancellationToken token;
         lock (_pendingThumbnailSync)
         {
             if (!_pendingThumbnails.Add(requestKey))
                 return;
 
-            token = _thumbnailRequestCts.Token;
+            requestScope = _thumbnailRequestCts;
+            token = requestScope.Token;
         }
 
         _ = Task.Run(() =>
@@ -110,10 +112,18 @@ internal sealed class TimelineFrameStripRequestCoordinator
             {
                 Dispatcher.UIThread.Post(() =>
                 {
+                    bool isCurrentScope;
                     lock (_pendingThumbnailSync)
-                        _pendingThumbnails.Remove(requestKey);
+                    {
+                        isCurrentScope = ReferenceEquals(
+                            _thumbnailRequestCts,
+                            requestScope);
+                        if (isCurrentScope)
+                            _pendingThumbnails.Remove(requestKey);
+                    }
 
-                    if (!token.IsCancellationRequested &&
+                    if (isCurrentScope &&
+                        !token.IsCancellationRequested &&
                         task.Status == TaskStatus.RanToCompletion &&
                         task.Result)
                     {
