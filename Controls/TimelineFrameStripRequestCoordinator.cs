@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -43,6 +44,49 @@ internal sealed class TimelineFrameStripRequestCoordinator
         _getSelectedFrameIndex = getSelectedFrameIndex ?? throw new ArgumentNullException(nameof(getSelectedFrameIndex));
         _setSelectedFrameIndex = setSelectedFrameIndex ?? throw new ArgumentNullException(nameof(setSelectedFrameIndex));
         _invalidateVisual = invalidateVisual ?? throw new ArgumentNullException(nameof(invalidateVisual));
+    }
+
+    internal void CancelPendingRequests()
+    {
+        CancellationTokenSource thumbnailScope;
+        lock (_pendingThumbnailSync)
+        {
+            thumbnailScope = _thumbnailRequestCts;
+            _thumbnailRequestCts = new CancellationTokenSource();
+            _pendingThumbnails.Clear();
+            _thumbnailRequestProvider = null;
+            _thumbnailRequestStart = double.NaN;
+            _thumbnailRequestEnd = double.NaN;
+        }
+
+        try { thumbnailScope.Cancel(); }
+        catch (ObjectDisposedException) { }
+        thumbnailScope.Dispose();
+
+        CancelRequest(ref _selectionRequestCts);
+        CancelRequest(ref _selectedPtsRequestCts);
+        CancelRequest(ref _issueViewportRequestCts);
+        CancelRequest(ref _issueFrameRequestCts);
+
+        _selectedPtsRequestProvider = null;
+        _selectedPtsRequestFrame = -1;
+        _issueViewportRequestProvider = null;
+        _issueViewportRequestSeconds = double.NaN;
+        _issueViewportFailedSeconds = double.NaN;
+        _issueFrameRequestProvider = null;
+        _issueFrameRequestIndex = -1;
+        _issueFrameFailedIndex = -1;
+    }
+
+    private static void CancelRequest(ref CancellationTokenSource? slot)
+    {
+        CancellationTokenSource? cts = Interlocked.Exchange(ref slot, null);
+        if (cts == null)
+            return;
+
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
+        // The request task owns disposal of its CTS in its finally block.
     }
 
     internal void EnsureThumbnailRequestScope(
@@ -99,12 +143,14 @@ internal sealed class TimelineFrameStripRequestCoordinator
                         timestampSeconds,
                         token) != null;
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
                     return false;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Debug.WriteLine(
+                        $"[TimelineFrameStrip] thumbnail request failed: {ex}");
                     return false;
                 }
             }, token)
@@ -197,8 +243,13 @@ internal sealed class TimelineFrameStripRequestCoordinator
                 _invalidateVisual();
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[TimelineFrameStrip] exact selection request failed: {ex}");
         }
         finally
         {
@@ -265,8 +316,13 @@ internal sealed class TimelineFrameStripRequestCoordinator
                 _invalidateVisual();
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[TimelineFrameStrip] selected timestamp request failed: {ex}");
         }
         finally
         {
@@ -362,8 +418,13 @@ internal sealed class TimelineFrameStripRequestCoordinator
                 _invalidateVisual();
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[TimelineFrameStrip] viewport mapping request failed: {ex}");
         }
         finally
         {
@@ -446,8 +507,13 @@ internal sealed class TimelineFrameStripRequestCoordinator
                 _invalidateVisual();
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[TimelineFrameStrip] issue frame mapping request failed: {ex}");
         }
         finally
         {
