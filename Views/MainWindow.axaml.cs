@@ -23,16 +23,13 @@ namespace FaceShield.Views
             if (vm.CurrentPage is not WorkspaceViewModel workspace)
                 return;
 
-            if (!workspace.ToolPanel.IsSessionReady)
+            if (!workspace.ToolPanel.CanEditWorkspace)
                 return;
 
             if (e.Key == Key.Q || e.Key == Key.E)
             {
-                if (!workspace.ToolPanel.CanEditWorkspace ||
-                    !workspace.HasAutoAnomalies)
-                {
+                if (!workspace.HasAutoAnomalies)
                     return;
-                }
 
                 if (e.Key == Key.Q)
                     workspace.PrevAutoAnomalyCommand.Execute(null);
