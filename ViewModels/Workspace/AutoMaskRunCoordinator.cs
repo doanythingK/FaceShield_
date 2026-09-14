@@ -442,7 +442,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             persisted = true;
             return true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_autoCts?.IsCancellationRequested == true)
         {
             Completed = autoAnalysisCompleted;
             if (postProcessCommitted)
@@ -557,7 +557,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             _persistWorkspaceState(true);
             return true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_autoCts?.IsCancellationRequested == true)
         {
             _persistWorkspaceState(true);
             return false;
