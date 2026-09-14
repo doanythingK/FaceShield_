@@ -327,7 +327,7 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private async void OnAutoRequested()
+        private async void OnAutoRequested(EditMode previousMode)
         {
             if (!ToolPanel.IsSessionReady)
                 return;
@@ -336,8 +336,16 @@ namespace FaceShield.ViewModels.Pages
             {
                 if (Mode == WorkspaceMode.Manual)
                 {
-                    await RunAutoSingleFrameAsync();
-                    ToolPanel.CurrentMode = EditMode.Manual;
+                    try
+                    {
+                        await RunAutoSingleFrameAsync();
+                    }
+                    finally
+                    {
+                        ToolPanel.CurrentMode = previousMode is EditMode.Brush or EditMode.Eraser
+                            ? previousMode
+                            : EditMode.None;
+                    }
                     return;
                 }
 
