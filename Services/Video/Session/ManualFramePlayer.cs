@@ -250,8 +250,14 @@ internal sealed class ManualFramePlayer : IDisposable, IAsyncDisposable
         if (Interlocked.Exchange(ref _resourcesDisposed, 1) != 0)
             return;
 
-        _extractor.Dispose();
-        _decodeGate.Dispose();
+        try
+        {
+            _extractor.Dispose();
+        }
+        finally
+        {
+            _decodeGate.Dispose();
+        }
     }
 
     public void Dispose()
