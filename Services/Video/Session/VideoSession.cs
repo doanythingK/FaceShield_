@@ -32,6 +32,7 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         ExactProvider = new ExactFrameProvider(_extractor, ownsExtractor: false);
         ManualPlayer = null;
 
+        TimelineThumbnailProvider? thumbnailProvider = null;
         try
         {
             if (enableManualPlayer)
@@ -41,19 +42,45 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
                     cancellationToken);
             }
 
-            ThumbnailProvider = new TimelineThumbnailProvider(
+            thumbnailProvider = new TimelineThumbnailProvider(
                 _extractor,
                 thumbWidth,
                 thumbHeight,
                 maxThumbnailCacheEntries,
                 ownsExtractor: false);
+            ThumbnailProvider = thumbnailProvider;
             Timeline = new TimelineController(ExactProvider, ThumbnailProvider);
             progress?.Report(100);
         }
         catch
         {
-            ManualPlayer?.Dispose();
-            ExactProvider.Dispose();
+            // Construction is an ownership transaction: every resource created
+            // before the failure must be released even when an earlier Dispose
+            // itself faults. The shared extractor is released last.
+            try
+            {
+                ManualPlayer?.Dispose();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                thumbnailProvider?.Dispose();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                ExactProvider.Dispose();
+            }
+            catch
+            {
+            }
+
             _extractor.Dispose();
             throw;
         }
