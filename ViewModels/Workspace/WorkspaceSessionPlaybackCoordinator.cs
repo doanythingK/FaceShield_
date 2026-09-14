@@ -20,6 +20,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     private readonly object _stateGate = new();
 
     private CancellationTokenSource? _sessionInitCts;
+    private bool _adoptionInProgress;
     private bool _initialized;
     private bool _disposed;
 
@@ -117,17 +118,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 return;
             }
 
-            lock (_stateGate)
-            {
-                if (_disposed || _initialized)
-                {
-                    session.Dispose();
-                    return;
-                }
-            }
-
             AdoptSession(session);
-            if (_frameList.SelectedFrameIndex >= 0)
+            if (_frameList.SelectedFrameIndex >= 0 && IsInitialized)
             {
                 if (_mode == WorkspaceMode.Manual)
                 {
@@ -180,6 +172,9 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
 
     private void AdoptSession(VideoSession session)
     {
+        if (session == null)
+            throw new ArgumentNullException(nameof(session));
+
         lock (_stateGate)
         {
             if (_disposed)
@@ -187,22 +182,52 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 session.Dispose();
                 throw new ObjectDisposedException(nameof(WorkspaceSessionPlaybackCoordinator));
             }
-            if (_initialized)
+
+            // Only one caller may cross the ownership-transfer boundary. Without
+            // this claim, two concurrent initializers can both observe
+            // _initialized=false and the second InitializeSession call will dispose
+            // the first session while FrameList still references its provider.
+            if (_initialized || _adoptionInProgress)
             {
                 session.Dispose();
                 return;
             }
+
+            _adoptionInProgress = true;
         }
 
-        _framePreview.InitializeSession(
-            session,
-            useManualPlayer: _mode == WorkspaceMode.Manual);
-        _frameList.SetThumbnailProvider(session.ThumbnailProvider);
-        lock (_stateGate)
-            _initialized = true;
+        bool adopted = false;
+        try
+        {
+            _framePreview.InitializeSession(
+                session,
+                useManualPlayer: _mode == WorkspaceMode.Manual);
+            _frameList.SetThumbnailProvider(session.ThumbnailProvider);
 
-        _frameList.SetPlaybackEnabled(true);
-        _framePreview.SetSessionReady(true);
+            lock (_stateGate)
+            {
+                if (!_disposed)
+                {
+                    _initialized = true;
+                    adopted = true;
+                }
+            }
+
+            if (!adopted)
+            {
+                _frameList.SetPlaybackEnabled(false);
+                _framePreview.SetSessionReady(false);
+                return;
+            }
+
+            _frameList.SetPlaybackEnabled(true);
+            _framePreview.SetSessionReady(true);
+        }
+        finally
+        {
+            lock (_stateGate)
+                _adoptionInProgress = false;
+        }
     }
 
     private void OnSelectedFrameIndexChanged(int frameIndex)
