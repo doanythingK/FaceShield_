@@ -26,8 +26,7 @@ public sealed class ExactFrameProvider : IDisposable
 
     public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
     {
-        CancellationToken operationToken;
-        CancellationToken lifetimeToken;
+        CancellationTokenSource linked;
         lock (_operationStateSync)
         {
             if (_disposed ||
@@ -37,17 +36,16 @@ public sealed class ExactFrameProvider : IDisposable
                 return null;
             }
 
-            // Capture tokens while disposal is excluded by the same lock. The
-            // CancellationToken structs remain safe to use even if the owning
-            // sources are disposed after this admission point.
-            operationToken = _operationCts.Token;
-            lifetimeToken = _lifetimeCts.Token;
+            // Admission includes linked-token registration. Dispose uses the same
+            // lock before cancelling and eventually disposing these sources, so an
+            // admitted request can never register against an already-disposed source.
+            linked = CancellationTokenSource.CreateLinkedTokenSource(
+                ct,
+                _lifetimeCts.Token,
+                _operationCts.Token);
         }
 
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            ct,
-            lifetimeToken,
-            operationToken);
+        using var linkedScope = linked;
         CancellationToken token = linked.Token;
 
         try
