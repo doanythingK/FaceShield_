@@ -1362,17 +1362,23 @@ namespace FaceShield.ViewModels.Pages
             var resolution = SelectedResolutionOption ?? ResolutionOptions[0];
 
             var list = new List<BlurExampleItem>(percents.Length);
-            foreach (var p in percents)
+            try
             {
-                var face = BuildCenteredFaceRect(w, h, p);
-                var src = CreatePatternImage(w, h);
-                var mask = FrameMaskProvider.CreateMaskFromFaceRects(new PixelSize(w, h), new[] { face });
-                var preview = PreviewBlurProcessor.CreateBlurPreview(src, mask, BlurRadius, new[] { face });
-                string label = BuildBlurLabel(p, resolution.Width, resolution.Height);
-                list.Add(new BlurExampleItem(p, label, preview));
-
-                src.Dispose();
-                mask.Dispose();
+                foreach (var p in percents)
+                {
+                    var face = BuildCenteredFaceRect(w, h, p);
+                    using var src = CreatePatternImage(w, h);
+                    using var mask = FrameMaskProvider.CreateMaskFromFaceRects(new PixelSize(w, h), new[] { face });
+                    var preview = PreviewBlurProcessor.CreateBlurPreview(src, mask, BlurRadius, new[] { face });
+                    string label = BuildBlurLabel(p, resolution.Width, resolution.Height);
+                    list.Add(new BlurExampleItem(p, label, preview));
+                }
+            }
+            catch
+            {
+                foreach (var item in list)
+                    item.Image.Dispose();
+                throw;
             }
 
             if (BlurExamples != null)
@@ -1399,12 +1405,9 @@ namespace FaceShield.ViewModels.Pages
             int h = resolution.Height;
 
             var face = BuildCenteredFaceRect(w, h, percent);
-            var src = CreatePatternImage(w, h);
-            var mask = FrameMaskProvider.CreateMaskFromFaceRects(new PixelSize(w, h), new[] { face });
+            using var src = CreatePatternImage(w, h);
+            using var mask = FrameMaskProvider.CreateMaskFromFaceRects(new PixelSize(w, h), new[] { face });
             var preview = PreviewBlurProcessor.CreateBlurPreview(src, mask, BlurRadius, new[] { face });
-
-            src.Dispose();
-            mask.Dispose();
             int faceW = (int)Math.Round(face.Width);
             int faceH = (int)Math.Round(face.Height);
             string label = $"{resolution.Label} / 얼굴 {percent:0.#}% ({faceW}x{faceH}px)";

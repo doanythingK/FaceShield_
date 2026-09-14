@@ -773,6 +773,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
         CancelTimelineNavigation();
         CancelSelectedTimestampResolution();
+        _canUserNavigate = null;
 
         // VideoSession owns the shared thumbnail provider and decoder.
         ThumbnailProvider = null;
