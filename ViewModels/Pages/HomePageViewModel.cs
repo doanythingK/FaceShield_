@@ -1586,7 +1586,9 @@ namespace FaceShield.ViewModels.Pages
             }
             catch (OperationCanceledException) when (downloadCts.IsCancellationRequested)
             {
-                if (IsCurrentYoloDownload(downloadCts))
+                if (IsCurrentYoloDownload(downloadCts) &&
+                    IsYoloDetectorSelected &&
+                    (SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.Yolo5Face) == modelType)
                 {
                     YoloModelDownloadProgress = 0;
                     YoloModelDownloadStatus = $"다운로드 취소됨: {downloadInfo.FileName}";
@@ -1594,8 +1596,12 @@ namespace FaceShield.ViewModels.Pages
             }
             catch (Exception ex)
             {
-                if (IsCurrentYoloDownload(downloadCts))
+                if (CanApplyYoloDownloadProgress(downloadCts) &&
+                    IsYoloDetectorSelected &&
+                    (SelectedYoloModelTypeOption?.ModelType ?? YoloFaceModelType.Yolo5Face) == modelType)
+                {
                     YoloModelDownloadStatus = $"다운로드 실패: {ex.Message}";
+                }
             }
             finally
             {
@@ -1798,6 +1804,22 @@ namespace FaceShield.ViewModels.Pages
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (autoHandoffStarted)
+                {
+                    IsAutoRunning = false;
+                    StopAutoStatusTimer(clearUi: !IsShutdownRequested);
+                    _activeAutoWorkspace = null;
+                }
+
+                if (!IsShutdownRequested && CanApplyWorkspaceLoadProgress(loadCts))
+                {
+                    _onBackHome();
+                    await ShowAutoErrorAsync(ex, isDuringRun: false);
+                }
                 return;
             }
             finally
