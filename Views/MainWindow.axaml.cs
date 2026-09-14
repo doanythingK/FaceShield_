@@ -14,7 +14,7 @@ namespace FaceShield.Views
 
         private void OnKeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.Source is TextBox)
+            if (e.Handled || IsInteractiveInputSource(e.Source))
                 return;
 
             if (DataContext is not MainWindowViewModel vm)
@@ -23,10 +23,16 @@ namespace FaceShield.Views
             if (vm.CurrentPage is not WorkspaceViewModel workspace)
                 return;
 
+            if (!workspace.ToolPanel.IsSessionReady)
+                return;
+
             if (e.Key == Key.Q || e.Key == Key.E)
             {
-                if (!workspace.HasAutoAnomalies)
+                if (!workspace.ToolPanel.CanEditWorkspace ||
+                    !workspace.HasAutoAnomalies)
+                {
                     return;
+                }
 
                 if (e.Key == Key.Q)
                     workspace.PrevAutoAnomalyCommand.Execute(null);
@@ -40,5 +46,8 @@ namespace FaceShield.Views
             if (workspace.FrameList.HandleKey(e.Key, e.KeyModifiers))
                 e.Handled = true;
         }
+
+        private static bool IsInteractiveInputSource(object? source)
+            => source is TextBox or ComboBox or Slider or Button;
     }
 }
