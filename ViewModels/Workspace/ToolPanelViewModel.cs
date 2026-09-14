@@ -120,8 +120,8 @@ namespace FaceShield.ViewModels.Workspace
         public event Action? UndoRequested;
         public event Action? SaveRequested;
 
-        // 🔹 새 이벤트: 자동 분석 요청
-        public event Action? AutoRequested;
+        // 자동 분석 요청 시 호출 전의 편집 모드를 함께 전달한다.
+        public event Action<EditMode>? AutoRequested;
         public event Action? AutoCancelRequested;
         public event Action? ExportCancelRequested;
 
@@ -129,8 +129,9 @@ namespace FaceShield.ViewModels.Workspace
         private void SetAuto()
         {
             if (!CanEditWorkspace) return;
+            EditMode previousMode = CurrentMode;
             CurrentMode = EditMode.Auto;
-            AutoRequested?.Invoke();
+            AutoRequested?.Invoke(previousMode);
         }
 
         [RelayCommand]
