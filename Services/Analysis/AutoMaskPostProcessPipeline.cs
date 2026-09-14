@@ -231,7 +231,8 @@ namespace FaceShield.Services.Analysis
                     trackPost,
                     detectorOptions,
                     _options,
-                    useFaceOnnxRoiDetector);
+                    useFaceOnnxRoiDetector,
+                    cancellationToken);
                 ranRoiRefine = true;
             }
             swRoi.Stop();

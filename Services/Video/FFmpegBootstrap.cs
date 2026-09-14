@@ -88,27 +88,15 @@ namespace FaceShield.Services.Video
             var paths = new List<string>();
             string? platformSubDir = GetBundledFfmpegSubDirectory();
 
+            // Native FFmpeg loading is restricted to application-owned locations.
+            // Do not search the process CWD, arbitrary parent directories, or PATH:
+            // those locations may contain unrelated or attacker-controlled libraries.
             AddPathIfExists(paths, Path.GetFullPath(baseDir));
-            AddPathIfExists(paths, Environment.CurrentDirectory);
-            AddPathIfExists(paths, Path.Combine(baseDir, "FFmpeg"));
             if (!string.IsNullOrWhiteSpace(platformSubDir))
                 AddPathIfExists(paths, Path.Combine(baseDir, "FFmpeg", platformSubDir));
+            AddPathIfExists(paths, Path.Combine(baseDir, "FFmpeg"));
             AddPathIfExists(paths, Path.GetFullPath(Path.Combine(baseDir, "..", "Frameworks")));
             AddPathIfExists(paths, Path.GetFullPath(Path.Combine(baseDir, "..", "Resources")));
-
-            var current = new DirectoryInfo(baseDir);
-            for (int i = 0; i < 8 && current != null; i++)
-            {
-                AddPathIfExists(paths, current.FullName);
-                AddPathIfExists(paths, Path.Combine(current.FullName, "FFmpeg"));
-                if (!string.IsNullOrWhiteSpace(platformSubDir))
-                    AddPathIfExists(paths, Path.Combine(current.FullName, "FFmpeg", platformSubDir));
-
-                current = current.Parent;
-            }
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                AddPathsFromEnvironment(paths, "PATH");
 
             return paths;
         }
@@ -138,16 +126,6 @@ namespace FaceShield.Services.Video
                 return;
 
             paths.Add(fullPath);
-        }
-
-        private static void AddPathsFromEnvironment(List<string> paths, string envName)
-        {
-            string? value = Environment.GetEnvironmentVariable(envName);
-            if (string.IsNullOrWhiteSpace(value))
-                return;
-
-            foreach (var part in value.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-                AddPathIfExists(paths, part.Trim());
         }
 
         private static string? GetBundledFfmpegSubDirectory()

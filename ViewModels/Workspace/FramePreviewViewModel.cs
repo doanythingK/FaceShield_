@@ -33,6 +33,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private int _changeStamp;
     private bool _isPlaying;
     private CancellationTokenSource? _playbackCts;
+    private Task? _playbackTask;
     private int _playbackRunId;
     private int _currentFrameIndex = -1;
     private bool _maskDirty;
@@ -473,6 +474,11 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     {
         if (session == null)
             throw new ArgumentNullException(nameof(session));
+        if (_disposed)
+        {
+            session.Dispose();
+            return;
+        }
 
         PreviewBlurProcessor.ReleaseCachedRenderer();
         _session?.Dispose();
@@ -495,7 +501,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (_session == null)
+        var session = _session;
+        if (_disposed || session == null)
             return;
         if (index < 0)
             return;
@@ -510,31 +517,37 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         int stamp = Interlocked.Increment(ref _changeStamp);
 
-        // 1) 저화질 썸네일
-        try
+        // 1) 선택 프레임 저화질 프리뷰.
+        // 캐시 원본이 아니라 독립 복사본을 받아 eviction과 화면 수명을 분리합니다.
+        var exactThumb = await session.Timeline.OnFrameChangingExactAsync(index);
+        if (_disposed || !ReferenceEquals(_session, session))
         {
-            var low = _session.Timeline.OnFrameChanging(index);
-            if (low != null && stamp == _changeStamp)
-                SetPreviewBitmap(low, ownsBitmap: false);
-        }
-        catch
-        {
-            // 썸네일 없으면 무시
+            exactThumb?.Dispose();
+            return;
         }
 
-        // 1-1) 선택 프레임과 동일한 저화질 썸네일 (정확도 우선)
-        var exactThumb = await _session.Timeline.OnFrameChangingExactAsync(index);
-        if (exactThumb != null && stamp == _changeStamp)
-            SetPreviewBitmap(exactThumb, ownsBitmap: false);
+        if (exactThumb != null)
+        {
+            if (stamp == _changeStamp)
+                SetPreviewBitmap(exactThumb, ownsBitmap: true);
+            else
+                exactThumb.Dispose();
+        }
 
         // 2) 고화질 프레임
-        var exact = await _session.Timeline.OnFrameChangedAsync(index);
+        var exact = await session.Timeline.OnFrameChangedAsync(index);
+        if (_disposed || !ReferenceEquals(_session, session))
+        {
+            exact?.Dispose();
+            return;
+        }
+
         if (exact == null || stamp != _changeStamp)
         {
             if (exact != null)
                 exact.Dispose();
             if (!_isPlaying && stamp == _changeStamp)
-                await TryLoadExactFallbackAsync(index, stamp);
+                await TryLoadExactFallbackAsync(session, index, stamp);
             Debug.WriteLine($"[FramePreview] exact frame not available (frame={index}, stamp={stamp}).");
             return;
         }
@@ -550,14 +563,15 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (_session == null)
+        var session = _session;
+        if (_disposed || session == null)
             return;
         if (index < 0)
             return;
 
         int stamp = Interlocked.Increment(ref _changeStamp);
 
-        await TryLoadExactFallbackAsync(index, stamp);
+        await TryLoadExactFallbackAsync(session, index, stamp);
     }
 
     public void StartPlayback(
@@ -566,7 +580,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         double fps,
         int totalFrames,
         Action<int> onFrameAdvanced,
-        Action onPlaybackEnded)
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
@@ -576,11 +591,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 fps,
                 totalFrames,
                 onFrameAdvanced,
-                onPlaybackEnded));
+                onPlaybackEnded,
+                onPlaybackFailed));
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(videoPath) || totalFrames <= 0 || startFrameIndex < 0)
+        if (string.IsNullOrWhiteSpace(videoPath) || startFrameIndex < 0)
         {
             onPlaybackEnded();
             return;
@@ -589,28 +605,91 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         PersistCurrentMask();
         Interlocked.Increment(ref _changeStamp);
 
-        if (_playbackCts != null)
+        Task? previousPlaybackTask = _playbackTask;
+        CancellationTokenSource? previousCts = _playbackCts;
+        if (previousCts != null)
         {
-            try { _playbackCts.Cancel(); }
-            catch { }
-            _playbackCts.Dispose();
+            try { previousCts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
-        _playbackCts = new CancellationTokenSource();
+
+        var playbackCts = new CancellationTokenSource();
+        _playbackCts = playbackCts;
 
         _isPlaying = true;
         int runId = Interlocked.Increment(ref _playbackRunId);
-        int safeStart = Math.Clamp(startFrameIndex, 0, totalFrames - 1);
+        int safeStart = totalFrames > 0
+            ? Math.Clamp(startFrameIndex, 0, totalFrames - 1)
+            : Math.Max(0, startFrameIndex);
         _currentFrameIndex = safeStart;
 
-        _ = RunSequentialPlaybackAsync(
+        _playbackTask = StartPlaybackAfterPreviousAsync(
+            previousPlaybackTask,
             runId,
             videoPath,
             safeStart,
             fps,
             totalFrames,
-            _playbackCts.Token,
+            playbackCts,
             onFrameAdvanced,
-            onPlaybackEnded);
+            onPlaybackEnded,
+            onPlaybackFailed);
+    }
+
+    private async Task StartPlaybackAfterPreviousAsync(
+        Task? previousPlaybackTask,
+        int runId,
+        string videoPath,
+        int startFrameIndex,
+        double fps,
+        int totalFrames,
+        CancellationTokenSource playbackCts,
+        Action<int> onFrameAdvanced,
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed)
+    {
+        try
+        {
+            if (previousPlaybackTask != null)
+            {
+                try
+                {
+                    await previousPlaybackTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(
+                        $"[FramePreview] previous playback shutdown completed with error: {ex.Message}");
+                }
+            }
+
+            if (playbackCts.IsCancellationRequested ||
+                runId != Volatile.Read(ref _playbackRunId) ||
+                _disposed)
+            {
+                return;
+            }
+
+            await RunSequentialPlaybackAsync(
+                runId,
+                videoPath,
+                startFrameIndex,
+                fps,
+                totalFrames,
+                playbackCts.Token,
+                onFrameAdvanced,
+                onPlaybackEnded,
+                onPlaybackFailed).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (ReferenceEquals(_playbackCts, playbackCts))
+                _playbackCts = null;
+            playbackCts.Dispose();
+        }
     }
 
     public void StopPlayback()
@@ -624,12 +703,68 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _isPlaying = false;
         Interlocked.Increment(ref _playbackRunId);
 
-        if (_playbackCts != null)
+        CancellationTokenSource? playbackCts = _playbackCts;
+        _playbackCts = null;
+        if (playbackCts != null)
         {
-            try { _playbackCts.Cancel(); }
-            catch { }
-            _playbackCts.Dispose();
-            _playbackCts = null;
+            try { playbackCts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    public async Task SuspendExactFrameOperationsAndWaitAsync()
+    {
+        var session = _session;
+        if (_disposed || session == null)
+            return;
+
+        await session.ExactProvider.SuspendOperationsAndWaitAsync();
+    }
+
+    public void ResumeExactFrameOperations()
+    {
+        if (_disposed)
+            return;
+
+        _session?.ExactProvider.ResumeOperations();
+    }
+
+    public async Task StopPlaybackAndWaitAsync()
+    {
+        Task? playbackTask = null;
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            playbackTask = _playbackTask;
+            StopPlayback();
+        }
+        else
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                playbackTask = _playbackTask;
+                StopPlayback();
+            });
+        }
+
+        if (playbackTask == null)
+            return;
+
+        try
+        {
+            await playbackTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[FramePreview] playback shutdown completed with error: {ex.Message}");
+        }
+        finally
+        {
+            if (ReferenceEquals(_playbackTask, playbackTask))
+                _playbackTask = null;
         }
     }
 
@@ -641,18 +776,24 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         int totalFrames,
         CancellationToken ct,
         Action<int> onFrameAdvanced,
-        Action onPlaybackEnded)
+        Action onPlaybackEnded,
+        Action<string>? onPlaybackFailed)
     {
         return Task.Run(async () =>
         {
             bool endedNaturally = false;
+            string? playbackError = null;
             double frameMs = fps > 0 ? 1000.0 / fps : 33.333;
+            double? playbackOriginTimestampSeconds = null;
+            double lastTargetMs = 0;
             var clock = Stopwatch.StartNew();
 
             try
             {
-                using var extractor = new FfFrameExtractor(videoPath);
-                extractor.StartSequentialRead(startFrameIndex);
+                using var extractor = new FfFrameExtractor(
+                    videoPath,
+                    cancellationToken: ct);
+                extractor.StartSequentialRead(startFrameIndex, ct);
 
                 while (!ct.IsCancellationRequested &&
                        extractor.TryGetNextFrame(ct, out var frame, out int frameIndex))
@@ -668,10 +809,29 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     if (totalFrames > 0 && frameIndex >= totalFrames)
                     {
                         frame.Dispose();
+                        endedNaturally = true;
                         break;
                     }
 
-                    double targetMs = Math.Max(0, frameIndex - startFrameIndex) * frameMs;
+                    double decodedTimestampSeconds =
+                        extractor.LastDecodedTimestampSeconds;
+                    double targetMs;
+                    if (double.IsFinite(decodedTimestampSeconds))
+                    {
+                        playbackOriginTimestampSeconds ??= decodedTimestampSeconds;
+                        targetMs = Math.Max(
+                            0,
+                            (decodedTimestampSeconds -
+                             playbackOriginTimestampSeconds.Value) * 1000.0);
+                    }
+                    else
+                    {
+                        targetMs =
+                            Math.Max(0, frameIndex - startFrameIndex) * frameMs;
+                    }
+
+                    targetMs = Math.Max(lastTargetMs, targetMs);
+                    lastTargetMs = targetMs;
                     double delayMs = targetMs - clock.Elapsed.TotalMilliseconds;
                     if (delayMs > 1)
                         await Task.Delay(TimeSpan.FromMilliseconds(delayMs), ct);
@@ -697,7 +857,21 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
                 }
 
-                endedNaturally |= !ct.IsCancellationRequested;
+                if (!ct.IsCancellationRequested && !extractor.SequentialReadCancelled)
+                {
+                    if (!string.IsNullOrWhiteSpace(extractor.SequentialDecodeError))
+                    {
+                        playbackError = extractor.SequentialDecodeError;
+                    }
+                    else if (extractor.SequentialReachedEndOfStream)
+                    {
+                        endedNaturally = true;
+                    }
+                    else if (!endedNaturally)
+                    {
+                        playbackError = "재생 디코더가 EOF에 도달하지 않은 상태에서 중단되었습니다.";
+                    }
+                }
             }
             catch (OperationCanceledException)
             {
@@ -706,17 +880,31 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             catch (Exception ex)
             {
                 Debug.WriteLine($"[FramePreview] sequential playback failed: {ex.Message}");
-                endedNaturally = true;
+                playbackError = ex.Message;
+                endedNaturally = false;
             }
 
-            if (endedNaturally && !ct.IsCancellationRequested)
+            if (ct.IsCancellationRequested)
+                return;
+
+            Dispatcher.UIThread.Post(() =>
             {
-                Dispatcher.UIThread.Post(() =>
+                if (runId != _playbackRunId || !_isPlaying)
+                    return;
+
+                if (!string.IsNullOrWhiteSpace(playbackError))
                 {
-                    if (runId == _playbackRunId && _isPlaying)
+                    Debug.WriteLine($"[FramePreview] sequential playback stopped by decode error: {playbackError}");
+                    if (onPlaybackFailed != null)
+                        onPlaybackFailed(playbackError);
+                    else
                         onPlaybackEnded();
-                });
-            }
+                    return;
+                }
+
+                if (endedNaturally)
+                    onPlaybackEnded();
+            });
         }, CancellationToken.None);
     }
 
@@ -843,28 +1031,40 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         _maskDirty = false;
     }
 
-    private async Task TryLoadExactFallbackAsync(int index, int stamp)
+    private async Task TryLoadExactFallbackAsync(
+        VideoSession session,
+        int index,
+        int stamp)
     {
-        if (_session == null)
+        if (_disposed || !ReferenceEquals(_session, session))
             return;
 
-        var exact = await _session.Timeline.GetExactNowAsync(index);
-        if (exact != null && stamp != _changeStamp)
+        var exact = await session.Timeline.GetExactNowAsync(index);
+        if (_disposed ||
+            !ReferenceEquals(_session, session) ||
+            stamp != _changeStamp)
         {
-            exact.Dispose();
+            exact?.Dispose();
             return;
         }
 
         if (exact == null)
         {
             await Task.Delay(120);
-            if (stamp != _changeStamp)
+            if (_disposed ||
+                !ReferenceEquals(_session, session) ||
+                stamp != _changeStamp)
+            {
                 return;
+            }
 
-            exact = await _session.Timeline.GetExactNowAsync(index);
+            exact = await session.Timeline.GetExactNowAsync(index);
         }
 
-        if (exact == null || stamp != _changeStamp)
+        if (exact == null ||
+            _disposed ||
+            !ReferenceEquals(_session, session) ||
+            stamp != _changeStamp)
         {
             exact?.Dispose();
             return;
@@ -883,12 +1083,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         Interlocked.Increment(ref _playbackRunId);
         _isPlaying = false;
 
-        if (_playbackCts != null)
+        CancellationTokenSource? playbackCts = _playbackCts;
+        _playbackCts = null;
+        if (playbackCts != null)
         {
-            try { _playbackCts.Cancel(); }
-            catch { }
-            _playbackCts.Dispose();
-            _playbackCts = null;
+            try { playbackCts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         SetPreviewBitmap(null, ownsBitmap: false);
@@ -896,8 +1096,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         FrameBitmap = null;
         MaskBitmap = null;
 
-        _session?.Dispose();
+        var session = _session;
         _session = null;
+        session?.Dispose();
         PreviewBlurProcessor.ReleaseCachedRenderer();
     }
 

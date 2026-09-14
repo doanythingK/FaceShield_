@@ -1,309 +1,467 @@
-using Avalonia;
 using Avalonia.Media.Imaging;
-using FFmpeg.AutoGen;
+using Avalonia.Threading;
 using System;
 using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace FaceShield.Services.Video
 {
-    public unsafe sealed class TimelineThumbnailProvider : IDisposable
+    public sealed class TimelineThumbnailProvider : IDisposable
     {
-        private readonly string _videoPath;
+        private readonly object _sync = new();
+        private readonly FfFrameExtractor _extractor;
+        private readonly bool _ownsExtractor;
         private readonly int _thumbWidth;
         private readonly int _thumbHeight;
-        private readonly object _sync = new();
-
-        private AVFormatContext* _fmt;
-        private AVCodecContext* _dec;
-        private SwsContext* _sws;
-        private int _videoStreamIndex = -1;
-
-        // ✅ seek 계산용 메타
-        private AVRational _timeBase;
-        private double _fps;
-
-        private readonly ConcurrentDictionary<int, WriteableBitmap> _cache = new();
+        private readonly int _maxCacheEntries;
+        private readonly ConcurrentDictionary<long, WriteableBitmap> _cache = new();
+        private readonly ConcurrentDictionary<long, long> _cacheAccess = new();
+        private readonly CancellationTokenSource _lifetimeCts = new();
+        private readonly object _operationStateSync = new();
+        private CancellationTokenSource _operationCts = new();
+        private long _cacheAccessClock;
+        private int _operationsSuspended;
+        private int _disposeStarted;
         private bool _disposed;
 
-        public TimelineThumbnailProvider(string videoPath, int thumbWidth = 160, int thumbHeight = 90)
-        {
-            _videoPath = videoPath;
-            _thumbWidth = thumbWidth;
-            _thumbHeight = thumbHeight;
+        public bool OperationsSuspended =>
+            Volatile.Read(ref _operationsSuspended) != 0;
 
-            try
-            {
-                Open();
-            }
-            catch
-            {
-                Dispose();
-                throw;
-            }
+        public TimelineThumbnailProvider(
+            string videoPath,
+            int thumbWidth = 160,
+            int thumbHeight = 90,
+            int maxCacheEntries = 256)
+            : this(
+                new FfFrameExtractor(videoPath, enableHardware: false),
+                thumbWidth,
+                thumbHeight,
+                maxCacheEntries,
+                ownsExtractor: true)
+        {
         }
 
-        private void Open()
+        internal TimelineThumbnailProvider(
+            FfFrameExtractor extractor,
+            int thumbWidth = 160,
+            int thumbHeight = 90,
+            int maxCacheEntries = 256,
+            bool ownsExtractor = false)
         {
-            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
-
-            fixed (AVFormatContext** pFmt = &_fmt)
-            {
-                int openResult = ffmpeg.avformat_open_input(pFmt, _videoPath, null, null);
-                FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {_videoPath}");
-
-                int streamInfo = ffmpeg.avformat_find_stream_info(_fmt, null);
-                FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {_videoPath}");
-            }
-
-            _videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(_fmt);
-
-            if (_videoStreamIndex < 0)
-                throw new InvalidOperationException("Video stream not found.");
-
-            AVStream* stream = _fmt->streams[_videoStreamIndex];
-
-            // ✅ time_base / fps 저장 (seek 계산에 사용)
-            _timeBase = stream->time_base;
-
-            double fpsValue =
-                stream->avg_frame_rate.num != 0
-                    ? ffmpeg.av_q2d(stream->avg_frame_rate)
-                    : stream->r_frame_rate.num != 0
-                        ? ffmpeg.av_q2d(stream->r_frame_rate)
-                        : 30.0;
-
-            _fps = Math.Max(1.0, fpsValue);
-
-            AVCodec* codec = ffmpeg.avcodec_find_decoder(stream->codecpar->codec_id);
-            if (codec == null)
-                throw new InvalidOperationException("Decoder not found.");
-
-            _dec = ffmpeg.avcodec_alloc_context3(codec);
-            if (_dec == null)
-                throw new InvalidOperationException("avcodec_alloc_context3 failed.");
-
-            int parResult = ffmpeg.avcodec_parameters_to_context(_dec, stream->codecpar);
-            FFmpegErrorHelper.ThrowIfError(parResult, "Failed to apply codec parameters.");
-
-            int decoderOpenResult = ffmpeg.avcodec_open2(_dec, codec, null);
-            FFmpegErrorHelper.ThrowIfError(decoderOpenResult, "Failed to open decoder.");
-
-            _sws = ffmpeg.sws_getContext(
-                _dec->width,
-                _dec->height,
-                _dec->pix_fmt,
-                _thumbWidth,
-                _thumbHeight,
-                AVPixelFormat.AV_PIX_FMT_BGRA,
-                (int)SwsFlags.SWS_BILINEAR,
-                null, null, null);
-
-            if (_sws == null)
-                throw new InvalidOperationException("sws_getContext failed.");
+            _extractor = extractor ?? throw new ArgumentNullException(nameof(extractor));
+            _ownsExtractor = ownsExtractor;
+            _thumbWidth = Math.Max(1, thumbWidth);
+            _thumbHeight = Math.Max(1, thumbHeight);
+            _maxCacheEntries = Math.Max(16, maxCacheEntries);
         }
 
         public WriteableBitmap? GetThumbnail(int frameIndex)
+            => GetThumbnail(frameIndex, CancellationToken.None);
+
+        public WriteableBitmap? GetThumbnail(int frameIndex, CancellationToken cancellationToken)
         {
-            if (frameIndex < 0) return null;
+            if (frameIndex < 0)
+                return null;
 
-            if (_cache.TryGetValue(frameIndex, out var cached))
-                return cached;
+            long cacheKey = FrameCacheKey(frameIndex);
+            return GetOrCreate(
+                cacheKey,
+                token => _extractor.GetTimelineThumbnailByFrameIndexScaled(
+                    frameIndex,
+                    _thumbWidth,
+                    _thumbHeight,
+                    token),
+                cancellationToken);
+        }
 
+        public WriteableBitmap? GetThumbnailAtTime(
+            double timestampSeconds,
+            CancellationToken cancellationToken = default)
+        {
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return null;
+
+            long cacheKey = TimeCacheKey(timestampSeconds);
+            return GetOrCreate(
+                cacheKey,
+                token => _extractor.GetTimelineThumbnailAtTimestampScaled(
+                    timestampSeconds,
+                    _thumbWidth,
+                    _thumbHeight,
+                    token),
+                cancellationToken);
+        }
+
+        public WriteableBitmap? GetThumbnailCopy(int frameIndex)
+            => GetThumbnailCopy(frameIndex, CancellationToken.None);
+
+        public WriteableBitmap? GetThumbnailCopy(
+            int frameIndex,
+            CancellationToken cancellationToken)
+        {
+            if (frameIndex < 0 || cancellationToken.IsCancellationRequested)
+                return null;
+
+            long cacheKey = FrameCacheKey(frameIndex);
+            using var linked = CreateLinkedTokenSource(cancellationToken);
             lock (_sync)
             {
-                if (_disposed)
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
                     return null;
+                }
 
-                if (_cache.TryGetValue(frameIndex, out cached))
-                    return cached;
-
-                var bmp = DecodeFrame(frameIndex);
-                if (bmp != null)
-                    _cache.TryAdd(frameIndex, bmp);
-
-                return bmp;
+                WriteableBitmap? cached = GetOrCreateLocked(
+                    cacheKey,
+                    token => _extractor.GetTimelineThumbnailByFrameIndexScaled(
+                        frameIndex,
+                        _thumbWidth,
+                        _thumbHeight,
+                        token),
+                    linked.Token);
+                return cached == null ? null : CloneBitmap(cached);
             }
         }
 
         public bool TryGetCachedThumbnail(int frameIndex, out WriteableBitmap? bitmap)
+            => TryGetCached(FrameCacheKey(frameIndex), out bitmap);
+
+        public bool TryGetCachedThumbnailAtTime(
+            double timestampSeconds,
+            out WriteableBitmap? bitmap)
         {
             bitmap = null;
-            if (frameIndex < 0)
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
                 return false;
 
-            return _cache.TryGetValue(frameIndex, out bitmap);
+            return TryGetCached(TimeCacheKey(timestampSeconds), out bitmap);
         }
 
-        private WriteableBitmap? DecodeFrame(int frameIndex)
+        public bool TryGetFrameTimestampSeconds(
+            int frameIndex,
+            out double timestampSeconds)
+            => _extractor.TryGetCachedFrameTimestampSeconds(
+                frameIndex,
+                out timestampSeconds);
+
+        public bool TryGetFrameIndexAtTimestamp(
+            double timestampSeconds,
+            out int frameIndex)
+            => _extractor.TryGetCachedFrameIndexAtTimestamp(
+                timestampSeconds,
+                out frameIndex);
+
+        public bool TryGetDecodedTimelineExtentSeconds(
+            out double extentSeconds,
+            out bool isComplete)
+            => _extractor.TryGetDecodedTimelineExtentSeconds(
+                out extentSeconds,
+                out isComplete);
+
+        public bool TryResolveFrameTimestampSeconds(
+            int frameIndex,
+            CancellationToken cancellationToken,
+            out double timestampSeconds)
         {
-            if (_fmt == null || _dec == null || _videoStreamIndex < 0 || _sws == null)
-                return null;
+            timestampSeconds = double.NaN;
+            if (cancellationToken.IsCancellationRequested)
+                return false;
+            if (_extractor.TryGetCachedFrameTimestampSeconds(
+                    frameIndex,
+                    out timestampSeconds))
+            {
+                return true;
+            }
+            if (_disposed || OperationsSuspended)
+                return false;
 
-            // ✅ frameIndex -> seconds -> stream time_base 기준 PTS로 변환
-            // time_base 초 단위 = av_q2d(time_base)
-            double tbSec = ffmpeg.av_q2d(_timeBase);
-            if (tbSec <= 0) tbSec = 1.0 / 90000.0; // (확실하지 않음) 매우 드문 방어
+            using var linked = CreateLinkedTokenSource(cancellationToken);
+            lock (_sync)
+            {
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
+                    return false;
+                }
 
-            double seconds = frameIndex / _fps;
-            long targetPts = (long)Math.Floor(seconds / tbSec);
+                return _extractor.TryResolveFrameTimestampSeconds(
+                    frameIndex,
+                    linked.Token,
+                    out timestampSeconds);
+            }
+        }
 
-            int seekResult = ffmpeg.av_seek_frame(
-                _fmt,
-                _videoStreamIndex,
-                targetPts,
-                ffmpeg.AVSEEK_FLAG_BACKWARD);
-            if (seekResult < 0)
-                return null;
-            ffmpeg.avcodec_flush_buffers(_dec);
+        public bool TryResolveFrameIndexAtTimestamp(
+            double timestampSeconds,
+            CancellationToken cancellationToken,
+            out int frameIndex)
+        {
+            frameIndex = -1;
+            if (cancellationToken.IsCancellationRequested)
+                return false;
+            if (_extractor.TryGetCachedFrameIndexAtTimestamp(
+                    timestampSeconds,
+                    out frameIndex))
+            {
+                return true;
+            }
+            if (_disposed || OperationsSuspended)
+                return false;
 
-            AVPacket* pkt = ffmpeg.av_packet_alloc();
-            AVFrame* src = ffmpeg.av_frame_alloc();
-            AVFrame* dst = ffmpeg.av_frame_alloc();
+            using var linked = CreateLinkedTokenSource(cancellationToken);
+            lock (_sync)
+            {
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
+                    return false;
+                }
+
+                return _extractor.TryResolveFrameIndexAtTimestamp(
+                    timestampSeconds,
+                    linked.Token,
+                    out frameIndex);
+            }
+        }
+
+        public async Task SuspendOperationsAndWaitAsync()
+        {
+            CancellationTokenSource previous;
+            lock (_operationStateSync)
+            {
+                if (_disposed)
+                    return;
+
+                Volatile.Write(ref _operationsSuspended, 1);
+                previous = _operationCts;
+                _operationCts = new CancellationTokenSource();
+            }
 
             try
             {
-                if (pkt == null || src == null || dst == null)
-                    return null;
-
-                dst->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
-                dst->width = _thumbWidth;
-                dst->height = _thumbHeight;
-
-                if (ffmpeg.av_frame_get_buffer(dst, 32) < 0)
-                    return null;
-
-                int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
-                bool drainSent = false;
-                while (true)
+                previous.Cancel();
+                await Task.Run(() =>
                 {
-                    ffmpeg.av_frame_unref(src);
-                    int receiveResult = ffmpeg.avcodec_receive_frame(_dec, src);
-                    if (receiveResult == 0)
+                    lock (_sync)
                     {
-                        long pts = src->best_effort_timestamp;
-                        if (pts == ffmpeg.AV_NOPTS_VALUE)
-                            pts = src->pts;
-
-                        if (pts != ffmpeg.AV_NOPTS_VALUE && pts < targetPts)
-                            continue;
-
-                        return CreateThumbnail(src, dst);
                     }
-
-                    if (receiveResult == ffmpeg.AVERROR_EOF)
-                        return null;
-                    if (receiveResult != tryAgain || drainSent)
-                        return null;
-
-                    int readResult;
-                    do
-                    {
-                        ffmpeg.av_packet_unref(pkt);
-                        readResult = ffmpeg.av_read_frame(_fmt, pkt);
-                    }
-                    while (readResult >= 0 && pkt->stream_index != _videoStreamIndex);
-
-                    if (readResult == ffmpeg.AVERROR_EOF)
-                    {
-                        ffmpeg.av_packet_unref(pkt);
-                        int drainResult = ffmpeg.avcodec_send_packet(_dec, null);
-                        drainSent = true;
-                        if (drainResult == 0)
-                            continue;
-                        return null;
-                    }
-
-                    if (readResult < 0)
-                    {
-                        ffmpeg.av_packet_unref(pkt);
-                        return null;
-                    }
-
-                    int sendResult = ffmpeg.avcodec_send_packet(_dec, pkt);
-                    ffmpeg.av_packet_unref(pkt);
-                    if (sendResult < 0)
-                        return null;
-                }
+                });
             }
             finally
             {
-                if (pkt != null) ffmpeg.av_packet_free(&pkt);
-                if (src != null) ffmpeg.av_frame_free(&src);
-                if (dst != null) ffmpeg.av_frame_free(&dst);
+                previous.Dispose();
             }
-
         }
 
-        private WriteableBitmap CreateThumbnail(AVFrame* src, AVFrame* dst)
+        public void ResumeOperations()
         {
-            ffmpeg.sws_scale(
-                _sws,
-                src->data,
-                src->linesize,
-                0,
-                src->height,
-                dst->data,
-                dst->linesize);
+            if (_disposed)
+                return;
 
-            var bmp = new WriteableBitmap(
-                new PixelSize(_thumbWidth, _thumbHeight),
-                new Vector(96, 96),
+            Volatile.Write(ref _operationsSuspended, 0);
+        }
+
+        private WriteableBitmap? GetOrCreate(
+            long cacheKey,
+            Func<CancellationToken, WriteableBitmap?> factory,
+            CancellationToken cancellationToken)
+        {
+            if (_disposed || cancellationToken.IsCancellationRequested)
+                return null;
+
+            if (_cache.TryGetValue(cacheKey, out WriteableBitmap? cached))
+            {
+                TouchCacheEntry(cacheKey);
+                return cached;
+            }
+
+            if (OperationsSuspended)
+                return null;
+
+            using var linked = CreateLinkedTokenSource(cancellationToken);
+            lock (_sync)
+            {
+                if (_disposed ||
+                    OperationsSuspended ||
+                    linked.Token.IsCancellationRequested)
+                {
+                    return null;
+                }
+
+                return GetOrCreateLocked(cacheKey, factory, linked.Token);
+            }
+        }
+
+        private WriteableBitmap? GetOrCreateLocked(
+            long cacheKey,
+            Func<CancellationToken, WriteableBitmap?> factory,
+            CancellationToken cancellationToken)
+        {
+            if (_cache.TryGetValue(cacheKey, out WriteableBitmap? cached))
+            {
+                TouchCacheEntry(cacheKey);
+                return cached;
+            }
+
+            WriteableBitmap? bitmap = factory(cancellationToken);
+            if (bitmap == null || cancellationToken.IsCancellationRequested)
+            {
+                bitmap?.Dispose();
+                return null;
+            }
+
+            _cache[cacheKey] = bitmap;
+            TouchCacheEntry(cacheKey);
+            TrimCacheIfNeeded(cacheKey);
+            return bitmap;
+        }
+
+        private bool TryGetCached(long cacheKey, out WriteableBitmap? bitmap)
+        {
+            bitmap = null;
+            if (_disposed)
+                return false;
+
+            if (!_cache.TryGetValue(cacheKey, out bitmap))
+                return false;
+
+            TouchCacheEntry(cacheKey);
+            return true;
+        }
+
+        private CancellationTokenSource CreateLinkedTokenSource(
+            CancellationToken cancellationToken)
+        {
+            lock (_operationStateSync)
+            {
+                return cancellationToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(
+                        cancellationToken,
+                        _lifetimeCts.Token,
+                        _operationCts.Token)
+                    : CancellationTokenSource.CreateLinkedTokenSource(
+                        _lifetimeCts.Token,
+                        _operationCts.Token);
+            }
+        }
+
+        private static long FrameCacheKey(int frameIndex)
+            => ((long)Math.Max(0, frameIndex)) << 1;
+
+        private static long TimeCacheKey(double timestampSeconds)
+        {
+            long milliseconds = Math.Max(
+                0,
+                (long)Math.Round(timestampSeconds * 1000.0));
+            return (milliseconds << 1) | 1L;
+        }
+
+        private void TouchCacheEntry(long cacheKey)
+        {
+            long access = Interlocked.Increment(ref _cacheAccessClock);
+            _cacheAccess[cacheKey] = access;
+        }
+
+        private void TrimCacheIfNeeded(long protectedCacheKey)
+        {
+            while (_cache.Count > _maxCacheEntries)
+            {
+                long evictionKey = -1;
+                long oldestAccess = long.MaxValue;
+
+                foreach (var entry in _cacheAccess)
+                {
+                    if (entry.Key == protectedCacheKey)
+                        continue;
+
+                    if (entry.Value < oldestAccess)
+                    {
+                        oldestAccess = entry.Value;
+                        evictionKey = entry.Key;
+                    }
+                }
+
+                if (evictionKey < 0)
+                    break;
+
+                _cacheAccess.TryRemove(evictionKey, out _);
+                if (_cache.TryRemove(evictionKey, out WriteableBitmap? evicted))
+                    DisposeOnUiThread(evicted);
+            }
+        }
+
+        private static WriteableBitmap CloneBitmap(WriteableBitmap source)
+        {
+            var copy = new WriteableBitmap(
+                source.PixelSize,
+                source.Dpi,
                 Avalonia.Platform.PixelFormat.Bgra8888,
                 Avalonia.Platform.AlphaFormat.Premul);
 
-            using var fb = bmp.Lock();
-            byte* dstPtr = (byte*)fb.Address;
-            byte* srcPtr = dst->data[0];
-            int srcStride = dst->linesize[0];
-            int dstStride = fb.RowBytes;
-            int copyBytesPerRow = Math.Min(srcStride, dstStride);
+            using var sourceBuffer = source.Lock();
+            using var copyBuffer = copy.Lock();
+            int rows = Math.Min(sourceBuffer.Size.Height, copyBuffer.Size.Height);
+            int bytesPerRow = Math.Min(sourceBuffer.RowBytes, copyBuffer.RowBytes);
 
-            for (int y = 0; y < _thumbHeight; y++)
+            unsafe
             {
-                Buffer.MemoryCopy(
-                    srcPtr + y * srcStride,
-                    dstPtr + y * dstStride,
-                    dstStride,
-                    copyBytesPerRow);
+                byte* src = (byte*)sourceBuffer.Address;
+                byte* dst = (byte*)copyBuffer.Address;
+                for (int y = 0; y < rows; y++)
+                {
+                    Buffer.MemoryCopy(
+                        src + y * sourceBuffer.RowBytes,
+                        dst + y * copyBuffer.RowBytes,
+                        copyBuffer.RowBytes,
+                        bytesPerRow);
+                }
             }
 
-            return bmp;
+            return copy;
+        }
+
+        private static void DisposeOnUiThread(WriteableBitmap bitmap)
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                bitmap.Dispose();
+                return;
+            }
+
+            Dispatcher.UIThread.Post(bitmap.Dispose);
         }
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+                return;
+
+            _lifetimeCts.Cancel();
+            lock (_operationStateSync)
+            {
+                Volatile.Write(ref _operationsSuspended, 1);
+                _operationCts.Cancel();
+            }
             lock (_sync)
             {
-                if (_disposed)
-                    return;
                 _disposed = true;
+                if (_ownsExtractor)
+                    _extractor.Dispose();
 
-                foreach (var kv in _cache)
-                    kv.Value.Dispose();
+                foreach (var entry in _cache)
+                    entry.Value.Dispose();
+
                 _cache.Clear();
-
-                if (_sws != null)
-                {
-                    ffmpeg.sws_freeContext(_sws);
-                    _sws = null;
-                }
-
-                if (_dec != null)
-                {
-                    fixed (AVCodecContext** pDec = &_dec)
-                    {
-                        ffmpeg.avcodec_free_context(pDec);
-                    }
-                }
-
-                if (_fmt != null)
-                {
-                    fixed (AVFormatContext** pFmt = &_fmt)
-                    {
-                        ffmpeg.avformat_close_input(pFmt);
-                    }
-                }
+                _operationCts.Dispose();
+                _cacheAccess.Clear();
             }
+
+            _lifetimeCts.Dispose();
         }
     }
 }

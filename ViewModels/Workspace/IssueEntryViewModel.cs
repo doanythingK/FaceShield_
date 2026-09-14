@@ -7,7 +7,9 @@ public partial class IssueEntryViewModel : ObservableObject
 {
     public int FrameIndex { get; }
     public string Label { get; }
-    public string TimeText { get; }
+
+    [ObservableProperty]
+    private string timeText = string.Empty;
 
     [ObservableProperty]
     private bool isResolved;

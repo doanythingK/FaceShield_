@@ -84,9 +84,23 @@ namespace FaceShield
 
             Dispatcher.UIThread.UnhandledException += (_, e) =>
             {
+                if (IsRecoverableUiException(e.Exception))
+                {
+                    e.Handled = true;
+                    return;
+                }
+
                 HandleUnhandledException(e.Exception);
-                e.Handled = true;
+                e.Handled = false;
             };
+        }
+
+        private static bool IsRecoverableUiException(Exception ex)
+        {
+            if (ex is AggregateException aggregate)
+                ex = aggregate.Flatten().InnerException ?? ex;
+
+            return ex is OperationCanceledException;
         }
 
         private void HandleUnhandledException(Exception ex)

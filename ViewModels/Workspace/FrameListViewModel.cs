@@ -1,28 +1,36 @@
 using Avalonia.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FaceShield.Services.Video;
-using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Threading;
 
 namespace FaceShield.ViewModels.Workspace;
 
 public partial class FrameListViewModel : ViewModelBase, IDisposable
 {
+    private const double UnknownTimelineInitialExtentSeconds = 60.0;
+    private const double UnknownTimelineInitialViewportSeconds = 10.0;
+
     public string VideoPath { get; }
 
     // ─────────────────────────────
     // Timeline bind targets
     // ─────────────────────────────
-    [ObservableProperty]
-    private IReadOnlyList<FrameItemViewModel> items = Array.Empty<FrameItemViewModel>();
 
     [ObservableProperty]
     private int totalFrames;
 
     [ObservableProperty]
     private double fps;
+
+    [ObservableProperty]
+    private bool isTotalFramesEstimated;
+
+    [ObservableProperty]
+    private bool isDurationKnown;
 
     [ObservableProperty]
     private int selectedFrameIndex = -1;
@@ -35,6 +43,15 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     private bool isPlaying;
+
+    [ObservableProperty]
+    private bool isPlaybackEnabled = true;
+
+    [ObservableProperty]
+    private double timelineExtentSeconds;
+
+    [ObservableProperty]
+    private int timelineRenderVersion;
 
     [ObservableProperty]
     private bool showNoFaceIssues = true;
@@ -70,142 +87,79 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private TimelineThumbnailProvider? thumbnailProvider;
 
     private bool _disposed;
+    private CancellationTokenSource? _timelineNavigationCts;
+    private CancellationTokenSource? _selectedTimestampCts;
 
     // ─────────────────────────────
     // ScrollBar 파생 프로퍼티
     // ─────────────────────────────
-    public double TotalDurationSeconds
-    {
-        get
-        {
-            if (Fps <= 0 || TotalFrames <= 0)
-                return 0;
-
-            return TotalFrames / Fps;
-        }
-    }
+    public double TotalDurationSeconds { get; private set; }
 
     // ─────────────────────────────
     // ctor
     // ─────────────────────────────
-    public FrameListViewModel(string videoPath)
+    public FrameListViewModel(
+        string videoPath,
+        CancellationToken cancellationToken = default)
     {
         VideoPath = videoPath;
-
-        LoadVideoInfo(videoPath);
-
-        Items = Enumerable
-            .Range(0, TotalFrames)
-            .Select(i =>
-                new FrameItemViewModel(
-                    index: i,
-                    hasFace: true,
-                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
-            .ToArray();
-
-        ThumbnailProvider = new TimelineThumbnailProvider(
-            videoPath,
-            thumbWidth: 160,
-            thumbHeight: 90);
+        LoadVideoInfo(videoPath, cancellationToken);
     }
 
     // ─────────────────────────────
     // FFmpeg metadata load
     // ─────────────────────────────
-    private unsafe void LoadVideoInfo(string path)
+    private void LoadVideoInfo(
+        string path,
+        CancellationToken cancellationToken)
     {
-        AVFormatContext* fmt = null;
+        VideoMetadataInfo metadata =
+            VideoMetadataReader.Read(path, cancellationToken);
 
-        try
-        {
-            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
+        Fps = metadata.Fps;
+        TotalFrames = metadata.GetFrameCountEstimate(
+            minimumOneWhenUnknown: true);
+        IsTotalFramesEstimated =
+            !metadata.HasContainerFrameCount && TotalFrames > 0;
 
-            int openResult = ffmpeg.avformat_open_input(&fmt, path, null, null);
-            FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
+        // A missing duration is unknown, not "frame count / average FPS".
+        // Keep it at zero rather than presenting an estimated VFR time axis as exact.
+        IsDurationKnown = metadata.DurationSeconds > 0;
+        TotalDurationSeconds = IsDurationKnown
+            ? metadata.DurationSeconds
+            : 0;
+        OnPropertyChanged(nameof(TotalDurationSeconds));
 
-            int streamInfo = ffmpeg.avformat_find_stream_info(fmt, null);
-            FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
+        TimelineExtentSeconds = TotalDurationSeconds > 0
+            ? TotalDurationSeconds
+            : UnknownTimelineInitialExtentSeconds;
+        SecondsPerScreen = TotalDurationSeconds > 0
+            ? Math.Max(0.1, TotalDurationSeconds)
+            : UnknownTimelineInitialViewportSeconds;
 
-            int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
-            AVStream* videoStream = videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
-
-            if (videoStream == null)
-                throw new InvalidOperationException("Video stream not found.");
-
-            double fpsValue =
-                videoStream->avg_frame_rate.num != 0
-                    ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
-                    : videoStream->r_frame_rate.num != 0
-                        ? ffmpeg.av_q2d(videoStream->r_frame_rate)
-                        : 30.0;
-
-            Fps = fpsValue;
-
-            double durationSeconds;
-
-            if (videoStream->duration > 0)
-            {
-                durationSeconds =
-                    videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
-            }
-            else if (fmt->duration > 0)
-            {
-                durationSeconds =
-                    fmt->duration / (double)ffmpeg.AV_TIME_BASE;
-            }
-            else
-            {
-                durationSeconds = 0;
-            }
-
-            int frames = videoStream->nb_frames > 0
-                ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
-                : (int)Math.Floor(durationSeconds * fpsValue);
-            TotalFrames = Math.Max(frames, 0);
-
-            // 전체 영상 길이(초)
-            double totalDurationSec =
-                Fps > 0 && TotalFrames > 0
-                    ? TotalFrames / Fps
-                    : 0;
-
-            // 🔑 초기에는 전체 영상이 한 화면에 보이도록
-            SecondsPerScreen = Math.Max(0.1, TotalDurationSeconds);
-
-            // 시작은 항상 0초
-            ViewStartSeconds = 0;
-
-            // 첫 프레임 선택
-            SelectedFrameIndex = TotalFrames > 0 ? 0 : -1;
-        }
-        finally
-        {
-            if (fmt != null)
-                ffmpeg.avformat_close_input(&fmt);
-        }
+        ViewStartSeconds = 0;
+        SelectedFrameIndex = TotalFrames > 0 ? 0 : -1;
     }
 
-    // ─────────────────────────────
-    // Timeline helper
-    // ─────────────────────────────
-    public double FrameIndexToSeconds(int frameIndex)
-        => frameIndex < 0 ? 0 : frameIndex / Fps;
+    public void SetThumbnailProvider(TimelineThumbnailProvider? provider)
+    {
+        CancelTimelineNavigation();
+        CancelSelectedTimestampResolution();
+        ThumbnailProvider = provider;
+        RefreshTimelineExtentFromProvider(provider);
+        OnPropertyChanged(nameof(TimelineTimeText));
+        TimelineRenderVersion++;
+        ResolveSelectedTimestampInBackground();
+    }
 
     public void UpdateActualTotalFrames(int actualTotalFrames)
     {
         int normalized = Math.Max(0, actualTotalFrames);
-        if (normalized == TotalFrames && Items.Count == normalized)
+        IsTotalFramesEstimated = false;
+        if (normalized == TotalFrames)
             return;
 
         int selected = SelectedFrameIndex;
-        Items = Enumerable
-            .Range(0, normalized)
-            .Select(i =>
-                new FrameItemViewModel(
-                    index: i,
-                    hasFace: true,
-                    time: TimeSpan.FromSeconds(Fps > 0 ? i / Fps : 0)))
-            .ToArray();
         TotalFrames = normalized;
         SelectedFrameIndex = normalized > 0
             ? Math.Clamp(selected, 0, normalized - 1)
@@ -218,7 +172,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         if (SecondsPerScreen <= 0) return;
 
         double maxStart =
-            Math.Max(0, FrameIndexToSeconds(TotalFrames) - SecondsPerScreen);
+            Math.Max(0, TimelineExtentSeconds - SecondsPerScreen);
 
         if (ViewStartSeconds < 0)
             ViewStartSeconds = 0;
@@ -233,8 +187,12 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "- / -";
 
-            // 사용자 표시용이므로 1-based
-            return $"{SelectedFrameIndex + 1} / {TotalFrames}";
+            // 사용자 표시용이므로 1-based. "~"는 컨테이너가 정확한
+            // nb_frames를 제공하지 않아 현재 값이 추정치임을 뜻합니다.
+            string totalText = IsTotalFramesEstimated
+                ? $"~{TotalFrames}"
+                : TotalFrames.ToString();
+            return $"{SelectedFrameIndex + 1} / {totalText}";
         }
     }
 
@@ -242,12 +200,28 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         get
         {
-            if (Fps <= 0 || TotalFrames <= 0 || SelectedFrameIndex < 0)
+            if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "--:-- / --:--";
 
-            var current = TimeSpan.FromSeconds(SelectedFrameIndex / Fps);
-            var total = TimeSpan.FromSeconds(TotalFrames / Fps);
-            return $"{FormatTime(current)} / {FormatTime(total)}";
+            bool hasKnownDuration =
+                TotalDurationSeconds > 0 &&
+                double.IsFinite(TotalDurationSeconds);
+            string totalText = hasKnownDuration
+                ? FormatTime(TimeSpan.FromSeconds(TotalDurationSeconds))
+                : "--:--";
+
+            if (ThumbnailProvider?.TryGetFrameTimestampSeconds(
+                    SelectedFrameIndex,
+                    out double currentSeconds) != true)
+            {
+                return $"--:-- / {totalText}";
+            }
+
+            double displayCurrentSeconds = hasKnownDuration
+                ? Math.Clamp(currentSeconds, 0, TotalDurationSeconds)
+                : Math.Max(0, currentSeconds);
+            var current = TimeSpan.FromSeconds(displayCurrentSeconds);
+            return $"{FormatTime(current)} / {totalText}";
         }
     }
 
@@ -265,6 +239,23 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     // ─────────────────────────────
     partial void OnSecondsPerScreenChanged(double value)
     {
+        if (!HasKnownDuration())
+        {
+            EnsureOpenEndedTimelineExtent(
+                ViewStartSeconds + Math.Max(value, 0.1) * 2.0);
+        }
+
+        ClampView();
+    }
+
+    partial void OnViewStartSecondsChanged(double value)
+    {
+        if (!HasKnownDuration())
+        {
+            EnsureOpenEndedTimelineExtent(
+                Math.Max(0, value) + Math.Max(SecondsPerScreen, 0.1) * 2.0);
+        }
+
         ClampView();
     }
 
@@ -275,11 +266,21 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(TimelineTimeText));
     }
 
+    partial void OnIsTotalFramesEstimatedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(FramePositionText));
+    }
+
     partial void OnSelectedFrameIndexChanged(int value)
     {
+        CancelTimelineNavigation();
+        if (IsTotalFramesEstimated && value >= TotalFrames)
+            TotalFrames = value + 1;
+
         SelectedFrameIndexChanged?.Invoke(value);
         OnPropertyChanged(nameof(FramePositionText));
         OnPropertyChanged(nameof(TimelineTimeText));
+        ResolveSelectedTimestampInBackground();
     }
 
     partial void OnNoFaceIssueFramesChanged(IReadOnlyList<int> value)
@@ -320,21 +321,44 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             return;
 
         IsPlaying = false;
+        RefreshTimelineExtentFromProvider(ThumbnailProvider);
+        TimelineRenderVersion++;
         PlaybackStateChanged?.Invoke(false);
         PlaybackStopped?.Invoke();
     }
 
     public void NotifyPlaybackStarted()
     {
-        if (IsPlaying)
+        if (IsPlaying || !IsPlaybackEnabled)
             return;
 
         IsPlaying = true;
         PlaybackStateChanged?.Invoke(true);
     }
 
+    public void SetPlaybackEnabled(bool enabled)
+    {
+        IsPlaybackEnabled = enabled;
+        if (enabled || !IsPlaying)
+            return;
+
+        IsPlaying = false;
+        PlaybackStateChanged?.Invoke(false);
+    }
+
     public void SetPlaybackFrameIndex(int frameIndex)
     {
+        if (frameIndex < 0)
+            return;
+
+        if (IsTotalFramesEstimated)
+        {
+            if (frameIndex >= TotalFrames)
+                TotalFrames = frameIndex + 1;
+            SelectedFrameIndex = frameIndex;
+            return;
+        }
+
         if (TotalFrames <= 0)
             return;
 
@@ -382,6 +406,15 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         int step = mods.HasFlag(KeyModifiers.Shift) ? 10 : 1;
         int delta = forward ? step : -step;
 
+        if (IsTotalFramesEstimated)
+        {
+            int nextEstimated = Math.Max(0, SelectedFrameIndex + delta);
+            if (nextEstimated >= TotalFrames)
+                TotalFrames = nextEstimated + 1;
+            SelectedFrameIndex = nextEstimated;
+            return;
+        }
+
         int next = Math.Clamp(
             SelectedFrameIndex + delta,
             0,
@@ -392,16 +425,293 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     private void MoveBySeconds(int seconds)
     {
-        if (Fps <= 0) return;
+        if (SelectedFrameIndex < 0 || TotalFrames <= 0)
+            return;
 
-        int deltaFrames = (int)Math.Round(seconds * Fps);
+        var provider = ThumbnailProvider;
+        if (provider == null)
+            return;
 
-        int next = Math.Clamp(
-            SelectedFrameIndex + deltaFrames,
-            0,
-            TotalFrames - 1);
+        int sourceFrameIndex = SelectedFrameIndex;
+        if (provider.TryGetFrameTimestampSeconds(
+                sourceFrameIndex,
+                out double currentSeconds))
+        {
+            double targetSeconds = ClampTimelineTargetSeconds(
+                currentSeconds + seconds);
+            if (!HasKnownDuration())
+            {
+                EnsureOpenEndedTimelineExtent(
+                    targetSeconds + Math.Max(SecondsPerScreen, 1.0));
+            }
 
-        SelectedFrameIndex = next;
+            if (provider.TryGetFrameIndexAtTimestamp(
+                    targetSeconds,
+                    out int cachedIndex))
+            {
+                ApplyResolvedFrameIndex(cachedIndex);
+                RefreshTimelineExtentFromProvider(provider);
+                return;
+            }
+        }
+
+        CancelTimelineNavigation();
+        var cts = new CancellationTokenSource();
+        _timelineNavigationCts = cts;
+        _ = ResolveTimelineNavigationAsync(
+            provider,
+            sourceFrameIndex,
+            seconds,
+            cts);
+    }
+
+    private async Task ResolveTimelineNavigationAsync(
+        TimelineThumbnailProvider provider,
+        int sourceFrameIndex,
+        int secondsDelta,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            (bool resolved, int frameIndex) = await Task.Run(() =>
+            {
+                if (!provider.TryResolveFrameTimestampSeconds(
+                        sourceFrameIndex,
+                        cts.Token,
+                        out double currentSeconds))
+                {
+                    return (false, -1);
+                }
+
+                double targetSeconds = ClampTimelineTargetSeconds(
+                    currentSeconds + secondsDelta);
+                bool ok = provider.TryResolveFrameIndexAtTimestamp(
+                    targetSeconds,
+                    cts.Token,
+                    out int resolvedIndex);
+                return (ok, resolvedIndex);
+            }, cts.Token);
+
+            if (!resolved || cts.IsCancellationRequested)
+                return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_disposed ||
+                    cts.IsCancellationRequested ||
+                    !ReferenceEquals(_timelineNavigationCts, cts) ||
+                    !ReferenceEquals(ThumbnailProvider, provider) ||
+                    SelectedFrameIndex != sourceFrameIndex ||
+                    TotalFrames <= 0)
+                {
+                    return;
+                }
+
+                ApplyResolvedFrameIndex(frameIndex);
+                RefreshTimelineExtentFromProvider(provider);
+                TimelineRenderVersion++;
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_timelineNavigationCts, cts))
+                _timelineNavigationCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void ResolveSelectedTimestampInBackground()
+    {
+        CancelSelectedTimestampResolution();
+
+        int frameIndex = SelectedFrameIndex;
+        var provider = ThumbnailProvider;
+        if (_disposed ||
+            provider == null ||
+            frameIndex < 0)
+        {
+            return;
+        }
+
+        if (provider.TryGetFrameTimestampSeconds(frameIndex, out _))
+        {
+            RefreshTimelineExtentFromProvider(provider);
+            OnPropertyChanged(nameof(TimelineTimeText));
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _selectedTimestampCts = cts;
+        _ = ResolveSelectedTimestampAsync(provider, frameIndex, cts);
+    }
+
+    private async Task ResolveSelectedTimestampAsync(
+        TimelineThumbnailProvider provider,
+        int frameIndex,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            bool resolved = await Task.Run(
+                () => provider.TryResolveFrameTimestampSeconds(
+                    frameIndex,
+                    cts.Token,
+                    out _),
+                cts.Token);
+
+            if (!resolved || cts.IsCancellationRequested)
+                return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_disposed ||
+                    cts.IsCancellationRequested ||
+                    !ReferenceEquals(_selectedTimestampCts, cts) ||
+                    !ReferenceEquals(ThumbnailProvider, provider) ||
+                    SelectedFrameIndex != frameIndex)
+                {
+                    return;
+                }
+
+                RefreshTimelineExtentFromProvider(provider);
+                OnPropertyChanged(nameof(TimelineTimeText));
+                TimelineRenderVersion++;
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_selectedTimestampCts, cts))
+                _selectedTimestampCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void CancelTimelineNavigation()
+    {
+        var cts = _timelineNavigationCts;
+        _timelineNavigationCts = null;
+        if (cts == null)
+            return;
+
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void CancelSelectedTimestampResolution()
+    {
+        var cts = _selectedTimestampCts;
+        _selectedTimestampCts = null;
+        if (cts == null)
+            return;
+
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    public async Task SuspendTimelineOperationsAndWaitAsync()
+    {
+        CancelTimelineNavigation();
+        CancelSelectedTimestampResolution();
+
+        var provider = ThumbnailProvider;
+        if (provider != null)
+            await provider.SuspendOperationsAndWaitAsync();
+    }
+
+    public void ResumeTimelineOperations()
+    {
+        var provider = ThumbnailProvider;
+        if (provider == null)
+            return;
+
+        provider.ResumeOperations();
+        RefreshTimelineExtentFromProvider(provider);
+        OnPropertyChanged(nameof(TimelineTimeText));
+        TimelineRenderVersion++;
+        ResolveSelectedTimestampInBackground();
+    }
+
+    private bool HasKnownDuration()
+        => IsDurationKnown &&
+           double.IsFinite(TotalDurationSeconds) &&
+           TotalDurationSeconds >= 0;
+
+    private double ClampTimelineTargetSeconds(double seconds)
+    {
+        double target = Math.Max(0, seconds);
+        return HasKnownDuration()
+            ? Math.Min(target, TotalDurationSeconds)
+            : target;
+    }
+
+    private void EnsureOpenEndedTimelineExtent(double minimumSeconds)
+    {
+        if (HasKnownDuration() ||
+            !double.IsFinite(minimumSeconds) ||
+            minimumSeconds <= TimelineExtentSeconds)
+        {
+            return;
+        }
+
+        TimelineExtentSeconds = minimumSeconds;
+    }
+
+    private void RefreshTimelineExtentFromProvider(
+        TimelineThumbnailProvider? provider)
+    {
+        if (provider == null ||
+            !provider.TryGetDecodedTimelineExtentSeconds(
+                out double decodedExtentSeconds,
+                out bool isComplete))
+        {
+            return;
+        }
+
+        decodedExtentSeconds = Math.Max(0, decodedExtentSeconds);
+        if (!HasKnownDuration() && isComplete)
+        {
+            IsDurationKnown = true;
+            TotalDurationSeconds = decodedExtentSeconds;
+            OnPropertyChanged(nameof(TotalDurationSeconds));
+            OnPropertyChanged(nameof(TimelineTimeText));
+            TimelineExtentSeconds = Math.Max(0.1, decodedExtentSeconds);
+            if (SecondsPerScreen > TimelineExtentSeconds)
+                SecondsPerScreen = TimelineExtentSeconds;
+            ClampView();
+            return;
+        }
+
+        if (!HasKnownDuration())
+        {
+            EnsureOpenEndedTimelineExtent(
+                decodedExtentSeconds +
+                Math.Max(UnknownTimelineInitialViewportSeconds, SecondsPerScreen));
+        }
+    }
+
+    private void ApplyResolvedFrameIndex(int frameIndex)
+    {
+        if (frameIndex < 0)
+            return;
+
+        if (IsTotalFramesEstimated)
+        {
+            if (frameIndex >= TotalFrames)
+                TotalFrames = frameIndex + 1;
+            SelectedFrameIndex = frameIndex;
+            return;
+        }
+
+        if (TotalFrames <= 0)
+            return;
+
+        SelectedFrameIndex = Math.Clamp(frameIndex, 0, TotalFrames - 1);
     }
 
     private void TogglePlay()
@@ -411,6 +721,9 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             StopPlay();
             return;
         }
+
+        if (!IsPlaybackEnabled)
+            return;
 
         NotifyPlaybackStarted();
     }
@@ -427,11 +740,10 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        if (ThumbnailProvider != null)
-        {
-            try { ThumbnailProvider.Dispose(); }
-            catch { }
-            ThumbnailProvider = null;
-        }
+        CancelTimelineNavigation();
+        CancelSelectedTimestampResolution();
+
+        // VideoSession owns the shared thumbnail provider and decoder.
+        ThumbnailProvider = null;
     }
 }

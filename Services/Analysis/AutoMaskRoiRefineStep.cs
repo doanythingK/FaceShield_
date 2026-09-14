@@ -3,6 +3,7 @@ using FaceShield.Services.Video;
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 
 namespace FaceShield.Services.Analysis
 {
@@ -15,8 +16,11 @@ namespace FaceShield.Services.Analysis
             FaceTrackPostProcessResult trackPost,
             FaceOnnxDetectorOptions detectorOptions,
             AutoMaskOptions options,
-            bool useFaceOnnxRoiDetector)
+            bool useFaceOnnxRoiDetector,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var candidates = trackPost.FilledGapFacesInfo
                 .Concat(trackPost.FilledLostFacesInfo)
                 .Concat(trackPost.FilledInitialFacesInfo)
@@ -33,7 +37,8 @@ namespace FaceShield.Services.Analysis
                 videoPath,
                 refineDetector,
                 candidates,
-                options.DownscaleQuality);
+                options.DownscaleQuality,
+                cancellationToken: cancellationToken);
 
             if (refine.Attempts > 0)
             {

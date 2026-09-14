@@ -408,7 +408,7 @@ namespace FaceShield.Services.Analysis
 
             try
             {
-                using var extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+                using var extractor = new FfFrameExtractor(videoPath, enableHardware: false, cancellationToken: cancellationToken);
                 var frameSize = extractor.FrameSize;
                 if (frameSize.Width <= 0 || frameSize.Height <= 0)
                     return FaceTrackSceneCutGuardResult.Empty;
@@ -950,7 +950,7 @@ namespace FaceShield.Services.Analysis
             if (targetFrame <= sourceFrame)
                 return;
 
-            extractor.StartSequentialRead(sourceFrame);
+            extractor.StartSequentialRead(sourceFrame, cancellationToken);
             bool previousRead = false;
             int previousFrame = -1;
             int decodedFrame = sourceFrame - 1;
@@ -1149,7 +1149,7 @@ namespace FaceShield.Services.Analysis
                 return true;
             }
 
-            extractor.StartSequentialRead(sourceFrame);
+            extractor.StartSequentialRead(sourceFrame, cancellationToken);
             bool sourceRead = false;
             int decodedFrame = sourceFrame - 1;
             int stride = 0;

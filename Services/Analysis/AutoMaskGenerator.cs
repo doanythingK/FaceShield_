@@ -48,13 +48,19 @@ namespace FaceShield.Services.Analysis
             float SmallFaceConfidenceMin,
             bool UseStatsFilter);
 
-        private static bool IsHardwareTransferFailure()
+        private static bool IsHardwareTransferFailure(FfFrameExtractor extractor)
         {
-            string status = FfFrameExtractor.GetLastDecodeStatus();
-            string? error = FfFrameExtractor.GetLastDecodeError();
-
-            if (!string.IsNullOrWhiteSpace(error) && error.Contains("av_hwframe_transfer_data 실패", StringComparison.Ordinal))
+            if (extractor.HardwareTransferFailed)
                 return true;
+
+            string status = extractor.DecodeStatus;
+            string? error = extractor.DecodeError;
+
+            if (!string.IsNullOrWhiteSpace(error) &&
+                error.Contains("av_hwframe_transfer_data 실패", StringComparison.Ordinal))
+            {
+                return true;
+            }
 
             return !string.IsNullOrWhiteSpace(status) &&
                 status.Contains("HW 프레임 전송 실패", StringComparison.Ordinal);
@@ -66,21 +72,21 @@ namespace FaceShield.Services.Analysis
             bool useRaw,
             CancellationToken ct)
         {
-            var extractor = new FfFrameExtractor(videoPath, enableHardware: true);
+            var extractor = new FfFrameExtractor(videoPath, enableHardware: true, cancellationToken: ct);
 
             try
             {
-                extractor.StartSequentialRead(startFrameIndex);
+                extractor.StartSequentialRead(startFrameIndex, ct);
 
                 bool ok = useRaw
                     ? extractor.TryGetNextFrameRaw(ct, requireBgra: true, out _, out _)
                     : extractor.TryGetNextFrame(ct, requireBitmap: true, out _, out _);
 
-                if (!ok && !ct.IsCancellationRequested && IsHardwareTransferFailure())
+                if (!ok && !ct.IsCancellationRequested && IsHardwareTransferFailure(extractor))
                 {
                     Debug.WriteLine("[AutoMask] HW decode failed; falling back to SW.");
                     extractor.Dispose();
-                    extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+                    extractor = new FfFrameExtractor(videoPath, enableHardware: false, cancellationToken: ct);
                 }
             }
             catch
@@ -89,7 +95,7 @@ namespace FaceShield.Services.Analysis
                 throw;
             }
 
-            extractor.StartSequentialRead(startFrameIndex);
+            extractor.StartSequentialRead(startFrameIndex, ct);
             return extractor;
         }
         private readonly IFaceDetector _detector;
@@ -127,11 +133,13 @@ namespace FaceShield.Services.Analysis
             if (string.IsNullOrWhiteSpace(videoPath))
                 throw new ArgumentException("videoPath is null or empty.", nameof(videoPath));
 
-            var (fps, totalFrames, _) = ReadVideoInfo(videoPath);
+            ct.ThrowIfCancellationRequested();
+            VideoMetadataInfo metadata =
+                VideoMetadataReader.Read(videoPath, ct);
+            double fps = metadata.Fps;
+            int totalFrames = metadata.GetFrameCountEstimate();
 
             if (fps <= 0)
-                return;
-            if (ct.IsCancellationRequested)
                 return;
 
             int requestedStartFrameIndex = Math.Max(0, startFrameIndex);
@@ -1103,7 +1111,7 @@ namespace FaceShield.Services.Analysis
                     if (ct.IsCancellationRequested)
                         return false;
 
-            using var extractor = new FfFrameExtractor(videoPath);
+            using var extractor = new FfFrameExtractor(videoPath, cancellationToken: ct);
                     using var frame = extractor.GetFrameByIndex(frameIndex, ct);
                     if (frame == null)
                     {
@@ -2936,64 +2944,5 @@ namespace FaceShield.Services.Analysis
             return min == float.MaxValue ? null : min;
         }
 
-        private unsafe static (double fps, int totalFrames, double durationSeconds) ReadVideoInfo(string path)
-        {
-            AVFormatContext* fmt = null;
-
-            try
-            {
-                ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
-
-                int openResult = ffmpeg.avformat_open_input(&fmt, path, null, null);
-                FFmpegErrorHelper.ThrowIfError(openResult, $"Failed to open video: {path}");
-
-                int streamInfo = ffmpeg.avformat_find_stream_info(fmt, null);
-                FFmpegErrorHelper.ThrowIfError(streamInfo, $"Failed to read stream info: {path}");
-
-                int videoStreamIndex = FFmpegStreamSelection.FindPrimaryVideoStreamIndex(fmt);
-                AVStream* videoStream = videoStreamIndex >= 0 ? fmt->streams[videoStreamIndex] : null;
-
-                if (videoStream == null)
-                    throw new InvalidOperationException("Video stream not found.");
-
-                double fpsValue =
-                    videoStream->avg_frame_rate.num != 0
-                        ? ffmpeg.av_q2d(videoStream->avg_frame_rate)
-                        : videoStream->r_frame_rate.num != 0
-                            ? ffmpeg.av_q2d(videoStream->r_frame_rate)
-                            : 30.0;
-
-                double durationSeconds;
-
-                if (videoStream->duration > 0)
-                {
-                    durationSeconds =
-                        videoStream->duration * ffmpeg.av_q2d(videoStream->time_base);
-                }
-                else if (fmt->duration > 0)
-                {
-                    durationSeconds =
-                        fmt->duration / (double)ffmpeg.AV_TIME_BASE;
-                }
-                else
-                {
-                    durationSeconds = 0;
-                }
-
-                int frames = videoStream->nb_frames > 0
-                    ? (int)Math.Min(videoStream->nb_frames, int.MaxValue)
-                    : (int)Math.Floor(durationSeconds * fpsValue);
-
-                return (
-                    fps: fpsValue,
-                    totalFrames: Math.Max(frames, 0),
-                    durationSeconds: Math.Max(durationSeconds, 0));
-            }
-            finally
-            {
-                if (fmt != null)
-                    ffmpeg.avformat_close_input(&fmt);
-            }
-        }
     }
 }

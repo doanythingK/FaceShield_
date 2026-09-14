@@ -20,8 +20,11 @@ namespace FaceShield.Services.Analysis
             IBgraFaceDetector detector,
             IReadOnlyList<FaceTrackFilledFace> candidates,
             DownscaleQuality quality,
-            int maxCandidates = 32)
+            int maxCandidates = 32,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (maskProvider == null)
                 throw new ArgumentNullException(nameof(maskProvider));
             if (string.IsNullOrWhiteSpace(videoPath) || detector == null || candidates.Count == 0)
@@ -32,7 +35,10 @@ namespace FaceShield.Services.Analysis
             int hits = 0;
             int seekCount = 0;
             int decodedFrames = 0;
-            using var extractor = new FfFrameExtractor(videoPath, enableHardware: false);
+            using var extractor = new FfFrameExtractor(
+                videoPath,
+                enableHardware: false,
+                cancellationToken: cancellationToken);
             var frameSize = extractor.FrameSize;
             int width = frameSize.Width;
             int height = frameSize.Height;
@@ -54,12 +60,16 @@ namespace FaceShield.Services.Analysis
 
                 foreach (var group in candidateGroups)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     int targetFrameIndex = group.Key;
                     if (!sequentialActive ||
                         targetFrameIndex < currentFrameIndex ||
                         targetFrameIndex - currentFrameIndex > MaxSequentialFrameGap)
                     {
-                        extractor.StartSequentialRead(targetFrameIndex);
+                        extractor.StartSequentialRead(
+                            targetFrameIndex,
+                            cancellationToken);
                         seekCount++;
                         currentFrameIndex = targetFrameIndex - 1;
                         sequentialActive = true;
@@ -71,7 +81,7 @@ namespace FaceShield.Services.Analysis
                     while (decodedFrameIndex < targetFrameIndex)
                     {
                         if (!extractor.TryGetNextFrameRawToBuffer(
-                                CancellationToken.None,
+                                cancellationToken,
                                 width,
                                 height,
                                 quality == DownscaleQuality.BalancedBilinear,
@@ -94,6 +104,8 @@ namespace FaceShield.Services.Analysis
 
                     foreach (var candidate in group)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         if (TryRefineCandidate(maskProvider, detector, candidate, frameSize, buffer, stride, quality))
                             hits++;
                         attempts++;

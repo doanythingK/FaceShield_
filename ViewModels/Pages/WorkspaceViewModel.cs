@@ -65,6 +65,11 @@ namespace FaceShield.ViewModels.Pages
         private bool _autoPreviewNeedsExactRefresh;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _exportCts;
+        private CancellationTokenSource? _issueTimeCts;
+        private CancellationTokenSource? _sessionInitCts;
+        private const int IssueTimeResolveBudget = 96;
+        private const int IssueTimeCacheProbeBudget = 192;
+        private readonly SemaphoreSlim _exportGate = new(1, 1);
         private bool _autoExportGateRequired;
         private bool _autoExportGatePassed;
         private string? _autoExportGateFailure;
@@ -73,7 +78,10 @@ namespace FaceShield.ViewModels.Pages
         private const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";
         private bool _autoExportAllowHybridCopy;
         private string? _autoExportHybridDisableReasons;
-        private bool _disposed;
+        private readonly object _lifetimeSync = new();
+        private int _activeLifetimeOperations;
+        private bool _disposeRequested;
+        private bool _resourcesDisposed;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -127,7 +135,8 @@ namespace FaceShield.ViewModels.Pages
             FaceOnnxDetectorOptions? detectorOptions = null,
             WorkspaceStateStore? stateStore = null,
             bool deferSessionInit = false,
-            FaceDetectorFactoryOptions? detectorFactoryOptions = null)
+            FaceDetectorFactoryOptions? detectorFactoryOptions = null,
+            CancellationToken initializationToken = default)
         {
             Mode = mode;
             _onBack = onBack;
@@ -135,10 +144,13 @@ namespace FaceShield.ViewModels.Pages
             _detectorOptions = detectorOptions ?? new FaceOnnxDetectorOptions();
             _detectorFactoryOptions = detectorFactoryOptions ?? FaceDetectorFactoryOptions.ForOnnx(_detectorOptions);
             _stateStore = stateStore;
-            FrameList = new FrameListViewModel(videoPath);
+            initializationToken.ThrowIfCancellationRequested();
+            FrameList = new FrameListViewModel(
+                videoPath,
+                initializationToken);
             FramePreview = new FramePreviewViewModel(ToolPanel, _maskProvider);
             if (!deferSessionInit)
-                InitializeSession(loadProgress);
+                InitializeSession(loadProgress, initializationToken);
 
             // 🔹 자동/최종 마스크 provider 주입
             FramePreview.SetMaskProvider(_maskProvider);
@@ -169,13 +181,37 @@ namespace FaceShield.ViewModels.Pages
             {
                 if (isPlaying)
                 {
+                    int playbackTotalFrames = FrameList.IsTotalFramesEstimated
+                        ? 0
+                        : FrameList.TotalFrames;
+                    bool playbackDecodedFrame = false;
                     FramePreview.StartPlayback(
                         FrameList.VideoPath,
                         FrameList.SelectedFrameIndex,
                         FrameList.Fps,
-                        FrameList.TotalFrames,
-                        FrameList.SetPlaybackFrameIndex,
-                        FrameList.NotifyPlaybackStopped);
+                        playbackTotalFrames,
+                        frameIndex =>
+                        {
+                            playbackDecodedFrame = true;
+                            FrameList.SetPlaybackFrameIndex(frameIndex);
+                        },
+                        () =>
+                        {
+                            if (FrameList.IsTotalFramesEstimated &&
+                                playbackDecodedFrame &&
+                                FrameList.SelectedFrameIndex >= 0)
+                            {
+                                FrameList.UpdateActualTotalFrames(
+                                    FrameList.SelectedFrameIndex + 1);
+                            }
+
+                            FrameList.NotifyPlaybackStopped();
+                        },
+                        message =>
+                        {
+                            FrameList.NotifyPlaybackStopped();
+                            _ = ShowErrorDialogAsync("재생 실패", message);
+                        });
                 }
                 else
                 {
@@ -219,28 +255,115 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        public async Task EnsureSessionInitializedAsync(IProgress<int>? loadProgress)
+        public async Task EnsureSessionInitializedAsync(
+            IProgress<int>? loadProgress,
+            CancellationToken cancellationToken = default)
         {
-            if (_sessionInitialized)
+            if (_sessionInitialized || !TryBeginLifetimeOperation())
                 return;
 
-            var session = await Task.Run(() => new VideoSession(FrameList.VideoPath, progress: loadProgress));
-            FramePreview.InitializeSession(session);
-            _sessionInitialized = true;
+            var sessionCts =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+            CancellationTokenSource? previousSessionCts =
+                Interlocked.Exchange(ref _sessionInitCts, sessionCts);
+            if (previousSessionCts != null)
+            {
+                try { previousSessionCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
 
-            if (FrameList.SelectedFrameIndex >= 0)
-                FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+            try
+            {
+                if (_sessionInitialized)
+                    return;
+
+                var session = await Task.Run(
+                    () => new VideoSession(
+                        FrameList.VideoPath,
+                        progress: loadProgress,
+                        cancellationToken: sessionCts.Token),
+                    sessionCts.Token);
+
+                lock (_lifetimeSync)
+                {
+                    if (_disposeRequested)
+                    {
+                        session.Dispose();
+                        return;
+                    }
+                }
+
+                FramePreview.InitializeSession(session);
+                FrameList.SetThumbnailProvider(session.ThumbnailProvider);
+                _sessionInitialized = true;
+
+                if (FrameList.SelectedFrameIndex >= 0)
+                    FramePreview.OnFrameIndexChanged(FrameList.SelectedFrameIndex);
+            }
+            catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    throw;
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _sessionInitCts, null, sessionCts);
+                sessionCts.Dispose();
+                EndLifetimeOperation();
+            }
         }
 
-        private void InitializeSession(IProgress<int>? loadProgress)
+        private void InitializeSession(
+            IProgress<int>? loadProgress,
+            CancellationToken cancellationToken)
         {
-            var session = new VideoSession(FrameList.VideoPath, progress: loadProgress);
+            cancellationToken.ThrowIfCancellationRequested();
+            var session = new VideoSession(
+                FrameList.VideoPath,
+                progress: loadProgress,
+                cancellationToken: cancellationToken);
             FramePreview.InitializeSession(session);
+            FrameList.SetThumbnailProvider(session.ThumbnailProvider);
             _sessionInitialized = true;
         }
 
 
         private async Task<bool> SaveVideoAsync(
+            IProgress<ExportProgress>? exportProgress = null,
+            CancellationToken cancellationToken = default,
+            bool updateToolPanel = true,
+            string? runId = null,
+            AutoMaskRunSummary? autoRunSummary = null,
+            AutoMaskOptions? autoRunOptions = null)
+        {
+            if (!TryBeginLifetimeOperation())
+                return false;
+
+            bool enteredExportGate = false;
+            try
+            {
+                enteredExportGate = await _exportGate.WaitAsync(0);
+                if (!enteredExportGate)
+                    return false;
+
+                return await SaveVideoCoreAsync(
+                    exportProgress,
+                    cancellationToken,
+                    updateToolPanel,
+                    runId,
+                    autoRunSummary,
+                    autoRunOptions);
+            }
+            finally
+            {
+                if (enteredExportGate)
+                    _exportGate.Release();
+                EndLifetimeOperation();
+            }
+        }
+
+        private async Task<bool> SaveVideoCoreAsync(
             IProgress<ExportProgress>? exportProgress = null,
             CancellationToken cancellationToken = default,
             bool updateToolPanel = true,
@@ -291,12 +414,14 @@ namespace FaceShield.ViewModels.Pages
 
             string output = BuildDefaultExportPath(input);
 
-            string? resolvedOutput = await ResolveExportOutputPathAsync(output);
+            (string? resolvedOutput, bool allowOutputOverwrite) =
+                await ResolveExportOutputPathAsync(output);
             if (string.IsNullOrWhiteSpace(resolvedOutput))
                 return false;
             output = resolvedOutput;
 
-            var exporter = new VideoExportService(_maskProvider);
+            using var exportMaskProvider = _maskProvider.CreateSnapshot();
+            var exporter = new VideoExportService(exportMaskProvider);
 
             if (updateToolPanel)
             {
@@ -320,12 +445,14 @@ namespace FaceShield.ViewModels.Pages
                 }
             });
 
+            var exportCts = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : new CancellationTokenSource();
+            _exportCts = exportCts;
+            CancellationToken exportToken = exportCts.Token;
+
             try
             {
-                _exportCts?.Dispose();
-                _exportCts = cancellationToken.CanBeCanceled
-                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                    : new CancellationTokenSource();
                 (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy = (
                     false,
                     new[] { HybridCopyDisabledReason });
@@ -342,10 +469,11 @@ namespace FaceShield.ViewModels.Pages
                         output,
                         blurRadius: ToolPanel.BlurRadius,
                         progress,
-                        _exportCts.Token,
+                        exportToken,
                         exportRunId,
-                        allowHybridCopy: hybridPolicy.allowHybridCopy);
-                }, _exportCts.Token);
+                        allowHybridCopy: hybridPolicy.allowHybridCopy,
+                        allowOutputOverwrite: allowOutputOverwrite);
+                }, exportToken);
                 if (exporter.LastExportSummary != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
@@ -372,8 +500,9 @@ namespace FaceShield.ViewModels.Pages
                     ToolPanel.ExportEtaText = null;
                     ToolPanel.ExportStatusText = null;
                 }
-                _exportCts?.Dispose();
-                _exportCts = null;
+                if (ReferenceEquals(_exportCts, exportCts))
+                    _exportCts = null;
+                exportCts.Dispose();
             }
         }
 
@@ -846,19 +975,20 @@ namespace FaceShield.ViewModels.Pages
             );
         }
 
-        private async Task<string?> ResolveExportOutputPathAsync(string outputPath)
+        private async Task<(string? Path, bool AllowOverwrite)> ResolveExportOutputPathAsync(
+            string outputPath)
         {
             if (!File.Exists(outputPath))
-                return outputPath;
+                return (outputPath, false);
 
             var result = await ShowExportConflictDialogAsync(outputPath);
             if (result == ExportConflictResult.Overwrite)
-                return outputPath;
+                return (outputPath, true);
 
             if (result == ExportConflictResult.SaveAs)
-                return GetUniqueExportPath(outputPath);
+                return (GetUniqueExportPath(outputPath), false);
 
-            return null;
+            return (null, false);
         }
 
         private static string GetUniqueExportPath(string outputPath)
@@ -874,7 +1004,15 @@ namespace FaceShield.ViewModels.Pages
                     return candidate;
             }
 
-            return outputPath;
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                string suffix = Guid.NewGuid().ToString("N")[..8];
+                string candidate = Path.Combine(dir, $"{baseName} ({suffix}){ext}");
+                if (!File.Exists(candidate))
+                    return candidate;
+            }
+
+            throw new IOException("덮어쓰지 않는 고유한 내보내기 파일명을 만들 수 없습니다.");
         }
 
         private static string BuildDefaultExportPath(string inputPath)
@@ -926,7 +1064,7 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken = default,
             IProgress<ExportProgress>? exportProgress = null)
         {
-            if (_isAutoRunning)
+            if (_isAutoRunning || !TryBeginLifetimeOperation())
                 return Task.FromResult(false);
 
             _isAutoRunning = true;
@@ -940,7 +1078,22 @@ namespace FaceShield.ViewModels.Pages
                 ToolPanel.AutoProgress = 0;
             }
 
-            return RunAutoCoreAsync(exportAfter, progress, exportProgress);
+            return RunTrackedAutoOperationAsync(exportAfter, progress, exportProgress);
+        }
+
+        private async Task<bool> RunTrackedAutoOperationAsync(
+            bool exportAfter,
+            IProgress<int>? progress,
+            IProgress<ExportProgress>? exportProgress)
+        {
+            try
+            {
+                return await RunAutoCoreAsync(exportAfter, progress, exportProgress);
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
         }
 
         private async Task<bool> RunAutoCoreAsync(
@@ -950,9 +1103,19 @@ namespace FaceShield.ViewModels.Pages
         {
             bool persisted = false;
             bool detectionCompleted = false;
+            bool exactFrameOperationsSuspended = false;
+            bool timelineOperationsSuspended = false;
+            bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
             string runId = $"auto-{Guid.NewGuid():N}";
+            FrameList.SetPlaybackEnabled(false);
             try
             {
+                await FramePreview.StopPlaybackAndWaitAsync();
+                await FramePreview.SuspendExactFrameOperationsAndWaitAsync();
+                exactFrameOperationsSuspended = true;
+                await FrameList.SuspendTimelineOperationsAndWaitAsync();
+                timelineOperationsSuspended = true;
+
                 // Progress updates no longer invoke the exact-frame path on every
                 // selection change, so preserve any pending manual edit once up front.
                 FramePreview.PersistCurrentMask();
@@ -1183,6 +1346,15 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                if (timelineOperationsSuspended)
+                {
+                    FrameList.ResumeTimelineOperations();
+                    if (!exportAfter)
+                        RefreshIssueTimesInBackground(FrameList.SelectedFrameIndex);
+                }
+                if (exactFrameOperationsSuspended)
+                    FramePreview.ResumeExactFrameOperations();
+                FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
                 if (!exportAfter &&
                     _autoPreviewNeedsExactRefresh &&
                     FrameList.SelectedFrameIndex >= 0)
@@ -1456,10 +1628,22 @@ namespace FaceShield.ViewModels.Pages
         private Task<bool> RunAutoSingleFrameAsync()
         {
             int frameIndex = FrameList.SelectedFrameIndex;
-            if (frameIndex < 0)
+            if (frameIndex < 0 || !TryBeginLifetimeOperation())
                 return Task.FromResult(false);
 
-            return RunAutoSingleFrameCoreAsync(frameIndex);
+            return RunTrackedAutoSingleFrameAsync(frameIndex);
+        }
+
+        private async Task<bool> RunTrackedAutoSingleFrameAsync(int frameIndex)
+        {
+            try
+            {
+                return await RunAutoSingleFrameCoreAsync(frameIndex);
+            }
+            finally
+            {
+                EndLifetimeOperation();
+            }
         }
 
         private async Task<bool> RunAutoSingleFrameCoreAsync(int frameIndex)
@@ -1469,12 +1653,23 @@ namespace FaceShield.ViewModels.Pages
 
             _isAutoRunning = true;
             _autoCts = new CancellationTokenSource();
+            bool refreshPreviewAfterAuto = false;
+            bool exactFrameOperationsSuspended = false;
+            bool timelineOperationsSuspended = false;
+            bool restorePlaybackEnabled = FrameList.IsPlaybackEnabled;
 
             ToolPanel.IsAutoRunning = true;
             ToolPanel.AutoProgress = 0;
+            FrameList.SetPlaybackEnabled(false);
 
             try
             {
+                await FramePreview.StopPlaybackAndWaitAsync();
+                await FramePreview.SuspendExactFrameOperationsAndWaitAsync();
+                exactFrameOperationsSuspended = true;
+                await FrameList.SuspendTimelineOperationsAndWaitAsync();
+                timelineOperationsSuspended = true;
+
                 var detectorFactory = CreateFaceDetectorFactory();
                 using IFaceDetector detector = detectorFactory.CreateDetector();
                 var generator = CreateAutoMaskGenerator(detector, detectorFactory);
@@ -1492,7 +1687,7 @@ namespace FaceShield.ViewModels.Pages
                     return false;
                 }
 
-                FramePreview.OnFrameIndexChanged(frameIndex);
+                refreshPreviewAfterAuto = true;
                 _autoLastProcessedFrame = frameIndex;
                 _autoLastProcessedAtUtc = DateTime.UtcNow;
                 PersistWorkspaceState();
@@ -1509,6 +1704,13 @@ namespace FaceShield.ViewModels.Pages
                 _autoCts = null;
                 _isAutoRunning = false;
                 ToolPanel.IsAutoRunning = false;
+                if (timelineOperationsSuspended)
+                    FrameList.ResumeTimelineOperations();
+                if (exactFrameOperationsSuspended)
+                    FramePreview.ResumeExactFrameOperations();
+                FrameList.SetPlaybackEnabled(restorePlaybackEnabled);
+                if (refreshPreviewAfterAuto)
+                    FramePreview.OnFrameIndexChanged(frameIndex);
                 PersistWorkspaceState();
             }
         }
@@ -1544,13 +1746,17 @@ namespace FaceShield.ViewModels.Pages
                 if (idx < 0) idx = _autoAnomalies.Length - 1;
             }
 
-            FrameList.SelectedFrameIndex = _autoAnomalies[idx];
+            int targetFrame = _autoAnomalies[idx];
+            FrameList.SelectedFrameIndex = targetFrame;
+            RefreshIssueTimesInBackground(targetFrame);
         }
 
         [RelayCommand]
         private void JumpToIssue(int frameIndex)
         {
-            FrameList.SelectedFrameIndex = Math.Clamp(frameIndex, 0, FrameList.TotalFrames - 1);
+            int targetFrame = Math.Clamp(frameIndex, 0, FrameList.TotalFrames - 1);
+            FrameList.SelectedFrameIndex = targetFrame;
+            RefreshIssueTimesInBackground(targetFrame);
         }
 
         [RelayCommand]
@@ -1558,7 +1764,10 @@ namespace FaceShield.ViewModels.Pages
         {
             if (_autoAnomalies.Length == 0)
                 return;
-            FrameList.SelectedFrameIndex = _autoAnomalies[0];
+
+            int targetFrame = _autoAnomalies[0];
+            FrameList.SelectedFrameIndex = targetFrame;
+            RefreshIssueTimesInBackground(targetFrame);
         }
 
         private async Task BuildAutoAnomaliesAsync()
@@ -1575,6 +1784,7 @@ namespace FaceShield.ViewModels.Pages
                 ResetIssueList(_noFaceIssueEntries, Array.Empty<int>(), "얼굴 없음");
                 ResetIssueList(_lowConfidenceIssueEntries, Array.Empty<int>(), "신뢰도 낮음");
                 ResetIssueList(_flickerIssueEntries, Array.Empty<int>(), "연속 끊김");
+                CancelIssueTimeRefresh();
                 return;
             }
 
@@ -1627,6 +1837,9 @@ namespace FaceShield.ViewModels.Pages
                         flicker.Add(i);
                 }
 
+                noFace.Sort();
+                lowConfidence.Sort();
+                flicker.Sort();
                 return (noFace.ToArray(), lowConfidence.ToArray(), flicker.ToArray());
             });
 
@@ -1646,6 +1859,7 @@ namespace FaceShield.ViewModels.Pages
             ResetIssueList(_noFaceIssueEntries, noFaceFrames, "얼굴 없음");
             ResetIssueList(_lowConfidenceIssueEntries, lowConfidenceFrames, "신뢰도 낮음");
             ResetIssueList(_flickerIssueEntries, flickerFrames, "연속 끊김");
+            RefreshIssueTimesInBackground();
         }
 
         private float GetLowConfidenceCutoff()
@@ -1859,15 +2073,272 @@ namespace FaceShield.ViewModels.Pages
             string label)
         {
             target.Clear();
+            TimelineThumbnailProvider? provider = FrameList.ThumbnailProvider;
             for (int i = 0; i < frames.Count; i++)
             {
-                var entry = new IssueEntryViewModel(frames[i], label, FormatFrameTime(frames[i], FrameList.Fps))
+                string timeText = "--:--.--";
+                if (provider?.TryGetFrameTimestampSeconds(
+                        frames[i],
+                        out double timestampSeconds) == true)
+                {
+                    timeText = FormatIssueTime(timestampSeconds);
+                }
+
+                var entry = new IssueEntryViewModel(frames[i], label, timeText)
                 {
                     HideResolved = HideResolvedIssues
                 };
                 entry.Resolved += OnIssueResolved;
                 target.Add(entry);
             }
+        }
+
+        private void RefreshIssueTimesInBackground(int? preferredFrameIndex = null)
+        {
+            TimelineThumbnailProvider? provider = FrameList.ThumbnailProvider;
+            if (provider == null || provider.OperationsSuspended)
+                return;
+
+            int anchorFrame = preferredFrameIndex ?? FrameList.SelectedFrameIndex;
+            double safeFps = double.IsFinite(FrameList.Fps) && FrameList.Fps > 0
+                ? FrameList.Fps
+                : 30.0;
+            double safeSpan = double.IsFinite(FrameList.SecondsPerScreen) &&
+                              FrameList.SecondsPerScreen > 0
+                ? FrameList.SecondsPerScreen
+                : 10.0;
+            int nearFrameDistance = (int)Math.Clamp(
+                Math.Ceiling(safeFps * safeSpan * 2.0),
+                120,
+                50_000);
+
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous =
+                Interlocked.Exchange(ref _issueTimeCts, cts);
+            if (previous != null)
+            {
+                try { previous.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            _ = RefreshIssueTimesAsync(
+                provider,
+                cts,
+                anchorFrame,
+                nearFrameDistance);
+        }
+
+        private async Task RefreshIssueTimesAsync(
+            TimelineThumbnailProvider provider,
+            CancellationTokenSource cts,
+            int anchorFrame,
+            int nearFrameDistance)
+        {
+            if (!TryBeginLifetimeOperation())
+            {
+                Interlocked.CompareExchange(ref _issueTimeCts, null, cts);
+                cts.Dispose();
+                return;
+            }
+
+            try
+            {
+                IssueEntryViewModel[] entries =
+                    CollectIssueEntriesNearAnchor(
+                        anchorFrame,
+                        IssueTimeCacheProbeBudget);
+                if (entries.Length == 0)
+                    return;
+
+                CancellationToken token = cts.Token;
+                Dictionary<int, double> resolved = await Task.Run(() =>
+                {
+                    var times = new Dictionary<int, double>();
+                    var unresolved = new HashSet<int>();
+
+                    foreach (int frameIndex in entries
+                                 .Select(static entry => entry.FrameIndex)
+                                 .Distinct())
+                    {
+                        token.ThrowIfCancellationRequested();
+
+                        if (provider.TryGetFrameTimestampSeconds(
+                                frameIndex,
+                                out double timestampSeconds))
+                        {
+                            times[frameIndex] = timestampSeconds;
+                        }
+                        else
+                        {
+                            unresolved.Add(frameIndex);
+                        }
+                    }
+
+                    if (provider.OperationsSuspended || unresolved.Count == 0)
+                        return times;
+
+                    int effectiveAnchor = anchorFrame >= 0
+                        ? anchorFrame
+                        : unresolved.Min();
+
+                    int[] candidates = unresolved
+                        .Where(frameIndex =>
+                            frameIndex == effectiveAnchor ||
+                            Math.Abs((long)frameIndex - effectiveAnchor) <= nearFrameDistance)
+                        .OrderBy(frameIndex =>
+                            Math.Abs((long)frameIndex - effectiveAnchor))
+                        .Take(IssueTimeResolveBudget)
+                        .OrderBy(static frameIndex => frameIndex)
+                        .ToArray();
+
+                    foreach (int frameIndex in candidates)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (provider.OperationsSuspended)
+                            break;
+
+                        if (provider.TryResolveFrameTimestampSeconds(
+                                frameIndex,
+                                token,
+                                out double timestampSeconds))
+                        {
+                            times[frameIndex] = timestampSeconds;
+                        }
+                    }
+
+                    return times;
+                }, token).ConfigureAwait(false);
+
+                token.ThrowIfCancellationRequested();
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (token.IsCancellationRequested ||
+                        !ReferenceEquals(_issueTimeCts, cts) ||
+                        !ReferenceEquals(FrameList.ThumbnailProvider, provider))
+                    {
+                        return;
+                    }
+
+                    for (int i = 0; i < entries.Length; i++)
+                    {
+                        IssueEntryViewModel entry = entries[i];
+                        if (resolved.TryGetValue(
+                                entry.FrameIndex,
+                                out double timestampSeconds))
+                        {
+                            entry.TimeText = FormatIssueTime(timestampSeconds);
+                        }
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _issueTimeCts, null, cts);
+                cts.Dispose();
+                EndLifetimeOperation();
+            }
+        }
+
+        private IssueEntryViewModel[] CollectIssueEntriesNearAnchor(
+            int anchorFrame,
+            int maxEntries)
+        {
+            if (maxEntries <= 0)
+                return Array.Empty<IssueEntryViewModel>();
+
+            int safeAnchor = Math.Max(0, anchorFrame);
+            int perCollectionBudget = Math.Max(
+                1,
+                (maxEntries + 2) / 3);
+            var candidates = new List<IssueEntryViewModel>(
+                Math.Min(maxEntries * 2, 512));
+
+            AddIssueEntriesNearAnchor(
+                _noFaceIssueEntries,
+                safeAnchor,
+                perCollectionBudget,
+                candidates);
+            AddIssueEntriesNearAnchor(
+                _lowConfidenceIssueEntries,
+                safeAnchor,
+                perCollectionBudget,
+                candidates);
+            AddIssueEntriesNearAnchor(
+                _flickerIssueEntries,
+                safeAnchor,
+                perCollectionBudget,
+                candidates);
+
+            return candidates
+                .OrderBy(entry =>
+                    Math.Abs((long)entry.FrameIndex - safeAnchor))
+                .ThenBy(static entry => entry.FrameIndex)
+                .Take(maxEntries)
+                .ToArray();
+        }
+
+        private static void AddIssueEntriesNearAnchor(
+            ObservableCollection<IssueEntryViewModel> source,
+            int anchorFrame,
+            int maxEntries,
+            List<IssueEntryViewModel> target)
+        {
+            if (source.Count == 0 || maxEntries <= 0)
+                return;
+
+            int low = 0;
+            int high = source.Count;
+            while (low < high)
+            {
+                int mid = low + ((high - low) / 2);
+                if (source[mid].FrameIndex < anchorFrame)
+                    low = mid + 1;
+                else
+                    high = mid;
+            }
+
+            int left = low - 1;
+            int right = low;
+            int added = 0;
+            while (added < maxEntries &&
+                   (left >= 0 || right < source.Count))
+            {
+                if (left < 0)
+                {
+                    target.Add(source[right++]);
+                }
+                else if (right >= source.Count)
+                {
+                    target.Add(source[left--]);
+                }
+                else
+                {
+                    long leftDistance =
+                        Math.Abs((long)source[left].FrameIndex - anchorFrame);
+                    long rightDistance =
+                        Math.Abs((long)source[right].FrameIndex - anchorFrame);
+                    if (leftDistance <= rightDistance)
+                        target.Add(source[left--]);
+                    else
+                        target.Add(source[right++]);
+                }
+
+                added++;
+            }
+        }
+
+        private void CancelIssueTimeRefresh()
+        {
+            CancellationTokenSource? cts =
+                Interlocked.Exchange(ref _issueTimeCts, null);
+            if (cts == null)
+                return;
+
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         private void OnIssueResolved(IssueEntryViewModel entry)
@@ -1932,24 +2403,15 @@ namespace FaceShield.ViewModels.Pages
                 entries[i].HideResolved = hideResolved;
         }
 
-        private static string FormatFrameTime(int frameIndex, double fps)
+        private static string FormatIssueTime(double timestampSeconds)
         {
-            if (fps <= 0)
-                return "00:00.00";
+            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+                return "--:--.--";
 
-            double framesPerSecond = fps;
-            int wholeSeconds = (int)Math.Floor(frameIndex / framesPerSecond);
-            int frameRemainder = (int)Math.Round(frameIndex - wholeSeconds * framesPerSecond);
-            int fpsInt = (int)Math.Round(framesPerSecond);
-            if (fpsInt > 0 && frameRemainder >= fpsInt)
-            {
-                wholeSeconds += frameRemainder / fpsInt;
-                frameRemainder %= fpsInt;
-            }
-
-            int minutes = wholeSeconds / 60;
-            int seconds = wholeSeconds % 60;
-            return $"{minutes:D2}:{seconds:D2}.{frameRemainder:D2}";
+            TimeSpan time = TimeSpan.FromSeconds(timestampSeconds);
+            long minutes = (long)Math.Floor(time.TotalMinutes);
+            int hundredths = time.Milliseconds / 10;
+            return $"{minutes:D2}:{time.Seconds:D2}.{hundredths:D2}";
         }
 
         public void RestoreFromStore(WorkspaceStateStore store)
@@ -2039,7 +2501,7 @@ namespace FaceShield.ViewModels.Pages
                 secondsPerScreen = FrameList.SecondsPerScreen;
             FrameList.SecondsPerScreen = secondsPerScreen;
 
-            double maxStart = Math.Max(0, FrameList.TotalDurationSeconds - FrameList.SecondsPerScreen);
+            double maxStart = Math.Max(0, FrameList.TimelineExtentSeconds - FrameList.SecondsPerScreen);
             FrameList.ViewStartSeconds = Math.Clamp(snapshot.ViewStartSeconds, 0, maxStart);
 
             int index;
@@ -2074,21 +2536,84 @@ namespace FaceShield.ViewModels.Pages
             _autoCompleted = false;
         }
 
+        private bool TryBeginLifetimeOperation()
+        {
+            lock (_lifetimeSync)
+            {
+                if (_disposeRequested)
+                    return false;
+
+                _activeLifetimeOperations++;
+                return true;
+            }
+        }
+
+        private void EndLifetimeOperation()
+        {
+            bool disposeNow = false;
+            lock (_lifetimeSync)
+            {
+                if (_activeLifetimeOperations > 0)
+                    _activeLifetimeOperations--;
+
+                if (_disposeRequested &&
+                    _activeLifetimeOperations == 0 &&
+                    !_resourcesDisposed)
+                {
+                    _resourcesDisposed = true;
+                    disposeNow = true;
+                }
+            }
+
+            if (disposeNow)
+                ScheduleOwnedResourceDispose();
+        }
+
+        private void ScheduleOwnedResourceDispose()
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                DisposeOwnedResources();
+                return;
+            }
+
+            Dispatcher.UIThread.Post(DisposeOwnedResources);
+        }
+
+        private void DisposeOwnedResources()
+        {
+            FramePreview.Dispose();
+            FrameList.Dispose();
+            _maskProvider.Dispose();
+            _exportGate.Dispose();
+        }
+
         public void Dispose()
         {
-            if (_disposed)
-                return;
+            bool disposeNow = false;
+            lock (_lifetimeSync)
+            {
+                if (_disposeRequested)
+                    return;
 
-            _disposed = true;
+                _disposeRequested = true;
+                if (_activeLifetimeOperations == 0 && !_resourcesDisposed)
+                {
+                    _resourcesDisposed = true;
+                    disposeNow = true;
+                }
+            }
 
             try { _autoCts?.Cancel(); }
             catch { }
             try { _exportCts?.Cancel(); }
             catch { }
+            try { _sessionInitCts?.Cancel(); }
+            catch { }
+            CancelIssueTimeRefresh();
 
-            FramePreview.Dispose();
-            FrameList.Dispose();
-            _maskProvider.Dispose();
+            if (disposeNow)
+                ScheduleOwnedResourceDispose();
         }
 
 

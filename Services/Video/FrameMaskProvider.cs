@@ -146,6 +146,33 @@ namespace FaceShield.Services.Video
     public IReadOnlyCollection<KeyValuePair<int, WriteableBitmap>> GetMaskEntries()
         => _masks.ToArray();
 
+    public FrameMaskProvider CreateSnapshot()
+    {
+        var snapshot = new FrameMaskProvider();
+        try
+        {
+            foreach (var entry in _masks.ToArray())
+                snapshot._masks[entry.Key] = CloneBitmap(entry.Value);
+
+            foreach (var entry in _faceMasks.ToArray())
+            {
+                FaceMaskData data = entry.Value;
+                snapshot._faceMasks[entry.Key] = new FaceMaskData(
+                    data.Size,
+                    data.Faces.ToArray(),
+                    data.MinConfidence,
+                    data.Confidences.ToArray());
+            }
+
+            return snapshot;
+        }
+        catch
+        {
+            snapshot.Dispose();
+            throw;
+        }
+    }
+
     public void Clear()
     {
         foreach (int frameIndex in _masks.Keys)
@@ -157,6 +184,36 @@ namespace FaceShield.Services.Video
     public void Dispose()
     {
         Clear();
+    }
+
+    private static WriteableBitmap CloneBitmap(WriteableBitmap source)
+    {
+        var copy = new WriteableBitmap(
+            source.PixelSize,
+            source.Dpi,
+            Avalonia.Platform.PixelFormat.Bgra8888,
+            Avalonia.Platform.AlphaFormat.Premul);
+
+        using var sourceBuffer = source.Lock();
+        using var copyBuffer = copy.Lock();
+        int rows = Math.Min(sourceBuffer.Size.Height, copyBuffer.Size.Height);
+        int bytesPerRow = Math.Min(sourceBuffer.RowBytes, copyBuffer.RowBytes);
+
+        unsafe
+        {
+            byte* src = (byte*)sourceBuffer.Address;
+            byte* dst = (byte*)copyBuffer.Address;
+            for (int y = 0; y < rows; y++)
+            {
+                Buffer.MemoryCopy(
+                    src + y * sourceBuffer.RowBytes,
+                    dst + y * copyBuffer.RowBytes,
+                    copyBuffer.RowBytes,
+                    bytesPerRow);
+            }
+        }
+
+        return copy;
     }
 
     private void RemoveStoredMask(int frameIndex)

@@ -107,8 +107,8 @@ namespace FaceShield.Services.FaceDetection
             if (string.IsNullOrWhiteSpace(videoPath) || maxSessions < 1)
                 return false;
 
-            using var extractor = new FfFrameExtractor(videoPath, enableHardware: true);
-            extractor.StartSequentialRead(0);
+            using var extractor = new FfFrameExtractor(videoPath, enableHardware: true, cancellationToken: cancellationToken);
+            extractor.StartSequentialRead(0, cancellationToken);
 
             PixelSize frameSize = extractor.FrameSize;
             int width = frameSize.Width;
