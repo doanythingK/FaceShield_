@@ -56,32 +56,11 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         {
             // Construction is an ownership transaction: every resource created
             // before the failure must be released even when an earlier Dispose
-            // itself faults. The shared extractor is released last.
-            try
-            {
-                ManualPlayer?.Dispose();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                thumbnailProvider?.Dispose();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                ExactProvider.Dispose();
-            }
-            catch
-            {
-            }
-
-            _extractor.Dispose();
+            // itself faults. Cleanup failures must not replace the construction fault.
+            TryDispose(ManualPlayer);
+            TryDispose(thumbnailProvider);
+            TryDispose(ExactProvider);
+            TryDispose(_extractor);
             throw;
         }
     }
@@ -123,9 +102,38 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
 
     private void DisposeSessionResources()
     {
-        Timeline.Dispose();
-        ExactProvider.Dispose();
-        ThumbnailProvider.Dispose();
-        _extractor.Dispose();
+        try
+        {
+            Timeline.Dispose();
+        }
+        finally
+        {
+            try
+            {
+                ExactProvider.Dispose();
+            }
+            finally
+            {
+                try
+                {
+                    ThumbnailProvider.Dispose();
+                }
+                finally
+                {
+                    _extractor.Dispose();
+                }
+            }
+        }
+    }
+
+    private static void TryDispose(IDisposable? resource)
+    {
+        try
+        {
+            resource?.Dispose();
+        }
+        catch
+        {
+        }
     }
 }
