@@ -40,6 +40,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
     private readonly Action<bool> _persistWorkspaceState;
 
     private CancellationTokenSource? _autoCts;
+    private long _autoRunGeneration;
     private long _lastPreviewTick;
     private bool _previewNeedsExactRefresh;
     private bool _disposed;
@@ -176,12 +177,14 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         if (IsRunning || !_tryBeginLifetimeOperation())
             return Task.FromResult(false);
 
+        long runGeneration = 0;
         try
         {
             _framePreview.PersistCurrentMask();
             ExecutionProviderLabel = null;
             ExecutionProviderError = null;
             IsRunning = true;
+            runGeneration = Interlocked.Increment(ref _autoRunGeneration);
             _autoCts = cancellationToken.CanBeCanceled
                 ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                 : new CancellationTokenSource();
@@ -190,10 +193,15 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             if (!exportAfter)
                 _toolPanel.AutoProgress = 0;
 
-            return RunTrackedAsync(exportAfter, progress, exportProgress);
+            return RunTrackedAsync(
+                exportAfter,
+                progress,
+                exportProgress,
+                runGeneration);
         }
         catch
         {
+            InvalidateAutoRunGeneration(runGeneration);
             _autoCts?.Dispose();
             _autoCts = null;
             IsRunning = false;
@@ -206,11 +214,20 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
     private async Task<bool> RunTrackedAsync(
         bool exportAfter,
         IProgress<int>? progress,
-        IProgress<ExportProgress>? exportProgress)
+        IProgress<ExportProgress>? exportProgress,
+        long runGeneration)
     {
         try
         {
-            return await RunCoreAsync(exportAfter, progress, exportProgress);
+            return await RunCoreAsync(
+                exportAfter,
+                progress,
+                exportProgress,
+                runGeneration);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw CreateUnexpectedCancellationException(ex);
         }
         finally
         {
@@ -221,7 +238,8 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
     private async Task<bool> RunCoreAsync(
         bool exportAfter,
         IProgress<int>? progress,
-        IProgress<ExportProgress>? exportProgress)
+        IProgress<ExportProgress>? exportProgress,
+        long runGeneration)
     {
         bool persisted = false;
         bool postProcessCommitted = false;
@@ -344,13 +362,16 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 WorkspaceExportGatePolicy.Begin(WorkspaceExportCoordinator.HybridCopyDisabledReason));
             ResetAutoFaceMasksForRun(lastProcessed);
 
+            CancellationToken token = _autoCts?.Token ?? CancellationToken.None;
             var effectiveProgress = new Progress<int>(p =>
             {
+                if (!CanApplyAutoProgress(runGeneration, token))
+                    return;
+
                 progress?.Report(p);
                 if (!exportAfter)
                     _toolPanel.AutoProgress = p;
             });
-            CancellationToken token = _autoCts?.Token ?? CancellationToken.None;
             await generator.GenerateAsync(
                 _frameList.VideoPath,
                 effectiveProgress,
@@ -453,6 +474,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         }
         finally
         {
+            InvalidateAutoRunGeneration(runGeneration);
             _autoCts?.Dispose();
             _autoCts = null;
             IsRunning = false;
@@ -499,6 +521,10 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         {
             return await RunSingleFrameCoreAsync(frameIndex);
         }
+        catch (OperationCanceledException ex)
+        {
+            throw CreateUnexpectedCancellationException(ex);
+        }
         finally
         {
             _endLifetimeOperation();
@@ -514,6 +540,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         ExecutionProviderLabel = null;
         ExecutionProviderError = null;
         IsRunning = true;
+        long runGeneration = Interlocked.Increment(ref _autoRunGeneration);
         _autoCts = new CancellationTokenSource();
         bool refreshPreviewAfterAuto = false;
         bool exactFrameOperationsSuspended = false;
@@ -538,8 +565,12 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 _maskProvider,
                 _getAutoOptions(),
                 detectorFactory);
-            var effectiveProgress = new Progress<int>(p => _toolPanel.AutoProgress = p);
             CancellationToken token = _autoCts?.Token ?? CancellationToken.None;
+            var effectiveProgress = new Progress<int>(p =>
+            {
+                if (CanApplyAutoProgress(runGeneration, token))
+                    _toolPanel.AutoProgress = p;
+            });
             bool generated = await generator.GenerateFrameAsync(
                 _frameList.VideoPath,
                 frameIndex,
@@ -564,6 +595,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         }
         finally
         {
+            InvalidateAutoRunGeneration(runGeneration);
             _autoCts?.Dispose();
             _autoCts = null;
             IsRunning = false;
@@ -584,6 +616,32 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         try { Volatile.Read(ref _autoCts)?.Cancel(); }
         catch (ObjectDisposedException) { }
     }
+
+    private bool CanApplyAutoProgress(
+        long runGeneration,
+        CancellationToken token)
+        => !_disposed &&
+           IsRunning &&
+           _toolPanel.IsAutoRunning &&
+           !token.IsCancellationRequested &&
+           Volatile.Read(ref _autoRunGeneration) == runGeneration;
+
+    private void InvalidateAutoRunGeneration(long runGeneration)
+    {
+        if (runGeneration <= 0)
+            return;
+
+        Interlocked.CompareExchange(
+            ref _autoRunGeneration,
+            unchecked(runGeneration + 1),
+            runGeneration);
+    }
+
+    private static InvalidOperationException CreateUnexpectedCancellationException(
+        OperationCanceledException exception)
+        => new(
+            "자동 분석 내부 작업이 요청되지 않은 취소 예외로 중단되었습니다.",
+            exception);
 
     private AutoMaskOptions BuildRunOptions(
         AutoMaskOptions effective,
