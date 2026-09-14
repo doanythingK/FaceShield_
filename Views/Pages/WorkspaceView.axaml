@@ -23,23 +23,27 @@
                 <TextBlock Text="{Binding AutoAnomalyCount, StringFormat=이상 프레임: {0}}"
                            Opacity="0.8"
                            VerticalAlignment="Center"/>
-                <Button Content="이전 이상 프레임"
-                        Command="{Binding PrevAutoAnomalyCommand}"
-                        IsEnabled="{Binding HasAutoAnomalies}"/>
-                <Button Content="다음 이상 프레임"
-                        Command="{Binding NextAutoAnomalyCommand}"
-                        IsEnabled="{Binding HasAutoAnomalies}"/>
-                <Border Background="#1C2A1C"
-                        CornerRadius="6"
-                        Padding="6,2"
-                        IsVisible="{Binding AutoSummaryVisible}">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="{Binding AutoSummaryText}"
-                                   VerticalAlignment="Center"/>
-                        <Button Content="바로 검토하기"
-                                Command="{Binding ReviewAutoAnomaliesCommand}"/>
-                    </StackPanel>
-                </Border>
+                <StackPanel Orientation="Horizontal"
+                            Spacing="8"
+                            IsEnabled="{Binding ToolPanel.CanEditWorkspace}">
+                    <Button Content="이전 이상 프레임"
+                            Command="{Binding PrevAutoAnomalyCommand}"
+                            IsEnabled="{Binding HasAutoAnomalies}"/>
+                    <Button Content="다음 이상 프레임"
+                            Command="{Binding NextAutoAnomalyCommand}"
+                            IsEnabled="{Binding HasAutoAnomalies}"/>
+                    <Border Background="#1C2A1C"
+                            CornerRadius="6"
+                            Padding="6,2"
+                            IsVisible="{Binding AutoSummaryVisible}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="{Binding AutoSummaryText}"
+                                       VerticalAlignment="Center"/>
+                            <Button Content="바로 검토하기"
+                                    Command="{Binding ReviewAutoAnomaliesCommand}"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -53,6 +57,7 @@
         <views:FrameListView
             Grid.Row="2"
             Grid.Column="0"
+            IsEnabled="{Binding ToolPanel.CanEditWorkspace}"
             DataContext="{Binding FrameList}" />
 
         <Border Grid.Row="1"
@@ -76,7 +81,8 @@
                 Grid.Column="1"
                 Grid.RowSpan="2"
                 Background="#151515"
-                Padding="12">
+                Padding="12"
+                IsEnabled="{Binding ToolPanel.CanEditWorkspace}">
             <StackPanel Spacing="8">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="문제 프레임"
