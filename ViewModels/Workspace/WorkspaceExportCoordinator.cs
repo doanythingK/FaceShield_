@@ -25,6 +25,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     private readonly Queue<(DateTime Timestamp, int FrameIndex)> _etaSamples = new();
     private (DateTime Timestamp, int FrameIndex) _lastEtaSample;
     private CancellationTokenSource? _exportCts;
+    private long _exportRunGeneration;
     private WorkspaceAutoExportGateState _gateState = new(
         Required: false,
         Passed: false,
@@ -168,23 +169,27 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         }
         _etaSamples.Clear();
 
+        var exportCts = cancellationToken.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : new CancellationTokenSource();
+        Interlocked.Exchange(ref _exportCts, exportCts);
+        CancellationToken exportToken = exportCts.Token;
+        long runGeneration = Interlocked.Increment(ref _exportRunGeneration);
+
         var progress = new Progress<ExportProgress>(p =>
         {
             exportProgress?.Report(p);
-            if (!updateToolPanel)
+            if (!updateToolPanel ||
+                !CanApplyExportProgress(runGeneration, exportToken))
+            {
                 return;
+            }
 
             _toolPanel.ExportProgress = Math.Clamp(p.Percent, 0, 100);
             UpdateEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
             if (!string.IsNullOrWhiteSpace(p.StatusMessage))
                 _toolPanel.ExportStatusText = p.StatusMessage;
         });
-
-        var exportCts = cancellationToken.CanBeCanceled
-            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-            : new CancellationTokenSource();
-        Interlocked.Exchange(ref _exportCts, exportCts);
-        CancellationToken exportToken = exportCts.Token;
 
         try
         {
@@ -228,6 +233,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         }
         finally
         {
+            InvalidateExportRunGeneration(runGeneration);
             if (updateToolPanel)
             {
                 _toolPanel.IsExportRunning = false;
@@ -238,6 +244,25 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             Interlocked.CompareExchange(ref _exportCts, null, exportCts);
             exportCts.Dispose();
         }
+    }
+
+    private bool CanApplyExportProgress(
+        long runGeneration,
+        CancellationToken token)
+        => !_disposed &&
+           _toolPanel.IsExportRunning &&
+           !token.IsCancellationRequested &&
+           Volatile.Read(ref _exportRunGeneration) == runGeneration;
+
+    private void InvalidateExportRunGeneration(long runGeneration)
+    {
+        if (runGeneration <= 0)
+            return;
+
+        Interlocked.CompareExchange(
+            ref _exportRunGeneration,
+            unchecked(runGeneration + 1),
+            runGeneration);
     }
 
     internal void Cancel()
