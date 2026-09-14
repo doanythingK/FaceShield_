@@ -16,10 +16,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     public string VideoPath { get; }
 
-    // ─────────────────────────────
-    // Timeline bind targets
-    // ─────────────────────────────
-
     [ObservableProperty]
     private int totalFrames;
 
@@ -80,9 +76,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private int flickerIssueCount;
 
-    // ─────────────────────────────
-    // Thumbnail Provider
-    // ─────────────────────────────
     [ObservableProperty]
     private TimelineThumbnailProvider? thumbnailProvider;
 
@@ -90,14 +83,8 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     private CancellationTokenSource? _timelineNavigationCts;
     private CancellationTokenSource? _selectedTimestampCts;
 
-    // ─────────────────────────────
-    // ScrollBar 파생 프로퍼티
-    // ─────────────────────────────
     public double TotalDurationSeconds { get; private set; }
 
-    // ─────────────────────────────
-    // ctor
-    // ─────────────────────────────
     public FrameListViewModel(
         string videoPath,
         CancellationToken cancellationToken = default)
@@ -106,9 +93,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         LoadVideoInfo(videoPath, cancellationToken);
     }
 
-    // ─────────────────────────────
-    // FFmpeg metadata load
-    // ─────────────────────────────
     private void LoadVideoInfo(
         string path,
         CancellationToken cancellationToken)
@@ -122,8 +106,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         IsTotalFramesEstimated =
             !metadata.HasContainerFrameCount && TotalFrames > 0;
 
-        // A missing duration is unknown, not "frame count / average FPS".
-        // Keep it at zero rather than presenting an estimated VFR time axis as exact.
         IsDurationKnown = metadata.DurationSeconds > 0;
         TotalDurationSeconds = IsDurationKnown
             ? metadata.DurationSeconds
@@ -171,8 +153,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         if (SecondsPerScreen <= 0) return;
 
-        double maxStart =
-            Math.Max(0, TimelineExtentSeconds - SecondsPerScreen);
+        double maxStart = Math.Max(0, TimelineExtentSeconds - SecondsPerScreen);
 
         if (ViewStartSeconds < 0)
             ViewStartSeconds = 0;
@@ -187,8 +168,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
             if (TotalFrames <= 0 || SelectedFrameIndex < 0)
                 return "- / -";
 
-            // 사용자 표시용이므로 1-based. "~"는 컨테이너가 정확한
-            // nb_frames를 제공하지 않아 현재 값이 추정치임을 뜻합니다.
             string totalText = IsTotalFramesEstimated
                 ? $"~{TotalFrames}"
                 : TotalFrames.ToString();
@@ -233,10 +212,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
         return time.ToString(@"mm\:ss");
     }
 
-    // ─────────────────────────────
-    // 🔑 **여기가 핵심**
-    // Zoom / 메타 변경 시 자동 보정
-    // ─────────────────────────────
     partial void OnSecondsPerScreenChanged(double value)
     {
         if (!HasKnownDuration())
@@ -301,13 +276,13 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     public event Action<int>? SelectedFrameIndexChanged;
     public event Action? PlaybackStopped;
     public event Action<bool>? PlaybackStateChanged;
+
     partial void OnTotalFramesChanged(int value)
     {
         ClampView();
         OnPropertyChanged(nameof(TotalDurationSeconds));
         OnPropertyChanged(nameof(FramePositionText));
         OnPropertyChanged(nameof(TimelineTimeText));
-
     }
 
     public void SetPropertyChanged(string propertyName)
@@ -367,7 +342,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
     public bool HandleKey(Key key, KeyModifiers modifiers)
     {
-        if (TotalFrames <= 0)
+        if (TotalFrames <= 0 || !IsPlaybackEnabled)
             return false;
 
         switch (key)
@@ -437,8 +412,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
                 sourceFrameIndex,
                 out double currentSeconds))
         {
-            double targetSeconds = ClampTimelineTargetSeconds(
-                currentSeconds + seconds);
+            double targetSeconds = ClampTimelineTargetSeconds(currentSeconds + seconds);
             if (!HasKnownDuration())
             {
                 EnsureOpenEndedTimelineExtent(
@@ -744,9 +718,7 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
     {
         NotifyPlaybackStopped();
     }
-    // ─────────────────────────────
-    // Dispose
-    // ─────────────────────────────
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -754,8 +726,6 @@ public partial class FrameListViewModel : ViewModelBase, IDisposable
 
         CancelTimelineNavigation();
         CancelSelectedTimestampResolution();
-
-        // VideoSession owns the shared thumbnail provider and decoder.
         ThumbnailProvider = null;
     }
 }
