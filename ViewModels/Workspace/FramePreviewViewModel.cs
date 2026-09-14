@@ -1317,7 +1317,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 endedNaturally = false;
             }
@@ -1488,7 +1488,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                     }
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 endedNaturally = false;
             }
@@ -1705,10 +1705,14 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
 
         cancellationToken.ThrowIfCancellationRequested();
-        var exact = await session.Timeline.GetExactNowAsync(
+        WriteableBitmap? exact = await session.Timeline.GetExactNowAsync(
             index,
             cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            exact?.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
         if (_disposed ||
             !ReferenceEquals(_session, session) ||
             stamp != _changeStamp)
@@ -1730,7 +1734,11 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             exact = await session.Timeline.GetExactNowAsync(
                 index,
                 cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                exact?.Dispose();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
         }
 
         if (exact == null ||
