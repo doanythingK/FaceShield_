@@ -26,16 +26,27 @@ public sealed class ExactFrameProvider : IDisposable
 
     public async Task<WriteableBitmap?> GetExactAsync(int frameIndex, CancellationToken ct)
     {
-        if (_disposed || Volatile.Read(ref _operationsSuspended) != 0)
-            return null;
-
         CancellationToken operationToken;
+        CancellationToken lifetimeToken;
         lock (_operationStateSync)
+        {
+            if (_disposed ||
+                Volatile.Read(ref _disposeStarted) != 0 ||
+                Volatile.Read(ref _operationsSuspended) != 0)
+            {
+                return null;
+            }
+
+            // Capture tokens while disposal is excluded by the same lock. The
+            // CancellationToken structs remain safe to use even if the owning
+            // sources are disposed after this admission point.
             operationToken = _operationCts.Token;
+            lifetimeToken = _lifetimeCts.Token;
+        }
 
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             ct,
-            _lifetimeCts.Token,
+            lifetimeToken,
             operationToken);
         CancellationToken token = linked.Token;
 
@@ -87,7 +98,7 @@ public sealed class ExactFrameProvider : IDisposable
         CancellationTokenSource previous;
         lock (_operationStateSync)
         {
-            if (_disposed)
+            if (_disposed || Volatile.Read(ref _disposeStarted) != 0)
                 return;
 
             Volatile.Write(ref _operationsSuspended, 1);
@@ -112,7 +123,7 @@ public sealed class ExactFrameProvider : IDisposable
 
     public void ResumeOperations()
     {
-        if (_disposed)
+        if (_disposed || Volatile.Read(ref _disposeStarted) != 0)
             return;
 
         Volatile.Write(ref _operationsSuspended, 0);
@@ -123,13 +134,14 @@ public sealed class ExactFrameProvider : IDisposable
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
 
-        _disposed = true;
-        _lifetimeCts.Cancel();
         lock (_operationStateSync)
         {
+            _disposed = true;
             Volatile.Write(ref _operationsSuspended, 1);
+            _lifetimeCts.Cancel();
             _operationCts.Cancel();
         }
+
         _decodeGate.Wait();
         try
         {
@@ -140,8 +152,11 @@ public sealed class ExactFrameProvider : IDisposable
         {
             _decodeGate.Release();
             _decodeGate.Dispose();
-            _operationCts.Dispose();
-            _lifetimeCts.Dispose();
+            lock (_operationStateSync)
+            {
+                _operationCts.Dispose();
+                _lifetimeCts.Dispose();
+            }
         }
     }
 }
