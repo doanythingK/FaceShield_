@@ -372,7 +372,11 @@ namespace FaceShield.Services.Video
             lock (_operationStateSync)
             {
                 if (_disposed || IsDisposingOrDisposed)
-                    return new CancellationTokenSource(canceled: true);
+                {
+                    var canceled = new CancellationTokenSource();
+                    canceled.Cancel();
+                    return canceled;
+                }
 
                 return cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(
