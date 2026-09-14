@@ -167,6 +167,7 @@ namespace FaceShield.Controls
                 () => SelectedFrameIndex,
                 frameIndex => SetCurrentValue(SelectedFrameIndexProperty, frameIndex),
                 InvalidateVisual);
+            DetachedFromVisualTree += (_, _) => _requests.CancelPendingRequests();
         }
 
         static TimelineFrameStrip()
