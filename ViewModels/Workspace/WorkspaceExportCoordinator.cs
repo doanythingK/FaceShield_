@@ -222,7 +222,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             }
             return true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (exportToken.IsCancellationRequested)
         {
             return false;
         }
