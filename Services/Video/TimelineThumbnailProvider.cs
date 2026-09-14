@@ -28,6 +28,9 @@ namespace FaceShield.Services.Video
         public bool OperationsSuspended =>
             Volatile.Read(ref _operationsSuspended) != 0;
 
+        private bool IsDisposingOrDisposed =>
+            Volatile.Read(ref _disposeStarted) != 0;
+
         public TimelineThumbnailProvider(
             string videoPath,
             int thumbWidth = 160,
@@ -61,7 +64,7 @@ namespace FaceShield.Services.Video
 
         public WriteableBitmap? GetThumbnail(int frameIndex, CancellationToken cancellationToken)
         {
-            if (frameIndex < 0)
+            if (frameIndex < 0 || IsDisposingOrDisposed)
                 return null;
 
             long cacheKey = FrameCacheKey(frameIndex);
@@ -79,8 +82,12 @@ namespace FaceShield.Services.Video
             double timestampSeconds,
             CancellationToken cancellationToken = default)
         {
-            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+            if (!double.IsFinite(timestampSeconds) ||
+                timestampSeconds < 0 ||
+                IsDisposingOrDisposed)
+            {
                 return null;
+            }
 
             long cacheKey = TimeCacheKey(timestampSeconds);
             return GetOrCreate(
@@ -100,8 +107,12 @@ namespace FaceShield.Services.Video
             int frameIndex,
             CancellationToken cancellationToken)
         {
-            if (frameIndex < 0 || cancellationToken.IsCancellationRequested)
+            if (frameIndex < 0 ||
+                cancellationToken.IsCancellationRequested ||
+                IsDisposingOrDisposed)
+            {
                 return null;
+            }
 
             long cacheKey = FrameCacheKey(frameIndex);
             using var linked = CreateLinkedTokenSource(cancellationToken);
@@ -134,8 +145,12 @@ namespace FaceShield.Services.Video
             out WriteableBitmap? bitmap)
         {
             bitmap = null;
-            if (!double.IsFinite(timestampSeconds) || timestampSeconds < 0)
+            if (!double.IsFinite(timestampSeconds) ||
+                timestampSeconds < 0 ||
+                IsDisposingOrDisposed)
+            {
                 return false;
+            }
 
             return TryGetCached(TimeCacheKey(timestampSeconds), out bitmap);
         }
@@ -143,23 +158,36 @@ namespace FaceShield.Services.Video
         public bool TryGetFrameTimestampSeconds(
             int frameIndex,
             out double timestampSeconds)
-            => _extractor.TryGetCachedFrameTimestampSeconds(
-                frameIndex,
-                out timestampSeconds);
+        {
+            timestampSeconds = double.NaN;
+            return !IsDisposingOrDisposed &&
+                _extractor.TryGetCachedFrameTimestampSeconds(
+                    frameIndex,
+                    out timestampSeconds);
+        }
 
         public bool TryGetFrameIndexAtTimestamp(
             double timestampSeconds,
             out int frameIndex)
-            => _extractor.TryGetCachedFrameIndexAtTimestamp(
-                timestampSeconds,
-                out frameIndex);
+        {
+            frameIndex = -1;
+            return !IsDisposingOrDisposed &&
+                _extractor.TryGetCachedFrameIndexAtTimestamp(
+                    timestampSeconds,
+                    out frameIndex);
+        }
 
         public bool TryGetDecodedTimelineExtentSeconds(
             out double extentSeconds,
             out bool isComplete)
-            => _extractor.TryGetDecodedTimelineExtentSeconds(
-                out extentSeconds,
-                out isComplete);
+        {
+            extentSeconds = 0;
+            isComplete = false;
+            return !IsDisposingOrDisposed &&
+                _extractor.TryGetDecodedTimelineExtentSeconds(
+                    out extentSeconds,
+                    out isComplete);
+        }
 
         public bool TryResolveFrameTimestampSeconds(
             int frameIndex,
@@ -167,7 +195,7 @@ namespace FaceShield.Services.Video
             out double timestampSeconds)
         {
             timestampSeconds = double.NaN;
-            if (cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested || IsDisposingOrDisposed)
                 return false;
             if (_extractor.TryGetCachedFrameTimestampSeconds(
                     frameIndex,
@@ -201,7 +229,7 @@ namespace FaceShield.Services.Video
             out int frameIndex)
         {
             frameIndex = -1;
-            if (cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested || IsDisposingOrDisposed)
                 return false;
             if (_extractor.TryGetCachedFrameIndexAtTimestamp(
                     timestampSeconds,
@@ -234,7 +262,7 @@ namespace FaceShield.Services.Video
             CancellationTokenSource previous;
             lock (_operationStateSync)
             {
-                if (_disposed)
+                if (_disposed || IsDisposingOrDisposed)
                     return;
 
                 Volatile.Write(ref _operationsSuspended, 1);
@@ -260,7 +288,7 @@ namespace FaceShield.Services.Video
 
         public void ResumeOperations()
         {
-            if (_disposed)
+            if (_disposed || IsDisposingOrDisposed)
                 return;
 
             Volatile.Write(ref _operationsSuspended, 0);
@@ -271,8 +299,12 @@ namespace FaceShield.Services.Video
             Func<CancellationToken, WriteableBitmap?> factory,
             CancellationToken cancellationToken)
         {
-            if (_disposed || cancellationToken.IsCancellationRequested)
+            if (_disposed ||
+                IsDisposingOrDisposed ||
+                cancellationToken.IsCancellationRequested)
+            {
                 return null;
+            }
 
             if (_cache.TryGetValue(cacheKey, out WriteableBitmap? cached))
             {
@@ -324,7 +356,7 @@ namespace FaceShield.Services.Video
         private bool TryGetCached(long cacheKey, out WriteableBitmap? bitmap)
         {
             bitmap = null;
-            if (_disposed)
+            if (_disposed || IsDisposingOrDisposed)
                 return false;
 
             if (!_cache.TryGetValue(cacheKey, out bitmap))
@@ -339,6 +371,9 @@ namespace FaceShield.Services.Video
         {
             lock (_operationStateSync)
             {
+                if (_disposed || IsDisposingOrDisposed)
+                    return new CancellationTokenSource(canceled: true);
+
                 return cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(
                         cancellationToken,
@@ -462,11 +497,14 @@ namespace FaceShield.Services.Video
                     DisposeOnUiThread(entry.Value);
 
                 _cache.Clear();
-                _operationCts.Dispose();
                 _cacheAccess.Clear();
             }
 
-            _lifetimeCts.Dispose();
+            lock (_operationStateSync)
+            {
+                _operationCts.Dispose();
+                _lifetimeCts.Dispose();
+            }
         }
     }
 }
