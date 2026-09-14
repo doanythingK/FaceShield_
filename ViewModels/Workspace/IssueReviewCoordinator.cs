@@ -142,10 +142,6 @@ public sealed class IssueReviewCoordinator : IDisposable
 
         if (resolvedManualFrames.Count > 0)
         {
-            // A stored bitmap is a persisted manual override. ResolveIssueForFrame
-            // removes the issue in-memory when the user edits it; keep that decision
-            // stable across a later auto re-run by not recreating an anomaly for the
-            // same manually-owned frame.
             noFace.RemoveAll(resolvedManualFrames.Contains);
             lowConfidence.RemoveAll(resolvedManualFrames.Contains);
             flicker.RemoveAll(resolvedManualFrames.Contains);
@@ -338,8 +334,13 @@ public sealed class IssueReviewCoordinator : IDisposable
                 }
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[IssueReview] timestamp refresh failed: {ex.Message}");
         }
         finally
         {
@@ -365,6 +366,7 @@ public sealed class IssueReviewCoordinator : IDisposable
         TimelineThumbnailProvider? provider,
         bool hideResolved)
     {
+        DetachIssueEntries(target);
         target.Clear();
         for (int i = 0; i < frames.Count; i++)
         {
@@ -445,13 +447,23 @@ public sealed class IssueReviewCoordinator : IDisposable
         }
     }
 
-    private static void RemoveIssueEntry(ObservableCollection<IssueEntryViewModel> target, int frameIndex)
+    private void RemoveIssueEntry(ObservableCollection<IssueEntryViewModel> target, int frameIndex)
     {
         for (int i = target.Count - 1; i >= 0; i--)
         {
-            if (target[i].FrameIndex == frameIndex)
-                target.RemoveAt(i);
+            IssueEntryViewModel entry = target[i];
+            if (entry.FrameIndex != frameIndex)
+                continue;
+
+            entry.Resolved -= OnIssueResolved;
+            target.RemoveAt(i);
         }
+    }
+
+    private void DetachIssueEntries(ObservableCollection<IssueEntryViewModel> target)
+    {
+        for (int i = 0; i < target.Count; i++)
+            target[i].Resolved -= OnIssueResolved;
     }
 
     private static void SetIssueVisibility(ObservableCollection<IssueEntryViewModel> entries, bool hideResolved)
@@ -622,6 +634,9 @@ public sealed class IssueReviewCoordinator : IDisposable
             return;
         _disposed = true;
         CancelTimeRefresh();
+        DetachIssueEntries(_noFaceIssueEntries);
+        DetachIssueEntries(_lowConfidenceIssueEntries);
+        DetachIssueEntries(_flickerIssueEntries);
     }
 
     private void ThrowIfDisposed()
