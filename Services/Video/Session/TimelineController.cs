@@ -27,7 +27,8 @@ public sealed class TimelineController : IDisposable
     public async Task<WriteableBitmap?> OnFrameChangingExactAsync(int frameIndex)
     {
         int requestId = Interlocked.Increment(ref _thumbRequestId);
-        CancellationToken token = ReplaceRequestToken(ref _thumbCts);
+        CancellationTokenSource requestCts = BeginRequest(ref _thumbCts);
+        CancellationToken token = requestCts.Token;
         try
         {
             WriteableBitmap? thumbnail = await Task.Run(
@@ -35,7 +36,9 @@ public sealed class TimelineController : IDisposable
                 token);
             if (!token.IsCancellationRequested &&
                 requestId == Volatile.Read(ref _thumbRequestId))
+            {
                 return thumbnail;
+            }
 
             thumbnail?.Dispose();
             return null;
@@ -49,19 +52,26 @@ public sealed class TimelineController : IDisposable
             ReportRequestFailure("thumbnail", frameIndex, ex);
             return null;
         }
+        finally
+        {
+            CompleteRequest(ref _thumbCts, requestCts);
+        }
     }
 
     public async Task<WriteableBitmap?> OnFrameChangedAsync(int frameIndex)
     {
         int requestId = Interlocked.Increment(ref _exactRequestId);
-        CancellationToken token = ReplaceRequestToken(ref _exactCts);
+        CancellationTokenSource requestCts = BeginRequest(ref _exactCts);
+        CancellationToken token = requestCts.Token;
         try
         {
             await Task.Delay(_debounceMs, token);
-            var exact = await _exact.GetExactAsync(frameIndex, token);
+            WriteableBitmap? exact = await _exact.GetExactAsync(frameIndex, token);
             if (!token.IsCancellationRequested &&
                 requestId == Volatile.Read(ref _exactRequestId))
+            {
                 return exact;
+            }
 
             exact?.Dispose();
             return null;
@@ -75,6 +85,10 @@ public sealed class TimelineController : IDisposable
             ReportRequestFailure("exact-debounced", frameIndex, ex);
             return null;
         }
+        finally
+        {
+            CompleteRequest(ref _exactCts, requestCts);
+        }
     }
 
     public async Task<WriteableBitmap?> GetExactNowAsync(
@@ -82,17 +96,25 @@ public sealed class TimelineController : IDisposable
         CancellationToken cancellationToken = default)
     {
         int requestId = Interlocked.Increment(ref _exactRequestId);
-        CancellationToken requestToken = ReplaceRequestToken(ref _exactCts);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-            requestToken,
-            cancellationToken);
-        CancellationToken token = linkedCts.Token;
+        CancellationTokenSource requestCts = BeginRequest(ref _exactCts);
+        CancellationTokenSource? linkedCts = null;
+        CancellationToken token = requestCts.Token;
         try
         {
-            var exact = await _exact.GetExactAsync(frameIndex, token);
+            // The request owns requestCts until this method completes. A newer
+            // request may cancel it, but cannot dispose it while linked-token
+            // registration or exact decoding is still using the token.
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                requestCts.Token,
+                cancellationToken);
+            token = linkedCts.Token;
+
+            WriteableBitmap? exact = await _exact.GetExactAsync(frameIndex, token);
             if (!token.IsCancellationRequested &&
                 requestId == Volatile.Read(ref _exactRequestId))
+            {
                 return exact;
+            }
 
             exact?.Dispose();
             return null;
@@ -106,6 +128,11 @@ public sealed class TimelineController : IDisposable
             ReportRequestFailure("exact-now", frameIndex, ex);
             return null;
         }
+        finally
+        {
+            linkedCts?.Dispose();
+            CompleteRequest(ref _exactCts, requestCts);
+        }
     }
 
     private static void ReportRequestFailure(
@@ -117,34 +144,80 @@ public sealed class TimelineController : IDisposable
             $"[TimelineController] operation={operation} frame={frameIndex} error={exception.GetType().Name}: {exception.Message}");
     }
 
-    private CancellationToken ReplaceRequestToken(ref CancellationTokenSource? slot)
+    private CancellationTokenSource BeginRequest(
+        ref CancellationTokenSource? slot)
+    {
+        var current = new CancellationTokenSource();
+        CancellationTokenSource? previous;
+        bool reject;
+
+        lock (_requestSync)
+        {
+            reject = _disposed;
+            previous = reject ? null : slot;
+            if (!reject)
+                slot = current;
+        }
+
+        if (reject)
+        {
+            current.Cancel();
+            return current;
+        }
+
+        CancelRequest(previous);
+        return current;
+    }
+
+    private void CompleteRequest(
+        ref CancellationTokenSource? slot,
+        CancellationTokenSource requestCts)
     {
         lock (_requestSync)
         {
-            if (_disposed)
-                return new CancellationToken(canceled: true);
+            if (ReferenceEquals(slot, requestCts))
+                slot = null;
+        }
 
-            slot?.Cancel();
-            slot?.Dispose();
-            slot = new CancellationTokenSource();
-            return slot.Token;
+        requestCts.Dispose();
+    }
+
+    private static void CancelRequest(CancellationTokenSource? cts)
+    {
+        if (cts == null)
+            return;
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The request owner may have completed between replacement and cancel.
         }
     }
 
     public void Dispose()
     {
+        CancellationTokenSource? exact;
+        CancellationTokenSource? thumb;
+
         lock (_requestSync)
         {
             if (_disposed)
                 return;
 
             _disposed = true;
-            _exactCts?.Cancel();
-            _thumbCts?.Cancel();
-            _exactCts?.Dispose();
-            _thumbCts?.Dispose();
+            exact = _exactCts;
+            thumb = _thumbCts;
             _exactCts = null;
             _thumbCts = null;
         }
+
+        // Active requests own disposal of their CTS. Controller shutdown only
+        // cancels them so no source is disposed while an in-flight request is
+        // still registering callbacks or consuming its token.
+        CancelRequest(exact);
+        CancelRequest(thumb);
     }
 }
