@@ -1869,8 +1869,10 @@ namespace FaceShield.ViewModels.Pages
                 }
                 while (_autoRestartRequested && !IsShutdownRequested);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
+                if (!IsShutdownRequested)
+                    await ShowAutoErrorAsync(ex, isDuringRun: true);
                 return;
             }
             catch (Exception ex)
