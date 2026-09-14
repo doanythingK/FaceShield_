@@ -43,7 +43,7 @@ public sealed class ExactFrameProvider : IDisposable
         {
             await _decodeGate.WaitAsync(token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return null;
         }
@@ -72,7 +72,7 @@ public sealed class ExactFrameProvider : IDisposable
 
             return frame;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return null;
         }
