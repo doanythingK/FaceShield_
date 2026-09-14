@@ -178,12 +178,12 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
         var progress = new Progress<ExportProgress>(p =>
         {
-            exportProgress?.Report(p);
-            if (!updateToolPanel ||
-                !CanApplyExportProgress(runGeneration, exportToken))
-            {
+            if (!IsCurrentExportRun(runGeneration, exportToken))
                 return;
-            }
+
+            exportProgress?.Report(p);
+            if (!updateToolPanel || !_toolPanel.IsExportRunning)
+                return;
 
             _toolPanel.ExportProgress = Math.Clamp(p.Percent, 0, 100);
             UpdateEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
@@ -246,11 +246,10 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         }
     }
 
-    private bool CanApplyExportProgress(
+    private bool IsCurrentExportRun(
         long runGeneration,
         CancellationToken token)
         => !_disposed &&
-           _toolPanel.IsExportRunning &&
            !token.IsCancellationRequested &&
            Volatile.Read(ref _exportRunGeneration) == runGeneration;
 
