@@ -57,7 +57,7 @@
         <views:FrameListView
             Grid.Row="2"
             Grid.Column="0"
-            IsEnabled="{Binding ToolPanel.CanEditWorkspace}"
+            IsEnabled="{Binding #Root.DataContext.ToolPanel.CanEditWorkspace}"
             DataContext="{Binding FrameList}" />
 
         <Border Grid.Row="1"
