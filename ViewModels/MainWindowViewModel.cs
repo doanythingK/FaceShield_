@@ -27,16 +27,21 @@ namespace FaceShield.ViewModels
         public MainWindowViewModel(IReadOnlyList<string>? startupArgs)
         {
             // 앱 시작 시 첫 화면: Home
-            _home = new HomePageViewModel(
+            HomePageViewModel? home = null;
+            home = new HomePageViewModel(
                 onStartWorkspace: vm => CurrentPage = vm,
                 onBackHome: () =>
                 {
-                    CurrentPage = _home;
-                    _home.PruneDeferredWorkspaceEvictions();
+                    if (home is not { } targetHome)
+                        return;
+
+                    CurrentPage = targetHome;
+                    targetHome.PruneDeferredWorkspaceEvictions();
                 },
                 stateStore: _stateStore,
                 isWorkspaceCurrent: vm => ReferenceEquals(CurrentPage, vm)
             );
+            _home = home;
 
             var startupOptions = AppStartupOptions.Parse(startupArgs);
             if (startupOptions.HasValues)
