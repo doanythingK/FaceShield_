@@ -82,7 +82,7 @@ internal static class ManualMaskTrackingService
                         cancellationToken,
                         sampleWidth,
                         sampleHeight,
-                        bilinear: true,
+                        useBilinear: true,
                         previous,
                         out decodedIndex,
                         out previousStride))
@@ -134,7 +134,7 @@ internal static class ManualMaskTrackingService
                         cancellationToken,
                         sampleWidth,
                         sampleHeight,
-                        bilinear: true,
+                        useBilinear: true,
                         current,
                         out int currentIndex,
                         out int currentStride))
