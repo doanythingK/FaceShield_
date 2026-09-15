@@ -11,6 +11,8 @@ namespace FaceShield.Views.Workspace;
 public partial class FramePreviewView : UserControl
 {
     private FramePreviewViewModel? _vm;
+    private bool _isViewModelSubscribed;
+    private bool _isAttachedToVisualTree;
     private bool _isStrokeActive;
     private Point? _lastImagePoint;
 
@@ -18,6 +20,20 @@ public partial class FramePreviewView : UserControl
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        AttachedToVisualTree += (_, _) =>
+        {
+            _isAttachedToVisualTree = true;
+            SubscribeToViewModel();
+            UpdateOverlay();
+        };
+        DetachedFromVisualTree += (_, _) =>
+        {
+            _isAttachedToVisualTree = false;
+            UnsubscribeFromViewModel();
+            _isStrokeActive = false;
+            _lastImagePoint = null;
+            SetBrushCursorVisible(false);
+        };
         LayoutUpdated += (_, __) => UpdateOverlay();
     }
 
@@ -239,14 +255,28 @@ public partial class FramePreviewView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_vm != null)
-            _vm.PropertyChanged -= OnViewModelPropertyChanged;
-
+        UnsubscribeFromViewModel();
         _vm = DataContext as FramePreviewViewModel;
-        if (_vm != null)
-            _vm.PropertyChanged += OnViewModelPropertyChanged;
-
+        SubscribeToViewModel();
         UpdateOverlay();
+    }
+
+    private void SubscribeToViewModel()
+    {
+        if (!_isAttachedToVisualTree || _vm == null || _isViewModelSubscribed)
+            return;
+
+        _vm.PropertyChanged += OnViewModelPropertyChanged;
+        _isViewModelSubscribed = true;
+    }
+
+    private void UnsubscribeFromViewModel()
+    {
+        if (_vm == null || !_isViewModelSubscribed)
+            return;
+
+        _vm.PropertyChanged -= OnViewModelPropertyChanged;
+        _isViewModelSubscribed = false;
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
