@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 
 namespace FaceShield.Services.Video;
@@ -10,6 +11,8 @@ namespace FaceShield.Services.Video;
 internal static class ManualMaskTrackingService
 {
     private const int MaxTrackingWidth = 480;
+    private const int MaxComponents = 32;
+    private const int MaxSamplesPerComponent = 96;
     private const double SceneCutThreshold = 0.34;
     private const double MinimumTrackingConfidence = 0.58;
     private static readonly double[] CandidateScales = { 0.94, 0.97, 1.0, 1.03, 1.06 };
@@ -19,6 +22,16 @@ internal static class ManualMaskTrackingService
     {
         internal double CenterX => X + Width * 0.5;
         internal double CenterY => Y + Height * 0.5;
+    }
+
+    private sealed class ComponentState
+    {
+        internal required int ComponentIndex { get; init; }
+        internal required Rect SourceBounds { get; init; }
+        internal required TrackRect SourceRect { get; init; }
+        internal required List<SamplePoint> Points { get; init; }
+        internal required double[] Template { get; init; }
+        internal TrackRect PreviousRect { get; set; }
     }
 
     internal static ManualMaskTrackResult TrackForward(
@@ -35,10 +48,6 @@ internal static class ManualMaskTrackingService
             throw new ArgumentNullException(nameof(sourceMask));
         if (sourceFrameIndex < 0)
             throw new ArgumentOutOfRangeException(nameof(sourceFrameIndex));
-
-        Rect sourceBounds = FindMaskBounds(sourceMask);
-        if (sourceBounds.Width <= 0 || sourceBounds.Height <= 0)
-            throw new InvalidOperationException("현재 마스크가 비어 있어 추적할 영역이 없습니다.");
 
         using var extractor = new FfFrameExtractor(
             videoPath,
@@ -62,9 +71,19 @@ internal static class ManualMaskTrackingService
         double sampleScaleY = sampleHeight / (double)frameSize.Height;
         int bufferSize = checked(sampleWidth * sampleHeight * 4);
 
-        var points = BuildSamplePoints(sourceMask, sourceBounds);
-        if (points.Count < 8)
-            throw new InvalidOperationException("추적에 사용할 마스크 영역이 너무 작습니다.");
+        int[] labels = BuildComponentLabels(
+            sourceMask,
+            sampleWidth,
+            sampleHeight,
+            out List<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> componentBoxes);
+        if (componentBoxes.Count == 0)
+            throw new InvalidOperationException("현재 마스크가 비어 있어 추적할 영역이 없습니다.");
+        if (componentBoxes.Count > MaxComponents)
+        {
+            throw new InvalidOperationException(
+                $"분리된 마스크 영역이 너무 많습니다({componentBoxes.Count}개). " +
+                $"한 번에 최대 {MaxComponents}개 영역을 추적할 수 있습니다.");
+        }
 
         var pool = ArrayPool<byte>.Shared;
         byte[] previous = pool.Rent(bufferSize);
@@ -97,19 +116,17 @@ internal static class ManualMaskTrackingService
             if (!sourceLoaded)
                 throw new InvalidOperationException("추적 시작 프레임을 디코딩하지 못했습니다.");
 
-            var sourceRect = new TrackRect(
-                sourceBounds.X * sampleScaleX,
-                sourceBounds.Y * sampleScaleY,
-                Math.Max(2.0, sourceBounds.Width * sampleScaleX),
-                Math.Max(2.0, sourceBounds.Height * sampleScaleY));
-            TrackRect previousRect = sourceRect;
-            double[] template = ReadTemplate(
+            List<ComponentState> states = BuildComponentStates(
+                labels,
+                componentBoxes,
                 previous,
                 previousStride,
                 sampleWidth,
                 sampleHeight,
-                previousRect,
-                points);
+                sampleScaleX,
+                sampleScaleY);
+            if (states.Count == 0)
+                throw new InvalidOperationException("추적 가능한 마스크 영역을 만들지 못했습니다.");
 
             int safeEndExclusive = endExclusive <= sourceFrameIndex
                 ? int.MaxValue
@@ -117,16 +134,25 @@ internal static class ManualMaskTrackingService
             var segment = new ManualMaskTrackSegment
             {
                 SourceKeyframe = sourceFrameIndex,
-                SourceBoundsX = sourceBounds.X,
-                SourceBoundsY = sourceBounds.Y,
-                SourceBoundsWidth = sourceBounds.Width,
-                SourceBoundsHeight = sourceBounds.Height,
-                EndExclusive = safeEndExclusive
+                EndExclusive = safeEndExclusive,
+                Components = states
+                    .Select(static state => new ManualMaskTrackComponent
+                    {
+                        ComponentIndex = state.ComponentIndex,
+                        SourceBoundsX = state.SourceBounds.X,
+                        SourceBoundsY = state.SourceBounds.Y,
+                        SourceBoundsWidth = state.SourceBounds.Width,
+                        SourceBoundsHeight = state.SourceBounds.Height
+                    })
+                    .ToList()
             };
 
             int processed = 0;
             int lastDecoded = sourceFrameIndex;
             bool reachedBoundary = false;
+            var candidateRects = new TrackRect[states.Count];
+            var candidateConfidences = new double[states.Count];
+
             while (lastDecoded + 1 < safeEndExclusive)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -145,11 +171,8 @@ internal static class ManualMaskTrackingService
                 }
 
                 if (currentIndex <= lastDecoded)
-                {
-                    Swap(ref previous, ref current);
-                    previousStride = currentStride;
                     continue;
-                }
+
                 lastDecoded = currentIndex;
                 if (currentIndex >= safeEndExclusive)
                 {
@@ -167,66 +190,89 @@ internal static class ManualMaskTrackingService
                     sampleHeight);
                 if (sceneDifference >= SceneCutThreshold)
                 {
-                    segment.EndExclusive = currentIndex;
-                    segment.StoppedByFailure = true;
-                    segment.StopFrame = currentIndex;
-                    segment.StopReason = $"장면 전환 감지(diff={sceneDifference:0.000})";
+                    StopSegment(
+                        segment,
+                        currentIndex,
+                        $"장면 전환 감지(diff={sceneDifference:0.000})");
                     break;
                 }
 
-                if (!TryFindBestTransform(
+                bool allTracked = true;
+                string? failureReason = null;
+                for (int i = 0; i < states.Count; i++)
+                {
+                    ComponentState state = states[i];
+                    if (!TryFindBestTransform(
+                            current,
+                            currentStride,
+                            sampleWidth,
+                            sampleHeight,
+                            state.PreviousRect,
+                            state.Points,
+                            state.Template,
+                            out TrackRect bestRect,
+                            out double confidence))
+                    {
+                        allTracked = false;
+                        failureReason = $"영역 {state.ComponentIndex + 1}의 추적 후보를 찾지 못했습니다.";
+                        break;
+                    }
+
+                    if (confidence < MinimumTrackingConfidence)
+                    {
+                        allTracked = false;
+                        failureReason =
+                            $"영역 {state.ComponentIndex + 1} 추적 신뢰도 부족({confidence:0.000})";
+                        break;
+                    }
+
+                    candidateRects[i] = bestRect;
+                    candidateConfidences[i] = confidence;
+                }
+
+                if (!allTracked)
+                {
+                    StopSegment(
+                        segment,
+                        currentIndex,
+                        failureReason ?? "추적 신뢰도 부족");
+                    break;
+                }
+
+                for (int i = 0; i < states.Count; i++)
+                {
+                    ComponentState state = states[i];
+                    TrackRect bestRect = candidateRects[i];
+                    double confidence = candidateConfidences[i];
+                    double scaleX = bestRect.Width / state.SourceRect.Width;
+                    double scaleY = bestRect.Height / state.SourceRect.Height;
+                    double scale = Math.Clamp((scaleX + scaleY) * 0.5, 0.25, 4.0);
+                    double destinationX = bestRect.X / sampleScaleX;
+                    double destinationY = bestRect.Y / sampleScaleY;
+
+                    ManualMaskTrackComponent outputComponent = segment.Components[i];
+                    outputComponent.Samples.Add(new ManualMaskTrackSample
+                    {
+                        FrameIndex = currentIndex,
+                        OffsetX = destinationX - outputComponent.SourceBoundsX,
+                        OffsetY = destinationY - outputComponent.SourceBoundsY,
+                        Scale = scale,
+                        Confidence = confidence
+                    });
+
+                    UpdateTemplate(
                         current,
                         currentStride,
                         sampleWidth,
                         sampleHeight,
-                        previousRect,
-                        points,
-                        template,
-                        out TrackRect bestRect,
-                        out double confidence))
-                {
-                    segment.EndExclusive = currentIndex;
-                    segment.StoppedByFailure = true;
-                    segment.StopFrame = currentIndex;
-                    segment.StopReason = "추적 후보를 찾지 못했습니다.";
-                    break;
+                        bestRect,
+                        state.Points,
+                        state.Template);
+                    state.PreviousRect = bestRect;
                 }
 
-                if (confidence < MinimumTrackingConfidence)
-                {
-                    segment.EndExclusive = currentIndex;
-                    segment.StoppedByFailure = true;
-                    segment.StopFrame = currentIndex;
-                    segment.StopReason = $"추적 신뢰도 부족({confidence:0.000})";
-                    break;
-                }
-
-                double scaleX = bestRect.Width / sourceRect.Width;
-                double scaleY = bestRect.Height / sourceRect.Height;
-                double scale = Math.Max(0.25, Math.Min(4.0, (scaleX + scaleY) * 0.5));
-                double destinationX = bestRect.X / sampleScaleX;
-                double destinationY = bestRect.Y / sampleScaleY;
-                segment.Samples.Add(new ManualMaskTrackSample
-                {
-                    FrameIndex = currentIndex,
-                    OffsetX = destinationX - sourceBounds.X,
-                    OffsetY = destinationY - sourceBounds.Y,
-                    Scale = scale,
-                    Confidence = confidence
-                });
-
-                UpdateTemplate(
-                    current,
-                    currentStride,
-                    sampleWidth,
-                    sampleHeight,
-                    bestRect,
-                    points,
-                    template);
-                previousRect = bestRect;
                 processed++;
                 progress?.Report(processed);
-
                 Swap(ref previous, ref current);
                 previousStride = currentStride;
             }
@@ -253,68 +299,178 @@ internal static class ManualMaskTrackingService
         }
     }
 
-    private static Rect FindMaskBounds(WriteableBitmap mask)
+    private static void StopSegment(
+        ManualMaskTrackSegment segment,
+        int frameIndex,
+        string reason)
     {
-        using var fb = mask.Lock();
-        int minX = fb.Size.Width;
-        int minY = fb.Size.Height;
-        int maxX = -1;
-        int maxY = -1;
-        unsafe
+        segment.EndExclusive = frameIndex;
+        segment.StoppedByFailure = true;
+        segment.StopFrame = frameIndex;
+        segment.StopReason = reason;
+    }
+
+    private static int[] BuildComponentLabels(
+        WriteableBitmap mask,
+        int sampleWidth,
+        int sampleHeight,
+        out List<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes)
+    {
+        int count = checked(sampleWidth * sampleHeight);
+        var active = new bool[count];
+        var labels = new int[count];
+        Array.Fill(labels, -1);
+
+        using (var fb = mask.Lock())
         {
-            byte* basePtr = (byte*)fb.Address;
-            for (int y = 0; y < fb.Size.Height; y++)
+            unsafe
             {
-                byte* row = basePtr + y * fb.RowBytes;
-                for (int x = 0; x < fb.Size.Width; x++)
+                byte* basePtr = (byte*)fb.Address;
+                for (int y = 0; y < sampleHeight; y++)
                 {
-                    if (row[x * 4 + 3] <= 8)
-                        continue;
-                    minX = Math.Min(minX, x);
-                    minY = Math.Min(minY, y);
-                    maxX = Math.Max(maxX, x);
-                    maxY = Math.Max(maxY, y);
+                    int sourceY = Math.Clamp(
+                        (int)Math.Round((y + 0.5) * fb.Size.Height / sampleHeight - 0.5),
+                        0,
+                        fb.Size.Height - 1);
+                    byte* row = basePtr + sourceY * fb.RowBytes;
+                    for (int x = 0; x < sampleWidth; x++)
+                    {
+                        int sourceX = Math.Clamp(
+                            (int)Math.Round((x + 0.5) * fb.Size.Width / sampleWidth - 0.5),
+                            0,
+                            fb.Size.Width - 1);
+                        active[y * sampleWidth + x] = row[sourceX * 4 + 3] > 24;
+                    }
                 }
             }
         }
 
-        if (maxX < minX || maxY < minY)
-            return default;
-        return new Rect(minX, minY, maxX - minX + 1, maxY - minY + 1);
+        boxes = new List<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)>();
+        int[] queue = ArrayPool<int>.Shared.Rent(count);
+        try
+        {
+            for (int y = 0; y < sampleHeight; y++)
+            {
+                for (int x = 0; x < sampleWidth; x++)
+                {
+                    int seed = y * sampleWidth + x;
+                    if (!active[seed] || labels[seed] >= 0)
+                        continue;
+
+                    int label = boxes.Count;
+                    int head = 0;
+                    int tail = 0;
+                    queue[tail++] = seed;
+                    labels[seed] = label;
+                    int minX = x;
+                    int minY = y;
+                    int maxX = x;
+                    int maxY = y;
+                    int pixelCount = 0;
+
+                    while (head < tail)
+                    {
+                        int index = queue[head++];
+                        int cy = index / sampleWidth;
+                        int cx = index - cy * sampleWidth;
+                        pixelCount++;
+                        minX = Math.Min(minX, cx);
+                        minY = Math.Min(minY, cy);
+                        maxX = Math.Max(maxX, cx);
+                        maxY = Math.Max(maxY, cy);
+
+                        TryVisit(cx - 1, cy);
+                        TryVisit(cx + 1, cy);
+                        TryVisit(cx, cy - 1);
+                        TryVisit(cx, cy + 1);
+                    }
+
+                    boxes.Add((minX, minY, maxX, maxY, pixelCount));
+
+                    void TryVisit(int nx, int ny)
+                    {
+                        if (nx < 0 || ny < 0 || nx >= sampleWidth || ny >= sampleHeight)
+                            return;
+                        int next = ny * sampleWidth + nx;
+                        if (!active[next] || labels[next] >= 0)
+                            return;
+                        labels[next] = label;
+                        queue[tail++] = next;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(queue);
+        }
+
+        return labels;
     }
 
-    private static List<SamplePoint> BuildSamplePoints(
-        WriteableBitmap mask,
-        Rect bounds)
+    private static List<ComponentState> BuildComponentStates(
+        int[] labels,
+        IReadOnlyList<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes,
+        byte[] sourceFrame,
+        int stride,
+        int sampleWidth,
+        int sampleHeight,
+        double sampleScaleX,
+        double sampleScaleY)
     {
-        var points = new List<SamplePoint>(256);
-        int left = (int)Math.Floor(bounds.X);
-        int top = (int)Math.Floor(bounds.Y);
-        int width = Math.Max(1, (int)Math.Ceiling(bounds.Width));
-        int height = Math.Max(1, (int)Math.Ceiling(bounds.Height));
-        int step = Math.Max(1, Math.Min(width, height) / 18);
-
-        using var fb = mask.Lock();
-        unsafe
+        var states = new List<ComponentState>(boxes.Count);
+        for (int componentIndex = 0; componentIndex < boxes.Count; componentIndex++)
         {
-            byte* basePtr = (byte*)fb.Address;
-            for (int y = top; y < top + height && points.Count < 256; y += step)
+            var box = boxes[componentIndex];
+            int boxWidth = box.MaxX - box.MinX + 1;
+            int boxHeight = box.MaxY - box.MinY + 1;
+            var points = new List<SamplePoint>(Math.Min(MaxSamplesPerComponent, box.PixelCount));
+            int step = Math.Max(1, (int)Math.Sqrt(Math.Max(1, box.PixelCount / MaxSamplesPerComponent)));
+
+            for (int y = box.MinY; y <= box.MaxY && points.Count < MaxSamplesPerComponent; y += step)
             {
-                if (y < 0 || y >= fb.Size.Height)
-                    continue;
-                byte* row = basePtr + y * fb.RowBytes;
-                for (int x = left; x < left + width && points.Count < 256; x += step)
+                for (int x = box.MinX; x <= box.MaxX && points.Count < MaxSamplesPerComponent; x += step)
                 {
-                    if (x < 0 || x >= fb.Size.Width || row[x * 4 + 3] <= 32)
+                    if (labels[y * sampleWidth + x] != componentIndex)
                         continue;
-                    double u = width <= 1 ? 0.5 : (x - left) / (double)(width - 1);
-                    double v = height <= 1 ? 0.5 : (y - top) / (double)(height - 1);
+                    double u = boxWidth <= 1 ? 0.5 : (x - box.MinX) / (double)(boxWidth - 1);
+                    double v = boxHeight <= 1 ? 0.5 : (y - box.MinY) / (double)(boxHeight - 1);
                     points.Add(new SamplePoint(u, v));
                 }
             }
+
+            if (points.Count == 0)
+                continue;
+
+            var sampleRect = new TrackRect(
+                box.MinX,
+                box.MinY,
+                Math.Max(2.0, boxWidth),
+                Math.Max(2.0, boxHeight));
+            var sourceBounds = new Rect(
+                box.MinX / sampleScaleX,
+                box.MinY / sampleScaleY,
+                Math.Max(1.0, boxWidth / sampleScaleX),
+                Math.Max(1.0, boxHeight / sampleScaleY));
+
+            states.Add(new ComponentState
+            {
+                ComponentIndex = states.Count,
+                SourceBounds = sourceBounds,
+                SourceRect = sampleRect,
+                PreviousRect = sampleRect,
+                Points = points,
+                Template = ReadTemplate(
+                    sourceFrame,
+                    stride,
+                    sampleWidth,
+                    sampleHeight,
+                    sampleRect,
+                    points)
+            });
         }
 
-        return points;
+        return states;
     }
 
     private static double[] ReadTemplate(
@@ -348,10 +504,10 @@ internal static class ManualMaskTrackingService
     {
         bestRect = previousRect;
         confidence = double.NegativeInfinity;
-        double radiusX = Math.Clamp(previousRect.Width * 0.20, 4.0, 36.0);
-        double radiusY = Math.Clamp(previousRect.Height * 0.20, 4.0, 36.0);
-        int stepX = Math.Max(1, (int)Math.Round(radiusX / 6.0));
-        int stepY = Math.Max(1, (int)Math.Round(radiusY / 6.0));
+        double radiusX = Math.Clamp(previousRect.Width * 0.28, 4.0, 42.0);
+        double radiusY = Math.Clamp(previousRect.Height * 0.28, 4.0, 42.0);
+        int stepX = Math.Max(1, (int)Math.Round(radiusX / 7.0));
+        int stepY = Math.Max(1, (int)Math.Round(radiusY / 7.0));
 
         foreach (double scaleDelta in CandidateScales)
         {
@@ -387,8 +543,8 @@ internal static class ManualMaskTrackingService
                     double meanError = error / Math.Max(1, points.Count) / 255.0;
                     double motionPenalty =
                         (Math.Abs(dx) / Math.Max(1.0, radiusX) +
-                         Math.Abs(dy) / Math.Max(1.0, radiusY)) * 0.012;
-                    double scalePenalty = Math.Abs(scaleDelta - 1.0) * 0.12;
+                         Math.Abs(dy) / Math.Max(1.0, radiusY)) * 0.010;
+                    double scalePenalty = Math.Abs(scaleDelta - 1.0) * 0.10;
                     double score = 1.0 - meanError - motionPenalty - scalePenalty;
                     if (score <= confidence)
                         continue;
@@ -410,7 +566,7 @@ internal static class ManualMaskTrackingService
         IReadOnlyList<SamplePoint> points,
         double[] template)
     {
-        const double oldWeight = 0.35;
+        const double oldWeight = 0.45;
         const double newWeight = 1.0 - oldWeight;
         for (int i = 0; i < points.Count; i++)
         {
