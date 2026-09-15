@@ -3,6 +3,9 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using FaceShield.ViewModels.Pages;
+using FaceShield.Views.Dialogs;
+using System;
+using System.Threading.Tasks;
 
 namespace FaceShield.Views.Pages;
 
@@ -23,7 +26,14 @@ public partial class HomePageView : UserControl
         if (storageProvider is null)
             return;
 
-        await vm.PickVideoAsync(storageProvider);
+        try
+        {
+            await vm.PickVideoAsync(storageProvider);
+        }
+        catch (Exception ex)
+        {
+            await ShowPickerErrorAsync("영상 파일 선택 실패", ex);
+        }
     }
 
     private async void PickYoloModel_Click(object? sender, RoutedEventArgs e)
@@ -36,6 +46,25 @@ public partial class HomePageView : UserControl
         if (storageProvider is null)
             return;
 
-        await vm.PickYoloModelAsync(storageProvider);
+        try
+        {
+            await vm.PickYoloModelAsync(storageProvider);
+        }
+        catch (Exception ex)
+        {
+            await ShowPickerErrorAsync("모델 파일 선택 실패", ex);
+        }
+    }
+
+    private async Task ShowPickerErrorAsync(string title, Exception exception)
+    {
+        var dialog = new ErrorDialog(title, exception.Message);
+        if (TopLevel.GetTopLevel(this) is Window owner)
+        {
+            await dialog.ShowDialog(owner);
+            return;
+        }
+
+        dialog.Show();
     }
 }
