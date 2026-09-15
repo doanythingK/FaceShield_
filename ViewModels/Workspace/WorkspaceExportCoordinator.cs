@@ -157,8 +157,9 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             return false;
         output = resolvedOutput;
 
-        using var exportMaskProvider = _maskProvider.CreateSnapshot();
-        var exporter = new VideoExportService(exportMaskProvider);
+        using var exportMaskLease =
+            ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
+        var exporter = new VideoExportService(exportMaskLease.Provider);
 
         if (updateToolPanel)
         {
