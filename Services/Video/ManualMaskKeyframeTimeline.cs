@@ -1,5 +1,7 @@
 using Avalonia.Media.Imaging;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -27,7 +29,7 @@ internal static class ManualMaskKeyframeTimeline
            States.TryGetValue(provider, out TimelineState? state) &&
            state.Enabled;
 
-    internal static bool TryCloneEffectiveStoredMask(
+    internal static bool TryCloneEffectiveKeyframeMask(
         FrameMaskProvider provider,
         int frameIndex,
         out WriteableBitmap mask,
@@ -39,15 +41,26 @@ internal static class ManualMaskKeyframeTimeline
             return false;
 
         int keyframe = FindFloorKeyframe(
-            provider.GetStoredMaskFrameIndices(),
+            GetKeyframeIndices(provider),
             frameIndex);
         if (keyframe < 0)
             return false;
 
-        return provider.TryCloneStoredMask(
-            keyframe,
-            out mask,
-            cancellationToken);
+        if (provider.TryCloneStoredMask(
+                keyframe,
+                out mask,
+                cancellationToken))
+        {
+            return true;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        WriteableBitmap? faceMask = provider.GetFinalMask(keyframe);
+        if (faceMask == null)
+            return false;
+
+        mask = faceMask;
+        return true;
     }
 
     internal static ExportMaskLease CreateExportMaskLease(FrameMaskProvider source)
@@ -58,13 +71,13 @@ internal static class ManualMaskKeyframeTimeline
         FrameMaskProvider snapshot = source.CreateSnapshot();
         try
         {
-            int[] storedKeyframes = snapshot.GetStoredMaskFrameIndices();
-            if (!IsEnabled(source) || storedKeyframes.Length == 0)
+            int[] keyframes = GetKeyframeIndices(snapshot);
+            if (!IsEnabled(source) || keyframes.Length == 0)
                 return new ExportMaskLease(snapshot, snapshot);
 
             return new ExportMaskLease(
                 snapshot,
-                new ManualKeyframeExportMaskProvider(snapshot, storedKeyframes));
+                new ManualKeyframeExportMaskProvider(snapshot, keyframes));
         }
         catch
         {
@@ -73,17 +86,25 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
+    private static int[] GetKeyframeIndices(FrameMaskProvider provider)
+    {
+        var indices = new HashSet<int>(provider.GetStoredMaskFrameIndices());
+        foreach (int frameIndex in provider.GetFaceMaskFrameIndices())
+            indices.Add(frameIndex);
+
+        int[] result = indices.ToArray();
+        Array.Sort(result);
+        return result;
+    }
+
     private static int FindFloorKeyframe(int[] keyframes, int frameIndex)
     {
-        int result = -1;
-        for (int i = 0; i < keyframes.Length; i++)
-        {
-            int candidate = keyframes[i];
-            if (candidate <= frameIndex && candidate > result)
-                result = candidate;
-        }
+        int position = Array.BinarySearch(keyframes, frameIndex);
+        if (position >= 0)
+            return keyframes[position];
 
-        return result;
+        position = ~position - 1;
+        return position >= 0 ? keyframes[position] : -1;
     }
 
     internal sealed class ExportMaskLease : IDisposable
@@ -112,6 +133,7 @@ internal static class ManualMaskKeyframeTimeline
         private readonly FrameMaskProvider _snapshot;
         private readonly int[] _keyframes;
         private readonly bool[] _keyframeHasCoverage;
+        private readonly bool[] _keyframeIsStoredMask;
 
         internal ManualKeyframeExportMaskProvider(
             FrameMaskProvider snapshot,
@@ -121,8 +143,25 @@ internal static class ManualMaskKeyframeTimeline
             _keyframes = keyframes;
             Array.Sort(_keyframes);
             _keyframeHasCoverage = new bool[_keyframes.Length];
+            _keyframeIsStoredMask = new bool[_keyframes.Length];
+
             for (int i = 0; i < _keyframes.Length; i++)
-                _keyframeHasCoverage[i] = snapshot.StoredMaskHasCoverage(_keyframes[i]);
+            {
+                int frameIndex = _keyframes[i];
+                bool isStored = snapshot.HasStoredMask(frameIndex);
+                _keyframeIsStoredMask[i] = isStored;
+                if (isStored)
+                {
+                    _keyframeHasCoverage[i] =
+                        snapshot.StoredMaskHasCoverage(frameIndex);
+                }
+                else
+                {
+                    _keyframeHasCoverage[i] =
+                        snapshot.TryGetFaceMaskData(frameIndex, out var faceData) &&
+                        faceData.Faces.Count > 0;
+                }
+            }
         }
 
         public WriteableBitmap? GetFinalMask(int frameIndex)
@@ -130,31 +169,23 @@ internal static class ManualMaskKeyframeTimeline
             if (frameIndex < 0)
                 return null;
 
-            if (_snapshot.HasStoredMask(frameIndex))
-            {
-                int exactPosition = Array.BinarySearch(_keyframes, frameIndex);
-                if (exactPosition < 0 || !_keyframeHasCoverage[exactPosition])
-                    return null;
-
-                return _snapshot.TryCloneStoredMask(frameIndex, out WriteableBitmap exact)
-                    ? exact
-                    : null;
-            }
-
-            if (_snapshot.TryGetFaceMaskData(frameIndex, out _))
-                return _snapshot.GetFinalMask(frameIndex);
-
             int position = Array.BinarySearch(_keyframes, frameIndex);
             if (position < 0)
                 position = ~position - 1;
             if (position < 0 || !_keyframeHasCoverage[position])
                 return null;
 
-            return _snapshot.TryCloneStoredMask(
-                _keyframes[position],
-                out WriteableBitmap inherited)
-                ? inherited
-                : null;
+            int keyframe = _keyframes[position];
+            if (_keyframeIsStoredMask[position])
+            {
+                return _snapshot.TryCloneStoredMask(
+                    keyframe,
+                    out WriteableBitmap stored)
+                    ? stored
+                    : null;
+            }
+
+            return _snapshot.GetFinalMask(keyframe);
         }
 
         public void SetMask(int frameIndex, WriteableBitmap mask)
