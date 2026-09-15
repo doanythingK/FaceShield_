@@ -180,13 +180,19 @@ public partial class FramePreviewViewModel
             });
 
             ManualMaskTrackResult result = await Task.Run(
-                () => ManualMaskTrackingService.TrackForward(
-                    _manualTrackingVideoPath!,
-                    sourceFrame,
-                    endExclusive,
-                    sourceMask,
-                    progress,
-                    token),
+                () =>
+                {
+                    ManualMaskTrackResult tracked = ManualMaskTrackingService.TrackForward(
+                        _manualTrackingVideoPath!,
+                        sourceFrame,
+                        endExclusive,
+                        sourceMask,
+                        progress,
+                        token);
+                    tracked.Segment.SourceMaskFingerprint =
+                        ManualMaskFingerprint.Compute(sourceMask);
+                    return tracked;
+                },
                 token);
 
             token.ThrowIfCancellationRequested();
