@@ -137,17 +137,25 @@ namespace FaceShield
 
         private void ShowGlobalErrorDialog(string message)
         {
-            if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
-                return;
-
-            var owner = desktop.MainWindow;
-            var dialog = new ErrorDialog("예기치 않은 오류", message);
-            if (owner == null)
+            try
             {
-                dialog.Show();
-                return;
+                if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
+                    return;
+
+                var owner = desktop.MainWindow;
+                var dialog = new ErrorDialog("예기치 않은 오류", message);
+                if (owner == null)
+                {
+                    dialog.Show();
+                    return;
+                }
+                _ = dialog.ShowDialog(owner);
             }
-            _ = dialog.ShowDialog(owner);
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"전역 오류 대화상자 표시 실패: {ex.Message}");
+            }
         }
 
         private void ShowStartupErrorAndExit(Exception ex)
@@ -158,10 +166,19 @@ namespace FaceShield
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
-                var dialog = new ErrorDialog("시작 실패", message);
-                dialog.Closed += (_, _) => desktop.Shutdown(-1);
-                desktop.MainWindow = dialog;
-                dialog.Show();
+                try
+                {
+                    var dialog = new ErrorDialog("시작 실패", message);
+                    dialog.Closed += (_, _) => desktop.Shutdown(-1);
+                    desktop.MainWindow = dialog;
+                    dialog.Show();
+                }
+                catch (Exception dialogException)
+                {
+                    Console.Error.WriteLine(
+                        $"시작 실패 대화상자 표시 실패: {dialogException.Message}");
+                    desktop.Shutdown(-1);
+                }
             }
         }
 
