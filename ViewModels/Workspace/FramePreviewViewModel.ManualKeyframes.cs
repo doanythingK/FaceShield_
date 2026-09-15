@@ -50,15 +50,14 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        // Exact stored masks and single-frame automatic face masks are explicit
-        // keyframes/overrides and must remain authoritative for this frame.
+        // An exact entry is already a keyframe and remains authoritative.
         if (provider.HasStoredMask(_currentFrameIndex) ||
             provider.TryGetFaceMaskData(_currentFrameIndex, out _))
         {
             return;
         }
 
-        if (!ManualMaskKeyframeTimeline.TryCloneEffectiveStoredMask(
+        if (!ManualMaskKeyframeTimeline.TryCloneEffectiveKeyframeMask(
                 provider,
                 _currentFrameIndex,
                 out var inherited))
