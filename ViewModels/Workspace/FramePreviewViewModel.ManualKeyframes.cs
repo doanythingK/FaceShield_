@@ -8,20 +8,31 @@ public partial class FramePreviewViewModel
     private bool _manualMaskKeyframesEnabled;
     private bool _manualMaskKeyframeRefreshInProgress;
     private bool _manualMaskKeyframeHandlerAttached;
+    private bool _manualMaskEditHandlerAttached;
 
-    internal void ConfigureManualMaskKeyframes(bool enabled)
+    internal void ConfigureManualMaskKeyframes(
+        bool enabled,
+        string? videoPath = null,
+        int totalFrames = 0)
     {
         _manualMaskKeyframesEnabled = enabled;
+        ConfigureManualTrackingContext(videoPath, totalFrames);
 
         if (_maskProvider is not FrameMaskProvider provider)
             return;
 
-        ManualMaskKeyframeTimeline.Configure(provider, enabled);
+        ManualMaskKeyframeTimeline.Configure(provider, enabled, videoPath);
 
         if (!_manualMaskKeyframeHandlerAttached)
         {
             PropertyChanged += OnManualMaskKeyframePropertyChanged;
             _manualMaskKeyframeHandlerAttached = true;
+        }
+
+        if (!_manualMaskEditHandlerAttached)
+        {
+            MaskEdited += NotifyManualMaskEditedForTracking;
+            _manualMaskEditHandlerAttached = true;
         }
 
         if (enabled)
@@ -33,7 +44,10 @@ public partial class FramePreviewViewModel
         PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MaskBitmap))
+        {
             ApplyInheritedManualMaskIfNeeded();
+            OnPropertyChanged(nameof(CanTrackForward));
+        }
     }
 
     private void ApplyInheritedManualMaskIfNeeded()
