@@ -6,7 +6,7 @@
              x:Name="Root"
              x:DataType="vm:WorkspaceViewModel">
 
-    <Grid RowDefinitions="Auto,*,160,96"
+    <Grid RowDefinitions="Auto,*,160,Auto"
           ColumnDefinitions="*,320">
 
         <!-- 상단 상태 영역 -->
