@@ -61,6 +61,9 @@ namespace FaceShield.ViewModels.Workspace
         private bool isExportRunning;
 
         [ObservableProperty]
+        private bool isManualTracking;
+
+        [ObservableProperty]
         private bool isNavigationInProgress;
 
         [ObservableProperty]
@@ -97,11 +100,13 @@ namespace FaceShield.ViewModels.Workspace
             IsSessionReady &&
             !IsExportRunning &&
             !IsAutoRunning &&
+            !IsManualTracking &&
             !IsNavigationInProgress &&
             !IsSaveOperationInProgress;
         public bool CanNavigateAway =>
             !IsExportRunning &&
             !IsAutoRunning &&
+            !IsManualTracking &&
             !IsNavigationInProgress &&
             !IsSaveOperationInProgress;
 
@@ -113,28 +118,23 @@ namespace FaceShield.ViewModels.Workspace
         partial void OnIsAutoRunningChanged(bool value)
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
-            OnPropertyChanged(nameof(CanEditWorkspace));
-            OnPropertyChanged(nameof(CanNavigateAway));
+            NotifyWorkspaceGateChanged();
         }
 
         partial void OnIsExportRunningChanged(bool value)
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
-            OnPropertyChanged(nameof(CanEditWorkspace));
-            OnPropertyChanged(nameof(CanNavigateAway));
+            NotifyWorkspaceGateChanged();
         }
+
+        partial void OnIsManualTrackingChanged(bool value)
+            => NotifyWorkspaceGateChanged();
 
         partial void OnIsNavigationInProgressChanged(bool value)
-        {
-            OnPropertyChanged(nameof(CanEditWorkspace));
-            OnPropertyChanged(nameof(CanNavigateAway));
-        }
+            => NotifyWorkspaceGateChanged();
 
         partial void OnIsSaveOperationInProgressChanged(bool value)
-        {
-            OnPropertyChanged(nameof(CanEditWorkspace));
-            OnPropertyChanged(nameof(CanNavigateAway));
-        }
+            => NotifyWorkspaceGateChanged();
 
         partial void OnIsSessionReadyChanged(bool value)
         {
@@ -144,6 +144,12 @@ namespace FaceShield.ViewModels.Workspace
         partial void OnSelectedExportQualityChanged(ExportQualityChoice value)
         {
             OnPropertyChanged(nameof(ExportQualityPreset));
+        }
+
+        private void NotifyWorkspaceGateChanged()
+        {
+            OnPropertyChanged(nameof(CanEditWorkspace));
+            OnPropertyChanged(nameof(CanNavigateAway));
         }
 
         public event Action? UndoRequested;
