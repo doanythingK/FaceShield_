@@ -18,33 +18,23 @@ internal sealed class ManualMaskTrackSample
     public double Confidence { get; set; } = 1.0;
 }
 
-internal sealed class ManualMaskTrackSegment
+internal sealed class ManualMaskTrackComponent
 {
-    public int SourceKeyframe { get; set; }
-    public string SourceMaskFingerprint { get; set; } = string.Empty;
+    public int ComponentIndex { get; set; }
     public double SourceBoundsX { get; set; }
     public double SourceBoundsY { get; set; }
     public double SourceBoundsWidth { get; set; }
     public double SourceBoundsHeight { get; set; }
-    public int EndExclusive { get; set; }
-    public bool StoppedByFailure { get; set; }
-    public int? StopFrame { get; set; }
-    public string? StopReason { get; set; }
     public List<ManualMaskTrackSample> Samples { get; set; } = new();
 
-    internal ManualMaskTrackSegment Clone()
+    internal ManualMaskTrackComponent Clone()
         => new()
         {
-            SourceKeyframe = SourceKeyframe,
-            SourceMaskFingerprint = SourceMaskFingerprint,
+            ComponentIndex = ComponentIndex,
             SourceBoundsX = SourceBoundsX,
             SourceBoundsY = SourceBoundsY,
             SourceBoundsWidth = SourceBoundsWidth,
             SourceBoundsHeight = SourceBoundsHeight,
-            EndExclusive = EndExclusive,
-            StoppedByFailure = StoppedByFailure,
-            StopFrame = StopFrame,
-            StopReason = StopReason,
             Samples = Samples
                 .Select(static sample => new ManualMaskTrackSample
                 {
@@ -58,6 +48,32 @@ internal sealed class ManualMaskTrackSegment
         };
 }
 
+internal sealed class ManualMaskTrackSegment
+{
+    public int SourceKeyframe { get; set; }
+    public string SourceMaskFingerprint { get; set; } = string.Empty;
+    public int EndExclusive { get; set; }
+    public bool StoppedByFailure { get; set; }
+    public int? StopFrame { get; set; }
+    public string? StopReason { get; set; }
+    public List<ManualMaskTrackComponent> Components { get; set; } = new();
+
+    internal ManualMaskTrackSegment Clone()
+        => new()
+        {
+            SourceKeyframe = SourceKeyframe,
+            SourceMaskFingerprint = SourceMaskFingerprint,
+            EndExclusive = EndExclusive,
+            StoppedByFailure = StoppedByFailure,
+            StopFrame = StopFrame,
+            StopReason = StopReason,
+            Components = Components
+                .OrderBy(static component => component.ComponentIndex)
+                .Select(static component => component.Clone())
+                .ToList()
+        };
+}
+
 internal sealed record ManualMaskTrackResult(
     ManualMaskTrackSegment Segment,
     int ProcessedFrames,
@@ -65,14 +81,14 @@ internal sealed record ManualMaskTrackResult(
 
 internal sealed class ManualMaskTrackStoreState
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
     public string SourceEvidence { get; set; } = string.Empty;
     public List<ManualMaskTrackSegment> Segments { get; set; } = new();
 }
 
 internal static class ManualMaskTrackStore
 {
-    private const int CurrentVersion = 2;
+    private const int CurrentVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -105,7 +121,8 @@ internal static class ManualMaskTrackStore
             return state.Segments?
                 .Where(static segment =>
                     segment.SourceKeyframe >= 0 &&
-                    !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+                    !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) &&
+                    segment.Components.Count > 0)
                 .Select(static segment => segment.Clone())
                 .ToArray()
                 ?? Array.Empty<ManualMaskTrackSegment>();
