@@ -520,27 +520,35 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        byte[][] newestFirst = stack.ToArray();
+        stack.Clear();
+
+        long retainedBudget = maxUndoBytes - snapshotBytes;
+        long retainedBytes = 0;
+        int keepCount = 0;
+        while (keepCount < newestFirst.Length &&
+               keepCount < maxSnapshots - 1 &&
+               retainedBytes + newestFirst[keepCount].LongLength <= retainedBudget)
+        {
+            retainedBytes += newestFirst[keepCount].LongLength;
+            keepCount++;
+        }
+
+        for (int i = keepCount - 1; i >= 0; i--)
+            stack.Push(newestFirst[i]);
+
+        if (keepCount < newestFirst.Length)
+        {
+            Array.Clear(
+                newestFirst,
+                keepCount,
+                newestFirst.Length - keepCount);
+        }
+
         unsafe
         {
             var arr = new byte[(int)snapshotBytes];
             MarshalCopyToArray((byte*)fb.Address, arr);
-
-            byte[][] newestFirst = stack.ToArray();
-            stack.Clear();
-
-            long retainedBytes = arr.LongLength;
-            int keepCount = 0;
-            while (keepCount < newestFirst.Length &&
-                   keepCount < maxSnapshots - 1 &&
-                   retainedBytes + newestFirst[keepCount].LongLength <= maxUndoBytes)
-            {
-                retainedBytes += newestFirst[keepCount].LongLength;
-                keepCount++;
-            }
-
-            for (int i = keepCount - 1; i >= 0; i--)
-                stack.Push(newestFirst[i]);
-
             stack.Push(arr);
         }
     }
