@@ -21,6 +21,7 @@ internal sealed class ManualMaskTrackSample
 internal sealed class ManualMaskTrackSegment
 {
     public int SourceKeyframe { get; set; }
+    public string SourceMaskFingerprint { get; set; } = string.Empty;
     public double SourceBoundsX { get; set; }
     public double SourceBoundsY { get; set; }
     public double SourceBoundsWidth { get; set; }
@@ -35,6 +36,7 @@ internal sealed class ManualMaskTrackSegment
         => new()
         {
             SourceKeyframe = SourceKeyframe,
+            SourceMaskFingerprint = SourceMaskFingerprint,
             SourceBoundsX = SourceBoundsX,
             SourceBoundsY = SourceBoundsY,
             SourceBoundsWidth = SourceBoundsWidth,
@@ -63,14 +65,14 @@ internal sealed record ManualMaskTrackResult(
 
 internal sealed class ManualMaskTrackStoreState
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public string SourceEvidence { get; set; } = string.Empty;
     public List<ManualMaskTrackSegment> Segments { get; set; } = new();
 }
 
 internal static class ManualMaskTrackStore
 {
-    private const int CurrentVersion = 1;
+    private const int CurrentVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -101,7 +103,9 @@ internal static class ManualMaskTrackStore
             }
 
             return state.Segments?
-                .Where(static segment => segment.SourceKeyframe >= 0)
+                .Where(static segment =>
+                    segment.SourceKeyframe >= 0 &&
+                    !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
                 .Select(static segment => segment.Clone())
                 .ToArray()
                 ?? Array.Empty<ManualMaskTrackSegment>();
