@@ -1,5 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace FaceShield.Views.Dialogs;
 
@@ -21,6 +24,19 @@ public partial class ErrorDialog : Window
         InitializeComponent();
         DataContext = this;
         Title = DialogTitle;
+    }
+
+    public new async Task ShowDialog(Window owner)
+    {
+        try
+        {
+            await base.ShowDialog(owner);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(
+                $"[ErrorDialog] dialog display suppressed during shutdown/detach: {ex.Message}");
+        }
     }
 
     private void InitializeComponent()

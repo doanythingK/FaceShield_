@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using FaceShield.ViewModels.Pages;
 using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace FaceShield.Views.Dialogs
 {
@@ -19,6 +21,20 @@ namespace FaceShield.Views.Dialogs
             InitializeComponent();
             DataContext = viewModel;
             viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        }
+
+        public new async Task ShowDialog(Window owner)
+        {
+            try
+            {
+                await base.ShowDialog(owner);
+            }
+            catch (Exception ex)
+            {
+                ReleaseOwnedResources();
+                Debug.WriteLine(
+                    $"[BlurPreviewDialog] dialog display suppressed during shutdown/detach: {ex.Message}");
+            }
         }
 
         private void OnExampleClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -77,14 +93,27 @@ namespace FaceShield.Views.Dialogs
 
         protected override void OnClosed(EventArgs e)
         {
+            ReleaseOwnedResources();
+            base.OnClosed(e);
+        }
+
+        private void ReleaseOwnedResources()
+        {
             if (DataContext is HomePageViewModel vm)
                 vm.PropertyChanged -= OnViewModelPropertyChanged;
             if (_previewWindow != null)
             {
-                _previewWindow.Close();
+                try
+                {
+                    _previewWindow.Close();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(
+                        $"[BlurPreviewDialog] preview close suppressed during shutdown/detach: {ex.Message}");
+                }
                 _previewWindow = null;
             }
-            base.OnClosed(e);
         }
     }
 }
