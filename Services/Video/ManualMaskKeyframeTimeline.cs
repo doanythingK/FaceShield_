@@ -19,7 +19,7 @@ internal static class ManualMaskKeyframeTimeline
         if (provider == null)
             throw new ArgumentNullException(nameof(provider));
 
-        States.GetOrCreateValue(provider).Enabled = enabled;
+        States.GetValue(provider, static _ => new TimelineState()).Enabled = enabled;
     }
 
     internal static bool IsEnabled(FrameMaskProvider provider)
