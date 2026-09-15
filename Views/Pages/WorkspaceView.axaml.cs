@@ -1,8 +1,8 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using FaceShield.Enums.Workspace;
 using FaceShield.ViewModels.Pages;
 
 namespace FaceShield.Views.Pages;
@@ -13,6 +13,17 @@ public partial class WorkspaceView : UserControl
     {
         InitializeComponent();
         AddHandler(KeyDownEvent, OnAnyKeyDown, RoutingStrategies.Tunnel);
+        DataContextChanged += (_, _) => ConfigureManualMaskTimeline();
+        AttachedToVisualTree += (_, _) => ConfigureManualMaskTimeline();
+    }
+
+    private void ConfigureManualMaskTimeline()
+    {
+        if (DataContext is not WorkspaceViewModel vm)
+            return;
+
+        vm.FramePreview.ConfigureManualMaskKeyframes(
+            vm.Mode == WorkspaceMode.Manual);
     }
 
     private void OnAnyKeyDown(object? sender, KeyEventArgs e)
