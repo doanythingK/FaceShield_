@@ -32,7 +32,7 @@ public partial class HomePageView : UserControl
         }
         catch (Exception ex)
         {
-            await ShowPickerErrorAsync("영상 파일 선택 실패", ex);
+            await ShowPickerErrorAsync(vm, "영상 파일 선택 실패", ex);
         }
     }
 
@@ -52,19 +52,33 @@ public partial class HomePageView : UserControl
         }
         catch (Exception ex)
         {
-            await ShowPickerErrorAsync("모델 파일 선택 실패", ex);
+            await ShowPickerErrorAsync(vm, "모델 파일 선택 실패", ex);
         }
     }
 
-    private async Task ShowPickerErrorAsync(string title, Exception exception)
+    private async Task ShowPickerErrorAsync(
+        HomePageViewModel vm,
+        string title,
+        Exception exception)
     {
-        var dialog = new ErrorDialog(title, exception.Message);
-        if (TopLevel.GetTopLevel(this) is Window owner)
-        {
-            await dialog.ShowDialog(owner);
+        if (vm.IsShutdownRequested)
             return;
-        }
 
-        dialog.Show();
+        try
+        {
+            if (TopLevel.GetTopLevel(this) is not Window owner ||
+                vm.IsShutdownRequested)
+            {
+                return;
+            }
+
+            var dialog = new ErrorDialog(title, exception.Message);
+            await dialog.ShowDialog(owner);
+        }
+        catch (Exception dialogException)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[HomePage] picker error dialog suppressed during shutdown/detach: {dialogException.Message}");
+        }
     }
 }
