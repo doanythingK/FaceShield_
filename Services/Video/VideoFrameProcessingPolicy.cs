@@ -134,7 +134,18 @@ internal static unsafe class VideoFrameProcessingPolicy
             VideoExportFrameRangePolicy.IsFrameInBlurRanges(decodedFrameOrdinal, blurRanges, ref blurRangeCursor);
         bool frameWasBlurred = false;
 
-        if (mightHaveMask && maskProvider is FrameMaskProvider provider)
+        if (mightHaveMask && maskProvider is IExportFrameMaskReadView exportMaskView)
+        {
+            if (exportMaskView.TryGetBorrowedStoredMask(decodedFrameOrdinal, out var stored))
+            {
+                mask = stored;
+            }
+            else if (exportMaskView.TryGetFaceMaskData(decodedFrameOrdinal, out var faces))
+            {
+                faceRects = faces.Faces;
+            }
+        }
+        else if (mightHaveMask && maskProvider is FrameMaskProvider provider)
         {
             if (provider.TryGetStoredMaskBorrowed(decodedFrameOrdinal, out var stored))
             {
