@@ -7,6 +7,12 @@ using System.Threading;
 
 namespace FaceShield.Services.Video;
 
+internal interface IExportFrameMaskReadView
+{
+    bool TryGetBorrowedStoredMask(int frameIndex, out WriteableBitmap mask);
+    bool TryGetFaceMaskData(int frameIndex, out FrameMaskProvider.FaceMaskData data);
+}
+
 internal static class ManualMaskKeyframeTimeline
 {
     private sealed class TimelineState
@@ -128,7 +134,9 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    private sealed class ManualKeyframeExportMaskProvider : IFrameMaskProvider
+    private sealed class ManualKeyframeExportMaskProvider :
+        IFrameMaskProvider,
+        IExportFrameMaskReadView
     {
         private readonly FrameMaskProvider _snapshot;
         private readonly int[] _keyframes;
@@ -166,12 +174,7 @@ internal static class ManualMaskKeyframeTimeline
 
         public WriteableBitmap? GetFinalMask(int frameIndex)
         {
-            if (frameIndex < 0)
-                return null;
-
-            int position = Array.BinarySearch(_keyframes, frameIndex);
-            if (position < 0)
-                position = ~position - 1;
+            int position = ResolveKeyframePosition(frameIndex);
             if (position < 0 || !_keyframeHasCoverage[position])
                 return null;
 
@@ -186,6 +189,53 @@ internal static class ManualMaskKeyframeTimeline
             }
 
             return _snapshot.GetFinalMask(keyframe);
+        }
+
+        public bool TryGetBorrowedStoredMask(
+            int frameIndex,
+            out WriteableBitmap mask)
+        {
+            mask = null!;
+            int position = ResolveKeyframePosition(frameIndex);
+            if (position < 0 ||
+                !_keyframeHasCoverage[position] ||
+                !_keyframeIsStoredMask[position])
+            {
+                return false;
+            }
+
+            return _snapshot.TryGetStoredMaskBorrowed(
+                _keyframes[position],
+                out mask);
+        }
+
+        public bool TryGetFaceMaskData(
+            int frameIndex,
+            out FrameMaskProvider.FaceMaskData data)
+        {
+            data = default;
+            int position = ResolveKeyframePosition(frameIndex);
+            if (position < 0 ||
+                !_keyframeHasCoverage[position] ||
+                _keyframeIsStoredMask[position])
+            {
+                return false;
+            }
+
+            return _snapshot.TryGetFaceMaskData(
+                _keyframes[position],
+                out data);
+        }
+
+        private int ResolveKeyframePosition(int frameIndex)
+        {
+            if (frameIndex < 0 || _keyframes.Length == 0)
+                return -1;
+
+            int position = Array.BinarySearch(_keyframes, frameIndex);
+            if (position < 0)
+                position = ~position - 1;
+            return position;
         }
 
         public void SetMask(int frameIndex, WriteableBitmap mask)
