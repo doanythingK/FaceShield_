@@ -45,12 +45,11 @@ namespace FaceShield.Services.Video
                 int oStride = ofb.RowBytes;
                 int window = blurRadius * 2 + 1;
 
-                var temp = new byte[h * sStride];
-                var dst = new byte[h * sStride];
+                var temp = new byte[checked(h * sStride)];
 
                 byte* sBase = (byte*)sfb.Address;
+                byte* oBase = (byte*)ofb.Address;
                 fixed (byte* tempBase = temp)
-                fixed (byte* dstBase = dst)
                 {
                     for (int y = 0; y < h; y++)
                     {
@@ -95,8 +94,8 @@ namespace FaceShield.Services.Video
 
                             for (int y = 0; y < h; y++)
                             {
-                                int idx = y * sStride + x * 4 + c;
-                                dstBase[idx] = (byte)(sum / window);
+                                byte* outputPixel = oBase + y * oStride + x * 4;
+                                outputPixel[c] = (byte)(sum / window);
 
                                 int removeY = y - blurRadius;
                                 int addY = y + blurRadius + 1;
@@ -108,18 +107,7 @@ namespace FaceShield.Services.Video
                         }
 
                         for (int y = 0; y < h; y++)
-                            dstBase[y * sStride + x * 4 + 3] = 255;
-                    }
-
-                    byte* oBase = (byte*)ofb.Address;
-                    int copy = Math.Min(sStride, oStride);
-                    for (int y = 0; y < h; y++)
-                    {
-                        Buffer.MemoryCopy(
-                            dstBase + y * sStride,
-                            oBase + y * oStride,
-                            oStride,
-                            copy);
+                            oBase[y * oStride + x * 4 + 3] = 255;
                     }
                 }
             }
