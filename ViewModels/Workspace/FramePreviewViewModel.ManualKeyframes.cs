@@ -9,6 +9,7 @@ public partial class FramePreviewViewModel
     private bool _manualMaskKeyframeRefreshInProgress;
     private bool _manualMaskKeyframeHandlerAttached;
     private bool _manualMaskEditHandlerAttached;
+    private bool _manualUndoHandlerAttached;
 
     internal void ConfigureManualMaskKeyframes(
         bool enabled,
@@ -35,8 +36,24 @@ public partial class FramePreviewViewModel
             _manualMaskEditHandlerAttached = true;
         }
 
+        if (!_manualUndoHandlerAttached)
+        {
+            // WorkspaceViewModel subscribes its Undo handler during construction.
+            // This subscription is attached later from the view, so it observes the
+            // already-restored mask and can invalidate tracking based on that result.
+            _toolPanel.UndoRequested += OnManualUndoCompleted;
+            _manualUndoHandlerAttached = true;
+        }
+
         if (enabled)
             ApplyInheritedManualMaskIfNeeded();
+    }
+
+    private void OnManualUndoCompleted()
+    {
+        if (!_manualMaskKeyframesEnabled || _currentFrameIndex < 0)
+            return;
+        NotifyManualMaskEditedForTracking(_currentFrameIndex);
     }
 
     private void OnManualMaskKeyframePropertyChanged(
@@ -64,10 +81,15 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        // An exact entry is already a keyframe and remains authoritative.
+        // An exact entry is already a keyframe and remains authoritative. Revalidate
+        // any stored tracking segment here because single-frame Auto can replace an
+        // exact keyframe without going through the brush MaskEdited event.
         if (provider.HasStoredMask(_currentFrameIndex) ||
             provider.TryGetFaceMaskData(_currentFrameIndex, out _))
         {
+            ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
+                provider,
+                _currentFrameIndex);
             return;
         }
 
