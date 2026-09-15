@@ -32,6 +32,7 @@ namespace FaceShield.Services.Video
                 new Vector(96, 96),
                 Avalonia.Platform.PixelFormat.Bgra8888,
                 Avalonia.Platform.AlphaFormat.Premul);
+            using var outputOwnership = new BitmapOwnership(outBmp);
 
             using var sfb = src.Lock();
             using var ofb = outBmp.Lock();
@@ -123,6 +124,7 @@ namespace FaceShield.Services.Video
                 }
             }
 
+            outputOwnership.Detach();
             return outBmp;
         }
 
@@ -140,6 +142,7 @@ namespace FaceShield.Services.Video
                 throw new InvalidOperationException("Blurred size must match source size.");
 
             var outBmp = target;
+            BitmapOwnership? outputOwnership = null;
             bool fullUpdate = false;
             if (outBmp == null || outBmp.PixelSize.Width != size.Width || outBmp.PixelSize.Height != size.Height)
             {
@@ -148,8 +151,10 @@ namespace FaceShield.Services.Video
                     new Vector(96, 96),
                     Avalonia.Platform.PixelFormat.Bgra8888,
                     Avalonia.Platform.AlphaFormat.Premul);
+                outputOwnership = new BitmapOwnership(outBmp);
                 fullUpdate = true;
             }
+            using var ownedOutput = outputOwnership;
 
             int w = size.Width;
             int h = size.Height;
@@ -226,6 +231,7 @@ namespace FaceShield.Services.Video
                 }
             }
 
+            ownedOutput?.Detach();
             return outBmp;
         }
 
@@ -246,6 +252,7 @@ namespace FaceShield.Services.Video
                 new Vector(96, 96),
                 Avalonia.Platform.PixelFormat.Bgra8888,
                 Avalonia.Platform.AlphaFormat.Premul);
+            using var outputOwnership = new BitmapOwnership(outBmp);
 
             CopyBitmap(src, outBmp);
 
@@ -265,6 +272,7 @@ namespace FaceShield.Services.Video
                 }
             }
 
+            outputOwnership.Detach();
             return outBmp;
         }
 
@@ -298,6 +306,27 @@ namespace FaceShield.Services.Video
                         destinationBuffer.RowBytes,
                         rowBytes);
                 }
+            }
+        }
+
+        private sealed class BitmapOwnership : IDisposable
+        {
+            private WriteableBitmap? _bitmap;
+
+            internal BitmapOwnership(WriteableBitmap bitmap)
+            {
+                _bitmap = bitmap;
+            }
+
+            internal void Detach()
+            {
+                _bitmap = null;
+            }
+
+            public void Dispose()
+            {
+                _bitmap?.Dispose();
+                _bitmap = null;
             }
         }
     }
