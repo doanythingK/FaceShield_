@@ -507,12 +507,40 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     private static void PushUndoSnapshot(WriteableBitmap mask, Stack<byte[]> stack)
     {
+        const int maxSnapshots = 16;
+        const long maxUndoBytes = 128L * 1024 * 1024;
+
         using var fb = mask.Lock();
+        long snapshotBytes = (long)fb.RowBytes * fb.Size.Height;
+        if (snapshotBytes <= 0 ||
+            snapshotBytes > maxUndoBytes ||
+            snapshotBytes > int.MaxValue)
+        {
+            stack.Clear();
+            return;
+        }
+
         unsafe
         {
-            int bytes = fb.RowBytes * fb.Size.Height;
-            var arr = new byte[bytes];
+            var arr = new byte[(int)snapshotBytes];
             MarshalCopyToArray((byte*)fb.Address, arr);
+
+            byte[][] newestFirst = stack.ToArray();
+            stack.Clear();
+
+            long retainedBytes = arr.LongLength;
+            int keepCount = 0;
+            while (keepCount < newestFirst.Length &&
+                   keepCount < maxSnapshots - 1 &&
+                   retainedBytes + newestFirst[keepCount].LongLength <= maxUndoBytes)
+            {
+                retainedBytes += newestFirst[keepCount].LongLength;
+                keepCount++;
+            }
+
+            for (int i = keepCount - 1; i >= 0; i--)
+                stack.Push(newestFirst[i]);
+
             stack.Push(arr);
         }
     }
