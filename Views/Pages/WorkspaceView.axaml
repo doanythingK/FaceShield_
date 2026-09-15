@@ -12,7 +12,9 @@
         <!-- 상단 상태 영역 -->
         <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#101010" Padding="8">
             <StackPanel Orientation="Horizontal" Spacing="12">
-                <Button Content="뒤로가기" Command="{Binding GoBackCommand}" />
+                <Button Content="뒤로가기"
+                        Command="{Binding GoBackCommand}"
+                        IsEnabled="{Binding ToolPanel.CanNavigateAway}" />
                 <TextBlock>
                     <Run Text="모드: "/>
                     <Run Text="{Binding Mode}"/>

@@ -433,7 +433,7 @@ namespace FaceShield.ViewModels.Pages
         [RelayCommand]
         private async Task GoBack()
         {
-            if (_autoRunCoordinator.IsRunning || ToolPanel.IsAutoRunning)
+            if (_autoRunCoordinator.IsRunning || !ToolPanel.CanNavigateAway)
                 return;
 
             _sessionPlaybackCoordinator.CancelInitialization();

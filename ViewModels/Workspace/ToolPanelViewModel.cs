@@ -89,6 +89,8 @@ namespace FaceShield.ViewModels.Workspace
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
         public bool CanEditWorkspace =>
             IsSessionReady && !IsExportRunning && !IsAutoRunning;
+        public bool CanNavigateAway =>
+            !IsExportRunning && !IsAutoRunning;
 
         partial void OnCurrentModeChanged(EditMode value)
         {
@@ -99,12 +101,14 @@ namespace FaceShield.ViewModels.Workspace
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
             OnPropertyChanged(nameof(CanEditWorkspace));
+            OnPropertyChanged(nameof(CanNavigateAway));
         }
 
         partial void OnIsExportRunningChanged(bool value)
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
             OnPropertyChanged(nameof(CanEditWorkspace));
+            OnPropertyChanged(nameof(CanNavigateAway));
         }
 
         partial void OnIsSessionReadyChanged(bool value)
