@@ -186,6 +186,16 @@ internal static unsafe class VideoExportCopyPolicy
             VideoExportFfmpegDiagnostics.Throw(
                 ffmpeg.avformat_write_header(outFmt, null));
 
+            AVStream* sourceVideoStream = inFmt->streams[videoStreamIndex];
+            long videoPacketFrameStep =
+                VideoExportTimingPolicy.GetVideoFrameStep(
+                    sourceFps,
+                    sourceVideoStream->time_base);
+            long lastVideoPacketPts = 0;
+            long lastVideoPacketDts = 0;
+            bool hasLastVideoPacketPts = false;
+            bool hasLastVideoPacketDts = false;
+
             int lastReportedFrame = -1;
             while (ffmpeg.av_read_frame(inFmt, pkt) >= 0)
             {
@@ -214,13 +224,25 @@ internal static unsafe class VideoExportCopyPolicy
                     isVideoPacket &&
                     (pkt->pts == ffmpeg.AV_NOPTS_VALUE ||
                      pkt->dts == ffmpeg.AV_NOPTS_VALUE);
+                if (isVideoPacket && hasMissingVideoTimestamp)
+                    missingVideoPacketTimestamps++;
+
+                if (isVideoPacket &&
+                    VideoExportTimingPolicy.NormalizeCopiedPacketTimestamps(
+                        pkt,
+                        ref lastVideoPacketPts,
+                        ref hasLastVideoPacketPts,
+                        ref lastVideoPacketDts,
+                        ref hasLastVideoPacketDts,
+                        videoPacketFrameStep))
+                {
+                    videoPacketTimestampAdjustments++;
+                }
 
                 ffmpeg.av_packet_rescale_ts(
                     pkt,
                     inStream->time_base,
                     outStream->time_base);
-                if (isVideoPacket && hasMissingVideoTimestamp)
-                    missingVideoPacketTimestamps++;
 
                 pkt->stream_index = outStream->index;
                 pkt->pos = -1;
