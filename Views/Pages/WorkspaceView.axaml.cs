@@ -23,7 +23,9 @@ public partial class WorkspaceView : UserControl
             return;
 
         vm.FramePreview.ConfigureManualMaskKeyframes(
-            vm.Mode == WorkspaceMode.Manual);
+            vm.Mode == WorkspaceMode.Manual,
+            vm.FrameList.VideoPath,
+            vm.FrameList.TotalFrames);
     }
 
     private void OnAnyKeyDown(object? sender, KeyEventArgs e)
