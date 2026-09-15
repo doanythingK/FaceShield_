@@ -30,6 +30,10 @@ public partial class HomePageView : UserControl
         {
             await vm.PickVideoAsync(storageProvider);
         }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
         catch (Exception ex)
         {
             await ShowPickerErrorAsync(vm, "영상 파일 선택 실패", ex);
@@ -49,6 +53,10 @@ public partial class HomePageView : UserControl
         try
         {
             await vm.PickYoloModelAsync(storageProvider);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex)
         {
