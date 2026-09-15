@@ -92,7 +92,7 @@ namespace FaceShield.ViewModels
             CurrentPage = _home;
             try
             {
-                _home.PersistAllWorkspaces();
+                _home.PersistAllWorkspacesForShutdown();
             }
             finally
             {
