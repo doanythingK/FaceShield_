@@ -157,6 +157,12 @@ namespace FaceShield.Services.Analysis
                 }
 
                 bool hadExisting = _maskProvider.HasEntry(idx);
+                if (_maskProvider.HasStoredMask(idx))
+                {
+                    ReportProgress(progress, idx, totalFrames, progressState);
+                    continue;
+                }
+
                 if (hadExisting && !shouldDetect)
                 {
                     ReportProgress(progress, idx, totalFrames, progressState);
