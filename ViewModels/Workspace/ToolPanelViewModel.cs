@@ -61,6 +61,12 @@ namespace FaceShield.ViewModels.Workspace
         private bool isExportRunning;
 
         [ObservableProperty]
+        private bool isNavigationInProgress;
+
+        [ObservableProperty]
+        private bool isSaveOperationInProgress;
+
+        [ObservableProperty]
         private bool isSessionReady;
 
         [ObservableProperty]
@@ -88,9 +94,16 @@ namespace FaceShield.ViewModels.Workspace
 
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
         public bool CanEditWorkspace =>
-            IsSessionReady && !IsExportRunning && !IsAutoRunning;
+            IsSessionReady &&
+            !IsExportRunning &&
+            !IsAutoRunning &&
+            !IsNavigationInProgress &&
+            !IsSaveOperationInProgress;
         public bool CanNavigateAway =>
-            !IsExportRunning && !IsAutoRunning;
+            !IsExportRunning &&
+            !IsAutoRunning &&
+            !IsNavigationInProgress &&
+            !IsSaveOperationInProgress;
 
         partial void OnCurrentModeChanged(EditMode value)
         {
@@ -107,6 +120,18 @@ namespace FaceShield.ViewModels.Workspace
         partial void OnIsExportRunningChanged(bool value)
         {
             OnPropertyChanged(nameof(ShowAutoProgress));
+            OnPropertyChanged(nameof(CanEditWorkspace));
+            OnPropertyChanged(nameof(CanNavigateAway));
+        }
+
+        partial void OnIsNavigationInProgressChanged(bool value)
+        {
+            OnPropertyChanged(nameof(CanEditWorkspace));
+            OnPropertyChanged(nameof(CanNavigateAway));
+        }
+
+        partial void OnIsSaveOperationInProgressChanged(bool value)
+        {
             OnPropertyChanged(nameof(CanEditWorkspace));
             OnPropertyChanged(nameof(CanNavigateAway));
         }

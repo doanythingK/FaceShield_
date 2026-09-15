@@ -282,6 +282,13 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken = default,
             IProgress<ExportProgress>? exportProgress = null)
         {
+            if (ToolPanel.IsNavigationInProgress ||
+                ToolPanel.IsSaveOperationInProgress ||
+                ToolPanel.IsExportRunning)
+            {
+                return Task.FromResult(false);
+            }
+
             return _autoRunCoordinator.RunAsync(
                 exportAfter,
                 progress,
@@ -305,32 +312,39 @@ namespace FaceShield.ViewModels.Pages
 
         private async void OnSaveRequested()
         {
-            if (!ToolPanel.IsSessionReady ||
-                _autoRunCoordinator.IsRunning ||
-                ToolPanel.IsAutoRunning)
-            {
+            if (!ToolPanel.CanEditWorkspace || _autoRunCoordinator.IsRunning)
                 return;
-            }
 
-            FramePreview.PersistCurrentMask();
-
+            ToolPanel.IsSaveOperationInProgress = true;
             try
             {
-                await SaveVideoAsync();
-            }
-            catch (Exception ex)
-            {
-                await ShowExportErrorAsync(ex);
+                FramePreview.PersistCurrentMask();
+
+                try
+                {
+                    await SaveVideoAsync();
+                }
+                catch (Exception ex)
+                {
+                    await ShowExportErrorAsync(ex);
+                }
             }
             finally
             {
-                PersistWorkspaceState();
+                try
+                {
+                    PersistWorkspaceState();
+                }
+                finally
+                {
+                    ToolPanel.IsSaveOperationInProgress = false;
+                }
             }
         }
 
         private async void OnAutoRequested(EditMode previousMode)
         {
-            if (!ToolPanel.IsSessionReady)
+            if (!ToolPanel.CanEditWorkspace)
                 return;
 
             try
@@ -436,32 +450,49 @@ namespace FaceShield.ViewModels.Pages
             if (_autoRunCoordinator.IsRunning || !ToolPanel.CanNavigateAway)
                 return;
 
-            _sessionPlaybackCoordinator.CancelInitialization();
-            if (FrameList.IsPlaying)
-                FrameList.NotifyPlaybackStopped();
-            await FramePreview.StopManualOperationsAndWaitAsync();
-
-            FramePreview.PersistCurrentMask();
-            PersistWorkspaceState(includePreviewMask: false);
-
-            if (_workspacePersistence != null)
+            ToolPanel.IsNavigationInProgress = true;
+            try
             {
-                try
-                {
-                    await _workspacePersistence.FlushAsync();
-                }
-                catch (Exception ex)
-                {
-                    await ShowErrorDialogAsync("워크스페이스 저장 실패", ex.Message);
-                    return;
-                }
-            }
+                _sessionPlaybackCoordinator.CancelInitialization();
+                if (FrameList.IsPlaying)
+                    FrameList.NotifyPlaybackStopped();
+                await FramePreview.StopManualOperationsAndWaitAsync();
 
-            _onBack?.Invoke();
+                FramePreview.PersistCurrentMask();
+                PersistWorkspaceState(includePreviewMask: false);
+
+                if (_workspacePersistence != null)
+                {
+                    try
+                    {
+                        await _workspacePersistence.FlushAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        await ShowErrorDialogAsync("워크스페이스 저장 실패", ex.Message);
+                        return;
+                    }
+                }
+
+                _onBack?.Invoke();
+            }
+            finally
+            {
+                ToolPanel.IsNavigationInProgress = false;
+            }
         }
 
         private Task<bool> RunAutoSingleFrameAsync()
-            => _autoRunCoordinator.RunSingleFrameAsync();
+        {
+            if (ToolPanel.IsNavigationInProgress ||
+                ToolPanel.IsSaveOperationInProgress ||
+                ToolPanel.IsExportRunning)
+            {
+                return Task.FromResult(false);
+            }
+
+            return _autoRunCoordinator.RunSingleFrameAsync();
+        }
 
         [RelayCommand]
         private void NextAutoAnomaly()
