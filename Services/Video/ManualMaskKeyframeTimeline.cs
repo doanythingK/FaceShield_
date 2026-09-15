@@ -23,6 +23,7 @@ internal static class ManualMaskKeyframeTimeline
         internal bool Loaded;
         internal string? VideoPath;
         internal List<ManualMaskTrackSegment> Segments = new();
+        internal Dictionary<int, bool> SegmentValidity = new();
     }
 
     private static readonly ConditionalWeakTable<FrameMaskProvider, TimelineState> States = new();
@@ -40,13 +41,23 @@ internal static class ManualMaskKeyframeTimeline
         {
             state.Enabled = enabled;
             if (!string.IsNullOrWhiteSpace(videoPath))
+            {
+                if (!string.IsNullOrWhiteSpace(state.VideoPath) &&
+                    !string.Equals(state.VideoPath, videoPath, StringComparison.Ordinal))
+                {
+                    state.Loaded = false;
+                    state.Segments.Clear();
+                    state.SegmentValidity.Clear();
+                }
                 state.VideoPath = videoPath;
+            }
 
             if (enabled && !state.Loaded && !string.IsNullOrWhiteSpace(state.VideoPath))
             {
                 state.Segments = ManualMaskTrackStore.Load(state.VideoPath!)
                     .Select(static segment => segment.Clone())
                     .ToList();
+                state.SegmentValidity.Clear();
                 state.Loaded = true;
             }
         }
@@ -87,6 +98,7 @@ internal static class ManualMaskKeyframeTimeline
         lock (state.Gate)
         {
             state.Segments.RemoveAll(segment => segment.SourceKeyframe == frameIndex);
+            state.SegmentValidity.Remove(frameIndex);
             foreach (ManualMaskTrackSegment segment in state.Segments)
             {
                 if (segment.SourceKeyframe >= frameIndex || segment.EndExclusive <= frameIndex)
@@ -98,7 +110,11 @@ internal static class ManualMaskKeyframeTimeline
                 segment.StopFrame = null;
                 segment.StopReason = null;
             }
-            PersistLocked(state);
+
+            // Do not persist invalidation here. The edited bitmap is persisted by the
+            // workspace store on its own transaction. If the process dies between the
+            // two writes, keeping the previous on-disk track is safer; its source-mask
+            // fingerprint will be checked against whichever workspace generation loads.
         }
     }
 
@@ -110,6 +126,8 @@ internal static class ManualMaskKeyframeTimeline
             throw new ArgumentNullException(nameof(provider));
         if (segment == null)
             throw new ArgumentNullException(nameof(segment));
+        if (string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+            throw new InvalidOperationException("Tracked segment is missing its source-mask fingerprint.");
 
         TimelineState state = States.GetValue(provider, static _ => new TimelineState());
         lock (state.Gate)
@@ -119,6 +137,7 @@ internal static class ManualMaskKeyframeTimeline
             state.Segments.Add(segment.Clone());
             state.Segments.Sort(static (a, b) =>
                 a.SourceKeyframe.CompareTo(b.SourceKeyframe));
+            state.SegmentValidity[segment.SourceKeyframe] = true;
             PersistLocked(state);
         }
     }
@@ -228,6 +247,12 @@ internal static class ManualMaskKeyframeTimeline
             if (segment == null)
                 return true;
 
+            if (!IsSegmentCurrentLocked(provider, state, segment))
+            {
+                blocked = true;
+                return true;
+            }
+
             sample = segment.Samples.FirstOrDefault(candidate =>
                 candidate.FrameIndex == frameIndex);
             if (sample != null)
@@ -236,6 +261,28 @@ internal static class ManualMaskKeyframeTimeline
             blocked = true;
             return true;
         }
+    }
+
+    private static bool IsSegmentCurrentLocked(
+        FrameMaskProvider provider,
+        TimelineState state,
+        ManualMaskTrackSegment segment)
+    {
+        if (state.SegmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached))
+            return cached;
+
+        bool valid = false;
+        using WriteableBitmap? sourceMask = provider.GetFinalMask(segment.SourceKeyframe);
+        if (sourceMask != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+        {
+            valid = string.Equals(
+                ManualMaskFingerprint.Compute(sourceMask),
+                segment.SourceMaskFingerprint,
+                StringComparison.Ordinal);
+        }
+
+        state.SegmentValidity[segment.SourceKeyframe] = valid;
+        return valid;
     }
 
     private static Rect GetSegmentSourceBounds(
@@ -357,8 +404,11 @@ internal static class ManualMaskKeyframeTimeline
     {
         using var sourceBuffer = source.Lock();
         using var targetBuffer = target.Lock();
-        if (sourceBuffer.Size != targetBuffer.Size)
+        if (sourceBuffer.Size.Width != targetBuffer.Size.Width ||
+            sourceBuffer.Size.Height != targetBuffer.Size.Height)
+        {
             throw new InvalidOperationException("Manual track mask size mismatch.");
+        }
 
         double scale = Math.Clamp(sample.Scale, 0.25, 4.0);
         double destinationX = sourceBounds.X + sample.OffsetX;
@@ -481,6 +531,7 @@ internal static class ManualMaskKeyframeTimeline
         private readonly ManualMaskTrackSegment[] _segments;
         private readonly bool[] _keyframeHasCoverage;
         private readonly bool[] _keyframeIsStoredMask;
+        private readonly Dictionary<int, bool> _segmentValidity = new();
         private WriteableBitmap? _scratchMask;
 
         internal ManualKeyframeExportMaskProvider(
@@ -643,10 +694,35 @@ internal static class ManualMaskKeyframeTimeline
             if (segment == null)
                 return true;
 
+            if (!IsSegmentCurrent(segment))
+            {
+                blocked = true;
+                return true;
+            }
+
             sample = segment.Samples.FirstOrDefault(candidate =>
                 candidate.FrameIndex == frameIndex);
             blocked = sample == null;
             return true;
+        }
+
+        private bool IsSegmentCurrent(ManualMaskTrackSegment segment)
+        {
+            if (_segmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached))
+                return cached;
+
+            bool valid = false;
+            using WriteableBitmap? sourceMask = _snapshot.GetFinalMask(segment.SourceKeyframe);
+            if (sourceMask != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+            {
+                valid = string.Equals(
+                    ManualMaskFingerprint.Compute(sourceMask),
+                    segment.SourceMaskFingerprint,
+                    StringComparison.Ordinal);
+            }
+
+            _segmentValidity[segment.SourceKeyframe] = valid;
+            return valid;
         }
 
         private Rect GetSegmentBounds(int sourceKeyframe)
@@ -673,8 +749,12 @@ internal static class ManualMaskKeyframeTimeline
 
         private void EnsureScratchMask(WriteableBitmap source)
         {
-            if (_scratchMask != null && _scratchMask.PixelSize == source.PixelSize)
+            if (_scratchMask != null &&
+                _scratchMask.PixelSize.Width == source.PixelSize.Width &&
+                _scratchMask.PixelSize.Height == source.PixelSize.Height)
+            {
                 return;
+            }
 
             _scratchMask?.Dispose();
             _scratchMask = new WriteableBitmap(
