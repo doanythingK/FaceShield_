@@ -1,91 +1,50 @@
 # Manual mask keyframe editing
 
-`refactor/manual-mask-keyframes`에서 수동 편집 마스크는 프레임별 독립 마스크가 아니라 키프레임 + 추적 타임라인으로 해석한다.
+작업 브랜치: `refactor/manual-mask-keyframes`. 수동 편집 마스크는 키프레임 + 추적 타임라인으로 해석한다. **현재 비-AI 수동 추적 엔진의 세부 구현, 성능·정확도 한계 및 재현 테스트 절차는 [MANUAL_TRACKING_CLASSICAL_CV.md](MANUAL_TRACKING_CLASSICAL_CV.md)를 참고한다.** 이 변경은 자동 블러의 얼굴 검출·후처리 파이프라인을 변경하지 않는다.
 
 ## 동작 계약
 
-- 수동 모드에서 브러시/지우개로 실제 수정한 프레임은 수동 마스크 키프레임이 된다.
-- 현재 프레임에 직접 저장된 마스크가 없고 추적 결과가 아직 없는 구간은 가장 가까운 이전 키프레임을 `hold` 방식으로 표시한다.
-- 사용자가 `현재 마스크 자동 추적`을 실행하면 현재 프레임부터 다음 명시적 키프레임 직전 또는 영상 끝까지 추적한다.
-- 현재 프레임이 상속/추적된 마스크라면 실제 추적 샘플이 생성되어 결과가 저장될 때만 새 소스 키프레임으로 승격한다. 취소되거나 추적할 다음 프레임이 없으면 타임라인을 변경하지 않는다.
-- 추적된 프레임은 위치 이동과 크기 변화를 적용한 마스크를 사용한다.
-- 다음 명시적 키프레임이 나오면 그 프레임부터 새 키프레임이 기준이 된다.
-- 단순히 프레임을 이동하거나 재생해서 확인한 것만으로는 중간 프레임 마스크를 새로 저장하지 않는다.
-- 상속/추적된 마스크를 수정하면 그 프레임이 새 키프레임이 되고 이전 추적 구간은 그 지점에서 끊긴다.
-- 상속된 마스크를 완전히 지워 저장하면 그 프레임부터 다음 키프레임 전까지 블러가 없는 구간이 된다.
-- 수동 모드에서 현재 프레임 자동 검출로 만든 얼굴 마스크도 명시적 키프레임으로 취급한다.
+- 수동 모드에서 브러시/지우개로 실제 수정한 프레임, 또는 현재 프레임 자동 검출로 생성한 마스크는 명시적 키프레임이다.
+- 직접 저장된 마스크와 추적 결과가 없는 프레임에서는 가장 가까운 이전 키프레임을 `hold` 방식으로 표시한다. 단, 추적 실패 경계 이후에는 기존 추적 마스크를 계속 적용하지 않는다.
+- `현재 마스크 자동 추적`은 현재 프레임부터 다음 명시적 키프레임 직전 또는 영상 끝까지 진행한다. 상속/추적된 마스크를 시작점으로 선택한 경우 실제 샘플이 생성되고 소스 저장이 완료되어야 새 키프레임으로 승격한다. 취소 또는 샘플 0개이면 타임라인을 바꾸지 않는다.
+- 추적 샘플은 마스크 연결 영역별 위치 이동 및 균일 크기 변화를 저장한다. 회전·원근 변형은 아직 지원하지 않는다.
+- 단순 프레임 이동·재생은 키프레임을 추가하지 않는다. 상속/추적된 마스크를 수정하면 그 프레임부터 새 키프레임이 되고 이전 구간은 그 지점에서 끊긴다. 완전히 지운 마스크는 다음 키프레임 전까지 블러가 없는 구간으로 해석한다.
 - 자동 워크스페이스의 기존 프레임별 마스크 의미는 변경하지 않는다.
 
-## 추적 방식
+## 현재 수동 추적 엔진
 
-수동 추적은 새 OpenCV 의존성을 추가하지 않고 기존 `FfFrameExtractor`를 사용한다.
+`ManualMaskTrackingService`는 OpenCV나 별도 AI 모델 없이 기존 `FfFrameExtractor`로 최대 폭 480px 프레임을 순차 디코딩한다.
 
-- 추적용 프레임은 최대 폭 480px로 축소해 순차 디코딩한다.
-- 마스크의 분리된 연결 영역을 기본 추적 단위로 사용한다.
-- 서로 다른 연결 영역이라도 source bounding box가 겹치거나, 영역을 합친 bounding envelope가 다른 영역을 포함하게 되면 같은 그룹으로 묶는다. 이는 한 영역의 transform이 다른 영역 픽셀까지 끌고 가는 것을 막기 위한 보수적 처리다.
-- 각 최종 그룹은 위치 이동과 제한된 스케일 변화를 독립적으로 추적한다.
-- 템플릿은 프레임 진행에 따라 갱신하되 이전 템플릿 일부를 유지한다.
-- 장면 차이가 임계값을 넘으면 장면 전환으로 판단하고 그 프레임부터 추적을 중단한다.
-- 한 영역이라도 추적 신뢰도가 기준보다 낮아지거나 후보를 찾지 못하면 해당 프레임에서 전체 추적 구간을 중단한다.
-- 실패 전에 생성된 추적 샘플이 있으면 성공한 구간까지만 저장한다. 첫 다음 프레임부터 실패해 샘플이 하나도 없으면 추적 결과와 새 소스 키프레임을 저장하지 않는다.
-- 추적 중단 이후 프레임에는 실패한 추적 결과를 계속 끌고 가지 않는다. 사용자가 중단 프레임에서 마스크를 수정한 뒤 다시 추적하는 방식이다.
-- 추적 중에는 편집, 저장, 화면 이탈을 막고 별도 취소 명령을 제공한다.
-- 후보 탐색, scene difference, component/template 처리 내부에서도 cancellation token을 주기적으로 확인해 취소가 한 프레임의 무거운 탐색 전체가 끝날 때까지 지연되지 않도록 한다.
+- 연결된 마스크 영역을 추적 단위로 사용하고 bounding envelope가 겹치는 영역은 같은 그룹으로 묶는다. 그룹마다 마스크 내부에서 밝기 변화가 있는 특징점을 최대 64개 선택한다. 최소 6개가 없으면 불확실한 추적을 시작하지 않는다.
+- 두 프레임 간 지역 패치를 성기게 탐색한 뒤 정밀 탐색하고, 다시 역방향으로 추적하여 출발점에 돌아오는지 확인한다. 역방향 오차가 큰 점은 제외한다. 이는 *피라미드 KLT 광학 흐름* 구현이 아니다.
+- 남은 특징점으로 두 점 기반 RANSAC 유사 합의(위치 + 균일 스케일, 회전 없음)를 만들고 합의 점으로 변환을 재계산한다. 기하학적 오차, 특징점 수, 합의 비율, 크기, 화면 경계, 신뢰도를 검증한다. 모든 그룹이 통과하기 전에 어느 그룹의 결과도 저장하지 않는다.
+- 전체 밝기 히스토그램, 4×4 구역별 밝기 히스토그램, 프레임 간 픽셀 차이를 함께 검사하여 장면 전환 조건을 판정한다. 하나의 전역 평균 밝기 차이 임계값만 사용하던 기존 방식과 다르다.
+- 순차 디코딩에서 프레임 번호가 건너뛰면 확인되지 않은 프레임에 마스크를 적용하지 않고 중단한다. 장면 전환이나 추적 실패가 감지되면 그 프레임을 `StopFrame`과 `EndExclusive`로 설정해 이후 구간을 막는다.
+- 실패 전에 생성된 샘플이 있으면 이전에 통과한 구간까지만 저장한다. 첫 다음 프레임부터 실패해 샘플이 0개이면 추적 결과와 승격 소스 키프레임을 저장하지 않는다. 추적 중에는 편집·저장·화면 이탈을 제한하고 별도 취소 명령을 제공한다.
 
-현재 구현은 회전/원근 변형을 모델링하지 않는다. 이동과 균일 스케일 변화가 주 대상이다. 따라서 큰 회전, 급격한 자세 변화, 심한 가림에서는 신뢰도 기준에 의해 추적이 중단될 수 있다.
+**제한:** 특징점 패치의 성긴 탐색→정밀 탐색은 다중 해상도 광학 흐름이 아니며 회전, 큰 움직임, 가림, 텍스처 부족에서 중단할 수 있다. 장면 전환 후 다른 영역으로 잘못 이동하는 모든 경우를 차단한다고 보증할 수 없다. 실패 발견 *이전*에 허용한 결과를 자동으로 되돌리는 기능은 아직 없다. 추적된 모든 프레임의 실제 정확도는 영상 테스트가 필요하다.
 
-## 수명 및 취소
+## 수명·취소 및 저장
 
-수동 tracking은 `WorkspaceOperationLifetime` 작업으로 등록한다.
+- 수동 추적은 `WorkspaceOperationLifetime` 작업으로 등록된다. 종료 시 CTS에 취소를 전달하고 tracking 작업이 `End()`에 도달하기 전에는 워크스페이스가 공유 session/provider를 해제하지 않는다.
+- 수동 키프레임이 구성된 `FramePreviewViewModel.Dispose()`를 직접 호출한 경우 tracking, 수동 프레임 로드, 재생 task를 세션의 지연 해제 조건에 등록한다. 취소 요청은 UI thread에서 native decoder를 동기 대기하는 것과 구분한다. 구성되지 않은 별도 직접 Dispose 경로까지 보장하는지는 별도 검증이 필요하다.
+- 취소와 tracking 결과 commit은 같은 gate를 사용한다. 취소가 선행하면 commit하지 않고, commit이 시작되면 source/workspace/track state commit을 완료한 뒤 종료한다. commit flag는 예외 발생 시에도 `finally`에서 해제한다.
+- 실제 키프레임만 기존 `mask_<frame>.png` 또는 face-mask entry로 저장한다. 프레임마다 4K 마스크 파일을 생성하지 않는다. 추적은 compact state에 `OffsetX`, `OffsetY`, `Scale`, `Confidence`, 원본 파일 evidence 및 source mask fingerprint를 저장한다.
+- 먼저 source 키프레임 workspace를 저장하고 persistence tail을 drain한 뒤 track state를 저장한다. source 저장 실패 시 새로 승격한 키프레임을 롤백하며 tracking metadata는 쓰지 않는다.
+- `WorkspacePersistenceCoordinator.QueueSaveAsync(Func<WorkspaceSnapshot>)` 및 `SaveNow(Func<WorkspaceSnapshot>)`는 scalar `BuildSnapshot` 실행과 provider mask 캡처를 같은 `_captureGate`에 넣는다. 일반·terminal·tracking 전용 저장은 메서드 그룹 `BuildSnapshot`을 전달한다. 이 gate가 외부 모든 상태 변경을 트랜잭션으로 보호하지는 않는다.
+- track state 파일은 호출마다 별도 임시 파일을 만들고 프로세스 내 저장을 직렬화한 다음 최종 파일을 교체한다.
 
-- workspace dispose 또는 terminal shutdown이 admission을 닫으면 실행 중 tracking CTS에 취소를 전달한다.
-- tracking 작업이 lifetime `End()`에 도달하기 전에는 workspace가 `FramePreview`, video session, mask provider를 dispose하지 않는다.
-- tracking task는 별도로 보관되어 cancel + drain이 가능한 형태이며, view detach 시에는 먼저 취소를 요청한다.
-- 수동 키프레임이 구성된 `FramePreviewViewModel.Dispose()` 직접 호출에서는 bitmap의 `PropertyChanged` 경계에서 이미 발행된 tracking·manual frame load·playback task를 모두 `VideoSession.DeferDisposeUntil()`에 등록한다. 취소 요청 후 task 완료를 기다려 세션 리소스를 해제하므로 UI thread에서 수동 디코더 완료를 동기 대기하지 않는다. 이 메서드 자체가 비동기로 작업 완료를 보장하는 API는 아니다.
-- 직접 Dispose의 tracking 이벤트 구독도 함께 해제한다. 일반 workspace 소유 경로의 리소스 정리와 추적 task drain은 기존 operation lifetime을 유지한다.
-- cancellation과 결과 commit은 같은 commit gate를 사용한다. 취소가 gate를 먼저 획득하면 결과를 commit하지 않고, commit이 먼저 시작된 경우에는 source/workspace/track metadata의 commit 구간을 완료한 뒤 취소가 관찰된다.
-- commit-start flag는 source 승격, workspace persistence, track metadata 저장을 포함하는 전체 commit 구간의 `try/finally`에서 관리하며, bitmap clone/`SetMask`/저장 예외가 발생해도 반드시 해제된다.
+## Preview / Export 동작
 
-## 저장 방식
+- Preview와 Export는 같은 tracking segment의 동일한 위치/스케일 샘플을 사용한다. Export는 source bitmap을 읽기 전용으로 참조하고 scratch bitmap을 재사용한다.
+- source mask fingerprint 불일치 시 해당 추적을 적용하지 않는다. 실패 경계 이후에는 기존 추적을 이어 붙이지 않는다. 해결되지 않은 tracking failure가 있으면 Export를 차단한다.
+- Preview의 tolerant load는 손상된 개별 segment를 제외할 수 있다. Export의 strict load는 파일이 존재하면서 읽기 실패·손상·중복 키프레임·버전/source evidence 불일치·필수 JSON 필드 누락·유효하지 않은 숫자/경계가 있으면 fail-closed 처리한다. tracking state 파일 자체가 없으면 비추적 workspace로 허용한다.
+- Export preflight는 CTS/status 준비 후 background에서 수행하고 source fingerprint 계산 시에도 취소를 확인한다. 수동 단일 Auto로 키프레임이 변경되면 provider 기준으로 현재 마스크를 다시 생성하고 추적 소스 fingerprint를 재검증한다.
 
-기존 workspace persistence 형식을 유지한다. 실제 키프레임 프레임만 기존 `mask_<frame>.png` 또는 face-mask entry로 저장하고, 중간 프레임을 일괄 bitmap 파일로 materialize하지 않는다.
+## 2026-09-16 수정 이력 및 검증 경계
 
-추적 결과는 별도의 compact track state에 프레임별 `offset X/Y`, `scale`, `confidence`를 저장한다. 원본 영상의 파일 크기/수정 시각과 소스 키프레임 마스크 fingerprint를 함께 검증해, 영상이나 키프레임이 바뀐 뒤 오래된 추적 결과가 재사용되지 않도록 한다.
+1. Workspace scalar/mask snapshot 정합성, tolerant/strict JSON 읽기, tracking commit과 직접 Dispose 시 수명 처리를 수정했다.
+2. 이어서 수동 tracking의 고정 밝기 패턴 검색을 특징점 패치의 전·후방 검증과 RANSAC 합의 기반 위치·크기 추정으로 교체했다. 평균 밝기 차이 한 가지 대신 전체/공간 밝기 분포와 픽셀 차이로 장면 전환 판정을 보강했다.
+3. RANSAC 두 번째 점이 첫 번째 점과 같아질 수 있는 조합을 방지하고, 성긴 탐색과 정밀 탐색의 점수를 분리했다. 자동 블러 쪽 구현은 변경하지 않았다.
 
-추적 결과를 commit할 때는 source keyframe을 먼저 workspace persistence에 저장하고 그 다음 compact track state를 저장한다. tracking 전용 저장은 `QueueSaveAsync()` 이후 현재 persistence tail을 `FlushAsync()`로 drain한 다음 완료되므로, latest-wins에서 해당 요청이 stale skip되더라도 더 최신 snapshot이 실제 저장을 끝내기 전에 track metadata를 먼저 쓰지 않는다. source workspace 저장이 실패하면 새로 승격한 source keyframe은 메모리 provider에서 롤백하고 tracking metadata는 쓰지 않는다.
-
-`WorkspacePersistenceCoordinator.QueueSaveAsync(Func<WorkspaceSnapshot>)`와 `SaveNow(Func<WorkspaceSnapshot>)`는 scalar 상태를 생성하는 콜백을 `_captureGate` *내부*에서 실행하고, 같은 gate 내에서 provider mask snapshot을 캡처하고 요청을 발행한다. `WorkspaceViewModel`의 일반 queued·terminal 저장과 `WorkspaceViewModel.ManualTrackingOwnership`의 tracking 전용 저장은 모두 사전에 만든 snapshot 대신 `BuildSnapshot` 메서드 그룹을 전달한다. 다른 저장 요청의 mask 캡처가 두 단계 사이에 끼어드는 문제를 방지한다. 이 gate는 무관한 외부 스레드의 임의 상태 변경까지 자동으로 막는 전역 트랜잭션은 아니다. 이전 snapshot 객체를 받는 기존 overload도 호환성 목적으로 유지한다.
-
-track state 저장은 호출마다 고유한 임시 파일을 사용하고 프로세스 내 저장은 serialize한 뒤 최종 파일로 교체한다. 같은 영상에 대한 동시 저장이 고정 `.tmp` 파일을 서로 덮어쓰는 문제를 피한다.
-
-따라서 긴 구간을 추적해도 프레임 수만큼 4K 마스크 파일이 생성되지 않는다.
-
-## Preview / Export 일관성
-
-Preview와 export는 같은 tracking segment를 해석한다.
-
-- 정상 추적 구간에서는 동일한 이동/스케일 결과를 사용한다.
-- 저장된 bitmap 키프레임은 export 동안 read-only source bitmap과 재사용 가능한 scratch bitmap을 사용해 프레임마다 4K `WriteableBitmap`을 새로 만들지 않는다.
-- 추적 데이터가 현재 키프레임 fingerprint와 맞지 않으면 stale segment로 판단하고 preview/export 모두 해당 추적을 적용하지 않는다.
-- 장면 전환 또는 신뢰도 실패 이후에는 실패 경계를 넘어 추적 마스크를 적용하지 않는다.
-- unresolved tracking failure가 있으면 export를 시작하지 않는다.
-- 일반 preview load는 개별 손상 segment를 제외하고 정상 segment를 유지하며, 파일 전체가 유효하지 않을 때는 keyframe hold로 복귀한다.
-- export는 strict track-state load를 사용한다. track 파일이 아예 없는 경우는 정상적인 비추적 workspace로 허용하지만, 파일이 존재하면서 읽기 실패, JSON/schema 손상, 버전 불일치, source evidence 불일치가 발생하면 fail-closed로 export를 차단한다.
-- export preflight는 export CTS/status를 먼저 준비한 뒤 background task에서 실행하며, source-mask fingerprint 계산도 cancellation token을 확인한다.
-- 수동 단일 Auto가 현재 키프레임 provider를 바꾸면 Auto 종료 시 현재 `MaskBitmap`을 provider 기준으로 다시 구성하고 기존 tracking source fingerprint를 재검증한다.
-
-## 2026-09-16 후속 검토 및 수정
-
-1. **Snapshot 정합성:** 기존 `_captureGate`는 scalar `BuildSnapshot()`을 보호하지 않아 서로 다른 저장 요청의 scalar/mask 캡처 시점이 섞일 수 있었다. 일반 queued·terminal 저장뿐 아니라 tracking 전용 `PersistManualTrackingWorkspaceAsync()`도 `QueueSaveAsync(BuildSnapshot)`을 사용하도록 고쳤다.
-2. **Preview tolerant-load:** `JsonDocument`로 파일 전체 구조·version·source evidence를 먼저 확인하고 segment를 각각 deserialize하여, 개별 타입 불일치나 잘못된 구조의 segment만 제외한다. 파일 전체 JSON 문법 오류, 누락된 segment 배열 및 source evidence 불일치는 전체 실패로 처리한다.
-3. **Strict metadata:** Export에서는 개별 decode 실패, 유효하지 않은 segment 하나 또는 중복 source keyframe 하나만 있어도 차단한다. source/end 프레임 순서, failure 경계, component index 중복, 유한한 bounds 및 양수 크기, 엄격히 증가하는 sample 프레임, sample 구간, 유한한 offset/scale/confidence, scale `[0.25, 4]` 및 confidence `[0, 1]`을 검사한다. `JsonRequired`를 header·segment·component·sample의 필수 필드에 적용해 누락된 `Version`, `SourceKeyframe`, `OffsetX`, `Scale`, `Confidence` 등이 기본값으로 통과하지 못하게 했다. Preview에서는 해당 segment만 제외한다.
-4. **직접 Dispose:** 수동 키프레임 Preview에서 tracking task뿐 아니라 이미 실행 중인 manual load·playback task도 세션 지연 해제의 완료 조건에 포함한다. cancellation 요청과 native session 해제를 분리하되 UI thread 동기 대기는 추가하지 않았다.
-5. **CI:** `quality-gate.yml`의 push 대상에 해당 작업 브랜치를 추가하여 Windows/macOS restore 및 build를 실행하도록 했다. 실행 결과는 해당 GitHub Actions run에서 별도로 확인해야 한다.
-
-## 검증 범위 및 한계
-
-- source fingerprint에서 영상 프레임의 실제 크기나 전체 디코딩 프레임 수까지 역추론하지 않으므로, component bounds가 원본 프레임 크기 이내인지와 sample/end 프레임이 실제 영상 길이 이내인지까지는 track JSON load 시 확인할 수 없다. 이 항목들은 별도 실제 영상 검증이 필요하다.
-- 수동 키프레임 이벤트 핸들러가 구성되기 전 또는 의도적으로 해제된 별도의 `FramePreview` 직접 Dispose 경로까지 동일한 지연 해제를 제공하는지는 확인되지 않았다. 일반 workspace 소유 종료는 operation lifetime을 사용한다.
-- 손상 JSON 실제 재현, 직접 Dispose 경계, 저장 동시성 및 실영상 추적·export는 별도 런타임 테스트가 필요하다.
-- CI build 통과만으로 수동 추적 정확도나 영상 내보내기 결과의 정확도를 보장할 수 없다.
-- 이 문서의 코드 동작 설명은 정적 소스 검토를 기준으로 작성되었으며 실영상 smoke test 완료를 의미하지 않는다.
+**빌드 통과와 추적 정확도 검증은 다르다.** 회전·원근·실제 피라미드 광학 흐름, 사후 오추적 롤백, 실제 영상의 총 프레임 수/크기와 track JSON의 대조, 비구성 Preview 직접 Dispose, 손상 JSON 재현, 저장 동시성, 550→750→851 재현 영상의 정확도·속도·Preview/Export 결과는 아직 개별 런타임 검증이 필요하다. 최신 CI는 해당 커밋의 GitHub Actions에서 확인한다.
