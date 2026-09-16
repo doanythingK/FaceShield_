@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using FaceShield.Services.Video;
 using System;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,6 +18,7 @@ public partial class FramePreviewViewModel
     private bool _isManualTracking;
     private int _manualTrackingProgress;
     private string? _manualTrackingStatusText;
+    private bool _manualTrackingToolPanelHandlerAttached;
 
     public bool ManualTrackingAvailable =>
         _manualMaskKeyframesEnabled &&
@@ -74,10 +76,23 @@ public partial class FramePreviewViewModel
     {
         _manualTrackingVideoPath = videoPath;
         _manualTrackingTotalFrames = Math.Max(0, totalFrames);
+        if (!_manualTrackingToolPanelHandlerAttached)
+        {
+            _toolPanel.PropertyChanged += OnManualTrackingToolPanelPropertyChanged;
+            _manualTrackingToolPanelHandlerAttached = true;
+        }
         if (_manualMaskKeyframesEnabled && !string.IsNullOrWhiteSpace(videoPath))
             ManualTrackingShutdownRegistry.Register(this);
         OnPropertyChanged(nameof(ManualTrackingAvailable));
         OnPropertyChanged(nameof(CanTrackForward));
+    }
+
+    private void OnManualTrackingToolPanelPropertyChanged(
+        object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolPanelViewModel.CanEditWorkspace))
+            OnPropertyChanged(nameof(CanTrackForward));
     }
 
     internal void NotifyManualMaskEditedForTracking(int frameIndex)
@@ -289,6 +304,11 @@ public partial class FramePreviewViewModel
         {
             _toolPanel.UndoRequested -= OnManualUndoCompleted;
             _manualUndoHandlerAttached = false;
+        }
+        if (_manualTrackingToolPanelHandlerAttached)
+        {
+            _toolPanel.PropertyChanged -= OnManualTrackingToolPanelPropertyChanged;
+            _manualTrackingToolPanelHandlerAttached = false;
         }
     }
 
