@@ -30,8 +30,18 @@
 - 실패 전에 생성된 추적 샘플이 있으면 성공한 구간까지만 저장한다. 첫 다음 프레임부터 실패해 샘플이 하나도 없으면 추적 결과와 새 소스 키프레임을 저장하지 않는다.
 - 추적 중단 이후 프레임에는 실패한 추적 결과를 계속 끌고 가지 않는다. 사용자가 중단 프레임에서 마스크를 수정한 뒤 다시 추적하는 방식이다.
 - 추적 중에는 편집, 저장, 화면 이탈을 막고 별도 취소 명령을 제공한다.
+- 후보 탐색, scene difference, component/template 처리 내부에서도 cancellation token을 주기적으로 확인해 취소가 한 프레임의 무거운 탐색 전체가 끝날 때까지 지연되지 않도록 한다.
 
 현재 구현은 회전/원근 변형을 모델링하지 않는다. 이동과 균일 스케일 변화가 주 대상이다. 따라서 큰 회전, 급격한 자세 변화, 심한 가림에서는 신뢰도 기준에 의해 추적이 중단될 수 있다.
+
+## 수명 및 취소
+
+수동 tracking은 `WorkspaceOperationLifetime` 작업으로 등록한다.
+
+- workspace dispose 또는 terminal shutdown이 admission을 닫으면 실행 중 tracking CTS에 취소를 전달한다.
+- tracking 작업이 lifetime `End()`에 도달하기 전에는 workspace가 `FramePreview`, video session, mask provider를 dispose하지 않는다.
+- tracking task는 별도로 보관되어 cancel + drain이 가능한 형태이며, view detach 시에는 먼저 취소를 요청한다.
+- cancellation과 결과 commit은 같은 commit gate를 사용한다. 취소가 gate를 먼저 획득하면 결과를 commit하지 않고, commit이 먼저 시작된 경우에는 source/workspace/track metadata의 짧은 commit 구간을 완료한 뒤 취소가 관찰된다.
 
 ## 저장 방식
 
@@ -39,7 +49,9 @@
 
 추적 결과는 별도의 compact track state에 프레임별 `offset X/Y`, `scale`, `confidence`를 저장한다. 원본 영상의 파일 크기/수정 시각과 소스 키프레임 마스크 fingerprint를 함께 검증해, 영상이나 키프레임이 바뀐 뒤 오래된 추적 결과가 재사용되지 않도록 한다.
 
-추적 state 저장은 임시 파일을 거쳐 교체하며, 저장이 성공한 뒤에만 새 tracking segment를 메모리 상태로 채택한다. 상속 프레임을 추적 소스로 승격한 직후 track state 저장이 실패하면 방금 만든 소스 키프레임도 롤백한다.
+추적 결과를 commit할 때는 source keyframe을 먼저 workspace persistence에 즉시 저장하고 그 다음 compact track state를 저장한다. 따라서 두 파일을 하나의 파일시스템 transaction으로 묶을 수 없는 상황에서도, 중간 실패 시 source keyframe 자체가 사라지는 것보다 안전한 `hold` 상태가 남는다. source workspace 저장이 실패하면 새로 승격한 source keyframe은 메모리 provider에서 롤백하고 tracking metadata는 쓰지 않는다.
+
+track state 저장은 호출마다 고유한 임시 파일을 사용하고 프로세스 내 저장은 serialize한 뒤 최종 파일로 교체한다. 같은 영상에 대한 동시 저장이 고정 `.tmp` 파일을 서로 덮어쓰는 문제를 피한다.
 
 따라서 긴 구간을 추적해도 프레임 수만큼 4K 마스크 파일이 생성되지 않는다.
 
@@ -51,6 +63,8 @@ Preview와 export는 같은 tracking segment를 해석한다.
 - 저장된 bitmap 키프레임은 export 동안 read-only source bitmap과 재사용 가능한 scratch bitmap을 사용해 프레임마다 4K `WriteableBitmap`을 새로 만들지 않는다.
 - 추적 데이터가 현재 키프레임 fingerprint와 맞지 않으면 stale segment로 판단하고 preview/export 모두 해당 추적을 적용하지 않는다.
 - 장면 전환 또는 신뢰도 실패 이후에는 실패 경계를 넘어 추적 마스크를 적용하지 않는다.
+- unresolved tracking failure가 있으면 export를 시작하지 않는다.
+- export preflight는 export CTS/status를 먼저 준비한 뒤 background task에서 실행하며, source-mask fingerprint 계산도 cancellation token을 확인한다.
 - 수동 단일 Auto가 현재 키프레임 provider를 바꾸면 Auto 종료 시 현재 `MaskBitmap`을 provider 기준으로 다시 구성하고 기존 tracking source fingerprint를 재검증한다.
 
 ## 검증 상태
