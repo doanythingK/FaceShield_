@@ -91,7 +91,7 @@ internal static class ManualMaskTrackStore
     private const int CurrentVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true,
+        WriteIndented = false,
         PropertyNameCaseInsensitive = true
     };
 
@@ -122,6 +122,7 @@ internal static class ManualMaskTrackStore
                 .Where(static segment =>
                     segment.SourceKeyframe >= 0 &&
                     !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) &&
+                    segment.Components != null &&
                     segment.Components.Count > 0)
                 .Select(static segment => segment.Clone())
                 .ToArray()
@@ -139,32 +140,40 @@ internal static class ManualMaskTrackStore
         IReadOnlyCollection<ManualMaskTrackSegment> segments)
     {
         if (string.IsNullOrWhiteSpace(videoPath))
-            return;
+            throw new ArgumentException("Video path is required.", nameof(videoPath));
 
+        string path = GetTrackPath(videoPath);
+        string directory = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(directory);
+
+        var state = new ManualMaskTrackStoreState
+        {
+            Version = CurrentVersion,
+            SourceEvidence = BuildSourceEvidence(videoPath),
+            Segments = segments
+                .OrderBy(static segment => segment.SourceKeyframe)
+                .Select(static segment => segment.Clone())
+                .ToList()
+        };
+
+        string json = JsonSerializer.Serialize(state, JsonOptions);
+        string tempPath = path + ".tmp";
         try
         {
-            string path = GetTrackPath(videoPath);
-            string directory = Path.GetDirectoryName(path)!;
-            Directory.CreateDirectory(directory);
-
-            var state = new ManualMaskTrackStoreState
-            {
-                Version = CurrentVersion,
-                SourceEvidence = BuildSourceEvidence(videoPath),
-                Segments = segments
-                    .OrderBy(static segment => segment.SourceKeyframe)
-                    .Select(static segment => segment.Clone())
-                    .ToList()
-            };
-
-            string json = JsonSerializer.Serialize(state, JsonOptions);
-            string tempPath = path + ".tmp";
             File.WriteAllText(tempPath, json);
             File.Move(tempPath, path, overwrite: true);
         }
-        catch (Exception ex)
+        catch
         {
-            Debug.WriteLine($"[ManualMaskTrackStore] save failed: {ex.Message}");
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch
+            {
+            }
+            throw;
         }
     }
 
