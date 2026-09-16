@@ -26,8 +26,9 @@ public partial class WorkspaceViewModel
             return;
 
         FramePreview.PersistCurrentMask();
-        var snapshot = BuildSnapshot();
-        await _workspacePersistence.QueueSaveAsync(snapshot).ConfigureAwait(false);
+        // Capture scalar state inside the same ordering gate as the provider mask
+        // snapshot and request publication, just like ordinary workspace saves.
+        await _workspacePersistence.QueueSaveAsync(BuildSnapshot).ConfigureAwait(false);
 
         // QueueSaveAsync uses latest-wins and an older request can complete after
         // being skipped as stale. Do not publish tracking metadata until the current
