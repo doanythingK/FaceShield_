@@ -18,12 +18,22 @@ public partial class FramePreviewViewModel
         int totalFrames = 0)
     {
         _manualMaskKeyframesEnabled = enabled;
-        ConfigureManualTrackingContext(videoPath, totalFrames);
 
-        if (_maskProvider is not FrameMaskProvider provider)
+        FrameMaskProvider? provider = _maskProvider as FrameMaskProvider;
+        if (provider != null)
+            ManualMaskKeyframeTimeline.Configure(provider, enabled, videoPath);
+
+        if (!enabled)
+        {
+            DetachManualTrackingContext();
+            OnPropertyChanged(nameof(ManualTrackingAvailable));
+            OnPropertyChanged(nameof(CanTrackForward));
             return;
+        }
 
-        ManualMaskKeyframeTimeline.Configure(provider, enabled, videoPath);
+        ConfigureManualTrackingContext(videoPath, totalFrames);
+        if (provider == null)
+            return;
 
         if (!_manualMaskKeyframeHandlerAttached)
         {
@@ -46,8 +56,7 @@ public partial class FramePreviewViewModel
             _manualUndoHandlerAttached = true;
         }
 
-        if (enabled)
-            ApplyInheritedManualMaskIfNeeded();
+        ApplyInheritedManualMaskIfNeeded();
     }
 
     private void OnManualUndoCompleted()
