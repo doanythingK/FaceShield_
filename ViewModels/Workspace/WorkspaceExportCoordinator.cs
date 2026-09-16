@@ -150,6 +150,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 $"자동 분석 품질 검증이 완료되지 않아 내보내기를 중단했습니다. reason={cascadeFailure}");
         }
 
+        ThrowIfUnresolvedManualTrackingFailure(input, exportRunId);
+
         string output = BuildDefaultExportPath(input);
         (string? resolvedOutput, bool allowOutputOverwrite) =
             await _resolveOutputPathAsync(output);
@@ -244,6 +246,66 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             }
             Interlocked.CompareExchange(ref _exportCts, null, exportCts);
             exportCts.Dispose();
+        }
+    }
+
+    private void ThrowIfUnresolvedManualTrackingFailure(
+        string input,
+        string exportRunId)
+    {
+        if (!ManualMaskKeyframeTimeline.IsEnabled(_maskProvider))
+            return;
+
+        int[] keyframes = _maskProvider.GetStoredMaskFrameIndices()
+            .Concat(_maskProvider.GetFaceMaskFrameIndices())
+            .Distinct()
+            .OrderBy(static frameIndex => frameIndex)
+            .ToArray();
+        if (keyframes.Length == 0)
+            return;
+
+        foreach (ManualMaskTrackSegment segment in ManualMaskTrackStore.Load(input)
+                     .Where(static candidate =>
+                         candidate.StoppedByFailure &&
+                         candidate.StopFrame.HasValue)
+                     .OrderBy(static candidate => candidate.StopFrame))
+        {
+            int sourcePosition = Array.BinarySearch(keyframes, segment.SourceKeyframe);
+            if (sourcePosition < 0)
+                continue;
+
+            using var sourceMask = _maskProvider.GetFinalMask(segment.SourceKeyframe);
+            if (sourceMask == null ||
+                string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
+                !string.Equals(
+                    ManualMaskFingerprint.Compute(sourceMask),
+                    segment.SourceMaskFingerprint,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            int stopFrame = segment.StopFrame!.Value;
+            int nextPosition = sourcePosition + 1;
+            if (nextPosition < keyframes.Length &&
+                keyframes[nextPosition] <= stopFrame)
+            {
+                continue;
+            }
+
+            string stopReason = string.IsNullOrWhiteSpace(segment.StopReason)
+                ? "추적 신뢰도 부족"
+                : segment.StopReason!;
+            string line =
+                $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-unresolved, " +
+                $"sourceFrame={segment.SourceKeyframe}, stopFrame={stopFrame}";
+            System.Diagnostics.Debug.WriteLine(line);
+            RunMetricsLog.AppendRunLines(exportRunId, line);
+
+            throw new InvalidOperationException(
+                $"수동 마스크 추적이 {stopFrame} 프레임에서 중단된 상태입니다 ({stopReason}). " +
+                "해당 프레임에 보정 키프레임을 만든 뒤 다시 추적하거나, " +
+                "해당 위치부터 유지할 마스크를 저장한 후 내보내세요.");
         }
     }
 
