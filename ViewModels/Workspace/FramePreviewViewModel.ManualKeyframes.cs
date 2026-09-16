@@ -1,6 +1,7 @@
 using FaceShield.Services.Video;
 using System;
 using System.ComponentModel;
+using System.Threading;
 
 namespace FaceShield.ViewModels.Workspace;
 
@@ -103,13 +104,26 @@ public partial class FramePreviewViewModel
         object? sender,
         PropertyChangedEventArgs e)
     {
-        // FramePreview.Dispose() sets _disposed before clearing FrameBitmap/MaskBitmap.
-        // Active manual tracking necessarily has a mask, so the ensuing property
-        // change gives the partial tracking layer a direct-dispose cancellation hook
-        // even when the caller bypasses WorkspaceViewModel's lifetime coordinator.
         if (_disposed)
         {
+            // Direct FramePreview.Dispose() bypasses the workspace's operation
+            // lifetime. Keep its VideoSession alive until the already-published
+            // tracking task completes; never synchronously wait on the UI thread.
             CancelManualTrackingCore();
+            var trackingTask = Volatile.Read(ref _manualTrackingTask);
+            if (trackingTask != null && _session != null)
+            {
+                try
+                {
+                    _session.DeferDisposeUntil(trackingTask);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // An independently disposed session cannot be held again.
+                }
+            }
+
+            DisposeManualTrackingState();
             return;
         }
 
