@@ -596,8 +596,8 @@ internal static class ManualMaskTrackingService
                         candidateWidth,
                         candidateHeight);
                     if (candidate.X < 0 || candidate.Y < 0 ||
-                        candidate.X + candidate.Width >= width ||
-                        candidate.Y + candidate.Height >= height)
+                        candidate.X + candidate.Width > width ||
+                        candidate.Y + candidate.Height > height)
                     {
                         continue;
                     }
