@@ -416,27 +416,35 @@ public partial class FramePreviewViewModel
                         "수동 추적 workspace 저장 컨텍스트가 구성되지 않았습니다.");
                 }
 
+                WriteableBitmap? promotedMask = null;
+                if (!sourceWasExplicit)
+                    promotedMask = CloneBitmap(sourceMask);
+
                 bool promotedSourceKeyframe = false;
-                lock (_manualTrackingCommitGate)
-                {
-                    // Cancellation and commit share one linearization point. If
-                    // cancellation wins first, nothing is committed. Once commit
-                    // starts, cancellation no longer interrupts this short durability
-                    // sequence; the tracking lifetime keeps shared resources alive.
-                    token.ThrowIfCancellationRequested();
-                    if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
-                        return;
-
-                    _manualTrackingCommitStarted = true;
-                    if (!sourceWasExplicit)
-                    {
-                        provider.SetMask(sourceFrame, CloneBitmap(sourceMask));
-                        promotedSourceKeyframe = true;
-                    }
-                }
-
+                bool commitStarted = false;
                 try
                 {
+                    lock (_manualTrackingCommitGate)
+                    {
+                        // Cancellation and commit share one linearization point. If
+                        // cancellation wins first, nothing is committed. Expensive
+                        // bitmap cloning is completed before this point so every
+                        // exception after setting the flag is covered by the outer
+                        // finally below.
+                        token.ThrowIfCancellationRequested();
+                        if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
+                            return;
+
+                        _manualTrackingCommitStarted = true;
+                        commitStarted = true;
+                        if (promotedMask != null)
+                        {
+                            provider.SetMask(sourceFrame, promotedMask);
+                            promotedMask = null;
+                            promotedSourceKeyframe = true;
+                        }
+                    }
+
                     try
                     {
                         // Make the source keyframe durable before writing compact
@@ -467,8 +475,12 @@ public partial class FramePreviewViewModel
                 }
                 finally
                 {
-                    lock (_manualTrackingCommitGate)
-                        _manualTrackingCommitStarted = false;
+                    promotedMask?.Dispose();
+                    if (commitStarted)
+                    {
+                        lock (_manualTrackingCommitGate)
+                            _manualTrackingCommitStarted = false;
+                    }
                 }
             }
 
