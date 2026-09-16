@@ -202,28 +202,35 @@ namespace FaceShield.Services.Workspace
             long finalRequestId = 0;
             bool ownsFinalization = false;
 
-            lock (_taskGate)
+            // Do not let terminal finalization overtake a QueueSaveAsync call that has
+            // already started capturing its provider snapshot but has not published its
+            // request yet. Whichever caller enters _captureGate first defines the
+            // ordering boundary.
+            lock (_captureGate)
             {
-                if (_disposed)
-                    throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
+                lock (_taskGate)
+                {
+                    if (_disposed)
+                        throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
 
-                if (_finalizing)
-                {
-                    finalTask = _latestTask;
-                }
-                else
-                {
-                    // Publish a terminal placeholder before releasing the task gate.
-                    // QueueSaveAsync observes _finalizing and cannot cross this boundary,
-                    // while Dispose/another SaveNow can already wait on the placeholder.
-                    _finalizing = true;
-                    predecessor = _latestTask;
-                    finalRequestId = ++_latestRequestId;
-                    finalCompletion = new TaskCompletionSource<object?>(
-                        TaskCreationOptions.RunContinuationsAsynchronously);
-                    _latestTask = finalCompletion.Task;
-                    finalTask = _latestTask;
-                    ownsFinalization = true;
+                    if (_finalizing)
+                    {
+                        finalTask = _latestTask;
+                    }
+                    else
+                    {
+                        // Publish a terminal placeholder before releasing the task gate.
+                        // QueueSaveAsync observes _finalizing and cannot cross this boundary,
+                        // while Dispose/another SaveNow can already wait on the placeholder.
+                        _finalizing = true;
+                        predecessor = _latestTask;
+                        finalRequestId = ++_latestRequestId;
+                        finalCompletion = new TaskCompletionSource<object?>(
+                            TaskCreationOptions.RunContinuationsAsynchronously);
+                        _latestTask = finalCompletion.Task;
+                        finalTask = _latestTask;
+                        ownsFinalization = true;
+                    }
                 }
             }
 
@@ -269,13 +276,20 @@ namespace FaceShield.Services.Workspace
         public void Dispose()
         {
             Task latestTask;
-            lock (_taskGate)
+            // As with SaveNow, wait for any in-progress QueueSaveAsync capture to
+            // publish (or fail) before taking the completion tail. Otherwise Dispose
+            // could return while a request still owns a provider snapshot that was not
+            // yet visible through _latestTask.
+            lock (_captureGate)
             {
-                if (_disposed)
-                    return;
+                lock (_taskGate)
+                {
+                    if (_disposed)
+                        return;
 
-                _disposed = true;
-                latestTask = _latestTask;
+                    _disposed = true;
+                    latestTask = _latestTask;
+                }
             }
 
             try
