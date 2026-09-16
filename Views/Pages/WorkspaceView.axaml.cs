@@ -8,19 +8,43 @@ namespace FaceShield.Views.Pages;
 
 public partial class WorkspaceView : UserControl
 {
+    private WorkspaceViewModel? _configuredWorkspace;
+    private bool _manualTimelineAttached;
+
     public WorkspaceView()
     {
         InitializeComponent();
         AddHandler(KeyDownEvent, OnAnyKeyDown, RoutingStrategies.Tunnel);
-        DataContextChanged += (_, _) => ConfigureManualMaskTimeline();
-        AttachedToVisualTree += (_, _) => ConfigureManualMaskTimeline();
-        DetachedFromVisualTree += (_, _) => DetachManualMaskTimeline();
+        DataContextChanged += (_, _) =>
+        {
+            if (_manualTimelineAttached)
+                ConfigureManualMaskTimeline();
+        };
+        AttachedToVisualTree += (_, _) =>
+        {
+            _manualTimelineAttached = true;
+            ConfigureManualMaskTimeline();
+        };
+        DetachedFromVisualTree += (_, _) =>
+        {
+            _manualTimelineAttached = false;
+            DetachManualMaskTimeline();
+        };
     }
 
     private void ConfigureManualMaskTimeline()
     {
         if (DataContext is not WorkspaceViewModel vm)
+        {
+            DetachManualMaskTimeline();
             return;
+        }
+
+        if (!ReferenceEquals(_configuredWorkspace, vm))
+        {
+            _configuredWorkspace?.FramePreview.DetachManualTrackingContext();
+            _configuredWorkspace = vm;
+        }
 
         vm.FramePreview.ConfigureManualMaskKeyframes(
             vm.Mode == WorkspaceMode.Manual,
@@ -30,8 +54,9 @@ public partial class WorkspaceView : UserControl
 
     private void DetachManualMaskTimeline()
     {
-        if (DataContext is WorkspaceViewModel vm)
-            vm.FramePreview.DetachManualTrackingContext();
+        WorkspaceViewModel? configured = _configuredWorkspace;
+        _configuredWorkspace = null;
+        configured?.FramePreview.DetachManualTrackingContext();
     }
 
     private void OnAnyKeyDown(object? sender, KeyEventArgs e)
