@@ -106,6 +106,12 @@ internal static class ManualMaskTrackStore
             string path = GetTrackPath(videoPath);
             if (!File.Exists(path))
             {
+                // On Windows, a differing legacy key means the path may live in a
+                // case-sensitive directory. The old all-uppercase identity can
+                // collide with a distinct source file there, so never fall back to it.
+                if (OperatingSystem.IsWindows())
+                    return Array.Empty<ManualMaskTrackSegment>();
+
                 string legacyPath = GetLegacyTrackPath(videoPath);
                 if (!string.Equals(path, legacyPath, StringComparison.Ordinal) &&
                     File.Exists(legacyPath))
