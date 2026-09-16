@@ -87,9 +87,14 @@ public partial class FramePreviewViewModel
         if (provider.HasStoredMask(_currentFrameIndex) ||
             provider.TryGetFaceMaskData(_currentFrameIndex, out _))
         {
-            ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
-                provider,
-                _currentFrameIndex);
+            if (ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
+                    provider,
+                    _currentFrameIndex))
+            {
+                ManualTrackingStatusText =
+                    "키프레임 마스크가 변경되어 기존 추적을 적용하지 않습니다. " +
+                    "현재 프레임에서 다시 자동 추적하세요.";
+            }
             return;
         }
 
