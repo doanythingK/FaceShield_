@@ -97,20 +97,13 @@ internal static class ManualMaskKeyframeTimeline
 
         lock (state.Gate)
         {
+            // Only tracking sourced from the edited keyframe is invalid. Older
+            // segments can keep their samples: once this frame is persisted as a new
+            // explicit keyframe, floor-keyframe resolution naturally hides the older
+            // segment at and after this point. Keeping it also lets a reversible edit
+            // restore the previous track instead of destructively trimming it.
             state.Segments.RemoveAll(segment => segment.SourceKeyframe == frameIndex);
             state.SegmentValidity.Remove(frameIndex);
-            foreach (ManualMaskTrackSegment segment in state.Segments)
-            {
-                if (segment.SourceKeyframe >= frameIndex || segment.EndExclusive <= frameIndex)
-                    continue;
-
-                foreach (ManualMaskTrackComponent component in segment.Components)
-                    component.Samples.RemoveAll(sample => sample.FrameIndex >= frameIndex);
-                segment.EndExclusive = frameIndex;
-                segment.StoppedByFailure = false;
-                segment.StopFrame = null;
-                segment.StopReason = null;
-            }
 
             // Workspace bitmap persistence and compact track persistence are separate
             // transactions. Do not eagerly overwrite the disk track here; a stale
@@ -118,14 +111,14 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    internal static void InvalidateSegmentIfSourceChanged(
+    internal static bool InvalidateSegmentIfSourceChanged(
         FrameMaskProvider provider,
         int sourceKeyframe)
     {
         if (provider == null || sourceKeyframe < 0 ||
             !States.TryGetValue(provider, out TimelineState? state))
         {
-            return;
+            return false;
         }
 
         lock (state.Gate)
@@ -133,13 +126,13 @@ internal static class ManualMaskKeyframeTimeline
             ManualMaskTrackSegment? segment = state.Segments.FirstOrDefault(candidate =>
                 candidate.SourceKeyframe == sourceKeyframe);
             if (segment == null)
-                return;
+                return false;
 
             // Recompute after any external keyframe replacement such as single-frame
             // automatic detection. Keep an invalid segment present so preview and
             // export both block stale tracking instead of silently falling back to hold.
             state.SegmentValidity.Remove(sourceKeyframe);
-            _ = IsSegmentCurrentLocked(provider, state, segment);
+            return !IsSegmentCurrentLocked(provider, state, segment);
         }
     }
 
