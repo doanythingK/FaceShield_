@@ -88,6 +88,15 @@ public partial class FramePreviewViewModel
         OnPropertyChanged(nameof(CanTrackForward));
     }
 
+    internal void DetachManualTrackingContext()
+    {
+        DisposeManualTrackingState();
+        _manualTrackingPendingSourceValidationFrame = -1;
+        IsManualTracking = false;
+        _toolPanel.IsManualTracking = false;
+        OnPropertyChanged(nameof(CanTrackForward));
+    }
+
     private void OnManualTrackingToolPanelPropertyChanged(
         object? sender,
         PropertyChangedEventArgs e)
