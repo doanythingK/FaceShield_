@@ -105,8 +105,58 @@ public partial class FramePreviewViewModel
         object? sender,
         PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(ToolPanelViewModel.IsAutoRunning) &&
+            !_toolPanel.IsAutoRunning)
+        {
+            RefreshCurrentManualMaskAfterAuto();
+        }
+
         if (e.PropertyName == nameof(ToolPanelViewModel.CanEditWorkspace))
             OnPropertyChanged(nameof(CanTrackForward));
+    }
+
+    private void RefreshCurrentManualMaskAfterAuto()
+    {
+        if (!_manualMaskKeyframesEnabled ||
+            _disposed ||
+            _currentFrameIndex < 0 ||
+            _frameBitmap == null ||
+            _maskProvider is not FrameMaskProvider provider)
+        {
+            return;
+        }
+
+        WriteableBitmap replacement =
+            CreateEditableMask(_currentFrameIndex, _frameBitmap)
+            ?? CreateEmptyMask(
+                _frameBitmap.PixelSize.Width,
+                _frameBitmap.PixelSize.Height);
+
+        _manualMaskKeyframeRefreshInProgress = true;
+        try
+        {
+            MaskBitmap = replacement;
+            _maskUndo.Clear();
+            _maskDirty = false;
+            UpdateDetectionRects(_currentFrameIndex);
+
+            if (ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
+                    provider,
+                    _currentFrameIndex))
+            {
+                ManualTrackingStatusText =
+                    "자동 검출로 키프레임 마스크가 변경되어 기존 추적을 적용하지 않습니다. " +
+                    "현재 프레임에서 다시 자동 추적하세요.";
+            }
+
+            RefreshPreview(force: true);
+        }
+        finally
+        {
+            _manualMaskKeyframeRefreshInProgress = false;
+        }
+
+        OnPropertyChanged(nameof(CanTrackForward));
     }
 
     internal void NotifyManualMaskEditedForTracking(int frameIndex)
