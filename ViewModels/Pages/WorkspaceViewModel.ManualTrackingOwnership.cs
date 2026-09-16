@@ -20,13 +20,19 @@ public partial class WorkspaceViewModel
             FramePreview.CancelManualTrackingForShutdown;
     }
 
-    private Task PersistManualTrackingWorkspaceAsync()
+    private async Task PersistManualTrackingWorkspaceAsync()
     {
         if (_workspacePersistence == null)
-            return Task.CompletedTask;
+            return;
 
         FramePreview.PersistCurrentMask();
         var snapshot = BuildSnapshot();
-        return _workspacePersistence.QueueSaveAsync(snapshot);
+        await _workspacePersistence.QueueSaveAsync(snapshot).ConfigureAwait(false);
+
+        // QueueSaveAsync uses latest-wins and an older request can complete after
+        // being skipped as stale. Do not publish tracking metadata until the current
+        // persistence tail has actually drained, so the promoted source keyframe is
+        // durable in either this snapshot or a newer one.
+        await _workspacePersistence.FlushAsync().ConfigureAwait(false);
     }
 }
