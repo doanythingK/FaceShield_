@@ -614,11 +614,10 @@ namespace FaceShield.ViewModels.Pages
                 return;
 
             FramePreview.PersistCurrentMask();
-            WorkspaceSnapshot snapshot = BuildSnapshot();
             if (_workspacePersistence != null)
-                _workspacePersistence.SaveNow(snapshot);
+                _workspacePersistence.SaveNow(BuildSnapshot);
             else
-                _stateStore.SaveWorkspace(snapshot, _maskProvider);
+                _stateStore.SaveWorkspace(BuildSnapshot(), _maskProvider);
         }
 
         private void PersistWorkspaceState(bool includePreviewMask)
@@ -632,8 +631,9 @@ namespace FaceShield.ViewModels.Pages
                 if (includePreviewMask)
                     FramePreview.PersistCurrentMask();
 
-                WorkspaceSnapshot snapshot = BuildSnapshot();
-                saveTask = _workspacePersistence.QueueSaveAsync(snapshot);
+                // The coordinator invokes BuildSnapshot inside _captureGate, then
+                // captures masks and publishes this request under the same gate.
+                saveTask = _workspacePersistence.QueueSaveAsync(BuildSnapshot);
             }
             catch
             {
