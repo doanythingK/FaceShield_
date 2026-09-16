@@ -277,7 +277,25 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         if (keyframes.Length == 0)
             return;
 
-        foreach (ManualMaskTrackSegment segment in ManualMaskTrackStore.Load(input)
+        IReadOnlyList<ManualMaskTrackSegment> trackSegments;
+        try
+        {
+            trackSegments = ManualMaskTrackStore.LoadForExport(input);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            string line =
+                $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-state-unreadable, " +
+                $"error={ex.GetType().Name}:{ex.Message}";
+            System.Diagnostics.Debug.WriteLine(line);
+            RunMetricsLog.AppendRunLines(exportRunId, line);
+            throw new InvalidOperationException(
+                "수동 마스크 추적 상태 파일을 확인할 수 없어 안전하게 내보낼 수 없습니다. " +
+                "현재 프레임의 마스크를 확인하고 다시 추적한 뒤 내보내세요.",
+                ex);
+        }
+
+        foreach (ManualMaskTrackSegment segment in trackSegments
                      .Where(static candidate =>
                          candidate.StoppedByFailure &&
                          candidate.StopFrame.HasValue)
@@ -310,11 +328,11 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             string stopReason = string.IsNullOrWhiteSpace(segment.StopReason)
                 ? "추적 신뢰도 부족"
                 : segment.StopReason!;
-            string line =
+            string unresolvedLine =
                 $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-unresolved, " +
                 $"sourceFrame={segment.SourceKeyframe}, stopFrame={stopFrame}";
-            System.Diagnostics.Debug.WriteLine(line);
-            RunMetricsLog.AppendRunLines(exportRunId, line);
+            System.Diagnostics.Debug.WriteLine(unresolvedLine);
+            RunMetricsLog.AppendRunLines(exportRunId, unresolvedLine);
 
             throw new InvalidOperationException(
                 $"수동 마스크 추적이 {stopFrame} 프레임에서 중단된 상태입니다 ({stopReason}). " +
