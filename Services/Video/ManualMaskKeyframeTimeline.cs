@@ -159,13 +159,18 @@ internal static class ManualMaskKeyframeTimeline
         TimelineState state = States.GetValue(provider, static _ => new TimelineState());
         lock (state.Gate)
         {
-            state.Segments.RemoveAll(existing =>
-                existing.SourceKeyframe == segment.SourceKeyframe);
-            state.Segments.Add(segment.Clone());
-            state.Segments.Sort(static (a, b) =>
+            var nextSegments = state.Segments
+                .Where(existing => existing.SourceKeyframe != segment.SourceKeyframe)
+                .Select(static existing => existing.Clone())
+                .ToList();
+            nextSegments.Add(segment.Clone());
+            nextSegments.Sort(static (a, b) =>
                 a.SourceKeyframe.CompareTo(b.SourceKeyframe));
+
+            PersistSegmentsLocked(state, nextSegments);
+
+            state.Segments = nextSegments;
             state.SegmentValidity[segment.SourceKeyframe] = true;
-            PersistLocked(state);
         }
     }
 
@@ -503,11 +508,15 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    private static void PersistLocked(TimelineState state)
+    private static void PersistSegmentsLocked(
+        TimelineState state,
+        IReadOnlyCollection<ManualMaskTrackSegment> segments)
     {
-        if (!state.Enabled || string.IsNullOrWhiteSpace(state.VideoPath))
-            return;
-        ManualMaskTrackStore.Save(state.VideoPath!, state.Segments);
+        if (!state.Enabled)
+            throw new InvalidOperationException("Manual tracking is not enabled for this workspace.");
+        if (string.IsNullOrWhiteSpace(state.VideoPath))
+            throw new InvalidOperationException("Manual tracking video path is unavailable.");
+        ManualMaskTrackStore.Save(state.VideoPath!, segments);
     }
 
     internal sealed class ExportMaskLease : IDisposable
