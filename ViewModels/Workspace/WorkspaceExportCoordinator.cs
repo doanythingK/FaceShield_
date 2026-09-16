@@ -150,34 +150,21 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 $"자동 분석 품질 검증이 완료되지 않아 내보내기를 중단했습니다. reason={cascadeFailure}");
         }
 
-        ThrowIfUnresolvedManualTrackingFailure(input, exportRunId);
-
-        string output = BuildDefaultExportPath(input);
-        (string? resolvedOutput, bool allowOutputOverwrite) =
-            await _resolveOutputPathAsync(output);
-        if (string.IsNullOrWhiteSpace(resolvedOutput))
-            return false;
-        output = resolvedOutput;
-
-        using var exportMaskLease =
-            ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
-        var exporter = new VideoExportService(exportMaskLease.Provider);
-
-        if (updateToolPanel)
-        {
-            _toolPanel.IsExportRunning = true;
-            _toolPanel.ExportProgress = 0;
-            _toolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
-            _toolPanel.ExportStatusText = null;
-        }
-        _etaSamples.Clear();
-
         var exportCts = cancellationToken.CanBeCanceled
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
             : new CancellationTokenSource();
         Interlocked.Exchange(ref _exportCts, exportCts);
         CancellationToken exportToken = exportCts.Token;
         long runGeneration = Interlocked.Increment(ref _exportRunGeneration);
+
+        if (updateToolPanel)
+        {
+            _toolPanel.IsExportRunning = true;
+            _toolPanel.ExportProgress = 0;
+            _toolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
+            _toolPanel.ExportStatusText = "수동 추적 상태를 확인하는 중...";
+        }
+        _etaSamples.Clear();
 
         var progress = new Progress<ExportProgress>(p =>
         {
@@ -196,6 +183,29 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
         try
         {
+            await Task.Run(
+                () => ThrowIfUnresolvedManualTrackingFailure(
+                    input,
+                    exportRunId,
+                    exportToken),
+                exportToken);
+            exportToken.ThrowIfCancellationRequested();
+
+            string output = BuildDefaultExportPath(input);
+            (string? resolvedOutput, bool allowOutputOverwrite) =
+                await _resolveOutputPathAsync(output);
+            exportToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(resolvedOutput))
+                return false;
+            output = resolvedOutput;
+
+            using var exportMaskLease =
+                ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
+            var exporter = new VideoExportService(exportMaskLease.Provider);
+
+            if (updateToolPanel)
+                _toolPanel.ExportStatusText = "내보내기를 준비하는 중...";
+
             (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy = (
                 false,
                 new[] { HybridCopyDisabledReason });
@@ -251,8 +261,10 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
     private void ThrowIfUnresolvedManualTrackingFailure(
         string input,
-        string exportRunId)
+        string exportRunId,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!ManualMaskKeyframeTimeline.IsEnabled(_maskProvider))
             return;
 
@@ -270,6 +282,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                          candidate.StopFrame.HasValue)
                      .OrderBy(static candidate => candidate.StopFrame))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int sourcePosition = Array.BinarySearch(keyframes, segment.SourceKeyframe);
             if (sourcePosition < 0)
                 continue;
@@ -278,7 +291,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             if (sourceMask == null ||
                 string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
                 !string.Equals(
-                    ManualMaskFingerprint.Compute(sourceMask),
+                    ManualMaskFingerprint.Compute(sourceMask, cancellationToken),
                     segment.SourceMaskFingerprint,
                     StringComparison.Ordinal))
             {
