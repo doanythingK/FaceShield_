@@ -255,6 +255,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         if (!isPlaying)
         {
             _framePreview.StopPlayback();
+            _framePreview.NotifyManualTrackingPlaybackStateChanged();
             return;
         }
 
@@ -298,6 +299,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 _frameList.NotifyPlaybackStopped();
                 _ = _showPlaybackErrorAsync(message);
             });
+        _framePreview.NotifyManualTrackingPlaybackStateChanged();
     }
 
     private void ThrowIfDisposed()
@@ -319,6 +321,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         }
 
         CancelInitialization();
+        _framePreview.DetachManualTrackingContext();
         _frameList.SetPlaybackEnabled(false);
         _framePreview.SetSessionReady(false);
         _frameList.SelectedFrameIndexChanged -= OnSelectedFrameIndexChanged;
