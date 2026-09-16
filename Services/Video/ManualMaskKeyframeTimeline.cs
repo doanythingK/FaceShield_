@@ -353,6 +353,26 @@ internal static class ManualMaskKeyframeTimeline
         return position >= 0 ? keyframes[position] : -1;
     }
 
+    private static ManualMaskTrackSample? FindSample(
+        IReadOnlyList<ManualMaskTrackSample> samples,
+        int frameIndex)
+    {
+        int low = 0;
+        int high = samples.Count - 1;
+        while (low <= high)
+        {
+            int mid = low + ((high - low) >> 1);
+            ManualMaskTrackSample sample = samples[mid];
+            if (sample.FrameIndex == frameIndex)
+                return sample;
+            if (sample.FrameIndex < frameIndex)
+                low = mid + 1;
+            else
+                high = mid - 1;
+        }
+        return null;
+    }
+
     private static bool TryCreateTransformedMask(
         WriteableBitmap source,
         ManualMaskTrackSegment segment,
@@ -412,8 +432,7 @@ internal static class ManualMaskKeyframeTimeline
 
         foreach (ManualMaskTrackComponent component in segment.Components)
         {
-            ManualMaskTrackSample? sample = component.Samples.FirstOrDefault(candidate =>
-                candidate.FrameIndex == frameIndex);
+            ManualMaskTrackSample? sample = FindSample(component.Samples, frameIndex);
             if (sample == null)
                 return false;
 
@@ -674,7 +693,7 @@ internal static class ManualMaskKeyframeTimeline
             tracked = true;
             foreach (ManualMaskTrackComponent component in segment.Components)
             {
-                if (!component.Samples.Any(sample => sample.FrameIndex == frameIndex))
+                if (FindSample(component.Samples, frameIndex) == null)
                 {
                     blocked = true;
                     break;
