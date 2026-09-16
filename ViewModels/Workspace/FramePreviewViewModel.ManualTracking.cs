@@ -284,6 +284,8 @@ public partial class FramePreviewViewModel
                 if (expectedFrames <= 0)
                     return;
                 int percent = (int)Math.Round(processed * 100.0 / expectedFrames);
+                if (endExclusive == int.MaxValue)
+                    percent = Math.Min(percent, 99);
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (!_disposed && ReferenceEquals(_manualTrackingCts, trackingCts))
@@ -311,30 +313,33 @@ public partial class FramePreviewViewModel
             if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
                 return;
 
-            bool promotedSourceKeyframe = false;
-            try
+            if (result.ProcessedFrames > 0)
             {
-                if (!sourceWasExplicit)
+                bool promotedSourceKeyframe = false;
+                try
                 {
-                    provider.SetMask(sourceFrame, CloneBitmap(sourceMask));
-                    promotedSourceKeyframe = true;
-                }
+                    if (!sourceWasExplicit)
+                    {
+                        provider.SetMask(sourceFrame, CloneBitmap(sourceMask));
+                        promotedSourceKeyframe = true;
+                    }
 
-                ManualMaskKeyframeTimeline.SetTrackSegment(provider, result.Segment);
-            }
-            catch
-            {
-                if (promotedSourceKeyframe)
-                {
-                    try
-                    {
-                        provider.RemoveFaceMasksRange(sourceFrame, sourceFrame + 1);
-                    }
-                    catch
-                    {
-                    }
+                    ManualMaskKeyframeTimeline.SetTrackSegment(provider, result.Segment);
                 }
-                throw;
+                catch
+                {
+                    if (promotedSourceKeyframe)
+                    {
+                        try
+                        {
+                            provider.RemoveFaceMasksRange(sourceFrame, sourceFrame + 1);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                    throw;
+                }
             }
 
             if (result.Segment.StoppedByFailure)
@@ -348,9 +353,11 @@ public partial class FramePreviewViewModel
                 string stop = result.Segment.StopFrame.HasValue
                     ? $"{result.Segment.StopFrame.Value} 프레임"
                     : "현재 구간";
-                ManualTrackingStatusText =
-                    $"추적 중단: {stop}에서 {result.Segment.StopReason ?? "신뢰도 부족"}. " +
-                    "해당 프레임에서 마스크를 수정한 뒤 다시 추적하세요.";
+                ManualTrackingStatusText = result.ProcessedFrames > 0
+                    ? $"추적 중단: {stop}에서 {result.Segment.StopReason ?? "신뢰도 부족"}. " +
+                      "성공한 구간까지만 저장했습니다. 해당 프레임에서 마스크를 수정한 뒤 다시 추적하세요."
+                    : $"추적 실패: {stop}에서 {result.Segment.StopReason ?? "신뢰도 부족"}. " +
+                      "추적 결과를 저장하지 않았습니다.";
             }
             else
             {
@@ -360,8 +367,9 @@ public partial class FramePreviewViewModel
                     .Select(static sample => sample.FrameIndex)
                     .DefaultIfEmpty(sourceFrame)
                     .Max();
-                ManualTrackingStatusText =
-                    $"추적 완료: {sourceFrame} → {lastFrame} 프레임.";
+                ManualTrackingStatusText = result.ProcessedFrames > 0
+                    ? $"추적 완료: {sourceFrame} → {lastFrame} 프레임."
+                    : "추적할 다음 프레임이 없어 타임라인을 변경하지 않았습니다.";
             }
         }
         catch (OperationCanceledException) when (trackingCts.IsCancellationRequested)
