@@ -199,10 +199,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 return false;
             output = resolvedOutput;
 
-            using var exportMaskLease =
-                ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
-            var exporter = new VideoExportService(exportMaskLease.Provider);
-
             if (updateToolPanel)
                 _toolPanel.ExportStatusText = "내보내기를 준비하는 중...";
 
@@ -215,8 +211,12 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 exportRunId,
                 $"[ExportRunConfig] runId={exportRunId}, blurRadius={blurRadius}, qualityPreset={qualityPreset}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
 
-            await Task.Run(() =>
+            var exportSummary = await Task.Run(() =>
             {
+                exportToken.ThrowIfCancellationRequested();
+                using var exportMaskLease =
+                    ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
+                var exporter = new VideoExportService(exportMaskLease.Provider);
                 exporter.Export(
                     input,
                     output,
@@ -227,14 +227,15 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                     allowHybridCopy: hybridPolicy.allowHybridCopy,
                     allowOutputOverwrite: allowOutputOverwrite,
                     qualityPreset: qualityPreset);
+                return exporter.LastExportSummary;
             }, exportToken);
 
-            if (exporter.LastExportSummary != null)
+            if (exportSummary != null)
             {
-                System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exporter.LastExportSummary.ToLogLine()}");
+                System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exportSummary.ToLogLine()}");
                 RunMetricsLog.AppendExportQualityGate(
                     effectiveAutoRunSummary,
-                    exporter.LastExportSummary,
+                    exportSummary,
                     hybridPolicy.allowHybridCopy,
                     hybridPolicy.disableReasons);
             }
