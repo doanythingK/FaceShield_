@@ -213,7 +213,7 @@ namespace FaceShield.Services.Workspace
             // slip its mask snapshot between those two captures.
             lock (_captureGate)
             {
-                Task predecessor;
+                Task predecessor = Task.CompletedTask;
                 TaskCompletionSource<object?>? finalCompletion = null;
                 long finalRequestId = 0;
                 lock (_taskGate)
@@ -257,7 +257,7 @@ namespace FaceShield.Services.Workspace
                         saveLease = null;
                         // The worker awaits the previously published completion tail.
                         // It cannot complete synchronously while the capture gate is held.
-                        _ = ExecutePendingSaveAsync(pending, predecessor!);
+                        _ = ExecutePendingSaveAsync(pending, predecessor);
                     }
                     catch (Exception ex)
                     {
