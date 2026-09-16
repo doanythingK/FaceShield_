@@ -89,17 +89,24 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         }
     }
 
-    public void Dispose()
+    private bool TryBeginDispose(out Task? pending)
     {
-        Task? pending;
         lock (_disposeGate)
         {
+            pending = null;
             if (_disposeState != 0)
-                return;
+                return false;
 
             _disposeState = 1;
             pending = _disposeAfter;
+            return true;
         }
+    }
+
+    public void Dispose()
+    {
+        if (!TryBeginDispose(out Task? pending))
+            return;
 
         if (pending != null && !pending.IsCompleted)
         {
@@ -148,26 +155,13 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        Task? pending;
-        lock (_disposeGate)
-        {
-            if (_disposeState != 0)
-                return;
-
-            _disposeState = 1;
-            pending = _disposeAfter;
-        }
+        if (!TryBeginDispose(out Task? pending))
+            return;
 
         if (pending != null)
         {
-            try
-            {
-                await pending.ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[VideoSession] tracking drain failed: {ex.Message}");
-            }
+            try { await pending.ConfigureAwait(false); }
+            catch (Exception ex) { Debug.WriteLine($"[VideoSession] tracking drain failed: {ex.Message}"); }
         }
 
         try
