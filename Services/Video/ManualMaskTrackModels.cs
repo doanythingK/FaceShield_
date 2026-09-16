@@ -104,10 +104,12 @@ internal static class ManualMaskTrackStore
 
         try
         {
-            return LoadCore(videoPath);
+            return LoadCore(videoPath, strict: false);
         }
         catch (Exception ex)
         {
+            // A missing/corrupt whole document, unsupported version or stale source
+            // evidence cannot be repaired by removing individual segments.
             Debug.WriteLine($"[ManualMaskTrackStore] load failed: {ex.Message}");
             return Array.Empty<ManualMaskTrackSegment>();
         }
@@ -124,10 +126,12 @@ internal static class ManualMaskTrackStore
         if (string.IsNullOrWhiteSpace(videoPath))
             throw new ArgumentException("Video path is required.", nameof(videoPath));
 
-        return LoadCore(videoPath);
+        return LoadCore(videoPath, strict: true);
     }
 
-    private static IReadOnlyList<ManualMaskTrackSegment> LoadCore(string videoPath)
+    private static IReadOnlyList<ManualMaskTrackSegment> LoadCore(
+        string videoPath,
+        bool strict)
     {
         string? path = ResolveExistingTrackPath(videoPath);
         if (path == null)
@@ -137,10 +141,7 @@ internal static class ManualMaskTrackStore
         ManualMaskTrackStoreState? state =
             JsonSerializer.Deserialize<ManualMaskTrackStoreState>(json, JsonOptions);
         if (state == null)
-        {
-            throw new InvalidDataException(
-                "Manual tracking state is empty or could not be deserialized.");
-        }
+            throw new InvalidDataException("Manual tracking state is empty or could not be deserialized.");
         if (state.Version != CurrentVersion)
         {
             throw new InvalidDataException(
@@ -148,10 +149,7 @@ internal static class ManualMaskTrackStore
         }
 
         string expectedEvidence = BuildSourceEvidence(videoPath);
-        if (!string.Equals(
-                state.SourceEvidence,
-                expectedEvidence,
-                StringComparison.Ordinal))
+        if (!string.Equals(state.SourceEvidence, expectedEvidence, StringComparison.Ordinal))
         {
             throw new InvalidDataException(
                 "Manual tracking state does not match the current source video evidence.");
@@ -160,34 +158,102 @@ internal static class ManualMaskTrackStore
             throw new InvalidDataException("Manual tracking state has no segment collection.");
 
         var result = new List<ManualMaskTrackSegment>(state.Segments.Count);
+        var keyframes = new HashSet<int>();
         foreach (ManualMaskTrackSegment? segment in state.Segments)
         {
-            if (segment == null ||
-                segment.SourceKeyframe < 0 ||
-                string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
-                segment.Components == null ||
-                segment.Components.Count == 0)
+            // Preview salvages only independently valid segments. Export fails closed
+            // on every invalid or duplicate entry; neither accepts a stale file.
+            if (!TryValidateSegment(segment, out string reason) ||
+                !keyframes.Add(segment!.SourceKeyframe))
             {
-                throw new InvalidDataException(
-                    "Manual tracking state contains an invalid segment.");
-            }
-
-            foreach (ManualMaskTrackComponent? component in segment.Components)
-            {
-                if (component == null ||
-                    component.SourceBoundsWidth <= 0 ||
-                    component.SourceBoundsHeight <= 0 ||
-                    component.Samples == null)
+                if (strict)
                 {
                     throw new InvalidDataException(
-                        "Manual tracking state contains an invalid component.");
+                        $"Manual tracking state contains an invalid segment: {reason}");
                 }
+
+                Debug.WriteLine($"[ManualMaskTrackStore] skipping invalid segment: {reason}");
+                continue;
             }
 
-            result.Add(segment.Clone());
+            result.Add(segment!.Clone());
         }
 
         return result;
+    }
+
+    private static bool TryValidateSegment(
+        ManualMaskTrackSegment? segment,
+        out string reason)
+    {
+        if (segment == null || segment.SourceKeyframe < 0 ||
+            string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
+            segment.EndExclusive <= segment.SourceKeyframe ||
+            segment.Components == null || segment.Components.Count == 0)
+        {
+            reason = "missing or invalid segment header";
+            return false;
+        }
+
+        if (segment.StoppedByFailure)
+        {
+            if (segment.StopFrame != segment.EndExclusive)
+            {
+                reason = "failure boundary does not match end-exclusive frame";
+                return false;
+            }
+        }
+        else if (segment.StopFrame.HasValue)
+        {
+            reason = "non-failed segment has a failure frame";
+            return false;
+        }
+
+        var componentIndices = new HashSet<int>();
+        foreach (ManualMaskTrackComponent? component in segment.Components)
+        {
+            if (component == null || component.ComponentIndex < 0 ||
+                !componentIndices.Add(component.ComponentIndex) ||
+                !double.IsFinite(component.SourceBoundsX) ||
+                !double.IsFinite(component.SourceBoundsY) ||
+                !double.IsFinite(component.SourceBoundsWidth) ||
+                !double.IsFinite(component.SourceBoundsHeight) ||
+                component.SourceBoundsX < 0 || component.SourceBoundsY < 0 ||
+                component.SourceBoundsWidth <= 0 || component.SourceBoundsHeight <= 0 ||
+                !double.IsFinite(component.SourceBoundsX + component.SourceBoundsWidth) ||
+                !double.IsFinite(component.SourceBoundsY + component.SourceBoundsHeight) ||
+                component.Samples == null)
+            {
+                reason = "invalid component index, bounds or sample collection";
+                return false;
+            }
+
+            int previousFrame = segment.SourceKeyframe;
+            foreach (ManualMaskTrackSample? sample in component.Samples)
+            {
+                if (sample == null || sample.FrameIndex <= previousFrame ||
+                    sample.FrameIndex >= segment.EndExclusive ||
+                    !double.IsFinite(sample.OffsetX) ||
+                    !double.IsFinite(sample.OffsetY) ||
+                    !double.IsFinite(sample.Scale) ||
+                    sample.Scale < 0.25 || sample.Scale > 4.0 ||
+                    !double.IsFinite(sample.Confidence) ||
+                    sample.Confidence < 0 || sample.Confidence > 1 ||
+                    !double.IsFinite(component.SourceBoundsX + sample.OffsetX) ||
+                    !double.IsFinite(component.SourceBoundsY + sample.OffsetY) ||
+                    !double.IsFinite(component.SourceBoundsWidth * sample.Scale) ||
+                    !double.IsFinite(component.SourceBoundsHeight * sample.Scale))
+                {
+                    reason = "invalid, duplicate or unordered frame sample/transform";
+                    return false;
+                }
+
+                previousFrame = sample.FrameIndex;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
     }
 
     private static string? ResolveExistingTrackPath(string videoPath)
@@ -236,8 +302,7 @@ internal static class ManualMaskTrackStore
         string json = JsonSerializer.Serialize(state, JsonOptions);
         lock (SaveGate)
         {
-            string tempPath =
-                path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
                 File.WriteAllText(tempPath, json);
