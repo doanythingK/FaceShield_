@@ -15,6 +15,11 @@ public partial class FramePreviewViewModel
     private string? _manualTrackingVideoPath;
     private int _manualTrackingTotalFrames;
     private CancellationTokenSource? _manualTrackingCts;
+    private Task? _manualTrackingTask;
+    private readonly object _manualTrackingCommitGate = new();
+    private Func<bool>? _tryBeginManualTrackingLifetime;
+    private Action? _endManualTrackingLifetime;
+    private Action? _persistManualTrackingWorkspace;
     private bool _isManualTracking;
     private int _manualTrackingProgress;
     private string? _manualTrackingStatusText;
@@ -73,6 +78,19 @@ public partial class FramePreviewViewModel
         _currentFrameIndex >= 0 &&
         _maskBitmap != null;
 
+    internal void ConfigureManualTrackingOwnership(
+        Func<bool> tryBeginLifetimeOperation,
+        Action endLifetimeOperation,
+        Action persistWorkspaceState)
+    {
+        _tryBeginManualTrackingLifetime = tryBeginLifetimeOperation
+            ?? throw new ArgumentNullException(nameof(tryBeginLifetimeOperation));
+        _endManualTrackingLifetime = endLifetimeOperation
+            ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
+        _persistManualTrackingWorkspace = persistWorkspaceState
+            ?? throw new ArgumentNullException(nameof(persistWorkspaceState));
+    }
+
     internal void ConfigureManualTrackingContext(
         string? videoPath,
         int totalFrames)
@@ -92,13 +110,38 @@ public partial class FramePreviewViewModel
 
     internal void DetachManualTrackingContext()
     {
-        // Detach only requests cancellation and releases view-lifecycle handlers.
-        // IsManualTracking/ToolPanel.IsManualTracking remain true until the active
-        // tracking task reaches its finally block. Clearing them here would allow a
-        // rapid detach/reattach to start a second tracker while the first is still
-        // unwinding decoder and exact-frame operations.
+        // Detach requests cancellation and releases view-lifecycle handlers. The
+        // workspace lifetime operation remains active until the tracking task drains,
+        // so shared providers/session resources cannot be disposed underneath it.
         DisposeManualTrackingState();
         OnPropertyChanged(nameof(CanTrackForward));
+    }
+
+    internal void NotifyManualTrackingPlaybackStateChanged()
+        => OnPropertyChanged(nameof(CanTrackForward));
+
+    internal async Task StopManualTrackingAndWaitAsync()
+    {
+        CancelManualTrackingCore();
+        Task? trackingTask = Volatile.Read(ref _manualTrackingTask);
+        if (trackingTask == null)
+            return;
+
+        try
+        {
+            await trackingTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[FramePreview] manual tracking shutdown completed with error: {ex.Message}");
+        }
     }
 
     private void OnManualTrackingToolPanelPropertyChanged(
@@ -204,6 +247,48 @@ public partial class FramePreviewViewModel
     [RelayCommand]
     private async Task TrackForward()
     {
+        if (!CanTrackForward)
+            return;
+
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task operationTask = completion.Task;
+        if (Interlocked.CompareExchange(
+                ref _manualTrackingTask,
+                operationTask,
+                null) != null)
+        {
+            return;
+        }
+
+        bool lifetimeStarted = false;
+        try
+        {
+            Func<bool>? tryBegin = _tryBeginManualTrackingLifetime;
+            if (tryBegin != null)
+            {
+                if (!tryBegin())
+                    return;
+                lifetimeStarted = true;
+            }
+
+            await TrackForwardCoreAsync();
+        }
+        finally
+        {
+            completion.TrySetResult(true);
+            _ = Interlocked.CompareExchange(
+                ref _manualTrackingTask,
+                null,
+                operationTask);
+
+            if (lifetimeStarted)
+                _endManualTrackingLifetime?.Invoke();
+        }
+    }
+
+    private async Task TrackForwardCoreAsync()
+    {
         if (!CanTrackForward ||
             _maskProvider is not FrameMaskProvider provider ||
             string.IsNullOrWhiteSpace(_manualTrackingVideoPath) ||
@@ -269,8 +354,10 @@ public partial class FramePreviewViewModel
         try
         {
             await StopManualOperationsAndWaitAsync();
+            token.ThrowIfCancellationRequested();
             await SuspendExactFrameOperationsAndWaitAsync();
             exactOperationsSuspended = true;
+            token.ThrowIfCancellationRequested();
 
             var progress = new SynchronousTrackingProgress(processed =>
             {
@@ -304,7 +391,7 @@ public partial class FramePreviewViewModel
                         progress,
                         token);
                     tracked.Segment.SourceMaskFingerprint =
-                        ManualMaskFingerprint.Compute(sourceMask);
+                        ManualMaskFingerprint.Compute(sourceMask, token);
                     return tracked;
                 },
                 token);
@@ -315,30 +402,58 @@ public partial class FramePreviewViewModel
 
             if (result.ProcessedFrames > 0)
             {
-                bool promotedSourceKeyframe = false;
-                try
+                lock (_manualTrackingCommitGate)
                 {
+                    // Cancellation and commit share this gate. A cancellation that
+                    // wins the gate prevents all state changes; once commit wins, it
+                    // finishes the small persistence transaction before cancellation
+                    // can be observed as complete.
+                    token.ThrowIfCancellationRequested();
+                    if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
+                        return;
+
+                    bool promotedSourceKeyframe = false;
                     if (!sourceWasExplicit)
                     {
                         provider.SetMask(sourceFrame, CloneBitmap(sourceMask));
                         promotedSourceKeyframe = true;
                     }
 
-                    ManualMaskKeyframeTimeline.SetTrackSegment(provider, result.Segment);
-                }
-                catch
-                {
-                    if (promotedSourceKeyframe)
+                    try
                     {
-                        try
+                        Action? persistWorkspace = _persistManualTrackingWorkspace;
+                        if (persistWorkspace == null)
                         {
-                            provider.RemoveFaceMasksRange(sourceFrame, sourceFrame + 1);
+                            throw new InvalidOperationException(
+                                "수동 추적 workspace 저장 컨텍스트가 구성되지 않았습니다.");
                         }
-                        catch
-                        {
-                        }
+
+                        // Persist the exact source keyframe before writing tracking
+                        // metadata. If the process stops after this point but before
+                        // track JSON commit, reopening safely falls back to keyframe
+                        // hold instead of losing the source mask.
+                        persistWorkspace();
                     }
-                    throw;
+                    catch
+                    {
+                        if (promotedSourceKeyframe)
+                        {
+                            try
+                            {
+                                provider.RemoveFaceMasksRange(
+                                    sourceFrame,
+                                    sourceFrame + 1);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                        throw;
+                    }
+
+                    ManualMaskKeyframeTimeline.SetTrackSegment(
+                        provider,
+                        result.Segment);
                 }
             }
 
@@ -407,11 +522,14 @@ public partial class FramePreviewViewModel
 
     private void CancelManualTrackingCore()
     {
-        CancellationTokenSource? cts = Volatile.Read(ref _manualTrackingCts);
-        if (cts == null)
-            return;
-        try { cts.Cancel(); }
-        catch (ObjectDisposedException) { }
+        lock (_manualTrackingCommitGate)
+        {
+            CancellationTokenSource? cts = Volatile.Read(ref _manualTrackingCts);
+            if (cts == null)
+                return;
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
     }
 
     private void DisposeManualTrackingState()
