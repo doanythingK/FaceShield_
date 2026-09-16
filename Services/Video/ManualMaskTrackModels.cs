@@ -90,6 +90,7 @@ internal sealed class ManualMaskTrackStoreState
 internal static class ManualMaskTrackStore
 {
     private const int CurrentVersion = 3;
+    private static readonly object SaveGate = new();
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = false,
@@ -175,23 +176,26 @@ internal static class ManualMaskTrackStore
         };
 
         string json = JsonSerializer.Serialize(state, JsonOptions);
-        string tempPath = path + ".tmp";
-        try
+        lock (SaveGate)
         {
-            File.WriteAllText(tempPath, json);
-            File.Move(tempPath, path, overwrite: true);
-        }
-        catch
-        {
+            string tempPath =
+                path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, path, overwrite: true);
             }
-            catch
+            finally
             {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                }
             }
-            throw;
         }
     }
 
