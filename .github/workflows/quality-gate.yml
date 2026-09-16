@@ -5,6 +5,7 @@ on:
     branches:
       - "main"
       - "hardening/**"
+      - "refactor/manual-mask-keyframes"
   pull_request:
     branches:
       - "main"
