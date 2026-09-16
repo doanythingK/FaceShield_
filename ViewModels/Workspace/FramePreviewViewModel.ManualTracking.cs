@@ -155,18 +155,24 @@ public partial class FramePreviewViewModel
 
         CancellationTokenSource trackingCts = _manualTrackingCts!;
         CancellationToken token = trackingCts.Token;
+
+        // Never use a possibly estimated total-frame count as a hard tracking
+        // boundary. An explicit next keyframe is authoritative; otherwise decode to
+        // EOF and use TotalFrames only to estimate progress.
         int endExclusive = ManualMaskKeyframeTimeline.GetNextExplicitKeyframe(
             provider,
             sourceFrame,
-            _manualTrackingTotalFrames);
+            totalFrames: 0);
         int expectedFrames = endExclusive != int.MaxValue
             ? Math.Max(0, endExclusive - sourceFrame - 1)
-            : 0;
+            : _manualTrackingTotalFrames > sourceFrame
+                ? Math.Max(0, _manualTrackingTotalFrames - sourceFrame - 1)
+                : 0;
 
         IsManualTracking = true;
         _toolPanel.IsManualTracking = true;
         ManualTrackingProgress = 0;
-        ManualTrackingStatusText = expectedFrames > 0
+        ManualTrackingStatusText = endExclusive != int.MaxValue
             ? $"프레임 {sourceFrame}부터 {endExclusive - 1}까지 추적 중..."
             : $"프레임 {sourceFrame}부터 영상 끝까지 추적 중...";
         OnPropertyChanged(nameof(CanTrackForward));
