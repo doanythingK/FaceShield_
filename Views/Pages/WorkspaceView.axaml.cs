@@ -46,6 +46,7 @@ public partial class WorkspaceView : UserControl
             _configuredWorkspace = vm;
         }
 
+        vm.ConfigureManualTrackingOwnership();
         vm.FramePreview.ConfigureManualMaskKeyframes(
             vm.Mode == WorkspaceMode.Manual,
             vm.FrameList.VideoPath,
