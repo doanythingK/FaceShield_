@@ -90,10 +90,12 @@ public partial class FramePreviewViewModel
 
     internal void DetachManualTrackingContext()
     {
+        // Detach only requests cancellation and releases view-lifecycle handlers.
+        // IsManualTracking/ToolPanel.IsManualTracking remain true until the active
+        // tracking task reaches its finally block. Clearing them here would allow a
+        // rapid detach/reattach to start a second tracker while the first is still
+        // unwinding decoder and exact-frame operations.
         DisposeManualTrackingState();
-        _manualTrackingPendingSourceValidationFrame = -1;
-        IsManualTracking = false;
-        _toolPanel.IsManualTracking = false;
         OnPropertyChanged(nameof(CanTrackForward));
     }
 
