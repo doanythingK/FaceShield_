@@ -1,7 +1,9 @@
 using FaceShield.Services.Video;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Workspace;
 
@@ -106,16 +108,28 @@ public partial class FramePreviewViewModel
     {
         if (_disposed)
         {
-            // Direct FramePreview.Dispose() bypasses the workspace's operation
-            // lifetime. Keep its VideoSession alive until the already-published
-            // tracking task completes; never synchronously wait on the UI thread.
+            // A direct FramePreview.Dispose() bypasses the workspace operation
+            // lifetime. Its preview-bitmap change fires before session.Dispose().
+            // Cancel first, then keep the session alive until *all* published manual
+            // operations finish, including a decoder load or playback without tracking.
+            // Never synchronously drain these tasks on the UI thread.
             CancelManualTrackingCore();
-            var trackingTask = Volatile.Read(ref _manualTrackingTask);
-            if (trackingTask != null && _session != null)
+            var pending = new List<Task>(3);
+            Task? trackingTask = Volatile.Read(ref _manualTrackingTask);
+            Task? loadTask = Volatile.Read(ref _manualFrameLoadTask);
+            Task? playbackTask = Volatile.Read(ref _playbackTask);
+            if (trackingTask != null)
+                pending.Add(trackingTask);
+            if (loadTask != null)
+                pending.Add(loadTask);
+            if (playbackTask != null)
+                pending.Add(playbackTask);
+
+            if (pending.Count > 0 && _session != null)
             {
                 try
                 {
-                    _session.DeferDisposeUntil(trackingTask);
+                    _session.DeferDisposeUntil(Task.WhenAll(pending));
                 }
                 catch (ObjectDisposedException)
                 {
