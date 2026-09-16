@@ -1,4 +1,5 @@
 using FaceShield.Services.Video;
+using System;
 using System.ComponentModel;
 
 namespace FaceShield.ViewModels.Workspace;
@@ -51,8 +52,40 @@ public partial class FramePreviewViewModel
 
     private void OnManualUndoCompleted()
     {
-        if (!_manualMaskKeyframesEnabled || _currentFrameIndex < 0)
+        if (!_manualMaskKeyframesEnabled ||
+            _currentFrameIndex < 0 ||
+            _maskBitmap == null ||
+            _maskProvider is not FrameMaskProvider provider)
+        {
             return;
+        }
+
+        // Undo can return a tracked/inherited frame exactly to the effective mask it
+        // had before editing. Do not persist that no-op as a new explicit keyframe,
+        // otherwise the existing track would be cut at this frame.
+        if (ManualMaskKeyframeTimeline.TryCloneEffectiveKeyframeMask(
+                provider,
+                _currentFrameIndex,
+                out var baseline))
+        {
+            using (baseline)
+            {
+                if (baseline.PixelSize.Width == _maskBitmap.PixelSize.Width &&
+                    baseline.PixelSize.Height == _maskBitmap.PixelSize.Height &&
+                    string.Equals(
+                        ManualMaskFingerprint.Compute(baseline),
+                        ManualMaskFingerprint.Compute(_maskBitmap),
+                        StringComparison.Ordinal))
+                {
+                    _maskDirty = false;
+                    ManualTrackingStatusText =
+                        "되돌리기로 원래 마스크 상태가 복원되어 기존 추적을 유지합니다.";
+                    OnPropertyChanged(nameof(CanTrackForward));
+                    return;
+                }
+            }
+        }
+
         NotifyManualMaskEditedForTracking(_currentFrameIndex);
     }
 
