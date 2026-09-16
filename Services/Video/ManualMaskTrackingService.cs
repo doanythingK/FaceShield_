@@ -49,6 +49,7 @@ internal static class ManualMaskTrackingService
         if (sourceFrameIndex < 0)
             throw new ArgumentOutOfRangeException(nameof(sourceFrameIndex));
 
+        cancellationToken.ThrowIfCancellationRequested();
         using var extractor = new FfFrameExtractor(
             videoPath,
             enableHardware: false,
@@ -75,6 +76,7 @@ internal static class ManualMaskTrackingService
             sourceMask,
             sampleWidth,
             sampleHeight,
+            cancellationToken,
             out List<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> componentBoxes);
         if (componentBoxes.Count == 0)
             throw new InvalidOperationException("현재 마스크가 비어 있어 추적할 영역이 없습니다.");
@@ -116,6 +118,7 @@ internal static class ManualMaskTrackingService
             if (!sourceLoaded)
                 throw new InvalidOperationException("추적 시작 프레임을 디코딩하지 못했습니다.");
 
+            cancellationToken.ThrowIfCancellationRequested();
             List<ComponentState> states = BuildComponentStates(
                 labels,
                 componentBoxes,
@@ -124,7 +127,8 @@ internal static class ManualMaskTrackingService
                 sampleWidth,
                 sampleHeight,
                 sampleScaleX,
-                sampleScaleY);
+                sampleScaleY,
+                cancellationToken);
             if (states.Count == 0)
                 throw new InvalidOperationException("추적 가능한 마스크 영역을 만들지 못했습니다.");
 
@@ -187,7 +191,8 @@ internal static class ManualMaskTrackingService
                     current,
                     currentStride,
                     sampleWidth,
-                    sampleHeight);
+                    sampleHeight,
+                    cancellationToken);
                 if (sceneDifference >= SceneCutThreshold)
                 {
                     StopSegment(
@@ -201,6 +206,7 @@ internal static class ManualMaskTrackingService
                 string? failureReason = null;
                 for (int i = 0; i < states.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     ComponentState state = states[i];
                     if (!TryFindBestTransform(
                             current,
@@ -210,6 +216,7 @@ internal static class ManualMaskTrackingService
                             state.PreviousRect,
                             state.Points,
                             state.Template,
+                            cancellationToken,
                             out TrackRect bestRect,
                             out double confidence))
                     {
@@ -241,6 +248,7 @@ internal static class ManualMaskTrackingService
 
                 for (int i = 0; i < states.Count; i++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     ComponentState state = states[i];
                     TrackRect bestRect = candidateRects[i];
                     double confidence = candidateConfidences[i];
@@ -267,7 +275,8 @@ internal static class ManualMaskTrackingService
                         sampleHeight,
                         bestRect,
                         state.Points,
-                        state.Template);
+                        state.Template,
+                        cancellationToken);
                     state.PreviousRect = bestRect;
                 }
 
@@ -277,6 +286,7 @@ internal static class ManualMaskTrackingService
                 previousStride = currentStride;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (!segment.StoppedByFailure)
             {
                 if (safeEndExclusive != int.MaxValue)
@@ -314,8 +324,10 @@ internal static class ManualMaskTrackingService
         WriteableBitmap mask,
         int sampleWidth,
         int sampleHeight,
+        CancellationToken cancellationToken,
         out List<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         int count = checked(sampleWidth * sampleHeight);
         var active = new bool[count];
         var labels = new int[count];
@@ -328,6 +340,9 @@ internal static class ManualMaskTrackingService
                 byte* basePtr = (byte*)fb.Address;
                 for (int y = 0; y < sampleHeight; y++)
                 {
+                    if ((y & 15) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+
                     int sourceY = Math.Clamp(
                         (int)Math.Round((y + 0.5) * fb.Size.Height / sampleHeight - 0.5),
                         0,
@@ -351,6 +366,9 @@ internal static class ManualMaskTrackingService
         {
             for (int y = 0; y < sampleHeight; y++)
             {
+                if ((y & 15) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+
                 for (int x = 0; x < sampleWidth; x++)
                 {
                     int seed = y * sampleWidth + x;
@@ -370,6 +388,9 @@ internal static class ManualMaskTrackingService
 
                     while (head < tail)
                     {
+                        if ((head & 1023) == 0)
+                            cancellationToken.ThrowIfCancellationRequested();
+
                         int index = queue[head++];
                         int cy = index / sampleWidth;
                         int cx = index - cy * sampleWidth;
@@ -405,6 +426,7 @@ internal static class ManualMaskTrackingService
             ArrayPool<int>.Shared.Return(queue);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return labels;
     }
 
@@ -416,12 +438,14 @@ internal static class ManualMaskTrackingService
         int sampleWidth,
         int sampleHeight,
         double sampleScaleX,
-        double sampleScaleY)
+        double sampleScaleY,
+        CancellationToken cancellationToken)
     {
-        List<int[]> groups = BuildOverlappingBoxGroups(boxes);
+        List<int[]> groups = BuildOverlappingBoxGroups(boxes, cancellationToken);
         var states = new List<ComponentState>(groups.Count);
         foreach (int[] group in groups)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int minX = group.Min(index => boxes[index].MinX);
             int minY = group.Min(index => boxes[index].MinY);
             int maxX = group.Max(index => boxes[index].MaxX);
@@ -437,6 +461,7 @@ internal static class ManualMaskTrackingService
             int step = Math.Max(1, (int)Math.Sqrt(Math.Max(1, pixelCount / MaxSamplesPerComponent)));
             for (int y = minY; y <= maxY && points.Count < MaxSamplesPerComponent; y += step)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int x = minX; x <= maxX && points.Count < MaxSamplesPerComponent; x += step)
                 {
                     int label = labels[y * sampleWidth + x];
@@ -475,7 +500,8 @@ internal static class ManualMaskTrackingService
                     sampleWidth,
                     sampleHeight,
                     sampleRect,
-                    points)
+                    points,
+                    cancellationToken)
             });
         }
 
@@ -483,13 +509,15 @@ internal static class ManualMaskTrackingService
     }
 
     private static List<int[]> BuildOverlappingBoxGroups(
-        IReadOnlyList<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes)
+        IReadOnlyList<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes,
+        CancellationToken cancellationToken)
     {
         var remaining = new SortedSet<int>(Enumerable.Range(0, boxes.Count));
         var groups = new List<int[]>();
 
         while (remaining.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int seed = remaining.Min;
             remaining.Remove(seed);
             var group = new List<int> { seed };
@@ -498,6 +526,7 @@ internal static class ManualMaskTrackingService
             bool expanded;
             do
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 expanded = false;
                 foreach (int index in remaining.ToArray())
                 {
@@ -543,11 +572,15 @@ internal static class ManualMaskTrackingService
         int width,
         int height,
         TrackRect rect,
-        IReadOnlyList<SamplePoint> points)
+        IReadOnlyList<SamplePoint> points,
+        CancellationToken cancellationToken)
     {
         var result = new double[points.Count];
         for (int i = 0; i < points.Count; i++)
         {
+            if ((i & 15) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
             double x = rect.X + points[i].U * Math.Max(1.0, rect.Width - 1.0);
             double y = rect.Y + points[i].V * Math.Max(1.0, rect.Height - 1.0);
             result[i] = ReadLuma(frame, stride, width, height, x, y);
@@ -563,6 +596,7 @@ internal static class ManualMaskTrackingService
         TrackRect previousRect,
         IReadOnlyList<SamplePoint> points,
         IReadOnlyList<double> template,
+        CancellationToken cancellationToken,
         out TrackRect bestRect,
         out double confidence)
     {
@@ -575,12 +609,15 @@ internal static class ManualMaskTrackingService
 
         foreach (double scaleDelta in CandidateScales)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             double candidateWidth = Math.Max(2.0, previousRect.Width * scaleDelta);
             double candidateHeight = Math.Max(2.0, previousRect.Height * scaleDelta);
             for (int dy = -(int)radiusY; dy <= radiusY; dy += stepY)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int dx = -(int)radiusX; dx <= radiusX; dx += stepX)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     double centerX = previousRect.CenterX + dx;
                     double centerY = previousRect.CenterY + dy;
                     var candidate = new TrackRect(
@@ -598,6 +635,9 @@ internal static class ManualMaskTrackingService
                     double error = 0.0;
                     for (int i = 0; i < points.Count; i++)
                     {
+                        if ((i & 31) == 0)
+                            cancellationToken.ThrowIfCancellationRequested();
+
                         double x = candidate.X + points[i].U * Math.Max(1.0, candidate.Width - 1.0);
                         double y = candidate.Y + points[i].V * Math.Max(1.0, candidate.Height - 1.0);
                         double luma = ReadLuma(current, stride, width, height, x, y);
@@ -628,12 +668,16 @@ internal static class ManualMaskTrackingService
         int height,
         TrackRect rect,
         IReadOnlyList<SamplePoint> points,
-        double[] template)
+        double[] template,
+        CancellationToken cancellationToken)
     {
         const double oldWeight = 0.45;
         const double newWeight = 1.0 - oldWeight;
         for (int i = 0; i < points.Count; i++)
         {
+            if ((i & 15) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
             double x = rect.X + points[i].U * Math.Max(1.0, rect.Width - 1.0);
             double y = rect.Y + points[i].V * Math.Max(1.0, rect.Height - 1.0);
             double luma = ReadLuma(frame, stride, width, height, x, y);
@@ -647,13 +691,15 @@ internal static class ManualMaskTrackingService
         byte[] current,
         int currentStride,
         int width,
-        int height)
+        int height,
+        CancellationToken cancellationToken)
     {
         int step = Math.Max(4, Math.Min(width, height) / 32);
         double total = 0.0;
         int count = 0;
         for (int y = step / 2; y < height; y += step)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int x = step / 2; x < width; x += step)
             {
                 double a = ReadLuma(previous, previousStride, width, height, x, y);
