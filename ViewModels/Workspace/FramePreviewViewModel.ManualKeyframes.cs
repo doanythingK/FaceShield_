@@ -103,6 +103,16 @@ public partial class FramePreviewViewModel
         object? sender,
         PropertyChangedEventArgs e)
     {
+        // FramePreview.Dispose() sets _disposed before clearing FrameBitmap/MaskBitmap.
+        // Active manual tracking necessarily has a mask, so the ensuing property
+        // change gives the partial tracking layer a direct-dispose cancellation hook
+        // even when the caller bypasses WorkspaceViewModel's lifetime coordinator.
+        if (_disposed)
+        {
+            CancelManualTrackingCore();
+            return;
+        }
+
         if (e.PropertyName == nameof(IsFrameLoading))
         {
             OnPropertyChanged(nameof(CanTrackForward));
