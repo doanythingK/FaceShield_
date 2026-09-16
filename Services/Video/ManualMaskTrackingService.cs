@@ -485,56 +485,49 @@ internal static class ManualMaskTrackingService
     private static List<int[]> BuildOverlappingBoxGroups(
         IReadOnlyList<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes)
     {
-        int count = boxes.Count;
-        var parent = new int[count];
-        for (int i = 0; i < count; i++)
-            parent[i] = i;
+        var remaining = new SortedSet<int>(Enumerable.Range(0, boxes.Count));
+        var groups = new List<int[]>();
 
-        for (int i = 0; i < count; i++)
+        while (remaining.Count > 0)
         {
-            for (int j = i + 1; j < count; j++)
+            int seed = remaining.Min;
+            remaining.Remove(seed);
+            var group = new List<int> { seed };
+            var envelope = boxes[seed];
+
+            bool expanded;
+            do
             {
-                if (!BoxesOverlap(boxes[i], boxes[j]))
-                    continue;
-                Union(i, j);
+                expanded = false;
+                foreach (int index in remaining.ToArray())
+                {
+                    if (!BoxesOverlap(envelope, boxes[index]))
+                        continue;
+
+                    group.Add(index);
+                    remaining.Remove(index);
+                    envelope = MergeBoxes(envelope, boxes[index]);
+                    expanded = true;
+                }
             }
+            while (expanded);
+
+            group.Sort();
+            groups.Add(group.ToArray());
         }
 
-        var groups = new Dictionary<int, List<int>>();
-        for (int i = 0; i < count; i++)
-        {
-            int root = Find(i);
-            if (!groups.TryGetValue(root, out List<int>? group))
-            {
-                group = new List<int>();
-                groups[root] = group;
-            }
-            group.Add(i);
-        }
-
-        return groups.Values
-            .OrderBy(static group => group[0])
-            .Select(static group => group.ToArray())
-            .ToList();
-
-        int Find(int value)
-        {
-            while (parent[value] != value)
-            {
-                parent[value] = parent[parent[value]];
-                value = parent[value];
-            }
-            return value;
-        }
-
-        void Union(int left, int right)
-        {
-            int a = Find(left);
-            int b = Find(right);
-            if (a != b)
-                parent[b] = a;
-        }
+        return groups;
     }
+
+    private static (int MinX, int MinY, int MaxX, int MaxY, int PixelCount) MergeBoxes(
+        (int MinX, int MinY, int MaxX, int MaxY, int PixelCount) a,
+        (int MinX, int MinY, int MaxX, int MaxY, int PixelCount) b)
+        => (
+            Math.Min(a.MinX, b.MinX),
+            Math.Min(a.MinY, b.MinY),
+            Math.Max(a.MaxX, b.MaxX),
+            Math.Max(a.MaxY, b.MaxY),
+            a.PixelCount + b.PixelCount);
 
     private static bool BoxesOverlap(
         (int MinX, int MinY, int MaxX, int MaxY, int PixelCount) a,
