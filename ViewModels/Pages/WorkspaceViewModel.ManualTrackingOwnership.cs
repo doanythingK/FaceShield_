@@ -1,3 +1,5 @@
+using System.Threading.Tasks;
+
 namespace FaceShield.ViewModels.Pages;
 
 public partial class WorkspaceViewModel
@@ -13,8 +15,18 @@ public partial class WorkspaceViewModel
         FramePreview.ConfigureManualTrackingOwnership(
             _operationLifetime.TryBegin,
             _operationLifetime.End,
-            PersistWorkspaceStateImmediate);
+            PersistManualTrackingWorkspaceAsync);
         _operationLifetime.AdmissionClosed +=
             FramePreview.CancelManualTrackingForShutdown;
+    }
+
+    private Task PersistManualTrackingWorkspaceAsync()
+    {
+        if (_workspacePersistence == null)
+            return Task.CompletedTask;
+
+        FramePreview.PersistCurrentMask();
+        var snapshot = BuildSnapshot();
+        return _workspacePersistence.QueueSaveAsync(snapshot);
     }
 }
