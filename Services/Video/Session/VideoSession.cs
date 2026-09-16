@@ -1,6 +1,7 @@
 // FILE: Services/Video/Session/VideoSession.cs
 using FaceShield.Services.Video;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,6 +15,8 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
     internal ManualFramePlayer? ManualPlayer { get; }
 
     private readonly FfFrameExtractor _extractor;
+    private readonly object _disposeGate = new();
+    private Task? _disposeAfter;
     private int _disposeState;
 
     public VideoSession(
@@ -65,11 +68,73 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A directly disposed preview may still have a tracking operation waiting for
+    /// this session. Register its completion before calling Dispose; the synchronous
+    /// Dispose returns without blocking the UI, and releases resources after drain.
+    /// </summary>
+    internal void DeferDisposeUntil(Task operation)
+    {
+        if (operation == null)
+            throw new ArgumentNullException(nameof(operation));
+
+        lock (_disposeGate)
+        {
+            if (_disposeState != 0)
+                throw new ObjectDisposedException(nameof(VideoSession));
+
+            _disposeAfter = _disposeAfter == null
+                ? operation
+                : Task.WhenAll(_disposeAfter, operation);
+        }
+    }
+
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
-            return;
+        Task? pending;
+        lock (_disposeGate)
+        {
+            if (_disposeState != 0)
+                return;
 
+            _disposeState = 1;
+            pending = _disposeAfter;
+        }
+
+        if (pending != null && !pending.IsCompleted)
+        {
+            _ = DisposeAfterAsync(pending);
+            return;
+        }
+
+        DisposeCore();
+    }
+
+    private async Task DisposeAfterAsync(Task pending)
+    {
+        try
+        {
+            await pending.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // A failed tracking operation must not keep the native session alive.
+            Debug.WriteLine($"[VideoSession] tracking drain failed: {ex.Message}");
+        }
+
+        try
+        {
+            DisposeCore();
+        }
+        catch (Exception ex)
+        {
+            // A deferred Dispose cannot report back through its original caller.
+            Debug.WriteLine($"[VideoSession] deferred disposal failed: {ex.Message}");
+        }
+    }
+
+    private void DisposeCore()
+    {
         try
         {
             ManualPlayer?.Dispose();
@@ -77,15 +142,33 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         finally
         {
             DisposeSessionResources();
+            GC.SuppressFinalize(this);
         }
-
-        GC.SuppressFinalize(this);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
-            return;
+        Task? pending;
+        lock (_disposeGate)
+        {
+            if (_disposeState != 0)
+                return;
+
+            _disposeState = 1;
+            pending = _disposeAfter;
+        }
+
+        if (pending != null)
+        {
+            try
+            {
+                await pending.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[VideoSession] tracking drain failed: {ex.Message}");
+            }
+        }
 
         try
         {
@@ -95,9 +178,8 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         finally
         {
             DisposeSessionResources();
+            GC.SuppressFinalize(this);
         }
-
-        GC.SuppressFinalize(this);
     }
 
     private void DisposeSessionResources()
