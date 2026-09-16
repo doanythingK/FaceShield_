@@ -17,9 +17,10 @@ public partial class FramePreviewViewModel
     private CancellationTokenSource? _manualTrackingCts;
     private Task? _manualTrackingTask;
     private readonly object _manualTrackingCommitGate = new();
+    private bool _manualTrackingCommitStarted;
     private Func<bool>? _tryBeginManualTrackingLifetime;
     private Action? _endManualTrackingLifetime;
-    private Action? _persistManualTrackingWorkspace;
+    private Func<Task>? _persistManualTrackingWorkspace;
     private bool _isManualTracking;
     private int _manualTrackingProgress;
     private string? _manualTrackingStatusText;
@@ -75,20 +76,24 @@ public partial class FramePreviewViewModel
         !_isPlaying &&
         !IsFrameLoading &&
         _toolPanel.CanEditWorkspace &&
+        _tryBeginManualTrackingLifetime != null &&
+        _endManualTrackingLifetime != null &&
+        _persistManualTrackingWorkspace != null &&
         _currentFrameIndex >= 0 &&
         _maskBitmap != null;
 
     internal void ConfigureManualTrackingOwnership(
         Func<bool> tryBeginLifetimeOperation,
         Action endLifetimeOperation,
-        Action persistWorkspaceState)
+        Func<Task> persistWorkspaceStateAsync)
     {
         _tryBeginManualTrackingLifetime = tryBeginLifetimeOperation
             ?? throw new ArgumentNullException(nameof(tryBeginLifetimeOperation));
         _endManualTrackingLifetime = endLifetimeOperation
             ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
-        _persistManualTrackingWorkspace = persistWorkspaceState
-            ?? throw new ArgumentNullException(nameof(persistWorkspaceState));
+        _persistManualTrackingWorkspace = persistWorkspaceStateAsync
+            ?? throw new ArgumentNullException(nameof(persistWorkspaceStateAsync));
+        OnPropertyChanged(nameof(CanTrackForward));
     }
 
     internal void ConfigureManualTrackingContext(
@@ -265,25 +270,27 @@ public partial class FramePreviewViewModel
         try
         {
             Func<bool>? tryBegin = _tryBeginManualTrackingLifetime;
-            if (tryBegin != null)
-            {
-                if (!tryBegin())
-                    return;
-                lifetimeStarted = true;
-            }
+            if (tryBegin == null || !tryBegin())
+                return;
 
+            lifetimeStarted = true;
             await TrackForwardCoreAsync();
         }
         finally
         {
-            completion.TrySetResult(true);
-            _ = Interlocked.CompareExchange(
-                ref _manualTrackingTask,
-                null,
-                operationTask);
-
-            if (lifetimeStarted)
-                _endManualTrackingLifetime?.Invoke();
+            try
+            {
+                if (lifetimeStarted)
+                    _endManualTrackingLifetime?.Invoke();
+            }
+            finally
+            {
+                completion.TrySetResult(true);
+                _ = Interlocked.CompareExchange(
+                    ref _manualTrackingTask,
+                    null,
+                    operationTask);
+            }
         }
     }
 
@@ -402,37 +409,40 @@ public partial class FramePreviewViewModel
 
             if (result.ProcessedFrames > 0)
             {
+                Func<Task>? persistWorkspace = _persistManualTrackingWorkspace;
+                if (persistWorkspace == null)
+                {
+                    throw new InvalidOperationException(
+                        "수동 추적 workspace 저장 컨텍스트가 구성되지 않았습니다.");
+                }
+
+                bool promotedSourceKeyframe = false;
                 lock (_manualTrackingCommitGate)
                 {
-                    // Cancellation and commit share this gate. A cancellation that
-                    // wins the gate prevents all state changes; once commit wins, it
-                    // finishes the small persistence transaction before cancellation
-                    // can be observed as complete.
+                    // Cancellation and commit share one linearization point. If
+                    // cancellation wins first, nothing is committed. Once commit
+                    // starts, cancellation no longer interrupts this short durability
+                    // sequence; the tracking lifetime keeps shared resources alive.
                     token.ThrowIfCancellationRequested();
                     if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
                         return;
 
-                    bool promotedSourceKeyframe = false;
+                    _manualTrackingCommitStarted = true;
                     if (!sourceWasExplicit)
                     {
                         provider.SetMask(sourceFrame, CloneBitmap(sourceMask));
                         promotedSourceKeyframe = true;
                     }
+                }
 
+                try
+                {
                     try
                     {
-                        Action? persistWorkspace = _persistManualTrackingWorkspace;
-                        if (persistWorkspace == null)
-                        {
-                            throw new InvalidOperationException(
-                                "수동 추적 workspace 저장 컨텍스트가 구성되지 않았습니다.");
-                        }
-
-                        // Persist the exact source keyframe before writing tracking
-                        // metadata. If the process stops after this point but before
-                        // track JSON commit, reopening safely falls back to keyframe
-                        // hold instead of losing the source mask.
-                        persistWorkspace();
+                        // Make the source keyframe durable before writing compact
+                        // tracking metadata. If metadata commit later fails, reopening
+                        // safely falls back to keyframe hold rather than losing source.
+                        await persistWorkspace().ConfigureAwait(true);
                     }
                     catch
                     {
@@ -454,6 +464,11 @@ public partial class FramePreviewViewModel
                     ManualMaskKeyframeTimeline.SetTrackSegment(
                         provider,
                         result.Segment);
+                }
+                finally
+                {
+                    lock (_manualTrackingCommitGate)
+                        _manualTrackingCommitStarted = false;
                 }
             }
 
@@ -524,6 +539,12 @@ public partial class FramePreviewViewModel
     {
         lock (_manualTrackingCommitGate)
         {
+            // Once the durable commit has crossed its linearization point, let it
+            // finish. The workspace lifetime keeps resources alive until the tracking
+            // task calls End(), so shutdown cannot dispose provider/session underneath.
+            if (_manualTrackingCommitStarted)
+                return;
+
             CancellationTokenSource? cts = Volatile.Read(ref _manualTrackingCts);
             if (cts == null)
                 return;
