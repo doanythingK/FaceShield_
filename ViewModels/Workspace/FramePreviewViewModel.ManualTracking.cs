@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using FaceShield.Services.Video;
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -73,6 +74,8 @@ public partial class FramePreviewViewModel
     {
         _manualTrackingVideoPath = videoPath;
         _manualTrackingTotalFrames = Math.Max(0, totalFrames);
+        if (_manualMaskKeyframesEnabled && !string.IsNullOrWhiteSpace(videoPath))
+            ManualTrackingShutdownRegistry.Register(this);
         OnPropertyChanged(nameof(ManualTrackingAvailable));
         OnPropertyChanged(nameof(CanTrackForward));
     }
@@ -200,9 +203,14 @@ public partial class FramePreviewViewModel
                 return;
 
             ManualMaskKeyframeTimeline.SetTrackSegment(provider, result.Segment);
-            ManualTrackingProgress = 100;
             if (result.Segment.StoppedByFailure)
             {
+                if (expectedFrames > 0)
+                {
+                    ManualTrackingProgress = (int)Math.Round(
+                        Math.Clamp(result.ProcessedFrames * 100.0 / expectedFrames, 0, 99));
+                }
+
                 string stop = result.Segment.StopFrame.HasValue
                     ? $"{result.Segment.StopFrame.Value} 프레임"
                     : "현재 구간";
@@ -212,9 +220,12 @@ public partial class FramePreviewViewModel
             }
             else
             {
-                int lastFrame = result.Segment.Samples.Count > 0
-                    ? result.Segment.Samples[^1].FrameIndex
-                    : sourceFrame;
+                ManualTrackingProgress = 100;
+                int lastFrame = result.Segment.Components
+                    .SelectMany(static component => component.Samples)
+                    .Select(static sample => sample.FrameIndex)
+                    .DefaultIfEmpty(sourceFrame)
+                    .Max();
                 ManualTrackingStatusText =
                     $"추적 완료: {sourceFrame} → {lastFrame} 프레임.";
             }
@@ -247,12 +258,38 @@ public partial class FramePreviewViewModel
 
     [RelayCommand]
     private void CancelManualTracking()
+        => CancelManualTrackingCore();
+
+    internal void CancelManualTrackingForShutdown()
+        => CancelManualTrackingCore();
+
+    private void CancelManualTrackingCore()
     {
         CancellationTokenSource? cts = Volatile.Read(ref _manualTrackingCts);
         if (cts == null)
             return;
         try { cts.Cancel(); }
         catch (ObjectDisposedException) { }
+    }
+
+    private void DisposeManualTrackingState()
+    {
+        CancelManualTrackingCore();
+        if (_manualMaskKeyframeHandlerAttached)
+        {
+            PropertyChanged -= OnManualMaskKeyframePropertyChanged;
+            _manualMaskKeyframeHandlerAttached = false;
+        }
+        if (_manualMaskEditHandlerAttached)
+        {
+            MaskEdited -= NotifyManualMaskEditedForTracking;
+            _manualMaskEditHandlerAttached = false;
+        }
+        if (_manualUndoHandlerAttached)
+        {
+            _toolPanel.UndoRequested -= OnManualUndoCompleted;
+            _manualUndoHandlerAttached = false;
+        }
     }
 
     private sealed class SynchronousTrackingProgress : IProgress<int>
