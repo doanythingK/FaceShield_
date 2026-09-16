@@ -19,6 +19,7 @@ public partial class FramePreviewViewModel
     private int _manualTrackingProgress;
     private string? _manualTrackingStatusText;
     private bool _manualTrackingToolPanelHandlerAttached;
+    private int _manualTrackingPendingSourceValidationFrame = -1;
 
     public bool ManualTrackingAvailable =>
         _manualMaskKeyframesEnabled &&
@@ -97,16 +98,42 @@ public partial class FramePreviewViewModel
 
     internal void NotifyManualMaskEditedForTracking(int frameIndex)
     {
-        if (!_manualMaskKeyframesEnabled ||
-            _maskProvider is not FrameMaskProvider provider ||
-            frameIndex < 0)
-        {
+        if (!_manualMaskKeyframesEnabled || frameIndex < 0)
             return;
-        }
 
-        ManualMaskKeyframeTimeline.NotifyExplicitKeyframeChanged(provider, frameIndex);
+        // MaskEdited fires before PersistCurrentMask updates FrameMaskProvider. Mark
+        // this frame for deferred source-fingerprint validation instead of deleting a
+        // valid segment prematurely. This also allows a full Undo to preserve tracking.
+        _manualTrackingPendingSourceValidationFrame = frameIndex;
         ManualTrackingStatusText = "마스크가 수정되었습니다. 이 프레임부터 다시 추적할 수 있습니다.";
         OnPropertyChanged(nameof(CanTrackForward));
+    }
+
+    private bool RevalidatePendingManualTrackingSource(FrameMaskProvider provider)
+    {
+        int frameIndex = _manualTrackingPendingSourceValidationFrame;
+        if (frameIndex < 0)
+            return false;
+
+        // If the provider still has no exact entry, the edit has not been persisted
+        // yet. Keep the pending marker until PersistCurrentMask runs.
+        if (!provider.HasStoredMask(frameIndex) &&
+            !provider.TryGetFaceMaskData(frameIndex, out _))
+        {
+            return false;
+        }
+
+        _manualTrackingPendingSourceValidationFrame = -1;
+        bool stale = ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
+            provider,
+            frameIndex);
+        if (stale)
+        {
+            ManualTrackingStatusText =
+                "키프레임 마스크가 변경되어 기존 추적을 적용하지 않습니다. " +
+                "현재 프레임에서 다시 자동 추적하세요.";
+        }
+        return stale;
     }
 
     [RelayCommand]
@@ -125,6 +152,7 @@ public partial class FramePreviewViewModel
             return;
 
         PersistCurrentMask();
+        RevalidatePendingManualTrackingSource(provider);
 
         // Tracking must always have an explicit source keyframe. If the visible mask
         // was inherited from an earlier keyframe, promote the current visible mask to
@@ -133,7 +161,6 @@ public partial class FramePreviewViewModel
             !provider.TryGetFaceMaskData(sourceFrame, out _))
         {
             provider.SetMask(sourceFrame, CloneBitmap(_maskBitmap));
-            ManualMaskKeyframeTimeline.NotifyExplicitKeyframeChanged(provider, sourceFrame);
         }
 
         WriteableBitmap? sourceMask = provider.GetFinalMask(sourceFrame);
