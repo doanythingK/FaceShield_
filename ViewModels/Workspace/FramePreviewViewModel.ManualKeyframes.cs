@@ -78,6 +78,7 @@ public partial class FramePreviewViewModel
                         StringComparison.Ordinal))
                 {
                     _maskDirty = false;
+                    _manualTrackingPendingSourceValidationFrame = -1;
                     ManualTrackingStatusText =
                         "되돌리기로 원래 마스크 상태가 복원되어 기존 추적을 유지합니다.";
                     OnPropertyChanged(nameof(CanTrackForward));
@@ -113,6 +114,11 @@ public partial class FramePreviewViewModel
         {
             return;
         }
+
+        // If a brush/eraser edit was persisted while leaving the previous frame,
+        // validate the source segment only now, after FrameMaskProvider contains the
+        // committed bitmap/face entry.
+        RevalidatePendingManualTrackingSource(provider);
 
         // An exact entry is already a keyframe and remains authoritative. Revalidate
         // any stored tracking segment here because single-frame Auto can replace an
