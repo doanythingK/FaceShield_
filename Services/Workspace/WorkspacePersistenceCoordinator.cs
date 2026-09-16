@@ -30,17 +30,22 @@ namespace FaceShield.Services.Workspace
             _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
         }
 
+        // Compatibility overload for callers that already own an immutable snapshot.
+        // WorkspaceViewModel uses the factory overload to include scalar capture in
+        // the same ordering boundary as mask capture and request publication.
         public Task QueueSaveAsync(WorkspaceSnapshot snapshot)
-        {
-            if (snapshot == null)
-                return Task.CompletedTask;
+            => snapshot == null ? Task.CompletedTask : QueueSaveAsync(() => snapshot);
 
-            // Snapshot capture must stay ordered with request publication. Without
-            // this gate an older, slower bitmap snapshot can be overtaken by a newer
-            // caller and then receive the higher request id, defeating latest-wins.
+        public Task QueueSaveAsync(Func<WorkspaceSnapshot> snapshotFactory)
+        {
+            if (snapshotFactory == null)
+                throw new ArgumentNullException(nameof(snapshotFactory));
+
             lock (_captureGate)
             {
                 ThrowIfQueueClosed();
+                WorkspaceSnapshot snapshot = snapshotFactory()
+                    ?? throw new InvalidOperationException("Workspace snapshot capture returned null.");
                 WorkspaceStateStore.SaveLease saveLease =
                     _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
                 FrameMaskProvider.PersistenceSnapshot maskSnapshot;
@@ -193,21 +198,24 @@ namespace FaceShield.Services.Workspace
         /// </summary>
         public void SaveNow(WorkspaceSnapshot snapshot)
         {
-            if (snapshot == null)
-                return;
+            if (snapshot != null)
+                SaveNow(() => snapshot);
+        }
 
-            Task predecessor = Task.CompletedTask;
+        public void SaveNow(Func<WorkspaceSnapshot> snapshotFactory)
+        {
+            if (snapshotFactory == null)
+                throw new ArgumentNullException(nameof(snapshotFactory));
+
             Task finalTask;
-            TaskCompletionSource<object?>? finalCompletion = null;
-            long finalRequestId = 0;
-            bool ownsFinalization = false;
-
-            // Do not let terminal finalization overtake a QueueSaveAsync call that has
-            // already started capturing its provider snapshot but has not published its
-            // request yet. Whichever caller enters _captureGate first defines the
-            // ordering boundary.
+            // Capture both scalar and bitmap states under the same gate, including
+            // the terminal request's publication. An earlier QueueSaveAsync cannot
+            // slip its mask snapshot between those two captures.
             lock (_captureGate)
             {
+                Task predecessor;
+                TaskCompletionSource<object?>? finalCompletion = null;
+                long finalRequestId = 0;
                 lock (_taskGate)
                 {
                     if (_disposed)
@@ -219,9 +227,6 @@ namespace FaceShield.Services.Workspace
                     }
                     else
                     {
-                        // Publish a terminal placeholder before releasing the task gate.
-                        // QueueSaveAsync observes _finalizing and cannot cross this boundary,
-                        // while Dispose/another SaveNow can already wait on the placeholder.
                         _finalizing = true;
                         predecessor = _latestTask;
                         finalRequestId = ++_latestRequestId;
@@ -229,44 +234,45 @@ namespace FaceShield.Services.Workspace
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         _latestTask = finalCompletion.Task;
                         finalTask = _latestTask;
-                        ownsFinalization = true;
                     }
                 }
-            }
 
-            if (ownsFinalization)
-            {
-                WorkspaceStateStore.SaveLease? saveLease = null;
-                FrameMaskProvider.PersistenceSnapshot? maskSnapshot = null;
-                try
+                if (finalCompletion != null)
                 {
-                    // The save lease starts before snapshot capture and remains owned by
-                    // PendingSave through commit, stale skip, or failure.
-                    saveLease = _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
-                    maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
-                    var pending = new PendingSave(
-                        finalRequestId,
-                        snapshot,
-                        maskSnapshot,
-                        saveLease,
-                        finalCompletion!);
-                    maskSnapshot = null;
-                    saveLease = null;
-                    _ = ExecutePendingSaveAsync(pending, predecessor);
-                }
-                catch (Exception ex)
-                {
+                    WorkspaceStateStore.SaveLease? saveLease = null;
+                    FrameMaskProvider.PersistenceSnapshot? maskSnapshot = null;
                     try
                     {
-                        maskSnapshot?.Dispose();
-                        saveLease?.Dispose();
+                        WorkspaceSnapshot snapshot = snapshotFactory()
+                            ?? throw new InvalidOperationException("Workspace snapshot capture returned null.");
+                        saveLease = _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
+                        maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
+                        var pending = new PendingSave(
+                            finalRequestId,
+                            snapshot,
+                            maskSnapshot,
+                            saveLease,
+                            finalCompletion);
+                        maskSnapshot = null;
+                        saveLease = null;
+                        // The worker awaits the previously published completion tail.
+                        // It cannot complete synchronously while the capture gate is held.
+                        _ = ExecutePendingSaveAsync(pending, predecessor!);
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Preserve the lease/snapshot-capture failure as the terminal error.
-                    }
+                        try
+                        {
+                            maskSnapshot?.Dispose();
+                            saveLease?.Dispose();
+                        }
+                        catch
+                        {
+                            // Preserve the original capture failure.
+                        }
 
-                    finalCompletion!.TrySetException(ex);
+                        finalCompletion.TrySetException(ex);
+                    }
                 }
             }
 
