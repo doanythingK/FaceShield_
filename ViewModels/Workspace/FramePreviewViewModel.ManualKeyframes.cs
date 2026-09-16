@@ -94,6 +94,12 @@ public partial class FramePreviewViewModel
         object? sender,
         PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(IsFrameLoading))
+        {
+            OnPropertyChanged(nameof(CanTrackForward));
+            return;
+        }
+
         if (e.PropertyName == nameof(MaskBitmap))
         {
             ApplyInheritedManualMaskIfNeeded();
