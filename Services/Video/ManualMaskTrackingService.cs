@@ -418,23 +418,32 @@ internal static class ManualMaskTrackingService
         double sampleScaleX,
         double sampleScaleY)
     {
-        var states = new List<ComponentState>(boxes.Count);
-        for (int componentIndex = 0; componentIndex < boxes.Count; componentIndex++)
+        List<int[]> groups = BuildOverlappingBoxGroups(boxes);
+        var states = new List<ComponentState>(groups.Count);
+        foreach (int[] group in groups)
         {
-            var box = boxes[componentIndex];
-            int boxWidth = box.MaxX - box.MinX + 1;
-            int boxHeight = box.MaxY - box.MinY + 1;
-            var points = new List<SamplePoint>(Math.Min(MaxSamplesPerComponent, box.PixelCount));
-            int step = Math.Max(1, (int)Math.Sqrt(Math.Max(1, box.PixelCount / MaxSamplesPerComponent)));
+            int minX = group.Min(index => boxes[index].MinX);
+            int minY = group.Min(index => boxes[index].MinY);
+            int maxX = group.Max(index => boxes[index].MaxX);
+            int maxY = group.Max(index => boxes[index].MaxY);
+            int pixelCount = group.Sum(index => boxes[index].PixelCount);
+            int boxWidth = maxX - minX + 1;
+            int boxHeight = maxY - minY + 1;
+            var includedLabels = new bool[boxes.Count];
+            foreach (int index in group)
+                includedLabels[index] = true;
 
-            for (int y = box.MinY; y <= box.MaxY && points.Count < MaxSamplesPerComponent; y += step)
+            var points = new List<SamplePoint>(Math.Min(MaxSamplesPerComponent, pixelCount));
+            int step = Math.Max(1, (int)Math.Sqrt(Math.Max(1, pixelCount / MaxSamplesPerComponent)));
+            for (int y = minY; y <= maxY && points.Count < MaxSamplesPerComponent; y += step)
             {
-                for (int x = box.MinX; x <= box.MaxX && points.Count < MaxSamplesPerComponent; x += step)
+                for (int x = minX; x <= maxX && points.Count < MaxSamplesPerComponent; x += step)
                 {
-                    if (labels[y * sampleWidth + x] != componentIndex)
+                    int label = labels[y * sampleWidth + x];
+                    if (label < 0 || label >= includedLabels.Length || !includedLabels[label])
                         continue;
-                    double u = boxWidth <= 1 ? 0.5 : (x - box.MinX) / (double)(boxWidth - 1);
-                    double v = boxHeight <= 1 ? 0.5 : (y - box.MinY) / (double)(boxHeight - 1);
+                    double u = boxWidth <= 1 ? 0.5 : (x - minX) / (double)(boxWidth - 1);
+                    double v = boxHeight <= 1 ? 0.5 : (y - minY) / (double)(boxHeight - 1);
                     points.Add(new SamplePoint(u, v));
                 }
             }
@@ -443,13 +452,13 @@ internal static class ManualMaskTrackingService
                 continue;
 
             var sampleRect = new TrackRect(
-                box.MinX,
-                box.MinY,
+                minX,
+                minY,
                 Math.Max(2.0, boxWidth),
                 Math.Max(2.0, boxHeight));
             var sourceBounds = new Rect(
-                box.MinX / sampleScaleX,
-                box.MinY / sampleScaleY,
+                minX / sampleScaleX,
+                minY / sampleScaleY,
                 Math.Max(1.0, boxWidth / sampleScaleX),
                 Math.Max(1.0, boxHeight / sampleScaleY));
 
@@ -472,6 +481,68 @@ internal static class ManualMaskTrackingService
 
         return states;
     }
+
+    private static List<int[]> BuildOverlappingBoxGroups(
+        IReadOnlyList<(int MinX, int MinY, int MaxX, int MaxY, int PixelCount)> boxes)
+    {
+        int count = boxes.Count;
+        var parent = new int[count];
+        for (int i = 0; i < count; i++)
+            parent[i] = i;
+
+        for (int i = 0; i < count; i++)
+        {
+            for (int j = i + 1; j < count; j++)
+            {
+                if (!BoxesOverlap(boxes[i], boxes[j]))
+                    continue;
+                Union(i, j);
+            }
+        }
+
+        var groups = new Dictionary<int, List<int>>();
+        for (int i = 0; i < count; i++)
+        {
+            int root = Find(i);
+            if (!groups.TryGetValue(root, out List<int>? group))
+            {
+                group = new List<int>();
+                groups[root] = group;
+            }
+            group.Add(i);
+        }
+
+        return groups.Values
+            .OrderBy(static group => group[0])
+            .Select(static group => group.ToArray())
+            .ToList();
+
+        int Find(int value)
+        {
+            while (parent[value] != value)
+            {
+                parent[value] = parent[parent[value]];
+                value = parent[value];
+            }
+            return value;
+        }
+
+        void Union(int left, int right)
+        {
+            int a = Find(left);
+            int b = Find(right);
+            if (a != b)
+                parent[b] = a;
+        }
+    }
+
+    private static bool BoxesOverlap(
+        (int MinX, int MinY, int MaxX, int MaxY, int PixelCount) a,
+        (int MinX, int MinY, int MaxX, int MaxY, int PixelCount) b)
+        => a.MinX <= b.MaxX &&
+           b.MinX <= a.MaxX &&
+           a.MinY <= b.MaxY &&
+           b.MinY <= a.MaxY;
 
     private static double[] ReadTemplate(
         byte[] frame,
