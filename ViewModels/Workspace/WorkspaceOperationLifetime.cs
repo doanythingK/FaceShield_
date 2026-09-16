@@ -22,6 +22,8 @@ internal sealed class WorkspaceOperationLifetime
             ?? throw new ArgumentNullException(nameof(onOperationsDrained));
     }
 
+    internal event Action? AdmissionClosed;
+
     internal bool TryBegin()
     {
         lock (_sync)
@@ -41,14 +43,19 @@ internal sealed class WorkspaceOperationLifetime
     /// </summary>
     internal bool CloseAdmission()
     {
+        bool notify = false;
         lock (_sync)
         {
             if (_admissionClosed)
                 return false;
 
             _admissionClosed = true;
-            return true;
+            notify = true;
         }
+
+        if (notify)
+            AdmissionClosed?.Invoke();
+        return true;
     }
 
     internal void End()
@@ -79,6 +86,7 @@ internal sealed class WorkspaceOperationLifetime
     /// </summary>
     internal bool RequestDispose(out bool disposeNow)
     {
+        bool notify = false;
         lock (_sync)
         {
             if (_disposeRequested)
@@ -87,13 +95,16 @@ internal sealed class WorkspaceOperationLifetime
                 return false;
             }
 
+            notify = !_admissionClosed;
             _admissionClosed = true;
             _disposeRequested = true;
             disposeNow = _activeOperations == 0 && !_disposeClaimed;
             if (disposeNow)
                 _disposeClaimed = true;
-
-            return true;
         }
+
+        if (notify)
+            AdmissionClosed?.Invoke();
+        return true;
     }
 }
