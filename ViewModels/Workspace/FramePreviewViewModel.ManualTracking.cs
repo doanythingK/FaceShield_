@@ -67,6 +67,8 @@ public partial class FramePreviewViewModel
         ManualTrackingAvailable &&
         !_disposed &&
         !IsManualTracking &&
+        !_isPlaying &&
+        !IsFrameLoading &&
         _toolPanel.CanEditWorkspace &&
         _currentFrameIndex >= 0 &&
         _maskBitmap != null;
