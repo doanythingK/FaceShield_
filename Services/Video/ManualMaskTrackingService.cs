@@ -62,8 +62,11 @@ internal static class ManualMaskTrackingService
         PixelSize frameSize = extractor.FrameSize;
         if (frameSize.Width <= 0 || frameSize.Height <= 0)
             throw new InvalidOperationException("영상 프레임 크기를 확인할 수 없습니다.");
-        if (sourceMask.PixelSize != frameSize)
+        if (sourceMask.PixelSize.Width != frameSize.Width ||
+            sourceMask.PixelSize.Height != frameSize.Height)
+        {
             throw new InvalidOperationException("현재 마스크 크기와 원본 영상 프레임 크기가 일치하지 않습니다.");
+        }
 
         int width = Math.Min(MaxTrackingWidth, frameSize.Width);
         int height = Math.Max(1, (int)Math.Round(frameSize.Height * width / (double)frameSize.Width));
@@ -96,8 +99,8 @@ internal static class ManualMaskTrackingService
             if (boxes.Count > MaxComponents)
                 throw new InvalidOperationException($"분리된 마스크 영역이 너무 많습니다({boxes.Count}개).");
 
-            // Group touching/overlapping envelopes so pixels from separate source
-            // regions cannot be moved independently into one another's source bounds.
+            // Merge overlapping envelopes so unrelated source pixels cannot be
+            // independently transformed within the same bounding rectangle.
             boxes = MergeOverlappingBoxes(boxes, cancellationToken);
             var components = new List<Component>(boxes.Count);
             var segment = new ManualMaskTrackSegment
@@ -149,7 +152,7 @@ internal static class ManualMaskTrackingService
                 }
                 if (currentIndex <= lastDecoded)
                     continue;
-                // Missing decoded ordinals are not evidence that their masks are valid.
+                // Missing ordinals are not evidence that their masks are valid.
                 if (currentIndex != lastDecoded + 1)
                 {
                     Stop(segment, lastDecoded + 1, "프레임 순서가 연속되지 않아 추적을 중단했습니다.");
@@ -416,12 +419,14 @@ internal static class ManualMaskTrackingService
         error = double.PositiveInfinity;
         if (point.X < 5 || point.Y < 5 || point.X >= width - 5 || point.Y >= height - 5)
             return false;
-        int radius = 11;
+        // Coarse search covers larger motion; fine search compares patches at
+        // its *own* sampling step rather than reusing incomparable coarse scores.
+        const int radius = 24;
         Point best = point;
-        for (int dy = -radius; dy <= radius; dy += 2)
+        for (int dy = -radius; dy <= radius; dy += 4)
         {
             ct.ThrowIfCancellationRequested();
-            for (int dx = -radius; dx <= radius; dx += 2)
+            for (int dx = -radius; dx <= radius; dx += 4)
             {
                 Point candidate = new(point.X + dx, point.Y + dy);
                 double score = PatchError(from, fromStride, to, toStride,
@@ -430,10 +435,11 @@ internal static class ManualMaskTrackingService
             }
         }
         Point coarse = best;
-        for (int dy = -2; dy <= 2; dy++)
+        error = double.PositiveInfinity;
+        for (int dy = -4; dy <= 4; dy++)
         {
             ct.ThrowIfCancellationRequested();
-            for (int dx = -2; dx <= 2; dx++)
+            for (int dx = -4; dx <= 4; dx++)
             {
                 Point candidate = new(coarse.X + dx, coarse.Y + dy);
                 double score = PatchError(from, fromStride, to, toStride,
@@ -449,8 +455,9 @@ internal static class ManualMaskTrackingService
         byte[] from, int fromStride, byte[] to, int toStride,
         int width, int height, Point a, Point b, int step)
     {
-        if (a.X < 4 || a.Y < 4 || a.X >= width - 4 || a.Y >= height - 4 ||
-            b.X < 4 || b.Y < 4 || b.X >= width - 4 || b.Y >= height - 4)
+        int margin = 2 * step + 1;
+        if (a.X < margin || a.Y < margin || a.X >= width - margin || a.Y >= height - margin ||
+            b.X < margin || b.Y < margin || b.X >= width - margin || b.Y >= height - margin)
             return double.PositiveInfinity;
         double sumA = 0, sumB = 0;
         int count = 0;
@@ -485,13 +492,15 @@ internal static class ManualMaskTrackingService
         double bestError = double.PositiveInfinity;
         Motion best = result;
         // Deterministic two-point RANSAC for uniform scale + translation. The
-        // renderer cannot rotate, so rotation is not silently approximated here.
+        // second index is always distinct, including when there are six points.
+        uint random = unchecked((uint)frame * 747796405u + 2891336453u);
         for (int attempt = 0; attempt < 128; attempt++)
         {
             if ((attempt & 15) == 0) ct.ThrowIfCancellationRequested();
-            int i = (attempt * 17 + frame) % matches.Count;
-            int j = (attempt * 29 + 7 + frame / 3) % matches.Count;
-            if (i == j) continue;
+            random = unchecked(random * 1664525u + 1013904223u);
+            int i = (int)(random % (uint)matches.Count);
+            random = unchecked(random * 1664525u + 1013904223u);
+            int j = (i + 1 + (int)(random % (uint)(matches.Count - 1))) % matches.Count;
             Point a = matches[i].From, b = matches[j].From;
             Point c = matches[i].To, d = matches[j].To;
             double denominator = DistanceSquared(a, b);
@@ -519,7 +528,6 @@ internal static class ManualMaskTrackingService
         if (bestCount < MinimumFeatures || bestCount <
             (int)Math.Ceiling(matches.Count * MinimumInlierFraction)) return false;
 
-        // Refine on the consensus set; keep only geometrically consistent points.
         var accepted = new List<Match>();
         foreach (Match match in matches)
             if (DistanceSquared(best.Apply(match.From), match.To) <=
@@ -562,9 +570,8 @@ internal static class ManualMaskTrackingService
         byte[] previous, int previousStride, byte[] current, int currentStride,
         int width, int height, CancellationToken ct, out double score)
     {
-        // A sole full-frame mean-luma threshold missed cuts between similarly
-        // lit scenes. Combine global luminance histograms, spatial histograms,
-        // and direct difference; never rely on brightness alone.
+        // Combine global luminance histograms, spatial histograms, and direct
+        // difference; do not rely on one brightness threshold alone.
         var globalA = new int[16]; var globalB = new int[16];
         var spatialA = new int[16 * 8]; var spatialB = new int[16 * 8];
         int[] perCell = new int[16];
