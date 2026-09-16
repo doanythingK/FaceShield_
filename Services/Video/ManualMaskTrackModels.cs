@@ -104,54 +104,112 @@ internal static class ManualMaskTrackStore
 
         try
         {
-            string path = GetTrackPath(videoPath);
-            if (!File.Exists(path))
-            {
-                // On Windows, a differing legacy key means the path may live in a
-                // case-sensitive directory. The old all-uppercase identity can
-                // collide with a distinct source file there, so never fall back to it.
-                if (OperatingSystem.IsWindows())
-                    return Array.Empty<ManualMaskTrackSegment>();
-
-                string legacyPath = GetLegacyTrackPath(videoPath);
-                if (!string.Equals(path, legacyPath, StringComparison.Ordinal) &&
-                    File.Exists(legacyPath))
-                {
-                    path = legacyPath;
-                }
-                else
-                {
-                    return Array.Empty<ManualMaskTrackSegment>();
-                }
-            }
-
-            string json = File.ReadAllText(path);
-            var state = JsonSerializer.Deserialize<ManualMaskTrackStoreState>(json, JsonOptions);
-            if (state == null ||
-                state.Version != CurrentVersion ||
-                !string.Equals(
-                    state.SourceEvidence,
-                    BuildSourceEvidence(videoPath),
-                    StringComparison.Ordinal))
-            {
-                return Array.Empty<ManualMaskTrackSegment>();
-            }
-
-            return state.Segments?
-                .Where(static segment =>
-                    segment.SourceKeyframe >= 0 &&
-                    !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) &&
-                    segment.Components != null &&
-                    segment.Components.Count > 0)
-                .Select(static segment => segment.Clone())
-                .ToArray()
-                ?? Array.Empty<ManualMaskTrackSegment>();
+            return LoadCore(videoPath);
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[ManualMaskTrackStore] load failed: {ex.Message}");
             return Array.Empty<ManualMaskTrackSegment>();
         }
+    }
+
+    /// <summary>
+    /// Strict read used by export safety checks. A missing track file is valid and
+    /// means there is no persisted tracking metadata, but an existing unreadable,
+    /// incompatible, stale-evidence, or structurally invalid file must not be treated
+    /// as an empty successful state.
+    /// </summary>
+    internal static IReadOnlyList<ManualMaskTrackSegment> LoadForExport(string videoPath)
+    {
+        if (string.IsNullOrWhiteSpace(videoPath))
+            throw new ArgumentException("Video path is required.", nameof(videoPath));
+
+        return LoadCore(videoPath);
+    }
+
+    private static IReadOnlyList<ManualMaskTrackSegment> LoadCore(string videoPath)
+    {
+        string? path = ResolveExistingTrackPath(videoPath);
+        if (path == null)
+            return Array.Empty<ManualMaskTrackSegment>();
+
+        string json = File.ReadAllText(path);
+        ManualMaskTrackStoreState? state =
+            JsonSerializer.Deserialize<ManualMaskTrackStoreState>(json, JsonOptions);
+        if (state == null)
+        {
+            throw new InvalidDataException(
+                "Manual tracking state is empty or could not be deserialized.");
+        }
+        if (state.Version != CurrentVersion)
+        {
+            throw new InvalidDataException(
+                $"Unsupported manual tracking state version {state.Version}; expected {CurrentVersion}.");
+        }
+
+        string expectedEvidence = BuildSourceEvidence(videoPath);
+        if (!string.Equals(
+                state.SourceEvidence,
+                expectedEvidence,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "Manual tracking state does not match the current source video evidence.");
+        }
+        if (state.Segments == null)
+            throw new InvalidDataException("Manual tracking state has no segment collection.");
+
+        var result = new List<ManualMaskTrackSegment>(state.Segments.Count);
+        foreach (ManualMaskTrackSegment? segment in state.Segments)
+        {
+            if (segment == null ||
+                segment.SourceKeyframe < 0 ||
+                string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
+                segment.Components == null ||
+                segment.Components.Count == 0)
+            {
+                throw new InvalidDataException(
+                    "Manual tracking state contains an invalid segment.");
+            }
+
+            foreach (ManualMaskTrackComponent? component in segment.Components)
+            {
+                if (component == null ||
+                    component.SourceBoundsWidth <= 0 ||
+                    component.SourceBoundsHeight <= 0 ||
+                    component.Samples == null)
+                {
+                    throw new InvalidDataException(
+                        "Manual tracking state contains an invalid component.");
+                }
+            }
+
+            result.Add(segment.Clone());
+        }
+
+        return result;
+    }
+
+    private static string? ResolveExistingTrackPath(string videoPath)
+    {
+        string path = GetTrackPath(videoPath);
+        if (File.Exists(path))
+            return path;
+
+        // On Windows, a differing legacy key means the path may live in a
+        // case-sensitive directory. The old all-uppercase identity can collide with
+        // a distinct source file there, so never fall back to it.
+        if (OperatingSystem.IsWindows())
+            return null;
+
+        string legacyPath = GetLegacyTrackPath(videoPath);
+        if (!string.Equals(path, legacyPath, StringComparison.Ordinal) &&
+            File.Exists(legacyPath))
+        {
+            return legacyPath;
+        }
+
+        return null;
     }
 
     internal static void Save(
