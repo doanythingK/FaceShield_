@@ -118,6 +118,31 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
+    internal static void InvalidateSegmentIfSourceChanged(
+        FrameMaskProvider provider,
+        int sourceKeyframe)
+    {
+        if (provider == null || sourceKeyframe < 0 ||
+            !States.TryGetValue(provider, out TimelineState? state))
+        {
+            return;
+        }
+
+        lock (state.Gate)
+        {
+            ManualMaskTrackSegment? segment = state.Segments.FirstOrDefault(candidate =>
+                candidate.SourceKeyframe == sourceKeyframe);
+            if (segment == null)
+                return;
+
+            // Recompute after any external keyframe replacement such as single-frame
+            // automatic detection. Keep an invalid segment present so preview and
+            // export both block stale tracking instead of silently falling back to hold.
+            state.SegmentValidity.Remove(sourceKeyframe);
+            _ = IsSegmentCurrentLocked(provider, state, segment);
+        }
+    }
+
     internal static void SetTrackSegment(
         FrameMaskProvider provider,
         ManualMaskTrackSegment segment)
@@ -166,8 +191,21 @@ internal static class ManualMaskKeyframeTimeline
 
         try
         {
-            if (frameIndex == sourceKeyframe ||
-                !TryGetCurrentSegment(provider, sourceKeyframe, out ManualMaskTrackSegment? segment))
+            if (frameIndex == sourceKeyframe)
+            {
+                mask = sourceMask;
+                sourceMask = null!;
+                return true;
+            }
+
+            bool hasSegment = TryResolveCurrentSegment(
+                provider,
+                sourceKeyframe,
+                out ManualMaskTrackSegment? segment,
+                out bool blocked);
+            if (blocked)
+                return false;
+            if (!hasSegment || segment == null)
             {
                 mask = sourceMask;
                 sourceMask = null!;
@@ -176,7 +214,7 @@ internal static class ManualMaskKeyframeTimeline
 
             if (!TryCreateTransformedMask(
                     sourceMask,
-                    segment!,
+                    segment,
                     frameIndex,
                     out WriteableBitmap transformed))
             {
@@ -218,12 +256,14 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    private static bool TryGetCurrentSegment(
+    private static bool TryResolveCurrentSegment(
         FrameMaskProvider provider,
         int sourceKeyframe,
-        out ManualMaskTrackSegment? segment)
+        out ManualMaskTrackSegment? segment,
+        out bool blocked)
     {
         segment = null;
+        blocked = false;
         if (!States.TryGetValue(provider, out TimelineState? state))
             return false;
 
@@ -235,8 +275,8 @@ internal static class ManualMaskKeyframeTimeline
                 return false;
             if (!IsSegmentCurrentLocked(provider, state, segment))
             {
-                segment = null;
-                return false;
+                blocked = true;
+                return true;
             }
             return true;
         }
