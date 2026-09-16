@@ -73,6 +73,21 @@ Preview와 export는 같은 tracking segment를 해석한다.
 - export preflight는 export CTS/status를 먼저 준비한 뒤 background task에서 실행하며, source-mask fingerprint 계산도 cancellation token을 확인한다.
 - 수동 단일 Auto가 현재 키프레임 provider를 바꾸면 Auto 종료 시 현재 `MaskBitmap`을 provider 기준으로 다시 구성하고 기존 tracking source fingerprint를 재검증한다.
 
+## 2026-09-16 후속 검토: track state 읽기 보강
+
+`ManualMaskTrackStore.Load()`와 `LoadForExport()`는 같은 segment 단위 검증을 적용하되 실패 정책이 다르다.
+
+- Preview: 정상 JSON, 지원 버전 및 일치하는 영상 source evidence를 먼저 확인한 다음, 개별 구조·수치·프레임 순서가 잘못된 segment만 로그에 남기고 제외한다. 나머지 정상 segment는 유지한다. 파일 전체가 깨졌거나 버전 또는 영상 증거가 다르면 전체를 사용하지 않는다.
+- Export: track 파일이 존재하면 잘못된 segment 하나 또는 중복 source keyframe 하나만 있어도 `InvalidDataException`으로 차단한다. 파일이 없으면 비추적 상태를 허용하는 기존 정책을 유지한다.
+- 각 segment에서 source/end 프레임 순서, failure stop-frame 경계, 중복 component index, 유한한 source bounds와 양수 크기, 증가하는 sample 프레임과 구간 범위, 유한한 offset/scale/confidence, tracker가 생성하는 scale `[0.25, 4]` 및 confidence `[0, 1]`을 검사한다.
+- 위 사항은 소스 정적 수정 내용이며 빌드, CI 및 실영상 검증 결과가 아니다.
+
+## 확인했으나 아직 해결하지 않은 사항
+
+- **Scalar/mask snapshot 시점 정합성:** `WorkspaceViewModel.BuildSnapshot()`이 coordinator의 `_captureGate` 진입 전에 실행된다. `_captureGate`는 mask snapshot과 요청 발행만 직렬화하므로, 서로 다른 저장 호출의 scalar capture와 mask capture가 뒤섞일 수 있다. scalar capture까지 동일한 경계에 포함하도록 변경해야 한다.
+- **직접 FramePreview.Dispose() task drain:** 직접 호출은 비트맵 변경 이벤트에서 추적 취소를 요청하지만 task 종료를 기다리지 않고 session을 dispose한다. `WorkspaceViewModel`이 소유한 일반 경로는 operation lifetime으로 보호된다. 직접 호출 경로는 UI thread 동기 대기 없이 별도 비동기 drain/deferred session disposal 계약이 필요하다.
+- source fingerprint에서 확인 가능한 영상 크기와 component bounds의 대응 검사, Preview/Export 손상 데이터 실제 재현, Windows/macOS 빌드 및 영상 smoke test는 추가 검증이 필요하다.
+
 ## 검증 상태
 
 이 문서는 현재 브랜치의 소스 동작 계약을 설명한다. 실제 영상에서의 추적 품질, Windows/macOS 빌드 및 런타임 검증 결과를 의미하지 않는다.
