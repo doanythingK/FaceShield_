@@ -7,25 +7,37 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace FaceShield.Services.Video;
 
 internal sealed class ManualMaskTrackSample
 {
+    [JsonRequired]
     public int FrameIndex { get; set; }
+    [JsonRequired]
     public double OffsetX { get; set; }
+    [JsonRequired]
     public double OffsetY { get; set; }
+    [JsonRequired]
     public double Scale { get; set; } = 1.0;
+    [JsonRequired]
     public double Confidence { get; set; } = 1.0;
 }
 
 internal sealed class ManualMaskTrackComponent
 {
+    [JsonRequired]
     public int ComponentIndex { get; set; }
+    [JsonRequired]
     public double SourceBoundsX { get; set; }
+    [JsonRequired]
     public double SourceBoundsY { get; set; }
+    [JsonRequired]
     public double SourceBoundsWidth { get; set; }
+    [JsonRequired]
     public double SourceBoundsHeight { get; set; }
+    [JsonRequired]
     public List<ManualMaskTrackSample> Samples { get; set; } = new();
 
     internal ManualMaskTrackComponent Clone()
@@ -51,12 +63,17 @@ internal sealed class ManualMaskTrackComponent
 
 internal sealed class ManualMaskTrackSegment
 {
+    [JsonRequired]
     public int SourceKeyframe { get; set; }
+    [JsonRequired]
     public string SourceMaskFingerprint { get; set; } = string.Empty;
+    [JsonRequired]
     public int EndExclusive { get; set; }
+    [JsonRequired]
     public bool StoppedByFailure { get; set; }
     public int? StopFrame { get; set; }
     public string? StopReason { get; set; }
+    [JsonRequired]
     public List<ManualMaskTrackComponent> Components { get; set; } = new();
 
     internal ManualMaskTrackSegment Clone()
@@ -101,7 +118,9 @@ internal static class ManualMaskTrackStore
     // field destroy every other segment before tolerant validation can run.
     private sealed class TrackHeader
     {
+        [JsonRequired]
         public int Version { get; set; } = CurrentVersion;
+        [JsonRequired]
         public string SourceEvidence { get; set; } = string.Empty;
     }
 
@@ -188,6 +207,8 @@ internal static class ManualMaskTrackStore
             ManualMaskTrackSegment? segment;
             try
             {
+                // JsonRequired also rejects *omitted* scalar fields that would
+                // otherwise silently deserialize to 0, 1.0, or false.
                 segment = JsonSerializer.Deserialize<ManualMaskTrackSegment>(element, JsonOptions);
             }
             catch (Exception ex) when (ex is JsonException or NotSupportedException)
