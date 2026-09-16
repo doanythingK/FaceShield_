@@ -138,6 +138,8 @@ public partial class FramePreviewViewModel
             MaskBitmap = replacement;
             _maskUndo.Clear();
             _maskDirty = false;
+            if (_manualTrackingPendingSourceValidationFrame == _currentFrameIndex)
+                _manualTrackingPendingSourceValidationFrame = -1;
             UpdateDetectionRects(_currentFrameIndex);
 
             if (ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
@@ -217,16 +219,12 @@ public partial class FramePreviewViewModel
         PersistCurrentMask();
         RevalidatePendingManualTrackingSource(provider);
 
-        // Tracking must always have an explicit source keyframe. If the visible mask
-        // was inherited from an earlier keyframe, promote the current visible mask to
-        // a new keyframe before starting the tracker.
-        if (!provider.HasStoredMask(sourceFrame) &&
-            !provider.TryGetFaceMaskData(sourceFrame, out _))
-        {
-            provider.SetMask(sourceFrame, CloneBitmap(_maskBitmap));
-        }
-
-        WriteableBitmap? sourceMask = provider.GetFinalMask(sourceFrame);
+        bool sourceWasExplicit =
+            provider.HasStoredMask(sourceFrame) ||
+            provider.TryGetFaceMaskData(sourceFrame, out _);
+        WriteableBitmap? sourceMask = sourceWasExplicit
+            ? provider.GetFinalMask(sourceFrame)
+            : CloneBitmap(_maskBitmap);
         if (sourceMask == null)
         {
             ManualTrackingStatusText = "현재 프레임에 추적할 마스크가 없습니다.";
@@ -313,7 +311,32 @@ public partial class FramePreviewViewModel
             if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
                 return;
 
-            ManualMaskKeyframeTimeline.SetTrackSegment(provider, result.Segment);
+            bool promotedSourceKeyframe = false;
+            try
+            {
+                if (!sourceWasExplicit)
+                {
+                    provider.SetMask(sourceFrame, CloneBitmap(sourceMask));
+                    promotedSourceKeyframe = true;
+                }
+
+                ManualMaskKeyframeTimeline.SetTrackSegment(provider, result.Segment);
+            }
+            catch
+            {
+                if (promotedSourceKeyframe)
+                {
+                    try
+                    {
+                        provider.RemoveFaceMasksRange(sourceFrame, sourceFrame + 1);
+                    }
+                    catch
+                    {
+                    }
+                }
+                throw;
+            }
+
             if (result.Segment.StoppedByFailure)
             {
                 if (expectedFrames > 0)
