@@ -41,8 +41,9 @@
 - workspace dispose 또는 terminal shutdown이 admission을 닫으면 실행 중 tracking CTS에 취소를 전달한다.
 - tracking 작업이 lifetime `End()`에 도달하기 전에는 workspace가 `FramePreview`, video session, mask provider를 dispose하지 않는다.
 - tracking task는 별도로 보관되어 cancel + drain이 가능한 형태이며, view detach 시에는 먼저 취소를 요청한다.
-- `FramePreviewViewModel.Dispose()`가 상위 workspace lifetime을 거치지 않고 직접 호출되는 경우에도 Dispose가 bitmap 상태를 비우는 시점에 manual tracking cancellation을 요청한다.
-- cancellation과 결과 commit은 같은 commit gate를 사용한다. 취소가 gate를 먼저 획득하면 결과를 commit하지 않고, commit이 먼저 시작된 경우에는 source/workspace/track metadata의 짧은 commit 구간을 완료한 뒤 취소가 관찰된다.
+- `FramePreviewViewModel.Dispose()`를 직접 호출한 경우에는 bitmap의 `PropertyChanged` 경계에서 추적 취소를 요청하고, 아직 실행 중인 추적 task를 `VideoSession.DeferDisposeUntil()`에 등록한다. `VideoSession.Dispose()`는 UI thread를 동기 대기시키지 않고 추적 task 완료 이후 세션 리소스를 해제한다. 직접 Dispose는 추적 task의 동기 완료를 보장하는 API는 아니며, 세션의 *추적 작업에 대한* 지연 해제 계약이다.
+- 직접 Dispose의 tracking 이벤트 구독도 함께 해제한다. 일반 workspace 소유 경로의 리소스 정리와 추적 task drain은 기존 operation lifetime을 유지한다.
+- cancellation과 결과 commit은 같은 commit gate를 사용한다. 취소가 gate를 먼저 획득하면 결과를 commit하지 않고, commit이 먼저 시작된 경우에는 source/workspace/track metadata의 commit 구간을 완료한 뒤 취소가 관찰된다.
 - commit-start flag는 source 승격, workspace persistence, track metadata 저장을 포함하는 전체 commit 구간의 `try/finally`에서 관리하며, bitmap clone/`SetMask`/저장 예외가 발생해도 반드시 해제된다.
 
 ## 저장 방식
@@ -53,7 +54,7 @@
 
 추적 결과를 commit할 때는 source keyframe을 먼저 workspace persistence에 저장하고 그 다음 compact track state를 저장한다. tracking 전용 저장은 `QueueSaveAsync()` 이후 현재 persistence tail을 `FlushAsync()`로 drain한 다음 완료되므로, latest-wins에서 해당 요청이 stale skip되더라도 더 최신 snapshot이 실제 저장을 끝내기 전에 track metadata를 먼저 쓰지 않는다. source workspace 저장이 실패하면 새로 승격한 source keyframe은 메모리 provider에서 롤백하고 tracking metadata는 쓰지 않는다.
 
-workspace queued-save snapshot capture와 request publication은 같은 ordering gate를 사용한다. terminal `SaveNow()`와 coordinator `Dispose()`도 이 gate를 통과하므로 캡처 중인 이전 snapshot이 뒤늦게 더 높은 request id를 얻거나, dispose가 아직 publish되지 않은 snapshot을 앞질러가는 경로를 막는다.
+`WorkspacePersistenceCoordinator.QueueSaveAsync(Func<WorkspaceSnapshot>)`와 `SaveNow(Func<WorkspaceSnapshot>)`는 scalar 상태를 생성하는 콜백을 `_captureGate` *내부*에서 실행하고, 같은 gate 내에서 provider mask snapshot을 캡처하고 요청을 발행한다. `WorkspaceViewModel`의 두 저장 경로는 사전에 만든 snapshot을 넘기는 대신 `BuildSnapshot` 메서드 그룹을 전달한다. 다른 저장 요청의 mask 캡처가 두 단계 사이에 끼어드는 문제를 방지한다. 이 gate는 무관한 외부 스레드의 임의 상태 변경까지 자동으로 막는 전역 트랜잭션은 아니다. 이전 snapshot 객체를 받는 기존 overload도 호환성 목적으로 유지한다.
 
 track state 저장은 호출마다 고유한 임시 파일을 사용하고 프로세스 내 저장은 serialize한 뒤 최종 파일로 교체한다. 같은 영상에 대한 동시 저장이 고정 `.tmp` 파일을 서로 덮어쓰는 문제를 피한다.
 
@@ -68,26 +69,21 @@ Preview와 export는 같은 tracking segment를 해석한다.
 - 추적 데이터가 현재 키프레임 fingerprint와 맞지 않으면 stale segment로 판단하고 preview/export 모두 해당 추적을 적용하지 않는다.
 - 장면 전환 또는 신뢰도 실패 이후에는 실패 경계를 넘어 추적 마스크를 적용하지 않는다.
 - unresolved tracking failure가 있으면 export를 시작하지 않는다.
-- 일반 preview load는 손상된 track metadata를 적용하지 않고 keyframe hold로 복귀할 수 있도록 tolerant하게 유지한다.
+- 일반 preview load는 개별 손상 segment를 제외하고 정상 segment를 유지하며, 파일 전체가 유효하지 않을 때는 keyframe hold로 복귀한다.
 - export는 strict track-state load를 사용한다. track 파일이 아예 없는 경우는 정상적인 비추적 workspace로 허용하지만, 파일이 존재하면서 읽기 실패, JSON/schema 손상, 버전 불일치, source evidence 불일치가 발생하면 fail-closed로 export를 차단한다.
 - export preflight는 export CTS/status를 먼저 준비한 뒤 background task에서 실행하며, source-mask fingerprint 계산도 cancellation token을 확인한다.
 - 수동 단일 Auto가 현재 키프레임 provider를 바꾸면 Auto 종료 시 현재 `MaskBitmap`을 provider 기준으로 다시 구성하고 기존 tracking source fingerprint를 재검증한다.
 
-## 2026-09-16 후속 검토: track state 읽기 보강
+## 2026-09-16 후속 검토 및 수정
 
-`ManualMaskTrackStore.Load()`와 `LoadForExport()`는 같은 segment 단위 검증을 적용하되 실패 정책이 다르다.
+1. **Snapshot 정합성:** 기존 `_captureGate`는 scalar `BuildSnapshot()`을 보호하지 않아 서로 다른 저장 요청의 scalar/mask 캡처 시점이 섞일 수 있었다. scalar 생성 콜백을 gate 내부로 옮기고 queued 및 terminal 저장 호출부를 변경했다.
+2. **Preview tolerant-load:** `JsonDocument`로 파일 전체 구조·version·source evidence를 먼저 확인하고 segment를 각각 deserialize하여, 개별 타입 불일치나 잘못된 구조의 segment만 제외한다. 파일 전체 JSON 문법 오류, 누락된 segment 배열 및 source evidence 불일치는 전체 실패로 처리한다.
+3. **Strict metadata:** Export에서는 개별 decode 실패, 유효하지 않은 segment 하나 또는 중복 source keyframe 하나만 있어도 차단한다. source/end 프레임 순서, failure 경계, component index 중복, 유한한 bounds 및 양수 크기, 엄격히 증가하는 sample 프레임, sample 구간, 유한한 offset/scale/confidence, scale `[0.25, 4]` 및 confidence `[0, 1]`을 검사한다.
+4. **직접 Dispose:** 추적 task 완료 전 session을 해제할 수 있는 경로에 지연 해제를 도입했다. cancellation 요청과 native session 해제를 분리하되 UI thread 동기 대기는 추가하지 않았다.
+5. **CI:** `quality-gate.yml`의 push 대상에 해당 작업 브랜치를 추가하여 Windows/macOS restore 및 build를 실행하도록 했다. 실행 결과는 해당 GitHub Actions run에서 별도로 확인해야 한다.
 
-- Preview: 정상 JSON, 지원 버전 및 일치하는 영상 source evidence를 먼저 확인한 다음, 개별 구조·수치·프레임 순서가 잘못된 segment만 로그에 남기고 제외한다. 나머지 정상 segment는 유지한다. 파일 전체가 깨졌거나 버전 또는 영상 증거가 다르면 전체를 사용하지 않는다.
-- Export: track 파일이 존재하면 잘못된 segment 하나 또는 중복 source keyframe 하나만 있어도 `InvalidDataException`으로 차단한다. 파일이 없으면 비추적 상태를 허용하는 기존 정책을 유지한다.
-- 각 segment에서 source/end 프레임 순서, failure stop-frame 경계, 중복 component index, 유한한 source bounds와 양수 크기, 증가하는 sample 프레임과 구간 범위, 유한한 offset/scale/confidence, tracker가 생성하는 scale `[0.25, 4]` 및 confidence `[0, 1]`을 검사한다.
-- 위 사항은 소스 정적 수정 내용이며 빌드, CI 및 실영상 검증 결과가 아니다.
+## 검증 범위 및 한계
 
-## 확인했으나 아직 해결하지 않은 사항
-
-- **Scalar/mask snapshot 시점 정합성:** `WorkspaceViewModel.BuildSnapshot()`이 coordinator의 `_captureGate` 진입 전에 실행된다. `_captureGate`는 mask snapshot과 요청 발행만 직렬화하므로, 서로 다른 저장 호출의 scalar capture와 mask capture가 뒤섞일 수 있다. scalar capture까지 동일한 경계에 포함하도록 변경해야 한다.
-- **직접 FramePreview.Dispose() task drain:** 직접 호출은 비트맵 변경 이벤트에서 추적 취소를 요청하지만 task 종료를 기다리지 않고 session을 dispose한다. `WorkspaceViewModel`이 소유한 일반 경로는 operation lifetime으로 보호된다. 직접 호출 경로는 UI thread 동기 대기 없이 별도 비동기 drain/deferred session disposal 계약이 필요하다.
-- source fingerprint에서 확인 가능한 영상 크기와 component bounds의 대응 검사, Preview/Export 손상 데이터 실제 재현, Windows/macOS 빌드 및 영상 smoke test는 추가 검증이 필요하다.
-
-## 검증 상태
-
-이 문서는 현재 브랜치의 소스 동작 계약을 설명한다. 실제 영상에서의 추적 품질, Windows/macOS 빌드 및 런타임 검증 결과를 의미하지 않는다.
+- source fingerprint에서 영상 프레임의 실제 크기까지 역추론하지 않으므로, component bounds가 원본 프레임 크기 이내인지까지는 track JSON load 시 확인할 수 없다. 잘못된 bounds와 실제 영상 크기의 조합, 손상 JSON 재현, 직접 Dispose 경계, 저장 동시성 및 실영상 추적·export는 별도 런타임 테스트가 필요하다.
+- CI build 통과만으로 수동 추적 정확도나 영상 내보내기 결과의 정확도를 보장할 수 없다.
+- 이 문서의 코드 동작 설명은 정적 소스 검토를 기준으로 작성되었으며 실영상 smoke test 완료를 의미하지 않는다.
