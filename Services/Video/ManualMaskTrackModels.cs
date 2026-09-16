@@ -1,3 +1,4 @@
+using FaceShield.Services.Workspace;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -104,7 +105,18 @@ internal static class ManualMaskTrackStore
         {
             string path = GetTrackPath(videoPath);
             if (!File.Exists(path))
-                return Array.Empty<ManualMaskTrackSegment>();
+            {
+                string legacyPath = GetLegacyTrackPath(videoPath);
+                if (!string.Equals(path, legacyPath, StringComparison.Ordinal) &&
+                    File.Exists(legacyPath))
+                {
+                    path = legacyPath;
+                }
+                else
+                {
+                    return Array.Empty<ManualMaskTrackSegment>();
+                }
+            }
 
             string json = File.ReadAllText(path);
             var state = JsonSerializer.Deserialize<ManualMaskTrackStoreState>(json, JsonOptions);
@@ -179,11 +191,21 @@ internal static class ManualMaskTrackStore
 
     private static string GetTrackPath(string videoPath)
     {
+        string identityKey = WorkspacePathIdentity.CreateIdentityKey(videoPath);
+        return BuildTrackPath(identityKey);
+    }
+
+    private static string GetLegacyTrackPath(string videoPath)
+    {
         string normalized = Path.GetFullPath(videoPath);
         if (OperatingSystem.IsWindows())
             normalized = normalized.ToUpperInvariant();
+        return BuildTrackPath(normalized);
+    }
 
-        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+    private static string BuildTrackPath(string identityKey)
+    {
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(identityKey));
         string key = Convert.ToHexString(hash).ToLowerInvariant();
         string root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
