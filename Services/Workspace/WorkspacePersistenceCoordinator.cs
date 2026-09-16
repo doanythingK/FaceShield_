@@ -15,6 +15,7 @@ namespace FaceShield.Services.Workspace
         private readonly WorkspaceStateStore _store;
         private readonly FrameMaskProvider _maskProvider;
         private readonly SemaphoreSlim _saveGate = new(1, 1);
+        private readonly object _captureGate = new();
         private readonly object _taskGate = new();
         private Task _latestTask = Task.CompletedTask;
         private long _latestRequestId;
@@ -34,49 +35,55 @@ namespace FaceShield.Services.Workspace
             if (snapshot == null)
                 return Task.CompletedTask;
 
-            ThrowIfQueueClosed();
-            WorkspaceStateStore.SaveLease saveLease =
-                _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
-            FrameMaskProvider.PersistenceSnapshot maskSnapshot;
-            try
+            // Snapshot capture must stay ordered with request publication. Without
+            // this gate an older, slower bitmap snapshot can be overtaken by a newer
+            // caller and then receive the higher request id, defeating latest-wins.
+            lock (_captureGate)
             {
-                maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
-            }
-            catch
-            {
-                saveLease.Dispose();
-                throw;
-            }
-
-            PendingSave pending;
-            Task predecessor;
-            lock (_taskGate)
-            {
-                if (_disposed || _finalizing)
+                ThrowIfQueueClosed();
+                WorkspaceStateStore.SaveLease saveLease =
+                    _store.AcquireWorkspaceSaveLease(snapshot.VideoPath);
+                FrameMaskProvider.PersistenceSnapshot maskSnapshot;
+                try
                 {
-                    maskSnapshot.Dispose();
+                    maskSnapshot = _maskProvider.CreatePersistenceSnapshot();
+                }
+                catch
+                {
                     saveLease.Dispose();
-                    if (_disposed)
-                        throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
-
-                    throw new InvalidOperationException(
-                        "Workspace persistence is finalizing and no longer accepts queued saves.");
+                    throw;
                 }
 
-                predecessor = _latestTask;
-                pending = new PendingSave(
-                    ++_latestRequestId,
-                    snapshot,
-                    maskSnapshot,
-                    saveLease);
+                PendingSave pending;
+                Task predecessor;
+                lock (_taskGate)
+                {
+                    if (_disposed || _finalizing)
+                    {
+                        maskSnapshot.Dispose();
+                        saveLease.Dispose();
+                        if (_disposed)
+                            throw new ObjectDisposedException(nameof(WorkspacePersistenceCoordinator));
 
-                // Publish the completion tail before starting this worker. The worker
-                // also awaits its predecessor, so the tail drains every prior request.
-                _latestTask = pending.Completion.Task;
+                        throw new InvalidOperationException(
+                            "Workspace persistence is finalizing and no longer accepts queued saves.");
+                    }
+
+                    predecessor = _latestTask;
+                    pending = new PendingSave(
+                        ++_latestRequestId,
+                        snapshot,
+                        maskSnapshot,
+                        saveLease);
+
+                    // Publish the completion tail before starting this worker. The worker
+                    // also awaits its predecessor, so the tail drains every prior request.
+                    _latestTask = pending.Completion.Task;
+                }
+
+                _ = ExecutePendingSaveAsync(pending, predecessor);
+                return pending.Completion.Task;
             }
-
-            _ = ExecutePendingSaveAsync(pending, predecessor);
-            return pending.Completion.Task;
         }
 
         private async Task ExecutePendingSaveAsync(
