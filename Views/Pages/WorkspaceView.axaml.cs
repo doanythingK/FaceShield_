@@ -35,10 +35,12 @@ public partial class WorkspaceView : UserControl
 
         bool isUndo = (e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta))
             && e.Key == Key.Z;
-        if (!isUndo)
+        if (!isUndo || !vm.ToolPanel.CanEditWorkspace)
             return;
 
-        vm.FramePreview.Undo();
+        // Route keyboard undo through the same ToolPanel command/event path as the
+        // toolbar button so manual tracking invalidation runs after the mask restore.
+        vm.ToolPanel.UndoCommand.Execute(null);
         e.Handled = true;
     }
 }
