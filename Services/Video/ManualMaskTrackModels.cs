@@ -97,6 +97,14 @@ internal static class ManualMaskTrackStore
         PropertyNameCaseInsensitive = true
     };
 
+    // Deserializing the complete state in one pass makes a single malformed numeric
+    // field destroy every other segment before tolerant validation can run.
+    private sealed class TrackHeader
+    {
+        public int Version { get; set; } = CurrentVersion;
+        public string SourceEvidence { get; set; } = string.Empty;
+    }
+
     internal static IReadOnlyList<ManualMaskTrackSegment> Load(string videoPath)
     {
         if (string.IsNullOrWhiteSpace(videoPath))
@@ -138,33 +146,63 @@ internal static class ManualMaskTrackStore
             return Array.Empty<ManualMaskTrackSegment>();
 
         string json = File.ReadAllText(path);
-        ManualMaskTrackStoreState? state =
-            JsonSerializer.Deserialize<ManualMaskTrackStoreState>(json, JsonOptions);
-        if (state == null)
-            throw new InvalidDataException("Manual tracking state is empty or could not be deserialized.");
-        if (state.Version != CurrentVersion)
+        using JsonDocument document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Manual tracking state must be a JSON object.");
+
+        TrackHeader? header = JsonSerializer.Deserialize<TrackHeader>(json, JsonOptions);
+        if (header == null)
+            throw new InvalidDataException("Manual tracking state has no header.");
+        if (header.Version != CurrentVersion)
         {
             throw new InvalidDataException(
-                $"Unsupported manual tracking state version {state.Version}; expected {CurrentVersion}.");
+                $"Unsupported manual tracking state version {header.Version}; expected {CurrentVersion}.");
         }
 
         string expectedEvidence = BuildSourceEvidence(videoPath);
-        if (!string.Equals(state.SourceEvidence, expectedEvidence, StringComparison.Ordinal))
+        if (!string.Equals(header.SourceEvidence, expectedEvidence, StringComparison.Ordinal))
         {
             throw new InvalidDataException(
                 "Manual tracking state does not match the current source video evidence.");
         }
-        if (state.Segments == null)
+
+        // Match the serializer's case-insensitive property handling. Missing or
+        // non-array collections are file-level failures, not recoverable segments.
+        JsonElement segmentsElement = default;
+        bool foundSegments = false;
+        foreach (JsonProperty property in document.RootElement.EnumerateObject())
+        {
+            if (string.Equals(property.Name, "Segments", StringComparison.OrdinalIgnoreCase))
+            {
+                segmentsElement = property.Value;
+                foundSegments = true;
+            }
+        }
+        if (!foundSegments || segmentsElement.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("Manual tracking state has no segment collection.");
 
-        var result = new List<ManualMaskTrackSegment>(state.Segments.Count);
+        var result = new List<ManualMaskTrackSegment>(segmentsElement.GetArrayLength());
         var keyframes = new HashSet<int>();
-        foreach (ManualMaskTrackSegment? segment in state.Segments)
+        foreach (JsonElement element in segmentsElement.EnumerateArray())
         {
-            // Preview salvages only independently valid segments. Export fails closed
-            // on every invalid or duplicate entry; neither accepts a stale file.
-            if (!TryValidateSegment(segment, out string reason) ||
-                !keyframes.Add(segment!.SourceKeyframe))
+            ManualMaskTrackSegment? segment;
+            try
+            {
+                segment = JsonSerializer.Deserialize<ManualMaskTrackSegment>(element, JsonOptions);
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException)
+            {
+                if (strict)
+                {
+                    throw new InvalidDataException(
+                        "Manual tracking state contains an undecodable segment.", ex);
+                }
+
+                Debug.WriteLine($"[ManualMaskTrackStore] skipping undecodable segment: {ex.Message}");
+                continue;
+            }
+
+            if (!TryValidateSegment(segment, out string reason))
             {
                 if (strict)
                 {
@@ -173,6 +211,15 @@ internal static class ManualMaskTrackStore
                 }
 
                 Debug.WriteLine($"[ManualMaskTrackStore] skipping invalid segment: {reason}");
+                continue;
+            }
+
+            if (!keyframes.Add(segment!.SourceKeyframe))
+            {
+                if (strict)
+                    throw new InvalidDataException("Manual tracking state has duplicate source keyframes.");
+
+                Debug.WriteLine("[ManualMaskTrackStore] skipping duplicate source keyframe.");
                 continue;
             }
 
