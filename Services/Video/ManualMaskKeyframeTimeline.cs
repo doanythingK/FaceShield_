@@ -97,17 +97,8 @@ internal static class ManualMaskKeyframeTimeline
 
         lock (state.Gate)
         {
-            // Only tracking sourced from the edited keyframe is invalid. Older
-            // segments can keep their samples: once this frame is persisted as a new
-            // explicit keyframe, floor-keyframe resolution naturally hides the older
-            // segment at and after this point. Keeping it also lets a reversible edit
-            // restore the previous track instead of destructively trimming it.
             state.Segments.RemoveAll(segment => segment.SourceKeyframe == frameIndex);
             state.SegmentValidity.Remove(frameIndex);
-
-            // Workspace bitmap persistence and compact track persistence are separate
-            // transactions. Do not eagerly overwrite the disk track here; a stale
-            // track is rejected after restart by its source-mask fingerprint.
         }
     }
 
@@ -128,9 +119,6 @@ internal static class ManualMaskKeyframeTimeline
             if (segment == null)
                 return false;
 
-            // Recompute after any external keyframe replacement such as single-frame
-            // automatic detection. The stale transform is ignored while the current
-            // source keyframe remains available through ordinary hold semantics.
             state.SegmentValidity.Remove(sourceKeyframe);
             return !IsSegmentCurrentLocked(provider, state, segment);
         }
@@ -157,11 +145,9 @@ internal static class ManualMaskKeyframeTimeline
                 .Select(static existing => existing.Clone())
                 .ToList();
             nextSegments.Add(segment.Clone());
-            nextSegments.Sort(static (a, b) =>
-                a.SourceKeyframe.CompareTo(b.SourceKeyframe));
+            nextSegments.Sort(static (a, b) => a.SourceKeyframe.CompareTo(b.SourceKeyframe));
 
             PersistSegmentsLocked(state, nextSegments);
-
             state.Segments = nextSegments;
             state.SegmentValidity[segment.SourceKeyframe] = true;
         }
@@ -178,9 +164,7 @@ internal static class ManualMaskKeyframeTimeline
         if (!IsEnabled(provider) || frameIndex < 0)
             return false;
 
-        int sourceKeyframe = FindFloorKeyframe(
-            GetKeyframeIndices(provider),
-            frameIndex);
+        int sourceKeyframe = FindFloorKeyframe(GetKeyframeIndices(provider), frameIndex);
         if (sourceKeyframe < 0)
             return false;
 
@@ -203,15 +187,25 @@ internal static class ManualMaskKeyframeTimeline
                 out bool blocked);
             if (blocked)
                 return false;
-            if (!hasSegment || segment == null || !HasAllSamples(segment, frameIndex))
+            if (!hasSegment || segment == null)
             {
                 mask = sourceMask;
                 sourceMask = null!;
                 return true;
             }
 
+            // An explicit failure/end boundary always wins over generic hold fallback.
             if (frameIndex >= segment.EndExclusive)
                 return false;
+
+            // Missing/corrupt samples do not justify dropping all coverage. Ignore the
+            // incomplete transform and fall back to the current source keyframe hold.
+            if (!HasAllSamples(segment, frameIndex))
+            {
+                mask = sourceMask;
+                sourceMask = null!;
+                return true;
+            }
 
             if (!TryCreateTransformedMask(
                     sourceMask,
@@ -246,10 +240,7 @@ internal static class ManualMaskKeyframeTimeline
                 return new ExportMaskLease(snapshot, snapshot, null);
 
             ManualMaskTrackSegment[] segments = GetSegmentsSnapshot(source);
-            var provider = new ManualKeyframeExportMaskProvider(
-                snapshot,
-                keyframes,
-                segments);
+            var provider = new ManualKeyframeExportMaskProvider(snapshot, keyframes, segments);
             return new ExportMaskLease(snapshot, provider, provider);
         }
         catch
@@ -272,8 +263,7 @@ internal static class ManualMaskKeyframeTimeline
 
         lock (state.Gate)
         {
-            segment = state.Segments.FirstOrDefault(candidate =>
-                candidate.SourceKeyframe == sourceKeyframe);
+            segment = state.Segments.FirstOrDefault(candidate => candidate.SourceKeyframe == sourceKeyframe);
             if (segment == null)
                 return false;
             if (!IsSegmentCurrentLocked(provider, state, segment))
@@ -439,9 +429,7 @@ internal static class ManualMaskKeyframeTimeline
             byte* dst = (byte*)targetBuffer.Address;
             for (int y = 0; y < targetBuffer.Size.Height; y++)
             {
-                new Span<byte>(
-                    dst + y * targetBuffer.RowBytes,
-                    targetBuffer.Size.Width * 4).Clear();
+                new Span<byte>(dst + y * targetBuffer.RowBytes, targetBuffer.Size.Width * 4).Clear();
             }
         }
 
@@ -451,11 +439,7 @@ internal static class ManualMaskKeyframeTimeline
             if (sample == null)
                 return false;
 
-            TransformComponentInto(
-                sourceBuffer,
-                targetBuffer,
-                component,
-                sample);
+            TransformComponentInto(sourceBuffer, targetBuffer, component, sample);
         }
 
         return true;
@@ -587,8 +571,7 @@ internal static class ManualMaskKeyframeTimeline
                 _keyframeIsStoredMask[i] = isStored;
                 _keyframeHasCoverage[i] = isStored
                     ? snapshot.StoredMaskHasCoverage(frameIndex)
-                    : snapshot.TryGetFaceMaskData(frameIndex, out var faceData) &&
-                      faceData.Faces.Count > 0;
+                    : snapshot.TryGetFaceMaskData(frameIndex, out var faceData) && faceData.Faces.Count > 0;
             }
         }
 
@@ -599,9 +582,7 @@ internal static class ManualMaskKeyframeTimeline
                     out int position,
                     out ManualMaskTrackSegment? segment,
                     out bool tracked,
-                    out bool blocked) ||
-                blocked ||
-                !_keyframeHasCoverage[position])
+                    out bool blocked) || blocked || !_keyframeHasCoverage[position])
             {
                 return null;
             }
@@ -618,9 +599,7 @@ internal static class ManualMaskKeyframeTimeline
                 : _snapshot.GetFinalMask(sourceKeyframe);
         }
 
-        public bool TryGetBorrowedStoredMask(
-            int frameIndex,
-            out WriteableBitmap mask)
+        public bool TryGetBorrowedStoredMask(int frameIndex, out WriteableBitmap mask)
         {
             mask = null!;
             if (!TryResolveFrame(
@@ -628,9 +607,7 @@ internal static class ManualMaskKeyframeTimeline
                     out int position,
                     out ManualMaskTrackSegment? segment,
                     out bool tracked,
-                    out bool blocked) ||
-                blocked ||
-                !_keyframeHasCoverage[position])
+                    out bool blocked) || blocked || !_keyframeHasCoverage[position])
             {
                 return false;
             }
@@ -658,9 +635,7 @@ internal static class ManualMaskKeyframeTimeline
             return true;
         }
 
-        public bool TryGetFaceMaskData(
-            int frameIndex,
-            out FrameMaskProvider.FaceMaskData data)
+        public bool TryGetFaceMaskData(int frameIndex, out FrameMaskProvider.FaceMaskData data)
         {
             data = default;
             if (!TryResolveFrame(
@@ -668,11 +643,7 @@ internal static class ManualMaskKeyframeTimeline
                     out int position,
                     out ManualMaskTrackSegment? segment,
                     out bool tracked,
-                    out bool blocked) ||
-                blocked ||
-                tracked ||
-                !_keyframeHasCoverage[position] ||
-                _keyframeIsStoredMask[position])
+                    out bool blocked) || blocked || tracked || !_keyframeHasCoverage[position] || _keyframeIsStoredMask[position])
             {
                 return false;
             }
@@ -704,8 +675,7 @@ internal static class ManualMaskKeyframeTimeline
             if (frameIndex == sourceKeyframe)
                 return true;
 
-            segment = _segments.FirstOrDefault(candidate =>
-                candidate.SourceKeyframe == sourceKeyframe);
+            segment = _segments.FirstOrDefault(candidate => candidate.SourceKeyframe == sourceKeyframe);
             if (segment == null)
                 return true;
             if (!IsSegmentCurrent(segment))
@@ -790,8 +760,7 @@ internal static class ManualMaskKeyframeTimeline
         }
 
         public void SetMask(int frameIndex, WriteableBitmap mask)
-            => throw new NotSupportedException(
-                "Export mask snapshots are read-only.");
+            => throw new NotSupportedException("Export mask snapshots are read-only.");
 
         public void Dispose()
         {
