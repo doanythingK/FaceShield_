@@ -129,8 +129,8 @@ internal static class ManualMaskKeyframeTimeline
                 return false;
 
             // Recompute after any external keyframe replacement such as single-frame
-            // automatic detection. Keep an invalid segment present so preview and
-            // export both block stale tracking instead of silently falling back to hold.
+            // automatic detection. The stale transform is ignored while the current
+            // source keyframe remains available through ordinary hold semantics.
             state.SegmentValidity.Remove(sourceKeyframe);
             return !IsSegmentCurrentLocked(provider, state, segment);
         }
@@ -203,7 +203,7 @@ internal static class ManualMaskKeyframeTimeline
                 out bool blocked);
             if (blocked)
                 return false;
-            if (!hasSegment || segment == null)
+            if (!hasSegment || segment == null || !HasAllSamples(segment, frameIndex))
             {
                 mask = sourceMask;
                 sourceMask = null!;
@@ -219,7 +219,9 @@ internal static class ManualMaskKeyframeTimeline
                     frameIndex,
                     out WriteableBitmap transformed))
             {
-                return false;
+                mask = sourceMask;
+                sourceMask = null!;
+                return true;
             }
 
             mask = transformed;
@@ -276,8 +278,8 @@ internal static class ManualMaskKeyframeTimeline
                 return false;
             if (!IsSegmentCurrentLocked(provider, state, segment))
             {
-                blocked = true;
-                return true;
+                segment = null;
+                return false;
             }
             return true;
         }
@@ -372,6 +374,18 @@ internal static class ManualMaskKeyframeTimeline
                 high = mid - 1;
         }
         return null;
+    }
+
+    private static bool HasAllSamples(
+        ManualMaskTrackSegment segment,
+        int frameIndex)
+    {
+        foreach (ManualMaskTrackComponent component in segment.Components)
+        {
+            if (FindSample(component.Samples, frameIndex) == null)
+                return false;
+        }
+        return segment.Components.Count > 0;
     }
 
     private static bool TryCreateTransformedMask(
@@ -601,7 +615,7 @@ internal static class ManualMaskKeyframeTimeline
                 return null;
             return TryCreateTransformedMask(source, segment, frameIndex, out WriteableBitmap transformed)
                 ? transformed
-                : null;
+                : _snapshot.GetFinalMask(sourceKeyframe);
         }
 
         public bool TryGetBorrowedStoredMask(
@@ -635,7 +649,11 @@ internal static class ManualMaskKeyframeTimeline
 
             EnsureScratchMask(source);
             if (!TransformComponentsInto(source, _scratchMask!, segment, frameIndex))
-                return false;
+            {
+                if (!_keyframeIsStoredMask[position])
+                    return false;
+                return _snapshot.TryGetStoredMaskBorrowed(sourceKeyframe, out mask);
+            }
             mask = _scratchMask!;
             return true;
         }
@@ -692,7 +710,7 @@ internal static class ManualMaskKeyframeTimeline
                 return true;
             if (!IsSegmentCurrent(segment))
             {
-                blocked = true;
+                segment = null;
                 return true;
             }
             if (frameIndex >= segment.EndExclusive)
@@ -700,16 +718,13 @@ internal static class ManualMaskKeyframeTimeline
                 blocked = true;
                 return true;
             }
+            if (!HasAllSamples(segment, frameIndex))
+            {
+                segment = null;
+                return true;
+            }
 
             tracked = true;
-            foreach (ManualMaskTrackComponent component in segment.Components)
-            {
-                if (FindSample(component.Samples, frameIndex) == null)
-                {
-                    blocked = true;
-                    break;
-                }
-            }
             return true;
         }
 
