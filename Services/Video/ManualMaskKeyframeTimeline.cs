@@ -210,6 +210,9 @@ internal static class ManualMaskKeyframeTimeline
                 return true;
             }
 
+            if (frameIndex >= segment.EndExclusive)
+                return false;
+
             if (!TryCreateTransformedMask(
                     sourceMask,
                     segment,
@@ -547,7 +550,8 @@ internal static class ManualMaskKeyframeTimeline
         private readonly bool[] _keyframeHasCoverage;
         private readonly bool[] _keyframeIsStoredMask;
         private readonly Dictionary<int, bool> _segmentValidity = new();
-        private readonly Dictionary<int, WriteableBitmap> _faceSourceMasks = new();
+        private int _faceSourceMaskKeyframe = -1;
+        private WriteableBitmap? _faceSourceMask;
         private WriteableBitmap? _scratchMask;
 
         internal ManualKeyframeExportMaskProvider(
@@ -691,6 +695,11 @@ internal static class ManualMaskKeyframeTimeline
                 blocked = true;
                 return true;
             }
+            if (frameIndex >= segment.EndExclusive)
+            {
+                blocked = true;
+                return true;
+            }
 
             tracked = true;
             foreach (ManualMaskTrackComponent component in segment.Components)
@@ -732,12 +741,19 @@ internal static class ManualMaskKeyframeTimeline
                     : null;
             }
 
-            if (_faceSourceMasks.TryGetValue(sourceKeyframe, out WriteableBitmap? cached))
-                return cached;
+            if (_faceSourceMask != null && _faceSourceMaskKeyframe == sourceKeyframe)
+                return _faceSourceMask;
+
+            _faceSourceMask?.Dispose();
+            _faceSourceMask = null;
+            _faceSourceMaskKeyframe = -1;
+
             WriteableBitmap? created = _snapshot.GetFinalMask(sourceKeyframe);
             if (created == null)
                 return null;
-            _faceSourceMasks[sourceKeyframe] = created;
+
+            _faceSourceMask = created;
+            _faceSourceMaskKeyframe = sourceKeyframe;
             return created;
         }
 
@@ -766,9 +782,9 @@ internal static class ManualMaskKeyframeTimeline
         {
             _scratchMask?.Dispose();
             _scratchMask = null;
-            foreach (WriteableBitmap bitmap in _faceSourceMasks.Values)
-                bitmap.Dispose();
-            _faceSourceMasks.Clear();
+            _faceSourceMask?.Dispose();
+            _faceSourceMask = null;
+            _faceSourceMaskKeyframe = -1;
         }
     }
 }
