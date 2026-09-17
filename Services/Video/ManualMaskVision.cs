@@ -48,7 +48,7 @@ internal static class ManualSimilarityEstimator
             double dx = q.X - p.X, dy = q.Y - p.Y;
             double denominator = dx * dx + dy * dy;
             if (denominator < 36) continue;
-            double vx = v.X - u.X, vy = v.Y - u.Y;
+            double vx = v.X - u, vy = v.Y - u.Y;
             double a = (dx * vx + dy * vy) / denominator;
             double b = (dx * vy - dy * vx) / denominator;
             var hypothesis = new ManualMotion(a, b, u.X - a * p.X + b * p.Y,
@@ -185,16 +185,22 @@ internal sealed class ManualImagePyramid
         error = double.PositiveInfinity;
         if (_levels.Count != next._levels.Count) return false;
         double deltaX = 0, deltaY = 0;
+        bool seeded = false;
         for (int level = _levels.Count - 1; level >= 0; level--)
         {
             ct.ThrowIfCancellationRequested();
             Level from = _levels[level], to = next._levels[level];
             double factor = 1 << level;
             double px = point.X / factor, py = point.Y / factor;
-            if (!Inside(from, px, py, 5)) return false;
-            if (level == _levels.Count - 1)
+            if (!Inside(from, px, py, 5))
             {
-                // Seed the coarsest optical flow with a small, bounded patch search.
+                // A face close to an image edge may not fit at coarse levels.
+                // Begin at the first usable finer level instead of rejecting it.
+                if (!seeded) continue;
+                return false;
+            }
+            if (!seeded)
+            {
                 double best = double.PositiveInfinity;
                 for (int dy = -8; dy <= 8; dy += 2)
                     for (int dx = -8; dx <= 8; dx += 2)
@@ -203,6 +209,7 @@ internal sealed class ManualImagePyramid
                         if (e < best) { best = e; deltaX = dx; deltaY = dy; }
                     }
                 if (!double.IsFinite(best)) return false;
+                seeded = true;
             }
             else
             {
@@ -239,6 +246,7 @@ internal sealed class ManualImagePyramid
             deltaX = qx - px;
             deltaY = qy - py;
         }
+        if (!seeded) return false;
         found = new ManualPoint(point.X + deltaX, point.Y + deltaY);
         error = PatchError(_levels[0], next._levels[0], point.X, point.Y, found.X, found.Y);
         return double.IsFinite(error);
