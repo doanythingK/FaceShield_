@@ -133,22 +133,15 @@ internal static class ManualMaskKeyframeTimeline
             }
             bool hasSegment = TryResolveCurrentSegment(provider, sourceKeyframe,
                 out ManualMaskTrackSegment? segment, out bool blocked);
-            if (blocked) return false;
-            if (!hasSegment || segment == null)
-            {
-                mask = sourceMask;
-                sourceMask = null!;
-                return true;
-            }
-            // Explicit end/failure takes precedence over holding the source keyframe.
-            if (frameIndex >= segment.EndExclusive) return false;
-            if (!HasAllSamples(segment, frameIndex) ||
-                !TryCreateTransformedMask(sourceMask, segment, frameIndex, out WriteableBitmap transformed))
-            {
-                mask = sourceMask;
-                sourceMask = null!;
-                return true;
-            }
+            if (blocked || !hasSegment || segment == null ||
+                frameIndex >= segment.EndExclusive ||
+                !HasAllSamples(segment, frameIndex))
+                return false;
+
+            // Do not silently replace missing tracking with a stationary source mask.
+            if (!TryCreateTransformedMask(sourceMask, segment, frameIndex,
+                    out WriteableBitmap transformed))
+                return false;
             mask = transformed;
             return true;
         }
@@ -326,7 +319,7 @@ internal static class ManualMaskKeyframeTimeline
         double x3 = x1 - scale * sin * height;
         double y3 = y1 + scale * cos * height;
         int minX = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originX, x1), Math.Min(x2, x3))), 0, targetBuffer.Size.Width);
-        int minY = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originY, y1), Math.Min(y2, y3))), 0, targetBuffer.Size.Height);
+        int minY = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originY, y1), Math.Min(x2, y3))), 0, targetBuffer.Size.Height);
         int maxX = Math.Clamp((int)Math.Ceiling(Math.Max(Math.Max(originX, x1), Math.Max(x2, x3))), 0, targetBuffer.Size.Width);
         int maxY = Math.Clamp((int)Math.Ceiling(Math.Max(Math.Max(originY, y1), Math.Max(y2, y3))), 0, targetBuffer.Size.Height);
         int sourceMinX = Math.Clamp((int)Math.Floor(sx0), 0, sourceBuffer.Size.Width - 1);
@@ -429,7 +422,7 @@ internal static class ManualMaskKeyframeTimeline
             WriteableBitmap? source = GetSourceRasterMask(sourceKeyframe, position);
             if (source == null) return null;
             return TryCreateTransformedMask(source, segment, frameIndex, out WriteableBitmap transformed)
-                ? transformed : _snapshot.GetFinalMask(sourceKeyframe);
+                ? transformed : throw MissingTracking(frameIndex);
         }
 
         public bool TryGetBorrowedStoredMask(int frameIndex, out WriteableBitmap mask)
@@ -448,10 +441,7 @@ internal static class ManualMaskKeyframeTimeline
             if (source == null) return false;
             EnsureScratchMask(source);
             if (!TransformComponentsInto(source, _scratchMask!, segment, frameIndex))
-            {
-                if (!_keyframeIsStoredMask[position]) return false;
-                return _snapshot.TryGetStoredMaskBorrowed(sourceKeyframe, out mask);
-            }
+                throw MissingTracking(frameIndex);
             mask = _scratchMask!;
             return true;
         }
@@ -465,6 +455,10 @@ internal static class ManualMaskKeyframeTimeline
                 _keyframeIsStoredMask[position]) return false;
             return _snapshot.TryGetFaceMaskData(_keyframes[position], out data);
         }
+
+        private static InvalidOperationException MissingTracking(int frameIndex) => new(
+            $"수동 블러 {frameIndex} 프레임의 추적 결과가 없습니다. " +
+            "고정된 키프레임 마스크로 대신 내보내지 않습니다. 해당 프레임에서 마스크를 다시 지정하고 추적하세요.");
 
         private bool TryResolveFrame(int frameIndex, out int position,
             out ManualMaskTrackSegment? segment, out bool tracked, out bool blocked)
@@ -480,10 +474,9 @@ internal static class ManualMaskKeyframeTimeline
             int sourceKeyframe = _keyframes[position];
             if (frameIndex == sourceKeyframe) return true;
             segment = _segments.FirstOrDefault(candidate => candidate.SourceKeyframe == sourceKeyframe);
-            if (segment == null) return true;
-            if (!IsSegmentCurrent(segment)) { segment = null; return true; }
-            if (frameIndex >= segment.EndExclusive) { blocked = true; return true; }
-            if (!HasAllSamples(segment, frameIndex)) { segment = null; return true; }
+            if (segment == null || !IsSegmentCurrent(segment) ||
+                frameIndex >= segment.EndExclusive || !HasAllSamples(segment, frameIndex))
+                throw MissingTracking(frameIndex);
             tracked = true;
             return true;
         }
