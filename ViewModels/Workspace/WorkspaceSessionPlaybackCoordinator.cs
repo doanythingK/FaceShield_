@@ -21,6 +21,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     private readonly object _stateGate = new();
 
     private CancellationTokenSource? _sessionInitCts;
+    private VideoSession? _adoptedSession;
     private bool _adoptionInProgress;
     private bool _initialized;
     private bool _disposed;
@@ -125,7 +126,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             // selected-frame PTS warmup for the same source file. Keep the timeline
             // provider unpublished until the first frame load has completed.
             bool prioritizeManualFrame = _mode == WorkspaceMode.Manual;
-            if (!AdoptSession(session, deferTimeline: prioritizeManualFrame))
+            AdoptSession(session, deferTimeline: prioritizeManualFrame);
+            if (!ReferenceEquals(_adoptedSession, session))
                 return;
 
             try
@@ -150,7 +152,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 // Adoption is irreversible for a cached workspace. Even if this
                 // particular load gets canceled, publish its already-owned provider
                 // so a later open can retry rather than inheriting a disabled UI.
-                if (prioritizeManualFrame && !_disposed)
+                if (prioritizeManualFrame && !_disposed &&
+                    ReferenceEquals(_adoptedSession, session))
                 {
                     _frameList.SetThumbnailProvider(session.ThumbnailProvider);
                     _frameList.SetPlaybackEnabled(true);
@@ -195,7 +198,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         catch (ObjectDisposedException) { }
     }
 
-    private bool AdoptSession(VideoSession session, bool deferTimeline = false)
+    private void AdoptSession(VideoSession session, bool deferTimeline = false)
     {
         if (session == null)
             throw new ArgumentNullException(nameof(session));
@@ -215,7 +218,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             if (_initialized || _adoptionInProgress)
             {
                 session.Dispose();
-                return false;
+                return;
             }
 
             _adoptionInProgress = true;
@@ -234,6 +237,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             {
                 if (!_disposed)
                 {
+                    _adoptedSession = session;
                     _initialized = true;
                     adopted = true;
                 }
@@ -243,7 +247,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             {
                 _frameList.SetPlaybackEnabled(false);
                 _framePreview.SetSessionReady(false);
-                return false;
+                return;
             }
 
             if (!deferTimeline)
@@ -251,7 +255,6 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 _frameList.SetPlaybackEnabled(true);
                 _framePreview.SetSessionReady(true);
             }
-            return true;
         }
         finally
         {
@@ -348,6 +351,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             if (_disposed)
                 return;
             _disposed = true;
+            _adoptedSession = null;
         }
 
         CancelInitialization();
