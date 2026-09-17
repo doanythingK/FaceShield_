@@ -92,7 +92,8 @@ internal static class ManualMaskTrackingService
                     sourceMask, box, previous, previousStride, width, height, cancellationToken);
                 if (features.Count < MinimumFeatures)
                     throw new InvalidOperationException(
-                        "마스크 내부의 추적 가능한 특징점이 부족합니다. 다른 프레임에서 마스크를 지정해 주세요.");
+                        "마스크 내부에서 추적 가능한 특징점을 6개 찾지 못했습니다. " +
+                        "영역을 조금 넓히거나 다른 프레임에서 마스크를 지정해 주세요.");
                 components.Add(new Component { Source = box, Features = features });
                 segment.Components.Add(new ManualMaskTrackComponent
                 {
@@ -370,7 +371,9 @@ internal static class ManualMaskTrackingService
                     double gx = Luma(frame, stride, x + 2, y) - Luma(frame, stride, x - 2, y);
                     double gy = Luma(frame, stride, x, y + 2) - Luma(frame, stride, x, y - 2);
                     double strength = Math.Abs(gx) + Math.Abs(gy);
-                    if (strength >= 16) ranked.Add((strength, new ManualPoint(x, y)));
+                    // Preserve the old strong-feature set. Only supplement it with
+                    // lower-contrast candidates when there are fewer than six.
+                    if (strength >= 6) ranked.Add((strength, new ManualPoint(x, y)));
                 }
             }
         }
@@ -379,6 +382,7 @@ internal static class ManualMaskTrackingService
         foreach (var candidate in ranked)
         {
             if ((chosen.Count & 15) == 0) ct.ThrowIfCancellationRequested();
+            if (candidate.Strength < 16 && chosen.Count >= MinimumFeatures) break;
             if (chosen.Any(point => DistanceSquared(point, candidate.Location) < 16)) continue;
             chosen.Add(candidate.Location);
             if (chosen.Count >= MaxFeaturesPerComponent) break;
