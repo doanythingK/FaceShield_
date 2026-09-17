@@ -87,6 +87,23 @@ try
     }
     Assert(tracked > 0, "Synthetic image supplied no trackable points");
 
+    // These points cannot fit the coarsest 1/8 pyramid level. Identical
+    // textured frames should allow at least one to track on a finer level.
+    // The prior implementation rejected all of them before optical flow began.
+    int borderTracked = 0;
+    for (int y = 18; y <= 38; y += 5)
+    {
+        for (int x = 18; x <= 38; x += 5)
+        {
+            var borderPoint = new ManualPoint(x, y);
+            if (!freshFirst.TryTrack(freshSecond, borderPoint, CancellationToken.None,
+                    out ManualPoint found, out double borderError)) continue;
+            if (Math.Abs(found.X - x) < 0.5 && Math.Abs(found.Y - y) < 0.5 &&
+                borderError < 0.01) borderTracked++;
+        }
+    }
+    Assert(borderTracked > 0, "Valid near-border points were rejected at every pyramid level");
+
     // This isolates managed allocations of the pyramid itself; it is NOT a
     // full-video throughput/GC benchmark or a comparison with an older binary.
     var warm = new ManualImagePyramid(w, h);
@@ -104,7 +121,7 @@ try
     long reusedBytes = GC.GetAllocatedBytesForCurrentThread() - reuseStart;
     Assert(freshBytes >= samples * 688080L, "Fresh pyramid allocation below expected float buffer bytes");
     Assert(reusedBytes * 20 < freshBytes, "Reload still allocates substantial managed memory");
-    Console.WriteLine($"PASS: dimensions, padding, pixel parity, buffer identity, cancellation recovery, optical flow");
+    Console.WriteLine($"PASS: dimensions, padding, pixel parity, buffer identity, cancellation recovery, optical flow, near-border points={borderTracked}");
     Console.WriteLine($"480x270, {samples} iterations: fresh_allocated_bytes={freshBytes}; reused_allocated_bytes={reusedBytes}");
 }
 catch (Exception error)
