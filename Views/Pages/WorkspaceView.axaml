@@ -33,7 +33,7 @@
                                 Command="{Binding PrevAutoAnomalyCommand}"
                                 IsEnabled="{Binding HasAutoAnomalies}"/>
                         <Button Content="다음 이상 프레임"
-                                Command="{Binding NextAutoAnomaliesCommand}"
+                                Command="{Binding NextAutoAnomalyCommand}"
                                 IsEnabled="{Binding HasAutoAnomalies}"/>
                         <Border Background="#1C2A1C"
                                 CornerRadius="6"
