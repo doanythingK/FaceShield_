@@ -7,13 +7,13 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Input;
 
 namespace FaceShield.Controls;
 
 /// <summary>
-/// Time-based timeline selection does not depend on thumbnail completion. An independent,
-/// single-reader PTS indexer prevents background thumbnail decoding from holding the
-/// selection decoder's lock. Never guess VFR ordinals from average FPS.
+/// A single, independent PTS indexer handles the most recent click without waiting
+/// for thumbnail decoding. Never infer VFR ordinals from average FPS.
 /// </summary>
 public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
 {
@@ -43,6 +43,15 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
     {
         get => GetValue(NavigationEnabledProperty);
         set => SetValue(NavigationEnabledProperty, value);
+    }
+
+    public static readonly StyledProperty<ICommand?> FrameSelectionCommandProperty =
+        AvaloniaProperty.Register<ManualTimelineFrameStrip, ICommand?>(nameof(FrameSelectionCommand));
+
+    public ICommand? FrameSelectionCommand
+    {
+        get => GetValue(FrameSelectionCommandProperty);
+        set => SetValue(FrameSelectionCommandProperty, value);
     }
 
     private static readonly IBrush ThumbnailReadyBrush =
@@ -100,6 +109,13 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
         }
 
         e.Handled = true;
+        ICommand? command = FrameSelectionCommand;
+        if (command == null || !command.CanExecute(Math.Max(0, SelectedFrameIndex)))
+        {
+            NavigationStatus = "현재 작업 중에는 타임라인을 이동할 수 없습니다.";
+            return;
+        }
+
         TimelineThumbnailProvider? provider = ThumbnailProvider;
         if (provider == null || string.IsNullOrWhiteSpace(VideoPath))
         {
@@ -107,7 +123,7 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
             return;
         }
 
-        // The newest click wins, including a click resolved directly from cache.
+        // Latest click wins, including a click immediately resolved from cache.
         CancelSelection();
         double seconds = Math.Max(0, ViewStartSeconds) +
             Math.Max(0.05, SecondsPerScreen) *
@@ -120,15 +136,16 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
 
         string path = VideoPath!;
         int generation = Volatile.Read(ref _attachmentGeneration);
+        int baseline = SelectedFrameIndex;
         var cts = new CancellationTokenSource();
         Interlocked.Exchange(ref _selectionCts, cts);
         NavigationStatus = "클릭한 위치의 정확한 프레임을 확인하는 중...";
-        _ = ResolveSelectionAsync(provider, path, seconds, generation, cts);
+        _ = ResolveSelectionAsync(provider, path, seconds, baseline, generation, cts);
     }
 
     private async Task ResolveSelectionAsync(
         TimelineThumbnailProvider provider, string path, double seconds,
-        int attachmentGeneration, CancellationTokenSource cts)
+        int baseline, int attachmentGeneration, CancellationTokenSource cts)
     {
         CancellationToken token = cts.Token;
         try
@@ -164,7 +181,8 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
                     !ReferenceEquals(Volatile.Read(ref _selectionCts), cts) ||
                     !ReferenceEquals(ThumbnailProvider, provider) ||
                     !string.Equals(VideoPath, path, StringComparison.Ordinal) ||
-                    attachmentGeneration != Volatile.Read(ref _attachmentGeneration))
+                    attachmentGeneration != Volatile.Read(ref _attachmentGeneration) ||
+                    SelectedFrameIndex != baseline)
                 {
                     return;
                 }
@@ -186,7 +204,8 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
             {
                 if (!token.IsCancellationRequested &&
                     ReferenceEquals(Volatile.Read(ref _selectionCts), cts) &&
-                    attachmentGeneration == Volatile.Read(ref _attachmentGeneration))
+                    attachmentGeneration == Volatile.Read(ref _attachmentGeneration) &&
+                    SelectedFrameIndex == baseline)
                 {
                     NavigationStatus = "해당 위치의 프레임을 불러오지 못했습니다. 영상의 디코딩 상태를 확인하세요.";
                 }
@@ -206,7 +225,13 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
         int selected = IsTotalFramesEstimated
             ? frame
             : Math.Clamp(frame, 0, Math.Max(0, TotalFrames - 1));
-        SetCurrentValue(SelectedFrameIndexProperty, selected);
+        ICommand? command = FrameSelectionCommand;
+        if (command == null || !command.CanExecute(selected))
+        {
+            NavigationStatus = "현재 작업 중에는 타임라인을 이동할 수 없습니다.";
+            return;
+        }
+        command.Execute(selected);
         NavigationStatus = null;
         InvalidateVisual();
     }
@@ -219,7 +244,7 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
             return;
         try { previous.Cancel(); }
         catch (ObjectDisposedException) { }
-        // ResolveSelectionAsync owns disposal after the decode has drained.
+        // ResolveSelectionAsync owns disposal after its decoder has drained.
     }
 
     public override void Render(DrawingContext context)
@@ -239,8 +264,7 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
             double sampleTime = ViewStartSeconds +
                 span * ((slot + 0.5) / slots);
             double x = slot * slotWidth;
-            // These bands describe the sampled thumbnail/time points, NOT every
-            // frame between them. Green = bitmap in cache; blue = exact PTS index.
+            // Each band describes one sampled point, not every frame in a slot.
             if (provider.TryGetCachedThumbnailAtTime(sampleTime, out _))
             {
                 context.FillRectangle(ThumbnailReadyBrush,
