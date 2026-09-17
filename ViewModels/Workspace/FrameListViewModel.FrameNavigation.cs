@@ -5,8 +5,34 @@ namespace FaceShield.ViewModels.Workspace;
 
 public partial class FrameListViewModel
 {
-    // These controls navigate ordinal frames, never seconds * average FPS. The
-    // ordinary selection event still drives the manual player's exact frame load.
+    // User-directed frame navigation must respect the active workspace operation.
+    private bool CanNavigateToFrame(int frameIndex)
+        => !_disposed && IsPlaybackEnabled &&
+           _canUserNavigate?.Invoke() != false &&
+           frameIndex >= 0 && TotalFrames > 0;
+
+    [RelayCommand]
+    private void SeekToFrame(int frameIndex)
+    {
+        if (!CanNavigateToFrame(frameIndex))
+            return;
+
+        if (IsPlaying)
+            NotifyPlaybackStopped();
+
+        int target = IsTotalFramesEstimated
+            ? frameIndex
+            : Math.Clamp(frameIndex, 0, TotalFrames - 1);
+        if (SelectedFrameIndex == target)
+        {
+            // A click on the same ordinal retries an earlier failed frame load.
+            SelectedFrameIndexChanged?.Invoke(target);
+            return;
+        }
+        SelectedFrameIndex = target;
+        TimelineNavigationStatus = null;
+    }
+
     [RelayCommand]
     private void PreviousFrame()
         => StepFrame(-1);
@@ -17,12 +43,8 @@ public partial class FrameListViewModel
 
     private void StepFrame(int delta)
     {
-        if (_disposed || !IsPlaybackEnabled ||
-            _canUserNavigate?.Invoke() == false ||
-            SelectedFrameIndex < 0 || TotalFrames <= 0)
-        {
+        if (!CanNavigateToFrame(SelectedFrameIndex))
             return;
-        }
 
         if (IsPlaying)
             NotifyPlaybackStopped();
@@ -35,9 +57,9 @@ public partial class FrameListViewModel
             return;
 
         SelectedFrameIndex = target;
+        TimelineNavigationStatus = null;
     }
 
-    // Selection failures must be visible rather than silently leaving the old frame.
     private string? _timelineNavigationStatus;
     public string? TimelineNavigationStatus
     {
