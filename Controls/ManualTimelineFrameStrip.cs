@@ -143,6 +143,17 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
         _ = ResolveSelectionAsync(provider, path, seconds, baseline, generation, cts);
     }
 
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        if (!NavigationEnabled)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        base.OnPointerWheelChanged(e);
+    }
+
     private async Task ResolveSelectionAsync(
         TimelineThumbnailProvider provider, string path, double seconds,
         int baseline, int attachmentGeneration, CancellationTokenSource cts)
@@ -204,6 +215,8 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
             {
                 if (!token.IsCancellationRequested &&
                     ReferenceEquals(Volatile.Read(ref _selectionCts), cts) &&
+                    ReferenceEquals(ThumbnailProvider, provider) &&
+                    string.Equals(VideoPath, path, StringComparison.Ordinal) &&
                     attachmentGeneration == Volatile.Read(ref _attachmentGeneration) &&
                     SelectedFrameIndex == baseline)
                 {
