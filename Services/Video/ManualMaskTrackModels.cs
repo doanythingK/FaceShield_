@@ -13,89 +13,67 @@ namespace FaceShield.Services.Video;
 
 internal sealed class ManualMaskTrackSample
 {
-    [JsonRequired]
-    public int FrameIndex { get; set; }
-    [JsonRequired]
-    public double OffsetX { get; set; }
-    [JsonRequired]
-    public double OffsetY { get; set; }
-    [JsonRequired]
-    public double Scale { get; set; } = 1.0;
-    [JsonRequired]
-    public double Confidence { get; set; } = 1.0;
+    [JsonRequired] public int FrameIndex { get; set; }
+    [JsonRequired] public double OffsetX { get; set; }
+    [JsonRequired] public double OffsetY { get; set; }
+    [JsonRequired] public double Scale { get; set; } = 1.0;
+    [JsonRequired] public double Confidence { get; set; } = 1.0;
+    // Optional in v3: existing saved tracks do not have this field and mean zero rotation.
+    public double RotationRadians { get; set; }
 }
 
 internal sealed class ManualMaskTrackComponent
 {
-    [JsonRequired]
-    public int ComponentIndex { get; set; }
-    [JsonRequired]
-    public double SourceBoundsX { get; set; }
-    [JsonRequired]
-    public double SourceBoundsY { get; set; }
-    [JsonRequired]
-    public double SourceBoundsWidth { get; set; }
-    [JsonRequired]
-    public double SourceBoundsHeight { get; set; }
-    [JsonRequired]
-    public List<ManualMaskTrackSample> Samples { get; set; } = new();
+    [JsonRequired] public int ComponentIndex { get; set; }
+    [JsonRequired] public double SourceBoundsX { get; set; }
+    [JsonRequired] public double SourceBoundsY { get; set; }
+    [JsonRequired] public double SourceBoundsWidth { get; set; }
+    [JsonRequired] public double SourceBoundsHeight { get; set; }
+    [JsonRequired] public List<ManualMaskTrackSample> Samples { get; set; } = new();
 
-    internal ManualMaskTrackComponent Clone()
-        => new()
+    internal ManualMaskTrackComponent Clone() => new()
+    {
+        ComponentIndex = ComponentIndex,
+        SourceBoundsX = SourceBoundsX,
+        SourceBoundsY = SourceBoundsY,
+        SourceBoundsWidth = SourceBoundsWidth,
+        SourceBoundsHeight = SourceBoundsHeight,
+        Samples = Samples.Select(static sample => new ManualMaskTrackSample
         {
-            ComponentIndex = ComponentIndex,
-            SourceBoundsX = SourceBoundsX,
-            SourceBoundsY = SourceBoundsY,
-            SourceBoundsWidth = SourceBoundsWidth,
-            SourceBoundsHeight = SourceBoundsHeight,
-            Samples = Samples
-                .Select(static sample => new ManualMaskTrackSample
-                {
-                    FrameIndex = sample.FrameIndex,
-                    OffsetX = sample.OffsetX,
-                    OffsetY = sample.OffsetY,
-                    Scale = sample.Scale,
-                    Confidence = sample.Confidence
-                })
-                .ToList()
-        };
+            FrameIndex = sample.FrameIndex,
+            OffsetX = sample.OffsetX,
+            OffsetY = sample.OffsetY,
+            Scale = sample.Scale,
+            Confidence = sample.Confidence,
+            RotationRadians = sample.RotationRadians
+        }).ToList()
+    };
 }
 
 internal sealed class ManualMaskTrackSegment
 {
-    [JsonRequired]
-    public int SourceKeyframe { get; set; }
-    [JsonRequired]
-    public string SourceMaskFingerprint { get; set; } = string.Empty;
-    [JsonRequired]
-    public int EndExclusive { get; set; }
-    [JsonRequired]
-    public bool StoppedByFailure { get; set; }
+    [JsonRequired] public int SourceKeyframe { get; set; }
+    [JsonRequired] public string SourceMaskFingerprint { get; set; } = string.Empty;
+    [JsonRequired] public int EndExclusive { get; set; }
+    [JsonRequired] public bool StoppedByFailure { get; set; }
     public int? StopFrame { get; set; }
     public string? StopReason { get; set; }
-    [JsonRequired]
-    public List<ManualMaskTrackComponent> Components { get; set; } = new();
+    [JsonRequired] public List<ManualMaskTrackComponent> Components { get; set; } = new();
 
-    internal ManualMaskTrackSegment Clone()
-        => new()
-        {
-            SourceKeyframe = SourceKeyframe,
-            SourceMaskFingerprint = SourceMaskFingerprint,
-            EndExclusive = EndExclusive,
-            StoppedByFailure = StoppedByFailure,
-            StopFrame = StopFrame,
-            StopReason = StopReason,
-            Components = Components
-                .OrderBy(static component => component.ComponentIndex)
-                .Select(static component => component.Clone())
-                .ToList()
-        };
+    internal ManualMaskTrackSegment Clone() => new()
+    {
+        SourceKeyframe = SourceKeyframe,
+        SourceMaskFingerprint = SourceMaskFingerprint,
+        EndExclusive = EndExclusive,
+        StoppedByFailure = StoppedByFailure,
+        StopFrame = StopFrame,
+        StopReason = StopReason,
+        Components = Components.OrderBy(static component => component.ComponentIndex)
+            .Select(static component => component.Clone()).ToList()
+    };
 }
 
-internal sealed record ManualMaskTrackResult(
-    ManualMaskTrackSegment Segment,
-    int ProcessedFrames,
-    bool ReachedBoundary);
+internal sealed record ManualMaskTrackResult(ManualMaskTrackSegment Segment, int ProcessedFrames, bool ReachedBoundary);
 
 internal sealed class ManualMaskTrackStoreState
 {
@@ -114,145 +92,86 @@ internal static class ManualMaskTrackStore
         PropertyNameCaseInsensitive = true
     };
 
-    // Deserializing the complete state in one pass makes a single malformed numeric
-    // field destroy every other segment before tolerant validation can run.
     private sealed class TrackHeader
     {
-        [JsonRequired]
-        public int Version { get; set; } = CurrentVersion;
-        [JsonRequired]
-        public string SourceEvidence { get; set; } = string.Empty;
+        [JsonRequired] public int Version { get; set; } = CurrentVersion;
+        [JsonRequired] public string SourceEvidence { get; set; } = string.Empty;
     }
 
     internal static IReadOnlyList<ManualMaskTrackSegment> Load(string videoPath)
     {
-        if (string.IsNullOrWhiteSpace(videoPath))
-            return Array.Empty<ManualMaskTrackSegment>();
-
-        try
-        {
-            return LoadCore(videoPath, strict: false);
-        }
+        if (string.IsNullOrWhiteSpace(videoPath)) return Array.Empty<ManualMaskTrackSegment>();
+        try { return LoadCore(videoPath, strict: false); }
         catch (Exception ex)
         {
-            // A missing/corrupt whole document, unsupported version or stale source
-            // evidence cannot be repaired by removing individual segments.
             Debug.WriteLine($"[ManualMaskTrackStore] load failed: {ex.Message}");
             return Array.Empty<ManualMaskTrackSegment>();
         }
     }
 
-    /// <summary>
-    /// Strict read used by export safety checks. A missing track file is valid and
-    /// means there is no persisted tracking metadata, but an existing unreadable,
-    /// incompatible, stale-evidence, or structurally invalid file must not be treated
-    /// as an empty successful state.
-    /// </summary>
+    // An absent file means no tracking. A present invalid file must block export.
     internal static IReadOnlyList<ManualMaskTrackSegment> LoadForExport(string videoPath)
     {
         if (string.IsNullOrWhiteSpace(videoPath))
             throw new ArgumentException("Video path is required.", nameof(videoPath));
-
         return LoadCore(videoPath, strict: true);
     }
 
-    private static IReadOnlyList<ManualMaskTrackSegment> LoadCore(
-        string videoPath,
-        bool strict)
+    private static IReadOnlyList<ManualMaskTrackSegment> LoadCore(string videoPath, bool strict)
     {
         string? path = ResolveExistingTrackPath(videoPath);
-        if (path == null)
-            return Array.Empty<ManualMaskTrackSegment>();
-
+        if (path == null) return Array.Empty<ManualMaskTrackSegment>();
         string json = File.ReadAllText(path);
         using JsonDocument document = JsonDocument.Parse(json);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Manual tracking state must be a JSON object.");
-
         TrackHeader? header = JsonSerializer.Deserialize<TrackHeader>(json, JsonOptions);
         if (header == null)
             throw new InvalidDataException("Manual tracking state has no header.");
         if (header.Version != CurrentVersion)
-        {
-            throw new InvalidDataException(
-                $"Unsupported manual tracking state version {header.Version}; expected {CurrentVersion}.");
-        }
-
-        string expectedEvidence = BuildSourceEvidence(videoPath);
-        if (!string.Equals(header.SourceEvidence, expectedEvidence, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException(
-                "Manual tracking state does not match the current source video evidence.");
-        }
-
-        // Match the serializer's case-insensitive property handling. Missing or
-        // non-array collections are file-level failures, not recoverable segments.
+            throw new InvalidDataException($"Unsupported manual tracking state version {header.Version}; expected {CurrentVersion}.");
+        if (!string.Equals(header.SourceEvidence, BuildSourceEvidence(videoPath), StringComparison.Ordinal))
+            throw new InvalidDataException("Manual tracking state does not match the current source video evidence.");
         JsonElement segmentsElement = default;
-        bool foundSegments = false;
+        bool found = false;
         foreach (JsonProperty property in document.RootElement.EnumerateObject())
-        {
             if (string.Equals(property.Name, "Segments", StringComparison.OrdinalIgnoreCase))
             {
                 segmentsElement = property.Value;
-                foundSegments = true;
+                found = true;
             }
-        }
-        if (!foundSegments || segmentsElement.ValueKind != JsonValueKind.Array)
+        if (!found || segmentsElement.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("Manual tracking state has no segment collection.");
-
         var result = new List<ManualMaskTrackSegment>(segmentsElement.GetArrayLength());
         var keyframes = new HashSet<int>();
         foreach (JsonElement element in segmentsElement.EnumerateArray())
         {
             ManualMaskTrackSegment? segment;
-            try
-            {
-                // JsonRequired also rejects *omitted* scalar fields that would
-                // otherwise silently deserialize to 0, 1.0, or false.
-                segment = JsonSerializer.Deserialize<ManualMaskTrackSegment>(element, JsonOptions);
-            }
+            try { segment = JsonSerializer.Deserialize<ManualMaskTrackSegment>(element, JsonOptions); }
             catch (Exception ex) when (ex is JsonException or NotSupportedException)
             {
-                if (strict)
-                {
-                    throw new InvalidDataException(
-                        "Manual tracking state contains an undecodable segment.", ex);
-                }
-
+                if (strict) throw new InvalidDataException("Manual tracking state contains an undecodable segment.", ex);
                 Debug.WriteLine($"[ManualMaskTrackStore] skipping undecodable segment: {ex.Message}");
                 continue;
             }
-
             if (!TryValidateSegment(segment, out string reason))
             {
-                if (strict)
-                {
-                    throw new InvalidDataException(
-                        $"Manual tracking state contains an invalid segment: {reason}");
-                }
-
+                if (strict) throw new InvalidDataException($"Manual tracking state contains an invalid segment: {reason}");
                 Debug.WriteLine($"[ManualMaskTrackStore] skipping invalid segment: {reason}");
                 continue;
             }
-
             if (!keyframes.Add(segment!.SourceKeyframe))
             {
-                if (strict)
-                    throw new InvalidDataException("Manual tracking state has duplicate source keyframes.");
-
+                if (strict) throw new InvalidDataException("Manual tracking state has duplicate source keyframes.");
                 Debug.WriteLine("[ManualMaskTrackStore] skipping duplicate source keyframe.");
                 continue;
             }
-
             result.Add(segment!.Clone());
         }
-
         return result;
     }
 
-    private static bool TryValidateSegment(
-        ManualMaskTrackSegment? segment,
-        out string reason)
+    private static bool TryValidateSegment(ManualMaskTrackSegment? segment, out string reason)
     {
         if (segment == null || segment.SourceKeyframe < 0 ||
             string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
@@ -262,7 +181,6 @@ internal static class ManualMaskTrackStore
             reason = "missing or invalid segment header";
             return false;
         }
-
         if (segment.StoppedByFailure)
         {
             if (segment.StopFrame != segment.EndExclusive)
@@ -276,7 +194,6 @@ internal static class ManualMaskTrackStore
             reason = "non-failed segment has a failure frame";
             return false;
         }
-
         var componentIndices = new HashSet<int>();
         foreach (ManualMaskTrackComponent? component in segment.Components)
         {
@@ -295,18 +212,15 @@ internal static class ManualMaskTrackStore
                 reason = "invalid component index, bounds or sample collection";
                 return false;
             }
-
             int previousFrame = segment.SourceKeyframe;
             foreach (ManualMaskTrackSample? sample in component.Samples)
             {
                 if (sample == null || sample.FrameIndex <= previousFrame ||
                     sample.FrameIndex >= segment.EndExclusive ||
-                    !double.IsFinite(sample.OffsetX) ||
-                    !double.IsFinite(sample.OffsetY) ||
-                    !double.IsFinite(sample.Scale) ||
-                    sample.Scale < 0.25 || sample.Scale > 4.0 ||
-                    !double.IsFinite(sample.Confidence) ||
-                    sample.Confidence < 0 || sample.Confidence > 1 ||
+                    !double.IsFinite(sample.OffsetX) || !double.IsFinite(sample.OffsetY) ||
+                    !double.IsFinite(sample.Scale) || sample.Scale < 0.25 || sample.Scale > 4.0 ||
+                    !double.IsFinite(sample.RotationRadians) || Math.Abs(sample.RotationRadians) > Math.PI ||
+                    !double.IsFinite(sample.Confidence) || sample.Confidence < 0 || sample.Confidence > 1 ||
                     !double.IsFinite(component.SourceBoundsX + sample.OffsetX) ||
                     !double.IsFinite(component.SourceBoundsY + sample.OffsetY) ||
                     !double.IsFinite(component.SourceBoundsWidth * sample.Scale) ||
@@ -315,11 +229,9 @@ internal static class ManualMaskTrackStore
                     reason = "invalid, duplicate or unordered frame sample/transform";
                     return false;
                 }
-
                 previousFrame = sample.FrameIndex;
             }
         }
-
         reason = string.Empty;
         return true;
     }
@@ -327,80 +239,51 @@ internal static class ManualMaskTrackStore
     private static string? ResolveExistingTrackPath(string videoPath)
     {
         string path = GetTrackPath(videoPath);
-        if (File.Exists(path))
-            return path;
-
-        // On Windows, a differing legacy key means the path may live in a
-        // case-sensitive directory. The old all-uppercase identity can collide with
-        // a distinct source file there, so never fall back to it.
-        if (OperatingSystem.IsWindows())
-            return null;
-
-        string legacyPath = GetLegacyTrackPath(videoPath);
-        if (!string.Equals(path, legacyPath, StringComparison.Ordinal) &&
-            File.Exists(legacyPath))
-        {
-            return legacyPath;
-        }
-
-        return null;
+        if (File.Exists(path)) return path;
+        // A Windows legacy uppercase path can collide with a distinct file: do not use it.
+        if (OperatingSystem.IsWindows()) return null;
+        string legacy = GetLegacyTrackPath(videoPath);
+        return !string.Equals(path, legacy, StringComparison.Ordinal) && File.Exists(legacy)
+            ? legacy : null;
     }
 
-    internal static void Save(
-        string videoPath,
-        IReadOnlyCollection<ManualMaskTrackSegment> segments)
+    internal static void Save(string videoPath, IReadOnlyCollection<ManualMaskTrackSegment> segments)
     {
         if (string.IsNullOrWhiteSpace(videoPath))
             throw new ArgumentException("Video path is required.", nameof(videoPath));
-
         string path = GetTrackPath(videoPath);
-        string directory = Path.GetDirectoryName(path)!;
-        Directory.CreateDirectory(directory);
-
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var state = new ManualMaskTrackStoreState
         {
             Version = CurrentVersion,
             SourceEvidence = BuildSourceEvidence(videoPath),
-            Segments = segments
-                .OrderBy(static segment => segment.SourceKeyframe)
-                .Select(static segment => segment.Clone())
-                .ToList()
+            Segments = segments.OrderBy(static segment => segment.SourceKeyframe)
+                .Select(static segment => segment.Clone()).ToList()
         };
-
         string json = JsonSerializer.Serialize(state, JsonOptions);
         lock (SaveGate)
         {
-            string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                File.WriteAllText(tempPath, json);
-                File.Move(tempPath, path, overwrite: true);
+                File.WriteAllText(temp, json);
+                File.Move(temp, path, overwrite: true);
             }
             finally
             {
-                try
-                {
-                    if (File.Exists(tempPath))
-                        File.Delete(tempPath);
-                }
-                catch
-                {
-                }
+                try { if (File.Exists(temp)) File.Delete(temp); }
+                catch { }
             }
         }
     }
 
-    private static string GetTrackPath(string videoPath)
-    {
-        string identityKey = WorkspacePathIdentity.CreateIdentityKey(videoPath);
-        return BuildTrackPath(identityKey);
-    }
+    private static string GetTrackPath(string videoPath) =>
+        BuildTrackPath(WorkspacePathIdentity.CreateIdentityKey(videoPath));
 
     private static string GetLegacyTrackPath(string videoPath)
     {
         string normalized = Path.GetFullPath(videoPath);
-        if (OperatingSystem.IsWindows())
-            normalized = normalized.ToUpperInvariant();
+        if (OperatingSystem.IsWindows()) normalized = normalized.ToUpperInvariant();
         return BuildTrackPath(normalized);
     }
 
@@ -408,11 +291,8 @@ internal static class ManualMaskTrackStore
     {
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(identityKey));
         string key = Convert.ToHexString(hash).ToLowerInvariant();
-        string root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "FaceShield",
-            "manual-tracks");
-        return Path.Combine(root, key + ".json");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "FaceShield", "manual-tracks", key + ".json");
     }
 
     private static string BuildSourceEvidence(string videoPath)
@@ -420,13 +300,8 @@ internal static class ManualMaskTrackStore
         try
         {
             var info = new FileInfo(videoPath);
-            if (!info.Exists)
-                return "missing";
-            return $"{info.Length}:{info.LastWriteTimeUtc.Ticks}";
+            return info.Exists ? $"{info.Length}:{info.LastWriteTimeUtc.Ticks}" : "missing";
         }
-        catch
-        {
-            return "unavailable";
-        }
+        catch { return "unavailable"; }
     }
 }
