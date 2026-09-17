@@ -5,14 +5,26 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
 
-if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
-        brew install ffmpeg
-    else
-        echo 'ERROR: ffmpeg and ffprobe are required for this integration test' >&2
-        exit 1
-    fi
+# The repository's macOS dylibs reference a Homebrew 8.0.1 Cellar path that is
+# absent from clean CI. Exercise the production managed decoder against a fresh,
+# compatible FFmpeg 8 installation; do NOT claim this validates app packaging.
+if [[ "$(uname -s)" != "Darwin" ]] || ! command -v brew >/dev/null 2>&1; then
+    echo 'ERROR: macOS with Homebrew is required for this integration test' >&2
+    exit 1
 fi
+ffmpeg_prefix="$(brew --prefix ffmpeg@8 2>/dev/null || true)"
+if [[ -z "$ffmpeg_prefix" || ! -x "$ffmpeg_prefix/bin/ffmpeg" ]]; then
+    brew install ffmpeg@8
+    ffmpeg_prefix="$(brew --prefix ffmpeg@8)"
+fi
+ffmpeg_cmd="$ffmpeg_prefix/bin/ffmpeg"
+ffprobe_cmd="$ffmpeg_prefix/bin/ffprobe"
+if [[ ! -x "$ffmpeg_cmd" || ! -x "$ffprobe_cmd" ]]; then
+    echo 'ERROR: the FFmpeg 8 command-line tools were not installed' >&2
+    exit 1
+fi
+
+echo "Synthetic integration runtime: $ffmpeg_prefix (FFmpeg 8; NOT bundled dylib validation)"
 
 # Deterministic textured still image: 750 stationary frames at 30 fps,
 # followed by 30 black frames. No private/user footage is committed.
@@ -32,13 +44,13 @@ with open(sys.argv[1], 'wb') as output:
 PY
 
 video="$test_dir/scene-cut-750.mkv"
-ffmpeg -hide_banner -loglevel error -y \
+"$ffmpeg_cmd" -hide_banner -loglevel error -y \
     -loop 1 -framerate 30 -t 25 -i "$test_dir/pattern.ppm" \
     -f lavfi -i 'color=c=black:s=320x180:r=30:d=1' \
     -filter_complex '[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]concat=n=2:v=1:a=0[v]' \
     -map '[v]' -frames:v 780 -c:v ffv1 -pix_fmt yuv420p "$video"
 
-frame_count="$(ffprobe -v error -count_frames -select_streams v:0 \
+frame_count="$("$ffprobe_cmd" -v error -count_frames -select_streams v:0 \
     -show_entries stream=nb_read_frames -of default=noprint_wrappers=1:nokey=1 "$video")"
 if [[ "$frame_count" != '780' ]]; then
     echo "ERROR: expected 780 decoded fixture frames, got $frame_count" >&2
@@ -70,6 +82,8 @@ XML
 dotnet restore "$test_dir/ManualTrackingIntegration.csproj" -r osx-arm64
 dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm64 --no-restore
 output_dir="$test_dir/bin/Release/net8.0/osx-arm64"
-# FFmpegBootstrap intentionally searches application-owned directories only.
-cp "$repo_root/FFmpeg/osx-arm64/"*.dylib "$output_dir/"
+# The project's stale dylibs must not shadow this isolated, installed FFmpeg 8.
+# Nothing in the repository's FFmpeg/ folder is edited or replaced.
+rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
+cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
 dotnet "$output_dir/ManualTrackingIntegration.dll" "$video"
