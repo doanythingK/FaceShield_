@@ -48,7 +48,7 @@ internal static class ManualSimilarityEstimator
             double dx = q.X - p.X, dy = q.Y - p.Y;
             double denominator = dx * dx + dy * dy;
             if (denominator < 36) continue;
-            double vx = v.X - u.X, vy = v.Y - u.Y;
+            double vx = v.X - u, vy = v.Y - u.Y;
             double a = (dx * vx + dy * vy) / denominator;
             double b = (dx * vy - dy * vx) / denominator;
             var hypothesis = new ManualMotion(a, b, u.X - a * p.X + b * p.Y,
@@ -118,14 +118,38 @@ internal static class ManualSimilarityEstimator
 }
 
 // Each level is a real downsampled image. Coordinates remain in level-zero pixels externally.
+// A tracking run keeps two instances and reloads their arrays rather than allocating
+// ~0.69 MB of new floats for every decoded 480x270 frame.
 internal sealed class ManualImagePyramid
 {
     private readonly record struct Level(float[] Gray, int Width, int Height);
     private readonly List<Level> _levels = new();
 
-    internal ManualImagePyramid(byte[] bgra, int stride, int width, int height, CancellationToken ct)
+    internal ManualImagePyramid(int width, int height)
     {
-        float[] gray = new float[checked(width * height)];
+        _levels.Add(new Level(new float[checked(width * height)], width, height));
+        while (_levels.Count < 4 && Math.Min(width, height) >= 40)
+        {
+            int nw = width / 2, nh = height / 2;
+            _levels.Add(new Level(new float[checked(nw * nh)], nw, nh));
+            width = nw;
+            height = nh;
+        }
+    }
+
+    internal ManualImagePyramid(byte[] bgra, int stride, int width, int height, CancellationToken ct)
+        : this(width, height)
+    {
+        Reload(bgra, stride, ct);
+    }
+
+    // Only call on the inactive pyramid: the previous frame must remain unchanged
+    // through forward/backward flow, scene validation, and sample commit.
+    internal void Reload(byte[] bgra, int stride, CancellationToken ct)
+    {
+        Level first = _levels[0];
+        int width = first.Width, height = first.Height;
+        float[] gray = first.Gray;
         for (int y = 0; y < height; y++)
         {
             if ((y & 15) == 0) ct.ThrowIfCancellationRequested();
@@ -136,22 +160,21 @@ internal sealed class ManualImagePyramid
                 gray[y * width + x] = (float)(bgra[i] * 0.114 + bgra[i + 1] * 0.587 + bgra[i + 2] * 0.299);
             }
         }
-        _levels.Add(new Level(gray, width, height));
-        while (_levels.Count < 4 && Math.Min(width, height) >= 40)
+        for (int level = 1; level < _levels.Count; level++)
         {
             ct.ThrowIfCancellationRequested();
-            int nw = width / 2, nh = height / 2;
-            var down = new float[checked(nw * nh)];
-            for (int y = 0; y < nh; y++)
-                for (int x = 0; x < nw; x++)
+            Level source = _levels[level - 1], destination = _levels[level];
+            float[] down = destination.Gray;
+            for (int y = 0; y < destination.Height; y++)
+            {
+                if ((y & 15) == 0) ct.ThrowIfCancellationRequested();
+                for (int x = 0; x < destination.Width; x++)
                 {
-                    int p = 2 * y * width + 2 * x;
-                    down[y * nw + x] = (gray[p] + gray[p + 1] + gray[p + width] + gray[p + width + 1]) * 0.25f;
+                    int p = 2 * y * source.Width + 2 * x;
+                    down[y * destination.Width + x] = (source.Gray[p] + source.Gray[p + 1] +
+                        source.Gray[p + source.Width] + source.Gray[p + source.Width + 1]) * 0.25f;
                 }
-            _levels.Add(new Level(down, nw, nh));
-            gray = down;
-            width = nw;
-            height = nh;
+            }
         }
     }
 
