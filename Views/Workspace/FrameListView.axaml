@@ -4,37 +4,23 @@
              xmlns:vm="clr-namespace:FaceShield.ViewModels.Workspace"
              x:Class="FaceShield.Views.Workspace.FrameListView"
              x:DataType="vm:FrameListViewModel">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" Focusable="True">
 
-   <!-- <Border Background="#121212">
+        <!-- Current frame position (1-based user display). -->
+        <TextBlock Grid.Row="0"
+                   Text="{Binding FramePositionText}"
+                   HorizontalAlignment="Right"
+                   Margin="0,4,8,4"
+                   Opacity="0.8"
+                   FontSize="12"/>
 
-        <controls:TimelineFrameStrip
-        Grid.Row="1"
-        Height="140"
-        TotalFrames="{Binding TotalFrames}"
-        Fps="{Binding Fps}"
-        SelectedFrameIndex="{Binding SelectedFrameIndex, Mode=TwoWay}"
-        SecondsPerScreen="{Binding SecondsPerScreen, Mode=TwoWay}"
-        ViewStartSeconds="{Binding ViewStartSeconds, Mode=TwoWay}"
-        ThumbnailProvider="{Binding ThumbnailProvider}" />
-
-    </Border>
-
--->
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" Focusable="True">
-
-        <!-- 🔹 프레임 위치 표시 -->
-        <TextBlock
-            Grid.Row="0"
-            Text="{Binding FramePositionText}"
-            HorizontalAlignment="Right"
-            Margin="0,4,8,4"
-            Opacity="0.8"
-            FontSize="12"/>
-
-        <!-- 🔹 Timeline -->
-        <controls:TimelineFrameStrip
+        <!-- Exact timestamp selection is independent from thumbnail caching. -->
+        <controls:ManualTimelineFrameStrip
             Grid.Row="1"
             Height="100"
+            VideoPath="{Binding VideoPath}"
+            NavigationStatus="{Binding TimelineNavigationStatus, Mode=TwoWay}"
+            NavigationEnabled="{Binding IsPlaybackEnabled}"
             TotalFrames="{Binding TotalFrames}"
             TotalDurationSeconds="{Binding TimelineExtentSeconds}"
             RenderVersion="{Binding TimelineRenderVersion}"
@@ -51,41 +37,50 @@
             ShowLowConfidenceIssues="{Binding ShowLowConfidenceIssues}"
             ShowFlickerIssues="{Binding ShowFlickerIssues}" />
 
-        <!-- 🔹 문제 프레임 표시 -->
-        <StackPanel
-            Grid.Row="2"
-            Orientation="Horizontal"
-            Spacing="12"
-            Margin="8,2,8,2">
-            <CheckBox
-                IsChecked="{Binding ShowNoFaceIssues, Mode=TwoWay}"
-                Content="{Binding NoFaceIssueCount, StringFormat=얼굴 없음 ({0})}" />
-            <CheckBox
-                IsChecked="{Binding ShowLowConfidenceIssues, Mode=TwoWay}"
-                Content="{Binding LowConfidenceIssueCount, StringFormat=신뢰도 낮음 ({0})}" />
-            <CheckBox
-                IsChecked="{Binding ShowFlickerIssues, Mode=TwoWay}"
-                Content="{Binding FlickerIssueCount, StringFormat=연속 끊김 ({0})}" />
+        <StackPanel Grid.Row="2" Margin="8,4,8,2" Spacing="3">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                <Button Content="◀ 이전 프레임"
+                        Command="{Binding PreviousFrameCommand}"
+                        IsEnabled="{Binding IsPlaybackEnabled}"
+                        MinWidth="108" />
+                <Button Content="다음 프레임 ▶"
+                        Command="{Binding NextFrameCommand}"
+                        IsEnabled="{Binding IsPlaybackEnabled}"
+                        MinWidth="108" />
+            </StackPanel>
+            <!-- Color bands mark sampled points only, not a continuous decoded range. -->
+            <TextBlock Text="초록: 썸네일 캐시 · 파랑: 정확한 프레임 위치 확인 (표본 지점)"
+                       HorizontalAlignment="Center" FontSize="11" Opacity="0.75" />
+            <TextBlock Text="{Binding TimelineNavigationStatus}"
+                       TextWrapping="Wrap" HorizontalAlignment="Center"
+                       FontSize="11" />
         </StackPanel>
 
-        <!-- 🔹 현재 시간 / 전체 시간 -->
-        <TextBlock
-            Grid.Row="3"
-            Text="{Binding TimelineTimeText}"
-            HorizontalAlignment="Right"
-            Margin="0,4,8,4"
-            Opacity="0.8"
-            FontSize="12"/>
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    Margin="8,2,8,2">
+            <CheckBox IsChecked="{Binding ShowNoFaceIssues, Mode=TwoWay}"
+                      Content="{Binding NoFaceIssueCount, StringFormat=얼굴 없음 ({0})}" />
+            <CheckBox IsChecked="{Binding ShowLowConfidenceIssues, Mode=TwoWay}"
+                      Content="{Binding LowConfidenceIssueCount, StringFormat=신뢰도 낮음 ({0})}" />
+            <CheckBox IsChecked="{Binding ShowFlickerIssues, Mode=TwoWay}"
+                      Content="{Binding FlickerIssueCount, StringFormat=연속 끊김 ({0})}" />
+        </StackPanel>
 
-        <!-- 🔹 ScrollBar -->
-        <ScrollBar
-            Grid.Row="4"
-            Orientation="Horizontal"
-            Height="16"
-            Minimum="0"
-            Maximum="{Binding TimelineExtentSeconds}"
-            ViewportSize="{Binding SecondsPerScreen}"
-            Value="{Binding ViewStartSeconds, Mode=TwoWay}" />
+        <TextBlock Grid.Row="4"
+                   Text="{Binding TimelineTimeText}"
+                   HorizontalAlignment="Right"
+                   Margin="0,4,8,4"
+                   Opacity="0.8"
+                   FontSize="12"/>
+
+        <ScrollBar Grid.Row="5"
+                   Orientation="Horizontal"
+                   Height="16"
+                   Minimum="0"
+                   Maximum="{Binding TimelineExtentSeconds}"
+                   ViewportSize="{Binding SecondsPerScreen}"
+                   Value="{Binding ViewStartSeconds, Mode=TwoWay}" />
     </Grid>
-
 </UserControl>
