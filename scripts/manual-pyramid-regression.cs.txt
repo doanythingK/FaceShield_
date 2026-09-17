@@ -1,0 +1,145 @@
+// This file is intentionally .txt so the Avalonia app does not compile it.
+// scripts/verify-manual-pyramid.sh compiles it in an isolated .NET 8 console project.
+using System;
+using System.Collections;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using FaceShield.Services.Video;
+
+try
+{
+    foreach ((int width, int height) in new[] { (480, 270), (319, 179), (32, 24) })
+    {
+        int stride = width * 4 + 12; // Exercise padded BGRA rows, not just packed pixels.
+        var reused = new ManualImagePyramid(width, height);
+        float[][] buffers = ReadLevels(reused);
+        for (int seed = 0; seed < 7; seed++)
+        {
+            byte[] frame = MakeFrame(width, height, stride, seed);
+            var freshlyAllocated = new ManualImagePyramid(frame, stride, width, height, CancellationToken.None);
+            reused.Reload(frame, stride, CancellationToken.None);
+            float[][] expected = ReadLevels(freshlyAllocated);
+            float[][] actual = ReadLevels(reused);
+            Assert(expected.Length == actual.Length, "Pyramid level count changed");
+            for (int level = 0; level < expected.Length; level++)
+            {
+                Assert(ReferenceEquals(buffers[level], actual[level]), "Reload replaced a level array");
+                Assert(expected[level].AsSpan().SequenceEqual(actual[level]),
+                    $"Pyramid pixel mismatch: {width}x{height}, frame {seed}, level {level}");
+            }
+            GC.KeepAlive(freshlyAllocated);
+        }
+    }
+
+    const int w = 480, h = 270, stride480 = 480 * 4 + 12;
+    byte[] first = MakeFrame(w, h, stride480, 2);
+    byte[] second = MakeFrame(w, h, stride480, 19);
+    var previous = new ManualImagePyramid(first, stride480, w, h, CancellationToken.None);
+    var current = new ManualImagePyramid(w, h);
+    float[][] previousData = ReadLevels(previous).Select(static layer => (float[])layer.Clone()).ToArray();
+    current.Reload(second, stride480, CancellationToken.None);
+    float[][] previousAfter = ReadLevels(previous);
+    for (int level = 0; level < previousData.Length; level++)
+        Assert(previousData[level].AsSpan().SequenceEqual(previousAfter[level]),
+            "Reload of current frame mutated previous frame");
+
+    using (var cancelled = new CancellationTokenSource())
+    {
+        cancelled.Cancel();
+        bool threw = false;
+        try { current.Reload(first, stride480, cancelled.Token); }
+        catch (OperationCanceledException) { threw = true; }
+        Assert(threw, "Reload did not honor cancellation");
+    }
+    current.Reload(second, stride480, CancellationToken.None);
+    float[][] repaired = ReadLevels(current);
+    float[][] expectedRecovery = ReadLevels(
+        new ManualImagePyramid(second, stride480, w, h, CancellationToken.None));
+    for (int level = 0; level < repaired.Length; level++)
+        Assert(repaired[level].AsSpan().SequenceEqual(expectedRecovery[level]),
+            "Cancelled Reload poisoned subsequent Reload");
+
+    // Identical source frames must yield identical forward/backward optical-flow
+    // decisions and coordinates for freshly allocated vs reused pyramid instances.
+    var freshFirst = new ManualImagePyramid(first, stride480, w, h, CancellationToken.None);
+    var freshSecond = new ManualImagePyramid(first, stride480, w, h, CancellationToken.None);
+    current.Reload(first, stride480, CancellationToken.None);
+    int tracked = 0;
+    foreach (ManualPoint point in new[]
+    {
+        new ManualPoint(120, 120), new ManualPoint(240, 110), new ManualPoint(320, 136)
+    })
+    {
+        bool original = freshFirst.TryTrack(freshSecond, point, CancellationToken.None,
+            out ManualPoint originalPoint, out double originalError);
+        bool reusedResult = previous.TryTrack(current, point, CancellationToken.None,
+            out ManualPoint reusedPoint, out double reusedError);
+        // Restore the previously loaded image for a like-for-like comparison.
+        previous.Reload(first, stride480, CancellationToken.None);
+        reusedResult = previous.TryTrack(current, point, CancellationToken.None,
+            out reusedPoint, out reusedError);
+        Assert(original == reusedResult, "Reuse changed optical-flow success/failure");
+        if (!original) continue;
+        tracked++;
+        Assert(originalPoint.Equals(reusedPoint) && originalError.Equals(reusedError),
+            "Reuse changed optical-flow motion or error");
+    }
+    Assert(tracked > 0, "Synthetic image supplied no trackable points");
+
+    // This isolates managed allocations of the pyramid itself; it is NOT a
+    // full-video throughput/GC benchmark or a comparison with an older binary.
+    var warm = new ManualImagePyramid(w, h);
+    for (int i = 0; i < 3; i++) warm.Reload(first, stride480, CancellationToken.None);
+    const int samples = 40;
+    long freshStart = GC.GetAllocatedBytesForCurrentThread();
+    for (int i = 0; i < samples; i++)
+    {
+        var allocated = new ManualImagePyramid(first, stride480, w, h, CancellationToken.None);
+        GC.KeepAlive(allocated);
+    }
+    long freshBytes = GC.GetAllocatedBytesForCurrentThread() - freshStart;
+    long reuseStart = GC.GetAllocatedBytesForCurrentThread();
+    for (int i = 0; i < samples; i++) warm.Reload(first, stride480, CancellationToken.None);
+    long reusedBytes = GC.GetAllocatedBytesForCurrentThread() - reuseStart;
+    Assert(freshBytes >= samples * 688080L, "Fresh pyramid allocation below expected float buffer bytes");
+    Assert(reusedBytes * 20 < freshBytes, "Reload still allocates substantial managed memory");
+    Console.WriteLine($"PASS: dimensions, padding, pixel parity, buffer identity, cancellation recovery, optical flow");
+    Console.WriteLine($"480x270, {samples} iterations: fresh_allocated_bytes={freshBytes}; reused_allocated_bytes={reusedBytes}");
+}
+catch (Exception error)
+{
+    Console.Error.WriteLine($"FAIL: manual pyramid regression: {error}");
+    Environment.ExitCode = 1;
+}
+
+static byte[] MakeFrame(int width, int height, int stride, int seed)
+{
+    var pixels = new byte[checked(stride * height)];
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int p = y * stride + x * 4;
+            pixels[p] = (byte)((x * 17 + y * 13 + seed * 11) & 255);
+            pixels[p + 1] = (byte)((x * 7 + y * 29 + seed * 23) & 255);
+            pixels[p + 2] = (byte)((x * 31 + y * 3 + seed * 19) & 255);
+            pixels[p + 3] = 255;
+        }
+    return pixels;
+}
+
+static float[][] ReadLevels(ManualImagePyramid pyramid)
+{
+    FieldInfo field = typeof(ManualImagePyramid).GetField("_levels",
+        BindingFlags.Instance | BindingFlags.NonPublic) ?? throw new Exception("Pyramid levels unavailable");
+    var levels = (IEnumerable)(field.GetValue(pyramid) ?? throw new Exception("Pyramid levels null"));
+    return levels.Cast<object>().Select(level =>
+        (float[])(level.GetType().GetProperty("Gray",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(level)
+            ?? throw new Exception("Pyramid pixel data unavailable"))).ToArray();
+}
+
+static void Assert(bool condition, string message)
+{
+    if (!condition) throw new Exception(message);
+}
