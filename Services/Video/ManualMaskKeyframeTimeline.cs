@@ -28,14 +28,9 @@ internal static class ManualMaskKeyframeTimeline
 
     private static readonly ConditionalWeakTable<FrameMaskProvider, TimelineState> States = new();
 
-    internal static void Configure(
-        FrameMaskProvider provider,
-        bool enabled,
-        string? videoPath = null)
+    internal static void Configure(FrameMaskProvider provider, bool enabled, string? videoPath = null)
     {
-        if (provider == null)
-            throw new ArgumentNullException(nameof(provider));
-
+        if (provider == null) throw new ArgumentNullException(nameof(provider));
         TimelineState state = States.GetValue(provider, static _ => new TimelineState());
         lock (state.Gate)
         {
@@ -51,50 +46,32 @@ internal static class ManualMaskKeyframeTimeline
                 }
                 state.VideoPath = videoPath;
             }
-
             if (enabled && !state.Loaded && !string.IsNullOrWhiteSpace(state.VideoPath))
             {
                 state.Segments = ManualMaskTrackStore.Load(state.VideoPath!)
-                    .Select(static segment => segment.Clone())
-                    .ToList();
+                    .Select(static segment => segment.Clone()).ToList();
                 state.SegmentValidity.Clear();
                 state.Loaded = true;
             }
         }
     }
 
-    internal static bool IsEnabled(FrameMaskProvider provider)
-        => provider != null &&
-           States.TryGetValue(provider, out TimelineState? state) &&
-           state.Enabled;
+    internal static bool IsEnabled(FrameMaskProvider provider) => provider != null &&
+        States.TryGetValue(provider, out TimelineState? state) && state.Enabled;
 
-    internal static int GetNextExplicitKeyframe(
-        FrameMaskProvider provider,
-        int frameIndex,
-        int totalFrames)
+    internal static int GetNextExplicitKeyframe(FrameMaskProvider provider, int frameIndex, int totalFrames)
     {
         int[] keyframes = GetKeyframeIndices(provider);
         int position = Array.BinarySearch(keyframes, frameIndex);
-        if (position < 0)
-            position = ~position;
-        else
-            position++;
-
-        if (position >= 0 && position < keyframes.Length)
-            return keyframes[position];
+        position = position < 0 ? ~position : position + 1;
+        if (position >= 0 && position < keyframes.Length) return keyframes[position];
         return totalFrames > frameIndex ? totalFrames : int.MaxValue;
     }
 
-    internal static void NotifyExplicitKeyframeChanged(
-        FrameMaskProvider provider,
-        int frameIndex)
+    internal static void NotifyExplicitKeyframeChanged(FrameMaskProvider provider, int frameIndex)
     {
         if (provider == null || frameIndex < 0 ||
-            !States.TryGetValue(provider, out TimelineState? state))
-        {
-            return;
-        }
-
+            !States.TryGetValue(provider, out TimelineState? state)) return;
         lock (state.Gate)
         {
             state.Segments.RemoveAll(segment => segment.SourceKeyframe == frameIndex);
@@ -102,75 +79,50 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    internal static bool InvalidateSegmentIfSourceChanged(
-        FrameMaskProvider provider,
-        int sourceKeyframe)
+    internal static bool InvalidateSegmentIfSourceChanged(FrameMaskProvider provider, int sourceKeyframe)
     {
         if (provider == null || sourceKeyframe < 0 ||
-            !States.TryGetValue(provider, out TimelineState? state))
-        {
-            return false;
-        }
-
+            !States.TryGetValue(provider, out TimelineState? state)) return false;
         lock (state.Gate)
         {
             ManualMaskTrackSegment? segment = state.Segments.FirstOrDefault(candidate =>
                 candidate.SourceKeyframe == sourceKeyframe);
-            if (segment == null)
-                return false;
-
+            if (segment == null) return false;
             state.SegmentValidity.Remove(sourceKeyframe);
             return !IsSegmentCurrentLocked(provider, state, segment);
         }
     }
 
-    internal static void SetTrackSegment(
-        FrameMaskProvider provider,
-        ManualMaskTrackSegment segment)
+    internal static void SetTrackSegment(FrameMaskProvider provider, ManualMaskTrackSegment segment)
     {
-        if (provider == null)
-            throw new ArgumentNullException(nameof(provider));
-        if (segment == null)
-            throw new ArgumentNullException(nameof(segment));
+        if (provider == null) throw new ArgumentNullException(nameof(provider));
+        if (segment == null) throw new ArgumentNullException(nameof(segment));
         if (string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
             throw new InvalidOperationException("Tracked segment is missing its source-mask fingerprint.");
         if (segment.Components.Count == 0)
             throw new InvalidOperationException("Tracked segment has no mask components.");
-
         TimelineState state = States.GetValue(provider, static _ => new TimelineState());
         lock (state.Gate)
         {
-            var nextSegments = state.Segments
-                .Where(existing => existing.SourceKeyframe != segment.SourceKeyframe)
-                .Select(static existing => existing.Clone())
-                .ToList();
-            nextSegments.Add(segment.Clone());
-            nextSegments.Sort(static (a, b) => a.SourceKeyframe.CompareTo(b.SourceKeyframe));
-
-            PersistSegmentsLocked(state, nextSegments);
-            state.Segments = nextSegments;
+            var next = state.Segments.Where(existing => existing.SourceKeyframe != segment.SourceKeyframe)
+                .Select(static existing => existing.Clone()).ToList();
+            next.Add(segment.Clone());
+            next.Sort(static (a, b) => a.SourceKeyframe.CompareTo(b.SourceKeyframe));
+            PersistSegmentsLocked(state, next);
+            state.Segments = next;
             state.SegmentValidity[segment.SourceKeyframe] = true;
         }
     }
 
-    internal static bool TryCloneEffectiveKeyframeMask(
-        FrameMaskProvider provider,
-        int frameIndex,
-        out WriteableBitmap mask,
-        CancellationToken cancellationToken = default)
+    internal static bool TryCloneEffectiveKeyframeMask(FrameMaskProvider provider, int frameIndex,
+        out WriteableBitmap mask, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         mask = null!;
-        if (!IsEnabled(provider) || frameIndex < 0)
-            return false;
-
+        if (!IsEnabled(provider) || frameIndex < 0) return false;
         int sourceKeyframe = FindFloorKeyframe(GetKeyframeIndices(provider), frameIndex);
-        if (sourceKeyframe < 0)
-            return false;
-
-        if (!TryCloneSourceMask(provider, sourceKeyframe, out WriteableBitmap sourceMask))
-            return false;
-
+        if (sourceKeyframe < 0 ||
+            !TryCloneSourceMask(provider, sourceKeyframe, out WriteableBitmap sourceMask)) return false;
         try
         {
             if (frameIndex == sourceKeyframe)
@@ -179,66 +131,39 @@ internal static class ManualMaskKeyframeTimeline
                 sourceMask = null!;
                 return true;
             }
-
-            bool hasSegment = TryResolveCurrentSegment(
-                provider,
-                sourceKeyframe,
-                out ManualMaskTrackSegment? segment,
-                out bool blocked);
-            if (blocked)
-                return false;
+            bool hasSegment = TryResolveCurrentSegment(provider, sourceKeyframe,
+                out ManualMaskTrackSegment? segment, out bool blocked);
+            if (blocked) return false;
             if (!hasSegment || segment == null)
             {
                 mask = sourceMask;
                 sourceMask = null!;
                 return true;
             }
-
-            // An explicit failure/end boundary always wins over generic hold fallback.
-            if (frameIndex >= segment.EndExclusive)
-                return false;
-
-            // Missing/corrupt samples do not justify dropping all coverage. Ignore the
-            // incomplete transform and fall back to the current source keyframe hold.
-            if (!HasAllSamples(segment, frameIndex))
+            // Explicit end/failure takes precedence over holding the source keyframe.
+            if (frameIndex >= segment.EndExclusive) return false;
+            if (!HasAllSamples(segment, frameIndex) ||
+                !TryCreateTransformedMask(sourceMask, segment, frameIndex, out WriteableBitmap transformed))
             {
                 mask = sourceMask;
                 sourceMask = null!;
                 return true;
             }
-
-            if (!TryCreateTransformedMask(
-                    sourceMask,
-                    segment,
-                    frameIndex,
-                    out WriteableBitmap transformed))
-            {
-                mask = sourceMask;
-                sourceMask = null!;
-                return true;
-            }
-
             mask = transformed;
             return true;
         }
-        finally
-        {
-            sourceMask?.Dispose();
-        }
+        finally { sourceMask?.Dispose(); }
     }
 
     internal static ExportMaskLease CreateExportMaskLease(FrameMaskProvider source)
     {
-        if (source == null)
-            throw new ArgumentNullException(nameof(source));
-
+        if (source == null) throw new ArgumentNullException(nameof(source));
         FrameMaskProvider snapshot = source.CreateSnapshot();
         try
         {
             int[] keyframes = GetKeyframeIndices(snapshot);
             if (!IsEnabled(source) || keyframes.Length == 0)
                 return new ExportMaskLease(snapshot, snapshot, null);
-
             ManualMaskTrackSegment[] segments = GetSegmentsSnapshot(source);
             var provider = new ManualKeyframeExportMaskProvider(snapshot, keyframes, segments);
             return new ExportMaskLease(snapshot, provider, provider);
@@ -250,22 +175,16 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    private static bool TryResolveCurrentSegment(
-        FrameMaskProvider provider,
-        int sourceKeyframe,
-        out ManualMaskTrackSegment? segment,
-        out bool blocked)
+    private static bool TryResolveCurrentSegment(FrameMaskProvider provider, int sourceKeyframe,
+        out ManualMaskTrackSegment? segment, out bool blocked)
     {
         segment = null;
         blocked = false;
-        if (!States.TryGetValue(provider, out TimelineState? state))
-            return false;
-
+        if (!States.TryGetValue(provider, out TimelineState? state)) return false;
         lock (state.Gate)
         {
             segment = state.Segments.FirstOrDefault(candidate => candidate.SourceKeyframe == sourceKeyframe);
-            if (segment == null)
-                return false;
+            if (segment == null) return false;
             if (!IsSegmentCurrentLocked(provider, state, segment))
             {
                 segment = null;
@@ -279,58 +198,35 @@ internal static class ManualMaskKeyframeTimeline
     {
         if (!States.TryGetValue(provider, out TimelineState? state))
             return Array.Empty<ManualMaskTrackSegment>();
-
-        lock (state.Gate)
-            return state.Segments.Select(static segment => segment.Clone()).ToArray();
+        lock (state.Gate) return state.Segments.Select(static segment => segment.Clone()).ToArray();
     }
 
-    private static bool IsSegmentCurrentLocked(
-        FrameMaskProvider provider,
-        TimelineState state,
-        ManualMaskTrackSegment segment)
+    private static bool IsSegmentCurrentLocked(FrameMaskProvider provider,
+        TimelineState state, ManualMaskTrackSegment segment)
     {
-        if (state.SegmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached))
-            return cached;
-
+        if (state.SegmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached)) return cached;
         bool valid = false;
         using WriteableBitmap? sourceMask = provider.GetFinalMask(segment.SourceKeyframe);
         if (sourceMask != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
-        {
-            valid = string.Equals(
-                ManualMaskFingerprint.Compute(sourceMask),
-                segment.SourceMaskFingerprint,
-                StringComparison.Ordinal);
-        }
-
+            valid = string.Equals(ManualMaskFingerprint.Compute(sourceMask),
+                segment.SourceMaskFingerprint, StringComparison.Ordinal);
         state.SegmentValidity[segment.SourceKeyframe] = valid;
         return valid;
     }
 
-    private static bool TryCloneSourceMask(
-        FrameMaskProvider provider,
-        int keyframe,
-        out WriteableBitmap mask)
+    private static bool TryCloneSourceMask(FrameMaskProvider provider, int keyframe, out WriteableBitmap mask)
     {
-        if (provider.TryCloneStoredMask(keyframe, out mask))
-            return true;
-
-        WriteableBitmap? faceMask = provider.GetFinalMask(keyframe);
-        if (faceMask == null)
-        {
-            mask = null!;
-            return false;
-        }
-
-        mask = faceMask;
+        if (provider.TryCloneStoredMask(keyframe, out mask)) return true;
+        WriteableBitmap? face = provider.GetFinalMask(keyframe);
+        if (face == null) { mask = null!; return false; }
+        mask = face;
         return true;
     }
 
     private static int[] GetKeyframeIndices(FrameMaskProvider provider)
     {
         var indices = new HashSet<int>(provider.GetStoredMaskFrameIndices());
-        foreach (int frameIndex in provider.GetFaceMaskFrameIndices())
-            indices.Add(frameIndex);
-
+        foreach (int frame in provider.GetFaceMaskFrameIndices()) indices.Add(frame);
         int[] result = indices.ToArray();
         Array.Sort(result);
         return result;
@@ -339,56 +235,36 @@ internal static class ManualMaskKeyframeTimeline
     private static int FindFloorKeyframe(int[] keyframes, int frameIndex)
     {
         int position = Array.BinarySearch(keyframes, frameIndex);
-        if (position >= 0)
-            return keyframes[position];
-
-        position = ~position - 1;
+        if (position < 0) position = ~position - 1;
         return position >= 0 ? keyframes[position] : -1;
     }
 
-    private static ManualMaskTrackSample? FindSample(
-        IReadOnlyList<ManualMaskTrackSample> samples,
-        int frameIndex)
+    private static ManualMaskTrackSample? FindSample(IReadOnlyList<ManualMaskTrackSample> samples, int frameIndex)
     {
-        int low = 0;
-        int high = samples.Count - 1;
-        while (low <= high)
+        int lo = 0, hi = samples.Count - 1;
+        while (lo <= hi)
         {
-            int mid = low + ((high - low) >> 1);
+            int mid = lo + ((hi - lo) >> 1);
             ManualMaskTrackSample sample = samples[mid];
-            if (sample.FrameIndex == frameIndex)
-                return sample;
-            if (sample.FrameIndex < frameIndex)
-                low = mid + 1;
-            else
-                high = mid - 1;
+            if (sample.FrameIndex == frameIndex) return sample;
+            if (sample.FrameIndex < frameIndex) lo = mid + 1;
+            else hi = mid - 1;
         }
         return null;
     }
 
-    private static bool HasAllSamples(
-        ManualMaskTrackSegment segment,
-        int frameIndex)
+    private static bool HasAllSamples(ManualMaskTrackSegment segment, int frameIndex)
     {
         foreach (ManualMaskTrackComponent component in segment.Components)
-        {
-            if (FindSample(component.Samples, frameIndex) == null)
-                return false;
-        }
+            if (FindSample(component.Samples, frameIndex) == null) return false;
         return segment.Components.Count > 0;
     }
 
-    private static bool TryCreateTransformedMask(
-        WriteableBitmap source,
-        ManualMaskTrackSegment segment,
-        int frameIndex,
-        out WriteableBitmap target)
+    private static bool TryCreateTransformedMask(WriteableBitmap source,
+        ManualMaskTrackSegment segment, int frameIndex, out WriteableBitmap target)
     {
-        target = new WriteableBitmap(
-            source.PixelSize,
-            source.Dpi,
-            Avalonia.Platform.PixelFormat.Bgra8888,
-            Avalonia.Platform.AlphaFormat.Premul);
+        target = new WriteableBitmap(source.PixelSize, source.Dpi,
+            Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Premul);
         try
         {
             if (!TransformComponentsInto(source, target, segment, frameIndex))
@@ -407,103 +283,82 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    private static bool TransformComponentsInto(
-        WriteableBitmap source,
-        WriteableBitmap target,
-        ManualMaskTrackSegment segment,
-        int frameIndex)
+    // Both preview and export call this same inverse-mapped rasterizer.
+    private static bool TransformComponentsInto(WriteableBitmap source, WriteableBitmap target,
+        ManualMaskTrackSegment segment, int frameIndex)
     {
-        if (segment.Components.Count == 0)
-            return false;
-
-        using var sourceBuffer = source.Lock();
-        using var targetBuffer = target.Lock();
-        if (sourceBuffer.Size.Width != targetBuffer.Size.Width ||
-            sourceBuffer.Size.Height != targetBuffer.Size.Height)
-        {
+        if (segment.Components.Count == 0) return false;
+        using var src = source.Lock();
+        using var dst = target.Lock();
+        if (src.Size.Width != dst.Size.Width || src.Size.Height != dst.Size.Height)
             throw new InvalidOperationException("Manual track mask size mismatch.");
-        }
-
         unsafe
         {
-            byte* dst = (byte*)targetBuffer.Address;
-            for (int y = 0; y < targetBuffer.Size.Height; y++)
-            {
-                new Span<byte>(dst + y * targetBuffer.RowBytes, targetBuffer.Size.Width * 4).Clear();
-            }
+            byte* pixels = (byte*)dst.Address;
+            for (int y = 0; y < dst.Size.Height; y++)
+                new Span<byte>(pixels + y * dst.RowBytes, dst.Size.Width * 4).Clear();
         }
-
         foreach (ManualMaskTrackComponent component in segment.Components)
         {
             ManualMaskTrackSample? sample = FindSample(component.Samples, frameIndex);
-            if (sample == null)
-                return false;
-
-            TransformComponentInto(sourceBuffer, targetBuffer, component, sample);
+            if (sample == null) return false;
+            TransformComponentInto(src, dst, component, sample);
         }
-
         return true;
     }
 
     private static unsafe void TransformComponentInto(
         Avalonia.Platform.ILockedFramebuffer sourceBuffer,
         Avalonia.Platform.ILockedFramebuffer targetBuffer,
-        ManualMaskTrackComponent component,
-        ManualMaskTrackSample sample)
+        ManualMaskTrackComponent component, ManualMaskTrackSample sample)
     {
         double scale = Math.Clamp(sample.Scale, 0.25, 4.0);
-        var sourceBounds = new Rect(
-            component.SourceBoundsX,
-            component.SourceBoundsY,
-            component.SourceBoundsWidth,
-            component.SourceBoundsHeight);
-        double destinationX = sourceBounds.X + sample.OffsetX;
-        double destinationY = sourceBounds.Y + sample.OffsetY;
-        int x0 = Math.Clamp((int)Math.Floor(destinationX), 0, targetBuffer.Size.Width);
-        int y0 = Math.Clamp((int)Math.Floor(destinationY), 0, targetBuffer.Size.Height);
-        int x1 = Math.Clamp(
-            (int)Math.Ceiling(destinationX + sourceBounds.Width * scale),
-            0,
-            targetBuffer.Size.Width);
-        int y1 = Math.Clamp(
-            (int)Math.Ceiling(destinationY + sourceBounds.Height * scale),
-            0,
-            targetBuffer.Size.Height);
-
-        byte* src = (byte*)sourceBuffer.Address;
-        byte* dst = (byte*)targetBuffer.Address;
-        for (int y = y0; y < y1; y++)
+        double cos = Math.Cos(sample.RotationRadians), sin = Math.Sin(sample.RotationRadians);
+        double sx0 = component.SourceBoundsX, sy0 = component.SourceBoundsY;
+        double width = component.SourceBoundsWidth, height = component.SourceBoundsHeight;
+        double originX = sx0 + sample.OffsetX, originY = sy0 + sample.OffsetY;
+        // Bounding box of the four transformed source corners; inverse sampling
+        // avoids holes that forward splatting produces in a rotated mask.
+        double x1 = originX + scale * cos * width;
+        double y1 = originY + scale * sin * width;
+        double x2 = originX - scale * sin * height;
+        double y2 = originY + scale * cos * height;
+        double x3 = x1 - scale * sin * height;
+        double y3 = y1 + scale * cos * height;
+        int minX = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originX, x1), Math.Min(x2, x3))), 0, targetBuffer.Size.Width);
+        int minY = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originY, y1), Math.Min(y2, y3))), 0, targetBuffer.Size.Height);
+        int maxX = Math.Clamp((int)Math.Ceiling(Math.Max(Math.Max(originX, x1), Math.Max(x2, x3))), 0, targetBuffer.Size.Width);
+        int maxY = Math.Clamp((int)Math.Ceiling(Math.Max(Math.Max(originY, y1), Math.Max(y2, y3))), 0, targetBuffer.Size.Height);
+        int sourceMinX = Math.Clamp((int)Math.Floor(sx0), 0, sourceBuffer.Size.Width - 1);
+        int sourceMinY = Math.Clamp((int)Math.Floor(sy0), 0, sourceBuffer.Size.Height - 1);
+        int sourceMaxX = Math.Clamp((int)Math.Ceiling(sx0 + width) - 1, 0, sourceBuffer.Size.Width - 1);
+        int sourceMaxY = Math.Clamp((int)Math.Ceiling(sy0 + height) - 1, 0, sourceBuffer.Size.Height - 1);
+        byte* sourcePixels = (byte*)sourceBuffer.Address;
+        byte* targetPixels = (byte*)targetBuffer.Address;
+        for (int y = minY; y < maxY; y++)
         {
-            byte* dstRow = dst + y * targetBuffer.RowBytes;
-            double sourceY = sourceBounds.Y + (y - destinationY) / scale;
-            int sy = Math.Clamp(
-                (int)Math.Round(sourceY),
-                Math.Clamp((int)Math.Floor(sourceBounds.Y), 0, sourceBuffer.Size.Height - 1),
-                Math.Clamp((int)Math.Ceiling(sourceBounds.Bottom) - 1, 0, sourceBuffer.Size.Height - 1));
-            byte* srcRow = src + sy * sourceBuffer.RowBytes;
-            for (int x = x0; x < x1; x++)
+            byte* targetRow = targetPixels + y * targetBuffer.RowBytes;
+            for (int x = minX; x < maxX; x++)
             {
-                double sourceX = sourceBounds.X + (x - destinationX) / scale;
-                int sx = Math.Clamp(
-                    (int)Math.Round(sourceX),
-                    Math.Clamp((int)Math.Floor(sourceBounds.X), 0, sourceBuffer.Size.Width - 1),
-                    Math.Clamp((int)Math.Ceiling(sourceBounds.Right) - 1, 0, sourceBuffer.Size.Width - 1));
-                byte alpha = srcRow[sx * 4 + 3];
-                if (alpha == 0)
-                    continue;
-                byte* pixel = dstRow + x * 4;
-                if (alpha <= pixel[3])
-                    continue;
-                pixel[0] = alpha;
-                pixel[1] = alpha;
-                pixel[2] = alpha;
-                pixel[3] = alpha;
+                double dx = (x - originX) / scale, dy = (y - originY) / scale;
+                double localX = cos * dx + sin * dy;
+                double localY = -sin * dx + cos * dy;
+                if (localX < 0 || localY < 0 || localX >= width || localY >= height) continue;
+                int sx = Math.Clamp((int)Math.Round(sx0 + localX), sourceMinX, sourceMaxX);
+                int sy = Math.Clamp((int)Math.Round(sy0 + localY), sourceMinY, sourceMaxY);
+                byte alpha = *(sourcePixels + sy * sourceBuffer.RowBytes + sx * 4 + 3);
+                if (alpha == 0) continue;
+                byte* target = targetRow + x * 4;
+                if (alpha <= target[3]) continue;
+                target[0] = alpha;
+                target[1] = alpha;
+                target[2] = alpha;
+                target[3] = alpha;
             }
         }
     }
 
-    private static void PersistSegmentsLocked(
-        TimelineState state,
+    private static void PersistSegmentsLocked(TimelineState state,
         IReadOnlyCollection<ManualMaskTrackSegment> segments)
     {
         if (!state.Enabled)
@@ -517,19 +372,13 @@ internal static class ManualMaskKeyframeTimeline
     {
         private FrameMaskProvider? _snapshot;
         private IDisposable? _providerLifetime;
-
-        internal ExportMaskLease(
-            FrameMaskProvider snapshot,
-            IFrameMaskProvider provider,
-            IDisposable? providerLifetime)
+        internal ExportMaskLease(FrameMaskProvider snapshot, IFrameMaskProvider provider, IDisposable? providerLifetime)
         {
             _snapshot = snapshot;
             Provider = provider;
             _providerLifetime = providerLifetime;
         }
-
         internal IFrameMaskProvider Provider { get; }
-
         public void Dispose()
         {
             Interlocked.Exchange(ref _providerLifetime, null)?.Dispose();
@@ -538,9 +387,7 @@ internal static class ManualMaskKeyframeTimeline
     }
 
     private sealed class ManualKeyframeExportMaskProvider :
-        IFrameMaskProvider,
-        IExportFrameMaskReadView,
-        IDisposable
+        IFrameMaskProvider, IExportFrameMaskReadView, IDisposable
     {
         private readonly FrameMaskProvider _snapshot;
         private readonly int[] _keyframes;
@@ -552,10 +399,8 @@ internal static class ManualMaskKeyframeTimeline
         private WriteableBitmap? _faceSourceMask;
         private WriteableBitmap? _scratchMask;
 
-        internal ManualKeyframeExportMaskProvider(
-            FrameMaskProvider snapshot,
-            int[] keyframes,
-            ManualMaskTrackSegment[] segments)
+        internal ManualKeyframeExportMaskProvider(FrameMaskProvider snapshot,
+            int[] keyframes, ManualMaskTrackSegment[] segments)
         {
             _snapshot = snapshot;
             _keyframes = keyframes;
@@ -563,7 +408,6 @@ internal static class ManualMaskKeyframeTimeline
             Array.Sort(_keyframes);
             _keyframeHasCoverage = new bool[_keyframes.Length];
             _keyframeIsStoredMask = new bool[_keyframes.Length];
-
             for (int i = 0; i < _keyframes.Length; i++)
             {
                 int frameIndex = _keyframes[i];
@@ -577,58 +421,35 @@ internal static class ManualMaskKeyframeTimeline
 
         public WriteableBitmap? GetFinalMask(int frameIndex)
         {
-            if (!TryResolveFrame(
-                    frameIndex,
-                    out int position,
-                    out ManualMaskTrackSegment? segment,
-                    out bool tracked,
-                    out bool blocked) || blocked || !_keyframeHasCoverage[position])
-            {
-                return null;
-            }
-
+            if (!TryResolveFrame(frameIndex, out int position,
+                out ManualMaskTrackSegment? segment, out bool tracked, out bool blocked) ||
+                blocked || !_keyframeHasCoverage[position]) return null;
             int sourceKeyframe = _keyframes[position];
-            if (!tracked || segment == null)
-                return _snapshot.GetFinalMask(sourceKeyframe);
-
+            if (!tracked || segment == null) return _snapshot.GetFinalMask(sourceKeyframe);
             WriteableBitmap? source = GetSourceRasterMask(sourceKeyframe, position);
-            if (source == null)
-                return null;
+            if (source == null) return null;
             return TryCreateTransformedMask(source, segment, frameIndex, out WriteableBitmap transformed)
-                ? transformed
-                : _snapshot.GetFinalMask(sourceKeyframe);
+                ? transformed : _snapshot.GetFinalMask(sourceKeyframe);
         }
 
         public bool TryGetBorrowedStoredMask(int frameIndex, out WriteableBitmap mask)
         {
             mask = null!;
-            if (!TryResolveFrame(
-                    frameIndex,
-                    out int position,
-                    out ManualMaskTrackSegment? segment,
-                    out bool tracked,
-                    out bool blocked) || blocked || !_keyframeHasCoverage[position])
-            {
-                return false;
-            }
-
+            if (!TryResolveFrame(frameIndex, out int position,
+                out ManualMaskTrackSegment? segment, out bool tracked, out bool blocked) ||
+                blocked || !_keyframeHasCoverage[position]) return false;
             int sourceKeyframe = _keyframes[position];
             if (!tracked || segment == null)
             {
-                if (!_keyframeIsStoredMask[position])
-                    return false;
+                if (!_keyframeIsStoredMask[position]) return false;
                 return _snapshot.TryGetStoredMaskBorrowed(sourceKeyframe, out mask);
             }
-
             WriteableBitmap? source = GetSourceRasterMask(sourceKeyframe, position);
-            if (source == null)
-                return false;
-
+            if (source == null) return false;
             EnsureScratchMask(source);
             if (!TransformComponentsInto(source, _scratchMask!, segment, frameIndex))
             {
-                if (!_keyframeIsStoredMask[position])
-                    return false;
+                if (!_keyframeIsStoredMask[position]) return false;
                 return _snapshot.TryGetStoredMaskBorrowed(sourceKeyframe, out mask);
             }
             mask = _scratchMask!;
@@ -638,81 +459,43 @@ internal static class ManualMaskKeyframeTimeline
         public bool TryGetFaceMaskData(int frameIndex, out FrameMaskProvider.FaceMaskData data)
         {
             data = default;
-            if (!TryResolveFrame(
-                    frameIndex,
-                    out int position,
-                    out ManualMaskTrackSegment? segment,
-                    out bool tracked,
-                    out bool blocked) || blocked || tracked || !_keyframeHasCoverage[position] || _keyframeIsStoredMask[position])
-            {
-                return false;
-            }
-
+            if (!TryResolveFrame(frameIndex, out int position,
+                out ManualMaskTrackSegment? segment, out bool tracked, out bool blocked) ||
+                blocked || tracked || !_keyframeHasCoverage[position] ||
+                _keyframeIsStoredMask[position]) return false;
             return _snapshot.TryGetFaceMaskData(_keyframes[position], out data);
         }
 
-        private bool TryResolveFrame(
-            int frameIndex,
-            out int position,
-            out ManualMaskTrackSegment? segment,
-            out bool tracked,
-            out bool blocked)
+        private bool TryResolveFrame(int frameIndex, out int position,
+            out ManualMaskTrackSegment? segment, out bool tracked, out bool blocked)
         {
             position = -1;
             segment = null;
             tracked = false;
             blocked = false;
-            if (frameIndex < 0 || _keyframes.Length == 0)
-                return false;
-
+            if (frameIndex < 0 || _keyframes.Length == 0) return false;
             position = Array.BinarySearch(_keyframes, frameIndex);
-            if (position < 0)
-                position = ~position - 1;
-            if (position < 0)
-                return false;
-
+            if (position < 0) position = ~position - 1;
+            if (position < 0) return false;
             int sourceKeyframe = _keyframes[position];
-            if (frameIndex == sourceKeyframe)
-                return true;
-
+            if (frameIndex == sourceKeyframe) return true;
             segment = _segments.FirstOrDefault(candidate => candidate.SourceKeyframe == sourceKeyframe);
-            if (segment == null)
-                return true;
-            if (!IsSegmentCurrent(segment))
-            {
-                segment = null;
-                return true;
-            }
-            if (frameIndex >= segment.EndExclusive)
-            {
-                blocked = true;
-                return true;
-            }
-            if (!HasAllSamples(segment, frameIndex))
-            {
-                segment = null;
-                return true;
-            }
-
+            if (segment == null) return true;
+            if (!IsSegmentCurrent(segment)) { segment = null; return true; }
+            if (frameIndex >= segment.EndExclusive) { blocked = true; return true; }
+            if (!HasAllSamples(segment, frameIndex)) { segment = null; return true; }
             tracked = true;
             return true;
         }
 
         private bool IsSegmentCurrent(ManualMaskTrackSegment segment)
         {
-            if (_segmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached))
-                return cached;
-
+            if (_segmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached)) return cached;
             bool valid = false;
-            using WriteableBitmap? sourceMask = _snapshot.GetFinalMask(segment.SourceKeyframe);
-            if (sourceMask != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
-            {
-                valid = string.Equals(
-                    ManualMaskFingerprint.Compute(sourceMask),
-                    segment.SourceMaskFingerprint,
-                    StringComparison.Ordinal);
-            }
-
+            using WriteableBitmap? source = _snapshot.GetFinalMask(segment.SourceKeyframe);
+            if (source != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+                valid = string.Equals(ManualMaskFingerprint.Compute(source),
+                    segment.SourceMaskFingerprint, StringComparison.Ordinal);
             _segmentValidity[segment.SourceKeyframe] = valid;
             return valid;
         }
@@ -720,23 +503,15 @@ internal static class ManualMaskKeyframeTimeline
         private WriteableBitmap? GetSourceRasterMask(int sourceKeyframe, int position)
         {
             if (_keyframeIsStoredMask[position])
-            {
                 return _snapshot.TryGetStoredMaskBorrowed(sourceKeyframe, out WriteableBitmap stored)
-                    ? stored
-                    : null;
-            }
-
+                    ? stored : null;
             if (_faceSourceMask != null && _faceSourceMaskKeyframe == sourceKeyframe)
                 return _faceSourceMask;
-
             _faceSourceMask?.Dispose();
             _faceSourceMask = null;
             _faceSourceMaskKeyframe = -1;
-
             WriteableBitmap? created = _snapshot.GetFinalMask(sourceKeyframe);
-            if (created == null)
-                return null;
-
+            if (created == null) return null;
             _faceSourceMask = created;
             _faceSourceMaskKeyframe = sourceKeyframe;
             return created;
@@ -746,21 +521,14 @@ internal static class ManualMaskKeyframeTimeline
         {
             if (_scratchMask != null &&
                 _scratchMask.PixelSize.Width == source.PixelSize.Width &&
-                _scratchMask.PixelSize.Height == source.PixelSize.Height)
-            {
-                return;
-            }
-
+                _scratchMask.PixelSize.Height == source.PixelSize.Height) return;
             _scratchMask?.Dispose();
-            _scratchMask = new WriteableBitmap(
-                source.PixelSize,
-                source.Dpi,
-                Avalonia.Platform.PixelFormat.Bgra8888,
-                Avalonia.Platform.AlphaFormat.Premul);
+            _scratchMask = new WriteableBitmap(source.PixelSize, source.Dpi,
+                Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Premul);
         }
 
-        public void SetMask(int frameIndex, WriteableBitmap mask)
-            => throw new NotSupportedException("Export mask snapshots are read-only.");
+        public void SetMask(int frameIndex, WriteableBitmap mask) =>
+            throw new NotSupportedException("Export mask snapshots are read-only.");
 
         public void Dispose()
         {
