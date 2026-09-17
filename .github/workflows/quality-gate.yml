@@ -52,3 +52,6 @@ jobs:
 
       - name: Build
         run: dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Verify manual pyramid reuse and allocations
+        run: bash scripts/verify-manual-pyramid.sh
