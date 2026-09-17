@@ -319,7 +319,7 @@ internal static class ManualMaskKeyframeTimeline
         double x3 = x1 - scale * sin * height;
         double y3 = y1 + scale * cos * height;
         int minX = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originX, x1), Math.Min(x2, x3))), 0, targetBuffer.Size.Width);
-        int minY = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originY, y1), Math.Min(x2, y3))), 0, targetBuffer.Size.Height);
+        int minY = Math.Clamp((int)Math.Floor(Math.Min(Math.Min(originY, y1), Math.Min(y2, y3))), 0, targetBuffer.Size.Height);
         int maxX = Math.Clamp((int)Math.Ceiling(Math.Max(Math.Max(originX, x1), Math.Max(x2, x3))), 0, targetBuffer.Size.Width);
         int maxY = Math.Clamp((int)Math.Ceiling(Math.Max(Math.Max(originY, y1), Math.Max(y2, y3))), 0, targetBuffer.Size.Height);
         int sourceMinX = Math.Clamp((int)Math.Floor(sx0), 0, sourceBuffer.Size.Width - 1);
