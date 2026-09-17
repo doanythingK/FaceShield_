@@ -6,7 +6,7 @@
              x:Name="Root"
              x:DataType="vm:WorkspaceViewModel">
 
-    <Grid RowDefinitions="Auto,*,160,Auto"
+    <Grid RowDefinitions="Auto,*,Auto,Auto"
           ColumnDefinitions="*,320">
 
         <!-- 상단 상태 영역 -->
@@ -33,7 +33,7 @@
                                 Command="{Binding PrevAutoAnomalyCommand}"
                                 IsEnabled="{Binding HasAutoAnomalies}"/>
                         <Button Content="다음 이상 프레임"
-                                Command="{Binding NextAutoAnomalyCommand}"
+                                Command="{Binding NextAutoAnomaliesCommand}"
                                 IsEnabled="{Binding HasAutoAnomalies}"/>
                         <Border Background="#1C2A1C"
                                 CornerRadius="6"
