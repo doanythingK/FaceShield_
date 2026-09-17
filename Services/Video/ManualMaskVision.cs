@@ -48,7 +48,7 @@ internal static class ManualSimilarityEstimator
             double dx = q.X - p.X, dy = q.Y - p.Y;
             double denominator = dx * dx + dy * dy;
             if (denominator < 36) continue;
-            double vx = v.X - u, vy = v.Y - u.Y;
+            double vx = v.X - u.X, vy = v.Y - u.Y;
             double a = (dx * vx + dy * vy) / denominator;
             double b = (dx * vy - dy * vx) / denominator;
             var hypothesis = new ManualMotion(a, b, u.X - a * p.X + b * p.Y,
