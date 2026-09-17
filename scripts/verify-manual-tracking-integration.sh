@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test_dir="$(mktemp -d)"
+trap 'rm -rf "$test_dir"' EXIT
+
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+        brew install ffmpeg
+    else
+        echo 'ERROR: ffmpeg and ffprobe are required for this integration test' >&2
+        exit 1
+    fi
+fi
+
+# Deterministic textured still image: 750 stationary frames at 30 fps,
+# followed by 30 black frames. No private/user footage is committed.
+python3 - "$test_dir/pattern.ppm" <<'PY'
+import sys
+width, height = 320, 180
+with open(sys.argv[1], 'wb') as output:
+    output.write(f'P6\n{width} {height}\n255\n'.encode('ascii'))
+    for y in range(height):
+        line = bytearray()
+        for x in range(width):
+            noise = ((x * 73856093) ^ (y * 19349663) ^ ((x * y + 1) * 83492791)) & 255
+            line.extend(((noise + 3*x + 5*y) & 255,
+                         (noise*3 + 7*x + y) & 255,
+                         (noise*7 + x + 11*y) & 255))
+        output.write(line)
+PY
+
+video="$test_dir/scene-cut-750.mkv"
+ffmpeg -hide_banner -loglevel error -y \
+    -loop 1 -framerate 30 -t 25 -i "$test_dir/pattern.ppm" \
+    -f lavfi -i 'color=c=black:s=320x180:r=30:d=1' \
+    -filter_complex '[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]concat=n=2:v=1:a=0[v]' \
+    -map '[v]' -frames:v 780 -c:v ffv1 -pix_fmt yuv420p "$video"
+
+frame_count="$(ffprobe -v error -count_frames -select_streams v:0 \
+    -show_entries stream=nb_read_frames -of default=noprint_wrappers=1:nokey=1 "$video")"
+if [[ "$frame_count" != '780' ]]; then
+    echo "ERROR: expected 780 decoded fixture frames, got $frame_count" >&2
+    exit 1
+fi
+
+# A temporary project avoids adding test entry points to the Avalonia app.
+# Reference the real FaceShield assembly so TrackForward, FFmpeg, and mask
+# bitmap creation run together rather than testing only ManualImagePyramid.
+cp "$repo_root/scripts/manual-tracking-integration.cs.txt" "$test_dir/Program.cs"
+cat > "$test_dir/ManualTrackingIntegration.csproj" <<XML
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$repo_root/FaceShield.csproj" />
+    <PackageReference Include="Avalonia.Headless" Version="11.3.9" />
+  </ItemGroup>
+</Project>
+XML
+
+dotnet restore "$test_dir/ManualTrackingIntegration.csproj" -r osx-arm64
+dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm64 --no-restore
+output_dir="$test_dir/bin/Release/net8.0/osx-arm64"
+# FFmpegBootstrap intentionally searches application-owned directories only.
+cp "$repo_root/FFmpeg/osx-arm64/"*.dylib "$output_dir/"
+dotnet "$output_dir/ManualTrackingIntegration.dll" "$video"
