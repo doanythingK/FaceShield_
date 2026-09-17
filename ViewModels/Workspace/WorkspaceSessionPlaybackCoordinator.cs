@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using FaceShield.Enums.Workspace;
 using FaceShield.Services.Video.Session;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -96,6 +97,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             catch (ObjectDisposedException) { }
         }
 
+        var startupClock = Stopwatch.StartNew();
         try
         {
             if (IsInitialized)
@@ -109,6 +111,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                     enableManualPlayer: _mode == WorkspaceMode.Manual),
                 sessionCts.Token);
 
+            Debug.WriteLine($"[WorkspaceStartup] session opened in {startupClock.ElapsedMilliseconds} ms (mode={_mode}).");
             if (sessionCts.IsCancellationRequested ||
                 !ReferenceEquals(Volatile.Read(ref _sessionInitCts), sessionCts))
             {
@@ -118,19 +121,41 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 return;
             }
 
-            AdoptSession(session);
-            if (_frameList.SelectedFrameIndex >= 0 && IsInitialized)
+            // The initial manual frame must not compete with thumbnail seeks and
+            // selected-frame PTS warmup for the same source file. Keep the timeline
+            // provider unpublished until the first frame load has completed.
+            bool prioritizeManualFrame = _mode == WorkspaceMode.Manual;
+            if (!AdoptSession(session, deferTimeline: prioritizeManualFrame))
+                return;
+
+            try
             {
-                if (_mode == WorkspaceMode.Manual)
+                if (_frameList.SelectedFrameIndex >= 0 && IsInitialized)
                 {
-                    await _framePreview.LoadManualFrameAsync(
-                        _frameList.SelectedFrameIndex,
-                        sessionCts.Token);
+                    if (prioritizeManualFrame)
+                    {
+                        await _framePreview.LoadManualFrameAsync(
+                            _frameList.SelectedFrameIndex,
+                            sessionCts.Token);
+                    }
+                    else
+                    {
+                        _framePreview.OnFrameIndexChanged(
+                            _frameList.SelectedFrameIndex);
+                    }
                 }
-                else
+            }
+            finally
+            {
+                if (prioritizeManualFrame &&
+                    !_disposed &&
+                    !sessionCts.IsCancellationRequested &&
+                    ReferenceEquals(Volatile.Read(ref _sessionInitCts), sessionCts))
                 {
-                    _framePreview.OnFrameIndexChanged(
-                        _frameList.SelectedFrameIndex);
+                    _frameList.SetThumbnailProvider(session.ThumbnailProvider);
+                    _frameList.SetPlaybackEnabled(true);
+                    _framePreview.SetSessionReady(true);
+                    Debug.WriteLine($"[WorkspaceStartup] initial manual frame and session ready in {startupClock.ElapsedMilliseconds} ms.");
                 }
             }
         }
@@ -170,7 +195,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         catch (ObjectDisposedException) { }
     }
 
-    private void AdoptSession(VideoSession session)
+    private bool AdoptSession(VideoSession session, bool deferTimeline = false)
     {
         if (session == null)
             throw new ArgumentNullException(nameof(session));
@@ -190,7 +215,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             if (_initialized || _adoptionInProgress)
             {
                 session.Dispose();
-                return;
+                return false;
             }
 
             _adoptionInProgress = true;
@@ -202,7 +227,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             _framePreview.InitializeSession(
                 session,
                 useManualPlayer: _mode == WorkspaceMode.Manual);
-            _frameList.SetThumbnailProvider(session.ThumbnailProvider);
+            if (!deferTimeline)
+                _frameList.SetThumbnailProvider(session.ThumbnailProvider);
 
             lock (_stateGate)
             {
@@ -217,11 +243,15 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             {
                 _frameList.SetPlaybackEnabled(false);
                 _framePreview.SetSessionReady(false);
-                return;
+                return false;
             }
 
-            _frameList.SetPlaybackEnabled(true);
-            _framePreview.SetSessionReady(true);
+            if (!deferTimeline)
+            {
+                _frameList.SetPlaybackEnabled(true);
+                _framePreview.SetSessionReady(true);
+            }
+            return true;
         }
         finally
         {
