@@ -147,10 +147,10 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             }
             finally
             {
-                if (prioritizeManualFrame &&
-                    !_disposed &&
-                    !sessionCts.IsCancellationRequested &&
-                    ReferenceEquals(Volatile.Read(ref _sessionInitCts), sessionCts))
+                // Adoption is irreversible for a cached workspace. Even if this
+                // particular load gets canceled, publish its already-owned provider
+                // so a later open can retry rather than inheriting a disabled UI.
+                if (prioritizeManualFrame && !_disposed)
                 {
                     _frameList.SetThumbnailProvider(session.ThumbnailProvider);
                     _frameList.SetPlaybackEnabled(true);
