@@ -1,5 +1,5 @@
 // Intentionally .txt: compiled only by scripts/verify-manual-tracking-integration.sh.
-// Exercises the production TrackForward method, bundled FFmpeg decoder and a real
+// Exercises the production TrackForward method, FFmpeg decoder and a real
 // Avalonia WriteableBitmap. The generated clip is synthetic, not a user recording.
 using Avalonia;
 using Avalonia.Headless;
@@ -127,10 +127,68 @@ for (int i = 0; i < samples.Count; i++)
            double.IsFinite(Read<double>(samples[i]!, "RotationRadians")),
            $"Non-finite tracking transform at frame {frame}");
 }
-Console.WriteLine($"PASS: FFmpeg ordinal 749/750, TrackForward 550..749, cut 750, cancellation");
+Console.WriteLine("PASS: FFmpeg ordinal 749/750, TrackForward 550..749, cut 750, cancellation");
 Console.WriteLine($"synthetic_tracking_elapsed_ms={elapsed.ElapsedMilliseconds}; " +
     $"managed_allocated_bytes={allocatedBytes}; gen0_collections={gen0Collections}; " +
     $"peak_working_set_bytes={Process.GetCurrentProcess().PeakWorkingSet64}");
+
+// Regression: a source mask without a validated track must not stick to every
+// later frame. Export must fail instead of silently producing unsafe coverage.
+using (var provider = new FrameMaskProvider())
+{
+    var stored = new WriteableBitmap(mask.PixelSize, mask.Dpi,
+        PixelFormat.Bgra8888, AlphaFormat.Premul);
+    using (var source = mask.Lock())
+    using (var target = stored.Lock())
+    {
+        unsafe
+        {
+            byte* src = (byte*)source.Address;
+            byte* dst = (byte*)target.Address;
+            for (int y = 0; y < height; y++)
+                Buffer.MemoryCopy(src + y * source.RowBytes,
+                    dst + y * target.RowBytes, target.RowBytes,
+                    Math.Min(source.RowBytes, target.RowBytes));
+        }
+    }
+    provider.SetMask(startFrame, stored);
+    Type timeline = typeof(FfFrameExtractor).Assembly.GetType(
+        "FaceShield.Services.Video.ManualMaskKeyframeTimeline", throwOnError: true)!;
+    const BindingFlags internalStatic = BindingFlags.NonPublic | BindingFlags.Static;
+    timeline.GetMethod("Configure", internalStatic)!.Invoke(
+        null, new object?[] { provider, true, null });
+    MethodInfo clone = timeline.GetMethod("TryCloneEffectiveKeyframeMask", internalStatic)!;
+    object?[] exactArgs = { provider, startFrame, null, CancellationToken.None };
+    Assert((bool)clone.Invoke(null, exactArgs)!, "Explicit keyframe mask missing");
+    ((WriteableBitmap)exactArgs[2]!).Dispose();
+    object?[] missingArgs = { provider, startFrame + 1, null, CancellationToken.None };
+    Assert(!(bool)clone.Invoke(null, missingArgs)!,
+        "Untracked preview incorrectly inherited a stationary source mask");
+
+    object lease = timeline.GetMethod("CreateExportMaskLease", internalStatic)!
+        .Invoke(null, new object?[] { provider })!;
+    using ((IDisposable)lease)
+    {
+        object exportProvider = lease.GetType()
+            .GetProperty("Provider", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(lease)!;
+        MethodInfo getMask = exportProvider.GetType().GetMethod(
+            "GetFinalMask", BindingFlags.Public | BindingFlags.Instance)!;
+        using var valid = (WriteableBitmap)getMask.Invoke(
+            exportProvider, new object[] { startFrame })!;
+        Assert(valid != null, "Explicit keyframe could not be exported");
+        try
+        {
+            getMask.Invoke(exportProvider, new object[] { startFrame + 1 });
+            throw new InvalidOperationException("Untracked export unexpectedly succeeded");
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException)
+        {
+            // Expected: incomplete tracking must never become a stationary blur.
+        }
+    }
+}
+Console.WriteLine("PASS: explicit manual keyframe, no untracked hold, fail-closed export");
 
 static T Read<T>(object source, string property) =>
     (T)(source.GetType().GetProperty(property, BindingFlags.Public | BindingFlags.Instance)
