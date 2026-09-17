@@ -1,0 +1,144 @@
+// Intentionally .txt: compiled only by scripts/verify-manual-tracking-integration.sh.
+// Exercises the production TrackForward method, bundled FFmpeg decoder and a real
+// Avalonia WriteableBitmap. The generated clip is synthetic, not a user recording.
+using Avalonia;
+using Avalonia.Headless;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Skia;
+using FaceShield.Services.Video;
+using System;
+using System.Collections;
+using System.Diagnostics;
+using System.Reflection;
+using System.Threading;
+
+if (args.Length != 1 || !System.IO.File.Exists(args[0]))
+    throw new ArgumentException("Expected a generated video path.");
+
+const int width = 320, height = 180;
+const int startFrame = 550, sceneCutFrame = 750, endExclusive = 780;
+AppBuilder.Configure<TrackingSmokeApp>()
+    .UseSkia()
+    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+    .SetupWithoutStarting();
+FFmpegBootstrap.Initialize();
+
+using (var extractor = new FfFrameExtractor(args[0], enableHardware: false))
+{
+    Assert(extractor.FrameSize.Width == width && extractor.FrameSize.Height == height,
+        "Unexpected decoded frame dimensions");
+    extractor.StartSequentialRead(sceneCutFrame - 1, CancellationToken.None);
+    var bgra = new byte[width * height * 4];
+    Assert(extractor.TryGetNextFrameRawToBuffer(CancellationToken.None, width, height,
+        useBilinear: true, bgra, out int before, out _), "Failed to decode pre-cut frame");
+    Assert(before == sceneCutFrame - 1, $"Pre-cut ordinal mismatch: {before}");
+    Assert(extractor.TryGetNextFrameRawToBuffer(CancellationToken.None, width, height,
+        useBilinear: true, bgra, out int after, out _), "Failed to decode cut frame");
+    Assert(after == sceneCutFrame, $"Cut ordinal mismatch: {after}");
+}
+
+using var mask = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96),
+    PixelFormat.Bgra8888, AlphaFormat.Premul);
+using (var pixels = mask.Lock())
+{
+    unsafe
+    {
+        byte* origin = (byte*)pixels.Address;
+        for (int y = 0; y < height; y++)
+        {
+            byte* row = origin + y * pixels.RowBytes;
+            for (int x = 0; x < width; x++)
+            {
+                byte alpha = x >= 45 && x < 275 && y >= 26 && y < 154 ? (byte)255 : (byte)0;
+                int offset = x * 4;
+                row[offset] = alpha;
+                row[offset + 1] = alpha;
+                row[offset + 2] = alpha;
+                row[offset + 3] = alpha;
+            }
+        }
+    }
+}
+
+Type service = typeof(FfFrameExtractor).Assembly.GetType(
+    "FaceShield.Services.Video.ManualMaskTrackingService", throwOnError: true)!;
+MethodInfo track = service.GetMethod("TrackForward",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("TrackForward method not found");
+
+// A cancelled request must fail without producing a partial successful result.
+using (var cancelled = new CancellationTokenSource())
+{
+    cancelled.Cancel();
+    try
+    {
+        track.Invoke(null, new object?[] { args[0], startFrame, endExclusive, mask, null, cancelled.Token });
+        throw new InvalidOperationException("Cancelled tracking unexpectedly completed");
+    }
+    catch (TargetInvocationException ex) when (ex.InnerException is OperationCanceledException)
+    {
+        // Expected.
+    }
+}
+
+GC.Collect();
+GC.WaitForPendingFinalizers();
+GC.Collect();
+long allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+int gen0Before = GC.CollectionCount(0);
+var elapsed = Stopwatch.StartNew();
+object result;
+try
+{
+    result = track.Invoke(null,
+        new object?[] { args[0], startFrame, endExclusive, mask, null, CancellationToken.None })
+        ?? throw new InvalidOperationException("Tracking returned null");
+}
+catch (TargetInvocationException ex) when (ex.InnerException != null)
+{
+    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+    throw;
+}
+elapsed.Stop();
+long allocatedBytes = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+int gen0Collections = GC.CollectionCount(0) - gen0Before;
+
+object segment = Read<object>(result, "Segment");
+int processed = Read<int>(result, "ProcessedFrames");
+bool stopped = Read<bool>(segment, "StoppedByFailure");
+int? stopFrame = Read<int?>(segment, "StopFrame");
+int boundary = Read<int>(segment, "EndExclusive");
+IList components = Read<IList>(segment, "Components");
+Assert(stopped, "Scene transition was not classified as a failure boundary");
+Assert(stopFrame == sceneCutFrame && boundary == sceneCutFrame,
+    $"Expected cut at {sceneCutFrame}, got StopFrame={stopFrame}, EndExclusive={boundary}");
+Assert(processed == sceneCutFrame - startFrame - 1,
+    $"Expected {sceneCutFrame - startFrame - 1} pre-cut frames, got {processed}");
+Assert(components.Count == 1, $"Expected exactly one mask component, got {components.Count}");
+IList samples = Read<IList>(components[0]!, "Samples");
+Assert(samples.Count == processed, $"Expected {processed} samples, got {samples.Count}");
+for (int i = 0; i < samples.Count; i++)
+{
+    int frame = Read<int>(samples[i]!, "FrameIndex");
+    Assert(frame == startFrame + i + 1, $"Missing or out-of-order sample: {frame}");
+    Assert(double.IsFinite(Read<double>(samples[i]!, "OffsetX")) &&
+           double.IsFinite(Read<double>(samples[i]!, "OffsetY")) &&
+           double.IsFinite(Read<double>(samples[i]!, "RotationRadians")),
+           $"Non-finite tracking transform at frame {frame}");
+}
+Console.WriteLine($"PASS: FFmpeg ordinal 749/750, TrackForward 550..749, cut 750, cancellation");
+Console.WriteLine($"synthetic_tracking_elapsed_ms={elapsed.ElapsedMilliseconds}; " +
+    $"managed_allocated_bytes={allocatedBytes}; gen0_collections={gen0Collections}; " +
+    $"peak_working_set_bytes={Process.GetCurrentProcess().PeakWorkingSet64}");
+
+static T Read<T>(object source, string property) =>
+    (T)(source.GetType().GetProperty(property, BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(source) ?? throw new InvalidOperationException($"Missing {property}"));
+
+static void Assert(bool condition, string description)
+{
+    if (!condition) throw new InvalidOperationException(description);
+}
+
+public sealed class TrackingSmokeApp : Application { }
