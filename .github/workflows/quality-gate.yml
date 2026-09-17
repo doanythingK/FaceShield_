@@ -55,3 +55,7 @@ jobs:
 
       - name: Verify manual pyramid reuse and allocations
         run: bash scripts/verify-manual-pyramid.sh
+
+      - name: Verify decoded manual tracking integration (synthetic video)
+        if: github.ref == 'refs/heads/refactor/manual-mask-keyframes'
+        run: bash scripts/verify-manual-tracking-integration.sh
