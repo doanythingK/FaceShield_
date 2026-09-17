@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using FaceShield.Services.Video;
 using System;
@@ -12,8 +13,8 @@ using System.Windows.Input;
 namespace FaceShield.Controls;
 
 /// <summary>
-/// A single, independent PTS indexer handles the most recent click without waiting
-/// for thumbnail decoding. Never infer VFR ordinals from average FPS.
+/// Seek to the clicked presentation time first. Exact ordinal resolution can still
+/// require a sequential PTS scan; never treat an estimated FPS ordinal as exact.
 /// </summary>
 public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
 {
@@ -63,6 +64,7 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
     private CancellationTokenSource? _selectionCts;
     private FfFrameExtractor? _indexer;
     private string? _indexerPath;
+    private WriteableBitmap? _pendingTimestampPreview;
     private int _attachmentGeneration;
 
     public ManualTimelineFrameStrip()
@@ -71,6 +73,7 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
         {
             Interlocked.Increment(ref _attachmentGeneration);
             CancelSelection();
+            ClearTimestampPreview();
             // A running decode owns the indexer until it releases the gate.
             _ = Task.Run(async () =>
             {
@@ -125,6 +128,7 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
 
         // Latest click wins, including a click immediately resolved from cache.
         CancelSelection();
+        ClearTimestampPreview();
         double seconds = Math.Max(0, ViewStartSeconds) +
             Math.Max(0.05, SecondsPerScreen) *
             Math.Clamp(position.X / Math.Max(1, Bounds.Width), 0, 1);
@@ -139,7 +143,19 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
         int baseline = SelectedFrameIndex;
         var cts = new CancellationTokenSource();
         Interlocked.Exchange(ref _selectionCts, cts);
-        NavigationStatus = "클릭한 위치의 정확한 프레임을 확인하는 중...";
+
+        // Switch the thumbnail viewport to the requested neighborhood immediately.
+        // Previously the old viewport continued consuming the thumbnail queue while
+        // a separate decoder scanned all ordinals between zero and the click.
+        double duration = TotalDurationSeconds;
+        if (double.IsFinite(duration) && duration > 0)
+        {
+            double span = Math.Max(0.05, SecondsPerScreen);
+            SetCurrentValue(ViewStartSecondsProperty,
+                Math.Clamp(seconds, 0, Math.Max(0, duration - span)));
+        }
+        NavigationStatus = "클릭 위치 미리보기 로딩 중 · 정확한 프레임 번호 확인 전에는 편집할 수 없습니다.";
+        _ = PrimeClickedThumbnailAsync(provider, seconds, cts.Token);
         _ = ResolveSelectionAsync(provider, path, seconds, baseline, generation, cts);
     }
 
@@ -153,6 +169,39 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
 
         base.OnPointerWheelChanged(e);
     }
+
+    private async Task PrimeClickedThumbnailAsync(
+        TimelineThumbnailProvider provider, double seconds, CancellationToken token)
+    {
+        try
+        {
+            bool available = await Task.Run(
+                () => provider.GetThumbnailAtTime(seconds, token) != null, token);
+            if (!available || token.IsCancellationRequested)
+                return;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!token.IsCancellationRequested && ReferenceEquals(ThumbnailProvider, provider))
+                    InvalidateVisual();
+            });
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ManualTimeline] clicked thumbnail prefetch failed: {ex}");
+        }
+    }
+
+    private bool IsCurrentSelection(
+        TimelineThumbnailProvider provider, string path,
+        int baseline, int attachmentGeneration, CancellationTokenSource cts)
+        => !cts.IsCancellationRequested &&
+           ReferenceEquals(Volatile.Read(ref _selectionCts), cts) &&
+           ReferenceEquals(ThumbnailProvider, provider) &&
+           string.Equals(VideoPath, path, StringComparison.Ordinal) &&
+           attachmentGeneration == Volatile.Read(ref _attachmentGeneration) &&
+           SelectedFrameIndex == baseline;
 
     private async Task ResolveSelectionAsync(
         TimelineThumbnailProvider provider, string path, double seconds,
@@ -176,6 +225,36 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
                         _indexerPath = path;
                     }
 
+                    // Timestamp seek is local: show the requested scene before
+                    // starting the potentially long exact ordinal PTS scan.
+                    WriteableBitmap? preview = _indexer.GetTimelineThumbnailAtTimestampScaled(
+                        seconds, 320, 180, token);
+                    if (preview != null)
+                    {
+                        try
+                        {
+                            await Dispatcher.UIThread.InvokeAsync(() =>
+                            {
+                                if (!IsCurrentSelection(provider, path, baseline,
+                                        attachmentGeneration, cts))
+                                {
+                                    preview.Dispose();
+                                    return;
+                                }
+                                ClearTimestampPreview();
+                                _pendingTimestampPreview = preview;
+                                NavigationStatus = "클릭한 위치의 임시 장면 표시 중 · 정확한 프레임 번호 확인 중 (편집 불가)";
+                                InvalidateVisual();
+                            });
+                        }
+                        catch
+                        {
+                            preview.Dispose();
+                            throw;
+                        }
+                    }
+
+                    token.ThrowIfCancellationRequested();
                     bool ok = _indexer.TryResolveFrameIndexAtTimestamp(
                         seconds, token, out int index);
                     return (ok, index);
@@ -188,38 +267,28 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (token.IsCancellationRequested ||
-                    !ReferenceEquals(Volatile.Read(ref _selectionCts), cts) ||
-                    !ReferenceEquals(ThumbnailProvider, provider) ||
-                    !string.Equals(VideoPath, path, StringComparison.Ordinal) ||
-                    attachmentGeneration != Volatile.Read(ref _attachmentGeneration) ||
-                    SelectedFrameIndex != baseline)
-                {
+                if (!IsCurrentSelection(provider, path, baseline,
+                        attachmentGeneration, cts))
                     return;
-                }
 
+                ClearTimestampPreview();
                 if (found && frame >= 0)
                     SelectFrame(frame);
                 else
-                    NavigationStatus = "정확한 프레임 위치를 확인하지 못했습니다. 영상의 시간 정보 또는 디코딩 상태를 확인하세요.";
+                    NavigationStatus = "정확한 프레임 번호를 확인하지 못했습니다. 영상의 시간 정보 또는 디코딩 상태를 확인하세요.";
                 InvalidateVisual();
             });
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
             Debug.WriteLine($"[ManualTimeline] priority selection failed: {ex}");
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (!token.IsCancellationRequested &&
-                    ReferenceEquals(Volatile.Read(ref _selectionCts), cts) &&
-                    ReferenceEquals(ThumbnailProvider, provider) &&
-                    string.Equals(VideoPath, path, StringComparison.Ordinal) &&
-                    attachmentGeneration == Volatile.Read(ref _attachmentGeneration) &&
-                    SelectedFrameIndex == baseline)
+                if (IsCurrentSelection(provider, path, baseline,
+                        attachmentGeneration, cts))
                 {
+                    ClearTimestampPreview();
                     NavigationStatus = "해당 위치의 프레임을 불러오지 못했습니다. 영상의 디코딩 상태를 확인하세요.";
                 }
             });
@@ -260,6 +329,13 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
         // ResolveSelectionAsync owns disposal after its decoder has drained.
     }
 
+    private void ClearTimestampPreview()
+    {
+        _pendingTimestampPreview?.Dispose();
+        _pendingTimestampPreview = null;
+        InvalidateVisual();
+    }
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);
@@ -287,6 +363,22 @@ public sealed class ManualTimelineFrameStrip : TimelineFrameStrip
             {
                 context.FillRectangle(TimestampReadyBrush,
                     new Rect(x + 1, stripHeight - 4, Math.Max(1, slotWidth - 2), 3));
+            }
+        }
+
+        // This is a timestamp-only image, NOT the selected editable ordinal.
+        // Keep it inside the timeline so it cannot be mistaken for an editable frame.
+        if (_pendingTimestampPreview is { } preview)
+        {
+            double previewWidth = Math.Min(200, Math.Max(40, width * 0.4));
+            double previewHeight = Math.Min(stripHeight - 2, previewWidth * 9 / 16);
+            if (previewHeight > 0)
+            {
+                context.FillRectangle(Brushes.Black,
+                    new Rect(width - previewWidth - 2, 0, previewWidth + 2, previewHeight + 2));
+                context.DrawImage(preview,
+                    new Rect(0, 0, preview.PixelSize.Width, preview.PixelSize.Height),
+                    new Rect(width - previewWidth - 1, 1, previewWidth, previewHeight));
             }
         }
     }
