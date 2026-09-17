@@ -104,6 +104,10 @@ internal static class ManualMaskTrackingService
                 });
             }
 
+            // Keep exactly two float-buffer sets for the lifetime of this run.
+            // The inactive set is reloaded only after the scene-cut check, and
+            // the swap happens only after every component passes validation.
+            ManualImagePyramid currentPyramid = new(width, height);
             int lastDecoded = sourceFrameIndex;
             int processed = 0;
             bool reachedBoundary = false;
@@ -139,7 +143,7 @@ internal static class ManualMaskTrackingService
                         $"장면 전환 감지(색상={scene.Color:0.000}, 구역={scene.Spatial:0.000}, 구조={scene.Structure:0.000})");
                     break;
                 }
-                ManualImagePyramid currentPyramid = new(current, currentStride, width, height, cancellationToken);
+                currentPyramid.Reload(current, currentStride, cancellationToken);
                 var nextFeatures = new List<ManualPoint>[components.Count];
                 var nextTransforms = new ManualMotion[components.Count];
                 var confidences = new double[components.Count];
@@ -211,7 +215,7 @@ internal static class ManualMaskTrackingService
                 progress?.Report(processed);
                 (previous, current) = (current, previous);
                 previousStride = currentStride;
-                previousPyramid = currentPyramid;
+                (previousPyramid, currentPyramid) = (currentPyramid, previousPyramid);
             }
             cancellationToken.ThrowIfCancellationRequested();
             if (!segment.StoppedByFailure && segment.EndExclusive == int.MaxValue)
