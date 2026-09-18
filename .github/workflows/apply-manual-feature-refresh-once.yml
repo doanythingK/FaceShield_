@@ -26,30 +26,7 @@ jobs:
       - name: Apply guarded tracker refresh patch
         run: python3 scripts/apply-manual-feature-refresh-once.py
       - name: Pin historical Homebrew core state for FFmpeg 8.1.1
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/verify-manual-tracking-integration.sh')
-          text = path.read_text()
-          old = '''        historical_formula="$test_dir/ffmpeg.rb"
-          curl -fsSL \\
-            'https://raw.githubusercontent.com/Homebrew/homebrew-core/40a61ec69293671eed15d9ff8f1d677120cabcde/Formula/f/ffmpeg.rb' \\
-            -o "$historical_formula"
-          HOMEBREW_NO_AUTO_UPDATE=1 brew install --formula "$historical_formula"
-          ffmpeg_prefix="$(brew --prefix ffmpeg)"
-'''
-          new = '''        export HOMEBREW_NO_INSTALL_FROM_API=1
-          HOMEBREW_NO_AUTO_UPDATE=1 brew tap --force homebrew/core
-          core_repo="$(brew --repo homebrew/core)"
-          git -C "$core_repo" fetch --depth=1 origin 40a61ec69293671eed15d9ff8f1d677120cabcde
-          git -C "$core_repo" checkout --detach 40a61ec69293671eed15d9ff8f1d677120cabcde
-          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install ffmpeg
-          ffmpeg_prefix="$(brew --prefix ffmpeg)"
-'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one historical formula install block, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
-          PY
+        run: python3 scripts/pin-historical-ffmpeg-core-once.py
       - name: Build production app
         run: |
           dotnet restore FaceShield.csproj -r osx-arm64
@@ -60,7 +37,7 @@ jobs:
         run: git diff --check
       - name: Commit verified tracker change and remove staging
         run: |
-          git rm -- .github/workflows/apply-manual-feature-refresh-once.yml scripts/apply-manual-feature-refresh-once.py
+          git rm -- .github/workflows/apply-manual-feature-refresh-once.yml scripts/apply-manual-feature-refresh-once.py scripts/pin-historical-ffmpeg-core-once.py
           git add -- Services/Video/ManualMaskTrackingService.cs scripts/verify-manual-tracking-integration.sh
           git -c user.name='FaceShield CI' -c user.email='actions@users.noreply.github.com' commit -m 'fix: refresh manual tracking features inside transformed mask'
           git push origin HEAD:refactor/manual-overlay-workflow
