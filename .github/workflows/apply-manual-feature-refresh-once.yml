@@ -1,4 +1,4 @@
-# one-shot verifier; pinned FFmpeg 8.1.1 regression; deleted by the successful job
+# one-shot verifier; pinned FFmpeg 8.1.1 regression after core reset; deleted by the successful job
 name: One-shot adaptive manual tracking feature refresh
 
 on:
