@@ -117,7 +117,9 @@ Assert-Match "decoded PTS cache enforces resident budget" $extractor 'GetResiden
 # Auto pipeline staging and cancellation semantics.
 Assert-Match "risk cascade and postprocess use one staged provider" $autoMask 'CreateSnapshot\(\s*out\s+long\s+providerVersion,\s*ct\)[\s\S]*YoloRiskCascadeStep\(\)\.Apply\(\s*workingProvider,[\s\S]*AutoMaskPostProcessPipeline\(\s*workingProvider,'
 Assert-Match "staged auto state commits only after postprocess succeeds" $autoMask 'postProcess\.Apply\([\s\S]{0,700}ThrowIfCancellationRequested\(\)[\s\S]{0,320}CommitFaceMasksFrom\([\s\S]{0,260}providerVersion'
-Assert-Match "stored-mask writes serialize both stores" $frameMaskProvider 'public\s+void\s+SetMask\([\s\S]{0,300}lock\s*\(_stateGate\)[\s\S]{0,700}_masks[\s\S]{0,300}_faceMasks'
+Assert-Match "editor composite uses shared locked write path" $frameMaskProvider 'public\s+void\s+SetMask\([\s\S]{0,150}SetMaskCore\(frameIndex,\s*mask,\s*editorComposite:\s*true\)'
+Assert-Match "trusted manual continuation bypasses Auto stripping" $frameMaskProvider 'internal\s+void\s+SetIndependentManualMask\([\s\S]{0,160}SetMaskCore\(frameIndex,\s*mask,\s*editorComposite:\s*false\)'
+Assert-Match "both mask writes serialize under the state gate" $frameMaskProvider 'private\s+void\s+SetMaskCore\([\s\S]{0,220}lock\s*\(_stateGate\)[\s\S]{0,900}_faceMasks[\s\S]{0,400}_masks'
 Assert-Match "face-rect writes serialize through state gate" $frameMaskProvider 'public\s+void\s+SetFaceRects\([\s\S]{0,400}lock\s*\(_stateGate\)[\s\S]{0,300}SetFaceRectsLocked\('
 Assert-Match "mask provider staged commit validates live version" $frameMaskProvider 'CommitFaceMasksFrom\([\s\S]{0,280}expectedVersion[\s\S]{0,700}_version\s*!=\s*expectedVersion[\s\S]{0,600}_faceMasks\.Clear\(\)'
 Assert-Match "mask provider staged commit preserves manual masks" $frameMaskProvider 'CommitFaceMasksFrom\([\s\S]{0,1200}_masks\.ContainsKey\(entry\.Key\)[\s\S]{0,220}continue'
