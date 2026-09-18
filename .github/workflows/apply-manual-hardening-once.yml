@@ -1,0 +1,40 @@
+name: One-shot independent manual mask hardening assertions
+
+on:
+  push:
+    branches:
+      - refactor/manual-overlay-workflow
+    paths:
+      - .github/workflows/apply-manual-hardening-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.ref == 'refs/heads/refactor/manual-overlay-workflow'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Apply guarded static invariant correction
+        run: python scripts/apply-manual-hardening-assertions-once.py
+      - name: Verify runtime hardening and Windows production build
+        shell: pwsh
+        run: |
+          ./scripts/verify-runtime-hardening.ps1
+          dotnet restore FaceShield.csproj -r win-x64
+          dotnet build FaceShield.csproj -c Release -r win-x64 --no-restore -p:ContinuousIntegrationBuild=true
+          git diff --check
+      - name: Commit verified assertion changes and remove staging
+        shell: pwsh
+        run: |
+          git rm -- .github/workflows/apply-manual-hardening-once.yml scripts/apply-manual-hardening-assertions-once.py
+          git add -- scripts/verify-runtime-hardening.ps1
+          git -c user.name='FaceShield CI' -c user.email='actions@users.noreply.github.com' commit -m 'test: check shared locked manual and editor mask writes'
+          git push origin HEAD:refactor/manual-overlay-workflow
