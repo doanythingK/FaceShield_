@@ -1,0 +1,87 @@
+using Avalonia;
+using Avalonia.Headless;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Skia;
+using FaceShield.Services.Video;
+using System;
+
+AppBuilder.Configure<MaskLayerRegressionApp>()
+    .UseSkia()
+    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+    .SetupWithoutStarting();
+
+const int width = 160, height = 100, frame = 12;
+var size = new PixelSize(width, height);
+var autoFace = new Rect(18, 24, 28, 28);
+using var provider = new FrameMaskProvider();
+provider.SetFaceRects(frame, new[] { autoFace }, size, 0.9f, new[] { 0.9f });
+provider.SetMask(frame, CreateManualMask(size, 112, 28, 24, 24));
+
+Assert(provider.TryGetFaceMaskData(frame, out var autoAfterManual) && autoAfterManual.Faces.Count == 1,
+    "SetMask erased the Auto layer on the same frame");
+Assert(provider.TryCloneStoredMask(frame, out var manualAfterAuto),
+    "Manual layer disappeared after same-frame Auto+manual storage");
+manualAfterAuto.Dispose();
+using (var final = provider.GetFinalMask(frame) ?? throw new InvalidOperationException("Combined mask missing"))
+{
+    Assert(AlphaAt(final, 32, 38) > 0, "Combined mask lost Auto coverage");
+    Assert(AlphaAt(final, 120, 36) == 255, "Combined mask lost manual coverage");
+}
+
+// Updating Auto on a frame with a manual layer must not erase the manual layer.
+provider.SetFaceRects(frame, new[] { new Rect(54, 20, 26, 26) }, size, 0.8f, new[] { 0.8f });
+Assert(provider.TryCloneStoredMask(frame, out var manualAfterAutoUpdate),
+    "SetFaceRects erased the manual layer on the same frame");
+manualAfterAutoUpdate.Dispose();
+using (var final = provider.GetFinalMask(frame) ?? throw new InvalidOperationException("Updated combined mask missing"))
+{
+    Assert(AlphaAt(final, 66, 32) > 0, "Updated Auto coverage missing from combined mask");
+    Assert(AlphaAt(final, 120, 36) == 255, "Manual coverage was not preserved across Auto update");
+}
+
+using (var snapshot = provider.CreateSnapshot())
+{
+    Assert(snapshot.TryGetFaceMaskData(frame, out _) && snapshot.TryCloneStoredMask(frame, out var stored),
+        "Snapshot did not preserve both layers");
+    stored.Dispose();
+    using var final = snapshot.GetFinalMask(frame) ?? throw new InvalidOperationException("Snapshot combined mask missing");
+    Assert(AlphaAt(final, 66, 32) > 0 && AlphaAt(final, 120, 36) == 255,
+        "Snapshot final mask did not union Auto and manual layers");
+}
+
+Console.WriteLine("PASS: same-frame Auto/manual layers survive either update order and compose in final masks");
+
+static WriteableBitmap CreateManualMask(PixelSize size, int x0, int y0, int w, int h)
+{
+    var mask = new WriteableBitmap(size, new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
+    using var fb = mask.Lock();
+    unsafe
+    {
+        byte* origin = (byte*)fb.Address;
+        for (int y = 0; y < size.Height; y++)
+        {
+            byte* row = origin + y * fb.RowBytes;
+            for (int x = 0; x < size.Width; x++)
+            {
+                byte a = x >= x0 && x < x0 + w && y >= y0 && y < y0 + h ? (byte)255 : (byte)0;
+                int p = x * 4;
+                row[p] = row[p + 1] = row[p + 2] = row[p + 3] = a;
+            }
+        }
+    }
+    return mask;
+}
+
+static byte AlphaAt(WriteableBitmap mask, int x, int y)
+{
+    using var fb = mask.Lock();
+    unsafe { return *((byte*)fb.Address + y * fb.RowBytes + x * 4 + 3); }
+}
+
+static void Assert(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+
+public sealed class MaskLayerRegressionApp : Application { }
