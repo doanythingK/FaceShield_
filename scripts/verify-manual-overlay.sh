@@ -17,6 +17,7 @@ cat > "$test_dir/ManualOverlayRegression.csproj" <<XML
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$repo_root/Services/Video/ManualOverlayCore.cs" Link="ManualOverlayCore.cs" />
+    <Compile Include="$repo_root/Services/Video/ManualOverlayStateStore.cs" Link="ManualOverlayStateStore.cs" />
   </ItemGroup>
 </Project>
 XML
