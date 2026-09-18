@@ -120,11 +120,42 @@ tracker.write_text(text, encoding="utf-8")
 
 verify = repo / "scripts/verify-manual-tracking-integration.sh"
 text = verify.read_text(encoding="utf-8")
-old_ffmpeg = """ffmpeg_prefix=\"$(brew --prefix ffmpeg@8 2>/dev/null || true)\"\nif [[ -z \"$ffmpeg_prefix\" || ! -x \"$ffmpeg_prefix/bin/ffmpeg\" ]]; then\n    brew install ffmpeg@8\n    ffmpeg_prefix=\"$(brew --prefix ffmpeg@8)\"\nfi\nffmpeg_cmd=\"$ffmpeg_prefix/bin/ffmpeg\"\nffprobe_cmd=\"$ffmpeg_prefix/bin/ffprobe\"\nif [[ ! -x \"$ffmpeg_cmd\" || ! -x \"$ffprobe_cmd\" ]]; then\n    echo 'ERROR: the FFmpeg 8 command-line tools were not installed' >&2\n    exit 1\nfi\n"""
-new_ffmpeg = """ffmpeg_prefix=\"$(brew --prefix ffmpeg@8 2>/dev/null || true)\"\nif [[ -z \"$ffmpeg_prefix\" || ! -x \"$ffmpeg_prefix/bin/ffmpeg\" ]]; then\n    ffmpeg_prefix=\"$(brew --prefix ffmpeg 2>/dev/null || true)\"\n    if [[ -z \"$ffmpeg_prefix\" || ! -x \"$ffmpeg_prefix/bin/ffmpeg\" ]]; then\n        brew install ffmpeg\n        ffmpeg_prefix=\"$(brew --prefix ffmpeg)\"\n    fi\nfi\nffmpeg_cmd=\"$ffmpeg_prefix/bin/ffmpeg\"\nffprobe_cmd=\"$ffmpeg_prefix/bin/ffprobe\"\nif [[ ! -x \"$ffmpeg_cmd\" || ! -x \"$ffprobe_cmd\" ]]; then\n    echo 'ERROR: FFmpeg command-line tools were not installed' >&2\n    exit 1\nfi\nffmpeg_version=\"$($ffmpeg_cmd -version | head -n 1)\"\nif [[ ! \"$ffmpeg_version\" =~ ffmpeg\\ version\\ 8([.[:space:]]|$) ]]; then\n    echo \"ERROR: manual tracking integration requires FFmpeg major 8, got: $ffmpeg_version\" >&2\n    exit 1\nfi\n"""
-if text.count(old_ffmpeg) != 1:
-    raise RuntimeError(f"expected one FFmpeg setup block, found {text.count(old_ffmpeg)}")
-text = text.replace(old_ffmpeg, new_ffmpeg, 1)
+start = text.index('ffmpeg_prefix="$(brew --prefix ffmpeg@8 2>/dev/null || true)"')
+end_marker = "echo \"Synthetic integration runtime: $ffmpeg_prefix (FFmpeg 8; NOT bundled dylib validation)\""
+end = text.index(end_marker, start)
+old_ffmpeg = text[start:end]
+new_ffmpeg = r'''# Homebrew removed the ffmpeg@8 formula after FFmpeg 9 became current.
+# Pin the last known FFmpeg 8.1.1 core formula/bottle used by this regression
+# instead of silently accepting a different ABI.
+ffmpeg_prefix="$(brew --prefix ffmpeg@8 2>/dev/null || true)"
+if [[ -z "$ffmpeg_prefix" || ! -x "$ffmpeg_prefix/bin/ffmpeg" ]]; then
+    existing_prefix="$(brew --prefix ffmpeg 2>/dev/null || true)"
+    if [[ -n "$existing_prefix" && -x "$existing_prefix/bin/ffmpeg" ]] && \
+       "$existing_prefix/bin/ffmpeg" -version | head -n 1 | grep -Eq '^ffmpeg version 8([.[:space:]]|$)'; then
+        ffmpeg_prefix="$existing_prefix"
+    else
+        historical_formula="$test_dir/ffmpeg.rb"
+        curl -fsSL \
+          'https://raw.githubusercontent.com/Homebrew/homebrew-core/40a61ec69293671eed15d9ff8f1d677120cabcde/Formula/f/ffmpeg.rb' \
+          -o "$historical_formula"
+        HOMEBREW_NO_AUTO_UPDATE=1 brew install --formula "$historical_formula"
+        ffmpeg_prefix="$(brew --prefix ffmpeg)"
+    fi
+fi
+ffmpeg_cmd="$ffmpeg_prefix/bin/ffmpeg"
+ffprobe_cmd="$ffmpeg_prefix/bin/ffprobe"
+if [[ ! -x "$ffmpeg_cmd" || ! -x "$ffprobe_cmd" ]]; then
+    echo 'ERROR: FFmpeg 8 command-line tools were not installed' >&2
+    exit 1
+fi
+ffmpeg_version="$($ffmpeg_cmd -version | head -n 1)"
+if [[ ! "$ffmpeg_version" =~ ffmpeg\ version\ 8([.[:space:]]|$) ]]; then
+    echo "ERROR: manual tracking integration requires FFmpeg major 8, got: $ffmpeg_version" >&2
+    exit 1
+fi
+
+'''
+text = text[:start] + new_ffmpeg + text[end:]
 
 old_fixture = """                sx = x - 40 - frame\n                sy = y - 28 - frame\n                if 0 <= sx < 56 and 0 <= sy < 56:\n                    value = int(125 + 45*math.sin(sx*.19) +\n                                35*math.cos(sy*.21) +\n                                30*math.sin((sx+sy)*.14))\n                    value = max(35, min(220, value))\n                else:\n                    value = 28\n"""
 new_fixture = """                sx = x - 40 - frame\n                sy = y - 28 - frame\n                if 0 <= sx < 56 and 0 <= sy < 56:\n                    # Frame 0 has useful texture only on the left half. From frame 1\n                    # the right half gains texture, and from frame 8 the left half\n                    # becomes flat. A tracker that only carries its original points\n                    # loses the target; per-frame feature refresh can hand off support.\n                    if sx < 28 and frame < 8:\n                        value = int(125 + 55*math.sin(sx*.41) +\n                                    45*math.cos(sy*.37) +\n                                    30*math.sin((sx+sy)*.29))\n                    elif sx >= 28 and frame >= 1:\n                        value = int(125 + 38*math.sin(sx*.33) +\n                                    34*math.cos(sy*.31) +\n                                    24*math.sin((sx+sy)*.23))\n                    else:\n                        value = 125\n                    value = max(35, min(220, value))\n                else:\n                    value = 125\n"""
@@ -132,4 +163,4 @@ if text.count(old_fixture) != 1:
     raise RuntimeError(f"expected one moving fixture block, found {text.count(old_fixture)}")
 text = text.replace(old_fixture, new_fixture, 1)
 verify.write_text(text, encoding="utf-8")
-print("PASS: staged transformed-mask feature refresh, FFmpeg 8 resolver, and texture-handoff regression")
+print("PASS: staged transformed-mask feature refresh, pinned FFmpeg 8.1.1 resolver, and texture-handoff regression")
