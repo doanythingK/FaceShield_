@@ -6,6 +6,7 @@ on:
       - "main"
       - "hardening/**"
       - "refactor/manual-mask-keyframes"
+      - "refactor/manual-overlay-workflow"
   pull_request:
     branches:
       - "main"
@@ -53,9 +54,12 @@ jobs:
       - name: Build
         run: dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
 
+      - name: Verify independent manual overlay core
+        run: bash scripts/verify-manual-overlay.sh
+
       - name: Verify manual pyramid reuse and allocations
         run: bash scripts/verify-manual-pyramid.sh
 
       - name: Verify decoded manual tracking integration (synthetic video)
-        if: github.ref == 'refs/heads/refactor/manual-mask-keyframes'
+        if: github.ref == 'refs/heads/refactor/manual-mask-keyframes' || github.ref == 'refs/heads/refactor/manual-overlay-workflow'
         run: bash scripts/verify-manual-tracking-integration.sh
