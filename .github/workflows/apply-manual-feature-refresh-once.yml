@@ -29,7 +29,7 @@ jobs:
           dotnet restore FaceShield.csproj -r osx-arm64
           dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
       - name: Verify decoded tracking with texture handoff
-        run: ./scripts/verify-manual-tracking-integration.sh
+        run: bash ./scripts/verify-manual-tracking-integration.sh
       - name: Check patch cleanliness
         run: git diff --check
       - name: Commit verified tracker change and remove staging
