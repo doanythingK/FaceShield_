@@ -1,0 +1,41 @@
+name: One-shot same-frame manual and Auto fix
+
+on:
+  push:
+    branches:
+      - refactor/manual-overlay-workflow
+    paths:
+      - .github/workflows/apply-manual-same-frame-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.ref == 'refs/heads/refactor/manual-overlay-workflow'
+    runs-on: macos-15-arm64
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Apply guarded same-frame source and regression patches
+        run: |
+          python3 scripts/apply-manual-same-frame-fix.py
+          python3 scripts/apply-manual-same-frame-preview-fix.py
+      - name: Restore, build and execute production integration checks
+        run: |
+          dotnet restore FaceShield.csproj -r osx-arm64
+          dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
+          bash scripts/verify-manual-overlay.sh
+          bash scripts/verify-manual-pyramid.sh
+          bash scripts/verify-manual-tracking-integration.sh
+      - name: Commit verified source changes and remove one-shot staging
+        run: |
+          git rm -- .github/workflows/apply-manual-same-frame-once.yml scripts/apply-manual-same-frame-fix.py scripts/apply-manual-same-frame-preview-fix.py
+          git add -- Services/Video/FrameMaskProvider.cs Services/Video/ManualMaskKeyframeTimeline.cs Services/Video/MaskedVideoExporter.cs ViewModels/Workspace/FramePreviewViewModel.cs ViewModels/Workspace/FramePreviewViewModel.ManualKeyframes.cs ViewModels/Workspace/FramePreviewViewModel.ManualTracking.cs ViewModels/Workspace/WorkspaceExportCoordinator.cs scripts/manual-auto-overlap-integration.cs.txt docs/MANUAL_OVERLAY_WORKFLOW.md
+          git -c user.name='FaceShield CI' -c user.email='actions@users.noreply.github.com' commit -m 'fix: preserve and render independent Auto and manual masks on same frame'
+          git push origin HEAD:refactor/manual-overlay-workflow
