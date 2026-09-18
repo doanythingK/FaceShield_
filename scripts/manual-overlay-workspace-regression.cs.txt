@@ -1,0 +1,57 @@
+// Compiled as a separate temporary executable; no private footage is used.
+using FaceShield.Services.Video;
+using System;
+using System.IO;
+using System.Linq;
+
+string directory = Path.Combine(Path.GetTempPath(), "faceshield-overlay-video-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+try
+{
+    string video = Path.Combine(directory, "source.mp4");
+    File.WriteAllBytes(video, new byte[] { 1, 2, 3, 4 });
+    byte[] source = new byte[16];
+    source[3] = 255;
+    source[7] = 160;
+    var target = new ManualOverlayStoredTarget(Guid.NewGuid(), new[]
+    {
+        ManualOverlayStoredKeyframe.FromBgra(17, source, 8, 2, 2)
+    });
+    string state = ManualOverlayWorkspaceStore.GetPathForVideo(video, directory);
+    Assert(!state.Equals(video, StringComparison.Ordinal), "Overlay state must not overwrite the video");
+    ManualOverlayWorkspaceStore.SaveForVideo(video, new[] { target }, directory);
+    Assert(File.Exists(state), "Video-specific overlay state was not created");
+    var loaded = ManualOverlayWorkspaceStore.LoadForVideo(video, directory);
+    Assert(loaded.Count == 1 && loaded[0].Id == target.Id &&
+        loaded[0].Keyframes.Single().FrameIndex == 17 &&
+        loaded[0].Keyframes.Single().Alpha.SequenceEqual(new byte[] { 255, 160, 0, 0 }),
+        "Independent video-specific overlay round-trip failed");
+    string anotherVideo = Path.Combine(directory, "different.mp4");
+    File.WriteAllBytes(anotherVideo, new byte[] { 1, 2, 3, 4 });
+    Assert(ManualOverlayWorkspaceStore.GetPathForVideo(anotherVideo, directory) != state,
+        "Distinct video paths must not share manual overlay storage");
+    Assert(ManualOverlayWorkspaceStore.LoadForVideo(anotherVideo, directory).Count == 0,
+        "A different video inherited another video's manual mask");
+    File.AppendAllText(video, "updated");
+    Expect<InvalidDataException>(() => ManualOverlayWorkspaceStore.LoadForVideo(video, directory),
+        "Replaced video content was accepted with stale manual masks");
+    File.Delete(video);
+    Expect<FileNotFoundException>(() => ManualOverlayWorkspaceStore.LoadForVideo(video, directory),
+        "A missing source was silently accepted");
+    Console.WriteLine("PASS: video-aware manual overlay path isolation, keyframe round-trip, source-change rejection");
+}
+finally
+{
+    Directory.Delete(directory, recursive: true);
+}
+
+static void Assert(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+static void Expect<T>(Action action, string message) where T : Exception
+{
+    try { action(); }
+    catch (T) { return; }
+    throw new InvalidOperationException(message);
+}
