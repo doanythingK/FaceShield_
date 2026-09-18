@@ -29,7 +29,6 @@ using (var final = provider.GetFinalMask(frame) ?? throw new InvalidOperationExc
     Assert(AlphaAt(final, 120, 36) == 255, "Combined mask lost manual coverage");
 }
 
-// Updating Auto on a frame with a manual layer must not erase the manual layer.
 provider.SetFaceRects(frame, new[] { new Rect(54, 20, 26, 26) }, size, 0.8f, new[] { 0.8f });
 Assert(provider.TryCloneStoredMask(frame, out var manualAfterAutoUpdate),
     "SetFaceRects erased the manual layer on the same frame");
@@ -42,8 +41,8 @@ using (var final = provider.GetFinalMask(frame) ?? throw new InvalidOperationExc
 
 using (var snapshot = provider.CreateSnapshot())
 {
-    Assert(snapshot.TryGetFaceMaskData(frame, out _) && snapshot.TryCloneStoredMask(frame, out var stored),
-        "Snapshot did not preserve both layers");
+    Assert(snapshot.TryGetFaceMaskData(frame, out _), "Snapshot lost Auto layer");
+    Assert(snapshot.TryCloneStoredMask(frame, out var stored), "Snapshot lost manual layer");
     stored.Dispose();
     using var final = snapshot.GetFinalMask(frame) ?? throw new InvalidOperationException("Snapshot combined mask missing");
     Assert(AlphaAt(final, 66, 32) > 0 && AlphaAt(final, 120, 36) == 255,
