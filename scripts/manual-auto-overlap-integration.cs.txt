@@ -41,10 +41,11 @@ using (var framebuffer = sourceMask.Lock())
     }
 }
 
-// The stored bitmap transfers ownership to provider. TrackForward itself only
-// reads the exact source bitmap; export/preview use their own leased copies.
+// The source has Auto and manual on the SAME frame; only manual may be tracked.
 provider.SetMask(sourceFrame, sourceMask);
 provider.SetFaceRects(sourceFrame - 1, new[] { new Rect(9, 10, 14, 14) },
+    new PixelSize(width, height));
+provider.SetFaceRects(sourceFrame, new[] { new Rect(9, 10, 14, 14) },
     new PixelSize(width, height));
 provider.SetFaceRects(sourceFrame + 1, new[] { new Rect(9, 10, 14, 14) },
     new PixelSize(width, height));
@@ -55,7 +56,9 @@ var assembly = typeof(FrameMaskProvider).Assembly;
 Type timeline = assembly.GetType("FaceShield.Services.Video.ManualMaskKeyframeTimeline", throwOnError: true)!;
 Type tracker = assembly.GetType("FaceShield.Services.Video.ManualMaskTrackingService", throwOnError: true)!;
 Type fingerprintType = assembly.GetType("FaceShield.Services.Video.ManualMaskFingerprint", throwOnError: true)!;
+Type selector = assembly.GetType("FaceShield.Services.Video.ManualTrackingSourceSelection", throwOnError: true)!;
 const BindingFlags internalStatic = BindingFlags.NonPublic | BindingFlags.Static;
+MethodInfo selectManual = selector.GetMethod("TryCloneContinuation", internalStatic)!;
 MethodInfo getBoundary = timeline.GetMethod("GetNextExplicitKeyframe", internalStatic)!;
 int boundary = (int)getBoundary.Invoke(null, new object[] { provider, sourceFrame, 0 })!;
 Check(boundary == int.MaxValue,
@@ -64,27 +67,23 @@ Check(boundary == int.MaxValue,
 timeline.GetMethod("Configure", internalStatic)!.Invoke(
     null, new object?[] { provider, true, args[0] });
 MethodInfo trackForward = tracker.GetMethod("TrackForward", internalStatic)!;
-object trackingResult;
-try
-{
-    trackingResult = trackForward.Invoke(null, new object?[]
-    {
-        args[0], sourceFrame, sourceFrame + 3, sourceMask, null, CancellationToken.None
-    })!;
-}
-catch (TargetInvocationException ex) when (ex.InnerException != null)
-{
-    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
-    throw;
-}
+object trackingResult = Track(sourceFrame, sourceFrame + 3, sourceMask);
 Check((int)Read(trackingResult, "ProcessedFrames") == 2,
     "Expected manual coverage at two successive Auto-detected frames");
 object segment = Read(trackingResult, "Segment");
-string fingerprint = (string)fingerprintType.GetMethod("Compute", internalStatic)!
-    .Invoke(null, new object?[] { sourceMask, CancellationToken.None })!;
-segment.GetType().GetProperty("SourceMaskFingerprint")!.SetValue(segment, fingerprint);
+segment.GetType().GetProperty("SourceMaskFingerprint")!.SetValue(segment, Fingerprint(sourceMask));
 timeline.GetMethod("SetTrackSegment", internalStatic)!.Invoke(null,
     new object[] { provider, segment });
+
+// A stored source must never include its same-frame Auto face.
+object?[] storedSelection = { provider, sourceFrame, null };
+Check((bool)selectManual.Invoke(null, storedSelection)!,
+    "Stored manual source could not be cloned");
+using (var manualSource = (WriteableBitmap)storedSelection[2]!)
+{
+    Check(AlphaAt(manualSource, 130, 95) > 0, "Stored source lost manual target");
+    Check(AlphaAt(manualSource, 16, 17) == 0, "Stored source was contaminated by same-frame Auto");
+}
 
 MethodInfo preview = timeline.GetMethod("TryCloneEffectiveKeyframeMask", internalStatic)!;
 object?[] previewArguments = { provider, sourceFrame + 1, null, CancellationToken.None };
@@ -135,7 +134,76 @@ using ((IDisposable)lease)
         // Expected fail-closed behavior after the last verified tracking sample.
     }
 }
-Console.WriteLine("PASS: manual track crosses unrelated Auto frames; preview and export union both masks; no stationary hold");
+
+// Continue tracking from frame 551, where only Auto is explicitly stored.
+// The new source must be the validated inherited manual mask, NOT that Auto.
+object?[] continuation = { provider, sourceFrame + 1, null };
+Check((bool)selectManual.Invoke(null, continuation)!,
+    "Validated inherited manual mask could not be selected for continuation");
+var continuedMask = (WriteableBitmap)continuation[2]!;
+try
+{
+    Check(AlphaAt(continuedMask, 130, 95) > 0,
+        "Continuation source lost the manually tracked subject");
+    Check(AlphaAt(continuedMask, 16, 17) == 0,
+        "Continuation source accidentally included the unrelated Auto face");
+    Check(!provider.HasStoredMask(sourceFrame + 1),
+        "Selecting a continuation unexpectedly wrote a correction keyframe");
+
+    object continued = Track(sourceFrame + 1, sourceFrame + 3, continuedMask);
+    Check((int)Read(continued, "ProcessedFrames") == 1,
+        "The manual-only continuation did not track the next frame");
+    object continuedSegment = Read(continued, "Segment");
+    continuedSegment.GetType().GetProperty("SourceMaskFingerprint")!
+        .SetValue(continuedSegment, Fingerprint(continuedMask));
+    provider.SetMask(sourceFrame + 1, continuedMask);
+    continuedMask = null!; // provider now owns this bitmap
+    timeline.GetMethod("SetTrackSegment", internalStatic)!.Invoke(null,
+        new object[] { provider, continuedSegment });
+    object?[] afterContinuation = { provider, sourceFrame + 2, null, CancellationToken.None };
+    Check((bool)preview.Invoke(null, afterContinuation)!,
+        "A promoted manual continuation lost the next verified sample");
+    using (var combined = (WriteableBitmap)afterContinuation[2]!) AssertBoth(combined);
+    using var exportLease = (IDisposable)timeline.GetMethod("CreateExportMaskLease", internalStatic)!
+        .Invoke(null, new object[] { provider })!;
+    object exportProvider2 = exportLease.GetType().GetProperty("Provider",
+        BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(exportLease)!;
+    using (var exported = (WriteableBitmap?)exportProvider2.GetType().GetMethod("GetFinalMask")!
+        .Invoke(exportProvider2, new object[] { sourceFrame + 2 }))
+    {
+        Check(exported != null, "Continued track has no export mask");
+        AssertBoth(exported!);
+    }
+}
+finally
+{
+    continuedMask?.Dispose();
+}
+
+object?[] untrackedSource = { provider, sourceFrame + 3, null };
+Check(!(bool)selectManual.Invoke(null, untrackedSource)!,
+    "An untracked frame silently became a new manual tracking source");
+Console.WriteLine("PASS: manual track crosses unrelated Auto frames; same-frame source and continued source exclude Auto; preview/export agree; untracked frames fail closed");
+
+object Track(int start, int endExclusive, WriteableBitmap mask)
+{
+    try
+    {
+        return trackForward.Invoke(null, new object?[]
+        {
+            args[0], start, endExclusive, mask, null, CancellationToken.None
+        })!;
+    }
+    catch (TargetInvocationException ex) when (ex.InnerException != null)
+    {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+        throw;
+    }
+}
+
+string Fingerprint(WriteableBitmap mask) =>
+    (string)fingerprintType.GetMethod("Compute", internalStatic)!
+        .Invoke(null, new object?[] { mask, CancellationToken.None })!;
 
 static object Read(object value, string property) =>
     value.GetType().GetProperty(property)!.GetValue(value)!;
