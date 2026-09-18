@@ -115,9 +115,6 @@ public partial class FramePreviewViewModel
 
     internal void DetachManualTrackingContext()
     {
-        // Detach requests cancellation and releases view-lifecycle handlers. The
-        // workspace lifetime operation remains active until the tracking task drains,
-        // so shared providers/session resources cannot be disposed underneath it.
         DisposeManualTrackingState();
         OnPropertyChanged(nameof(CanTrackForward));
     }
@@ -214,9 +211,6 @@ public partial class FramePreviewViewModel
         if (!_manualMaskKeyframesEnabled || frameIndex < 0)
             return;
 
-        // MaskEdited fires before PersistCurrentMask updates FrameMaskProvider. Mark
-        // this frame for deferred source-fingerprint validation instead of deleting a
-        // valid segment prematurely. This also allows a full Undo to preserve tracking.
         _manualTrackingPendingSourceValidationFrame = frameIndex;
         ManualTrackingStatusText = "마스크가 수정되었습니다. 이 프레임부터 다시 추적할 수 있습니다.";
         OnPropertyChanged(nameof(CanTrackForward));
@@ -228,8 +222,6 @@ public partial class FramePreviewViewModel
         if (frameIndex < 0)
             return false;
 
-        // If the provider still has no exact entry, the edit has not been persisted
-        // yet. Keep the pending marker until PersistCurrentMask runs.
         if (!provider.HasStoredMask(frameIndex) &&
             !provider.TryGetFaceMaskData(frameIndex, out _))
         {
@@ -253,9 +245,6 @@ public partial class FramePreviewViewModel
     private Task TrackForward()
         => RunManualTrackingAsync(maxNextFrames: null);
 
-    // A bounded operation gives the editor a correction point without forcing
-    // a decode of the entire remaining video. It uses the same cancellation,
-    // lifetime and durable-commit path as the unbounded command.
     [RelayCommand]
     private Task TrackNextFrame()
         => RunManualTrackingAsync(maxNextFrames: 1);
@@ -321,12 +310,17 @@ public partial class FramePreviewViewModel
         PersistCurrentMask();
         RevalidatePendingManualTrackingSource(provider);
 
+        bool hasStoredManualSource = provider.TryCloneStoredMask(
+            sourceFrame,
+            out WriteableBitmap storedManualSource);
         bool sourceWasExplicit =
-            provider.HasStoredMask(sourceFrame) ||
+            hasStoredManualSource ||
             provider.TryGetFaceMaskData(sourceFrame, out _);
-        WriteableBitmap? sourceMask = sourceWasExplicit
-            ? provider.GetFinalMask(sourceFrame)
-            : CloneBitmap(_maskBitmap);
+        WriteableBitmap? sourceMask = hasStoredManualSource
+            ? storedManualSource
+            : sourceWasExplicit
+                ? provider.GetFinalMask(sourceFrame)
+                : CloneBitmap(_maskBitmap);
         if (sourceMask == null)
         {
             ManualTrackingStatusText = "현재 프레임에 추적할 마스크가 없습니다.";
@@ -346,17 +340,12 @@ public partial class FramePreviewViewModel
         CancellationTokenSource trackingCts = _manualTrackingCts!;
         CancellationToken token = trackingCts.Token;
 
-        // Never use a possibly estimated total-frame count as a hard tracking
-        // boundary. An explicit next keyframe is authoritative; otherwise decode to
-        // EOF and use TotalFrames only to estimate progress.
         int endExclusive = ManualMaskKeyframeTimeline.GetNextExplicitKeyframe(
             provider,
             sourceFrame,
             totalFrames: 0);
         if (maxNextFrames.HasValue)
         {
-            // EndExclusive excludes the boundary frame. A one-frame run uses
-            // source + 2; avoid integer wrap for extremely long streams.
             int limit = sourceFrame >= int.MaxValue - maxNextFrames.Value - 1
                 ? int.MaxValue
                 : sourceFrame + maxNextFrames.Value + 1;
@@ -445,11 +434,6 @@ public partial class FramePreviewViewModel
                 {
                     lock (_manualTrackingCommitGate)
                     {
-                        // Cancellation and commit share one linearization point. If
-                        // cancellation wins first, nothing is committed. Expensive
-                        // bitmap cloning is completed before this point so every
-                        // exception after setting the flag is covered by the outer
-                        // finally below.
                         token.ThrowIfCancellationRequested();
                         if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
                             return;
@@ -466,9 +450,6 @@ public partial class FramePreviewViewModel
 
                     try
                     {
-                        // Make the source keyframe durable before writing compact
-                        // tracking metadata. If metadata commit later fails, reopening
-                        // safely falls back to keyframe hold rather than losing source.
                         await persistWorkspace().ConfigureAwait(true);
                     }
                     catch
@@ -570,9 +551,6 @@ public partial class FramePreviewViewModel
     {
         lock (_manualTrackingCommitGate)
         {
-            // Once the durable commit has crossed its linearization point, let it
-            // finish. The workspace lifetime keeps resources alive until the tracking
-            // task calls End(), so shutdown cannot dispose provider/session underneath.
             if (_manualTrackingCommitStarted)
                 return;
 
