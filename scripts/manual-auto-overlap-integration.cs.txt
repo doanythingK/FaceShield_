@@ -1,0 +1,164 @@
+// Compiled only by verify-manual-tracking-integration.sh.
+// Production FFmpeg tracking, timeline preview and export must agree when an
+// unrelated Auto detection lands inside an ongoing user-drawn manual track.
+using Avalonia;
+using Avalonia.Headless;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Skia;
+using FaceShield.Services.Video;
+using System;
+using System.Reflection;
+using System.Threading;
+
+if (args.Length != 1 || !System.IO.File.Exists(args[0]))
+    throw new ArgumentException("Expected the generated video path.");
+
+const int width = 320, height = 180, sourceFrame = 550;
+AppBuilder.Configure<OverlayTestApp>().UseSkia()
+    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+    .SetupWithoutStarting();
+FFmpegBootstrap.Initialize();
+
+using var provider = new FrameMaskProvider();
+var sourceMask = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96),
+    PixelFormat.Bgra8888, AlphaFormat.Premul);
+using (var framebuffer = sourceMask.Lock())
+{
+    unsafe
+    {
+        byte* pixels = (byte*)framebuffer.Address;
+        for (int y = 0; y < height; y++)
+        {
+            byte* row = pixels + y * framebuffer.RowBytes;
+            for (int x = 0; x < width; x++)
+            {
+                byte alpha = x >= 95 && x < 190 && y >= 70 && y < 125 ? (byte)255 : (byte)0;
+                int offset = x * 4;
+                row[offset] = row[offset + 1] = row[offset + 2] = row[offset + 3] = alpha;
+            }
+        }
+    }
+}
+
+// The stored bitmap transfers ownership to provider. TrackForward itself only
+// reads the exact source bitmap; export/preview use their own leased copies.
+provider.SetMask(sourceFrame, sourceMask);
+provider.SetFaceRects(sourceFrame - 1, new[] { new Rect(9, 10, 14, 14) },
+    new PixelSize(width, height));
+provider.SetFaceRects(sourceFrame + 1, new[] { new Rect(9, 10, 14, 14) },
+    new PixelSize(width, height));
+provider.SetFaceRects(sourceFrame + 2, new[] { new Rect(9, 10, 14, 14) },
+    new PixelSize(width, height));
+
+var assembly = typeof(FrameMaskProvider).Assembly;
+Type timeline = assembly.GetType("FaceShield.Services.Video.ManualMaskKeyframeTimeline", throwOnError: true)!;
+Type tracker = assembly.GetType("FaceShield.Services.Video.ManualMaskTrackingService", throwOnError: true)!;
+Type fingerprintType = assembly.GetType("FaceShield.Services.Video.ManualMaskFingerprint", throwOnError: true)!;
+const BindingFlags internalStatic = BindingFlags.NonPublic | BindingFlags.Static;
+MethodInfo getBoundary = timeline.GetMethod("GetNextExplicitKeyframe", internalStatic)!;
+int boundary = (int)getBoundary.Invoke(null, new object[] { provider, sourceFrame, 0 })!;
+Check(boundary == int.MaxValue,
+    $"Unrelated Auto detection truncated user-drawn track at {boundary}");
+
+timeline.GetMethod("Configure", internalStatic)!.Invoke(
+    null, new object?[] { provider, true, args[0] });
+MethodInfo trackForward = tracker.GetMethod("TrackForward", internalStatic)!;
+object trackingResult;
+try
+{
+    trackingResult = trackForward.Invoke(null, new object?[]
+    {
+        args[0], sourceFrame, sourceFrame + 3, sourceMask, null, CancellationToken.None
+    })!;
+}
+catch (TargetInvocationException ex) when (ex.InnerException != null)
+{
+    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+    throw;
+}
+Check((int)Read(trackingResult, "ProcessedFrames") == 2,
+    "Expected manual coverage at two successive Auto-detected frames");
+object segment = Read(trackingResult, "Segment");
+string fingerprint = (string)fingerprintType.GetMethod("Compute", internalStatic)!
+    .Invoke(null, new object?[] { sourceMask, CancellationToken.None })!;
+segment.GetType().GetProperty("SourceMaskFingerprint")!.SetValue(segment, fingerprint);
+timeline.GetMethod("SetTrackSegment", internalStatic)!.Invoke(null,
+    new object[] { provider, segment });
+
+MethodInfo preview = timeline.GetMethod("TryCloneEffectiveKeyframeMask", internalStatic)!;
+object?[] previewArguments = { provider, sourceFrame + 1, null, CancellationToken.None };
+Check((bool)preview.Invoke(null, previewArguments)!,
+    "Preview lost manually tracked face at an unrelated Auto frame");
+using (var previewMask = (WriteableBitmap)previewArguments[2]!)
+    AssertBoth(previewMask);
+
+object lease = timeline.GetMethod("CreateExportMaskLease", internalStatic)!
+    .Invoke(null, new object[] { provider })!;
+using ((IDisposable)lease)
+{
+    object exportProvider = lease.GetType().GetProperty("Provider",
+        BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(lease)!;
+    MethodInfo getMask = exportProvider.GetType().GetMethod("GetFinalMask")!;
+    using (var exactAuto = (WriteableBitmap?)getMask.Invoke(exportProvider,
+        new object[] { sourceFrame - 1 }))
+    {
+        Check(exactAuto != null && AlphaAt(exactAuto, 16, 17) > 0,
+            "Auto mask before manual start was dropped");
+    }
+    using (var combined = (WriteableBitmap?)getMask.Invoke(exportProvider,
+        new object[] { sourceFrame + 1 }))
+    {
+        Check(combined != null, "Combined export mask missing");
+        AssertBoth(combined!);
+    }
+    using (var nextCombined = (WriteableBitmap?)getMask.Invoke(exportProvider,
+        new object[] { sourceFrame + 2 }))
+    {
+        Check(nextCombined != null, "Second Auto frame interrupted manual tracking");
+        AssertBoth(nextCombined!);
+    }
+    MethodInfo borrowedMethod = exportProvider.GetType().GetMethod("TryGetBorrowedStoredMask")!;
+    object?[] borrowedArguments = { sourceFrame + 1, null };
+    Check((bool)borrowedMethod.Invoke(exportProvider, borrowedArguments)!,
+        "Export bitmap fast path dropped a combined mask");
+    AssertBoth((WriteableBitmap)borrowedArguments[1]!);
+    Check(provider.TryGetFaceMaskData(sourceFrame + 1, out _),
+        "Creating export overlay mutated the source Auto detection");
+    try
+    {
+        getMask.Invoke(exportProvider, new object[] { sourceFrame + 3 });
+        throw new InvalidOperationException("Untracked manual coverage was silently held");
+    }
+    catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException)
+    {
+        // Expected fail-closed behavior after the last verified tracking sample.
+    }
+}
+Console.WriteLine("PASS: manual track crosses unrelated Auto frames; preview and export union both masks; no stationary hold");
+
+static object Read(object value, string property) =>
+    value.GetType().GetProperty(property)!.GetValue(value)!;
+
+static byte AlphaAt(WriteableBitmap bitmap, int x, int y)
+{
+    using var framebuffer = bitmap.Lock();
+    unsafe
+    {
+        byte* row = (byte*)framebuffer.Address + y * framebuffer.RowBytes;
+        return row[x * 4 + 3];
+    }
+}
+
+static void AssertBoth(WriteableBitmap bitmap)
+{
+    Check(AlphaAt(bitmap, 130, 95) > 0, "Manually tracked mask is absent");
+    Check(AlphaAt(bitmap, 16, 17) > 0, "Automatic face mask is absent");
+}
+
+static void Check(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+
+public sealed class OverlayTestApp : Application { }
