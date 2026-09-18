@@ -250,7 +250,17 @@ public partial class FramePreviewViewModel
     }
 
     [RelayCommand]
-    private async Task TrackForward()
+    private Task TrackForward()
+        => RunManualTrackingAsync(maxNextFrames: null);
+
+    // A bounded operation gives the editor a correction point without forcing
+    // a decode of the entire remaining video. It uses the same cancellation,
+    // lifetime and durable-commit path as the unbounded command.
+    [RelayCommand]
+    private Task TrackNextFrame()
+        => RunManualTrackingAsync(maxNextFrames: 1);
+
+    private async Task RunManualTrackingAsync(int? maxNextFrames)
     {
         if (!CanTrackForward)
             return;
@@ -274,7 +284,7 @@ public partial class FramePreviewViewModel
                 return;
 
             lifetimeStarted = true;
-            await TrackForwardCoreAsync();
+            await TrackForwardCoreAsync(maxNextFrames);
         }
         finally
         {
@@ -294,7 +304,7 @@ public partial class FramePreviewViewModel
         }
     }
 
-    private async Task TrackForwardCoreAsync()
+    private async Task TrackForwardCoreAsync(int? maxNextFrames)
     {
         if (!CanTrackForward ||
             _maskProvider is not FrameMaskProvider provider ||
@@ -343,6 +353,15 @@ public partial class FramePreviewViewModel
             provider,
             sourceFrame,
             totalFrames: 0);
+        if (maxNextFrames.HasValue)
+        {
+            // EndExclusive excludes the boundary frame. A one-frame run uses
+            // source + 2; avoid integer wrap for extremely long streams.
+            int limit = sourceFrame >= int.MaxValue - maxNextFrames.Value - 1
+                ? int.MaxValue
+                : sourceFrame + maxNextFrames.Value + 1;
+            endExclusive = Math.Min(endExclusive, limit);
+        }
         int expectedFrames = endExclusive != int.MaxValue
             ? Math.Max(0, endExclusive - sourceFrame - 1)
             : _manualTrackingTotalFrames > sourceFrame
