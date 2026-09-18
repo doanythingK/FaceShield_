@@ -2,44 +2,47 @@
 
 Branch: `refactor/manual-overlay-workflow` (based on `refactor/manual-mask-keyframes` at `f9ad497a`).
 
-## User workflow and non-negotiable invariants
+## Intended user workflow and safety contract
 
-1. Auto detects faces and writes Auto masks. A user may add **an independent manual target** for a missed face or another object. The manual target has a stable ID, its own explicit correction keyframes and its own tracking samples.
-2. Each explicit manual keyframe is usable on its exact frame even if any optical-flow/feature tracker fails. No face detector or feature count is a prerequisite for manual editing.
-3. A target's forward tracking stops at its **own** next correction keyframe, a selected end, EOF, or a documented tracking failure. Another face's Auto detection and another manual target's keyframe must not interrupt it.
-4. Compose the Auto mask on the **same frame** with only the manual masks actually confirmed on that frame. Union alpha without mutating either source. A missing manual sample must never silently inherit a stationary mask from an earlier frame.
-5. Expose 1-frame, selected-range and continuous tracking. Permit correction at the failure frame followed by a new run. Display verified, proposed and unresolved coverage separately; do not mark proposed coverage as verified.
-6. Before exporting a required anonymization range, identify unresolved manual targets/frames and stop with an actionable message, not an unblurred success or fabricated stationary blur.
+1. Preserve automatically detected face masks. Manually selected missed faces or objects need independent target IDs, correction keyframes and tracking samples.
+2. A user-drawn mask is authoritative on its own frame regardless of tracker success. Tracking is optional and must not block manual editing.
+3. One manual target's next correction, a user-selected end, EOF, or an explicit tracking failure may stop that target's tracking; another face's automatic detection must not.
+4. Preview and export must merge the *same frame's* Auto and validated manual masks without mutating either. Missing samples must never become a stationary held mask.
+5. Support next-frame, selected-range and continuous tracking; permit correction and continuation. Clearly distinguish verified, proposed and unresolved coverage.
+6. Anonymization export must identify and reject unresolved required manual coverage instead of silently leaking faces or fabricating blur.
 
-## Implemented in the isolated foundation
+## Implemented — isolated overlay foundation
 
-- `Services/Video/ManualOverlayCore.cs`: independent per-target keyframe/boundary primitive and pure BGRA alpha-mask union. A missing manual mask is not replaced with the mask from an earlier frame.
-- `Services/Video/ManualOverlayStateStore.cs`: independent JSON state file containing stable target IDs and **explicit manual alpha keyframes only**, with compressed alpha, atomic replacement, exact-length decompression and required video source evidence. The automatic-mask store is not modified. Missing state is empty; invalid, corrupt or source-mismatched state throws rather than silently discarding coverage.
-- `Services/Video/ManualOverlayWorkspaceStore.cs`: video-path-aware adapter resolving a separate `FaceShield/manual-overlays/<path-identity-hash>.json` under local app data, using the existing workspace path-identity rules. It requires an existing source video and uses file length plus last-write timestamp as cheap evidence, like the legacy tracker. This is not a cryptographic content hash, and the adapter **is not called by the application yet**. No video frames are decoded by this adapter.
-- `scripts/manual-overlay-regression.cs.txt`, `scripts/manual-overlay-workspace-regression.cs.txt` and `scripts/verify-manual-overlay.sh`: isolated tests for target boundaries, Auto+multiple-manual alpha union, no stationary hold, row stride, keyframe/ID persistence, independent video paths, source changes, duplicate IDs/keyframes and corrupt compressed alpha.
+- `Services/Video/ManualOverlayCore.cs`: independent per-target keyframe/boundary primitive and BGRA alpha-mask union. Missing manual samples are omitted, not held.
+- `Services/Video/ManualOverlayStateStore.cs`: separately versioned JSON containing target IDs and **explicit manual alpha keyframes only**; compressed alpha, atomic replacement, exact-length decompression and video source evidence. Legacy Auto data remains untouched.
+- `Services/Video/ManualOverlayWorkspaceStore.cs`: path-identity-derived separate `FaceShield/manual-overlays/<hash>.json` location with source size/mtime evidence. Neither module decodes video; this adapter is **not wired into the application lifecycle yet**.
+- `scripts/manual-overlay-regression.cs.txt`, `scripts/manual-overlay-workspace-regression.cs.txt` and `scripts/verify-manual-overlay.sh`: isolated target boundaries, mask union, no stationary hold, persistence, source mismatch and malformed-data checks.
 
-**Not yet integrated:** `FrameMaskProvider`, `ManualMaskKeyframeTimeline`, the editor, preview, export and actual workspace lifecycle still use their existing single-provider workflow. The new state store and video adapter are not called by the application. Existing legacy masks are not migrated. This work does **not** change the user's current manual-mode behavior. The tracker algorithm has not been altered.
+## Implemented — legacy editor one-frame operation (this stage)
 
-## Actions organization
+- `ViewModels/Workspace/FramePreviewViewModel.ManualTracking.cs`: `TrackNextFrameCommand` reuses the existing cancellation, workspace-lifetime and durable-commit path, with an exclusive upper bound of `sourceFrame + 2`. It does not automatically decode the remaining video.
+- `Views/Pages/WorkspaceView.axaml`: **다음 1프레임 추적** button next to the existing unbounded **현재 마스크 자동 추적** button.
+- `scripts/manual-tracking-integration.cs.txt`: decoded FFmpeg synthetic-video assertion that exactly one next-frame sample is generated by the bounded operation; the existing scene-cut, cancellation and fail-closed export checks remain.
 
-- `.github/workflows/quality-gate.yml` is the automatic CI workflow: Windows/macOS builds, isolated manual overlay regression, existing pyramid regression and the synthetic decoded tracker integration on the manual branches. Development branch runs cancel superseded runs; documentation-only push commits do not trigger a new run. `main` runs are not auto-cancelled, and PR runs have separate concurrency groups. Windows/macOS jobs have 30/45-minute timeouts.
-- `.github/workflows/windows-build.yml` and `macos-build.yml` remain **manual `workflow_dispatch` app packaging workflows**, not redundant push-triggered quality gates. They have not been deleted or merged because they publish different platform-specific artifacts.
-- Historical GitHub Actions runs have **not been deleted**. The connector used for this work does not expose an action-run deletion operation.
+**Important limitation:** this new button still uses the old feature-point tracker and legacy single `FrameMaskProvider`. If another automatic face detection occupies the immediately following global keyframe, the legacy timeline may end tracking before that frame. A one-frame button is not evidence that the independent overlay workflow is integrated or that feature-poor real faces can be tracked.
 
-## Remaining implementation and verification gates
+## Actions and verification
 
-**A. Complete persistence integration:** wire loading/saving the independent video-aware store into the actual workspace, without converting Auto detections into manual targets. Persist *validated tracking samples* separately from explicit keyframes. Test legacy workspace loading, undo and mask-edit invalidation. Store/load must not block manual-mode startup with unnecessary decoding.
+- `.github/workflows/quality-gate.yml` runs Windows/macOS builds, isolated overlay regressions, pyramid regression and synthetic decoded tracking on development branches. Superseded development-branch runs are cancelled; documentation-only pushes are skipped. `main` runs are not auto-cancelled.
+- The Windows and macOS packaging workflows are separate **manual** operations, not duplicate push-triggered builds.
+- The one-shot pruning workflow deleted **55** redundant completed Quality Gate runs (0 deletion errors) from the two manual development branches on September 18, 2026; see run `35295440490`. It retained selected latest/failure runs and did not delete packaging, PR or in-progress runs. Do not cite deleted run URLs as current verification.
+- Quality Gate `35300003952` is the verification run for the latest code change in this stage. It must complete successfully before this stage can be considered CI-verified. A synthetic pass is not a GUI or real-video quality assessment.
 
-**B. Preview/export integration:** for frame `f`, resolve Auto(f) plus each validated ManualTarget(f), merge once, and share that resolution between preview and export. Test multiple simultaneous faces, tracker failure, mask edits, and matching rendered/output pixels. Do not discard Auto(f) when a manual mask is edited.
+## Remaining required stages
 
-**C. Interaction and intervals:** add selected-target controls for next-frame / bounded-range / continuous tracking, stop/cancel with coherent progress, and correction-to-keyframe / resume. Verify that unrelated Auto results at f+1 cannot truncate a target track.
+**A. Integrate identity and persistence:** connect the separate video-aware store to the actual workspace, migrate legacy manual edits safely without classifying Auto detections as manual targets, save validated tracking samples under stable target IDs, and cover undo/source edits. Avoid adding synchronous decoding to manual-mode startup.
 
-**D. Tracking quality:** compare the existing optical-flow track with candidate translation-only/patch-search fallback on moving, small, low-texture, near-edge and occluded targets. Use ground-truth mask coverage and false-mask metrics. Do not weaken confidence checks or automatically approve guesses. This gate is not complete until real-video tests are available.
+**B. Shared preview/export resolver:** resolve Auto(f) plus independently validated ManualTarget(f), use one composition contract in GUI and export, test multiple simultaneous faces and pixel agreement, and fail safely for unresolved required coverage.
 
-**E. Runtime and privacy:** measure manual entry latency, uncached random seek, long-video memory/CPU, Windows GUI and exported frames. Verify packaged macOS FFmpeg dependencies separately; the current synthetic integration test uses an installed FFmpeg library, not the bundled `.app`.
+**C. Bounded tracking and correction:** implement user-selected ranges, target-specific boundaries, a selected-target editor and correction/resume. The existing one-frame button is only the first control, not completion of this stage.
 
-## Running the isolated regression
+**D. Tracker quality:** compare the existing feature-point tracker with translation-only/patch-search fallback on moving, small, low-texture, near-edge and occluded real targets. Retain explicit uncertainty rather than weakening checks or silently approving guesses.
 
-`bash scripts/verify-manual-overlay.sh` with .NET 8 installed.
+**E. Runtime/privacy:** measure entry latency, uncached random seek and resource use; validate Windows GUI and rendered exports. The synthetic macOS integration test uses installed FFmpeg libraries, not bundled `.app` dependencies.
 
-Passing this regression establishes only the isolated target boundaries, mask composition and explicit-keyframe persistence contracts. It does **not** demonstrate a working user-facing manual tracking workflow, real-video accuracy or production export correctness.
+`bash scripts/verify-manual-overlay.sh` runs the isolated overlay regression with .NET 8. The application is **not yet ready to claim automated-detection-gap manual tracking is solved**.
