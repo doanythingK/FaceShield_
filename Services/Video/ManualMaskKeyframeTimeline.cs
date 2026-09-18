@@ -170,6 +170,49 @@ internal static class ManualMaskKeyframeTimeline
         finally { sourceMask?.Dispose(); }
     }
 
+    /// <summary>
+    /// Resolve ONLY the stored manual raster and its validated tracked samples.
+    /// Never subtract Auto from a composite: overlapping manual pixels cannot
+    /// be recovered from that lossy union. The caller owns the result.
+    /// </summary>
+    internal static bool TryCloneEffectiveManualMask(FrameMaskProvider provider,
+        int frameIndex, out WriteableBitmap mask,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        mask = null!;
+        if (!IsEnabled(provider) || frameIndex < 0) return false;
+        int[] manualKeyframes = Sort(provider.GetStoredMaskFrameIndices());
+        int sourceKeyframe = FindFloorKeyframe(manualKeyframes, frameIndex);
+        if (sourceKeyframe < 0 ||
+            !provider.TryCloneStoredMask(sourceKeyframe, out WriteableBitmap sourceMask))
+            return false;
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (frameIndex == sourceKeyframe)
+            {
+                mask = sourceMask;
+                sourceMask = null!;
+                return true;
+            }
+
+            if (!TryResolveCurrentSegment(provider, sourceKeyframe,
+                    out ManualMaskTrackSegment? segment, out bool blocked) ||
+                blocked || segment == null || frameIndex >= segment.EndExclusive ||
+                !HasAllSamples(segment, frameIndex))
+                return false;
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return TryCreateTransformedMask(sourceMask, segment, frameIndex, out mask);
+        }
+        finally
+        {
+            sourceMask?.Dispose();
+        }
+    }
+
     internal static ExportMaskLease CreateExportMaskLease(FrameMaskProvider source)
     {
         if (source == null) throw new ArgumentNullException(nameof(source));

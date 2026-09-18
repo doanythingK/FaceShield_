@@ -26,18 +26,15 @@ internal static class ManualTrackingSourceSelection
         if (provider.TryCloneStoredMask(frameIndex, out source))
             return true;
 
-        // Only a validated, fully sampled inherited track may become a new
-        // source. Do not fall back to provider.GetFinalMask(frameIndex): on an
-        // Auto-only frame that method contains *only* the unrelated Auto face.
-        if (!ManualMaskKeyframeTimeline.TryCloneEffectiveKeyframeMask(
+        // Re-render the verified manual layer from its own source keyframe.
+        // Subtracting Auto from a union destroys genuine overlapping pixels.
+        // Missing or stale samples must still fail closed.
+        if (!ManualMaskKeyframeTimeline.TryCloneEffectiveManualMask(
                 provider, frameIndex, out WriteableBitmap inherited))
             return false;
 
         try
         {
-            if (provider.TryGetFaceMaskData(frameIndex, out var automatic))
-                ManualMaskLayerIsolation.StripAutomaticCoverage(inherited, automatic);
-
             if (!HasCoverage(inherited))
                 return false;
 

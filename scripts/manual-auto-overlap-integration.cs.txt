@@ -38,7 +38,14 @@ using (var framebuffer = sourceMask.Lock())
 }
 provider.SetMask(sourceFrame, sourceMask);
 foreach (int frame in new[] { sourceFrame - 1, sourceFrame, sourceFrame + 1, sourceFrame + 2 })
-    provider.SetFaceRects(frame, new[] { new Rect(9, 10, 14, 14) }, new PixelSize(width, height));
+{
+    // At frame 551 Auto overlaps the manual target AND extends beyond it.
+    // A lossy subtraction would erase genuine manual pixels at (185,95).
+    Rect[] faces = frame == sourceFrame + 1
+        ? new[] { new Rect(9, 10, 14, 14), new Rect(178, 85, 32, 30) }
+        : new[] { new Rect(9, 10, 14, 14) };
+    provider.SetFaceRects(frame, faces, new PixelSize(width, height));
+}
 
 var assembly = typeof(FrameMaskProvider).Assembly;
 const BindingFlags internalStatic = BindingFlags.NonPublic | BindingFlags.Static;
@@ -105,6 +112,9 @@ WriteableBitmap? continuedMask = (WriteableBitmap)continuationArgs[2]!;
 try
 {
     AssertManualOnly(continuedMask);
+    Check(AlphaAt(continuedMask, 185, 95) > 0 &&
+          AlphaAt(continuedMask, 200, 95) == 0,
+        "Overlapping manual pixels were subtracted or Auto-only pixels contaminated source");
     Check(Array.IndexOf(provider.GetStoredMaskFrameIndices(), sourceFrame + 1) < 0,
         "Continuation selection wrote a keyframe prematurely");
     object continued = Track(sourceFrame + 1, sourceFrame + 3, continuedMask);
@@ -112,8 +122,15 @@ try
     object segment = Read(continued, "Segment");
     segment.GetType().GetProperty("SourceMaskFingerprint")!
         .SetValue(segment, Fingerprint(continuedMask));
-    provider.SetMask(sourceFrame + 1, continuedMask);
+    typeof(FrameMaskProvider).GetMethod("SetIndependentManualMask",
+        BindingFlags.NonPublic | BindingFlags.Instance)!
+        .Invoke(provider, new object[] { sourceFrame + 1, continuedMask });
     continuedMask = null; // ownership transferred
+    Check(provider.TryCloneStoredMask(sourceFrame + 1, out var retained),
+        "Promoted manual correction was not stored");
+    using (retained)
+        Check(AlphaAt(retained, 185, 95) > 0 && AlphaAt(retained, 200, 95) == 0,
+            "Promotion stripped overlapping manual pixels or stored Auto-only pixels");
     setSegment.Invoke(null, new object[] { provider, segment });
     object?[] nextArgs = { provider, sourceFrame + 2, null, CancellationToken.None };
     Check((bool)preview.Invoke(null, nextArgs)!, "Continued preview missing");
@@ -132,7 +149,7 @@ object?[] missingArgs = { provider, sourceFrame + 3, null };
 Check(!(bool)selectManual.Invoke(null, missingArgs)!,
     "An untracked frame was silently accepted as a source");
 Check(provider.TryGetFaceMaskData(sourceFrame + 1, out _), "Auto data was mutated");
-Console.WriteLine("PASS: same-frame and inherited manual-only sources, continued FFmpeg track, Auto+manual preview/export, no untracked hold");
+Console.WriteLine("PASS: overlapping Auto/manual independent continuation, correction persistence, FFmpeg tracking, preview/export, no untracked hold");
 
 object Track(int start, int endExclusive, WriteableBitmap mask)
 {

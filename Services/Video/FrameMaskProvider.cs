@@ -130,13 +130,22 @@ namespace FaceShield.Services.Video
     /// before the manual residual is stored.
     /// </summary>
     public void SetMask(int frameIndex, WriteableBitmap mask)
+        => SetMaskCore(frameIndex, mask, editorComposite: true);
+
+    // Only validated manual-only rasters may use this path. The editor's
+    // composite SetMask must continue separating pre-existing Auto coverage.
+    internal void SetIndependentManualMask(int frameIndex, WriteableBitmap mask)
+        => SetMaskCore(frameIndex, mask, editorComposite: false);
+
+    private void SetMaskCore(int frameIndex, WriteableBitmap mask, bool editorComposite)
     {
         if (mask == null)
             throw new ArgumentNullException(nameof(mask));
 
         lock (_stateGate)
         {
-            if (_faceMasks.TryGetValue(frameIndex, out FaceMaskData automatic))
+            if (editorComposite &&
+                _faceMasks.TryGetValue(frameIndex, out FaceMaskData automatic))
                 ManualMaskLayerIsolation.StripAutomaticCoverage(mask, automatic);
 
             if (_masks.TryRemove(frameIndex, out var previous) &&
@@ -146,7 +155,6 @@ namespace FaceShield.Services.Video
             }
 
             _masks[frameIndex] = mask;
-            _ = _faceMasks.ContainsKey(frameIndex);
             _version++;
         }
     }

@@ -456,7 +456,7 @@ public partial class FramePreviewViewModel
                         commitStarted = true;
                         if (promotedMask != null)
                         {
-                            provider.SetMask(sourceFrame, promotedMask);
+                            provider.SetIndependentManualMask(sourceFrame, promotedMask);
                             promotedMask = null;
                         }
                     }
