@@ -215,7 +215,12 @@ internal static class ManualMaskTrackStore
             int previousFrame = segment.SourceKeyframe;
             foreach (ManualMaskTrackSample? sample in component.Samples)
             {
-                if (sample == null || sample.FrameIndex <= previousFrame ||
+                // An isolated later sample is not proof that the missing frames
+                // in between were tracked. Reject incomplete sequences at load
+                // and before committing a new state file.
+                if (sample == null ||
+                    previousFrame == int.MaxValue ||
+                    sample.FrameIndex != previousFrame + 1 ||
                     sample.FrameIndex >= segment.EndExclusive ||
                     !double.IsFinite(sample.OffsetX) || !double.IsFinite(sample.OffsetY) ||
                     !double.IsFinite(sample.Scale) || sample.Scale < 0.25 || sample.Scale > 4.0 ||
@@ -226,10 +231,17 @@ internal static class ManualMaskTrackStore
                     !double.IsFinite(component.SourceBoundsWidth * sample.Scale) ||
                     !double.IsFinite(component.SourceBoundsHeight * sample.Scale))
                 {
-                    reason = "invalid, duplicate or unordered frame sample/transform";
+                    reason = "invalid, missing or unordered frame sample/transform";
                     return false;
                 }
                 previousFrame = sample.FrameIndex;
+            }
+            // Every component must cover the same complete interval up to the
+            // exclusive boundary; a missing tail must not appear as a success.
+            if (previousFrame != segment.EndExclusive - 1)
+            {
+                reason = "manual track component ends before its declared boundary";
+                return false;
             }
         }
         reason = string.Empty;
@@ -251,6 +263,15 @@ internal static class ManualMaskTrackStore
     {
         if (string.IsNullOrWhiteSpace(videoPath))
             throw new ArgumentException("Video path is required.", nameof(videoPath));
+        ArgumentNullException.ThrowIfNull(segments);
+        var keyframes = new HashSet<int>();
+        foreach (ManualMaskTrackSegment segment in segments)
+        {
+            if (!TryValidateSegment(segment, out string reason))
+                throw new InvalidDataException($"Cannot persist an invalid manual track: {reason}");
+            if (!keyframes.Add(segment.SourceKeyframe))
+                throw new InvalidDataException("Cannot persist duplicate manual source keyframes.");
+        }
         string path = GetTrackPath(videoPath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var state = new ManualMaskTrackStoreState
