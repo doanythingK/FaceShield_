@@ -28,12 +28,15 @@ cat > "$test_dir/ManualOverlayRegression.csproj" <<XML
     <Compile Include="$repo_root/Services/Video/ManualOverlayCore.cs" Link="ManualOverlayCore.cs" />
     <Compile Include="$repo_root/Services/Video/ManualOverlayStateStore.cs" Link="ManualOverlayStateStore.cs" />
     <Compile Include="$repo_root/Services/Video/ManualOverlayWorkspaceStore.cs" Link="ManualOverlayWorkspaceStore.cs" />
+    <Compile Include="$repo_root/Services/Video/ManualMaskTrackModels.cs" Link="ManualMaskTrackModels.cs" />
   </ItemGroup>
 </Project>
 XML
 
 dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
 cp "$repo_root/scripts/manual-overlay-workspace-regression.cs.txt" "$test_dir/Program.cs"
+dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
+cp "$repo_root/scripts/manual-track-continuity-regression.cs.txt" "$test_dir/Program.cs"
 dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
 
 # Exercise the production FrameMaskProvider through the built application assembly.
