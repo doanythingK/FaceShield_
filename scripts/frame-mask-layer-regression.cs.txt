@@ -16,23 +16,42 @@ var size = new PixelSize(width, height);
 var autoFace = new Rect(18, 24, 28, 28);
 using var provider = new FrameMaskProvider();
 provider.SetFaceRects(frame, new[] { autoFace }, size, 0.9f, new[] { 0.9f });
-provider.SetMask(frame, CreateManualMask(size, 112, 28, 24, 24));
+
+// The real editor starts from the visible composite Auto mask, then the user
+// paints an extra missed subject. SetMask must persist only that manual residual.
+using (var editedComposite = provider.GetFinalMask(frame)
+       ?? throw new InvalidOperationException("Auto source mask missing"))
+{
+    PaintRect(editedComposite, 112, 28, 24, 24, 255);
+    provider.SetMask(frame, Clone(editedComposite));
+}
 
 Assert(provider.TryGetFaceMaskData(frame, out var autoAfterManual) && autoAfterManual.Faces.Count == 1,
     "SetMask erased the Auto layer on the same frame");
 Assert(provider.TryCloneStoredMask(frame, out var manualAfterAuto),
     "Manual layer disappeared after same-frame Auto+manual storage");
-manualAfterAuto.Dispose();
+using (manualAfterAuto)
+{
+    Assert(AlphaAt(manualAfterAuto, 32, 38) == 0,
+        "Auto coverage was duplicated into the stored manual layer");
+    Assert(AlphaAt(manualAfterAuto, 120, 36) == 255,
+        "Manual addition was not preserved in the stored manual layer");
+}
 using (var final = provider.GetFinalMask(frame) ?? throw new InvalidOperationException("Combined mask missing"))
 {
     Assert(AlphaAt(final, 32, 38) > 0, "Combined mask lost Auto coverage");
     Assert(AlphaAt(final, 120, 36) == 255, "Combined mask lost manual coverage");
 }
 
+// Updating Auto on a frame with a manual residual must not erase that residual.
 provider.SetFaceRects(frame, new[] { new Rect(54, 20, 26, 26) }, size, 0.8f, new[] { 0.8f });
 Assert(provider.TryCloneStoredMask(frame, out var manualAfterAutoUpdate),
     "SetFaceRects erased the manual layer on the same frame");
-manualAfterAutoUpdate.Dispose();
+using (manualAfterAutoUpdate)
+{
+    Assert(AlphaAt(manualAfterAutoUpdate, 120, 36) == 255,
+        "Manual layer changed when Auto was updated");
+}
 using (var final = provider.GetFinalMask(frame) ?? throw new InvalidOperationException("Updated combined mask missing"))
 {
     Assert(AlphaAt(final, 66, 32) > 0, "Updated Auto coverage missing from combined mask");
@@ -43,33 +62,52 @@ using (var snapshot = provider.CreateSnapshot())
 {
     Assert(snapshot.TryGetFaceMaskData(frame, out _), "Snapshot lost Auto layer");
     Assert(snapshot.TryCloneStoredMask(frame, out var stored), "Snapshot lost manual layer");
-    stored.Dispose();
+    using (stored)
+    {
+        Assert(AlphaAt(stored, 66, 32) == 0,
+            "Snapshot manual layer unexpectedly contains Auto coverage");
+        Assert(AlphaAt(stored, 120, 36) == 255,
+            "Snapshot lost manual residual coverage");
+    }
     using var final = snapshot.GetFinalMask(frame) ?? throw new InvalidOperationException("Snapshot combined mask missing");
     Assert(AlphaAt(final, 66, 32) > 0 && AlphaAt(final, 120, 36) == 255,
         "Snapshot final mask did not union Auto and manual layers");
 }
 
-Console.WriteLine("PASS: same-frame Auto/manual layers survive either update order and compose in final masks");
+Console.WriteLine("PASS: same-frame editor composite stores manual residual; Auto/manual layers remain independent and compose");
 
-static WriteableBitmap CreateManualMask(PixelSize size, int x0, int y0, int w, int h)
+static void PaintRect(WriteableBitmap mask, int x0, int y0, int w, int h, byte alpha)
 {
-    var mask = new WriteableBitmap(size, new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
     using var fb = mask.Lock();
     unsafe
     {
         byte* origin = (byte*)fb.Address;
-        for (int y = 0; y < size.Height; y++)
+        for (int y = Math.Max(0, y0); y < Math.Min(fb.Size.Height, y0 + h); y++)
         {
             byte* row = origin + y * fb.RowBytes;
-            for (int x = 0; x < size.Width; x++)
+            for (int x = Math.Max(0, x0); x < Math.Min(fb.Size.Width, x0 + w); x++)
             {
-                byte a = x >= x0 && x < x0 + w && y >= y0 && y < y0 + h ? (byte)255 : (byte)0;
                 int p = x * 4;
-                row[p] = row[p + 1] = row[p + 2] = row[p + 3] = a;
+                row[p] = row[p + 1] = row[p + 2] = row[p + 3] = alpha;
             }
         }
     }
-    return mask;
+}
+
+static WriteableBitmap Clone(WriteableBitmap source)
+{
+    var copy = new WriteableBitmap(source.PixelSize, source.Dpi, PixelFormat.Bgra8888, AlphaFormat.Premul);
+    using var src = source.Lock();
+    using var dst = copy.Lock();
+    unsafe
+    {
+        byte* s = (byte*)src.Address;
+        byte* d = (byte*)dst.Address;
+        int bytes = Math.Min(src.RowBytes, dst.RowBytes);
+        for (int y = 0; y < src.Size.Height; y++)
+            Buffer.MemoryCopy(s + y * src.RowBytes, d + y * dst.RowBytes, dst.RowBytes, bytes);
+    }
+    return copy;
 }
 
 static byte AlphaAt(WriteableBitmap mask, int x, int y)
