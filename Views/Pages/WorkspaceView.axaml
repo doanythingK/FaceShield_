@@ -54,6 +54,9 @@
                         Padding="8,5"
                         IsVisible="{Binding FramePreview.ManualTrackingAvailable}">
                     <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="다음 1프레임 추적"
+                                Command="{Binding FramePreview.TrackNextFrameCommand}"
+                                IsEnabled="{Binding FramePreview.CanTrackForward}"/>
                         <Button Content="현재 마스크 자동 추적"
                                 Command="{Binding FramePreview.TrackForwardCommand}"
                                 IsEnabled="{Binding FramePreview.CanTrackForward}"/>
@@ -114,6 +117,10 @@
                 Padding="12"
                 IsEnabled="{Binding ToolPanel.CanEditWorkspace}">
             <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="문제 프레임"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"/>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="문제 프레임"
                                FontWeight="SemiBold"
