@@ -14,7 +14,9 @@ internal static class ManualMaskTrackingService
     private const int MaxTrackingWidth = 480;
     private const int MaxComponents = 32;
     private const int MaxFeaturesPerComponent = 64;
-    private const int MinimumFeatures = 6;
+    // Similarity needs six matches, but three well-separated, verified points
+    // can still support translation without inventing rotation or scale.
+    private const int MinimumFeatures = 3;
     private const double MaximumForwardBackwardError = 2.5;
     private const double MinimumConfidence = 0.52;
 
@@ -92,8 +94,8 @@ internal static class ManualMaskTrackingService
                     sourceMask, box, previous, previousStride, width, height, cancellationToken);
                 if (features.Count < MinimumFeatures)
                     throw new InvalidOperationException(
-                        "마스크 내부에서 추적 가능한 특징점을 6개 찾지 못했습니다. " +
-                        "영역을 조금 넓히거나 다른 프레임에서 마스크를 지정해 주세요.");
+                        "현재 영역에 움직임을 검증할 영상 정보가 부족합니다. " +
+                        "원본 프레임의 마스크는 유지됩니다. 위치를 직접 보정해 다음 구간을 시작해 주세요.");
                 components.Add(new Component { Source = box, Features = features });
                 segment.Components.Add(new ManualMaskTrackComponent
                 {
@@ -119,6 +121,15 @@ internal static class ManualMaskTrackingService
                     cancellationToken, width, height, useBilinear: true,
                     current, out int currentIndex, out int currentStride))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (extractor.SequentialReadCancelled)
+                        throw new OperationCanceledException("추적 프레임 디코딩이 취소되었습니다.", cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(extractor.SequentialDecodeError))
+                        throw new InvalidOperationException(
+                            $"추적 도중 영상 디코딩 오류: {extractor.SequentialDecodeError}");
+                    if (!extractor.SequentialReachedEndOfStream)
+                        throw new InvalidOperationException(
+                            "영상 끝에 도달하지 않았으나 추적 디코더가 중단되었습니다.");
                     segment.EndExclusive = checked(lastDecoded + 1);
                     reachedBoundary = true;
                     break;
@@ -166,8 +177,18 @@ internal static class ManualMaskTrackingService
                             continue;
                         matches.Add(new ManualFeatureMatch(feature, found, error));
                     }
-                    if (!ManualSimilarityEstimator.TryEstimate(matches, currentIndex, cancellationToken,
-                        out ManualMotion step, out List<ManualPoint> inliers, out double confidence))
+                    bool estimated = ManualSimilarityEstimator.TryEstimate(
+                        matches, currentIndex, cancellationToken,
+                        out ManualMotion step, out List<ManualPoint> inliers, out double confidence);
+                    if (!estimated || confidence < MinimumConfidence)
+                    {
+                        // Fall back to translation only when the independently
+                        // forward/backward-validated motion agrees spatially.
+                        // A flat or ambiguous target still fails safely.
+                        estimated = ManualTranslationEstimator.TryEstimate(
+                            matches, cancellationToken, out step, out inliers, out confidence);
+                    }
+                    if (!estimated)
                     {
                         failure = scene.Suspicious
                             ? $"장면 전환 의심 및 영역 {c + 1} 특징점 추적 불일치(score={scene.Score:0.000})"
@@ -371,8 +392,6 @@ internal static class ManualMaskTrackingService
                     double gx = Luma(frame, stride, x + 2, y) - Luma(frame, stride, x - 2, y);
                     double gy = Luma(frame, stride, x, y + 2) - Luma(frame, stride, x, y - 2);
                     double strength = Math.Abs(gx) + Math.Abs(gy);
-                    // Preserve the old strong-feature set. Only supplement it with
-                    // lower-contrast candidates when there are fewer than six.
                     if (strength >= 6) ranked.Add((strength, new ManualPoint(x, y)));
                 }
             }
