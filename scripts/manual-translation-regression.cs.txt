@@ -1,0 +1,59 @@
+using FaceShield.Services.Video;
+using System;
+using System.Collections.Generic;
+using System.Threading;
+
+static void Assert(bool condition, string explanation)
+{
+    if (!condition) throw new InvalidOperationException(explanation);
+}
+
+static ManualFeatureMatch Match(double x, double y, double dx, double dy, double error = 0.01)
+    => new(new ManualPoint(x, y), new ManualPoint(x + dx, y + dy), error);
+
+var sparse = new List<ManualFeatureMatch>
+{
+    Match(10, 10, 3, -2), Match(32, 10, 3.1, -2.1), Match(11, 35, 2.9, -1.9)
+};
+Assert(ManualTranslationEstimator.TryEstimate(sparse, CancellationToken.None,
+    out ManualMotion shifted, out List<ManualPoint> tracked, out double confidence),
+    "Three separated, consistent landmarks should permit translation");
+Assert(tracked.Count == 3 && confidence >= 0.52 &&
+    Math.Abs(shifted.X - 3) < 0.15 && Math.Abs(shifted.Y + 2) < 0.15 &&
+    shifted.Scale == 1 && shifted.Angle == 0,
+    "Sparse tracking must only translate without inventing scale or rotation");
+
+Assert(!ManualTranslationEstimator.TryEstimate(sparse.GetRange(0, 2), CancellationToken.None,
+    out _, out _, out _), "Two points cannot claim validated translation");
+Assert(!ManualTranslationEstimator.TryEstimate(new List<ManualFeatureMatch>
+{
+    Match(10, 10, 1, 2), Match(32, 10, -4, 3), Match(11, 35, 7, -4)
+}, CancellationToken.None, out _, out _, out _),
+    "Disagreeing optical flow must fail closed");
+Assert(!ManualTranslationEstimator.TryEstimate(new List<ManualFeatureMatch>
+{
+    Match(10, 10, 1, 1), Match(11, 11, 1, 1), Match(12, 12, 1, 1)
+}, CancellationToken.None, out _, out _, out _),
+    "Overlapping points must not establish a spatially supported track");
+Assert(!ManualTranslationEstimator.TryEstimate(new List<ManualFeatureMatch>
+{
+    Match(10, 10, 1, 1, 0.8), Match(30, 10, 1, 1, 0.8), Match(10, 30, 1, 1, 0.8)
+}, CancellationToken.None, out _, out _, out _),
+    "Ambiguous appearance must not establish a track");
+Assert(!ManualTranslationEstimator.TryEstimate(new List<ManualFeatureMatch>
+{
+    Match(10, 10, double.NaN, 1), Match(30, 10, 1, 1), Match(10, 30, 1, 1)
+}, CancellationToken.None, out _, out _, out _),
+    "Non-finite motion must fail closed");
+
+using (var cancelled = new CancellationTokenSource())
+{
+    cancelled.Cancel();
+    try
+    {
+        ManualTranslationEstimator.TryEstimate(sparse, cancelled.Token, out _, out _, out _);
+        throw new InvalidOperationException("Cancelled estimate unexpectedly completed");
+    }
+    catch (OperationCanceledException) { }
+}
+Console.WriteLine("PASS: sparse translation, no fake scale, mismatched/ambiguous/nonfinite flow rejected, cancellation");
