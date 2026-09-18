@@ -1,0 +1,92 @@
+// Built outside the repository by verify-manual-tracking-integration.sh.
+// Ground truth is an independently generated textured rectangle moving 1px/frame.
+using Avalonia;
+using Avalonia.Headless;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Skia;
+using FaceShield.Services.Video;
+using System;
+using System.Collections;
+using System.Reflection;
+using System.Threading;
+
+if (args.Length != 1 || !System.IO.File.Exists(args[0]))
+    throw new ArgumentException("Expected a generated moving fixture video.");
+
+AppBuilder.Configure<MovingTrackingApp>()
+    .UseSkia()
+    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+    .SetupWithoutStarting();
+FFmpegBootstrap.Initialize();
+
+const int width = 160, height = 120, frames = 16;
+using var mask = new WriteableBitmap(new PixelSize(width, height),
+    new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Premul);
+using (var pixels = mask.Lock())
+{
+    unsafe
+    {
+        byte* origin = (byte*)pixels.Address;
+        for (int y = 0; y < height; y++)
+        {
+            byte* row = origin + y * pixels.RowBytes;
+            for (int x = 0; x < width; x++)
+            {
+                byte alpha = x >= 44 && x < 92 && y >= 32 && y < 80 ? (byte)255 : (byte)0;
+                int p = x * 4;
+                row[p] = row[p + 1] = row[p + 2] = row[p + 3] = alpha;
+            }
+        }
+    }
+}
+
+Type service = typeof(FfFrameExtractor).Assembly.GetType(
+    "FaceShield.Services.Video.ManualMaskTrackingService", throwOnError: true)!;
+MethodInfo track = service.GetMethod("TrackForward", BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new InvalidOperationException("TrackForward not found");
+object result;
+try
+{
+    result = track.Invoke(null, new object?[] { args[0], 0, frames, mask, null, CancellationToken.None })
+        ?? throw new InvalidOperationException("Tracker returned null");
+}
+catch (TargetInvocationException ex) when (ex.InnerException != null)
+{
+    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+    throw;
+}
+object segment = Read<object>(result, "Segment");
+int processed = Read<int>(result, "ProcessedFrames");
+Assert(!Read<bool>(segment, "StoppedByFailure") && processed == frames - 1 &&
+       Read<int>(segment, "EndExclusive") == frames,
+    $"Moving object was lost before the selected boundary: processed={processed}");
+IList components = Read<IList>(segment, "Components");
+Assert(components.Count == 1, "Expected one manual mask target");
+IList samples = Read<IList>(components[0]!, "Samples");
+Assert(samples.Count == frames - 1, "Every moving frame requires a tracking sample");
+for (int i = 0; i < samples.Count; i++)
+{
+    object sample = samples[i]!;
+    int frame = Read<int>(sample, "FrameIndex");
+    double dx = Read<double>(sample, "OffsetX");
+    double dy = Read<double>(sample, "OffsetY");
+    double scale = Read<double>(sample, "Scale");
+    double rotation = Read<double>(sample, "RotationRadians");
+    double confidence = Read<double>(sample, "Confidence");
+    Assert(frame == i + 1 && Math.Abs(dx - frame) <= 2 && Math.Abs(dy - frame) <= 2 &&
+        Math.Abs(scale - 1) <= 0.12 && Math.Abs(rotation) <= 0.15 && confidence >= 0.52,
+        $"Moving-mask coverage mismatch at frame {frame}: dx={dx}, dy={dy}, scale={scale}, angle={rotation}, confidence={confidence}");
+}
+Console.WriteLine("PASS: moving textured target 1px/frame, exact 15 samples, per-frame mask translation within 2px");
+
+static T Read<T>(object source, string property) =>
+    (T)(source.GetType().GetProperty(property, BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(source) ?? throw new InvalidOperationException($"Missing {property}"));
+
+static void Assert(bool condition, string explanation)
+{
+    if (!condition) throw new InvalidOperationException(explanation);
+}
+
+public sealed class MovingTrackingApp : Application { }
