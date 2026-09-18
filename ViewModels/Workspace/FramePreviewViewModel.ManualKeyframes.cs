@@ -168,16 +168,17 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        // If a brush/eraser edit was persisted while leaving the previous frame,
-        // validate the source segment only now, after FrameMaskProvider contains the
-        // committed bitmap/face entry.
+        // A brush/eraser edit is persisted on leaving the prior frame. Validate
+        // against that committed source, never against the in-progress bitmap.
         RevalidatePendingManualTrackingSource(provider);
 
-        // An exact entry is already a keyframe and remains authoritative. Revalidate
-        // any stored tracking segment here because single-frame Auto can replace an
-        // exact keyframe without going through the brush MaskEdited event.
-        if (provider.HasStoredMask(_currentFrameIndex) ||
-            provider.TryGetFaceMaskData(_currentFrameIndex, out _))
+        // Only the user's stored correction is authoritative for a manual track.
+        // Auto rectangles on another face at the same frame must not suppress
+        // the independently tracked mask. Auto-only legacy sessions retain their
+        // original exact-keyframe behavior.
+        bool stored = provider.HasStoredMask(_currentFrameIndex);
+        bool automatic = provider.TryGetFaceMaskData(_currentFrameIndex, out _);
+        if (stored || (automatic && provider.GetStoredMaskFrameIndices().Length == 0))
         {
             if (ManualMaskKeyframeTimeline.InvalidateSegmentIfSourceChanged(
                     provider,
