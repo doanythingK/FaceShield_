@@ -1,0 +1,77 @@
+// Compiled by scripts/verify-manual-overlay.sh, not by the Avalonia app.
+using FaceShield.Services.Video;
+using System;
+
+const int width = 3, height = 2, stride = 16;
+var targetA = new ManualOverlayTarget(Guid.NewGuid());
+var targetB = new ManualOverlayTarget(Guid.NewGuid());
+targetA.SetExplicitKeyframe(100);
+targetA.SetExplicitKeyframe(140);
+targetB.SetExplicitKeyframe(101); // Simulates an unrelated face/target.
+Assert(targetA.NextBoundaryExclusive(100, 900) == 140,
+    "Another target must not interrupt target A");
+Assert(targetB.NextBoundaryExclusive(101, 900) == 900,
+    "Unknown next keyframe must respect video EOF");
+Assert(targetA.NextBoundaryExclusive(140, 0) == int.MaxValue,
+    "An unknown frame count must not be invented as a boundary");
+Assert(targetA.RemoveExplicitKeyframe(140), "Could not remove correction keyframe");
+Assert(targetA.NextBoundaryExclusive(100, 900) == 900,
+    "Removing a correction did not restore the target's range");
+Assert(targetA.Id != targetB.Id, "Distinct targets have identical IDs");
+Expect<InvalidOperationException>(() => targetA.NextBoundaryExclusive(101, 900),
+    "Unconfirmed source frame incorrectly allowed tracking");
+Expect<ArgumentOutOfRangeException>(() => targetA.SetExplicitKeyframe(-1),
+    "Negative keyframe was accepted");
+
+var auto = new byte[stride * height];
+var manualA = new byte[stride * height];
+var manualB = new byte[stride * height];
+var merged = new byte[stride * height];
+// Two automatically detected faces and two additional manual targets.
+SetAlpha(auto, stride, 0, 0, 180);
+SetAlpha(auto, stride, 2, 1, 255);
+SetAlpha(manualA, stride, 1, 0, 220);
+SetAlpha(manualB, stride, 1, 0, 170);
+SetAlpha(manualB, stride, 0, 1, 90);
+ManualOverlayMaskComposer.Compose(auto, stride,
+    new[] { new ManualOverlayMask(manualA, stride), new ManualOverlayMask(manualB, stride) },
+    merged, stride, width, height);
+Assert(Alpha(merged, stride, 0, 0) == 180, "Auto detection was lost");
+Assert(Alpha(merged, stride, 2, 1) == 255, "Second Auto detection was lost");
+Assert(Alpha(merged, stride, 1, 0) == 220, "Manual masks were not unioned");
+Assert(Alpha(merged, stride, 0, 1) == 90, "Independent manual target was lost");
+Assert(Alpha(merged, stride, 2, 0) == 0, "Union invented blur coverage");
+Assert(Alpha(auto, stride, 0, 0) == 180 && Alpha(manualA, stride, 1, 0) == 220,
+    "Compositor mutated its input masks");
+Assert(merged[12] == 0 && merged[15] == 0 && merged[28] == 0,
+    "Padding should not be used for mask pixels");
+
+// On the next frame the manual tracker has no verified sample. Do not
+// substitute a stationary mask from the previous frame.
+Array.Clear(merged);
+ManualOverlayMaskComposer.Compose(auto, stride, Array.Empty<ManualOverlayMask>(),
+    merged, stride, width, height);
+Assert(Alpha(merged, stride, 1, 0) == 0, "Untracked manual mask was held");
+Assert(Alpha(merged, stride, 0, 0) == 180, "Auto was lost after manual tracking failed");
+Expect<ArgumentException>(() => ManualOverlayMaskComposer.Compose(
+    auto, width * 4 - 1, Array.Empty<ManualOverlayMask>(), merged, stride, width, height),
+    "Invalid source stride was accepted");
+Expect<ArgumentException>(() => ManualOverlayMaskComposer.Compose(
+    auto, stride, new[] { new ManualOverlayMask(new byte[3], stride) },
+    merged, stride, width, height), "Truncated manual mask was accepted");
+Console.WriteLine("PASS: target-specific keyframes, Auto+manual union, no untracked hold, padded rows, invalid layout");
+
+static void SetAlpha(byte[] pixels, int stride, int x, int y, byte alpha)
+    => pixels[y * stride + x * 4 + 3] = alpha;
+static byte Alpha(byte[] pixels, int stride, int x, int y)
+    => pixels[y * stride + x * 4 + 3];
+static void Assert(bool value, string message)
+{
+    if (!value) throw new InvalidOperationException(message);
+}
+static void Expect<T>(Action action, string message) where T : Exception
+{
+    try { action(); }
+    catch (T) { return; }
+    throw new InvalidOperationException(message);
+}
