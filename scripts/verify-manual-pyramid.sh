@@ -8,6 +8,7 @@ trap 'rm -rf "$test_dir"' EXIT
 # Keep the test project outside the repository so its Program.cs is never
 # picked up by FaceShield.csproj's default recursive Compile glob.
 cp "$repo_root/Services/Video/ManualMaskVision.cs" "$test_dir/ManualMaskVision.cs"
+cp "$repo_root/Services/Video/ManualTranslationEstimator.cs" "$test_dir/ManualTranslationEstimator.cs"
 cp "$repo_root/scripts/manual-pyramid-regression.cs.txt" "$test_dir/Program.cs"
 cat > "$test_dir/ManualPyramidRegression.csproj" <<'XML'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -21,4 +22,6 @@ cat > "$test_dir/ManualPyramidRegression.csproj" <<'XML'
 </Project>
 XML
 
+dotnet run --project "$test_dir/ManualPyramidRegression.csproj" --configuration Release --nologo
+cp "$repo_root/scripts/manual-translation-regression.cs.txt" "$test_dir/Program.cs"
 dotnet run --project "$test_dir/ManualPyramidRegression.csproj" --configuration Release --nologo
