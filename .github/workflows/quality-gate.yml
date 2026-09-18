@@ -73,7 +73,8 @@ jobs:
 
       # The production FFmpeg fixture checks overlapped manual pixels are
       # preserved, Auto-only pixels are excluded from the continuation source,
-      # and both layers survive source-keyframe promotion and preview/export.
+      # both layers survive source-keyframe promotion and preview/export, and
+      # refreshed target-local features survive a synthetic texture handoff.
       - name: Verify continuous tracking and overlapping Auto/manual integration
         if: github.ref == 'refs/heads/refactor/manual-mask-keyframes' || github.ref == 'refs/heads/refactor/manual-overlay-workflow'
         run: bash scripts/verify-manual-tracking-integration.sh
