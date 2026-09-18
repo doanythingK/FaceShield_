@@ -121,10 +121,6 @@
                     <TextBlock Text="문제 프레임"
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="문제 프레임"
-                               FontWeight="SemiBold"
-                               VerticalAlignment="Center"/>
                     <CheckBox Content="완료 숨기기"
                               IsChecked="{Binding HideResolvedIssues, Mode=TwoWay}"
                               VerticalAlignment="Center"/>
