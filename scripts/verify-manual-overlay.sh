@@ -5,6 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
 
+manual_tracking="$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualTracking.cs"
+if grep -q 'RemoveFaceMasksRange' "$manual_tracking"; then
+    echo 'ERROR: manual tracking rollback must not delete the combined Auto/manual frame range' >&2
+    exit 1
+fi
+
+echo 'PASS: manual tracking rollback does not delete Auto mask ranges'
+
 cp "$repo_root/scripts/manual-overlay-regression.cs.txt" "$test_dir/Program.cs"
 cat > "$test_dir/ManualOverlayRegression.csproj" <<XML
 <Project Sdk="Microsoft.NET.Sdk">
