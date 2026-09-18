@@ -1,0 +1,97 @@
+// Compiled as Program.cs by verify-manual-overlay.sh together with production
+// ManualMaskTrackModels.cs and WorkspacePathIdentity.cs.
+using FaceShield.Services.Video;
+using FaceShield.Services.Workspace;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
+
+string directory = Path.Combine(Path.GetTempPath(), "faceshield-manual-continuity-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+string video = Path.Combine(directory, "source.mkv");
+File.WriteAllBytes(video, new byte[] { 1, 2, 3, 4 });
+string identity = WorkspacePathIdentity.CreateIdentityKey(video);
+string key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
+string statePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "FaceShield", "manual-tracks", key + ".json");
+
+try
+{
+    ManualMaskTrackSegment CreateValid() => new()
+    {
+        SourceKeyframe = 10,
+        EndExclusive = 14,
+        SourceMaskFingerprint = "fixture-fingerprint",
+        Components = new List<ManualMaskTrackComponent>
+        {
+            new() { ComponentIndex = 0, SourceBoundsX = 1, SourceBoundsY = 2,
+                SourceBoundsWidth = 8, SourceBoundsHeight = 9,
+                Samples = new List<ManualMaskTrackSample>
+                {
+                    new() { FrameIndex = 11 }, new() { FrameIndex = 12 }, new() { FrameIndex = 13 }
+                } },
+            new() { ComponentIndex = 1, SourceBoundsX = 20, SourceBoundsY = 3,
+                SourceBoundsWidth = 8, SourceBoundsHeight = 9,
+                Samples = new List<ManualMaskTrackSample>
+                {
+                    new() { FrameIndex = 11 }, new() { FrameIndex = 12 }, new() { FrameIndex = 13 }
+                } }
+        }
+    };
+
+    var valid = CreateValid();
+    ManualMaskTrackStore.Save(video, new[] { valid });
+    Check(ManualMaskTrackStore.LoadForExport(video).Count == 1, "complete segment was not restored");
+
+    var gap = CreateValid();
+    gap.Components[0].Samples.RemoveAt(1);
+    ThrowsInvalid(() => ManualMaskTrackStore.Save(video, new[] { gap }), "gap at frame 12");
+    Check(ManualMaskTrackStore.LoadForExport(video).Count == 1, "failed save replaced valid state");
+
+    var missingTail = CreateValid();
+    missingTail.Components[1].Samples.RemoveAt(2);
+    ThrowsInvalid(() => ManualMaskTrackStore.Save(video, new[] { missingTail }), "missing component tail");
+
+    ThrowsInvalid(() => ManualMaskTrackStore.Save(video, new[] { CreateValid(), CreateValid() }),
+        "duplicate source keyframe");
+
+    var cut = CreateValid();
+    cut.StoppedByFailure = true;
+    cut.StopFrame = cut.EndExclusive;
+    ManualMaskTrackStore.Save(video, new[] { cut });
+    Check(ManualMaskTrackStore.LoadForExport(video).Single().StoppedByFailure,
+        "valid failed-boundary segment was rejected");
+
+    // Simulate an already-existing malformed file: strict export load must
+    // reject it even though this state was not created through Save().
+    JsonNode root = JsonNode.Parse(File.ReadAllText(statePath))!;
+    root["Segments"]![0]!["Components"]![0]!["Samples"]![1]!["FrameIndex"] = 13;
+    File.WriteAllText(statePath, root.ToJsonString());
+    ThrowsInvalid(() => { _ = ManualMaskTrackStore.LoadForExport(video); },
+        "corrupt on-disk tracking interval");
+    Check(ManualMaskTrackStore.Load(video).Count == 0,
+        "preview load accepted a corrupt tracking interval");
+
+    Console.WriteLine("PASS: contiguous multi-component manual tracks round-trip; gaps/tails/duplicates and corrupt export state rejected");
+}
+finally
+{
+    try { if (File.Exists(statePath)) File.Delete(statePath); }
+    finally { Directory.Delete(directory, recursive: true); }
+}
+
+static void ThrowsInvalid(Action operation, string label)
+{
+    try { operation(); }
+    catch (InvalidDataException) { return; }
+    throw new InvalidOperationException("Expected invalid manual tracking state rejection: " + label);
+}
+
+static void Check(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
