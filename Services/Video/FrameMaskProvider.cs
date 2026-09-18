@@ -10,7 +10,7 @@ using System.Threading;
 namespace FaceShield.Services.Video
 {
     public sealed class FrameMaskProvider : IFrameMaskProvider, IDisposable
-{
+    {
     private readonly object _stateGate = new();
     private readonly ConcurrentDictionary<int, WriteableBitmap> _masks = new();
     private readonly ConcurrentDictionary<int, FaceMaskData> _faceMasks = new();
@@ -57,9 +57,6 @@ namespace FaceShield.Services.Video
             float? minConfidence = null,
             IReadOnlyList<float>? confidences = null)
         {
-            if (_storedMaskFrames.Contains(frameIndex))
-                return;
-
             Rect[] faceArray = faces == null ? Array.Empty<Rect>() : faces.ToArray();
             if (faceArray.Length == 0 || size.Width <= 0 || size.Height <= 0)
             {
@@ -126,9 +123,9 @@ namespace FaceShield.Services.Video
         }
     }
 
-
     /// <summary>
-    /// Stores the supplied bitmap and takes ownership of it.
+    /// Stores the supplied manual bitmap and takes ownership of it. Automatic
+    /// face rectangles on the same frame are preserved as an independent layer.
     /// After this call succeeds, the caller must not mutate or dispose the bitmap.
     /// </summary>
     public void SetMask(int frameIndex, WriteableBitmap mask)
@@ -145,7 +142,6 @@ namespace FaceShield.Services.Video
             }
 
             _masks[frameIndex] = mask;
-            _faceMasks.TryRemove(frameIndex, out _);
             _version++;
         }
     }
@@ -193,8 +189,6 @@ namespace FaceShield.Services.Video
         float? minConfidence,
         IReadOnlyList<float>? confidences)
     {
-        RemoveStoredMaskLocked(frameIndex);
-
         if (faces.Length == 0 || size.Width <= 0 || size.Height <= 0)
         {
             _faceMasks.TryRemove(frameIndex, out _);
@@ -211,13 +205,61 @@ namespace FaceShield.Services.Video
     {
         lock (_stateGate)
         {
-            if (_masks.TryGetValue(frameIndex, out var mask))
-                return CloneBitmap(mask, CancellationToken.None);
+            bool hasManual = _masks.TryGetValue(frameIndex, out var manual);
+            bool hasAuto = _faceMasks.TryGetValue(frameIndex, out var faces);
+            if (!hasManual && !hasAuto)
+                return null;
 
-            if (_faceMasks.TryGetValue(frameIndex, out var faces))
-                return CreateMaskFromFaceRects(faces.Size, faces.Faces);
+            WriteableBitmap? result = hasManual
+                ? CloneBitmap(manual!, CancellationToken.None)
+                : null;
+            if (!hasAuto)
+                return result;
 
-            return null;
+            WriteableBitmap autoMask = CreateMaskFromFaceRects(faces.Size, faces.Faces);
+            if (result == null)
+                return autoMask;
+
+            try
+            {
+                UnionAlphaInto(result, autoMask);
+                return result;
+            }
+            finally
+            {
+                autoMask.Dispose();
+            }
+        }
+    }
+
+    private static void UnionAlphaInto(WriteableBitmap destination, WriteableBitmap source)
+    {
+        if (destination.PixelSize.Width != source.PixelSize.Width ||
+            destination.PixelSize.Height != source.PixelSize.Height)
+        {
+            throw new InvalidOperationException("Auto and manual mask sizes do not match.");
+        }
+
+        using var dst = destination.Lock();
+        using var src = source.Lock();
+        unsafe
+        {
+            byte* dstBase = (byte*)dst.Address;
+            byte* srcBase = (byte*)src.Address;
+            for (int y = 0; y < dst.Size.Height; y++)
+            {
+                byte* dstRow = dstBase + y * dst.RowBytes;
+                byte* srcRow = srcBase + y * src.RowBytes;
+                for (int x = 0; x < dst.Size.Width; x++)
+                {
+                    int offset = x * 4;
+                    byte alpha = Math.Max(dstRow[offset + 3], srcRow[offset + 3]);
+                    dstRow[offset] = alpha;
+                    dstRow[offset + 1] = alpha;
+                    dstRow[offset + 2] = alpha;
+                    dstRow[offset + 3] = alpha;
+                }
+            }
         }
     }
 
@@ -565,15 +607,8 @@ namespace FaceShield.Services.Video
 
             _faceMasks.Clear();
             foreach (var entry in committedFaces)
-            {
-                // Stored/manual bitmap entries remain authoritative.
-                if (_masks.ContainsKey(entry.Key))
-                    continue;
-
                 _faceMasks[entry.Key] = entry.Value;
-            }
 
-            // Once commit mutation starts, finish atomically rather than observing cancellation mid-commit.
             _version++;
         }
     }
@@ -604,14 +639,7 @@ namespace FaceShield.Services.Video
 
             _faceMasks.Clear();
             foreach (var entry in committedFaces)
-            {
-                // A manually stored bitmap remains authoritative if an unexpected
-                // working-copy mutation attempted to replace it with face rectangles.
-                if (_masks.ContainsKey(entry.Key))
-                    continue;
-
                 _faceMasks[entry.Key] = entry.Value;
-            }
 
             _version++;
         }
