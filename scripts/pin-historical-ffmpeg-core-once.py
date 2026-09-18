@@ -13,6 +13,7 @@ old = '''        historical_formula="$test_dir/ffmpeg.rb"
 new = '''        export HOMEBREW_NO_INSTALL_FROM_API=1
         HOMEBREW_NO_AUTO_UPDATE=1 brew tap --force homebrew/core
         core_repo="$(brew --repo homebrew/core)"
+        git -C "$core_repo" reset --hard HEAD
         git -C "$core_repo" fetch --depth=1 origin 40a61ec69293671eed15d9ff8f1d677120cabcde
         git -C "$core_repo" checkout --detach 40a61ec69293671eed15d9ff8f1d677120cabcde
         HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install ffmpeg
