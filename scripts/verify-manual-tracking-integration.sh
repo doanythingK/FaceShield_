@@ -87,3 +87,47 @@ output_dir="$test_dir/bin/Release/net8.0/osx-arm64"
 rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
 cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
 dotnet "$output_dir/ManualTrackingIntegration.dll" "$video"
+
+# Independent ground-truth target: a textured 56x56 square translates exactly
+# (+1,+1) pixels in each successive frame. No learned face detector is involved.
+python3 - "$test_dir" <<'PY'
+import math
+import os
+import sys
+root = sys.argv[1]
+width, height = 160, 120
+for frame in range(16):
+    path = os.path.join(root, f'moving-{frame:03d}.ppm')
+    with open(path, 'wb') as output:
+        output.write(f'P6\n{width} {height}\n255\n'.encode('ascii'))
+        for y in range(height):
+            row = bytearray()
+            for x in range(width):
+                sx = x - 40 - frame
+                sy = y - 28 - frame
+                if 0 <= sx < 56 and 0 <= sy < 56:
+                    value = int(125 + 45*math.sin(sx*.19) +
+                                35*math.cos(sy*.21) +
+                                30*math.sin((sx+sy)*.14))
+                    value = max(35, min(220, value))
+                else:
+                    value = 28
+                row.extend((value, value, value))
+            output.write(row)
+PY
+
+moving_video="$test_dir/moving-target.mkv"
+"$ffmpeg_cmd" -hide_banner -loglevel error -y -framerate 30 \
+    -start_number 0 -i "$test_dir/moving-%03d.ppm" \
+    -frames:v 16 -c:v ffv1 -pix_fmt yuv444p "$moving_video"
+move_frames="$("$ffprobe_cmd" -v error -count_frames -select_streams v:0 \
+    -show_entries stream=nb_read_frames -of default=noprint_wrappers=1:nokey=1 "$moving_video")"
+if [[ "$move_frames" != '16' ]]; then
+    echo "ERROR: expected 16 moving fixture frames, got $move_frames" >&2
+    exit 1
+fi
+cp "$repo_root/scripts/manual-moving-tracking-integration.cs.txt" "$test_dir/Program.cs"
+dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm64 --no-restore
+rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
+cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
+dotnet "$output_dir/ManualTrackingIntegration.dll" "$moving_video"
