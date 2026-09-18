@@ -25,3 +25,5 @@ cat > "$test_dir/ManualOverlayRegression.csproj" <<XML
 XML
 
 dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
+cp "$repo_root/scripts/manual-overlay-workspace-regression.cs.txt" "$test_dir/Program.cs"
+dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
