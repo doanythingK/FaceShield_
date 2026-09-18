@@ -124,9 +124,10 @@ namespace FaceShield.Services.Video
     }
 
     /// <summary>
-    /// Stores the supplied manual bitmap and takes ownership of it. Automatic
-    /// face rectangles on the same frame are preserved as an independent layer.
-    /// After this call succeeds, the caller must not mutate or dispose the bitmap.
+    /// Stores the supplied editor bitmap and takes ownership of it. Automatic
+    /// face rectangles on the same frame remain an independent layer. When the
+    /// editor bitmap already contains Auto coverage, that coverage is removed
+    /// before the manual residual is stored.
     /// </summary>
     public void SetMask(int frameIndex, WriteableBitmap mask)
     {
@@ -135,6 +136,9 @@ namespace FaceShield.Services.Video
 
         lock (_stateGate)
         {
+            if (_faceMasks.TryGetValue(frameIndex, out FaceMaskData automatic))
+                ManualMaskLayerIsolation.StripAutomaticCoverage(mask, automatic);
+
             if (_masks.TryRemove(frameIndex, out var previous) &&
                 !ReferenceEquals(previous, mask))
             {
@@ -142,6 +146,7 @@ namespace FaceShield.Services.Video
             }
 
             _masks[frameIndex] = mask;
+            _ = _faceMasks.ContainsKey(frameIndex);
             _version++;
         }
     }
@@ -269,10 +274,6 @@ namespace FaceShield.Services.Video
             return _masks.ContainsKey(frameIndex) || _faceMasks.ContainsKey(frameIndex);
     }
 
-    /// <summary>
-    /// Returns a provider-owned bitmap reference for read-stable internal paths only.
-    /// The caller must not dispose it and must ensure the provider is not mutated while it is in use.
-    /// </summary>
     internal bool TryGetStoredMaskBorrowed(int frameIndex, out WriteableBitmap mask)
     {
         if (!_allowsBorrowedBitmapReads)
@@ -607,7 +608,12 @@ namespace FaceShield.Services.Video
 
             _faceMasks.Clear();
             foreach (var entry in committedFaces)
+            {
+                bool hasManualLayer = _masks.ContainsKey(entry.Key);
                 _faceMasks[entry.Key] = entry.Value;
+                if (hasManualLayer)
+                    continue;
+            }
 
             _version++;
         }
@@ -639,7 +645,12 @@ namespace FaceShield.Services.Video
 
             _faceMasks.Clear();
             foreach (var entry in committedFaces)
+            {
+                bool hasManualLayer = _masks.ContainsKey(entry.Key);
                 _faceMasks[entry.Key] = entry.Value;
+                if (hasManualLayer)
+                    continue;
+            }
 
             _version++;
         }
