@@ -71,6 +71,9 @@ jobs:
       - name: Verify manual pyramid reuse and allocations
         run: bash scripts/verify-manual-pyramid.sh
 
-      - name: Verify decoded manual tracking integration (synthetic video)
+      # The production FFmpeg fixture checks overlapped manual pixels are
+      # preserved, Auto-only pixels are excluded from the continuation source,
+      # and both layers survive source-keyframe promotion and preview/export.
+      - name: Verify continuous tracking and overlapping Auto/manual integration
         if: github.ref == 'refs/heads/refactor/manual-mask-keyframes' || github.ref == 'refs/heads/refactor/manual-overlay-workflow'
         run: bash scripts/verify-manual-tracking-integration.sh
