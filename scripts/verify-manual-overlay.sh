@@ -16,8 +16,10 @@ cat > "$test_dir/ManualOverlayRegression.csproj" <<XML
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="$repo_root/Services/Workspace/WorkspacePathIdentity.cs" Link="WorkspacePathIdentity.cs" />
     <Compile Include="$repo_root/Services/Video/ManualOverlayCore.cs" Link="ManualOverlayCore.cs" />
     <Compile Include="$repo_root/Services/Video/ManualOverlayStateStore.cs" Link="ManualOverlayStateStore.cs" />
+    <Compile Include="$repo_root/Services/Video/ManualOverlayWorkspaceStore.cs" Link="ManualOverlayWorkspaceStore.cs" />
   </ItemGroup>
 </Project>
 XML
