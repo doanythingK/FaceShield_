@@ -61,8 +61,6 @@ internal static class ManualMaskKeyframeTimeline
 
     internal static int GetNextExplicitKeyframe(FrameMaskProvider provider, int frameIndex, int totalFrames)
     {
-        // Once a user has drawn a stored mask, only another stored correction
-        // can terminate its track. An unrelated Auto face is never a boundary.
         int[] stored = provider.GetStoredMaskFrameIndices();
         int[] keyframes = stored.Length > 0 ? stored : GetKeyframeIndices(provider);
         Array.Sort(keyframes);
@@ -130,7 +128,6 @@ internal static class ManualMaskKeyframeTimeline
             independentManual ? Sort(stored) : GetKeyframeIndices(provider), frameIndex);
         if (sourceKeyframe < 0)
         {
-            // Before the first manual correction, render only this frame's Auto.
             if (!independentManual) return false;
             WriteableBitmap? automatic = provider.TryGetFaceMaskData(frameIndex, out var faces)
                 ? FrameMaskProvider.CreateMaskFromFaceRects(faces.Size, faces.Faces) : null;
@@ -226,10 +223,19 @@ internal static class ManualMaskKeyframeTimeline
     {
         if (state.SegmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached)) return cached;
         bool valid = false;
-        using WriteableBitmap? sourceMask = provider.GetFinalMask(segment.SourceKeyframe);
-        if (sourceMask != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
-            valid = string.Equals(ManualMaskFingerprint.Compute(sourceMask),
-                segment.SourceMaskFingerprint, StringComparison.Ordinal);
+        WriteableBitmap? sourceMask = null;
+        try
+        {
+            if (TryCloneSourceMask(provider, segment.SourceKeyframe, out WriteableBitmap source))
+                sourceMask = source;
+            if (sourceMask != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+                valid = string.Equals(ManualMaskFingerprint.Compute(sourceMask),
+                    segment.SourceMaskFingerprint, StringComparison.Ordinal);
+        }
+        finally
+        {
+            sourceMask?.Dispose();
+        }
         state.SegmentValidity[segment.SourceKeyframe] = valid;
         return valid;
     }
@@ -307,7 +313,6 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    // Preview and export share the identical inverse-mapped rasterizer.
     private static bool TransformComponentsInto(WriteableBitmap source, WriteableBitmap target,
         ManualMaskTrackSegment segment, int frameIndex)
     {
@@ -558,8 +563,6 @@ internal static class ManualMaskKeyframeTimeline
             data = default;
             if (_independentManual)
             {
-                // The bitmap fast path already contains Auto when manual coverage
-                // is active; before the first manual keyframe use direct Auto.
                 return FindFloorKeyframe(_keyframes, frameIndex) < 0 &&
                     _snapshot.TryGetFaceMaskData(frameIndex, out data);
             }
@@ -599,10 +602,20 @@ internal static class ManualMaskKeyframeTimeline
         {
             if (_segmentValidity.TryGetValue(segment.SourceKeyframe, out bool cached)) return cached;
             bool valid = false;
-            using WriteableBitmap? source = _snapshot.GetFinalMask(segment.SourceKeyframe);
-            if (source != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
-                valid = string.Equals(ManualMaskFingerprint.Compute(source),
-                    segment.SourceMaskFingerprint, StringComparison.Ordinal);
+            WriteableBitmap? source = null;
+            try
+            {
+                source = _snapshot.TryCloneStoredMask(segment.SourceKeyframe, out WriteableBitmap stored)
+                    ? stored
+                    : _snapshot.GetFinalMask(segment.SourceKeyframe);
+                if (source != null && !string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint))
+                    valid = string.Equals(ManualMaskFingerprint.Compute(source),
+                        segment.SourceMaskFingerprint, StringComparison.Ordinal);
+            }
+            finally
+            {
+                source?.Dispose();
+            }
             _segmentValidity[segment.SourceKeyframe] = valid;
             return valid;
         }
