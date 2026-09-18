@@ -82,6 +82,35 @@ using (var cancelled = new CancellationTokenSource())
     }
 }
 
+// A one-frame correction must decode only the next target frame, not scan to
+// the next global keyframe, the scene cut, or the end of the video.
+object boundedResult;
+try
+{
+    boundedResult = track.Invoke(null,
+        new object?[] { args[0], startFrame, startFrame + 2, mask, null, CancellationToken.None })
+        ?? throw new InvalidOperationException("Bounded tracking returned null");
+}
+catch (TargetInvocationException ex) when (ex.InnerException != null)
+{
+    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+    throw;
+}
+object boundedSegment = Read<object>(boundedResult, "Segment");
+Assert(Read<int>(boundedResult, "ProcessedFrames") == 1,
+    "A bounded one-frame run did not stop after the next frame");
+Assert(Read<int>(boundedSegment, "EndExclusive") == startFrame + 2,
+    "Bounded tracking lost its exclusive frame boundary");
+Assert(!Read<bool>(boundedSegment, "StoppedByFailure"),
+    "Stationary textured frame unexpectedly failed one-frame tracking");
+IList boundedComponents = Read<IList>(boundedSegment, "Components");
+Assert(boundedComponents.Count == 1, "Unexpected bounded mask component count");
+IList boundedSamples = Read<IList>(boundedComponents[0]!, "Samples");
+Assert(boundedSamples.Count == 1 &&
+       Read<int>(boundedSamples[0]!, "FrameIndex") == startFrame + 1,
+    "Bounded tracking produced missing or extra frame samples");
+Console.WriteLine("PASS: bounded 1-frame tracking stops at the exclusive boundary");
+
 GC.Collect();
 GC.WaitForPendingFinalizers();
 GC.Collect();
