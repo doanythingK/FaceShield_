@@ -27,3 +27,26 @@ XML
 dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
 cp "$repo_root/scripts/manual-overlay-workspace-regression.cs.txt" "$test_dir/Program.cs"
 dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
+
+# Exercise the production FrameMaskProvider through the built application assembly.
+cp "$repo_root/scripts/frame-mask-layer-regression.cs.txt" "$test_dir/Program.cs"
+cat > "$test_dir/FrameMaskLayerRegression.csproj" <<XML
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$repo_root/FaceShield.csproj" />
+    <PackageReference Include="Avalonia.Headless" Version="11.3.9" />
+  </ItemGroup>
+</Project>
+XML
+
+dotnet restore "$test_dir/FrameMaskLayerRegression.csproj" -r osx-arm64
+dotnet run --project "$test_dir/FrameMaskLayerRegression.csproj" -c Release -r osx-arm64 --no-restore
