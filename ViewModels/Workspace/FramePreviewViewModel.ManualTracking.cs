@@ -428,7 +428,6 @@ public partial class FramePreviewViewModel
                 if (!sourceWasExplicit)
                     promotedMask = CloneBitmap(sourceMask);
 
-                bool promotedSourceKeyframe = false;
                 bool commitStarted = false;
                 try
                 {
@@ -444,30 +443,14 @@ public partial class FramePreviewViewModel
                         {
                             provider.SetMask(sourceFrame, promotedMask);
                             promotedMask = null;
-                            promotedSourceKeyframe = true;
                         }
                     }
 
-                    try
-                    {
-                        await persistWorkspace().ConfigureAwait(true);
-                    }
-                    catch
-                    {
-                        if (promotedSourceKeyframe)
-                        {
-                            try
-                            {
-                                provider.RemoveFaceMasksRange(
-                                    sourceFrame,
-                                    sourceFrame + 1);
-                            }
-                            catch
-                            {
-                            }
-                        }
-                        throw;
-                    }
+                    // If persistence fails, leave the in-memory user/manual source
+                    // intact. The old rollback removed the whole frame range, which
+                    // can now contain an independent Auto layer. A later save can
+                    // safely retry this source without destroying unrelated Auto data.
+                    await persistWorkspace().ConfigureAwait(true);
 
                     ManualMaskKeyframeTimeline.SetTrackSegment(
                         provider,
