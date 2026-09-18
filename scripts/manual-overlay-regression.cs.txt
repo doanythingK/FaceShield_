@@ -1,6 +1,8 @@
 // Compiled by scripts/verify-manual-overlay.sh, not by the Avalonia app.
 using FaceShield.Services.Video;
 using System;
+using System.IO;
+using System.Linq;
 
 const int width = 3, height = 2, stride = 16;
 var targetA = new ManualOverlayTarget(Guid.NewGuid());
@@ -59,7 +61,57 @@ Expect<ArgumentException>(() => ManualOverlayMaskComposer.Compose(
 Expect<ArgumentException>(() => ManualOverlayMaskComposer.Compose(
     auto, stride, new[] { new ManualOverlayMask(new byte[3], stride) },
     merged, stride, width, height), "Truncated manual mask was accepted");
-Console.WriteLine("PASS: target-specific keyframes, Auto+manual union, no untracked hold, padded rows, invalid layout");
+
+// Independent persistence does not write to the automatic-mask provider.
+string directory = Path.Combine(Path.GetTempPath(), "faceshield-overlay-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+try
+{
+    string path = Path.Combine(directory, "manual-overlay.json");
+    const string evidence = "test-video-identity-and-content-evidence";
+    Assert(ManualOverlayStateStore.Load(path, evidence).Count == 0,
+        "An absent overlay file should mean no manual targets");
+    var storedA = ManualOverlayStoredKeyframe.FromBgra(100, manualA, stride, width, height);
+    var storedB = ManualOverlayStoredKeyframe.FromBgra(101, manualB, stride, width, height);
+    var targetStates = new[]
+    {
+        new ManualOverlayStoredTarget(targetA.Id, new[] { storedA }),
+        new ManualOverlayStoredTarget(targetB.Id, new[] { storedB })
+    };
+    ManualOverlayStateStore.Save(path, evidence, targetStates);
+    var restored = ManualOverlayStateStore.Load(path, evidence);
+    Assert(restored.Count == 2, "Manual target identities were lost");
+    Assert(restored.Single(t => t.Id == targetA.Id).Keyframes.Single().FrameIndex == 100,
+        "Manual target A keyframe frame was lost");
+    var reloadedA = restored.Single(t => t.Id == targetA.Id).Keyframes.Single().ToBgra(stride);
+    var reloadedB = restored.Single(t => t.Id == targetB.Id).Keyframes.Single().ToBgra(stride);
+    Array.Clear(merged);
+    ManualOverlayMaskComposer.Compose(auto, stride, new[] { reloadedA, reloadedB },
+        merged, stride, width, height);
+    Assert(Alpha(merged, stride, 0, 0) == 180 && Alpha(merged, stride, 1, 0) == 220 &&
+           Alpha(merged, stride, 0, 1) == 90,
+        "Restored manual masks did not compose with unchanged Auto");
+    Assert(reloadedA.Pixels[12] == 0, "Restored padded rows were not cleared");
+    Expect<InvalidDataException>(() => ManualOverlayStateStore.Load(path, "another-video"),
+        "Masks from another source video were accepted");
+    Expect<InvalidDataException>(() => ManualOverlayStateStore.Save(path, evidence,
+        new[] { targetStates[0], targetStates[0] }), "Duplicate target IDs were accepted");
+    Expect<InvalidDataException>(() => ManualOverlayStateStore.Save(path, evidence,
+        new[] { new ManualOverlayStoredTarget(targetA.Id, new[] { storedA, storedA }) }),
+        "Duplicate keyframes were accepted");
+    Assert(ManualOverlayStateStore.Load(path, evidence).Count == 2,
+        "Rejected write overwrote the last valid state");
+    File.WriteAllText(path, "{\"Version\":1,\"SourceEvidence\":\"" + evidence +
+        "\",\"Targets\":[{\"Id\":\"" + targetA.Id +
+        "\",\"Keyframes\":[{\"FrameIndex\":100,\"Width\":3,\"Height\":2,\"CompressedAlpha\":\"AA==\"}]}]}");
+    Expect<InvalidDataException>(() => ManualOverlayStateStore.Load(path, evidence),
+        "Truncated compressed alpha must fail closed");
+}
+finally
+{
+    Directory.Delete(directory, recursive: true);
+}
+Console.WriteLine("PASS: target boundaries, Auto+manual union, no hold, independent state round-trip, malformed/source-mismatch rejection");
 
 static void SetAlpha(byte[] pixels, int stride, int x, int y, byte alpha)
     => pixels[y * stride + x * 4 + 3] = alpha;
