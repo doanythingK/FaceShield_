@@ -1,0 +1,40 @@
+name: One-shot adaptive manual tracking feature refresh
+
+on:
+  push:
+    branches:
+      - refactor/manual-overlay-workflow
+    paths:
+      - .github/workflows/apply-manual-feature-refresh-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-commit:
+    if: github.ref == 'refs/heads/refactor/manual-overlay-workflow'
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Apply guarded tracker refresh patch
+        run: python3 scripts/apply-manual-feature-refresh-once.py
+      - name: Build production app
+        run: |
+          dotnet restore FaceShield.csproj -r osx-arm64
+          dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
+      - name: Verify decoded tracking with texture handoff
+        run: ./scripts/verify-manual-tracking-integration.sh
+      - name: Check patch cleanliness
+        run: git diff --check
+      - name: Commit verified tracker change and remove staging
+        run: |
+          git rm -- .github/workflows/apply-manual-feature-refresh-once.yml scripts/apply-manual-feature-refresh-once.py
+          git add -- Services/Video/ManualMaskTrackingService.cs scripts/verify-manual-tracking-integration.sh
+          git -c user.name='FaceShield CI' -c user.email='actions@users.noreply.github.com' commit -m 'fix: refresh manual tracking features inside transformed mask'
+          git push origin HEAD:refactor/manual-overlay-workflow
