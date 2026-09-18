@@ -131,3 +131,11 @@ dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm6
 rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
 cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
 dotnet "$output_dir/ManualTrackingIntegration.dll" "$moving_video"
+
+# Production overlay regression: Auto face boxes cannot truncate a manual
+# track, and actual preview/export masks must contain both at those frames.
+cp "$repo_root/scripts/manual-auto-overlap-integration.cs.txt" "$test_dir/Program.cs"
+dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm64 --no-restore
+rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
+cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
+dotnet "$output_dir/ManualTrackingIntegration.dll" "$video"
