@@ -12,15 +12,35 @@ if [[ "$(uname -s)" != "Darwin" ]] || ! command -v brew >/dev/null 2>&1; then
     echo 'ERROR: macOS with Homebrew is required for this integration test' >&2
     exit 1
 fi
+# Homebrew removed the ffmpeg@8 formula after FFmpeg 9 became current.
+# Pin the last known FFmpeg 8.1.1 core formula/bottle used by this regression
+# instead of silently accepting a different ABI.
 ffmpeg_prefix="$(brew --prefix ffmpeg@8 2>/dev/null || true)"
 if [[ -z "$ffmpeg_prefix" || ! -x "$ffmpeg_prefix/bin/ffmpeg" ]]; then
-    brew install ffmpeg@8
-    ffmpeg_prefix="$(brew --prefix ffmpeg@8)"
+    existing_prefix="$(brew --prefix ffmpeg 2>/dev/null || true)"
+    if [[ -n "$existing_prefix" && -x "$existing_prefix/bin/ffmpeg" ]] && \
+       "$existing_prefix/bin/ffmpeg" -version | head -n 1 | grep -Eq '^ffmpeg version 8([.[:space:]]|$)'; then
+        ffmpeg_prefix="$existing_prefix"
+    else
+        export HOMEBREW_NO_INSTALL_FROM_API=1
+        HOMEBREW_NO_AUTO_UPDATE=1 brew tap --force homebrew/core
+        core_repo="$(brew --repo homebrew/core)"
+        git -C "$core_repo" reset --hard HEAD
+        git -C "$core_repo" fetch --depth=1 origin 40a61ec69293671eed15d9ff8f1d677120cabcde
+        git -C "$core_repo" checkout --detach 40a61ec69293671eed15d9ff8f1d677120cabcde
+        HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1 brew install ffmpeg
+        ffmpeg_prefix="$(brew --prefix ffmpeg)"
+    fi
 fi
 ffmpeg_cmd="$ffmpeg_prefix/bin/ffmpeg"
 ffprobe_cmd="$ffmpeg_prefix/bin/ffprobe"
 if [[ ! -x "$ffmpeg_cmd" || ! -x "$ffprobe_cmd" ]]; then
-    echo 'ERROR: the FFmpeg 8 command-line tools were not installed' >&2
+    echo 'ERROR: FFmpeg 8 command-line tools were not installed' >&2
+    exit 1
+fi
+ffmpeg_version="$($ffmpeg_cmd -version | head -n 1)"
+if [[ ! "$ffmpeg_version" =~ ffmpeg\ version\ 8([.[:space:]]|$) ]]; then
+    echo "ERROR: manual tracking integration requires FFmpeg major 8, got: $ffmpeg_version" >&2
     exit 1
 fi
 
@@ -106,12 +126,23 @@ for frame in range(16):
                 sx = x - 40 - frame
                 sy = y - 28 - frame
                 if 0 <= sx < 56 and 0 <= sy < 56:
-                    value = int(125 + 45*math.sin(sx*.19) +
-                                35*math.cos(sy*.21) +
-                                30*math.sin((sx+sy)*.14))
+                    # Frame 0 has useful texture only on the left half. From frame 1
+                    # the right half gains texture, and from frame 8 the left half
+                    # becomes flat. A tracker that only carries its original points
+                    # loses the target; per-frame feature refresh can hand off support.
+                    if sx < 28 and frame < 8:
+                        value = int(125 + 55*math.sin(sx*.41) +
+                                    45*math.cos(sy*.37) +
+                                    30*math.sin((sx+sy)*.29))
+                    elif sx >= 28 and frame >= 1:
+                        value = int(125 + 38*math.sin(sx*.33) +
+                                    34*math.cos(sy*.31) +
+                                    24*math.sin((sx+sy)*.23))
+                    else:
+                        value = 125
                     value = max(35, min(220, value))
                 else:
-                    value = 28
+                    value = 125
                 row.extend((value, value, value))
             output.write(row)
 PY

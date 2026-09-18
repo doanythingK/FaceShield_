@@ -205,7 +205,15 @@ internal static class ManualMaskTrackingService
                             : $"영역 {c + 1}의 움직임 또는 추적 신뢰도가 불안정합니다.";
                         break;
                     }
-                    nextFeatures[c] = inliers;
+                    // Re-detect strong points inside the CURRENT transformed manual
+                    // mask. Carrying only surviving optical-flow points makes the feature
+                    // set monotonically shrink and eventually fail after blur/occlusion.
+                    // The source mask still defines the allowed target region, so refreshed
+                    // points cannot be seeded on unrelated background outside that mask.
+                    List<ManualPoint> refreshed = SelectFeaturesInTransformedMask(
+                        sourceMask, component.Source, cumulative, current, currentStride,
+                        width, height, cancellationToken);
+                    nextFeatures[c] = refreshed.Count >= MinimumFeatures ? refreshed : inliers;
                     nextTransforms[c] = cumulative;
                     confidences[c] = confidence;
                 }
@@ -405,6 +413,106 @@ internal static class ManualMaskTrackingService
             if (chosen.Any(point => DistanceSquared(point, candidate.Location) < 16)) continue;
             chosen.Add(candidate.Location);
             if (chosen.Count >= MaxFeaturesPerComponent) break;
+        }
+        return chosen;
+    }
+
+    private static List<ManualPoint> SelectFeaturesInTransformedMask(
+        WriteableBitmap sourceMask, Bounds source, ManualMotion motion,
+        byte[] frame, int stride, int width, int height, CancellationToken ct)
+    {
+        double determinant = motion.A * motion.A + motion.B * motion.B;
+        if (!double.IsFinite(determinant) || determinant < 1e-8)
+            return new List<ManualPoint>();
+
+        ManualPoint[] corners =
+        {
+            motion.Apply(new ManualPoint(source.X0, source.Y0)),
+            motion.Apply(new ManualPoint(source.X1, source.Y0)),
+            motion.Apply(new ManualPoint(source.X0, source.Y1)),
+            motion.Apply(new ManualPoint(source.X1, source.Y1))
+        };
+        if (corners.Any(static p => !double.IsFinite(p.X) || !double.IsFinite(p.Y)))
+            return new List<ManualPoint>();
+
+        double left = corners.Min(static p => p.X);
+        double right = corners.Max(static p => p.X);
+        double top = corners.Min(static p => p.Y);
+        double bottom = corners.Max(static p => p.Y);
+        int x0 = Math.Max(4, (int)Math.Floor(left));
+        int x1 = Math.Min(width - 5, (int)Math.Ceiling(right));
+        int y0 = Math.Max(4, (int)Math.Floor(top));
+        int y1 = Math.Min(height - 5, (int)Math.Ceiling(bottom));
+        if (x0 > x1 || y0 > y1)
+            return new List<ManualPoint>();
+
+        var ranked = new List<(double Strength, ManualPoint Location)>();
+        using var fb = sourceMask.Lock();
+        unsafe
+        {
+            byte* origin = (byte*)fb.Address;
+            for (int y = y0; y <= y1; y += 2)
+            {
+                ct.ThrowIfCancellationRequested();
+                for (int x = x0; x <= x1; x += 2)
+                {
+                    double dx = x - motion.X;
+                    double dy = y - motion.Y;
+                    double sourceX = (motion.A * dx + motion.B * dy) / determinant;
+                    double sourceY = (-motion.B * dx + motion.A * dy) / determinant;
+                    if (sourceX < source.X0 || sourceX > source.X1 ||
+                        sourceY < source.Y0 || sourceY > source.Y1)
+                        continue;
+
+                    int sx = Math.Clamp(
+                        (int)Math.Round((sourceX + 0.5) * fb.Size.Width / width - 0.5),
+                        0, fb.Size.Width - 1);
+                    int sy = Math.Clamp(
+                        (int)Math.Round((sourceY + 0.5) * fb.Size.Height / height - 0.5),
+                        0, fb.Size.Height - 1);
+                    byte* row = origin + sy * fb.RowBytes;
+                    if (row[sx * 4 + 3] <= 24)
+                        continue;
+
+                    double gx = Luma(frame, stride, x + 2, y) -
+                                Luma(frame, stride, x - 2, y);
+                    double gy = Luma(frame, stride, x, y + 2) -
+                                Luma(frame, stride, x, y - 2);
+                    double strength = Math.Abs(gx) + Math.Abs(gy);
+                    if (strength >= 6)
+                        ranked.Add((strength, new ManualPoint(x, y)));
+                }
+            }
+        }
+
+        ranked.Sort(static (a, b) => b.Strength.CompareTo(a.Strength));
+        var chosen = new List<ManualPoint>(Math.Min(MaxFeaturesPerComponent, ranked.Count));
+        // Keep coverage across the target instead of letting one high-contrast patch
+        // monopolize all 64 points. This lets the tracker survive local blur/occlusion.
+        const int grid = 4;
+        const int perCellLimit = MaxFeaturesPerComponent / (grid * grid);
+        var perCell = new int[grid * grid];
+        double spanX = Math.Max(1.0, right - left + 1.0);
+        double spanY = Math.Max(1.0, bottom - top + 1.0);
+        foreach ((double strength, ManualPoint location) in ranked)
+        {
+            if ((chosen.Count & 15) == 0)
+                ct.ThrowIfCancellationRequested();
+            if (strength < 16 && chosen.Count >= MinimumFeatures)
+                break;
+            if (chosen.Any(point => DistanceSquared(point, location) < 16))
+                continue;
+
+            int cellX = Math.Clamp((int)((location.X - left) * grid / spanX), 0, grid - 1);
+            int cellY = Math.Clamp((int)((location.Y - top) * grid / spanY), 0, grid - 1);
+            int cell = cellY * grid + cellX;
+            if (perCell[cell] >= perCellLimit)
+                continue;
+
+            chosen.Add(location);
+            perCell[cell]++;
+            if (chosen.Count >= MaxFeaturesPerComponent)
+                break;
         }
         return chosen;
     }
