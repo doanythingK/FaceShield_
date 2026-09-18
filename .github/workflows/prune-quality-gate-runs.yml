@@ -1,1 +1,27 @@
-x
+name: Prune redundant Quality Gate runs
+
+on:
+  push:
+    branches:
+      - refactor/manual-overlay-workflow
+    paths:
+      - .github/workflows/prune-quality-gate-runs.yml
+      - scripts/prune-quality-gate-runs.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove redundant completed Quality Gate runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPOSITORY: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: python3 scripts/prune-quality-gate-runs.py
