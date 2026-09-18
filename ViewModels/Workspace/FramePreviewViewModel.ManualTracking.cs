@@ -192,7 +192,7 @@ public partial class FramePreviewViewModel
                     _currentFrameIndex))
             {
                 ManualTrackingStatusText =
-                    "자동 검출로 키프레임 마스크가 변경되어 기존 추적을 적용하지 않습니다. " +
+                    "키프레임 마스크가 변경되어 기존 추적을 적용하지 않습니다. " +
                     "현재 프레임에서 다시 자동 추적하세요.";
             }
 
@@ -310,17 +310,32 @@ public partial class FramePreviewViewModel
         PersistCurrentMask();
         RevalidatePendingManualTrackingSource(provider);
 
-        bool hasStoredManualSource = provider.TryCloneStoredMask(
-            sourceFrame,
-            out WriteableBitmap storedManualSource);
-        bool sourceWasExplicit =
-            hasStoredManualSource ||
-            provider.TryGetFaceMaskData(sourceFrame, out _);
-        WriteableBitmap? sourceMask = hasStoredManualSource
-            ? storedManualSource
-            : sourceWasExplicit
+        bool independentManual = provider.GetStoredMaskFrameIndices().Length > 0;
+        bool sourceWasExplicit;
+        WriteableBitmap? sourceMask;
+        if (independentManual)
+        {
+            // Once the user has established a manual layer, an unrelated Auto
+            // detection can never silently replace that layer as the source.
+            sourceWasExplicit = provider.HasStoredMask(sourceFrame);
+            if (!ManualTrackingSourceSelection.TryCloneContinuation(
+                    provider, sourceFrame, out WriteableBitmap manualSource))
+            {
+                ManualTrackingStatusText =
+                    "이 프레임에는 검증된 수동 추적 마스크가 없습니다. " +
+                    "추적할 대상에 마스크를 직접 지정한 뒤 다시 추적하세요.";
+                return;
+            }
+            sourceMask = manualSource;
+        }
+        else
+        {
+            // Preserve the legacy Auto-only behavior when no user mask exists.
+            sourceWasExplicit = provider.TryGetFaceMaskData(sourceFrame, out _);
+            sourceMask = sourceWasExplicit
                 ? provider.GetFinalMask(sourceFrame)
                 : CloneBitmap(_maskBitmap);
+        }
         if (sourceMask == null)
         {
             ManualTrackingStatusText = "현재 프레임에 추적할 마스크가 없습니다.";
@@ -446,10 +461,8 @@ public partial class FramePreviewViewModel
                         }
                     }
 
-                    // If persistence fails, leave the in-memory user/manual source
-                    // intact. The old rollback removed the whole frame range, which
-                    // can now contain an independent Auto layer. A later save can
-                    // safely retry this source without destroying unrelated Auto data.
+                    // Keep independently owned Auto masks intact if persistence fails.
+                    // The in-memory manual source can be retried on the next save.
                     await persistWorkspace().ConfigureAwait(true);
 
                     ManualMaskKeyframeTimeline.SetTrackSegment(
