@@ -13,6 +13,26 @@ fi
 
 echo 'PASS: manual tracking rollback does not delete Auto mask ranges'
 
+# The editor must never persist an Auto/manual composite as an independent
+# manual keyframe. The headless regression below verifies alpha preservation;
+# these assertions also guard the actual view-model connection to that path.
+editor_view="$repo_root/ViewModels/Workspace/FramePreviewViewModel.cs"
+keyframe_view="$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualKeyframes.cs"
+for connection in \
+    'ManualMaskEditorLayer.CreateEditableMask(' \
+    'ManualMaskEditorLayer.ComposeWithAutomatic(' \
+    'manualProvider.SetIndependentManualMask('; do
+    if ! grep -Fq "$connection" "$editor_view"; then
+        echo "ERROR: manual-only editor connection missing: $connection" >&2
+        exit 1
+    fi
+done
+if ! grep -Fq 'ManualMaskKeyframeTimeline.TryCloneEffectiveManualMask(' "$keyframe_view"; then
+    echo 'ERROR: inherited editable mask must resolve the manual-only layer' >&2
+    exit 1
+fi
+echo 'PASS: editor stores manual-only alpha and composites Auto only for preview'
+
 cp "$repo_root/scripts/manual-overlay-regression.cs.txt" "$test_dir/Program.cs"
 cat > "$test_dir/ManualOverlayRegression.csproj" <<XML
 <Project Sdk="Microsoft.NET.Sdk">
