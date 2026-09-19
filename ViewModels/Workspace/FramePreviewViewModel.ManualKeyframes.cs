@@ -72,30 +72,22 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        // Undo can return a tracked/inherited frame exactly to the effective mask it
-        // had before editing. Do not persist that no-op as a new explicit keyframe,
-        // otherwise the existing track would be cut at this frame.
-        if (ManualMaskKeyframeTimeline.TryCloneEffectiveKeyframeMask(
-                provider,
-                _currentFrameIndex,
-                out var baseline))
+        // Compare manual-only baselines. A composite Auto mask would make an
+        // Undo result look like a new manual correction, or hide an overlap edit.
+        using (var baseline = ManualMaskEditorLayer.CreateEditableMask(
+                   provider, _currentFrameIndex, _maskBitmap.PixelSize))
         {
-            using (baseline)
+            if (string.Equals(
+                    ManualMaskFingerprint.Compute(baseline),
+                    ManualMaskFingerprint.Compute(_maskBitmap),
+                    StringComparison.Ordinal))
             {
-                if (baseline.PixelSize.Width == _maskBitmap.PixelSize.Width &&
-                    baseline.PixelSize.Height == _maskBitmap.PixelSize.Height &&
-                    string.Equals(
-                        ManualMaskFingerprint.Compute(baseline),
-                        ManualMaskFingerprint.Compute(_maskBitmap),
-                        StringComparison.Ordinal))
-                {
-                    _maskDirty = false;
-                    _manualTrackingPendingSourceValidationFrame = -1;
-                    ManualTrackingStatusText =
-                        "되돌리기로 원래 마스크 상태가 복원되어 기존 추적을 유지합니다.";
-                    OnPropertyChanged(nameof(CanTrackForward));
-                    return;
-                }
+                _maskDirty = false;
+                _manualTrackingPendingSourceValidationFrame = -1;
+                ManualTrackingStatusText =
+                    "되돌리기로 원래 마스크 상태가 복원되어 기존 추적을 유지합니다.";
+                OnPropertyChanged(nameof(CanTrackForward));
+                return;
             }
         }
 
@@ -191,7 +183,7 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        if (!ManualMaskKeyframeTimeline.TryCloneEffectiveKeyframeMask(
+        if (!ManualMaskKeyframeTimeline.TryCloneEffectiveManualMask(
                 provider,
                 _currentFrameIndex,
                 out var inherited))

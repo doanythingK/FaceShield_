@@ -409,43 +409,66 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         {
             _lastPreviewTick = Environment.TickCount64;
         }
+
         IReadOnlyList<Rect>? faces = null;
         if (_maskProvider is FrameMaskProvider provider &&
             _currentFrameIndex >= 0 &&
             provider.TryGetFaceMaskData(_currentFrameIndex, out var data))
-        {
             faces = data.Faces;
-        }
 
-        if (faces == null || faces.Count == 0 || _isDrawing)
+        // The editable mask is manual-only in manual-keyframe workspaces. Auto
+        // is merged into a disposable PREVIEW bitmap, never into editable state.
+        // This preserves a user-painted manual pixel even if Auto overlaps it.
+        WriteableBitmap? previewComposite = null;
+        try
         {
-            EnsureBlurredFrame();
-            Rect? dirtyRect = null;
-            if (!force && _hasDirtyRegion)
+            WriteableBitmap previewMask = _maskBitmap;
+            if (_manualMaskKeyframesEnabled &&
+                _maskProvider is FrameMaskProvider manualProvider &&
+                _currentFrameIndex >= 0 &&
+                manualProvider.TryGetFaceMaskData(_currentFrameIndex, out var automatic) &&
+                automatic.Faces.Count > 0)
             {
-                dirtyRect = new Rect(
-                    _dirtyX0,
-                    _dirtyY0,
-                    Math.Max(0, _dirtyX1 - _dirtyX0 + 1),
-                    Math.Max(0, _dirtyY1 - _dirtyY0 + 1));
+                previewComposite = ManualMaskEditorLayer.ComposeWithAutomatic(
+                    _maskBitmap, automatic);
+                previewMask = previewComposite;
             }
 
-            var preview = PreviewBlurProcessor.ComposeMaskedPreview(
-                _frameBitmap,
-                _blurredFrame!,
-                _maskBitmap,
-                _ownsPreviewBitmap ? _previewBitmap : null,
-                dirtyRect);
-            SetPreviewBitmap(preview, ownsBitmap: true);
-        }
-        else
-        {
-            SetPreviewBitmap(
-                PreviewBlurProcessor.CreateBlurPreview(_frameBitmap, _maskBitmap, PreviewBlurRadius, faces),
-                ownsBitmap: true);
-        }
+            if (_manualMaskKeyframesEnabled || faces == null || faces.Count == 0 || _isDrawing)
+            {
+                EnsureBlurredFrame();
+                Rect? dirtyRect = null;
+                if (!force && _hasDirtyRegion)
+                {
+                    dirtyRect = new Rect(
+                        _dirtyX0,
+                        _dirtyY0,
+                        Math.Max(0, _dirtyX1 - _dirtyX0 + 1),
+                        Math.Max(0, _dirtyY1 - _dirtyY0 + 1));
+                }
 
-        _hasDirtyRegion = false;
+                var preview = PreviewBlurProcessor.ComposeMaskedPreview(
+                    _frameBitmap,
+                    _blurredFrame!,
+                    previewMask,
+                    _ownsPreviewBitmap ? _previewBitmap : null,
+                    dirtyRect);
+                SetPreviewBitmap(preview, ownsBitmap: true);
+            }
+            else
+            {
+                SetPreviewBitmap(
+                    PreviewBlurProcessor.CreateBlurPreview(
+                        _frameBitmap, previewMask, PreviewBlurRadius, faces),
+                    ownsBitmap: true);
+            }
+
+            _hasDirtyRegion = false;
+        }
+        finally
+        {
+            previewComposite?.Dispose();
+        }
     }
 
     private void EnsureBlurredFrame()
@@ -1666,6 +1689,13 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
     private WriteableBitmap? CreateEditableMask(int frameIndex, WriteableBitmap frame)
     {
+        // Never make Auto pixels editable manual pixels: the union cannot
+        // distinguish a new brush stroke inside an already-opaque Auto mask.
+        if (_manualMaskKeyframesEnabled &&
+            _maskProvider is FrameMaskProvider manualProvider)
+            return ManualMaskEditorLayer.CreateEditableMask(
+                manualProvider, frameIndex, frame.PixelSize);
+
         if (_maskProvider is FrameMaskProvider provider)
         {
             if (provider.TryCloneStoredMask(frameIndex, out var stored))
@@ -1714,7 +1744,12 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (_maskProvider == null || _currentFrameIndex < 0 || _maskBitmap == null)
             return;
 
-        _maskProvider.SetMask(_currentFrameIndex, CloneBitmap(_maskBitmap));
+        // Manual-keyframe edits already contain ONLY the user's manual layer.
+        // SetMask would strip any pixels overlapped by Auto and lose coverage.
+        if (_manualMaskKeyframesEnabled && _maskProvider is FrameMaskProvider manualProvider)
+            manualProvider.SetIndependentManualMask(_currentFrameIndex, CloneBitmap(_maskBitmap));
+        else
+            _maskProvider.SetMask(_currentFrameIndex, CloneBitmap(_maskBitmap));
         _maskDirty = false;
     }
 

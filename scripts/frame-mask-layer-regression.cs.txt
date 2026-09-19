@@ -74,7 +74,43 @@ using (var snapshot = provider.CreateSnapshot())
         "Snapshot final mask did not union Auto and manual layers");
 }
 
-Console.WriteLine("PASS: same-frame editor composite stores manual residual; Auto/manual layers remain independent and compose");
+// New manual-keyframe editor path: Auto is visible but NOT writable. Paint
+// inside an opaque Auto face, persist manual-only, then move Auto away: the
+// overlapping user stroke must remain. This was lost by alpha subtraction.
+const int overlappingFrame = frame + 1;
+provider.SetFaceRects(overlappingFrame, new[] { autoFace }, size, 0.9f, new[] { 0.9f });
+using (var manualEditor = ManualMaskEditorLayer.CreateEditableMask(provider, overlappingFrame, size))
+{
+    Assert(AlphaAt(manualEditor, 32, 38) == 0 && AlphaAt(manualEditor, 40, 38) == 0,
+        "Auto pixels leaked into the writable manual layer");
+    PaintRect(manualEditor, 32, 36, 6, 6, 255);
+    PaintRect(manualEditor, 112, 28, 24, 24, 255);
+    Assert(provider.TryGetFaceMaskData(overlappingFrame, out var automatic),
+        "Overlapping Auto face missing");
+    using (var preview = ManualMaskEditorLayer.ComposeWithAutomatic(manualEditor, automatic))
+    {
+        Assert(AlphaAt(preview, 40, 38) > 0, "Preview lost Auto-only pixels");
+        Assert(AlphaAt(preview, 34, 38) == 255, "Preview lost overlapped manual pixels");
+        Assert(AlphaAt(preview, 120, 36) == 255, "Preview lost independent manual pixels");
+    }
+    provider.SetIndependentManualMask(overlappingFrame, Clone(manualEditor));
+}
+using (var reopened = ManualMaskEditorLayer.CreateEditableMask(provider, overlappingFrame, size))
+{
+    Assert(AlphaAt(reopened, 40, 38) == 0, "Auto-only pixels were persisted as manual");
+    Assert(AlphaAt(reopened, 34, 38) == 255, "Overlapping manual stroke was lost on reload");
+}
+provider.SetFaceRects(overlappingFrame, new[] { new Rect(54, 20, 26, 26) }, size);
+using (var finalOverlap = provider.GetFinalMask(overlappingFrame)
+       ?? throw new InvalidOperationException("Overlapping final mask missing"))
+{
+    Assert(AlphaAt(finalOverlap, 34, 38) == 255,
+        "Manual stroke vanished when Auto moved off the overlapping pixels");
+    Assert(AlphaAt(finalOverlap, 66, 32) > 0,
+        "Updated Auto face vanished when manual overlap was preserved");
+}
+
+Console.WriteLine("PASS: legacy residual and manual-only editor retain Auto/manual alpha, including overlap and Auto relocation");
 
 static void PaintRect(WriteableBitmap mask, int x0, int y0, int w, int h, byte alpha)
 {
