@@ -1,3 +1,4 @@
+# One-shot verifier; removes itself after build and overlap regression pass.
 name: One-shot manual editor layer overlap fix
 
 on:
