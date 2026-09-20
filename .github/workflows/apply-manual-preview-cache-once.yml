@@ -1,0 +1,61 @@
+name: One-shot manual preview cache integration
+
+on:
+  push:
+    branches:
+      - refactor/manual-overlay-workflow
+    paths:
+      - .github/workflows/apply-manual-preview-cache-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  verify-commit-and-dispatch:
+    if: github.ref == 'refs/heads/refactor/manual-overlay-workflow'
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Validate and apply guarded code change
+        run: |
+          python3 -m py_compile scripts/apply-manual-preview-cache-once.py
+          python3 scripts/apply-manual-preview-cache-once.py
+      - name: Build actual app
+        run: |
+          dotnet restore FaceShield.csproj -r osx-arm64
+          dotnet build FaceShield.csproj -c Release -r osx-arm64 --no-restore -p:ContinuousIntegrationBuild=true
+      - name: Run production mask and preview cache regressions
+        run: bash scripts/verify-manual-overlay.sh
+      - name: Verify patch and commit only after passing tests
+        run: |
+          git diff --check
+          git rm -- .github/workflows/apply-manual-preview-cache-once.yml scripts/apply-manual-preview-cache-once.py
+          git add -- Services/Video/ManualPreviewCompositeCache.cs ViewModels/Workspace/FramePreviewViewModel.cs scripts/frame-mask-layer-regression.cs.txt scripts/verify-manual-overlay.sh
+          git -c user.name='FaceShield CI' -c user.email='actions@users.noreply.github.com' commit -m 'perf: reuse manual preview Auto raster and update only dirty region'
+          git push origin HEAD:refactor/manual-overlay-workflow
+      - name: Dispatch full Windows and macOS Quality Gate on validated commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          url = 'https://api.github.com/repos/' + os.environ['GH_REPOSITORY'] + '/actions/workflows/quality-gate.yml/dispatches'
+          payload = json.dumps({'ref': 'refactor/manual-overlay-workflow'}).encode('utf-8')
+          request = urllib.request.Request(url, data=payload, method='POST', headers={
+              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              if response.status != 204:
+                  raise RuntimeError('Quality Gate dispatch returned status ' + str(response.status))
+          print('PASS: full cross-platform Quality Gate dispatched for validated HEAD')
+          PY
