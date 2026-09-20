@@ -444,6 +444,7 @@ public partial class FramePreviewViewModel
                     promotedMask = CloneBitmap(sourceMask);
 
                 bool commitStarted = false;
+                bool retainedExistingTrack = false;
                 try
                 {
                     lock (_manualTrackingCommitGate)
@@ -465,9 +466,12 @@ public partial class FramePreviewViewModel
                     // The in-memory manual source can be retried on the next save.
                     await persistWorkspace().ConfigureAwait(true);
 
-                    ManualMaskKeyframeTimeline.SetTrackSegment(
+                    retainedExistingTrack = ManualMaskKeyframeTimeline.SetTrackSegment(
                         provider,
                         result.Segment);
+                    if (retainedExistingTrack)
+                        ManualTrackingStatusText =
+                            "재추적이 기존 검증 구간보다 짧아 이전 추적 결과를 유지했습니다.";
                 }
                 finally
                 {
@@ -480,6 +484,9 @@ public partial class FramePreviewViewModel
                 }
             }
 
+            bool retainedPreviousCoverage = result.ProcessedFrames > 0 &&
+                ManualMaskKeyframeTimeline.HasLongerCurrentSegment(
+                    provider, result.Segment);
             if (result.Segment.StoppedByFailure)
             {
                 if (expectedFrames > 0)
@@ -509,6 +516,8 @@ public partial class FramePreviewViewModel
                     ? $"추적 완료: {sourceFrame} → {lastFrame} 프레임."
                     : "추적할 다음 프레임이 없어 타임라인을 변경하지 않았습니다.";
             }
+            if (retainedPreviousCoverage)
+                ManualTrackingStatusText += " 이전에 검증된 더 긴 추적 구간은 유지됩니다.";
         }
         catch (OperationCanceledException) when (trackingCts.IsCancellationRequested)
         {

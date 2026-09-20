@@ -5,6 +5,8 @@ using Avalonia.Platform;
 using Avalonia.Skia;
 using FaceShield.Services.Video;
 using System;
+using System.Collections.Generic;
+using System.IO;
 
 AppBuilder.Configure<MaskLayerRegressionApp>()
     .UseSkia()
@@ -147,6 +149,91 @@ using (var cache = new ManualPreviewCompositeCache())
     Assert(!ReferenceEquals(rebuilt, nextFrame),
         "Switching frames retained a stale cached bitmap");
 }
+
+// A new retry must never truncate already verified frames from the same
+// unchanged manual source, including in the export snapshot and on disk.
+string retryVideo = Path.GetTempFileName();
+try
+{
+    using var retryProvider = new FrameMaskProvider();
+    var source = new WriteableBitmap(size, new Vector(96, 96),
+        PixelFormat.Bgra8888, AlphaFormat.Premul);
+    PaintRect(source, 60, 30, 12, 12, 255);
+    retryProvider.SetIndependentManualMask(42, source);
+    ManualMaskKeyframeTimeline.Configure(retryProvider, enabled: true, videoPath: retryVideo);
+    Assert(retryProvider.TryCloneStoredMask(42, out var sourceCopy),
+        "Missing manual source for retry regression");
+    string fingerprint;
+    using (sourceCopy)
+        fingerprint = ManualMaskFingerprint.Compute(sourceCopy);
+
+    ManualMaskTrackSegment MakeSegment(int frames, double offsetX = 0, bool failed = false)
+    {
+        var component = new ManualMaskTrackComponent
+        {
+            ComponentIndex = 0,
+            SourceBoundsX = 60, SourceBoundsY = 30,
+            SourceBoundsWidth = 12, SourceBoundsHeight = 12,
+            Samples = new List<ManualMaskTrackSample>()
+        };
+        for (int frameIndex = 43; frameIndex <= 42 + frames; frameIndex++)
+            component.Samples.Add(new ManualMaskTrackSample
+            {
+                FrameIndex = frameIndex,
+                OffsetX = offsetX, OffsetY = 0,
+                Scale = 1, Confidence = 0.9
+            });
+        return new ManualMaskTrackSegment
+        {
+            SourceKeyframe = 42,
+            SourceMaskFingerprint = fingerprint,
+            EndExclusive = 43 + frames,
+            StoppedByFailure = failed,
+            StopFrame = failed ? 43 + frames : null,
+            StopReason = failed ? "synthetic retry failure" : null,
+            Components = new List<ManualMaskTrackComponent> { component }
+        };
+    }
+
+    Assert(!ManualMaskKeyframeTimeline.SetTrackSegment(retryProvider, MakeSegment(3)),
+        "Initial validated interval was not saved");
+    Assert(ManualMaskKeyframeTimeline.SetTrackSegment(retryProvider,
+            MakeSegment(1, failed: true)),
+        "An early-failing retry erased an existing longer track");
+    Assert(ManualMaskKeyframeTimeline.HasLongerCurrentSegment(retryProvider, MakeSegment(1)),
+        "UI did not recognize preserved verified coverage");
+    Assert(ManualMaskKeyframeTimeline.TryCloneEffectiveManualMask(retryProvider, 45,
+            out var retainedMask), "Preview lost the previously verified tail");
+    using (retainedMask)
+        Assert(AlphaAt(retainedMask, 64, 34) == 255,
+            "Previously verified tail was replaced by a shorter retry");
+    using (var exportLease = ManualMaskKeyframeTimeline.CreateExportMaskLease(retryProvider))
+    using (var exported = exportLease.Provider.GetFinalMask(45)
+           ?? throw new InvalidOperationException("Export lost verified tail"))
+        Assert(AlphaAt(exported, 64, 34) == 255,
+            "Export snapshot lost the previously verified tail");
+    Assert(ManualMaskTrackStore.LoadForExport(retryVideo).Single().EndExclusive == 46,
+        "Short retry truncated persisted verified tail");
+    Assert(ManualMaskKeyframeTimeline.SetTrackSegment(retryProvider,
+            MakeSegment(3, failed: true)),
+        "An equally long failed retry downgraded a successful track");
+    Assert(!ManualMaskKeyframeTimeline.SetTrackSegment(retryProvider,
+            MakeSegment(3, offsetX: 20)),
+        "An equally long successful retry could not replace its predecessor");
+    Assert(ManualMaskKeyframeTimeline.TryCloneEffectiveManualMask(retryProvider, 45,
+            out var updatedMask), "Successful retrack was not applied");
+    using (updatedMask)
+        Assert(AlphaAt(updatedMask, 84, 34) == 255 && AlphaAt(updatedMask, 64, 34) == 0,
+            "Successful full-length retrack did not replace the previous motion");
+    Assert(ManualMaskTrackStore.LoadForExport(retryVideo).Single()
+        .Components[0].Samples[^1].OffsetX == 20,
+        "Successful full-length retrack was not persisted");
+}
+finally
+{
+    File.Delete(retryVideo);
+}
+Console.WriteLine("PASS: shorter/failed retracks preserve verified preview/export/disk tail; full retry replaces it");
 
 Console.WriteLine("PASS: cached preview reuses dirty regions and invalidates on Auto/frame change");
 

@@ -41,3 +41,11 @@ Auto masks and manually selected masks must remain independently owned. A manual
 ## Actions organization
 
 `quality-gate.yml` runs Windows/macOS CI on code changes and cancels superseded development-branch runs; documentation-only pushes are excluded. Windows/macOS packaging workflows remain manual (`workflow_dispatch`). The temporary write-enabled editor and preview-cache verification workflows and their patch scripts were deleted by their successful runs; neither remains in branch HEAD.
+
+
+## Change log — 2026-09-20: preserve verified tracking on retry
+
+- **Why:** `ManualMaskKeyframeTimeline.SetTrackSegment` previously unconditionally replaced a segment with the same source frame. A shorter or early-failing retry could silently erase already verified later frames in preview, export and the persisted tracking JSON.
+- **What:** Preserve a longer, still-current track when the new candidate has the same source fingerprint but a shorter interval; also preserve a successful interval over an equally long failed retry. Different-source or equally long successful retries may replace the prior track. Surface a retention message in the tracking status. This protects the existing single-global-keyframe workflow; it does not add per-target IDs.
+- **Tests:** Headless application regression now checks early failure, shorter interval, preview, export snapshot, persisted state, an equally long failed retry and a successful full-length retrack. Run: https://github.com/doanythingK/FaceShield_/actions/runs/35489538971 (the one-shot integration; complete cross-platform Quality Gate must be verified separately).
+- **Remaining:** No per-face target identity/selection or independent same-target correction boundaries, no real-face tracking accuracy benchmark and no packaged GUI/export parity test.

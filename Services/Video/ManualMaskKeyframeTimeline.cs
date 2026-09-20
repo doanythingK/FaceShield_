@@ -95,7 +95,7 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    internal static void SetTrackSegment(FrameMaskProvider provider, ManualMaskTrackSegment segment)
+    internal static bool SetTrackSegment(FrameMaskProvider provider, ManualMaskTrackSegment segment)
     {
         if (provider == null) throw new ArgumentNullException(nameof(provider));
         if (segment == null) throw new ArgumentNullException(nameof(segment));
@@ -106,13 +106,45 @@ internal static class ManualMaskKeyframeTimeline
         TimelineState state = States.GetValue(provider, static _ => new TimelineState());
         lock (state.Gate)
         {
-            var next = state.Segments.Where(existing => existing.SourceKeyframe != segment.SourceKeyframe)
-                .Select(static existing => existing.Clone()).ToList();
+            ManualMaskTrackSegment? existing = state.Segments.FirstOrDefault(candidate =>
+                candidate.SourceKeyframe == segment.SourceKeyframe);
+            // A shorter retry (including a one-frame check or an early failure)
+            // cannot erase a longer, still-current verified interval. A changed
+            // source fingerprint never qualifies for preservation. An equally
+            // long failed retry cannot downgrade an already successful interval.
+            if (existing != null &&
+                string.Equals(existing.SourceMaskFingerprint,
+                    segment.SourceMaskFingerprint, StringComparison.Ordinal) &&
+                IsSegmentCurrentLocked(provider, state, existing) &&
+                (existing.EndExclusive > segment.EndExclusive ||
+                 (existing.EndExclusive == segment.EndExclusive &&
+                  !existing.StoppedByFailure && segment.StoppedByFailure)))
+                return true;
+
+            var next = state.Segments.Where(candidate => candidate.SourceKeyframe != segment.SourceKeyframe)
+                .Select(static candidate => candidate.Clone()).ToList();
             next.Add(segment.Clone());
             next.Sort(static (a, b) => a.SourceKeyframe.CompareTo(b.SourceKeyframe));
             PersistSegmentsLocked(state, next);
             state.Segments = next;
             state.SegmentValidity[segment.SourceKeyframe] = true;
+            return false;
+        }
+    }
+
+    internal static bool HasLongerCurrentSegment(
+        FrameMaskProvider provider, ManualMaskTrackSegment candidate)
+    {
+        if (!States.TryGetValue(provider, out TimelineState? state)) return false;
+        lock (state.Gate)
+        {
+            ManualMaskTrackSegment? existing = state.Segments.FirstOrDefault(segment =>
+                segment.SourceKeyframe == candidate.SourceKeyframe);
+            return existing != null &&
+                existing.EndExclusive > candidate.EndExclusive &&
+                string.Equals(existing.SourceMaskFingerprint,
+                    candidate.SourceMaskFingerprint, StringComparison.Ordinal) &&
+                IsSegmentCurrentLocked(provider, state, existing);
         }
     }
 
