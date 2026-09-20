@@ -26,6 +26,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private WriteableBitmap? _blurredFrame;
     private WriteableBitmap? _blurredSource;
     private int _blurredRadius;
+    private readonly ManualPreviewCompositeCache _manualPreviewCache = new();
 
     private VideoSession? _session;
     private bool _useManualPlayer;
@@ -160,6 +161,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (ReferenceEquals(_previewBitmap, _frameBitmap))
             SetPreviewBitmap(null, ownsBitmap: false);
 
+        _manualPreviewCache.Reset();
         ResetBlurredFrame();
     }
 
@@ -416,59 +418,51 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             provider.TryGetFaceMaskData(_currentFrameIndex, out var data))
             faces = data.Faces;
 
-        // The editable mask is manual-only in manual-keyframe workspaces. Auto
-        // is merged into a disposable PREVIEW bitmap, never into editable state.
-        // This preserves a user-painted manual pixel even if Auto overlaps it.
-        WriteableBitmap? previewComposite = null;
-        try
+        // Editable pixels remain manual-only. Reuse this frame's Auto raster and
+        // preview union; brush updates touch only the changed rectangle.
+        Rect? dirtyRect = null;
+        if (!force && _hasDirtyRegion)
+            dirtyRect = new Rect(_dirtyX0, _dirtyY0,
+                Math.Max(0, _dirtyX1 - _dirtyX0 + 1),
+                Math.Max(0, _dirtyY1 - _dirtyY0 + 1));
+
+        WriteableBitmap previewMask = _maskBitmap;
+        if (_manualMaskKeyframesEnabled &&
+            _maskProvider is FrameMaskProvider manualProvider &&
+            _currentFrameIndex >= 0 &&
+            manualProvider.TryGetFaceMaskData(_currentFrameIndex, out var automatic) &&
+            automatic.Faces.Count > 0)
         {
-            WriteableBitmap previewMask = _maskBitmap;
-            if (_manualMaskKeyframesEnabled &&
-                _maskProvider is FrameMaskProvider manualProvider &&
-                _currentFrameIndex >= 0 &&
-                manualProvider.TryGetFaceMaskData(_currentFrameIndex, out var automatic) &&
-                automatic.Faces.Count > 0)
-            {
-                previewComposite = ManualMaskEditorLayer.ComposeWithAutomatic(
-                    _maskBitmap, automatic);
-                previewMask = previewComposite;
-            }
-
-            if (_manualMaskKeyframesEnabled || faces == null || faces.Count == 0 || _isDrawing)
-            {
-                EnsureBlurredFrame();
-                Rect? dirtyRect = null;
-                if (!force && _hasDirtyRegion)
-                {
-                    dirtyRect = new Rect(
-                        _dirtyX0,
-                        _dirtyY0,
-                        Math.Max(0, _dirtyX1 - _dirtyX0 + 1),
-                        Math.Max(0, _dirtyY1 - _dirtyY0 + 1));
-                }
-
-                var preview = PreviewBlurProcessor.ComposeMaskedPreview(
-                    _frameBitmap,
-                    _blurredFrame!,
-                    previewMask,
-                    _ownsPreviewBitmap ? _previewBitmap : null,
-                    dirtyRect);
-                SetPreviewBitmap(preview, ownsBitmap: true);
-            }
-            else
-            {
-                SetPreviewBitmap(
-                    PreviewBlurProcessor.CreateBlurPreview(
-                        _frameBitmap, previewMask, PreviewBlurRadius, faces),
-                    ownsBitmap: true);
-            }
-
-            _hasDirtyRegion = false;
+            previewMask = _manualPreviewCache.Compose(
+                _maskBitmap, automatic, _currentFrameIndex, dirtyRect);
+            if (_manualPreviewCache.LastComposeWasFullUpdate)
+                dirtyRect = null;
         }
-        finally
+        else
         {
-            previewComposite?.Dispose();
+            _manualPreviewCache.Reset();
         }
+
+        if (_manualMaskKeyframesEnabled || faces == null || faces.Count == 0 || _isDrawing)
+        {
+            EnsureBlurredFrame();
+            var preview = PreviewBlurProcessor.ComposeMaskedPreview(
+                _frameBitmap,
+                _blurredFrame!,
+                previewMask,
+                _ownsPreviewBitmap ? _previewBitmap : null,
+                dirtyRect);
+            SetPreviewBitmap(preview, ownsBitmap: true);
+        }
+        else
+        {
+            SetPreviewBitmap(
+                PreviewBlurProcessor.CreateBlurPreview(
+                    _frameBitmap, previewMask, PreviewBlurRadius, faces),
+                ownsBitmap: true);
+        }
+
+        _hasDirtyRegion = false;
     }
 
     private void EnsureBlurredFrame()
@@ -614,6 +608,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         CancelManualFrameLoad();
+        _manualPreviewCache.Reset();
         PreviewBlurProcessor.ReleaseCachedRenderer();
         _session?.Dispose();
         _session = session;
@@ -1845,6 +1840,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         SetPreviewBitmap(null, ownsBitmap: false);
+        _manualPreviewCache.Reset();
         ResetBlurredFrame();
         FrameBitmap = null;
         MaskBitmap = null;

@@ -110,6 +110,46 @@ using (var finalOverlap = provider.GetFinalMask(overlappingFrame)
         "Updated Auto face vanished when manual overlap was preserved");
 }
 
+// The production preview cache must preserve an overlapping manual stroke,
+// reuse the same bitmap during brush movement, and invalidate on Auto changes.
+const int cachedFrame = 27;
+provider.SetFaceRects(cachedFrame, new[] { autoFace }, size);
+using (var editable = ManualMaskEditorLayer.CreateEditableMask(provider, cachedFrame, size))
+using (var cache = new ManualPreviewCompositeCache())
+{
+    PaintRect(editable, 112, 28, 24, 24, 255);
+    Assert(provider.TryGetFaceMaskData(cachedFrame, out var originalAuto),
+        "Missing Auto layer for preview-cache test");
+    var initial = cache.Compose(editable, originalAuto, cachedFrame);
+    Assert(AlphaAt(initial, 40, 38) > 0 && AlphaAt(initial, 120, 36) == 255,
+        "Initial cached preview lost Auto or manual pixels");
+    PaintRect(editable, 32, 36, 6, 6, 255);
+    var reused = cache.Compose(editable, originalAuto, cachedFrame,
+        new Rect(32, 36, 6, 6));
+    Assert(ReferenceEquals(initial, reused),
+        "Brush movement allocated a new preview composite");
+    Assert(AlphaAt(reused, 34, 38) == 255 && AlphaAt(reused, 120, 36) == 255,
+        "Dirty preview update lost an overlapping or unchanged manual pixel");
+    provider.SetFaceRects(cachedFrame, new[] { new Rect(54, 20, 26, 26) }, size);
+    Assert(provider.TryGetFaceMaskData(cachedFrame, out var movedAuto),
+        "Missing updated Auto layer for preview-cache test");
+    var rebuilt = cache.Compose(editable, movedAuto, cachedFrame,
+        new Rect(32, 36, 6, 6));
+    Assert(!ReferenceEquals(initial, rebuilt) && cache.LastComposeWasFullUpdate,
+        "Changing Auto did not invalidate the cached preview and require a full redraw");
+    Assert(AlphaAt(rebuilt, 34, 38) == 255 && AlphaAt(rebuilt, 40, 38) == 0 &&
+           AlphaAt(rebuilt, 66, 32) > 0 && AlphaAt(rebuilt, 120, 36) == 255,
+        "Auto relocation lost an overlapping manual pixel or retained stale Auto pixels");
+    Assert(AlphaAt(editable, 40, 38) == 0 && AlphaAt(editable, 34, 38) == 255,
+        "Preview cache mutated the editable manual layer");
+    var nextFrame = cache.Compose(editable, movedAuto, cachedFrame + 1,
+        new Rect(32, 36, 6, 6));
+    Assert(!ReferenceEquals(rebuilt, nextFrame),
+        "Switching frames retained a stale cached bitmap");
+}
+
+Console.WriteLine("PASS: cached preview reuses dirty regions and invalidates on Auto/frame change");
+
 Console.WriteLine("PASS: legacy residual and manual-only editor retain Auto/manual alpha, including overlap and Auto relocation");
 
 static void PaintRect(WriteableBitmap mask, int x0, int y0, int w, int h, byte alpha)

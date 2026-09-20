@@ -20,7 +20,7 @@ editor_view="$repo_root/ViewModels/Workspace/FramePreviewViewModel.cs"
 keyframe_view="$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualKeyframes.cs"
 for connection in \
     'ManualMaskEditorLayer.CreateEditableMask(' \
-    'ManualMaskEditorLayer.ComposeWithAutomatic(' \
+    '_manualPreviewCache.Compose(' \
     'manualProvider.SetIndependentManualMask('; do
     if ! grep -Fq "$connection" "$editor_view"; then
         echo "ERROR: manual-only editor connection missing: $connection" >&2
@@ -29,6 +29,10 @@ for connection in \
 done
 if ! grep -Fq 'ManualMaskKeyframeTimeline.TryCloneEffectiveManualMask(' "$keyframe_view"; then
     echo 'ERROR: inherited editable mask must resolve the manual-only layer' >&2
+    exit 1
+fi
+if ! grep -Fq '_manualPreviewCache.Compose(' "$editor_view"; then
+    echo 'ERROR: manual preview cache is not wired to the editor' >&2
     exit 1
 fi
 echo 'PASS: editor stores manual-only alpha and composites Auto only for preview'
