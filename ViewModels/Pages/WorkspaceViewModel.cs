@@ -583,7 +583,7 @@ namespace FaceShield.ViewModels.Pages
             IssueReviewStateSnapshot state = _issueReview.CreateStateSnapshot();
             FrameList.NoFaceIssueFrames = state.NoFaceFrames;
             FrameList.LowConfidenceIssueFrames = state.LowConfidenceFrames;
-            FrameList.FlickerIssueFrames = state.FlickerIssues;
+            FrameList.FlickerIssueFrames = state.FlickerFrames;
             AutoAnomalyCount = state.Anomalies.Length;
             HasAutoAnomalies = state.Anomalies.Length > 0;
         }
