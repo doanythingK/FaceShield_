@@ -47,11 +47,12 @@ internal static class ManualOverlayTargetTrackingService
             !(attempted.Segment.StoppedByFailure && attempted.Segment.Components.Count > 0))
             return attempted;
 
-        // The workspace rechecks the individual target's source fingerprint
-        // and correction boundary after decoding. It may retain a longer,
-        // already persisted run rather than accepting a shorter retry.
+        // Once SetTrackSegment changes the live workspace, do not check
+        // cancellation between that mutation and Save(). Otherwise a late
+        // cancellation leaves preview using an unpersisted track while export
+        // reloads the older document. Cancellation remains effective before
+        // this short, non-cancellable commit section.
         bool retainedPrevious = workspace.SetTrackSegment(targetId, attempted.Segment);
-        cancellationToken.ThrowIfCancellationRequested();
         workspace.Save();
         if (!retainedPrevious)
             return attempted;
