@@ -14,14 +14,23 @@ public partial class FramePreviewViewModel
     // Called before switching faces. Snapshot arrays are owned by the undo
     // stack; moving them between contexts preserves the original per-frame
     // undo semantics without copying full-resolution masks yet again.
-    internal void PreserveManualTargetUndo()
+    // Playback and frame-refresh can clear the shared stack AFTER its archive
+    // has been saved. An empty incidental snapshot must not erase that archive.
+    internal void PreserveManualTargetUndo(bool clearWhenEmpty = false)
     {
         if (_selectedManualTarget == null || _currentFrameIndex < 0)
             return;
         var key = (_selectedManualTarget.Id, _currentFrameIndex);
-        RemoveArchivedUndo(key);
         byte[][] snapshots = _maskUndo.ToArray(); // newest first
-        if (snapshots.Length == 0) return;
+        if (snapshots.Length == 0)
+        {
+            // A completed user Undo that exhausted the stack is different
+            // from a playback/refresh that cleared the shared stack.
+            if (clearWhenEmpty)
+                RemoveArchivedUndo(key);
+            return;
+        }
+        RemoveArchivedUndo(key);
         long bytes = snapshots.Sum(static snapshot => (long)snapshot.Length);
         if (bytes > ManualTargetUndoBudgetBytes) return;
         while (_manualTargetUndoBytes + bytes > ManualTargetUndoBudgetBytes &&
