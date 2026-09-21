@@ -9,10 +9,9 @@ using System.Threading;
 namespace FaceShield.Services.Video;
 
 /// <summary>
-/// Target-aware entry point to the existing video motion tracker. The tracked
-/// source is one target's explicitly confirmed mask, never a global union or
-/// an unrelated Auto detection. The target workspace owns the saved samples.
-/// This service is not yet invoked by the existing GUI tracking command.
+/// Tracks one explicitly selected manual target, never a global union or Auto
+/// detection. Reports the segment that actually remains in the workspace when
+/// a shorter or failed retry is discarded.
 /// </summary>
 internal static class ManualOverlayTargetTrackingService
 {
@@ -30,33 +29,45 @@ internal static class ManualOverlayTargetTrackingService
             throw new ArgumentException("A tracking video path is required.", nameof(videoPath));
         cancellationToken.ThrowIfCancellationRequested();
 
-        // NextBoundaryExclusive refuses an inherited result or a keyframe from
-        // a different target; the same target's next correction is the only
-        // manual upper bound. Zero/unknown totalFrames means decoder EOF.
         int endExclusive = workspace.NextBoundaryExclusive(targetId, sourceFrame, totalFrames);
         if (!workspace.TryResolveTargetMask(targetId, sourceFrame,
                 out ManualOverlayStoredKeyframe source) || source.FrameIndex != sourceFrame)
             throw new InvalidOperationException("The selected target has no explicit source mask.");
+        if (Array.TrueForAll(source.Alpha, static value => value == 0))
+            throw new InvalidOperationException("Cannot track an explicitly absent manual face.");
 
         string fingerprint = workspace.GetSourceFingerprint(targetId, sourceFrame);
         using WriteableBitmap sourceBitmap = CreateSourceBitmap(source);
-        ManualMaskTrackResult result = ManualMaskTrackingService.TrackForward(
+        ManualMaskTrackResult attempted = ManualMaskTrackingService.TrackForward(
             videoPath, sourceFrame, endExclusive, sourceBitmap, progress, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        // A target fingerprint identifies the original alpha and dimensions;
-        // it must not reuse the global bitmap/Auto-composite fingerprint.
-        result.Segment.SourceMaskFingerprint = fingerprint;
-        if (result.ProcessedFrames > 0 ||
-            (result.Segment.StoppedByFailure && result.Segment.Components.Count > 0))
+        attempted.Segment.SourceMaskFingerprint = fingerprint;
+        if (attempted.ProcessedFrames <= 0 &&
+            !(attempted.Segment.StoppedByFailure && attempted.Segment.Components.Count > 0))
+            return attempted;
+
+        // The workspace rechecks the individual target's source fingerprint
+        // and correction boundary after decoding. It may retain a longer,
+        // already persisted run rather than accepting a shorter retry.
+        bool retainedPrevious = workspace.SetTrackSegment(targetId, attempted.Segment);
+        cancellationToken.ThrowIfCancellationRequested();
+        workspace.Save();
+        if (!retainedPrevious)
+            return attempted;
+
+        if (!workspace.TryGetTrackSegment(targetId, sourceFrame,
+                out ManualMaskTrackSegment effective) ||
+            !string.Equals(effective.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal))
+            throw new InvalidDataException("Retained target tracking state changed unexpectedly.");
+
+        // Do not show the rejected attempt's shorter frame count or failure
+        // as though it were the currently saved interval.
+        return attempted with
         {
-            // The workspace rejects corrections inserted while decoding by
-            // checking the exact source fingerprint and same-target boundary.
-            workspace.SetTrackSegment(targetId, result.Segment);
-            cancellationToken.ThrowIfCancellationRequested();
-            workspace.Save();
-        }
-        return result;
+            Segment = effective,
+            ProcessedFrames = Math.Max(0, effective.EndExclusive - sourceFrame - 1)
+        };
     }
 
     private static WriteableBitmap CreateSourceBitmap(ManualOverlayStoredKeyframe source)
