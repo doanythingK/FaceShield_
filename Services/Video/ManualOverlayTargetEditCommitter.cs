@@ -9,8 +9,8 @@ namespace FaceShield.Services.Video;
 /// Publishes an explicit correction only after the complete target document
 /// has been atomically replaced. A failed write must not invalidate the live
 /// verified track or make an unsaved keyframe appear persisted in the preview.
-/// Committers for this workspace lock the same workspace instance. This is
-/// in-process serialization, NOT a cross-process filesystem transaction.
+/// Committers for this workspace lock the same workspace instance; the store
+/// separately checks for another committed writer before replacing the file.
 /// </summary>
 internal static class ManualOverlayTargetEditCommitter
 {
@@ -26,9 +26,7 @@ internal static class ManualOverlayTargetEditCommitter
         ArgumentNullException.ThrowIfNull(correction);
 
         // Tracking and correction both use this instance as their commit gate.
-        // Keep snapshot, atomic disk replacement and live publication together;
-        // otherwise a concurrent in-process retrack can overwrite a correction
-        // based on a stale snapshot between SaveForVideo and SetExplicitKeyframe.
+        // Keep snapshot, disk replacement and live publication together.
         lock (workspace)
         {
             IReadOnlyList<ManualOverlayStoredTarget> snapshot = workspace.Snapshot();
@@ -69,9 +67,11 @@ internal static class ManualOverlayTargetEditCommitter
                 return new ManualOverlayStoredTarget(target.Id, keyframes, tracks);
             }).ToArray();
 
-            // SaveForVideo validates the complete candidate. A failed write
-            // leaves the original workspace and the editor's dirty flag intact.
-            ManualOverlayWorkspaceStore.SaveForVideo(videoPath, staged);
+            // Compare against the on-disk snapshot under a per-file lock.
+            // A conflicting writer now fails closed without clearing dirty
+            // pixels or changing this workspace's existing verified segments.
+            ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(
+                videoPath, snapshot, staged);
             workspace.SetExplicitKeyframe(targetId, correction);
         }
     }
