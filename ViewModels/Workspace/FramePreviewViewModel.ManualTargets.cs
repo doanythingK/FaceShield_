@@ -97,8 +97,14 @@ public partial class FramePreviewViewModel
             return;
         CommitSelectedManualTargetEdit();
         PreserveManualTargetUndo();
-        Guid id = _manualTargets.CreateTarget();
-        _manualTargets.Save();
+        // Creating on the live workspace first could leave an unsaved ghost
+        // target/selection when the file write fails. Prepare a detached copy
+        // from the just-saved target document, persist it, then adopt it.
+        ManualOverlayTargetWorkspace staged = ManualOverlayTargetWorkspace.Open(
+            _manualTargetsVideoPath ?? throw new InvalidOperationException("Manual target video path is missing."));
+        Guid id = staged.CreateTarget();
+        staged.Save();
+        _manualTargets = staged;
         ManualTargetChoice choice = new(id, $"수동 얼굴 {ManualTargetChoices.Count + 1}");
         ManualTargetChoices.Add(choice);
         _selectedManualTarget = choice;
@@ -279,7 +285,7 @@ public partial class FramePreviewViewModel
         byte[] alpha = new byte[checked(width * height)];
         for (int y = 0; y < height; y++)
             for (int x = 0; x < width; x++)
-                alpha[y * width + x] = bgra[y * rowBytes + x * 4 + 3];
+                alpha[y * rowBytes + x] = bgra[y * rowBytes + x * 4 + 3];
         return alpha;
     }
 
@@ -382,7 +388,9 @@ public partial class FramePreviewViewModel
                 ManualOverlayTargetTrackingService.TrackForward(
                     _manualTargetsVideoPath!, _manualTargets, targetId, sourceFrame,
                     _manualTrackingTotalFrames, progress, cts.Token), cts.Token);
-            cts.Token.ThrowIfCancellationRequested();
+            // TrackForward may have already persisted its result before a late
+            // cancel request. Report that committed result rather than throwing
+            // here and falsely telling the user that nothing was saved.
             ManualTrackingProgress = result.Segment.StoppedByFailure ? ManualTrackingProgress : 100;
             ManualTrackingStatusText = result.Segment.StoppedByFailure
                 ? $"수동 얼굴 추적 중단: {result.Segment.StopFrame} 프레임. {result.Segment.StopReason} 해당 얼굴을 보정하고 이어서 추적하세요."
