@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using FaceShield.Services.Analysis;
 using FaceShield.Services.Diagnostics;
 using FaceShield.Services.Video;
@@ -62,6 +63,21 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         {
             entered = await _gate.WaitAsync(0);
             if (!entered) return false;
+
+            // ExportAsync is also called without ToolPanel.Save (including the
+            // Auto/export pipeline). Commit face-owned edits at the actual
+            // export entry point before taking the export mask snapshot.
+            Func<bool>? pendingTargetGuard = _toolPanel.ManualTargetExportGuard;
+            if (pendingTargetGuard != null)
+            {
+                bool committed = Dispatcher.UIThread.CheckAccess()
+                    ? pendingTargetGuard()
+                    : await Dispatcher.UIThread.InvokeAsync(pendingTargetGuard);
+                if (!committed)
+                    throw new IOException(
+                        "수동 얼굴 마스크를 저장하지 못해 내보내기를 중단했습니다. 편집 내용을 보존한 상태에서 저장 오류를 확인하세요.");
+            }
+
             return await ExportCoreAsync(input, blurRadius, exportProgress, cancellationToken,
                 updateToolPanel, runId, autoRunSummary, autoRunOptions, qualityPreset);
         }
