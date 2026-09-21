@@ -43,7 +43,7 @@ public partial class FramePreviewViewModel
     private void OnManualTargetUndoCompletedArchiveUndo()
     {
         if (!_disposed && _selectedManualTarget != null)
-            PreserveManualTargetUndo();
+            PreserveManualTargetUndo(clearWhenEmpty: true);
     }
 
     private void OnManualTargetAutoLifecycleChanged(object? sender, PropertyChangedEventArgs e)
