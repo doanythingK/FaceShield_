@@ -1,0 +1,76 @@
+// Synthetic regression source for the existing temporary C# regression harness.
+// NOT EXECUTED as of 2026-09-21 (builds/tests deferred by request).
+// No private footage or application GUI is required.
+using FaceShield.Services.Video;
+using System;
+using System.IO;
+using System.Linq;
+
+string directory = Path.Combine(Path.GetTempPath(),
+    "faceshield-overlay-conflict-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+try
+{
+    string video = Path.Combine(directory, "source.mp4");
+    File.WriteAllBytes(video, new byte[] { 1, 2, 3, 4 });
+    string state = ManualOverlayWorkspaceStore.GetPathForVideo(video, directory);
+    Guid faceA = Guid.NewGuid(), faceB = Guid.NewGuid();
+    ManualOverlayStoredTarget a0 = Face(faceA, 255);
+    ManualOverlayStoredTarget b0 = Face(faceB, 100);
+    ManualOverlayWorkspaceStore.SaveForVideo(video, new[] { a0, b0 }, directory);
+    var staleSnapshot = ManualOverlayWorkspaceStore.LoadForVideo(video, directory);
+
+    // Writer 1 changes A without touching B.
+    ManualOverlayStoredTarget a1 = Face(faceA, 180);
+    ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(video,
+        staleSnapshot, new[] { a1, b0 }, directory);
+    byte[] committed = File.ReadAllBytes(state);
+
+    // Writer 2 started from the old document: even a different-face edit
+    // must not silently replace writer 1's A correction.
+    Expect<IOException>(() => ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(
+        video, staleSnapshot, new[] { a0, Face(faceB, 40) }, directory),
+        "Stale writer overwrote another face's correction");
+    Assert(File.ReadAllBytes(state).SequenceEqual(committed),
+        "A rejected conflict modified the target state on disk");
+
+    // Legacy direct SaveForVideo may seed, but cannot overwrite nonempty state.
+    Expect<IOException>(() => ManualOverlayWorkspaceStore.SaveForVideo(
+        video, new[] { a0, Face(faceB, 40) }, directory),
+        "Legacy save overwrote an existing target document");
+    Assert(File.ReadAllBytes(state).SequenceEqual(committed),
+        "Legacy save failure modified an existing target document");
+
+    // A duplicate already-applied request is idempotent, including when its
+    // original expected snapshot predates the successful first commit.
+    ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(video,
+        staleSnapshot, new[] { a1, b0 }, directory);
+    ManualOverlayWorkspaceStore.SaveForVideo(video, new[] { a1, b0 }, directory);
+    Assert(File.ReadAllBytes(state).SequenceEqual(committed),
+        "Idempotent repeat unexpectedly rewrote the target document");
+    var final = ManualOverlayWorkspaceStore.LoadForVideo(video, directory);
+    Assert(final.Single(x => x.Id == faceA).Keyframes.Single().Alpha[0] == 180 &&
+           final.Single(x => x.Id == faceB).Keyframes.Single().Alpha[0] == 100,
+        "Independent face alpha was lost during a conflict");
+    Console.WriteLine("PASS: independent faces, stale-writer rejection, seed-only save, idempotent repeat");
+}
+finally
+{
+    Directory.Delete(directory, recursive: true);
+}
+
+static ManualOverlayStoredTarget Face(Guid id, byte alpha)
+    => new(id, new[] { new ManualOverlayStoredKeyframe(
+        0, 2, 2, new byte[] { alpha, 0, 0, 0 }) });
+
+static void Assert(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+
+static void Expect<T>(Action action, string message) where T : Exception
+{
+    try { action(); }
+    catch (T) { return; }
+    throw new InvalidOperationException(message);
+}
