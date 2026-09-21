@@ -88,9 +88,9 @@ namespace FaceShield.ViewModels.Workspace
             !IsExportRunning && !IsAutoRunning && !IsManualTracking &&
             !IsNavigationInProgress && !IsSaveOperationInProgress;
 
-        // Until the export coordinator actually consumes the target-aware
-        // provider, do not emit an apparently successful legacy-only video.
-        // The editor stores target keyframes independently before this guard.
+        // The manual workspace installs a target-owned pending-edit commit.
+        // Both Auto and Save must pass it before legacy/global frame persistence
+        // or editor refresh can occur. A failed commit blocks the command.
         internal Func<bool>? ManualTargetExportGuard { get; set; }
 
         partial void OnCurrentModeChanged(EditMode value)
@@ -138,7 +138,8 @@ namespace FaceShield.ViewModels.Workspace
         [RelayCommand]
         private void SetAuto()
         {
-            if (!CanEditWorkspace) return;
+            if (!CanEditWorkspace || ManualTargetExportGuard?.Invoke() == false)
+                return;
             EditMode previousMode = CurrentMode;
             CurrentMode = EditMode.Auto;
             AutoRequested?.Invoke(previousMode);
