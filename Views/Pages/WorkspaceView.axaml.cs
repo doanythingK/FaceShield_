@@ -128,7 +128,26 @@ public partial class WorkspaceView : UserControl
                 return;
             }
             workspace.FramePreview.PreserveManualTargetUndo();
-            workspace.FramePreview.CreateManualTargetCommand.Execute(null);
+            Guid? previousId = workspace.FramePreview.SelectedManualTarget?.Id;
+            try
+            {
+                workspace.FramePreview.CreateManualTargetCommand.Execute(null);
+            }
+            catch (Exception ex)
+            {
+                // Staged creation has not replaced the live workspace on a
+                // failed write. Keep the picker on its original face and show
+                // the failure instead of throwing from an Avalonia click event.
+                workspace.FramePreview.ReportManualTargetFailure("새 얼굴 생성", ex);
+                SyncManualTargetControls();
+                return;
+            }
+            if (workspace.FramePreview.SelectedManualTarget?.Id == previousId)
+            {
+                // A gated/no-op command must not invalidate current Undo.
+                SyncManualTargetControls();
+                return;
+            }
             workspace.FramePreview.PersistManualTargetSelection();
             _restoredUndoContext = null;
             workspace.FramePreview.RestoreManualTargetUndo();
