@@ -12,7 +12,7 @@ namespace FaceShield.Services.Video;
 /// <summary>
 /// Tracks one explicitly selected manual target, never a global union or Auto
 /// detection. Reports the segment that actually remains in the workspace when
-/// a shorter or failed retry is discarded.
+/// a shorter, failed or zero-sample retry is discarded.
 /// </summary>
 internal static class ManualOverlayTargetTrackingService
 {
@@ -46,7 +46,20 @@ internal static class ManualOverlayTargetTrackingService
         attempted.Segment.SourceMaskFingerprint = fingerprint;
         if (attempted.ProcessedFrames <= 0 &&
             !(attempted.Segment.StoppedByFailure && attempted.Segment.Components.Count > 0))
+        {
+            // A tracker that cannot produce a usable component/next-frame
+            // sample has not replaced anything. Do not misreport its empty
+            // attempt when a same-source verified interval remains in memory.
+            if (workspace.TryGetTrackSegment(targetId, sourceFrame,
+                    out ManualMaskTrackSegment previous) &&
+                string.Equals(previous.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal))
+                return attempted with
+                {
+                    Segment = previous,
+                    ProcessedFrames = Math.Max(0, previous.EndExclusive - sourceFrame - 1)
+                };
             return attempted;
+        }
 
         // Take an independent copy and validate against the current source.
         // Do not mutate the live workspace before the atomic file replacement:
