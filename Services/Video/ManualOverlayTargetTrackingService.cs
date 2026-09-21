@@ -111,6 +111,7 @@ internal static class ManualOverlayTargetTrackingService
                 saved.EndExclusive != effective.EndExclusive ||
                 saved.StoppedByFailure != effective.StoppedByFailure)
                 throw new InvalidDataException("Persisted manual target track changed unexpectedly.");
+            workspace.RecordPersistedSnapshot(staged);
 
             if (!retainedOnLive)
                 return attempted;
