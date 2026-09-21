@@ -61,8 +61,6 @@ public partial class FramePreviewViewModel
             string.Equals(_manualTargetsVideoPath, videoPath, StringComparison.Ordinal))
             return;
 
-        // A source switch must never assign the previous video's face IDs to
-        // the new video. Invalid persisted data deliberately propagates.
         CommitSelectedManualTargetEdit();
         _manualTargets = ManualOverlayTargetWorkspace.Open(videoPath);
         _manualTargetsVideoPath = videoPath;
@@ -76,7 +74,6 @@ public partial class FramePreviewViewModel
         OnPropertyChanged(nameof(HasSelectedManualTarget));
         OnPropertyChanged(nameof(HasManualTargetWorkspace));
         OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
-
         if (!_manualTargetEventsAttached)
         {
             PropertyChanged += OnManualTargetPreviewPropertyChanged;
@@ -109,7 +106,8 @@ public partial class FramePreviewViewModel
         if (_manualTargets == null || _selectedManualTarget == null || _currentFrameIndex < 0)
             return false;
         return _manualTargets.Snapshot().Any(target => target.Id == _selectedManualTarget.Id &&
-            target.Keyframes.Any(keyframe => keyframe.FrameIndex == _currentFrameIndex));
+            target.Keyframes.Any(keyframe => keyframe.FrameIndex == _currentFrameIndex &&
+                keyframe.Alpha.Any(static alpha => alpha != 0)));
     }
 
     private void OnManualTargetPreviewPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -123,13 +121,9 @@ public partial class FramePreviewViewModel
             OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
         }
         else if (e.PropertyName == nameof(PreviewBitmap) && !_composingTargetPreview)
-        {
             ComposeTargetPreview();
-        }
         else if (e.PropertyName == nameof(CanTrackForward))
-        {
             OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
-        }
     }
 
     private void ReplaceEditorWithSelectedTarget()
@@ -152,9 +146,7 @@ public partial class FramePreviewViewModel
                 next = ToBitmap(mask);
             }
             else
-            {
                 next = CreateEmptyMask(_frameBitmap.PixelSize.Width, _frameBitmap.PixelSize.Height);
-            }
             MaskBitmap = next;
             _maskUndo.Clear();
             _maskDirty = false;
@@ -170,16 +162,14 @@ public partial class FramePreviewViewModel
 
     private void OnManualTargetMaskEdited(int frameIndex)
     {
-        if (_selectedManualTarget == null || frameIndex != _currentFrameIndex)
-            return;
-        CommitSelectedManualTargetEdit();
+        if (_selectedManualTarget != null && frameIndex == _currentFrameIndex)
+            CommitSelectedManualTargetEdit();
     }
 
     private void OnManualTargetUndoRequested()
     {
-        if (_selectedManualTarget == null || !_maskDirty)
-            return;
-        CommitSelectedManualTargetEdit();
+        if (_selectedManualTarget != null && _maskDirty)
+            CommitSelectedManualTargetEdit();
     }
 
     private void CommitSelectedManualTargetEdit()
@@ -187,15 +177,12 @@ public partial class FramePreviewViewModel
         if (!_maskDirty || _manualTargets == null ||
             _selectedManualTarget == null || _maskBitmap == null || _currentFrameIndex < 0)
             return;
-
         ManualOverlayStoredKeyframe correction = FromBitmap(_currentFrameIndex, _maskBitmap);
-        if (correction.Alpha.Any(static alpha => alpha != 0))
-            _manualTargets.SetExplicitKeyframe(_selectedManualTarget.Id, correction);
-        else
-            _manualTargets.RemoveExplicitKeyframe(_selectedManualTarget.Id, _currentFrameIndex);
+        // All-zero alpha is an EXPLICIT same-target absence boundary. Removing
+        // the keyframe would leave an earlier face's tracking interval open and
+        // make a known departure indistinguishable from missing evidence.
+        _manualTargets.SetExplicitKeyframe(_selectedManualTarget.Id, correction);
         _manualTargets.Save();
-        // Do not allow the legacy single-raster persistence path to overwrite
-        // another target's pixels with the selected face's editor bitmap.
         _maskDirty = false;
         _manualTrackingPendingSourceValidationFrame = -1;
         OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
@@ -209,7 +196,6 @@ public partial class FramePreviewViewModel
             _maskBitmap == null || _frameBitmap == null || _currentFrameIndex < 0 ||
             _maskBitmap.PixelSize != _frameBitmap.PixelSize)
             return;
-
         _composingTargetPreview = true;
         try
         {
@@ -233,7 +219,6 @@ public partial class FramePreviewViewModel
                     }
                 }
             }
-
             var layers = new System.Collections.Generic.List<ManualOverlayMask>();
             foreach (Guid id in _manualTargets.GetTargetIds())
             {
@@ -299,9 +284,8 @@ public partial class FramePreviewViewModel
     private static ManualOverlayStoredKeyframe FromBitmap(int frameIndex, WriteableBitmap bitmap)
     {
         int width = bitmap.PixelSize.Width, height = bitmap.PixelSize.Height;
-        byte[] pixels = ReadBitmap(bitmap, width, height);
-        return ManualOverlayStoredKeyframe.FromBgra(frameIndex, pixels,
-            checked(width * 4), width, height);
+        return ManualOverlayStoredKeyframe.FromBgra(frameIndex,
+            ReadBitmap(bitmap, width, height), checked(width * 4), width, height);
     }
 
     private static WriteableBitmap ToBitmap(ManualOverlayStoredKeyframe mask)
@@ -334,8 +318,12 @@ public partial class FramePreviewViewModel
         CommitSelectedManualTargetEdit();
         Guid targetId = _selectedManualTarget.Id;
         int sourceFrame = _currentFrameIndex;
-        if (!HasSelectedExplicitKeyframe())
-            return;
+        if (!HasSelectedExplicitKeyframe()) return;
+        int boundary = _manualTargets.NextBoundaryExclusive(targetId,
+            sourceFrame, _manualTrackingTotalFrames);
+        int expectedFrames = boundary == int.MaxValue
+            ? Math.Max(1, _manualTrackingTotalFrames - sourceFrame - 1)
+            : Math.Max(1, boundary - sourceFrame - 1);
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         Task operation = completion.Task;
         if (Interlocked.CompareExchange(ref _manualTrackingTask, operation, null) != null)
@@ -361,7 +349,8 @@ public partial class FramePreviewViewModel
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (!_disposed && ReferenceEquals(_manualTrackingCts, cts))
-                        ManualTrackingProgress = Math.Min(99, processed);
+                        ManualTrackingProgress = Math.Min(99,
+                            (int)Math.Round(processed * 100.0 / expectedFrames));
                 }));
             ManualMaskTrackResult result = await Task.Run(() =>
                 ManualOverlayTargetTrackingService.TrackForward(
