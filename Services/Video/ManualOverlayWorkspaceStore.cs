@@ -36,14 +36,15 @@ internal static class ManualOverlayWorkspaceStore
         return ManualOverlayStateStore.Load(GetPathForVideo(videoPath, stateDirectory), evidence);
     }
 
+    // Compatibility entry point for first-time state seeding. Callers that
+    // modify an existing document must provide its exact expected snapshot to
+    // CommitIfUnchangedForVideo; this method cannot safely infer that baseline.
     internal static void SaveForVideo(
         string videoPath,
         IReadOnlyCollection<ManualOverlayStoredTarget> targets,
         string? stateDirectory = null)
-    {
-        string evidence = GetSourceEvidence(videoPath);
-        ManualOverlayStateStore.Save(GetPathForVideo(videoPath, stateDirectory), evidence, targets);
-    }
+        => CommitIfUnchangedForVideo(videoPath,
+            Array.Empty<ManualOverlayStoredTarget>(), targets, stateDirectory);
 
     /// <summary>
     /// Refuse to overwrite another writer's saved correction or track. Both
@@ -54,12 +55,13 @@ internal static class ManualOverlayWorkspaceStore
     internal static void CommitIfUnchangedForVideo(
         string videoPath,
         IReadOnlyCollection<ManualOverlayStoredTarget> expected,
-        IReadOnlyCollection<ManualOverlayStoredTarget> updated)
+        IReadOnlyCollection<ManualOverlayStoredTarget> updated,
+        string? stateDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(expected);
         ArgumentNullException.ThrowIfNull(updated);
         string evidence = GetSourceEvidence(videoPath);
-        string statePath = GetPathForVideo(videoPath);
+        string statePath = GetPathForVideo(videoPath, stateDirectory);
         string fullPath = Path.GetFullPath(statePath);
 
         // Keep the lock file in place after closing it: removing it would
