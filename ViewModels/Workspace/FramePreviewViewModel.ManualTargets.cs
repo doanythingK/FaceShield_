@@ -97,13 +97,17 @@ public partial class FramePreviewViewModel
             return;
         CommitSelectedManualTargetEdit();
         PreserveManualTargetUndo();
-        // Creating on the live workspace first could leave an unsaved ghost
-        // target/selection when the file write fails. Prepare a detached copy
-        // from the just-saved target document, persist it, then adopt it.
-        ManualOverlayTargetWorkspace staged = ManualOverlayTargetWorkspace.Open(
-            _manualTargetsVideoPath ?? throw new InvalidOperationException("Manual target video path is missing."));
+        // Prepare a detached candidate without changing the live selection.
+        // Compare with its exact loaded document under the same commit gate as
+        // corrections and tracking, not an unconditional staged.Save() that
+        // could overwrite a correction committed during creation.
+        string videoPath = _manualTargetsVideoPath
+            ?? throw new InvalidOperationException("Manual target video path is missing.");
+        ManualOverlayTargetWorkspace staged = ManualOverlayTargetWorkspace.Open(videoPath);
+        var expected = staged.Snapshot();
         Guid id = staged.CreateTarget();
-        staged.Save();
+        ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(
+            videoPath, expected, staged.Snapshot());
         _manualTargets = staged;
         ManualTargetChoice choice = new(id, $"수동 얼굴 {ManualTargetChoices.Count + 1}");
         ManualTargetChoices.Add(choice);
