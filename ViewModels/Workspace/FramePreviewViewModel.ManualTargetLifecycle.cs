@@ -9,7 +9,6 @@ namespace FaceShield.ViewModels.Workspace;
 
 public partial class FramePreviewViewModel
 {
-    internal int ManualTargetEditableFrameIndex => _currentFrameIndex;
     private bool _manualTargetAutoLifecycleAttached;
 
     // A workspace can export without ever attaching WorkspaceView. Install
