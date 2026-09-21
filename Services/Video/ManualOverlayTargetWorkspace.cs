@@ -26,6 +26,11 @@ internal sealed class ManualOverlayTargetWorkspace
     private readonly string _videoPath;
     private readonly Dictionary<Guid, TargetState> _targets = new();
     private Guid? _selectedTargetId;
+    // The last document confirmed on disk, not the current mutable editor.
+    // Save() uses this baseline so a stale workspace cannot replace a newer
+    // correction created by another workspace or a cooperating process.
+    private IReadOnlyList<ManualOverlayStoredTarget> _persistedSnapshot =
+        Array.Empty<ManualOverlayStoredTarget>();
 
     private ManualOverlayTargetWorkspace(string videoPath)
     {
@@ -54,6 +59,7 @@ internal sealed class ManualOverlayTargetWorkspace
             workspace._targets.Add(item.Id, state);
         }
         workspace._selectedTargetId = stored.FirstOrDefault()?.Id;
+        workspace._persistedSnapshot = workspace.Snapshot();
         return workspace;
     }
 
@@ -245,7 +251,27 @@ internal sealed class ManualOverlayTargetWorkspace
     }
 
     internal void Save()
-        => ManualOverlayWorkspaceStore.SaveForVideo(_videoPath, Snapshot());
+    {
+        // Share the same gate as target correction/tracking committers. A
+        // direct Save is never an unconditional last-writer-wins replacement.
+        lock (this)
+        {
+            IReadOnlyList<ManualOverlayStoredTarget> current = Snapshot();
+            ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(
+                _videoPath, _persistedSnapshot, current);
+            _persistedSnapshot = current;
+        }
+    }
+
+    // A disk-first committer calls this only after its live publication.
+    // The baseline must follow successful commits or a later direct Save()
+    // would reject the workspace's own previous correction as a conflict.
+    internal void RecordPersistedSnapshot(IReadOnlyList<ManualOverlayStoredTarget> snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        lock (this)
+            _persistedSnapshot = snapshot;
+    }
 
     private TargetState RequireTarget(Guid targetId)
         => _targets.TryGetValue(targetId, out TargetState? state)
