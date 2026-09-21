@@ -20,6 +20,7 @@ public partial class WorkspaceView : UserControl
     private StackPanel? _manualTargetBar;
     private ComboBox? _manualTargetPicker;
     private Button? _targetTrackButton;
+    private Button? _targetAbsentButton;
     private Button? _legacyNextTrackButton;
     private Button? _legacyTrackButton;
     private (Guid TargetId, int Frame)? _restoredUndoContext;
@@ -178,6 +179,30 @@ public partial class WorkspaceView : UserControl
             SyncManualTargetControls();
         };
         bar.Children.Add(picker);
+
+        // An empty frame has no pixels for the eraser to change. Provide an
+        // explicit same-face absence boundary after tracking loses a face;
+        // other targets and Auto masks retain their own coverage.
+        _targetAbsentButton = new Button { Content = "이 프레임부터 선택 얼굴 없음" };
+        _targetAbsentButton.Click += (_, _) =>
+        {
+            if (DataContext is not WorkspaceViewModel workspace ||
+                workspace.Mode != WorkspaceMode.Manual)
+                return;
+            try
+            {
+                if (!workspace.FramePreview.MarkSelectedManualTargetAbsentAtCurrentFrame())
+                    return;
+                _restoredUndoContext = null;
+                workspace.FramePreview.RefreshManualTargetPreview();
+                SyncManualTargetControls();
+            }
+            catch (Exception ex)
+            {
+                workspace.FramePreview.ReportManualTargetFailure("선택 얼굴 없음 지정", ex);
+            }
+        };
+        bar.Children.Add(_targetAbsentButton);
         bar.Children.Add(new TextBlock
         {
             Text = "대상을 선택하고 마스크를 그린 뒤 해당 얼굴을 추적하세요.",
@@ -213,6 +238,8 @@ public partial class WorkspaceView : UserControl
         bool selected = manual && vm.FramePreview.HasSelectedManualTarget;
         if (_targetTrackButton != null)
             _targetTrackButton.IsVisible = selected;
+        if (_targetAbsentButton != null)
+            _targetAbsentButton.IsVisible = selected;
         if (_legacyNextTrackButton != null)
             _legacyNextTrackButton.IsVisible = !selected;
         if (_legacyTrackButton != null)
