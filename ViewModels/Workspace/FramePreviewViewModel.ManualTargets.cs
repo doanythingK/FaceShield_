@@ -7,6 +7,7 @@ using FaceShield.Services.Video;
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -41,11 +42,14 @@ public partial class FramePreviewViewModel
                 _selectedManualTarget?.Id == value.Id || !CanSwitchManualTarget())
                 return;
             CommitSelectedManualTargetEdit();
+            PreserveManualTargetUndo();
             _manualTargets.SelectTarget(value.Id);
             _selectedManualTarget = ManualTargetChoices.First(choice => choice.Id == value.Id);
             OnPropertyChanged(nameof(SelectedManualTarget));
             OnPropertyChanged(nameof(HasSelectedManualTarget));
             ReplaceEditorWithSelectedTarget();
+            RestoreManualTargetUndo();
+            PersistManualTargetSelection();
             OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
         }
     }
@@ -62,6 +66,7 @@ public partial class FramePreviewViewModel
             return;
 
         CommitSelectedManualTargetEdit();
+        PreserveManualTargetUndo();
         _manualTargets = ManualOverlayTargetWorkspace.Open(videoPath);
         _manualTargetsVideoPath = videoPath;
         ManualTargetChoices.Clear();
@@ -82,6 +87,7 @@ public partial class FramePreviewViewModel
             _manualTargetEventsAttached = true;
         }
         ReplaceEditorWithSelectedTarget();
+        RestoreManualTargetUndo();
     }
 
     [RelayCommand]
@@ -90,6 +96,7 @@ public partial class FramePreviewViewModel
         if (!CanSwitchManualTarget() || _manualTargets == null)
             return;
         CommitSelectedManualTargetEdit();
+        PreserveManualTargetUndo();
         Guid id = _manualTargets.CreateTarget();
         _manualTargets.Save();
         ManualTargetChoice choice = new(id, $"수동 얼굴 {ManualTargetChoices.Count + 1}");
@@ -98,6 +105,8 @@ public partial class FramePreviewViewModel
         OnPropertyChanged(nameof(SelectedManualTarget));
         OnPropertyChanged(nameof(HasSelectedManualTarget));
         ReplaceEditorWithSelectedTarget();
+        RestoreManualTargetUndo();
+        PersistManualTargetSelection();
         OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
     }
 
@@ -162,14 +171,30 @@ public partial class FramePreviewViewModel
 
     private void OnManualTargetMaskEdited(int frameIndex)
     {
-        if (_selectedManualTarget != null && frameIndex == _currentFrameIndex)
-            CommitSelectedManualTargetEdit();
+        if (_selectedManualTarget == null || frameIndex != _currentFrameIndex)
+            return;
+        TryCommitManualTargetEditWithoutDiscardingDirtyPixels();
     }
 
     private void OnManualTargetUndoRequested()
     {
         if (_selectedManualTarget != null && _maskDirty)
+            TryCommitManualTargetEditWithoutDiscardingDirtyPixels();
+    }
+
+    private void TryCommitManualTargetEditWithoutDiscardingDirtyPixels()
+    {
+        try
+        {
             CommitSelectedManualTargetEdit();
+        }
+        catch (Exception ex)
+        {
+            // Brush release and Undo are event callbacks: report the error
+            // without allowing a failed save to clear the editable bitmap.
+            Debug.WriteLine($"[ManualTarget] Correction save failed: {ex}");
+            ManualTrackingStatusText = $"수동 얼굴 마스크 저장 실패: {ex.Message}";
+        }
     }
 
     private void CommitSelectedManualTargetEdit()
@@ -178,11 +203,12 @@ public partial class FramePreviewViewModel
             _selectedManualTarget == null || _maskBitmap == null || _currentFrameIndex < 0)
             return;
         ManualOverlayStoredKeyframe correction = FromBitmap(_currentFrameIndex, _maskBitmap);
-        // All-zero alpha is an EXPLICIT same-target absence boundary. Removing
-        // the keyframe would leave an earlier face's tracking interval open and
-        // make a known departure indistinguishable from missing evidence.
-        _manualTargets.SetExplicitKeyframe(_selectedManualTarget.Id, correction);
-        _manualTargets.Save();
+        // An all-zero alpha mask is an explicit absence boundary for this face.
+        // Stage the complete state on disk BEFORE changing the live timeline:
+        // a failed write leaves the existing verified track and dirty editor intact.
+        ManualOverlayTargetEditCommitter.Commit(
+            _manualTargetsVideoPath ?? throw new InvalidOperationException("Manual target video path is missing."),
+            _manualTargets, _selectedManualTarget.Id, correction);
         _maskDirty = false;
         _manualTrackingPendingSourceValidationFrame = -1;
         OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
