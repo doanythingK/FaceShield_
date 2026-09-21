@@ -72,11 +72,16 @@ public partial class FramePreviewViewModel
         if (choice == null)
             return;
 
+        // The optional saved ID can differ from the workspace's first target.
+        // Treat this as a real selection change so the first target's in-memory
+        // Undo stack is not lost when its editor is replaced.
+        PreserveManualTargetUndo();
         _manualTargets.SelectTarget(choice.Id);
         _selectedManualTarget = choice;
         OnPropertyChanged(nameof(SelectedManualTarget));
         OnPropertyChanged(nameof(HasSelectedManualTarget));
         ReplaceEditorWithSelectedTarget();
+        RestoreManualTargetUndo();
         OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
     }
 
