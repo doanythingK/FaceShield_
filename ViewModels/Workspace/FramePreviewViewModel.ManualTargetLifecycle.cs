@@ -12,6 +12,11 @@ public partial class FramePreviewViewModel
     internal int ManualTargetEditableFrameIndex => _currentFrameIndex;
     private bool _manualTargetAutoLifecycleAttached;
 
+    // A workspace can export without ever attaching WorkspaceView. Install
+    // this guard at the session coordinator rather than only in the view.
+    internal void InstallManualTargetExportGuard()
+        => _toolPanel.ManualTargetExportGuard = TryCommitPendingManualTargetEdit;
+
     // The global Auto refresh rebuilds the legacy editor and clears its Undo
     // stack. A selected target owns different pixels and a different stack.
     // Attach after the legacy handlers so target restoration/archiving runs last.
