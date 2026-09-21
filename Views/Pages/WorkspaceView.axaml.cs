@@ -58,8 +58,7 @@ public partial class WorkspaceView : UserControl
             if (_configuredWorkspace != null)
             {
                 _configuredWorkspace.FramePreview.PropertyChanged -= OnFramePreviewPropertyChanged;
-                _configuredWorkspace.FramePreview.CommitPendingManualTargetEdit();
-                _configuredWorkspace.ToolPanel.ManualTargetExportGuard = null;
+                _configuredWorkspace.FramePreview.TryCommitPendingManualTargetEdit();
                 _configuredWorkspace.FramePreview.DetachManualTrackingContext();
             }
             _configuredWorkspace = vm;
@@ -76,15 +75,10 @@ public partial class WorkspaceView : UserControl
             vm.FramePreview.ConfigureManualTargets(vm.FrameList.VideoPath);
             vm.FramePreview.RestorePersistedManualTargetSelection();
             vm.FramePreview.RefreshManualTargetPreview();
-            // ToolPanel.Save invokes the guard synchronously BEFORE invoking
-            // WorkspaceViewModel.OnSaveRequested, which otherwise may call the
-            // legacy/global PersistCurrentMask and begin export. An exception
-            // from the target store must stop export, not silently drop edits.
-            vm.ToolPanel.ManualTargetExportGuard = () =>
-            {
-                vm.FramePreview.CommitPendingManualTargetEdit();
-                return true;
-            };
+            // ToolPanel invokes this guard synchronously before SaveRequested.
+            // Retain it when the view detaches: programmatic Save calls on the
+            // still-live workspace must not bypass target-owned persistence.
+            vm.ToolPanel.ManualTargetExportGuard = vm.FramePreview.TryCommitPendingManualTargetEdit;
         }
         else
         {
@@ -128,7 +122,11 @@ public partial class WorkspaceView : UserControl
             if (DataContext is not WorkspaceViewModel workspace ||
                 workspace.Mode != WorkspaceMode.Manual)
                 return;
-            workspace.FramePreview.CommitPendingManualTargetEdit();
+            if (!workspace.FramePreview.TryCommitPendingManualTargetEdit())
+            {
+                SyncManualTargetControls();
+                return;
+            }
             workspace.FramePreview.PreserveManualTargetUndo();
             workspace.FramePreview.CreateManualTargetCommand.Execute(null);
             workspace.FramePreview.PersistManualTargetSelection();
@@ -146,7 +144,11 @@ public partial class WorkspaceView : UserControl
             if (_syncingTargetPicker || picker.SelectedItem is not ManualTargetChoice choice ||
                 DataContext is not WorkspaceViewModel workspace)
                 return;
-            workspace.FramePreview.CommitPendingManualTargetEdit();
+            if (!workspace.FramePreview.TryCommitPendingManualTargetEdit())
+            {
+                SyncManualTargetControls();
+                return;
+            }
             workspace.FramePreview.PreserveManualTargetUndo();
             workspace.FramePreview.SelectedManualTarget = choice;
             if (workspace.FramePreview.SelectedManualTarget?.Id == choice.Id)
@@ -202,9 +204,13 @@ public partial class WorkspaceView : UserControl
     {
         if (_configuredWorkspace?.Mode != WorkspaceMode.Manual)
             return;
+        if (!_configuredWorkspace.FramePreview.TryCommitPendingManualTargetEdit())
+        {
+            e.Handled = true;
+            return;
+        }
         // Pointer-driven timeline navigation and face selection can otherwise
         // clear the shared undo stack before the previous face/frame is saved.
-        _configuredWorkspace.FramePreview.CommitPendingManualTargetEdit();
         _configuredWorkspace.FramePreview.PreserveManualTargetUndo();
     }
 
@@ -234,8 +240,7 @@ public partial class WorkspaceView : UserControl
         if (configured != null)
         {
             configured.FramePreview.PropertyChanged -= OnFramePreviewPropertyChanged;
-            configured.FramePreview.CommitPendingManualTargetEdit();
-            configured.ToolPanel.ManualTargetExportGuard = null;
+            configured.FramePreview.TryCommitPendingManualTargetEdit();
             configured.FramePreview.DetachManualTrackingContext();
         }
     }
@@ -246,7 +251,11 @@ public partial class WorkspaceView : UserControl
             return;
         if (vm.Mode == WorkspaceMode.Manual)
         {
-            vm.FramePreview.CommitPendingManualTargetEdit();
+            if (!vm.FramePreview.TryCommitPendingManualTargetEdit())
+            {
+                e.Handled = true;
+                return;
+            }
             if (e.Key is Key.Left or Key.Right or Key.Home or Key.End or
                 Key.PageUp or Key.PageDown)
                 vm.FramePreview.PreserveManualTargetUndo();
