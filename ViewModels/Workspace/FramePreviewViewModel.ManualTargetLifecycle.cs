@@ -14,13 +14,31 @@ public partial class FramePreviewViewModel
 
     // The global Auto refresh rebuilds the legacy editor and clears its Undo
     // stack. A selected target owns different pixels and a different stack.
-    // Attach after the legacy handler so the target is restored last.
+    // Attach after the legacy handlers so target restoration/archiving runs last.
     private void AttachManualTargetAutoLifecycle()
     {
         if (_manualTargetAutoLifecycleAttached)
             return;
         _toolPanel.PropertyChanged += OnManualTargetAutoLifecycleChanged;
+        // Direct programmatic frame reloads do not always pass through the
+        // view's pointer/keyboard tunnel. Preserve the latest pushed snapshot
+        // at the actual brush/Undo completion boundary as an additional guard.
+        MaskEdited += OnManualTargetEditCompletedArchiveUndo;
+        _toolPanel.UndoRequested += OnManualTargetUndoCompletedArchiveUndo;
         _manualTargetAutoLifecycleAttached = true;
+    }
+
+    private void OnManualTargetEditCompletedArchiveUndo(int frameIndex)
+    {
+        if (!_disposed && _selectedManualTarget != null &&
+            frameIndex == _currentFrameIndex)
+            PreserveManualTargetUndo();
+    }
+
+    private void OnManualTargetUndoCompletedArchiveUndo()
+    {
+        if (!_disposed && _selectedManualTarget != null)
+            PreserveManualTargetUndo();
     }
 
     private void OnManualTargetAutoLifecycleChanged(object? sender, PropertyChangedEventArgs e)
@@ -28,6 +46,8 @@ public partial class FramePreviewViewModel
         if (_disposed)
         {
             _toolPanel.PropertyChanged -= OnManualTargetAutoLifecycleChanged;
+            MaskEdited -= OnManualTargetEditCompletedArchiveUndo;
+            _toolPanel.UndoRequested -= OnManualTargetUndoCompletedArchiveUndo;
             _manualTargetAutoLifecycleAttached = false;
             return;
         }
@@ -112,6 +132,13 @@ public partial class FramePreviewViewModel
         CommitSelectedManualTargetEdit();
     }
 
+    internal void ReportManualTargetFailure(string operation, Exception ex)
+    {
+        Debug.WriteLine($"[ManualTarget] {operation} failed: {ex}");
+        ManualTrackingStatusText =
+            $"{operation} 실패: {ex.Message} 현재 작업 화면의 편집 상태를 확인한 뒤 다시 시도하세요.";
+    }
+
     // ToolPanel.Save invokes its guard BEFORE WorkspaceViewModel.OnSaveRequested
     // calls the legacy PersistCurrentMask. A failed target write must block that
     // event, preserve the dirty bitmap and expose a reason to the user.
@@ -124,9 +151,7 @@ public partial class FramePreviewViewModel
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[ManualTarget] Target edit remains pending after save failure: {ex}");
-            ManualTrackingStatusText =
-                $"수동 얼굴 마스크 저장 실패: {ex.Message} 편집 내용은 현재 화면에 남아 있습니다. 저장 경로를 확인한 뒤 다시 시도하세요.";
+            ReportManualTargetFailure("수동 얼굴 마스크 저장", ex);
             return false;
         }
     }
