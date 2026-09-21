@@ -49,13 +49,11 @@ public partial class WorkspaceView : UserControl
             DetachManualMaskTimeline();
             return;
         }
-
         if (!ReferenceEquals(_configuredWorkspace, vm))
         {
             _configuredWorkspace?.FramePreview.DetachManualTrackingContext();
             _configuredWorkspace = vm;
         }
-
         vm.ConfigureManualTrackingOwnership();
         vm.FramePreview.ConfigureManualMaskKeyframes(
             vm.Mode == WorkspaceMode.Manual,
@@ -63,8 +61,7 @@ public partial class WorkspaceView : UserControl
             vm.FrameList.TotalFrames);
         if (vm.Mode == WorkspaceMode.Manual)
             vm.FramePreview.ConfigureManualTargets(vm.FrameList.VideoPath);
-        // Standard save now uses the target-aware provider in
-        // WorkspaceExportCoordinator, including its missing-sample preflight.
+        // Export coordinator now adds target-owned coverage to Auto/legacy.
         vm.ToolPanel.ManualTargetExportGuard = null;
         EnsureManualTargetControls();
         SyncManualTargetControls();
@@ -91,8 +88,11 @@ public partial class WorkspaceView : UserControl
                 new Binding("FramePreview.CanTrackSelectedManualTarget"));
             tracking.Children.Insert(0, _targetTrackButton);
         }
-
         var bar = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8 };
+        // Readiness usually becomes true *after* AttachedToVisualTree. A
+        // one-time IsEnabled assignment would permanently disable creation.
+        bar.Bind(Control.IsEnabledProperty,
+            new Binding("ToolPanel.CanEditWorkspace"));
         bar.Children.Add(new TextBlock
         {
             Text = "수동 얼굴",
@@ -140,7 +140,6 @@ public partial class WorkspaceView : UserControl
             return;
         bool manual = vm.Mode == WorkspaceMode.Manual;
         _manualTargetBar.IsVisible = manual;
-        _manualTargetBar.IsEnabled = manual && vm.ToolPanel.CanEditWorkspace;
         _syncingTargetPicker = true;
         try
         {
