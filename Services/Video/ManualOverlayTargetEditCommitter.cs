@@ -73,6 +73,7 @@ internal static class ManualOverlayTargetEditCommitter
             ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(
                 videoPath, snapshot, staged);
             workspace.SetExplicitKeyframe(targetId, correction);
+            workspace.RecordPersistedSnapshot(staged);
         }
     }
 }
