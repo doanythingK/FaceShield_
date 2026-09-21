@@ -49,6 +49,10 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
 
         _frameList.SetPlaybackEnabled(false);
         _framePreview.SetSessionReady(false);
+        // Install before the view is ever attached. Direct SaveVideoAsync and
+        // Auto-to-export calls must not depend on a pointer/UI setup hook.
+        if (_mode == WorkspaceMode.Manual)
+            _framePreview.InstallManualTargetExportGuard();
         _frameList.SelectedFrameIndexChanged += OnSelectedFrameIndexChanged;
         _frameList.PlaybackStopped += OnPlaybackStopped;
         _frameList.PlaybackStateChanged += OnPlaybackStateChanged;
@@ -215,6 +219,14 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         bool adopted = false;
         try
         {
+            // InitializeSession replaces the video session without attempting
+            // to flush the previous editor. Reject adoption before that point
+            // when a selected face still has an unsaved correction.
+            if (!TryCommitTargetBeforeTransition())
+            {
+                session.Dispose();
+                return;
+            }
             _framePreview.InitializeSession(
                 session,
                 useManualPlayer: _mode == WorkspaceMode.Manual);
@@ -304,8 +316,18 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     {
         if (_suppressStoppedAfterFailedTargetSave)
             return;
-        if (_frameList.SelectedFrameIndex >= 0)
-            _framePreview.OnPlaybackStopped(_frameList.SelectedFrameIndex);
+        if (_frameList.SelectedFrameIndex < 0)
+            return;
+        if (!TryCommitTargetBeforeTransition())
+            return;
+
+        int selectedFrame = _frameList.SelectedFrameIndex;
+        int displayedFrame = _framePreview.ManualTargetEditableFrameIndex;
+        _framePreview.OnPlaybackStopped(selectedFrame);
+        // Same-frame stop refresh clears the legacy shared Undo stack. Its
+        // synchronous manual branch has already returned at this point.
+        if (_mode == WorkspaceMode.Manual && displayedFrame == selectedFrame)
+            _framePreview.RestoreManualTargetUndo();
     }
 
     private void OnPlaybackStateChanged(bool isPlaying)
