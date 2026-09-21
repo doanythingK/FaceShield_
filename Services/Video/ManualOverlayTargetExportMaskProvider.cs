@@ -9,10 +9,9 @@ using System.Runtime.InteropServices;
 namespace FaceShield.Services.Video;
 
 /// <summary>
-/// Applies the same target-owned exact-keyframe/verified-sample resolver used
-/// in the editor to an export's existing legacy/Auto snapshot. Does not replace
-/// or reinterpret legacy masks as a new face. Owns no bitmaps beyond each call.
-/// The workspace is freshly loaded for this export, isolating it from edits.
+/// Combines an export's existing Auto/legacy mask with exact or validated
+/// target-owned masks. A separate workspace instance freezes saved data for
+/// this export. No legacy raster is silently assigned to a target ID.
 /// </summary>
 internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
 {
@@ -39,16 +38,23 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
         if (targets.Count == 0 || targets.All(target => target.Keyframes.Count == 0))
             return legacyAndAuto;
 
-        // Do not export a known unverified interval as if it were protected.
-        // Its failure remains unresolved until the *same target* is corrected
-        // at the failure boundary. Other faces' corrections cannot clear it.
         foreach (ManualOverlayStoredTarget target in targets)
             foreach (ManualMaskTrackSegment segment in target.Segments ??
                          Array.Empty<ManualMaskTrackSegment>())
-                if (segment.StoppedByFailure)
+            {
+                if (!segment.StoppedByFailure)
+                    continue;
+                // A correction on exactly the failed frame explicitly restores
+                // ownership for that face. A later correction leaves a gap;
+                // correcting a different face cannot resolve this failure.
+                bool correctedAtFailure = segment.StopFrame.HasValue &&
+                    target.Keyframes.Any(keyframe =>
+                        keyframe.FrameIndex == segment.StopFrame.Value);
+                if (!correctedAtFailure)
                     throw new InvalidDataException(
                         $"수동 얼굴 {target.Id}의 {segment.StopFrame} 프레임 추적 실패가 미해결 상태입니다. " +
-                        "해당 얼굴을 보정한 뒤 다시 내보내세요.");
+                        "해당 프레임에서 같은 얼굴을 보정한 뒤 다시 내보내세요.");
+            }
 
         ManualOverlayStoredKeyframe? first = targets.SelectMany(target => target.Keyframes)
             .FirstOrDefault();
