@@ -1,5 +1,6 @@
 using FaceShield.Services.Video;
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,6 +10,48 @@ namespace FaceShield.ViewModels.Workspace;
 public partial class FramePreviewViewModel
 {
     internal int ManualTargetEditableFrameIndex => _currentFrameIndex;
+    private bool _manualTargetAutoLifecycleAttached;
+
+    // The global Auto refresh rebuilds the legacy editor and clears its Undo
+    // stack. A selected target owns different pixels and a different stack.
+    // Attach after the legacy handler so the target is restored last.
+    private void AttachManualTargetAutoLifecycle()
+    {
+        if (_manualTargetAutoLifecycleAttached)
+            return;
+        _toolPanel.PropertyChanged += OnManualTargetAutoLifecycleChanged;
+        _manualTargetAutoLifecycleAttached = true;
+    }
+
+    private void OnManualTargetAutoLifecycleChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_disposed)
+        {
+            _toolPanel.PropertyChanged -= OnManualTargetAutoLifecycleChanged;
+            _manualTargetAutoLifecycleAttached = false;
+            return;
+        }
+        if (e.PropertyName != nameof(ToolPanelViewModel.IsAutoRunning) ||
+            _manualTargets == null || _selectedManualTarget == null)
+            return;
+
+        if (_toolPanel.IsAutoRunning)
+        {
+            // The toolbar's commit guard normally saves before Auto begins;
+            // this also protects programmatic Auto transitions after attachment.
+            if (TryCommitPendingManualTargetEdit())
+                PreserveManualTargetUndo();
+            return;
+        }
+
+        // The legacy handler runs earlier and may have replaced the editor
+        // with a global mask. Never overwrite a dirty target after save failure.
+        if (_maskDirty || _isDrawing || _frameBitmap == null || _currentFrameIndex < 0)
+            return;
+        ReplaceEditorWithSelectedTarget();
+        RestoreManualTargetUndo();
+        ComposeTargetPreview();
+    }
 
     // The workspace restores target data first, then the UI restores only an ID
     // that is still present. Do not use the normal user-switch gate during
@@ -16,7 +59,10 @@ public partial class FramePreviewViewModel
     internal void RestorePersistedManualTargetSelection()
     {
         if (_manualTargets == null || string.IsNullOrWhiteSpace(_manualTargetsVideoPath) ||
-            _disposed || _maskDirty || _isDrawing)
+            _disposed)
+            return;
+        AttachManualTargetAutoLifecycle();
+        if (_maskDirty || _isDrawing)
             return;
 
         Guid? saved = ManualOverlayTargetSelectionStore.Load(_manualTargetsVideoPath);
