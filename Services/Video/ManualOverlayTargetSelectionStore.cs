@@ -1,15 +1,15 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Security;
 using System.Text.Json;
 
 namespace FaceShield.Services.Video;
 
 /// <summary>
-/// Optional UI selection metadata. Never interprets a legacy composite as a
-/// target and never determines whether any blur data may be exported.
-/// A missing, stale or damaged selection falls back to the workspace's first
-/// existing target, without modifying target keyframes or tracking samples.
+/// Optional UI selection metadata; never determines mask ownership or export
+/// coverage. A missing, stale or damaged selection cannot prevent opening the
+/// independently persisted manual-target masks.
 /// </summary>
 internal static class ManualOverlayTargetSelectionStore
 {
@@ -19,11 +19,14 @@ internal static class ManualOverlayTargetSelectionStore
 
     internal static Guid? Load(string videoPath)
     {
-        string path = GetPath(videoPath);
-        if (!File.Exists(path))
-            return null;
         try
         {
+            // Resolve the path INSIDE the error boundary: an invalid path or
+            // missing source must not turn optional UI metadata into a fatal
+            // workspace loading failure.
+            string path = GetPath(videoPath);
+            if (!File.Exists(path))
+                return null;
             SelectionRecord? record = JsonSerializer.Deserialize<SelectionRecord>(File.ReadAllText(path));
             return record != null && record.Version == Version &&
                    record.TargetId != Guid.Empty &&
@@ -33,7 +36,8 @@ internal static class ManualOverlayTargetSelectionStore
                 : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
-                                    JsonException or ArgumentException)
+                                    JsonException or ArgumentException or SecurityException or
+                                    NotSupportedException)
         {
             Debug.WriteLine($"[ManualOverlayTargetSelection] Ignoring invalid UI selection: {ex.Message}");
             return null;
@@ -55,8 +59,14 @@ internal static class ManualOverlayTargetSelectionStore
         }
         finally
         {
-            if (File.Exists(temporary))
-                File.Delete(temporary);
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine($"[ManualOverlayTargetSelection] Temporary UI metadata cleanup failed: {ex.Message}");
+            }
         }
     }
 
