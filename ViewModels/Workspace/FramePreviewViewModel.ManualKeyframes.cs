@@ -72,8 +72,15 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        // Compare manual-only baselines. A composite Auto mask would make an
-        // Undo result look like a new manual correction, or hide an overlap edit.
+        // Target edits have their own baseline, source fingerprint and Undo
+        // persistence handler. Never compare an individual face to the global
+        // legacy bitmap or clear its dirty flag before its own handler saves it.
+        if (HasSelectedManualTarget)
+        {
+            _manualTrackingPendingSourceValidationFrame = -1;
+            return;
+        }
+
         using (var baseline = ManualMaskEditorLayer.CreateEditableMask(
                    provider, _currentFrameIndex, _maskBitmap.PixelSize))
         {
@@ -100,11 +107,6 @@ public partial class FramePreviewViewModel
     {
         if (_disposed)
         {
-            // A direct FramePreview.Dispose() bypasses the workspace operation
-            // lifetime. Its preview-bitmap change fires before session.Dispose().
-            // Cancel first, then keep the session alive until *all* published manual
-            // operations finish, including a decoder load or playback without tracking.
-            // Never synchronously drain these tasks on the UI thread.
             CancelManualTrackingCore();
             var pending = new List<Task>(3);
             Task? trackingTask = Volatile.Read(ref _manualTrackingTask);
@@ -125,7 +127,6 @@ public partial class FramePreviewViewModel
                 }
                 catch (ObjectDisposedException)
                 {
-                    // An independently disposed session cannot be held again.
                 }
             }
 
@@ -149,6 +150,7 @@ public partial class FramePreviewViewModel
     private void ApplyInheritedManualMaskIfNeeded()
     {
         if (!_manualMaskKeyframesEnabled ||
+            HasSelectedManualTarget ||
             _manualMaskKeyframeRefreshInProgress ||
             _disposed ||
             _maskDirty ||
@@ -160,14 +162,8 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        // A brush/eraser edit is persisted on leaving the prior frame. Validate
-        // against that committed source, never against the in-progress bitmap.
         RevalidatePendingManualTrackingSource(provider);
 
-        // Only the user's stored correction is authoritative for a manual track.
-        // Auto rectangles on another face at the same frame must not suppress
-        // the independently tracked mask. Auto-only legacy sessions retain their
-        // original exact-keyframe behavior.
         bool stored = provider.HasStoredMask(_currentFrameIndex);
         bool automatic = provider.TryGetFaceMaskData(_currentFrameIndex, out _);
         if (stored || (automatic && provider.GetStoredMaskFrameIndices().Length == 0))
