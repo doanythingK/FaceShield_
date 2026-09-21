@@ -60,7 +60,10 @@ public partial class WorkspaceView : UserControl
             vm.FrameList.VideoPath,
             vm.FrameList.TotalFrames);
         if (vm.Mode == WorkspaceMode.Manual)
+        {
             vm.FramePreview.ConfigureManualTargets(vm.FrameList.VideoPath);
+            vm.FramePreview.RefreshManualTargetPreview();
+        }
         // Export coordinator now adds target-owned coverage to Auto/legacy.
         vm.ToolPanel.ManualTargetExportGuard = null;
         EnsureManualTargetControls();
@@ -89,8 +92,6 @@ public partial class WorkspaceView : UserControl
             tracking.Children.Insert(0, _targetTrackButton);
         }
         var bar = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 8 };
-        // Readiness usually becomes true *after* AttachedToVisualTree. A
-        // one-time IsEnabled assignment would permanently disable creation.
         bar.Bind(Control.IsEnabledProperty,
             new Binding("ToolPanel.CanEditWorkspace"));
         bar.Children.Add(new TextBlock
@@ -104,7 +105,9 @@ public partial class WorkspaceView : UserControl
             if (DataContext is WorkspaceViewModel workspace &&
                 workspace.Mode == WorkspaceMode.Manual)
             {
+                workspace.FramePreview.PreserveManualTargetUndo();
                 workspace.FramePreview.CreateManualTargetCommand.Execute(null);
+                workspace.FramePreview.RestoreManualTargetUndo();
                 SyncManualTargetControls();
                 workspace.FramePreview.RefreshManualTargetPreview();
             }
@@ -118,7 +121,9 @@ public partial class WorkspaceView : UserControl
             if (_syncingTargetPicker || picker.SelectedItem is not ManualTargetChoice choice ||
                 DataContext is not WorkspaceViewModel workspace)
                 return;
+            workspace.FramePreview.PreserveManualTargetUndo();
             workspace.FramePreview.SelectedManualTarget = choice;
+            workspace.FramePreview.RestoreManualTargetUndo();
             workspace.FramePreview.RefreshManualTargetPreview();
             SyncManualTargetControls();
         };
