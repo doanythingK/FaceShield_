@@ -51,13 +51,32 @@ public partial class FramePreviewViewModel
         }
     }
 
-    // Called by UI tunnel handlers before their ordinary selection handlers.
     // Write only selected target alpha, never its editable raster into the
-    // provider's legacy/global manual layer.
+    // provider's legacy/global manual layer. The throwing form is used where
+    // navigation can show its own error and roll back the frame selection.
     internal void CommitPendingManualTargetEdit()
     {
         if (_manualTargets == null || _selectedManualTarget == null || _disposed)
             return;
         CommitSelectedManualTargetEdit();
+    }
+
+    // ToolPanel.Save invokes its guard BEFORE WorkspaceViewModel.OnSaveRequested
+    // calls the legacy PersistCurrentMask. A failed target write must block that
+    // event, preserve the dirty bitmap and expose a reason to the user.
+    internal bool TryCommitPendingManualTargetEdit()
+    {
+        try
+        {
+            CommitPendingManualTargetEdit();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ManualTarget] Target edit remains pending after save failure: {ex}");
+            ManualTrackingStatusText =
+                $"수동 얼굴 마스크 저장 실패: {ex.Message} 편집 내용은 현재 화면에 남아 있습니다. 저장 경로를 확인한 뒤 다시 시도하세요.";
+            return false;
+        }
     }
 }
