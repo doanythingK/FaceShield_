@@ -28,8 +28,6 @@ public partial class WorkspaceView : UserControl
     {
         InitializeComponent();
         AddHandler(KeyDownEvent, OnAnyKeyDown, RoutingStrategies.Tunnel);
-        // UI navigation must flush target-owned alpha before its ordinary
-        // handler can invoke the legacy/global PersistCurrentMask path.
         AddHandler(PointerPressedEvent, OnBeforeWorkspacePointerPressed, RoutingStrategies.Tunnel);
         DataContextChanged += (_, _) =>
         {
@@ -60,6 +58,8 @@ public partial class WorkspaceView : UserControl
             if (_configuredWorkspace != null)
             {
                 _configuredWorkspace.FramePreview.PropertyChanged -= OnFramePreviewPropertyChanged;
+                _configuredWorkspace.FramePreview.CommitPendingManualTargetEdit();
+                _configuredWorkspace.ToolPanel.ManualTargetExportGuard = null;
                 _configuredWorkspace.FramePreview.DetachManualTrackingContext();
             }
             _configuredWorkspace = vm;
@@ -76,8 +76,20 @@ public partial class WorkspaceView : UserControl
             vm.FramePreview.ConfigureManualTargets(vm.FrameList.VideoPath);
             vm.FramePreview.RestorePersistedManualTargetSelection();
             vm.FramePreview.RefreshManualTargetPreview();
+            // ToolPanel.Save invokes the guard synchronously BEFORE invoking
+            // WorkspaceViewModel.OnSaveRequested, which otherwise may call the
+            // legacy/global PersistCurrentMask and begin export. An exception
+            // from the target store must stop export, not silently drop edits.
+            vm.ToolPanel.ManualTargetExportGuard = () =>
+            {
+                vm.FramePreview.CommitPendingManualTargetEdit();
+                return true;
+            };
         }
-        vm.ToolPanel.ManualTargetExportGuard = null;
+        else
+        {
+            vm.ToolPanel.ManualTargetExportGuard = null;
+        }
         EnsureManualTargetControls();
         SyncManualTargetControls();
     }
@@ -188,8 +200,12 @@ public partial class WorkspaceView : UserControl
 
     private void OnBeforeWorkspacePointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (_configuredWorkspace?.Mode == WorkspaceMode.Manual)
-            _configuredWorkspace.FramePreview.CommitPendingManualTargetEdit();
+        if (_configuredWorkspace?.Mode != WorkspaceMode.Manual)
+            return;
+        // Pointer-driven timeline navigation and face selection can otherwise
+        // clear the shared undo stack before the previous face/frame is saved.
+        _configuredWorkspace.FramePreview.CommitPendingManualTargetEdit();
+        _configuredWorkspace.FramePreview.PreserveManualTargetUndo();
     }
 
     private void OnFramePreviewPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -219,6 +235,7 @@ public partial class WorkspaceView : UserControl
         {
             configured.FramePreview.PropertyChanged -= OnFramePreviewPropertyChanged;
             configured.FramePreview.CommitPendingManualTargetEdit();
+            configured.ToolPanel.ManualTargetExportGuard = null;
             configured.FramePreview.DetachManualTrackingContext();
         }
     }
