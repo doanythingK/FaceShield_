@@ -25,6 +25,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     private bool _adoptionInProgress;
     private bool _initialized;
     private bool _disposed;
+    private bool _revertingFailedTargetNavigation;
+    private bool _suppressStoppedAfterFailedTargetSave;
 
     internal WorkspaceSessionPlaybackCoordinator(
         WorkspaceMode mode,
@@ -45,12 +47,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         _endLifetimeOperation = endLifetimeOperation ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
         _showPlaybackErrorAsync = showPlaybackErrorAsync ?? throw new ArgumentNullException(nameof(showPlaybackErrorAsync));
 
-        // A workspace may become visible before the deferred VideoSession exists.
-        // Keep both keyboard playback and edit commands gated until AdoptSession
-        // completes, then enable them atomically from the UI's point of view.
         _frameList.SetPlaybackEnabled(false);
         _framePreview.SetSessionReady(false);
-
         _frameList.SelectedFrameIndexChanged += OnSelectedFrameIndexChanged;
         _frameList.PlaybackStopped += OnPlaybackStopped;
         _frameList.PlaybackStateChanged += OnPlaybackStateChanged;
@@ -122,9 +120,6 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 return;
             }
 
-            // The initial manual frame must not compete with thumbnail seeks and
-            // selected-frame PTS warmup for the same source file. Keep the timeline
-            // provider unpublished until the first frame load has completed.
             bool prioritizeManualFrame = _mode == WorkspaceMode.Manual;
             AdoptSession(session, deferTimeline: prioritizeManualFrame);
             if (!ReferenceEquals(_adoptedSession, session))
@@ -149,9 +144,6 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             }
             finally
             {
-                // Adoption is irreversible for a cached workspace. Even if this
-                // particular load gets canceled, publish its already-owned provider
-                // so a later open can retry rather than inheriting a disabled UI.
                 if (prioritizeManualFrame && !_disposed &&
                     ReferenceEquals(_adoptedSession, session))
                 {
@@ -211,10 +203,6 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 throw new ObjectDisposedException(nameof(WorkspaceSessionPlaybackCoordinator));
             }
 
-            // Only one caller may cross the ownership-transfer boundary. Without
-            // this claim, two concurrent initializers can both observe
-            // _initialized=false and the second InitializeSession call will dispose
-            // the first session while FrameList still references its provider.
             if (_initialized || _adoptionInProgress)
             {
                 session.Dispose();
@@ -263,9 +251,34 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         }
     }
 
+    /// <summary>
+    /// The coordinator is subscribed before the view's pointer/keyboard hooks
+    /// and also receives programmatic FrameList selection and playback events.
+    /// A failed target save must not proceed into the global bitmap persistence
+    /// path or clear the still-dirty editable mask.
+    /// </summary>
+    private bool TryCommitTargetBeforeTransition()
+    {
+        if (_mode != WorkspaceMode.Manual)
+            return true;
+        try
+        {
+            _framePreview.CommitPendingManualTargetEdit();
+            _framePreview.PreserveManualTargetUndo();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ManualTarget] Navigation blocked by target save failure: {ex}");
+            _ = _showPlaybackErrorAsync(
+                $"수동 얼굴 마스크 저장에 실패하여 프레임 이동을 취소했습니다: {ex.Message}");
+            return false;
+        }
+    }
+
     private void OnSelectedFrameIndexChanged(int frameIndex)
     {
-        if (_frameList.IsPlaying)
+        if (_revertingFailedTargetNavigation || _frameList.IsPlaying)
             return;
 
         if (_isAutoRunning() && _mode == WorkspaceMode.Auto)
@@ -274,11 +287,25 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             return;
         }
 
+        if (!TryCommitTargetBeforeTransition())
+        {
+            int previousFrame = _framePreview.ManualTargetEditableFrameIndex;
+            if (previousFrame >= 0 && previousFrame != frameIndex)
+            {
+                _revertingFailedTargetNavigation = true;
+                try { _frameList.SelectedFrameIndex = previousFrame; }
+                finally { _revertingFailedTargetNavigation = false; }
+            }
+            return;
+        }
+
         _framePreview.OnFrameIndexChanged(frameIndex);
     }
 
     private void OnPlaybackStopped()
     {
+        if (_suppressStoppedAfterFailedTargetSave)
+            return;
         if (_frameList.SelectedFrameIndex >= 0)
             _framePreview.OnPlaybackStopped(_frameList.SelectedFrameIndex);
     }
@@ -292,12 +319,18 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
             return;
         }
 
-        // Defense in depth: SetPlaybackEnabled(false) should prevent this state,
-        // but never allow the legacy sequential path to start before the session
-        // (and, in manual mode, ManualFramePlayer) has been adopted.
         if (!IsInitialized)
         {
             _frameList.NotifyPlaybackStopped();
+            return;
+        }
+
+        if (!TryCommitTargetBeforeTransition())
+        {
+            _suppressStoppedAfterFailedTargetSave = true;
+            try { _frameList.NotifyPlaybackStopped(); }
+            finally { _suppressStoppedAfterFailedTargetSave = false; }
+            _framePreview.NotifyManualTrackingPlaybackStateChanged();
             return;
         }
 
