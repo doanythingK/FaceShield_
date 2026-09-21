@@ -285,7 +285,7 @@ public partial class FramePreviewViewModel
         byte[] alpha = new byte[checked(width * height)];
         for (int y = 0; y < height; y++)
             for (int x = 0; x < width; x++)
-                alpha[y * rowBytes + x] = bgra[y * rowBytes + x * 4 + 3];
+                alpha[y * width + x] = bgra[y * rowBytes + x * 4 + 3];
         return alpha;
     }
 
