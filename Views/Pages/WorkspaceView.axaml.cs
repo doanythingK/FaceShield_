@@ -157,8 +157,13 @@ public partial class WorkspaceView : UserControl
         };
         bar.Children.Add(add);
         var picker = new ComboBox { Width = 190 };
+        // Ordinal labels can change when saved GUIDs are sorted on reopen.
+        // Keep a short, stable identifier visible to distinguish actual faces.
         picker.ItemTemplate = new FuncDataTemplate<ManualTargetChoice>(
-            (choice, _) => new TextBlock { Text = choice.Label });
+            (choice, _) => new TextBlock
+            {
+                Text = $"{choice.Label} · {choice.Id.ToString("N")[..8]}"
+            });
         picker.SelectionChanged += (_, _) =>
         {
             if (_syncingTargetPicker || picker.SelectedItem is not ManualTargetChoice choice ||
