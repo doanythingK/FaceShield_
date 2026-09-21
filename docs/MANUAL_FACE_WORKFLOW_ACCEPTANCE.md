@@ -28,4 +28,4 @@
 - **작업 수명:** 저장 실패 상태에서 얼굴 전환·프레임 이동·내보내기·창 닫기가 편집을 버리지 않음. 강제 종료 복구는 별도 미구현 범위.
 - **합성 테스트 소스:** `scripts/manual-overlay-regression.cs.txt`, `scripts/manual-overlay-absence-regression.cs.txt`, `scripts/manual-overlay-conflict-regression.cs.txt`. 테스트 파일은 작성됐지만 실행하지 않음.
 
-현재 코드에서 **얼굴 번호는 표시 순서에 따라 바뀔 수 있다**. 내부 GUID는 구분되지만 사람이 알아볼 수 있는 얼굴 이름/썸네일 저장은 아직 구현되지 않았다. 이 항목과 재등장·출력 동등성 검증을 저장 하드닝보다 우선 확인한다. 변경 이력 및 세부 위험은 [`MANUAL_OVERLAY_WORKFLOW.md`](MANUAL_OVERLAY_WORKFLOW.md)를 참고한다.
+**얼굴 식별:** 얼굴 번호는 다시 열 때 정렬 순서에 따라 바뀔 수 있어 선택 목록에 GUID 앞 8자리도 함께 표시하도록 수정했다. [표시 변경 `40005f0`](https://github.com/doanythingK/FaceShield_/commit/40005f01dc3cf10ab02766be50407b7136f09205). 이는 안정적인 *식별 단서*이지 사용자 지정 얼굴 이름·썸네일 저장이 아니다. 실제 사용성과 GUID 접두부 충돌 처리, 재등장·출력 동등성은 아직 미검증이다. 변경 이력 및 세부 위험은 [`MANUAL_OVERLAY_WORKFLOW.md`](MANUAL_OVERLAY_WORKFLOW.md)를 참고한다.
