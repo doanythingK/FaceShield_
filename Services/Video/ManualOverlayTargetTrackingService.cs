@@ -47,9 +47,9 @@ internal static class ManualOverlayTargetTrackingService
         attempted.Segment.SourceMaskFingerprint = fingerprint;
 
         // Correction and tracking use the same instance as a commit gate.
-        // Hold it from the fresh snapshot through atomic file replacement and
-        // live publication. This does NOT lock another process or workspace
-        // instance editing the same video.
+        // Hold it from the fresh snapshot through disk replacement and live
+        // publication. The store additionally checks for independently saved
+        // changes under a per-file lock before overwriting the document.
         lock (workspace)
         {
             var snapshot = workspace.Snapshot();
@@ -99,9 +99,10 @@ internal static class ManualOverlayTargetTrackingService
                         .ToArray())).ToArray();
 
             cancellationToken.ThrowIfCancellationRequested();
-            // A failed write leaves the live workspace unchanged. No further
-            // cancellation point after a successful disk replacement.
-            ManualOverlayWorkspaceStore.SaveForVideo(videoPath, staged);
+            // A conflicting independent writer or failed disk write leaves
+            // this live workspace unchanged. Do not cancel after replacement.
+            ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(
+                videoPath, snapshot, staged);
             bool retainedOnLive = workspace.SetTrackSegment(targetId, attempted.Segment);
             if (retainedOnLive != retainPrior ||
                 !workspace.TryGetTrackSegment(targetId, sourceFrame,
