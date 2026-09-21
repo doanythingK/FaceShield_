@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -61,7 +62,14 @@ public partial class WorkspaceView : UserControl
             vm.FrameList.VideoPath,
             vm.FrameList.TotalFrames);
         if (vm.Mode == WorkspaceMode.Manual)
+        {
             vm.FramePreview.ConfigureManualTargets(vm.FrameList.VideoPath);
+            vm.ToolPanel.ManualTargetExportGuard = vm.FramePreview.CanExportLegacyMask;
+        }
+        else
+        {
+            vm.ToolPanel.ManualTargetExportGuard = null;
+        }
 
         EnsureManualTargetControls();
         SyncManualTargetControls();
@@ -81,10 +89,7 @@ public partial class WorkspaceView : UserControl
             Button[] legacy = tracking.Children.OfType<Button>().Take(2).ToArray();
             _legacyNextTrackButton = legacy.ElementAtOrDefault(0);
             _legacyTrackButton = legacy.ElementAtOrDefault(1);
-            _targetTrackButton = new Button
-            {
-                Content = "선택한 얼굴 연속 추적"
-            };
+            _targetTrackButton = new Button { Content = "선택한 얼굴 연속 추적" };
             _targetTrackButton.Bind(Button.CommandProperty,
                 new Binding("FramePreview.TrackSelectedManualTargetCommand"));
             _targetTrackButton.Bind(Button.IsEnabledProperty,
@@ -111,6 +116,8 @@ public partial class WorkspaceView : UserControl
         };
         bar.Children.Add(add);
         var picker = new ComboBox { Width = 190 };
+        picker.ItemTemplate = new FuncDataTemplate<ManualTargetChoice>(
+            (choice, _) => new TextBlock { Text = choice.Label });
         picker.SelectionChanged += (_, _) =>
         {
             if (_syncingTargetPicker || picker.SelectedItem is not ManualTargetChoice choice ||
