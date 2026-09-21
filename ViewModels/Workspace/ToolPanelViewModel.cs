@@ -45,45 +45,32 @@ namespace FaceShield.ViewModels.Workspace
 
         [ObservableProperty]
         private ExportQualityChoice selectedExportQuality = BalancedExportQuality;
-
         public VideoExportQualityPreset ExportQualityPreset => SelectedExportQuality.Preset;
 
         [ObservableProperty]
         private EditMode currentMode = EditMode.None;
-
         [ObservableProperty]
         private int autoProgress;
-
         [ObservableProperty]
         private bool isAutoRunning;
-
         [ObservableProperty]
         private bool isExportRunning;
-
         [ObservableProperty]
         private bool isManualTracking;
-
         [ObservableProperty]
         private bool isNavigationInProgress;
-
         [ObservableProperty]
         private bool isSaveOperationInProgress;
-
         [ObservableProperty]
         private bool isSessionReady;
-
         [ObservableProperty]
         private int exportProgress;
-
         [ObservableProperty]
         private string? exportEtaText;
-
         [ObservableProperty]
         private string? exportStatusText;
-
         [ObservableProperty]
         private int brushDiameter = DefaultBrushDiameter;
-
         [ObservableProperty]
         private int blurRadius = DefaultBlurRadius;
 
@@ -91,29 +78,23 @@ namespace FaceShield.ViewModels.Workspace
         public int MaxBrushDiameter => MaxBrushDiameterValue;
         public int MinBlurRadius => MinBlurRadiusValue;
         public int MaxBlurRadius => MaxBlurRadiusValue;
-
         public bool ShowBrushSize =>
             CurrentMode == EditMode.Brush || CurrentMode == EditMode.Eraser;
-
         public bool ShowAutoProgress => IsAutoRunning && !IsExportRunning;
         public bool CanEditWorkspace =>
-            IsSessionReady &&
-            !IsExportRunning &&
-            !IsAutoRunning &&
-            !IsManualTracking &&
-            !IsNavigationInProgress &&
-            !IsSaveOperationInProgress;
+            IsSessionReady && !IsExportRunning && !IsAutoRunning &&
+            !IsManualTracking && !IsNavigationInProgress && !IsSaveOperationInProgress;
         public bool CanNavigateAway =>
-            !IsExportRunning &&
-            !IsAutoRunning &&
-            !IsManualTracking &&
-            !IsNavigationInProgress &&
-            !IsSaveOperationInProgress;
+            !IsExportRunning && !IsAutoRunning && !IsManualTracking &&
+            !IsNavigationInProgress && !IsSaveOperationInProgress;
+
+        // Until the export coordinator actually consumes the target-aware
+        // provider, do not emit an apparently successful legacy-only video.
+        // The editor stores target keyframes independently before this guard.
+        internal Func<bool>? ManualTargetExportGuard { get; set; }
 
         partial void OnCurrentModeChanged(EditMode value)
-        {
-            OnPropertyChanged(nameof(ShowBrushSize));
-        }
+            => OnPropertyChanged(nameof(ShowBrushSize));
 
         partial void OnIsAutoRunningChanged(bool value)
         {
@@ -137,14 +118,10 @@ namespace FaceShield.ViewModels.Workspace
             => NotifyWorkspaceGateChanged();
 
         partial void OnIsSessionReadyChanged(bool value)
-        {
-            OnPropertyChanged(nameof(CanEditWorkspace));
-        }
+            => OnPropertyChanged(nameof(CanEditWorkspace));
 
         partial void OnSelectedExportQualityChanged(ExportQualityChoice value)
-        {
-            OnPropertyChanged(nameof(ExportQualityPreset));
-        }
+            => OnPropertyChanged(nameof(ExportQualityPreset));
 
         private void NotifyWorkspaceGateChanged()
         {
@@ -154,8 +131,6 @@ namespace FaceShield.ViewModels.Workspace
 
         public event Action? UndoRequested;
         public event Action? SaveRequested;
-
-        // 자동 분석 요청 시 호출 전의 편집 모드를 함께 전달한다.
         public event Action<EditMode>? AutoRequested;
         public event Action? AutoCancelRequested;
         public event Action? ExportCancelRequested;
@@ -201,6 +176,8 @@ namespace FaceShield.ViewModels.Workspace
         private void Save()
         {
             if (!CanEditWorkspace) return;
+            if (ManualTargetExportGuard?.Invoke() == false)
+                return;
             SaveRequested?.Invoke();
         }
 
