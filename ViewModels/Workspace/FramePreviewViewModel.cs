@@ -607,6 +607,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        PersistCurrentMask();
+        PreserveManualTargetUndo();
         CancelManualFrameLoad();
         _manualPreviewCache.Reset();
         PreviewBlurProcessor.ReleaseCachedRenderer();
@@ -637,11 +639,27 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
 
         if (_useManualPlayer)
         {
-            await LoadManualFrameAsync(index);
+            try
+            {
+                await LoadManualFrameAsync(index);
+            }
+            catch (Exception ex)
+            {
+                ReportManualTargetFailure("프레임 이동 중 얼굴 마스크 저장", ex);
+            }
             return;
         }
 
-        PersistCurrentMask();
+        try
+        {
+            PersistCurrentMask();
+            PreserveManualTargetUndo();
+        }
+        catch (Exception ex)
+        {
+            ReportManualTargetFailure("프레임 이동 중 얼굴 마스크 저장", ex);
+            return;
+        }
         InvalidateEditableFrameState();
 
         if (_isPlaying)
@@ -723,6 +741,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         }
 
         PersistCurrentMask();
+        PreserveManualTargetUndo();
         _isDrawing = false;
         _lastDrawPoint = null;
         _maskUndo.Clear();
@@ -913,17 +932,23 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (_frameBitmap == null || _currentFrameIndex != index)
             return;
 
+        // Reloading the currently displayed frame is not an edit or a reason
+        // to discard a dirty target bitmap or its in-session Undo history.
+        if (_maskDirty || _isDrawing)
+        {
+            RefreshPreview(force: true);
+            return;
+        }
         if (_maskBitmap == null)
         {
             MaskBitmap = CreateEditableMask(index, _frameBitmap)
                 ?? CreateEmptyMask(
                     _frameBitmap.PixelSize.Width,
                     _frameBitmap.PixelSize.Height);
+            RestoreManualTargetUndo();
         }
 
         UpdateDetectionRects(index);
-        _maskUndo.Clear();
-        _maskDirty = false;
         RefreshPreview(force: true);
     }
 
@@ -949,7 +974,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            await LoadManualFrameAsync(index);
+            try { await LoadManualFrameAsync(index); }
+            catch (Exception ex) { ReportManualTargetFailure("재생 종료 후 프레임 저장", ex); }
             return;
         }
 
@@ -999,7 +1025,18 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        PersistCurrentMask();
+        try
+        {
+            PersistCurrentMask();
+            PreserveManualTargetUndo();
+        }
+        catch (Exception ex)
+        {
+            ReportManualTargetFailure("재생 전 얼굴 마스크 저장", ex);
+            if (onPlaybackFailed != null) onPlaybackFailed(ex.Message);
+            else onPlaybackEnded();
+            return;
+        }
         bool useManualPlayback =
             _useManualPlayer && playbackSession.ManualPlayer != null;
         bool continueManualFromCurrentFrame =
@@ -1513,7 +1550,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                             break;
 
                         frame = null;
-                        if (totalFrames > 0 && frameIndex >= totalFrames - 1)
+                        if (totalFrames > 0 &&
+                            frameIndex >= totalFrames - 1)
                         {
                             endedNaturally = true;
                             break;
@@ -1592,6 +1630,19 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Fallback/exact callbacks may race a newly edited current frame.
+        // Do not replace its pixels until the correct target document is saved.
+        try
+        {
+            PersistCurrentMask();
+            PreserveManualTargetUndo();
+        }
+        catch (Exception ex)
+        {
+            exact.Dispose();
+            ReportManualTargetFailure("정확한 프레임 교체 전 마스크 저장", ex);
+            return;
+        }
         _currentManualFrameIdentity = null;
         _currentFrameIndex = index;
         PrepareFrameReplacement();
@@ -1601,6 +1652,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             ?? CreateEmptyMask(exact.PixelSize.Width, exact.PixelSize.Height);
         _maskUndo.Clear();
         _maskDirty = false;
+        RestoreManualTargetUndo();
 
         UpdateDetectionRects(index);
         RefreshPreview(force: true);
@@ -1620,6 +1672,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (_disposed)
             return;
 
+        PersistCurrentMask();
+        PreserveManualTargetUndo();
         _currentManualFrameIdentity = manualIdentity;
         _currentFrameIndex = index;
         PrepareFrameReplacement();
@@ -1654,6 +1708,8 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (_disposed)
             return;
 
+        PersistCurrentMask();
+        PreserveManualTargetUndo();
         _currentManualFrameIdentity = identity;
         _currentFrameIndex = identity.FrameOrdinal;
         PrepareFrameReplacement();
@@ -1665,6 +1721,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
                 frame.PixelSize.Height);
         _maskUndo.Clear();
         _maskDirty = false;
+        RestoreManualTargetUndo();
         UpdateDetectionRects(identity.FrameOrdinal);
         RefreshPreview(force: true);
     }
@@ -1736,6 +1793,14 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     {
         if (!_maskDirty)
             return;
+        // The editor is a single face's alpha, not a legacy/global mask.
+        // Route it before testing the legacy provider: even direct callers of
+        // PersistCurrentMask may never pollute SetMask/SetIndependentManualMask.
+        if (_manualTargets != null && _selectedManualTarget != null)
+        {
+            CommitSelectedManualTargetEdit();
+            return;
+        }
         if (_maskProvider == null || _currentFrameIndex < 0 || _maskBitmap == null)
             return;
 
@@ -1824,6 +1889,17 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (_disposed)
             return;
 
+        try
+        {
+            PersistCurrentMask();
+        }
+        catch (Exception ex)
+        {
+            // A shutdown cannot guarantee disk writes (e.g. disk full).
+            // Surface the failure where possible and never write the face's
+            // alpha into the legacy mask as a fallback.
+            ReportManualTargetFailure("종료 전 얼굴 마스크 저장", ex);
+        }
         _disposed = true;
         CancelManualFrameLoad();
         _toolPanel.PropertyChanged -= OnToolPanelPropertyChanged;
