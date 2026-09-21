@@ -32,13 +32,13 @@ public partial class FramePreviewViewModel
         _manualTargetUndoBytes += bytes;
     }
 
-    // Called after ReplaceEditorWithSelectedTarget clears the shared stack.
-    // An Undo from face A can therefore never restore pixels into face B.
+    // Only a selected target has a target-owned Undo stack. Configuring an
+    // empty target workspace must not erase the existing legacy/global Undo.
     internal void RestoreManualTargetUndo()
     {
-        _maskUndo.Clear();
         if (_selectedManualTarget == null || _currentFrameIndex < 0)
             return;
+        _maskUndo.Clear();
         var key = (_selectedManualTarget.Id, _currentFrameIndex);
         if (!_manualTargetUndoArchives.TryGetValue(key, out byte[][]? newestFirst))
             return;
