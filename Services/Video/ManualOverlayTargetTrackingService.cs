@@ -39,82 +39,86 @@ internal static class ManualOverlayTargetTrackingService
 
         string fingerprint = workspace.GetSourceFingerprint(targetId, sourceFrame);
         using WriteableBitmap sourceBitmap = CreateSourceBitmap(source);
+        // Decoding is deliberately outside the commit gate. A correction can
+        // run while frames decode; its source/boundary is checked again below.
         ManualMaskTrackResult attempted = ManualMaskTrackingService.TrackForward(
             videoPath, sourceFrame, endExclusive, sourceBitmap, progress, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-
         attempted.Segment.SourceMaskFingerprint = fingerprint;
-        if (attempted.ProcessedFrames <= 0 &&
-            !(attempted.Segment.StoppedByFailure && attempted.Segment.Components.Count > 0))
+
+        // Correction and tracking use the same instance as a commit gate.
+        // Hold it from the fresh snapshot through atomic file replacement and
+        // live publication. This does NOT lock another process or workspace
+        // instance editing the same video.
+        lock (workspace)
         {
-            // A tracker that cannot produce a usable component/next-frame
-            // sample has not replaced anything. Do not misreport its empty
-            // attempt when a same-source verified interval remains in memory.
-            if (workspace.TryGetTrackSegment(targetId, sourceFrame,
-                    out ManualMaskTrackSegment previous) &&
-                string.Equals(previous.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal))
-                return attempted with
-                {
-                    Segment = previous,
-                    ProcessedFrames = Math.Max(0, previous.EndExclusive - sourceFrame - 1)
-                };
-            return attempted;
+            var snapshot = workspace.Snapshot();
+            ManualOverlayStoredTarget current = snapshot.SingleOrDefault(target => target.Id == targetId)
+                ?? throw new InvalidDataException("The selected manual target disappeared during tracking.");
+            ManualOverlayStoredKeyframe currentSource = current.Keyframes
+                .SingleOrDefault(keyframe => keyframe.FrameIndex == sourceFrame)
+                ?? throw new InvalidDataException("The tracking source correction disappeared.");
+            if (!string.Equals(ManualOverlayTrackValidation.Fingerprint(currentSource),
+                    fingerprint, StringComparison.Ordinal))
+                throw new InvalidDataException("The manual target source changed during tracking.");
+            if (attempted.Segment.EndExclusive >
+                workspace.NextBoundaryExclusive(targetId, sourceFrame, totalFrames: 0))
+                throw new InvalidDataException("Tracking crossed the selected face's correction boundary.");
+
+            ManualMaskTrackSegment? prior = current.Segments?
+                .SingleOrDefault(segment => segment.SourceKeyframe == sourceFrame);
+            if (attempted.ProcessedFrames <= 0 &&
+                !(attempted.Segment.StoppedByFailure && attempted.Segment.Components.Count > 0))
+            {
+                // No usable attempt can overwrite a verified segment. Recheck
+                // the source inside the gate before reporting earlier coverage.
+                if (prior != null && string.Equals(prior.SourceMaskFingerprint,
+                        fingerprint, StringComparison.Ordinal))
+                    return attempted with
+                    {
+                        Segment = prior,
+                        ProcessedFrames = Math.Max(0, prior.EndExclusive - sourceFrame - 1)
+                    };
+                return attempted;
+            }
+
+            ManualOverlayTrackValidation.Validate(attempted.Segment, currentSource);
+            bool retainPrior = prior != null &&
+                string.Equals(prior.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal) &&
+                (prior.EndExclusive > attempted.Segment.EndExclusive ||
+                 (prior.EndExclusive == attempted.Segment.EndExclusive &&
+                  !prior.StoppedByFailure && attempted.Segment.StoppedByFailure));
+            ManualMaskTrackSegment effective = retainPrior ? prior! : attempted.Segment;
+            var staged = snapshot.Select(target => target.Id != targetId
+                ? target
+                : new ManualOverlayStoredTarget(target.Id, target.Keyframes,
+                    (target.Segments ?? Array.Empty<ManualMaskTrackSegment>())
+                        .Where(segment => segment.SourceKeyframe != sourceFrame)
+                        .Append(effective.Clone())
+                        .OrderBy(segment => segment.SourceKeyframe)
+                        .ToArray())).ToArray();
+
+            cancellationToken.ThrowIfCancellationRequested();
+            // A failed write leaves the live workspace unchanged. No further
+            // cancellation point after a successful disk replacement.
+            ManualOverlayWorkspaceStore.SaveForVideo(videoPath, staged);
+            bool retainedOnLive = workspace.SetTrackSegment(targetId, attempted.Segment);
+            if (retainedOnLive != retainPrior ||
+                !workspace.TryGetTrackSegment(targetId, sourceFrame,
+                    out ManualMaskTrackSegment saved) ||
+                !string.Equals(saved.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal) ||
+                saved.EndExclusive != effective.EndExclusive ||
+                saved.StoppedByFailure != effective.StoppedByFailure)
+                throw new InvalidDataException("Persisted manual target track changed unexpectedly.");
+
+            if (!retainedOnLive)
+                return attempted;
+            return attempted with
+            {
+                Segment = saved,
+                ProcessedFrames = Math.Max(0, saved.EndExclusive - sourceFrame - 1)
+            };
         }
-
-        // Take an independent copy and validate against the current source.
-        // Do not mutate the live workspace before the atomic file replacement:
-        // a failed disk write must leave its previously verified track intact.
-        var snapshot = workspace.Snapshot();
-        ManualOverlayStoredTarget current = snapshot.SingleOrDefault(target => target.Id == targetId)
-            ?? throw new InvalidDataException("The selected manual target disappeared during tracking.");
-        ManualOverlayStoredKeyframe currentSource = current.Keyframes
-            .SingleOrDefault(keyframe => keyframe.FrameIndex == sourceFrame)
-            ?? throw new InvalidDataException("The tracking source correction disappeared.");
-        if (!string.Equals(ManualOverlayTrackValidation.Fingerprint(currentSource),
-                fingerprint, StringComparison.Ordinal))
-            throw new InvalidDataException("The manual target source changed during tracking.");
-        ManualOverlayTrackValidation.Validate(attempted.Segment, currentSource);
-        if (attempted.Segment.EndExclusive >
-            workspace.NextBoundaryExclusive(targetId, sourceFrame, totalFrames: 0))
-            throw new InvalidDataException("Tracking crossed the selected face's correction boundary.");
-
-        ManualMaskTrackSegment? prior = current.Segments?
-            .SingleOrDefault(segment => segment.SourceKeyframe == sourceFrame);
-        bool retainPrior = prior != null &&
-            string.Equals(prior.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal) &&
-            (prior.EndExclusive > attempted.Segment.EndExclusive ||
-             (prior.EndExclusive == attempted.Segment.EndExclusive &&
-              !prior.StoppedByFailure && attempted.Segment.StoppedByFailure));
-        ManualMaskTrackSegment effective = retainPrior ? prior! : attempted.Segment;
-        var staged = snapshot.Select(target => target.Id != targetId
-            ? target
-            : new ManualOverlayStoredTarget(target.Id, target.Keyframes,
-                (target.Segments ?? Array.Empty<ManualMaskTrackSegment>())
-                    .Where(segment => segment.SourceKeyframe != sourceFrame)
-                    .Append(effective.Clone())
-                    .OrderBy(segment => segment.SourceKeyframe)
-                    .ToArray())).ToArray();
-
-        cancellationToken.ThrowIfCancellationRequested();
-        ManualOverlayWorkspaceStore.SaveForVideo(videoPath, staged);
-
-        // No cancellation point after successful persistence. UI edit/navigation
-        // is gated while tracking runs, so publish the same effective segment
-        // immediately. Independent concurrent writers still need an explicit
-        // cross-process transaction, which is not provided by this workspace.
-        bool retainedOnLive = workspace.SetTrackSegment(targetId, attempted.Segment);
-        if (!workspace.TryGetTrackSegment(targetId, sourceFrame,
-                out ManualMaskTrackSegment saved) ||
-            !string.Equals(saved.SourceMaskFingerprint, fingerprint, StringComparison.Ordinal))
-            throw new InvalidDataException("Persisted manual target track changed unexpectedly.");
-
-        if (!retainedOnLive)
-            return attempted;
-        return attempted with
-        {
-            Segment = saved,
-            ProcessedFrames = Math.Max(0, saved.EndExclusive - sourceFrame - 1)
-        };
     }
 
     private static WriteableBitmap CreateSourceBitmap(ManualOverlayStoredKeyframe source)
