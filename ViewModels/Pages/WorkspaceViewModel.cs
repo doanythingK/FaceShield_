@@ -316,24 +316,30 @@ namespace FaceShield.ViewModels.Pages
                 return;
 
             ToolPanel.IsSaveOperationInProgress = true;
+            bool maskPersisted = false;
             try
             {
                 FramePreview.PersistCurrentMask();
-
-                try
-                {
-                    await SaveVideoAsync();
-                }
-                catch (Exception ex)
-                {
-                    await ShowExportErrorAsync(ex);
-                }
+                maskPersisted = true;
+                await SaveVideoAsync();
+            }
+            catch (Exception ex)
+            {
+                // SaveRequested is an async-void event; a failed target commit
+                // must be reported rather than escaping through the UI loop.
+                await ShowExportErrorAsync(ex);
             }
             finally
             {
                 try
                 {
-                    PersistWorkspaceState();
+                    // Do not retry a failed face commit indirectly through a
+                    // legacy workspace snapshot while handling its error.
+                    PersistWorkspaceState(includePreviewMask: maskPersisted);
+                }
+                catch (Exception ex)
+                {
+                    await ShowErrorDialogAsync("워크스페이스 저장 실패", ex.Message);
                 }
                 finally
                 {
@@ -458,8 +464,18 @@ namespace FaceShield.ViewModels.Pages
                     FrameList.NotifyPlaybackStopped();
                 await FramePreview.StopManualOperationsAndWaitAsync();
 
-                FramePreview.PersistCurrentMask();
-                PersistWorkspaceState(includePreviewMask: false);
+                try
+                {
+                    FramePreview.PersistCurrentMask();
+                    PersistWorkspaceState(includePreviewMask: false);
+                }
+                catch (Exception ex)
+                {
+                    // Leave the current view/editable pixels intact when the
+                    // face document cannot be saved; never navigate away.
+                    await ShowErrorDialogAsync("워크스페이스 저장 실패", ex.Message);
+                    return;
+                }
 
                 if (_workspacePersistence != null)
                 {
@@ -567,7 +583,7 @@ namespace FaceShield.ViewModels.Pages
             IssueReviewStateSnapshot state = _issueReview.CreateStateSnapshot();
             FrameList.NoFaceIssueFrames = state.NoFaceFrames;
             FrameList.LowConfidenceIssueFrames = state.LowConfidenceFrames;
-            FrameList.FlickerIssueFrames = state.FlickerFrames;
+            FrameList.FlickerIssueFrames = state.FlickerIssues;
             AutoAnomalyCount = state.Anomalies.Length;
             HasAutoAnomalies = state.Anomalies.Length > 0;
         }
