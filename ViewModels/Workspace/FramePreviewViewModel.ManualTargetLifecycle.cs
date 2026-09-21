@@ -8,6 +8,8 @@ namespace FaceShield.ViewModels.Workspace;
 
 public partial class FramePreviewViewModel
 {
+    internal int ManualTargetEditableFrameIndex => _currentFrameIndex;
+
     // The workspace restores target data first, then the UI restores only an ID
     // that is still present. Do not use the normal user-switch gate during
     // startup: video initialization can finish after the view is attached.
@@ -49,9 +51,9 @@ public partial class FramePreviewViewModel
         }
     }
 
-    // Called by timeline input before its frame selection changes. This writes
-    // only the selected target's explicit alpha; it must not copy an editable
-    // target bitmap into FrameMaskProvider's legacy/global manual layer.
+    // Called by UI tunnel handlers before their ordinary selection handlers.
+    // Write only selected target alpha, never its editable raster into the
+    // provider's legacy/global manual layer.
     internal void CommitPendingManualTargetEdit()
     {
         if (_manualTargets == null || _selectedManualTarget == null || _disposed)
