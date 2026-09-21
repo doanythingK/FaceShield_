@@ -1,0 +1,105 @@
+// Synthetic source for the temporary manual-overlay C# regression harness.
+// NOT COMPILED OR RUN (2026-09-21, per user's deferred-verification request).
+// Tests target-specific absence, a corrected failure boundary and Auto/B union.
+using FaceShield.Services.Video;
+using System;
+using System.IO;
+using System.Linq;
+
+const int width = 4, height = 4, stride = width * 4;
+string directory = Path.Combine(Path.GetTempPath(),
+    "faceshield-absence-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+try
+{
+    string stateFile = Path.Combine(directory, "targets.json");
+    const string evidence = "synthetic-face-absence";
+    Guid faceA = Guid.NewGuid(), faceB = Guid.NewGuid();
+    byte[] faceAPixels = new byte[width * height];
+    faceAPixels[0] = 255;
+    byte[] faceBPixels = new byte[width * height];
+    faceBPixels[15] = 180;
+    var sourceA = new ManualOverlayStoredKeyframe(3, width, height, faceAPixels);
+    var explicitAbsence = new ManualOverlayStoredKeyframe(
+        5, width, height, new byte[width * height]);
+    var sourceB = new ManualOverlayStoredKeyframe(5, width, height, faceBPixels);
+    var failedTrackA = new ManualMaskTrackSegment
+    {
+        SourceKeyframe = 3,
+        SourceMaskFingerprint = ManualOverlayTrackValidation.Fingerprint(sourceA),
+        EndExclusive = 5,
+        StoppedByFailure = true,
+        StopFrame = 5,
+        StopReason = "synthetic tracking loss",
+        Components = new()
+        {
+            new ManualMaskTrackComponent
+            {
+                ComponentIndex = 0,
+                SourceBoundsX = 0,
+                SourceBoundsY = 0,
+                SourceBoundsWidth = 1,
+                SourceBoundsHeight = 1,
+                Samples = new()
+                {
+                    new ManualMaskTrackSample
+                    {
+                        FrameIndex = 4,
+                        OffsetX = 1,
+                        OffsetY = 0,
+                        Scale = 1,
+                        RotationRadians = 0,
+                        Confidence = 0.9
+                    }
+                }
+            }
+        }
+    };
+
+    ManualOverlayStateStore.Save(stateFile, evidence, new[]
+    {
+        new ManualOverlayStoredTarget(faceA, new[] { sourceA, explicitAbsence },
+            new[] { failedTrackA }),
+        new ManualOverlayStoredTarget(faceB, new[] { sourceB })
+    });
+    var restored = ManualOverlayStateStore.Load(stateFile, evidence);
+    var a = restored.Single(target => target.Id == faceA);
+    var b = restored.Single(target => target.Id == faceB);
+    Assert(a.Keyframes.Single(frame => frame.FrameIndex == 5).Alpha.All(value => value == 0),
+        "Face A's explicit absence boundary was not persisted");
+    Assert(a.Segments!.Single().EndExclusive == 5 &&
+           a.Segments.Single().StopFrame == 5,
+        "A verified track was extended past its correction boundary");
+    Assert(b.Keyframes.Single().Alpha[15] == 180,
+        "Correcting face A unexpectedly changed face B");
+
+    var aBoundary = new ManualOverlayTarget(faceA);
+    aBoundary.SetExplicitKeyframe(3);
+    aBoundary.SetExplicitKeyframe(5);
+    Assert(aBoundary.NextBoundaryExclusive(3, 100) == 5,
+        "Explicit absence did not stop face A at the selected frame");
+
+    byte[] auto = new byte[stride * height];
+    auto[stride + 4 + 3] = 140;
+    byte[] merged = new byte[stride * height];
+    ManualOverlayMaskComposer.Compose(auto, stride,
+        new[] { a.Keyframes.Single(frame => frame.FrameIndex == 5).ToBgra(stride),
+                b.Keyframes.Single().ToBgra(stride) },
+        merged, stride, width, height);
+    Assert(merged[stride + 4 + 3] == 140,
+        "An absence correction removed an unrelated Auto face");
+    Assert(merged[3 * stride + 3 * 4 + 3] == 180,
+        "An absence correction removed the other manual face");
+    Assert(merged[3] == 0,
+        "Face A's old alpha was held across its explicit absence");
+    Console.WriteLine("PASS: face-specific absence, corrected failure boundary, independent face/Auto union");
+}
+finally
+{
+    Directory.Delete(directory, recursive: true);
+}
+
+static void Assert(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
