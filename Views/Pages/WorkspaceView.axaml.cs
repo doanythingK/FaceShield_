@@ -62,15 +62,10 @@ public partial class WorkspaceView : UserControl
             vm.FrameList.VideoPath,
             vm.FrameList.TotalFrames);
         if (vm.Mode == WorkspaceMode.Manual)
-        {
             vm.FramePreview.ConfigureManualTargets(vm.FrameList.VideoPath);
-            vm.ToolPanel.ManualTargetExportGuard = vm.FramePreview.CanExportLegacyMask;
-        }
-        else
-        {
-            vm.ToolPanel.ManualTargetExportGuard = null;
-        }
-
+        // Standard save now uses the target-aware provider in
+        // WorkspaceExportCoordinator, including its missing-sample preflight.
+        vm.ToolPanel.ManualTargetExportGuard = null;
         EnsureManualTargetControls();
         SyncManualTargetControls();
     }
@@ -181,12 +176,10 @@ public partial class WorkspaceView : UserControl
     {
         if (DataContext is not WorkspaceViewModel vm)
             return;
-
         bool isUndo = (e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta))
             && e.Key == Key.Z;
         if (!isUndo || !vm.ToolPanel.CanEditWorkspace)
             return;
-
         vm.ToolPanel.UndoCommand.Execute(null);
         e.Handled = true;
     }
