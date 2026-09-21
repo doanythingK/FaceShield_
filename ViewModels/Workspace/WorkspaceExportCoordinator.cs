@@ -14,7 +14,6 @@ namespace FaceShield.ViewModels.Workspace;
 internal sealed class WorkspaceExportCoordinator : IDisposable
 {
     internal const string HybridCopyDisabledReason = "bitstream-compatibility-unverified";
-
     private readonly FrameMaskProvider _maskProvider;
     private readonly ToolPanelViewModel _toolPanel;
     private readonly Func<bool> _isAutoRunning;
@@ -27,21 +26,14 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     private CancellationTokenSource? _exportCts;
     private long _exportRunGeneration;
     private WorkspaceAutoExportGateState _gateState = new(
-        Required: false,
-        Passed: false,
-        Failure: null,
-        CompletedRunSummary: null,
-        HybridPolicyAvailable: false,
-        AllowHybridCopy: false,
+        Required: false, Passed: false, Failure: null, CompletedRunSummary: null,
+        HybridPolicyAvailable: false, AllowHybridCopy: false,
         HybridDisableReasons: HybridCopyDisabledReason);
     private bool _disposed;
 
-    internal WorkspaceExportCoordinator(
-        FrameMaskProvider maskProvider,
-        ToolPanelViewModel toolPanel,
-        Func<bool> isAutoRunning,
-        Func<bool> tryBeginLifetimeOperation,
-        Action endLifetimeOperation,
+    internal WorkspaceExportCoordinator(FrameMaskProvider maskProvider,
+        ToolPanelViewModel toolPanel, Func<bool> isAutoRunning,
+        Func<bool> tryBeginLifetimeOperation, Action endLifetimeOperation,
         Func<string, Task<(string? Path, bool AllowOverwrite)>> resolveOutputPathAsync)
     {
         _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
@@ -53,66 +45,40 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     }
 
     internal WorkspaceAutoExportGateState GateState => _gateState;
-
     internal void ApplyGateState(WorkspaceAutoExportGateState state)
         => _gateState = state ?? throw new ArgumentNullException(nameof(state));
 
-    internal async Task<bool> ExportAsync(
-        string input,
-        int blurRadius,
+    internal async Task<bool> ExportAsync(string input, int blurRadius,
         IProgress<ExportProgress>? exportProgress = null,
-        CancellationToken cancellationToken = default,
-        bool updateToolPanel = true,
-        string? runId = null,
-        AutoMaskRunSummary? autoRunSummary = null,
+        CancellationToken cancellationToken = default, bool updateToolPanel = true,
+        string? runId = null, AutoMaskRunSummary? autoRunSummary = null,
         AutoMaskOptions? autoRunOptions = null,
         VideoExportQualityPreset qualityPreset = VideoExportQualityPreset.Balanced)
     {
         ThrowIfDisposed();
-        if (!_tryBeginLifetimeOperation())
-            return false;
-
+        if (!_tryBeginLifetimeOperation()) return false;
         bool entered = false;
         try
         {
             entered = await _gate.WaitAsync(0);
-            if (!entered)
-                return false;
-
-            return await ExportCoreAsync(
-                input,
-                blurRadius,
-                exportProgress,
-                cancellationToken,
-                updateToolPanel,
-                runId,
-                autoRunSummary,
-                autoRunOptions,
-                qualityPreset);
+            if (!entered) return false;
+            return await ExportCoreAsync(input, blurRadius, exportProgress, cancellationToken,
+                updateToolPanel, runId, autoRunSummary, autoRunOptions, qualityPreset);
         }
         finally
         {
-            if (entered)
-                _gate.Release();
+            if (entered) _gate.Release();
             _endLifetimeOperation();
         }
     }
 
-    private async Task<bool> ExportCoreAsync(
-        string input,
-        int blurRadius,
-        IProgress<ExportProgress>? exportProgress,
-        CancellationToken cancellationToken,
-        bool updateToolPanel,
-        string? runId,
-        AutoMaskRunSummary? autoRunSummary,
-        AutoMaskOptions? autoRunOptions,
-        VideoExportQualityPreset qualityPreset)
+    private async Task<bool> ExportCoreAsync(string input, int blurRadius,
+        IProgress<ExportProgress>? exportProgress, CancellationToken cancellationToken,
+        bool updateToolPanel, string? runId, AutoMaskRunSummary? autoRunSummary,
+        AutoMaskOptions? autoRunOptions, VideoExportQualityPreset qualityPreset)
     {
         string exportRunId = string.IsNullOrWhiteSpace(runId)
-            ? $"export-{Guid.NewGuid():N}"
-            : runId;
-
+            ? $"export-{Guid.NewGuid():N}" : runId;
         if (_isAutoRunning() && autoRunOptions == null)
         {
             const string reason = "auto-analysis-in-progress";
@@ -130,15 +96,13 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         if (autoRunOptions != null)
         {
             cascadeFailure = WorkspaceExportGatePolicy.GetRequiredYoloCascadeFailure(
-                autoRunOptions,
-                autoRunSummary);
+                autoRunOptions, autoRunSummary);
             cascadeError = autoRunSummary?.YoloCascadeError ?? "summary-missing";
         }
         if (cascadeFailure == null && _gateState.Required && !_gateState.Passed)
         {
             cascadeFailure = string.IsNullOrWhiteSpace(_gateState.Failure)
-                ? "persisted-auto-export-gate-failed"
-                : _gateState.Failure;
+                ? "persisted-auto-export-gate-failed" : _gateState.Failure;
             cascadeError = "persisted-gate";
         }
         if (cascadeFailure != null)
@@ -156,7 +120,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         Interlocked.Exchange(ref _exportCts, exportCts);
         CancellationToken exportToken = exportCts.Token;
         long runGeneration = Interlocked.Increment(ref _exportRunGeneration);
-
         if (updateToolPanel)
         {
             _toolPanel.IsExportRunning = true;
@@ -165,16 +128,11 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             _toolPanel.ExportStatusText = "수동 추적 상태를 확인하는 중...";
         }
         _etaSamples.Clear();
-
         var progress = new Progress<ExportProgress>(p =>
         {
-            if (!IsCurrentExportRun(runGeneration, exportToken))
-                return;
-
+            if (!IsCurrentExportRun(runGeneration, exportToken)) return;
             exportProgress?.Report(p);
-            if (!updateToolPanel || !_toolPanel.IsExportRunning)
-                return;
-
+            if (!updateToolPanel || !_toolPanel.IsExportRunning) return;
             _toolPanel.ExportProgress = Math.Clamp(p.Percent, 0, 100);
             UpdateEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
             if (!string.IsNullOrWhiteSpace(p.StatusMessage))
@@ -183,32 +141,23 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
         try
         {
-            await Task.Run(
-                () => ThrowIfUnresolvedManualTrackingFailure(
-                    input,
-                    exportRunId,
-                    exportToken),
-                exportToken);
+            await Task.Run(() => ThrowIfUnresolvedManualTrackingFailure(
+                input, exportRunId, exportToken), exportToken);
             exportToken.ThrowIfCancellationRequested();
-
             string output = BuildDefaultExportPath(input);
             (string? resolvedOutput, bool allowOutputOverwrite) =
                 await _resolveOutputPathAsync(output);
             exportToken.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(resolvedOutput))
-                return false;
+            if (string.IsNullOrWhiteSpace(resolvedOutput)) return false;
             output = resolvedOutput;
-
             if (updateToolPanel)
                 _toolPanel.ExportStatusText = "내보내기를 준비하는 중...";
 
-            (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy = (
-                false,
-                new[] { HybridCopyDisabledReason });
+            (bool allowHybridCopy, IReadOnlyList<string> disableReasons) hybridPolicy =
+                (false, new[] { HybridCopyDisabledReason });
             System.Diagnostics.Debug.WriteLine(
                 $"[WorkspaceExportPolicy] runId={exportRunId}, autoRunSummary={(effectiveAutoRunSummary?.RunId ?? "n/a")}, persistedPolicy={(_gateState.HybridPolicyAvailable && effectiveAutoRunSummary == null).ToString().ToLowerInvariant()}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
-            RunMetricsLog.AppendRunLines(
-                exportRunId,
+            RunMetricsLog.AppendRunLines(exportRunId,
                 $"[ExportRunConfig] runId={exportRunId}, blurRadius={blurRadius}, qualityPreset={qualityPreset}, allowHybridCopy={hybridPolicy.allowHybridCopy.ToString().ToLowerInvariant()}, disableReasons={FormatTextListForLog(hybridPolicy.disableReasons)}");
 
             var exportSummary = await Task.Run(() =>
@@ -216,15 +165,15 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 exportToken.ThrowIfCancellationRequested();
                 using var exportMaskLease =
                     ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
-                var exporter = new VideoExportService(exportMaskLease.Provider);
-                exporter.Export(
-                    input,
-                    output,
-                    blurRadius,
-                    progress,
-                    exportToken,
-                    exportRunId,
-                    allowHybridCopy: hybridPolicy.allowHybridCopy,
+                // Preserve the existing Auto/legacy source; the target adapter
+                // adds ONLY each face's exact keyframe or verified track sample.
+                // Invalid target persistence or unresolved failure blocks export.
+                IFrameMaskProvider effectiveMasks =
+                    ManualOverlayTargetExportMaskProvider.WrapIfPresent(
+                        input, exportMaskLease.Provider);
+                var exporter = new VideoExportService(effectiveMasks);
+                exporter.Export(input, output, blurRadius, progress, exportToken,
+                    exportRunId, allowHybridCopy: hybridPolicy.allowHybridCopy,
                     allowOutputOverwrite: allowOutputOverwrite,
                     qualityPreset: qualityPreset);
                 return exporter.LastExportSummary;
@@ -233,11 +182,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             if (exportSummary != null)
             {
                 System.Diagnostics.Debug.WriteLine($"[WorkspaceExport] {exportSummary.ToLogLine()}");
-                RunMetricsLog.AppendExportQualityGate(
-                    effectiveAutoRunSummary,
-                    exportSummary,
-                    hybridPolicy.allowHybridCopy,
-                    hybridPolicy.disableReasons);
+                RunMetricsLog.AppendExportQualityGate(effectiveAutoRunSummary, exportSummary,
+                    hybridPolicy.allowHybridCopy, hybridPolicy.disableReasons);
             }
             return true;
         }
@@ -261,79 +207,47 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     }
 
     private void ThrowIfUnresolvedManualTrackingFailure(
-        string input,
-        string exportRunId,
-        CancellationToken cancellationToken)
+        string input, string exportRunId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!ManualMaskKeyframeTimeline.IsEnabled(_maskProvider))
-            return;
-
+        if (!ManualMaskKeyframeTimeline.IsEnabled(_maskProvider)) return;
         int[] keyframes = _maskProvider.GetStoredMaskFrameIndices()
-            .Concat(_maskProvider.GetFaceMaskFrameIndices())
-            .Distinct()
-            .OrderBy(static frameIndex => frameIndex)
-            .ToArray();
-        if (keyframes.Length == 0)
-            return;
-
+            .Concat(_maskProvider.GetFaceMaskFrameIndices()).Distinct()
+            .OrderBy(static frameIndex => frameIndex).ToArray();
+        if (keyframes.Length == 0) return;
         IReadOnlyList<ManualMaskTrackSegment> trackSegments;
-        try
-        {
-            trackSegments = ManualMaskTrackStore.LoadForExport(input);
-        }
+        try { trackSegments = ManualMaskTrackStore.LoadForExport(input); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            string line =
-                $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-state-unreadable, " +
-                $"error={ex.GetType().Name}:{ex.Message}";
+            string line = $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-state-unreadable, error={ex.GetType().Name}:{ex.Message}";
             System.Diagnostics.Debug.WriteLine(line);
             RunMetricsLog.AppendRunLines(exportRunId, line);
             throw new InvalidOperationException(
                 "수동 마스크 추적 상태 파일을 확인할 수 없어 안전하게 내보낼 수 없습니다. " +
-                "현재 프레임의 마스크를 확인하고 다시 추적한 뒤 내보내세요.",
-                ex);
+                "현재 프레임의 마스크를 확인하고 다시 추적한 뒤 내보내세요.", ex);
         }
 
         foreach (ManualMaskTrackSegment segment in trackSegments
-                     .Where(static candidate =>
-                         candidate.StoppedByFailure &&
-                         candidate.StopFrame.HasValue)
+                     .Where(static candidate => candidate.StoppedByFailure && candidate.StopFrame.HasValue)
                      .OrderBy(static candidate => candidate.StopFrame))
         {
             cancellationToken.ThrowIfCancellationRequested();
             int sourcePosition = Array.BinarySearch(keyframes, segment.SourceKeyframe);
-            if (sourcePosition < 0)
-                continue;
-
+            if (sourcePosition < 0) continue;
             using var sourceMask = _maskProvider.GetFinalMask(segment.SourceKeyframe);
-            if (sourceMask == null ||
-                string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
-                !string.Equals(
-                    ManualMaskFingerprint.Compute(sourceMask, cancellationToken),
-                    segment.SourceMaskFingerprint,
-                    StringComparison.Ordinal))
-            {
+            if (sourceMask == null || string.IsNullOrWhiteSpace(segment.SourceMaskFingerprint) ||
+                !string.Equals(ManualMaskFingerprint.Compute(sourceMask, cancellationToken),
+                    segment.SourceMaskFingerprint, StringComparison.Ordinal))
                 continue;
-            }
-
             int stopFrame = segment.StopFrame!.Value;
             int nextPosition = sourcePosition + 1;
-            if (nextPosition < keyframes.Length &&
-                keyframes[nextPosition] <= stopFrame)
-            {
+            if (nextPosition < keyframes.Length && keyframes[nextPosition] <= stopFrame)
                 continue;
-            }
-
             string stopReason = string.IsNullOrWhiteSpace(segment.StopReason)
-                ? "추적 신뢰도 부족"
-                : segment.StopReason!;
-            string unresolvedLine =
-                $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-unresolved, " +
-                $"sourceFrame={segment.SourceKeyframe}, stopFrame={stopFrame}";
+                ? "추적 신뢰도 부족" : segment.StopReason!;
+            string unresolvedLine = $"[ExportBlocked] runId={exportRunId}, reason=manual-tracking-unresolved, sourceFrame={segment.SourceKeyframe}, stopFrame={stopFrame}";
             System.Diagnostics.Debug.WriteLine(unresolvedLine);
             RunMetricsLog.AppendRunLines(exportRunId, unresolvedLine);
-
             throw new InvalidOperationException(
                 $"수동 마스크 추적이 {stopFrame} 프레임에서 중단된 상태입니다 ({stopReason}). " +
                 "해당 프레임에 보정 키프레임을 만든 뒤 다시 추적하거나, " +
@@ -341,22 +255,15 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         }
     }
 
-    private bool IsCurrentExportRun(
-        long runGeneration,
-        CancellationToken token)
-        => !_disposed &&
-           !token.IsCancellationRequested &&
-           Volatile.Read(ref _exportRunGeneration) == runGeneration;
+    private bool IsCurrentExportRun(long generation, CancellationToken token)
+        => !_disposed && !token.IsCancellationRequested &&
+           Volatile.Read(ref _exportRunGeneration) == generation;
 
-    private void InvalidateExportRunGeneration(long runGeneration)
+    private void InvalidateExportRunGeneration(long generation)
     {
-        if (runGeneration <= 0)
-            return;
-
-        Interlocked.CompareExchange(
-            ref _exportRunGeneration,
-            unchecked(runGeneration + 1),
-            runGeneration);
+        if (generation > 0)
+            Interlocked.CompareExchange(ref _exportRunGeneration,
+                unchecked(generation + 1), generation);
     }
 
     internal void Cancel()
@@ -380,22 +287,20 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         }
         if (_etaSamples.Count > 0 && frameIndex <= _lastEtaSample.FrameIndex)
             return;
-
         _etaSamples.Enqueue((timestamp, frameIndex));
         _lastEtaSample = (timestamp, frameIndex);
-        while (_etaSamples.Count > 0 && (timestamp - _etaSamples.Peek().Timestamp).TotalSeconds > 10)
+        while (_etaSamples.Count > 0 &&
+               (timestamp - _etaSamples.Peek().Timestamp).TotalSeconds > 10)
             _etaSamples.Dequeue();
         if (_etaSamples.Count < 2)
         {
             _toolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
             return;
         }
-
         var first = _etaSamples.Peek();
         double elapsedSeconds = (_lastEtaSample.Timestamp - first.Timestamp).TotalSeconds;
         int progressed = _lastEtaSample.FrameIndex - first.FrameIndex;
-        if (elapsedSeconds <= 0 || progressed <= 0)
-            return;
+        if (elapsedSeconds <= 0 || progressed <= 0) return;
         double remaining = (totalFrames - frameIndex) / (progressed / elapsedSeconds);
         if (remaining >= 0)
             _toolPanel.ExportEtaText = $"예상 남은 시간: {FormatEta(TimeSpan.FromSeconds(remaining))}";
@@ -423,8 +328,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
     private static string FormatTextListForLog(IReadOnlyList<string> values)
     {
-        if (values.Count == 0)
-            return "none";
+        if (values.Count == 0) return "none";
         const int maxValues = 12;
         string text = string.Join("|", values.Take(maxValues));
         return values.Count > maxValues ? $"{text}|...(+{values.Count - maxValues})" : text;
@@ -432,8 +336,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-            return;
+        if (_disposed) return;
         _disposed = true;
         Cancel();
         _gate.Dispose();
@@ -441,7 +344,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
 
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(WorkspaceExportCoordinator));
+        if (_disposed) throw new ObjectDisposedException(nameof(WorkspaceExportCoordinator));
     }
 }
