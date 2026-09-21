@@ -252,10 +252,8 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     }
 
     /// <summary>
-    /// The coordinator is subscribed before the view's pointer/keyboard hooks
-    /// and also receives programmatic FrameList selection and playback events.
-    /// A failed target save must not proceed into the global bitmap persistence
-    /// path or clear the still-dirty editable mask.
+    /// Handles both GUI and programmatic FrameList selection/playback. A failed
+    /// target save must not fall through to the legacy global mask writer.
     /// </summary>
     private bool TryCommitTargetBeforeTransition()
     {
@@ -314,7 +312,11 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     {
         if (!isPlaying)
         {
-            _framePreview.StopPlayback();
+            // NotifyPlaybackStopped is also used to revert a rejected play
+            // request. The player never started, so StopPlayback would clear
+            // this face's unsaved Undo stack and editable state needlessly.
+            if (!_suppressStoppedAfterFailedTargetSave)
+                _framePreview.StopPlayback();
             _framePreview.NotifyManualTrackingPlaybackStateChanged();
             return;
         }
