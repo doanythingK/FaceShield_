@@ -45,18 +45,20 @@ internal sealed record ManualOverlayStoredKeyframe(int FrameIndex, int Width, in
     }
 }
 
-internal sealed record ManualOverlayStoredTarget(Guid Id, IReadOnlyList<ManualOverlayStoredKeyframe> Keyframes);
+// The third optional argument preserves existing explicit-keyframe-only callers.
+internal sealed record ManualOverlayStoredTarget(
+    Guid Id,
+    IReadOnlyList<ManualOverlayStoredKeyframe> Keyframes,
+    IReadOnlyList<ManualMaskTrackSegment>? Segments = null);
 
 /// <summary>
-/// Separate, versioned persistence for manual targets. The caller supplies a
-/// workspace-specific path and video source evidence. Missing files are empty;
-/// existing corrupt or mismatched files throw instead of silently dropping blur.
-/// The legacy automatic-mask and tracking stores are never written here.
-/// This foundation is not yet wired into the editor or export.
+/// A single atomically replaced document contains both a target's corrections
+/// and its validated samples. Version 1 explicit-only files remain readable;
+/// version 2 never borrows any legacy global-keyframe tracking state.
 /// </summary>
 internal static class ManualOverlayStateStore
 {
-    private const int CurrentVersion = 1;
+    private const int CurrentVersion = 2;
     private const int MaxDimension = 8192;
     private const int MaxPixels = 64_000_000;
     private static readonly object SaveGate = new();
@@ -77,6 +79,8 @@ internal static class ManualOverlayStateStore
     {
         [JsonRequired] public Guid Id { get; set; }
         [JsonRequired] public List<KeyframeDto> Keyframes { get; set; } = new();
+        // Version 1 has no Segments member; version 2 requires it even when empty.
+        public List<ManualMaskTrackSegment>? Segments { get; set; }
     }
 
     private sealed class KeyframeDto
@@ -107,8 +111,13 @@ internal static class ManualOverlayStateStore
             if (target == null || target.Id == Guid.Empty || !seenIds.Add(target.Id) ||
                 target.Keyframes == null)
                 throw new InvalidDataException("Invalid or duplicated manual target.");
-            var savedTarget = new TargetDto { Id = target.Id };
+            var savedTarget = new TargetDto
+            {
+                Id = target.Id,
+                Segments = new List<ManualMaskTrackSegment>()
+            };
             var frames = new HashSet<int>();
+            var sources = new Dictionary<int, ManualOverlayStoredKeyframe>();
             foreach (ManualOverlayStoredKeyframe keyframe in target.Keyframes.OrderBy(k => k.FrameIndex))
             {
                 if (keyframe == null || keyframe.FrameIndex < 0 || !frames.Add(keyframe.FrameIndex))
@@ -123,6 +132,23 @@ internal static class ManualOverlayStateStore
                     Height = keyframe.Height,
                     CompressedAlpha = Compress(keyframe.Alpha)
                 });
+                sources.Add(keyframe.FrameIndex, keyframe);
+            }
+            var sourceFrames = new HashSet<int>();
+            foreach (ManualMaskTrackSegment segment in
+                     (target.Segments ?? Array.Empty<ManualMaskTrackSegment>())
+                     .OrderBy(s => s.SourceKeyframe))
+            {
+                if (segment == null || !sourceFrames.Add(segment.SourceKeyframe) ||
+                    !sources.TryGetValue(segment.SourceKeyframe,
+                        out ManualOverlayStoredKeyframe? source))
+                    throw new InvalidDataException("Duplicated track or track without its target's source.");
+                ManualOverlayTrackValidation.Validate(segment, source);
+                int next = sources.Keys.Where(frame => frame > segment.SourceKeyframe)
+                    .DefaultIfEmpty(int.MaxValue).Min();
+                if (segment.EndExclusive > next)
+                    throw new InvalidDataException("Track crosses its own target's next correction.");
+                savedTarget.Segments!.Add(segment.Clone());
             }
             dto.Targets.Add(savedTarget);
         }
@@ -159,16 +185,19 @@ internal static class ManualOverlayStateStore
         {
             throw new InvalidDataException("Manual overlay file is malformed.", ex);
         }
-        if (dto.Version != CurrentVersion || dto.SourceEvidence != sourceEvidence || dto.Targets == null)
+        if ((dto.Version != 1 && dto.Version != CurrentVersion) ||
+            dto.SourceEvidence != sourceEvidence || dto.Targets == null)
             throw new InvalidDataException("Manual overlay version or video source evidence does not match.");
 
         var result = new List<ManualOverlayStoredTarget>(dto.Targets.Count);
         var ids = new HashSet<Guid>();
         foreach (TargetDto target in dto.Targets)
         {
-            if (target == null || target.Id == Guid.Empty || !ids.Add(target.Id) || target.Keyframes == null)
+            if (target == null || target.Id == Guid.Empty || !ids.Add(target.Id) ||
+                target.Keyframes == null || (dto.Version == CurrentVersion && target.Segments == null))
                 throw new InvalidDataException("Invalid or duplicated manual target.");
             var keyframes = new List<ManualOverlayStoredKeyframe>(target.Keyframes.Count);
+            var sources = new Dictionary<int, ManualOverlayStoredKeyframe>();
             int lastFrame = -1;
             foreach (KeyframeDto keyframe in target.Keyframes)
             {
@@ -177,18 +206,37 @@ internal static class ManualOverlayStateStore
                 int count = CheckedPixelCount(keyframe.Width, keyframe.Height);
                 if (keyframe.CompressedAlpha == null)
                     throw new InvalidDataException("Manual keyframe has no alpha payload.");
-                keyframes.Add(new ManualOverlayStoredKeyframe(keyframe.FrameIndex,
-                    keyframe.Width, keyframe.Height, DecompressExactly(keyframe.CompressedAlpha, count)));
+                var restored = new ManualOverlayStoredKeyframe(keyframe.FrameIndex,
+                    keyframe.Width, keyframe.Height, DecompressExactly(keyframe.CompressedAlpha, count));
+                keyframes.Add(restored);
+                sources.Add(restored.FrameIndex, restored);
                 lastFrame = keyframe.FrameIndex;
             }
-            result.Add(new ManualOverlayStoredTarget(target.Id, keyframes));
+            var segments = new List<ManualMaskTrackSegment>();
+            var segmentSources = new HashSet<int>();
+            foreach (ManualMaskTrackSegment segment in
+                     target.Segments ?? new List<ManualMaskTrackSegment>())
+            {
+                if (segment == null || !segmentSources.Add(segment.SourceKeyframe) ||
+                    !sources.TryGetValue(segment.SourceKeyframe,
+                        out ManualOverlayStoredKeyframe? source))
+                    throw new InvalidDataException("Invalid target track source or duplicate.");
+                ManualOverlayTrackValidation.Validate(segment, source);
+                int next = sources.Keys.Where(frame => frame > segment.SourceKeyframe)
+                    .DefaultIfEmpty(int.MaxValue).Min();
+                if (segment.EndExclusive > next)
+                    throw new InvalidDataException("Target track crosses a same-target correction.");
+                segments.Add(segment.Clone());
+            }
+            result.Add(new ManualOverlayStoredTarget(target.Id, keyframes, segments));
         }
         return result;
     }
 
     private static void ValidateHeader(string path, string sourceEvidence)
     {
-        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A state file path is required.", nameof(path));
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("A state file path is required.", nameof(path));
         if (string.IsNullOrWhiteSpace(sourceEvidence))
             throw new ArgumentException("Video source evidence is required.", nameof(sourceEvidence));
     }
