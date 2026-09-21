@@ -72,7 +72,13 @@ internal static class ManualOverlayWorkspaceStore
                 FileShare.None);
             IReadOnlyList<ManualOverlayStoredTarget> actual =
                 ManualOverlayStateStore.Load(fullPath, evidence);
-            if (!CanonicalState(actual).AsSpan().SequenceEqual(CanonicalState(expected)))
+            byte[] actualState = CanonicalState(actual);
+            // An identical document was already committed (for example, a
+            // detached new-face workspace was adopted after its disk-first
+            // commit). Treat this as an idempotent success without rewriting.
+            if (actualState.AsSpan().SequenceEqual(CanonicalState(updated)))
+                return;
+            if (!actualState.AsSpan().SequenceEqual(CanonicalState(expected)))
                 throw new IOException(
                     "Manual face state changed on disk. Reload the video before saving to avoid overwriting another edit.");
 
