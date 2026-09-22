@@ -13,8 +13,8 @@ public partial class WorkspaceViewModel
 
         _manualTrackingOwnershipConfigured = true;
         FramePreview.ConfigureManualTrackingOwnership(
-            _operationLifetime.TryBegin,
-            _operationLifetime.End,
+            _operationLifetime.TryBeginExclusiveProcessing,
+            _operationLifetime.EndExclusiveProcessing,
             PersistManualTrackingWorkspaceAsync);
         _operationLifetime.AdmissionClosed +=
             FramePreview.CancelManualTrackingForShutdown;
