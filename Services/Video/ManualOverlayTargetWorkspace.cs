@@ -265,14 +265,10 @@ internal sealed class ManualOverlayTargetWorkspace
                 if (sourceIndex < 0)
                     continue;
                 ManualOverlayStoredKeyframe source = target.Keyframes.Values[sourceIndex];
-                // Empty correction explicitly terminates only this face until
-                // its next keyframe. Do not require samples for its absence.
+                // An explicit all-zero correction denotes absence, not a mask
+                // to export on its own (including the correction frame itself).
                 if (target.AbsentKeyframes.Contains(source.FrameIndex))
-                {
-                    if (frameIndex == source.FrameIndex)
-                        hasManual = true;
                     continue;
-                }
                 if (!TryResolveLocked(target, frameIndex,
                         out ManualOverlayStoredKeyframe mask, cancellationToken))
                 {
