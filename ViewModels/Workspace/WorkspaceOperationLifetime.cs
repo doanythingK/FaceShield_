@@ -15,6 +15,7 @@ internal sealed class WorkspaceOperationLifetime
     private bool _admissionClosed;
     private bool _disposeRequested;
     private bool _disposeClaimed;
+    private bool _exclusiveProcessing;
 
     internal WorkspaceOperationLifetime(Action onOperationsDrained)
     {
@@ -24,6 +25,8 @@ internal sealed class WorkspaceOperationLifetime
 
     internal event Action? AdmissionClosed;
 
+    // Normal operations (including Auto's subsequent export) retain their
+    // independent lifetime lease. They never reacquire the processing gate.
     internal bool TryBegin()
     {
         lock (_sync)
@@ -34,6 +37,34 @@ internal sealed class WorkspaceOperationLifetime
             _activeOperations++;
             return true;
         }
+    }
+
+    /// <summary>
+    /// Atomically admits only one Auto or manual-tracking operation. This is
+    /// separate from TryBegin so an Auto-owned export can obtain a regular
+    /// lifetime lease without deadlocking on its parent's exclusive lease.
+    /// </summary>
+    internal bool TryBeginExclusiveProcessing()
+    {
+        lock (_sync)
+        {
+            if (_admissionClosed || _exclusiveProcessing)
+                return false;
+            _exclusiveProcessing = true;
+            _activeOperations++;
+            return true;
+        }
+    }
+
+    internal void EndExclusiveProcessing()
+    {
+        lock (_sync)
+        {
+            if (!_exclusiveProcessing)
+                throw new InvalidOperationException("No exclusive workspace operation is active.");
+            _exclusiveProcessing = false;
+        }
+        End();
     }
 
     /// <summary>
