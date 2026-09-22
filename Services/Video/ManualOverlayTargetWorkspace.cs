@@ -22,6 +22,7 @@ internal sealed class ManualOverlayTargetWorkspace
         // SortedList exposes random-access Keys for a logarithmic floor lookup.
         internal SortedList<int, ManualOverlayStoredKeyframe> Keyframes { get; } = new();
         internal Dictionary<int, string> SourceFingerprints { get; } = new();
+        internal HashSet<int> AbsentKeyframes { get; } = new();
         internal Dictionary<int, ManualMaskTrackSegment> Tracks { get; } = new();
     }
 
@@ -58,6 +59,8 @@ internal sealed class ManualOverlayTargetWorkspace
                 state.Keyframes.Add(keyframe.FrameIndex, Copy(keyframe));
                 state.SourceFingerprints.Add(keyframe.FrameIndex,
                     ManualOverlayTrackValidation.Fingerprint(keyframe));
+                if (Array.TrueForAll(keyframe.Alpha, static value => value == 0))
+                    state.AbsentKeyframes.Add(keyframe.FrameIndex);
             }
             foreach (ManualMaskTrackSegment segment in item.Segments ?? Array.Empty<ManualMaskTrackSegment>())
                 state.Tracks.Add(segment.SourceKeyframe, segment.Clone());
@@ -127,6 +130,10 @@ internal sealed class ManualOverlayTargetWorkspace
             state.Keyframes[keyframe.FrameIndex] = Copy(keyframe);
             state.SourceFingerprints[keyframe.FrameIndex] =
                 ManualOverlayTrackValidation.Fingerprint(keyframe);
+            if (Array.TrueForAll(keyframe.Alpha, static value => value == 0))
+                state.AbsentKeyframes.Add(keyframe.FrameIndex);
+            else
+                state.AbsentKeyframes.Remove(keyframe.FrameIndex);
         }
     }
 
@@ -138,6 +145,7 @@ internal sealed class ManualOverlayTargetWorkspace
             if (!state.Target.RemoveExplicitKeyframe(frameIndex)) return false;
             state.Keyframes.Remove(frameIndex);
             state.SourceFingerprints.Remove(frameIndex);
+            state.AbsentKeyframes.Remove(frameIndex);
             state.Tracks.Remove(frameIndex);
             // Do not extend the preceding track into the newly vacant interval:
             // those frames have not been verified against this change.
@@ -233,6 +241,7 @@ internal sealed class ManualOverlayTargetWorkspace
         byte[]? output = automaticMask == null ? null : new byte[checked(pixelCount * 4)];
         if (automaticMask != null)
         {
+            byte[] destination = output!;
             for (int y = 0; y < height; y++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -240,7 +249,8 @@ internal sealed class ManualOverlayTargetWorkspace
                 {
                     byte alpha = automaticMask[y * automaticRowBytes + x * 4 + 3];
                     int offset = y * rowBytes + x * 4;
-                    output![offset] = output[offset + 1] = output[offset + 2] = output[offset + 3] = alpha;
+                    destination[offset] = destination[offset + 1] =
+                        destination[offset + 2] = destination[offset + 3] = alpha;
                 }
             }
         }
@@ -257,7 +267,7 @@ internal sealed class ManualOverlayTargetWorkspace
                 ManualOverlayStoredKeyframe source = target.Keyframes.Values[sourceIndex];
                 // Empty correction explicitly terminates only this face until
                 // its next keyframe. Do not require samples for its absence.
-                if (Array.TrueForAll(source.Alpha, static alpha => alpha == 0))
+                if (target.AbsentKeyframes.Contains(source.FrameIndex))
                 {
                     if (frameIndex == source.FrameIndex)
                         hasManual = true;
@@ -275,7 +285,7 @@ internal sealed class ManualOverlayTargetWorkspace
                 if (mask.Width != width || mask.Height != height)
                     throw new InvalidDataException("Manual target mask dimensions differ from video frame.");
                 hasManual = true;
-                output ??= new byte[checked(pixelCount * 4)];
+                byte[] destination = output ??= new byte[checked(pixelCount * 4)];
                 for (int y = 0; y < height; y++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -285,9 +295,10 @@ internal sealed class ManualOverlayTargetWorkspace
                     {
                         byte alpha = mask.Alpha[alphaRow + x];
                         int offset = outputRow + x * 4;
-                        if (alpha <= output[offset + 3])
+                        if (alpha <= destination[offset + 3])
                             continue;
-                        output[offset] = output[offset + 1] = output[offset + 2] = output[offset + 3] = alpha;
+                        destination[offset] = destination[offset + 1] =
+                            destination[offset + 2] = destination[offset + 3] = alpha;
                     }
                 }
             }
