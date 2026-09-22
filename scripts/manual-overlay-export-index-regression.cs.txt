@@ -1,0 +1,96 @@
+// Synthetic regression source; NOT COMPILED OR RUN (verification deferred).
+// Run in a temporary headless project that references FaceShield.csproj and
+// grants access to internal FaceShield.Services.Video types.
+using FaceShield.Services.Video;
+using System;
+using System.IO;
+using System.Linq;
+
+const int width = 4, height = 4, rowBytes = width * 4;
+string directory = Path.Combine(Path.GetTempPath(),
+    "faceshield-export-index-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+try
+{
+    string videoPath = Path.Combine(directory, "synthetic.mkv");
+    File.WriteAllBytes(videoPath, new byte[] { 1, 2, 3, 4 });
+    ManualOverlayTargetWorkspace workspace = ManualOverlayTargetWorkspace.Open(videoPath);
+    Guid a = workspace.CreateTarget();
+    Guid b = workspace.CreateTarget();
+
+    byte[] pixelsA = new byte[width * height];
+    pixelsA[1 + width] = 255;
+    var sourceA = new ManualOverlayStoredKeyframe(0, width, height, pixelsA);
+    workspace.SetExplicitKeyframe(a, sourceA);
+    var segment = new ManualMaskTrackSegment
+    {
+        SourceKeyframe = 0,
+        SourceMaskFingerprint = ManualOverlayTrackValidation.Fingerprint(sourceA),
+        EndExclusive = 4,
+        StoppedByFailure = false,
+        Components = new()
+        {
+            new ManualMaskTrackComponent
+            {
+                ComponentIndex = 0,
+                SourceBoundsX = 1, SourceBoundsY = 1,
+                SourceBoundsWidth = 1, SourceBoundsHeight = 1,
+                Samples = Enumerable.Range(1, 3).Select(frame => new ManualMaskTrackSample
+                {
+                    FrameIndex = frame, OffsetX = 0, OffsetY = 0,
+                    Scale = 1, RotationRadians = 0, Confidence = 1
+                }).ToList()
+            }
+        }
+    };
+    workspace.SetTrackSegment(a, segment);
+
+    byte[] pixelsB = new byte[width * height];
+    pixelsB[3 + 3 * width] = 180;
+    workspace.SetExplicitKeyframe(b, new ManualOverlayStoredKeyframe(2, width, height, pixelsB));
+    workspace.SetExplicitKeyframe(b, new ManualOverlayStoredKeyframe(3, width, height,
+        new byte[width * height]));
+
+    byte[] automatic = new byte[rowBytes * height];
+    automatic[3] = 120;
+    Check(workspace.TryComposeFrame(2, width, height, automatic, rowBytes,
+        out ManualOverlayMask composed, requireCompleteTargets: true),
+        "Strict compose unexpectedly returned no mask");
+    Check(composed.Pixels[3] == 120, "Auto face disappeared");
+    Check(composed.Pixels[(1 + width) * 4 + 3] == 255, "Face A sample disappeared");
+    Check(composed.Pixels[(3 + 3 * width) * 4 + 3] == 180, "Face B disappeared");
+
+    Check(workspace.TryComposeFrame(3, width, height, null, rowBytes,
+        out ManualOverlayMask afterAbsence, requireCompleteTargets: true),
+        "Face A's valid sample disappeared with B's explicit absence");
+    Check(afterAbsence.Pixels[(1 + width) * 4 + 3] == 255,
+        "Face A sample missing after B's absence");
+    Check(afterAbsence.Pixels[(3 + 3 * width) * 4 + 3] == 0,
+        "Face B was held after its explicit absence");
+
+    // A has a nonempty source but no frame-4 sample: do not silently export it.
+    bool rejected = false;
+    try
+    {
+        workspace.TryComposeFrame(4, width, height, null, rowBytes,
+            out _, requireCompleteTargets: true);
+    }
+    catch (InvalidDataException)
+    {
+        rejected = true;
+    }
+    Check(rejected, "Strict export did not reject a missing tail sample");
+    Check(!workspace.TryComposeFrame(4, width, height, null, rowBytes,
+        out _, requireCompleteTargets: false),
+        "Preview unexpectedly held an earlier manual mask");
+    Console.WriteLine("PASS: indexed sample, Auto union, independent absence and missing tail");
+}
+finally
+{
+    Directory.Delete(directory, recursive: true);
+}
+
+static void Check(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
