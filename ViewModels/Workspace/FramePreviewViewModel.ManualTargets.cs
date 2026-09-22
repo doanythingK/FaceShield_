@@ -355,8 +355,9 @@ public partial class FramePreviewViewModel
         Guid targetId = _selectedManualTarget.Id;
         int sourceFrame = _currentFrameIndex;
         if (!HasSelectedExplicitKeyframe()) return;
+        // Metadata counts are only a progress hint, never the hard boundary.
         int boundary = _manualTargets.NextBoundaryExclusive(targetId,
-            sourceFrame, _manualTrackingTotalFrames);
+            sourceFrame, totalFrames: 0);
         int expectedFrames = boundary == int.MaxValue
             ? Math.Max(1, _manualTrackingTotalFrames - sourceFrame - 1)
             : Math.Max(1, boundary - sourceFrame - 1);
@@ -388,10 +389,20 @@ public partial class FramePreviewViewModel
                         ManualTrackingProgress = Math.Min(99,
                             (int)Math.Round(processed * 100.0 / expectedFrames));
                 }));
+            int confirmedEofFrameCount = 0;
             ManualMaskTrackResult result = await Task.Run(() =>
                 ManualOverlayTargetTrackingService.TrackForward(
                     _manualTargetsVideoPath!, _manualTargets, targetId, sourceFrame,
-                    _manualTrackingTotalFrames, progress, cts.Token), cts.Token);
+                    _manualTrackingTotalFrames, progress, cts.Token,
+                    actual => Interlocked.Exchange(ref confirmedEofFrameCount, actual)), cts.Token);
+            // Only the unbounded decoder-EOF callback can promote an estimate
+            // to an actual timeline count. A next-keyframe boundary cannot.
+            int actualFrames = Volatile.Read(ref confirmedEofFrameCount);
+            if (!_disposed && actualFrames > 0)
+            {
+                _manualTrackingTotalFrames = actualFrames;
+                _onConfirmedManualTargetEof?.Invoke(actualFrames);
+            }
             // TrackForward may have already persisted its result before a late
             // cancel request. Report that committed result rather than throwing
             // here and falsely telling the user that nothing was saved.
