@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Pages;
@@ -16,6 +17,13 @@ public partial class WorkspaceViewModel
             _operationLifetime.TryBeginExclusiveProcessing,
             _operationLifetime.EndExclusiveProcessing,
             PersistManualTrackingWorkspaceAsync);
+        FramePreview.ConfigureConfirmedManualTargetEof(actualFrameCount =>
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+                FrameList.UpdateActualTotalFrames(actualFrameCount);
+            else
+                Dispatcher.UIThread.Post(() => FrameList.UpdateActualTotalFrames(actualFrameCount));
+        });
         _operationLifetime.AdmissionClosed +=
             FramePreview.CancelManualTrackingForShutdown;
     }
