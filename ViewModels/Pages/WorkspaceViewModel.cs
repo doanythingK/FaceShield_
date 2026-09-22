@@ -148,8 +148,8 @@ namespace FaceShield.ViewModels.Pages
                 () => _detectorOptions,
                 () => _detectorFactoryOptions,
                 () => HideResolvedIssues,
-                _operationLifetime.TryBegin,
-                _operationLifetime.End,
+                _operationLifetime.TryBeginExclusiveProcessing,
+                _operationLifetime.EndExclusiveProcessing,
                 PersistWorkspaceState);
             _sessionPlaybackCoordinator = new WorkspaceSessionPlaybackCoordinator(
                 Mode,
@@ -282,13 +282,18 @@ namespace FaceShield.ViewModels.Pages
             CancellationToken cancellationToken = default,
             IProgress<ExportProgress>? exportProgress = null)
         {
-            if (ToolPanel.IsNavigationInProgress ||
-                ToolPanel.IsSaveOperationInProgress ||
-                ToolPanel.IsExportRunning)
+            if (!ToolPanel.CanEditWorkspace ||
+                !ToolPanel.IsSessionReady ||
+                ToolPanel.IsManualTracking ||
+                FramePreview.IsManualTracking ||
+                _autoRunCoordinator.IsRunning)
             {
                 return Task.FromResult(false);
             }
 
+            // The coordinator acquires the same atomic exclusive lease as
+            // manual tracking. Auto-owned export only needs a normal lifetime
+            // lease, so it never waits on its parent's exclusive processing gate.
             return _autoRunCoordinator.RunAsync(
                 exportAfter,
                 progress,
@@ -500,9 +505,11 @@ namespace FaceShield.ViewModels.Pages
 
         private Task<bool> RunAutoSingleFrameAsync()
         {
-            if (ToolPanel.IsNavigationInProgress ||
-                ToolPanel.IsSaveOperationInProgress ||
-                ToolPanel.IsExportRunning)
+            if (!ToolPanel.CanEditWorkspace ||
+                !ToolPanel.IsSessionReady ||
+                ToolPanel.IsManualTracking ||
+                FramePreview.IsManualTracking ||
+                _autoRunCoordinator.IsRunning)
             {
                 return Task.FromResult(false);
             }
