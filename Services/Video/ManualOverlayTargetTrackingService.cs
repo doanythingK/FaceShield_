@@ -30,7 +30,11 @@ internal static class ManualOverlayTargetTrackingService
             throw new ArgumentException("A tracking video path is required.", nameof(videoPath));
         cancellationToken.ThrowIfCancellationRequested();
 
-        int endExclusive = workspace.NextBoundaryExclusive(targetId, sourceFrame, totalFrames);
+        // Callers may supply an estimated container frame count. There is no
+        // trustworthy-count flag in this legacy signature, so never let this
+        // display/progress hint truncate coverage. The next correction of this
+        // SAME target is the only finite boundary; otherwise decode to EOF.
+        int endExclusive = workspace.NextBoundaryExclusive(targetId, sourceFrame, totalFrames: 0);
         if (!workspace.TryResolveTargetMask(targetId, sourceFrame,
                 out ManualOverlayStoredKeyframe source) || source.FrameIndex != sourceFrame)
             throw new InvalidOperationException("The selected target has no explicit source mask.");
