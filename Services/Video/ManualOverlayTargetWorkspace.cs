@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 
 namespace FaceShield.Services.Video;
 
@@ -18,7 +19,9 @@ internal sealed class ManualOverlayTargetWorkspace
     {
         internal TargetState(Guid id) => Target = new ManualOverlayTarget(id);
         internal ManualOverlayTarget Target { get; }
-        internal SortedDictionary<int, ManualOverlayStoredKeyframe> Keyframes { get; } = new();
+        // SortedList exposes random-access Keys for a logarithmic floor lookup.
+        internal SortedList<int, ManualOverlayStoredKeyframe> Keyframes { get; } = new();
+        internal Dictionary<int, string> SourceFingerprints { get; } = new();
         internal Dictionary<int, ManualMaskTrackSegment> Tracks { get; } = new();
     }
 
@@ -53,6 +56,8 @@ internal sealed class ManualOverlayTargetWorkspace
             {
                 state.Target.SetExplicitKeyframe(keyframe.FrameIndex);
                 state.Keyframes.Add(keyframe.FrameIndex, Copy(keyframe));
+                state.SourceFingerprints.Add(keyframe.FrameIndex,
+                    ManualOverlayTrackValidation.Fingerprint(keyframe));
             }
             foreach (ManualMaskTrackSegment segment in item.Segments ?? Array.Empty<ManualMaskTrackSegment>())
                 state.Tracks.Add(segment.SourceKeyframe, segment.Clone());
@@ -120,6 +125,8 @@ internal sealed class ManualOverlayTargetWorkspace
             state.Tracks.Remove(keyframe.FrameIndex);
             state.Target.SetExplicitKeyframe(keyframe.FrameIndex);
             state.Keyframes[keyframe.FrameIndex] = Copy(keyframe);
+            state.SourceFingerprints[keyframe.FrameIndex] =
+                ManualOverlayTrackValidation.Fingerprint(keyframe);
         }
     }
 
@@ -130,6 +137,7 @@ internal sealed class ManualOverlayTargetWorkspace
             TargetState state = RequireTarget(targetId);
             if (!state.Target.RemoveExplicitKeyframe(frameIndex)) return false;
             state.Keyframes.Remove(frameIndex);
+            state.SourceFingerprints.Remove(frameIndex);
             state.Tracks.Remove(frameIndex);
             // Do not extend the preceding track into the newly vacant interval:
             // those frames have not been verified against this change.
@@ -148,9 +156,9 @@ internal sealed class ManualOverlayTargetWorkspace
         lock (_gate)
         {
             TargetState state = RequireTarget(targetId);
-            if (!state.Keyframes.TryGetValue(sourceFrame, out ManualOverlayStoredKeyframe? source))
+            if (!state.SourceFingerprints.TryGetValue(sourceFrame, out string? fingerprint))
                 throw new InvalidOperationException("Tracking requires this target's explicit source keyframe.");
-            return ManualOverlayTrackValidation.Fingerprint(source);
+            return fingerprint;
         }
     }
 
@@ -208,34 +216,88 @@ internal sealed class ManualOverlayTargetWorkspace
     /// <summary>
     /// One resolver for preview and export consumers: current-frame Auto plus
     /// each target's exact correction or fully sampled, fingerprint-valid track.
+    /// Export enables requireCompleteTargets so missing motion fails closed.
+    /// Transform and union each target only once, without per-target BGRA buffers.
     /// Callers own the returned pixel array. No previous-frame mask is held.
     /// </summary>
     internal bool TryComposeFrame(int frameIndex, int width, int height,
-        byte[]? automaticMask, int automaticRowBytes, out ManualOverlayMask composite)
+        byte[]? automaticMask, int automaticRowBytes, out ManualOverlayMask composite,
+        bool requireCompleteTargets = false, CancellationToken cancellationToken = default)
     {
         int pixelCount = ManualOverlayStateStore.CheckedPixelCount(width, height);
         int rowBytes = checked(width * 4);
-        var manuals = new List<ManualOverlayMask>();
+        if (automaticMask != null && (automaticRowBytes < rowBytes ||
+            (long)automaticRowBytes * height > automaticMask.Length))
+            throw new ArgumentException("Invalid automatic mask dimensions or row stride.", nameof(automaticMask));
+
+        byte[]? output = automaticMask == null ? null : new byte[checked(pixelCount * 4)];
+        if (automaticMask != null)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                for (int x = 0; x < width; x++)
+                {
+                    byte alpha = automaticMask[y * automaticRowBytes + x * 4 + 3];
+                    int offset = y * rowBytes + x * 4;
+                    output![offset] = output[offset + 1] = output[offset + 2] = output[offset + 3] = alpha;
+                }
+            }
+        }
+
+        bool hasManual = false;
         lock (_gate)
         {
             foreach (TargetState target in _targets.Values)
             {
-                if (!TryResolveLocked(target, frameIndex, out ManualOverlayStoredKeyframe mask))
+                cancellationToken.ThrowIfCancellationRequested();
+                int sourceIndex = FindFloorIndex(target.Keyframes.Keys, frameIndex);
+                if (sourceIndex < 0)
                     continue;
+                ManualOverlayStoredKeyframe source = target.Keyframes.Values[sourceIndex];
+                // Empty correction explicitly terminates only this face until
+                // its next keyframe. Do not require samples for its absence.
+                if (Array.TrueForAll(source.Alpha, static alpha => alpha == 0))
+                {
+                    if (frameIndex == source.FrameIndex)
+                        hasManual = true;
+                    continue;
+                }
+                if (!TryResolveLocked(target, frameIndex,
+                        out ManualOverlayStoredKeyframe mask, cancellationToken))
+                {
+                    if (requireCompleteTargets)
+                        throw new InvalidDataException(
+                            $"수동 얼굴 {target.Target.Id}의 {frameIndex} 프레임에 검증된 추적 샘플이 없습니다. " +
+                            "같은 얼굴을 보정·재추적하거나 해당 프레임에서 영역을 모두 지워 종료를 지정하세요.");
+                    continue;
+                }
                 if (mask.Width != width || mask.Height != height)
                     throw new InvalidDataException("Manual target mask dimensions differ from video frame.");
-                manuals.Add(mask.ToBgra(rowBytes));
+                hasManual = true;
+                output ??= new byte[checked(pixelCount * 4)];
+                for (int y = 0; y < height; y++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int alphaRow = y * width;
+                    int outputRow = y * rowBytes;
+                    for (int x = 0; x < width; x++)
+                    {
+                        byte alpha = mask.Alpha[alphaRow + x];
+                        int offset = outputRow + x * 4;
+                        if (alpha <= output[offset + 3])
+                            continue;
+                        output[offset] = output[offset + 1] = output[offset + 2] = output[offset + 3] = alpha;
+                    }
+                }
             }
         }
-        if (automaticMask == null && manuals.Count == 0)
+        if (automaticMask == null && !hasManual)
         {
             composite = default;
             return false;
         }
-        byte[] output = new byte[checked(pixelCount * 4)];
-        ManualOverlayMaskComposer.Compose(automaticMask, automaticRowBytes, manuals,
-            output, rowBytes, width, height);
-        composite = new ManualOverlayMask(output, rowBytes);
+        composite = new ManualOverlayMask(output ?? new byte[checked(pixelCount * 4)], rowBytes);
         return true;
     }
 
@@ -280,19 +342,33 @@ internal sealed class ManualOverlayTargetWorkspace
     private static ManualOverlayStoredKeyframe Copy(ManualOverlayStoredKeyframe source)
         => new(source.FrameIndex, source.Width, source.Height, (byte[])source.Alpha.Clone());
 
+    // SortedList<TKey,TValue>.Keys provides positional access without a scan.
+    private static int FindFloorIndex(IList<int> keys, int frameIndex)
+    {
+        int low = 0, high = keys.Count - 1, floor = -1;
+        while (low <= high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (keys[middle] <= frameIndex)
+            {
+                floor = middle;
+                low = middle + 1;
+            }
+            else
+                high = middle - 1;
+        }
+        return floor;
+    }
+
     private static bool TryResolveLocked(TargetState target, int frameIndex,
-        out ManualOverlayStoredKeyframe mask)
+        out ManualOverlayStoredKeyframe mask, CancellationToken cancellationToken = default)
     {
         mask = null!;
         if (frameIndex < 0) return false;
-        int sourceFrame = -1;
-        foreach (int key in target.Keyframes.Keys)
-        {
-            if (key > frameIndex) break;
-            sourceFrame = key;
-        }
-        if (sourceFrame < 0) return false;
-        ManualOverlayStoredKeyframe source = target.Keyframes[sourceFrame];
+        int sourceIndex = FindFloorIndex(target.Keyframes.Keys, frameIndex);
+        if (sourceIndex < 0) return false;
+        ManualOverlayStoredKeyframe source = target.Keyframes.Values[sourceIndex];
+        int sourceFrame = source.FrameIndex;
         if (frameIndex == sourceFrame)
         {
             mask = Copy(source);
@@ -302,24 +378,30 @@ internal sealed class ManualOverlayTargetWorkspace
             !target.Tracks.TryGetValue(sourceFrame, out ManualMaskTrackSegment? segment) ||
             frameIndex >= segment.EndExclusive ||
             !string.Equals(segment.SourceMaskFingerprint,
-                ManualOverlayTrackValidation.Fingerprint(source), StringComparison.Ordinal))
+                target.SourceFingerprints[sourceFrame], StringComparison.Ordinal))
             return false;
-        return TryTransform(source, segment, frameIndex, out mask);
+        return TryTransform(source, segment, frameIndex, out mask, cancellationToken);
     }
 
     private static bool TryTransform(ManualOverlayStoredKeyframe source,
-        ManualMaskTrackSegment segment, int frameIndex, out ManualOverlayStoredKeyframe mask)
+        ManualMaskTrackSegment segment, int frameIndex, out ManualOverlayStoredKeyframe mask,
+        CancellationToken cancellationToken)
     {
         mask = null!;
         int width = source.Width, height = source.Height;
-        byte[] output = new byte[ManualOverlayStateStore.CheckedPixelCount(width, height)];
         if (segment.Components.Count == 0) return false;
+        // Validate every component's ordinal before allocating a full-frame mask.
+        int sampleIndex = frameIndex - source.FrameIndex - 1;
+        foreach (ManualMaskTrackComponent component in segment.Components)
+            if ((uint)sampleIndex >= (uint)component.Samples.Count ||
+                component.Samples[sampleIndex].FrameIndex != frameIndex)
+                return false;
+
+        byte[] output = new byte[ManualOverlayStateStore.CheckedPixelCount(width, height)];
         foreach (ManualMaskTrackComponent component in segment.Components)
         {
-            // A missing sample on even one component invalidates the whole frame.
-            ManualMaskTrackSample? sample = component.Samples.FirstOrDefault(
-                candidate => candidate.FrameIndex == frameIndex);
-            if (sample == null) return false;
+            cancellationToken.ThrowIfCancellationRequested();
+            ManualMaskTrackSample sample = component.Samples[sampleIndex];
             double scale = sample.Scale;
             double cos = Math.Cos(sample.RotationRadians), sin = Math.Sin(sample.RotationRadians);
             double sx0 = component.SourceBoundsX, sy0 = component.SourceBoundsY;
@@ -337,6 +419,8 @@ internal sealed class ManualOverlayTargetWorkspace
             int sxMax = Math.Clamp((int)Math.Ceiling(sx0 + w) - 1, 0, width - 1);
             int syMax = Math.Clamp((int)Math.Ceiling(sy0 + h) - 1, 0, height - 1);
             for (int y = minY; y < maxY; y++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 for (int x = minX; x < maxX; x++)
                 {
                     double dx = (x - x0) / scale, dy = (y - y0) / scale;
@@ -348,6 +432,7 @@ internal sealed class ManualOverlayTargetWorkspace
                     int position = y * width + x;
                     output[position] = Math.Max(output[position], source.Alpha[sy * width + sx]);
                 }
+            }
         }
         mask = new ManualOverlayStoredKeyframe(frameIndex, width, height, output);
         return true;
