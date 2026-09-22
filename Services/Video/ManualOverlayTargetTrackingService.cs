@@ -23,7 +23,8 @@ internal static class ManualOverlayTargetTrackingService
         int sourceFrame,
         int totalFrames,
         IProgress<int>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int>? onConfirmedEofFrameCount = null)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         if (string.IsNullOrWhiteSpace(videoPath))
@@ -49,6 +50,16 @@ internal static class ManualOverlayTargetTrackingService
             videoPath, sourceFrame, endExclusive, sourceBitmap, progress, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         attempted.Segment.SourceMaskFingerprint = fingerprint;
+
+        // ReachedBoundary by itself also means a finite correction boundary.
+        // Only an unbounded run that reached decoder EOF without error/failure
+        // establishes an actual total frame count. Capture the attempted run,
+        // not a potentially retained longer prior segment.
+        if (endExclusive == int.MaxValue && attempted.ReachedBoundary &&
+            !attempted.Segment.StoppedByFailure &&
+            attempted.Segment.EndExclusive > sourceFrame &&
+            attempted.Segment.EndExclusive != int.MaxValue)
+            onConfirmedEofFrameCount?.Invoke(attempted.Segment.EndExclusive);
 
         // Correction and tracking use the same instance as a commit gate.
         // Hold it from the fresh snapshot through disk replacement and live
