@@ -430,6 +430,18 @@ public partial class FramePreviewViewModel
             if (_disposed || !ReferenceEquals(_manualTrackingCts, trackingCts))
                 return;
 
+            // A finite correction/one-frame boundary, cancellation or tracking
+            // failure does not establish the video's actual frame count.
+            // An unbounded run reaching the decoder's clean EOF does.
+            if (endExclusive == int.MaxValue && result.ReachedBoundary &&
+                !result.Segment.StoppedByFailure &&
+                result.Segment.EndExclusive > sourceFrame &&
+                result.Segment.EndExclusive != int.MaxValue)
+            {
+                _manualTrackingTotalFrames = result.Segment.EndExclusive;
+                _onConfirmedManualTargetEof?.Invoke(result.Segment.EndExclusive);
+            }
+
             if (result.ProcessedFrames > 0)
             {
                 Func<Task>? persistWorkspace = _persistManualTrackingWorkspace;
