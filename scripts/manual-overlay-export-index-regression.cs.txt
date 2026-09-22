@@ -83,7 +83,41 @@ try
     Check(!workspace.TryComposeFrame(4, width, height, null, rowBytes,
         out _, requireCompleteTargets: false),
         "Preview unexpectedly held an earlier manual mask");
-    Console.WriteLine("PASS: indexed sample, Auto union, independent absence and missing tail");
+
+    // A separate workspace has ONLY an explicitly absent face. The exact
+    // absence frame and later frames must return no mask, not an empty BGRA
+    // bitmap that would fail MaskedVideoExporter.GetMaskBounds.
+    string absentVideo = Path.Combine(directory, "absent-only.mkv");
+    File.WriteAllBytes(absentVideo, new byte[] { 4, 3, 2, 1 });
+    ManualOverlayTargetWorkspace absentOnly = ManualOverlayTargetWorkspace.Open(absentVideo);
+    Guid absentId = absentOnly.CreateTarget();
+    absentOnly.SetExplicitKeyframe(absentId,
+        new ManualOverlayStoredKeyframe(5, width, height, new byte[width * height]));
+    Check(!absentOnly.TryComposeFrame(4, width, height, null, rowBytes,
+        out _, requireCompleteTargets: true), "Unexpected mask before absence");
+    Check(!absentOnly.TryComposeFrame(5, width, height, null, rowBytes,
+        out _, requireCompleteTargets: true), "Empty correction emitted a mask on its own frame");
+    Check(!absentOnly.TryComposeFrame(6, width, height, null, rowBytes,
+        out _, requireCompleteTargets: true), "Empty correction emitted a held mask");
+
+    Check(absentOnly.TryComposeFrame(5, width, height, automatic, rowBytes,
+        out ManualOverlayMask autoOnly, requireCompleteTargets: true),
+        "Explicit absence removed unrelated Auto coverage");
+    Check(autoOnly.Pixels[3] == 120,
+        "Auto alpha changed when an absent face was skipped");
+
+    Guid independentId = absentOnly.CreateTarget();
+    byte[] independent = new byte[width * height];
+    independent[width + 1] = 200;
+    absentOnly.SetExplicitKeyframe(independentId,
+        new ManualOverlayStoredKeyframe(5, width, height, independent));
+    Check(absentOnly.TryComposeFrame(5, width, height, null, rowBytes,
+        out ManualOverlayMask independentOnly, requireCompleteTargets: true),
+        "Absent face removed a different manual target");
+    Check(independentOnly.Pixels[(width + 1) * 4 + 3] == 200,
+        "Independent manual target lost its alpha");
+
+    Console.WriteLine("PASS: indexed samples, strict gaps, absence-only frames and independent Auto/manual union");
 }
 finally
 {
