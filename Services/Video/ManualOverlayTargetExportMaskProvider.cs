@@ -82,6 +82,7 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
         _cancellationToken.ThrowIfCancellationRequested();
         WriteableBitmap? legacy = null;
         byte[]? legacyScratch = null;
+        byte[]? compositionScratch = null;
         try
         {
             legacy = _legacyAndAuto.GetFinalMask(frameIndex);
@@ -89,19 +90,21 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
             if (legacy != null && legacy.PixelSize != _size)
                 throw new InvalidDataException("내보내기 Auto/기존 수동 마스크의 크기가 대상별 마스크와 다릅니다.");
             int rowBytes = checked(_size.Width * 4);
+            int bufferBytes = checked(rowBytes * _size.Height);
             if (legacy != null)
             {
-                legacyScratch = ArrayPool<byte>.Shared.Rent(
-                    checked(rowBytes * _size.Height));
+                legacyScratch = ArrayPool<byte>.Shared.Rent(bufferBytes);
                 ReadPixels(legacy, rowBytes, legacyScratch);
             }
+            compositionScratch = ArrayPool<byte>.Shared.Rent(bufferBytes);
 
-            // A verified target is resolved only once; cancellation reaches
-            // per-target transformation and every composition scanline.
+            // Both rented arrays belong to this invocation. A tracked target
+            // rasterizes into compositionScratch without an alpha-frame copy.
             if (!_workspace.TryComposeFrame(frameIndex, _size.Width, _size.Height,
                     legacyScratch, rowBytes, out ManualOverlayMask merged,
                     requireCompleteTargets: true,
-                    cancellationToken: _cancellationToken))
+                    cancellationToken: _cancellationToken,
+                    destinationBuffer: compositionScratch))
                 return null;
 
             _cancellationToken.ThrowIfCancellationRequested();
@@ -126,6 +129,8 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
         }
         finally
         {
+            if (compositionScratch != null)
+                ArrayPool<byte>.Shared.Return(compositionScratch);
             if (legacyScratch != null)
                 ArrayPool<byte>.Shared.Return(legacyScratch);
             legacy?.Dispose();
