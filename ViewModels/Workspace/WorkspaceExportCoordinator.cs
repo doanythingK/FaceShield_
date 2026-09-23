@@ -186,7 +186,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 // Invalid target persistence or unresolved failure blocks export.
                 IFrameMaskProvider effectiveMasks =
                     ManualOverlayTargetExportMaskProvider.WrapIfPresent(
-                        input, exportMaskLease.Provider);
+                        input, exportMaskLease.Provider, exportToken);
                 var exporter = new VideoExportService(effectiveMasks);
                 exporter.Export(input, output, blurRadius, progress, exportToken,
                     exportRunId, allowHybridCopy: hybridPolicy.allowHybridCopy,
@@ -326,8 +326,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     {
         if (remaining.TotalHours >= 1)
             return $"{(int)remaining.TotalHours}시간 {Math.Max(0, remaining.Minutes)}분 {Math.Max(0, remaining.Seconds)}초";
-        if (remaining.TotalMinutes >= 1)
-            return $"{(int)remaining.TotalMinutes}분 {Math.Max(0, remaining.Seconds)}초";
         return $"{Math.Max(0, (int)remaining.TotalSeconds)}초";
     }
 
