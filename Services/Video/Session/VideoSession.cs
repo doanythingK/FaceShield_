@@ -69,9 +69,8 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// A directly disposed preview may still have a tracking operation waiting for
-    /// this session. Register its completion before calling Dispose; the synchronous
-    /// Dispose returns without blocking the UI, and releases resources after drain.
+    /// Register a preview-owned tracking/load/playback operation before Dispose.
+    /// Native decoders are also independently drained during direct Dispose.
     /// </summary>
     internal void DeferDisposeUntil(Task operation)
     {
@@ -103,17 +102,41 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         }
     }
 
+    // A directly disposed preview may have no keyframe PropertyChanged handler
+    // to register tasks. Cancel timeline requests, stop admitting decoder work
+    // and asynchronously drain active native operations before freeing FFmpeg.
+    // No synchronous wait is performed on the UI thread.
+    private async Task DrainDecoderOperationsAsync()
+    {
+        Timeline.Dispose();
+        Task exact = ExactProvider.SuspendOperationsAndWaitAsync();
+        Task thumbnails = ThumbnailProvider.SuspendOperationsAndWaitAsync();
+        Task manual = ManualPlayer == null
+            ? Task.CompletedTask
+            : ManualPlayer.StopAndWaitAsync().AsTask();
+        await Task.WhenAll(exact, thumbnails, manual).ConfigureAwait(false);
+    }
+
     public void Dispose()
     {
         if (!TryBeginDispose(out Task? pending))
             return;
 
-        if (pending != null && !pending.IsCompleted)
+        Task drain = DrainDecoderOperationsAsync();
+        Task completion = pending == null ? drain : Task.WhenAll(pending, drain);
+        if (!completion.IsCompleted)
         {
-            _ = DisposeAfterAsync(pending);
+            _ = DisposeAfterAsync(completion);
             return;
         }
 
+        // The drain has completed, even if it faulted. Do not keep native
+        // resources alive permanently because a canceled operation failed.
+        try { completion.GetAwaiter().GetResult(); }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VideoSession] decoder drain failed: {ex.Message}");
+        }
         DisposeCore();
     }
 
@@ -125,8 +148,7 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            // A failed tracking operation must not keep the native session alive.
-            Debug.WriteLine($"[VideoSession] tracking drain failed: {ex.Message}");
+            Debug.WriteLine($"[VideoSession] decoder drain failed: {ex.Message}");
         }
 
         try
@@ -158,10 +180,15 @@ public sealed class VideoSession : IDisposable, IAsyncDisposable
         if (!TryBeginDispose(out Task? pending))
             return;
 
-        if (pending != null)
+        Task drain = DrainDecoderOperationsAsync();
+        Task completion = pending == null ? drain : Task.WhenAll(pending, drain);
+        try
         {
-            try { await pending.ConfigureAwait(false); }
-            catch (Exception ex) { Debug.WriteLine($"[VideoSession] tracking drain failed: {ex.Message}"); }
+            await completion.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VideoSession] decoder drain failed: {ex.Message}");
         }
 
         try
