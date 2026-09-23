@@ -2,10 +2,12 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace FaceShield.Services.Video;
 
@@ -20,30 +22,38 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
     private readonly IFrameMaskProvider _legacyAndAuto;
     private readonly ManualOverlayTargetWorkspace _workspace;
     private readonly PixelSize _size;
+    private readonly CancellationToken _cancellationToken;
 
     private ManualOverlayTargetExportMaskProvider(
         IFrameMaskProvider legacyAndAuto,
         ManualOverlayTargetWorkspace workspace,
-        PixelSize size)
+        PixelSize size,
+        CancellationToken cancellationToken)
     {
         _legacyAndAuto = legacyAndAuto;
         _workspace = workspace;
         _size = size;
+        _cancellationToken = cancellationToken;
     }
 
     internal static IFrameMaskProvider WrapIfPresent(
-        string videoPath, IFrameMaskProvider legacyAndAuto)
+        string videoPath, IFrameMaskProvider legacyAndAuto,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(legacyAndAuto);
+        cancellationToken.ThrowIfCancellationRequested();
         ManualOverlayTargetWorkspace workspace = ManualOverlayTargetWorkspace.Open(videoPath);
         IReadOnlyList<ManualOverlayStoredTarget> targets = workspace.Snapshot();
         if (targets.Count == 0 || targets.All(target => target.Keyframes.Count == 0))
             return legacyAndAuto;
 
         foreach (ManualOverlayStoredTarget target in targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             foreach (ManualMaskTrackSegment segment in target.Segments ??
                          Array.Empty<ManualMaskTrackSegment>())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!segment.StoppedByFailure) continue;
                 bool correctedAtFailure = segment.StopFrame.HasValue &&
                     target.Keyframes.Any(keyframe =>
@@ -53,6 +63,7 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
                         $"수동 얼굴 {target.Id}의 {segment.StopFrame} 프레임 추적 실패가 미해결 상태입니다. " +
                         "해당 프레임에서 같은 얼굴을 보정한 뒤 다시 내보내세요.");
             }
+        }
 
         ManualOverlayStoredKeyframe? first = targets.SelectMany(target => target.Keyframes)
             .FirstOrDefault();
@@ -61,35 +72,50 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
         if (targets.SelectMany(target => target.Keyframes)
             .Any(keyframe => keyframe.Width != size.Width || keyframe.Height != size.Height))
             throw new InvalidDataException("수동 얼굴별 키프레임의 영상 크기가 서로 다릅니다.");
-        return new ManualOverlayTargetExportMaskProvider(legacyAndAuto, workspace, size);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ManualOverlayTargetExportMaskProvider(
+            legacyAndAuto, workspace, size, cancellationToken);
     }
 
     public WriteableBitmap? GetFinalMask(int frameIndex)
     {
-        WriteableBitmap? legacy = _legacyAndAuto.GetFinalMask(frameIndex);
+        _cancellationToken.ThrowIfCancellationRequested();
+        WriteableBitmap? legacy = null;
+        byte[]? legacyScratch = null;
         try
         {
+            legacy = _legacyAndAuto.GetFinalMask(frameIndex);
+            _cancellationToken.ThrowIfCancellationRequested();
             if (legacy != null && legacy.PixelSize != _size)
                 throw new InvalidDataException("내보내기 Auto/기존 수동 마스크의 크기가 대상별 마스크와 다릅니다.");
             int rowBytes = checked(_size.Width * 4);
-            byte[]? automaticAndLegacy = legacy == null ? null : ReadPixels(legacy, rowBytes);
+            if (legacy != null)
+            {
+                legacyScratch = ArrayPool<byte>.Shared.Rent(
+                    checked(rowBytes * _size.Height));
+                ReadPixels(legacy, rowBytes, legacyScratch);
+            }
 
-            // Strict composition resolves each target once. An absent face is
-            // skipped, but any missing sample for a present face raises an error.
-            // No per-frame keyframe sort, preflight transform or target BGRA list.
+            // A verified target is resolved only once; cancellation reaches
+            // per-target transformation and every composition scanline.
             if (!_workspace.TryComposeFrame(frameIndex, _size.Width, _size.Height,
-                    automaticAndLegacy, rowBytes, out ManualOverlayMask merged,
-                    requireCompleteTargets: true))
+                    legacyScratch, rowBytes, out ManualOverlayMask merged,
+                    requireCompleteTargets: true,
+                    cancellationToken: _cancellationToken))
                 return null;
 
+            _cancellationToken.ThrowIfCancellationRequested();
             var bitmap = new WriteableBitmap(_size, new Vector(96, 96),
                 PixelFormat.Bgra8888, AlphaFormat.Premul);
             try
             {
                 using var buffer = bitmap.Lock();
                 for (int y = 0; y < _size.Height; y++)
+                {
+                    _cancellationToken.ThrowIfCancellationRequested();
                     Marshal.Copy(merged.Pixels, checked(y * merged.RowBytes),
                         IntPtr.Add(buffer.Address, checked(y * buffer.RowBytes)), rowBytes);
+                }
                 return bitmap;
             }
             catch
@@ -100,6 +126,8 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
         }
         finally
         {
+            if (legacyScratch != null)
+                ArrayPool<byte>.Shared.Return(legacyScratch);
             legacy?.Dispose();
         }
     }
@@ -107,13 +135,14 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
     public void SetMask(int frameIndex, WriteableBitmap mask)
         => throw new NotSupportedException("The export mask provider is read-only.");
 
-    private byte[] ReadPixels(WriteableBitmap bitmap, int rowBytes)
+    private void ReadPixels(WriteableBitmap bitmap, int rowBytes, byte[] destination)
     {
-        byte[] pixels = new byte[checked(rowBytes * _size.Height)];
         using var buffer = bitmap.Lock();
         for (int y = 0; y < _size.Height; y++)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
             Marshal.Copy(IntPtr.Add(buffer.Address, checked(y * buffer.RowBytes)),
-                pixels, checked(y * rowBytes), rowBytes);
-        return pixels;
+                destination, checked(y * rowBytes), rowBytes);
+        }
     }
 }
