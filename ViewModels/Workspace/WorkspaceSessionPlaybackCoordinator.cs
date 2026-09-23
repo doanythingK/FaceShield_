@@ -49,6 +49,10 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
 
         _frameList.SetPlaybackEnabled(false);
         _framePreview.SetSessionReady(false);
+        // Install before session startup, independent of keyframe/UI setup.
+        // Direct Dispose must register all preview-owned tasks before clearing
+        // its VideoSession, even if no mask or initial frame exists yet.
+        _framePreview.InstallDirectDisposeDrain();
         // Install before the view is ever attached. Direct SaveVideoAsync and
         // Auto-to-export calls must not depend on a pointer/UI setup hook.
         if (_mode == WorkspaceMode.Manual)
