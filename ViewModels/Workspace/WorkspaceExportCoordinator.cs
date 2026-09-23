@@ -20,6 +20,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     private readonly Func<bool> _isAutoRunning;
     private readonly Func<bool> _tryBeginLifetimeOperation;
     private readonly Action _endLifetimeOperation;
+    private readonly WorkspaceOperationLifetime? _workspaceLifetime;
     private readonly Func<string, Task<(string? Path, bool AllowOverwrite)>> _resolveOutputPathAsync;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Queue<(DateTime Timestamp, int FrameIndex)> _etaSamples = new();
@@ -43,6 +44,13 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         _tryBeginLifetimeOperation = tryBeginLifetimeOperation ?? throw new ArgumentNullException(nameof(tryBeginLifetimeOperation));
         _endLifetimeOperation = endLifetimeOperation ?? throw new ArgumentNullException(nameof(endLifetimeOperation));
         _resolveOutputPathAsync = resolveOutputPathAsync ?? throw new ArgumentNullException(nameof(resolveOutputPathAsync));
+        // Production passes the same workspace owner's direct TryBegin/End
+        // method groups. Preserve injected delegates for isolated consumers,
+        // but use its atomic exclusive gate for standalone workspace exports.
+        _workspaceLifetime = ReferenceEquals(tryBeginLifetimeOperation.Target,
+                endLifetimeOperation.Target)
+            ? tryBeginLifetimeOperation.Target as WorkspaceOperationLifetime
+            : null;
     }
 
     internal WorkspaceAutoExportGateState GateState => _gateState;
@@ -57,7 +65,15 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         VideoExportQualityPreset qualityPreset = VideoExportQualityPreset.Balanced)
     {
         ThrowIfDisposed();
-        if (!_tryBeginLifetimeOperation()) return false;
+        // Auto still owns the processing gate during its own chained export.
+        // Reacquiring it would deadlock/reject that operation. A standalone
+        // export instead owns it exclusively until the entire export drains.
+        bool autoOwnedExport = autoRunOptions != null && _isAutoRunning();
+        bool exclusive = !autoOwnedExport && _workspaceLifetime != null;
+        bool admitted = exclusive
+            ? _workspaceLifetime!.TryBeginExclusiveProcessing()
+            : _tryBeginLifetimeOperation();
+        if (!admitted) return false;
         bool entered = false;
         try
         {
@@ -84,7 +100,10 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         finally
         {
             if (entered) _gate.Release();
-            _endLifetimeOperation();
+            if (exclusive)
+                _workspaceLifetime!.EndExclusiveProcessing();
+            else
+                _endLifetimeOperation();
         }
     }
 
@@ -326,6 +345,8 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     {
         if (remaining.TotalHours >= 1)
             return $"{(int)remaining.TotalHours}시간 {Math.Max(0, remaining.Minutes)}분 {Math.Max(0, remaining.Seconds)}초";
+        if (remaining.TotalMinutes >= 1)
+            return $"{(int)remaining.TotalMinutes}분 {Math.Max(0, remaining.Seconds)}초";
         return $"{Math.Max(0, (int)remaining.TotalSeconds)}초";
     }
 
