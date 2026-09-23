@@ -284,6 +284,7 @@ internal sealed class ManualOverlayTargetWorkspace
                 if (!isExplicit &&
                     (frameIndex >= target.Target.NextBoundaryExclusive(source.FrameIndex, 0) ||
                      !target.Tracks.TryGetValue(source.FrameIndex, out segment) ||
+                     segment == null ||
                      frameIndex >= segment.EndExclusive ||
                      !string.Equals(segment.SourceMaskFingerprint,
                          target.SourceFingerprints[source.FrameIndex], StringComparison.Ordinal)))
@@ -479,7 +480,7 @@ internal sealed class ManualOverlayTargetWorkspace
                     if (compositionOutput == null)
                     {
                         int position = y * width + x;
-                        output![position] = Math.Max(output[position], alpha);
+                        output![position] = Math.Max(output![position], alpha);
                     }
                     else
                     {
