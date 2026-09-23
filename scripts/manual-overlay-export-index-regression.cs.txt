@@ -5,6 +5,7 @@ using FaceShield.Services.Video;
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 const int width = 4, height = 4, rowBytes = width * 4;
 string directory = Path.Combine(Path.GetTempPath(),
@@ -68,12 +69,47 @@ try
     Check(afterAbsence.Pixels[(3 + 3 * width) * 4 + 3] == 0,
         "Face B was held after its explicit absence");
 
+    // The caller retains a rented scratch buffer until the bitmap copy ends.
+    // A manual-only composition must erase old frame pixels before union.
+    byte[] scratch = new byte[rowBytes * height];
+    Array.Fill(scratch, (byte)255);
+    Check(workspace.TryComposeFrame(3, width, height, null, rowBytes,
+        out ManualOverlayMask reused, requireCompleteTargets: true,
+        destinationBuffer: scratch), "Pooled output lost verified target A");
+    Check(ReferenceEquals(reused.Pixels, scratch), "Composition did not use caller-owned buffer");
+    Check(reused.Pixels[(1 + width) * 4 + 3] == 255,
+        "Pooled output lost the verified motion sample");
+    Check(reused.Pixels[3] == 0 && reused.Pixels[(3 + 3 * width) * 4 + 3] == 0,
+        "Pooled output retained stale Auto or explicitly absent target alpha");
+    Check(workspace.TryComposeFrame(2, width, height, automatic, rowBytes,
+        out ManualOverlayMask reusedAuto, requireCompleteTargets: true,
+        destinationBuffer: scratch), "Pooled Auto and manual union failed");
+    Check(reusedAuto.Pixels[3] == 120 &&
+          reusedAuto.Pixels[(1 + width) * 4 + 3] == 255 &&
+          reusedAuto.Pixels[(3 + 3 * width) * 4 + 3] == 180,
+        "Pooled Auto/manual union lost one layer");
+
+    bool cancelled = false;
+    try
+    {
+        workspace.TryComposeFrame(2, width, height, automatic, rowBytes,
+            out _, requireCompleteTargets: true,
+            cancellationToken: new CancellationToken(canceled: true),
+            destinationBuffer: scratch);
+    }
+    catch (OperationCanceledException)
+    {
+        cancelled = true;
+    }
+    Check(cancelled, "Cancelled target composition was not interrupted");
+
     // A has a nonempty source but no frame-4 sample: do not silently export it.
     bool rejected = false;
     try
     {
         workspace.TryComposeFrame(4, width, height, null, rowBytes,
-            out _, requireCompleteTargets: true);
+            out _, requireCompleteTargets: true,
+            destinationBuffer: scratch);
     }
     catch (InvalidDataException)
     {
@@ -81,7 +117,8 @@ try
     }
     Check(rejected, "Strict export did not reject a missing tail sample");
     Check(!workspace.TryComposeFrame(4, width, height, null, rowBytes,
-        out _, requireCompleteTargets: false),
+        out _, requireCompleteTargets: false,
+        destinationBuffer: scratch),
         "Preview unexpectedly held an earlier manual mask");
 
     // A separate workspace has ONLY an explicitly absent face. The exact
@@ -99,6 +136,10 @@ try
         out _, requireCompleteTargets: true), "Empty correction emitted a mask on its own frame");
     Check(!absentOnly.TryComposeFrame(6, width, height, null, rowBytes,
         out _, requireCompleteTargets: true), "Empty correction emitted a held mask");
+    Array.Fill(scratch, (byte)255);
+    Check(!absentOnly.TryComposeFrame(5, width, height, null, rowBytes,
+        out _, requireCompleteTargets: true, destinationBuffer: scratch),
+        "Pooled absent-only correction emitted a mask");
 
     Check(absentOnly.TryComposeFrame(5, width, height, automatic, rowBytes,
         out ManualOverlayMask autoOnly, requireCompleteTargets: true),
@@ -117,7 +158,7 @@ try
     Check(independentOnly.Pixels[(width + 1) * 4 + 3] == 200,
         "Independent manual target lost its alpha");
 
-    Console.WriteLine("PASS: indexed samples, strict gaps, absence-only frames and independent Auto/manual union");
+    Console.WriteLine("PASS: indexed samples, strict gaps, absence, pooled composition, cancellation and Auto/manual union");
 }
 finally
 {
