@@ -222,23 +222,28 @@ internal sealed class ManualOverlayTargetWorkspace
     }
 
     /// <summary>
-    /// One resolver for preview and export consumers: current-frame Auto plus
-    /// each target's exact correction or fully sampled, fingerprint-valid track.
-    /// Export enables requireCompleteTargets so missing motion fails closed.
-    /// Transform and union each target only once, without per-target BGRA buffers.
-    /// Callers own the returned pixel array. No previous-frame mask is held.
+    /// Resolve each independent target once. If destinationBuffer is supplied,
+    /// the caller retains ownership and must not return it to a pool until the
+    /// composite has been consumed. Otherwise the returned pixel array is owned
+    /// by the caller. Missing verified samples fail closed in strict export.
     /// </summary>
     internal bool TryComposeFrame(int frameIndex, int width, int height,
         byte[]? automaticMask, int automaticRowBytes, out ManualOverlayMask composite,
-        bool requireCompleteTargets = false, CancellationToken cancellationToken = default)
+        bool requireCompleteTargets = false, CancellationToken cancellationToken = default,
+        byte[]? destinationBuffer = null)
     {
         int pixelCount = ManualOverlayStateStore.CheckedPixelCount(width, height);
         int rowBytes = checked(width * 4);
+        int outputBytes = checked(pixelCount * 4);
         if (automaticMask != null && (automaticRowBytes < rowBytes ||
             (long)automaticRowBytes * height > automaticMask.Length))
             throw new ArgumentException("Invalid automatic mask dimensions or row stride.", nameof(automaticMask));
+        if (destinationBuffer != null && destinationBuffer.Length < outputBytes)
+            throw new ArgumentException("Insufficient composition buffer.", nameof(destinationBuffer));
 
-        byte[]? output = automaticMask == null ? null : new byte[checked(pixelCount * 4)];
+        byte[]? output = automaticMask == null
+            ? null
+            : destinationBuffer ?? new byte[outputBytes];
         if (automaticMask != null)
         {
             byte[] destination = output!;
@@ -254,6 +259,12 @@ internal sealed class ManualOverlayTargetWorkspace
                 }
             }
         }
+        else if (destinationBuffer != null)
+        {
+            // ArrayPool buffers can retain previous-frame alpha. Never let
+            // previous-frame pixels appear in a manual-only composition.
+            Array.Clear(destinationBuffer, 0, outputBytes);
+        }
 
         bool hasManual = false;
         lock (_gate)
@@ -265,38 +276,39 @@ internal sealed class ManualOverlayTargetWorkspace
                 if (sourceIndex < 0)
                     continue;
                 ManualOverlayStoredKeyframe source = target.Keyframes.Values[sourceIndex];
-                // An explicit all-zero correction denotes absence, not a mask
-                // to export on its own (including the correction frame itself).
                 if (target.AbsentKeyframes.Contains(source.FrameIndex))
                     continue;
-                if (!TryResolveLocked(target, frameIndex,
-                        out ManualOverlayStoredKeyframe mask, cancellationToken))
+
+                bool isExplicit = frameIndex == source.FrameIndex;
+                ManualMaskTrackSegment? segment = null;
+                if (!isExplicit &&
+                    (frameIndex >= target.Target.NextBoundaryExclusive(source.FrameIndex, 0) ||
+                     !target.Tracks.TryGetValue(source.FrameIndex, out segment) ||
+                     frameIndex >= segment.EndExclusive ||
+                     !string.Equals(segment.SourceMaskFingerprint,
+                         target.SourceFingerprints[source.FrameIndex], StringComparison.Ordinal)))
                 {
                     if (requireCompleteTargets)
-                        throw new InvalidDataException(
-                            $"수동 얼굴 {target.Target.Id}의 {frameIndex} 프레임에 검증된 추적 샘플이 없습니다. " +
-                            "같은 얼굴을 보정·재추적하거나 해당 프레임에서 영역을 모두 지워 종료를 지정하세요.");
+                        ThrowMissingSample(target, frameIndex);
                     continue;
                 }
-                if (mask.Width != width || mask.Height != height)
+                if (source.Width != width || source.Height != height)
                     throw new InvalidDataException("Manual target mask dimensions differ from video frame.");
-                hasManual = true;
-                byte[] destination = output ??= new byte[checked(pixelCount * 4)];
-                for (int y = 0; y < height; y++)
+
+                byte[] destination = output ??= destinationBuffer ?? new byte[outputBytes];
+                if (isExplicit)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    int alphaRow = y * width;
-                    int outputRow = y * rowBytes;
-                    for (int x = 0; x < width; x++)
-                    {
-                        byte alpha = mask.Alpha[alphaRow + x];
-                        int offset = outputRow + x * 4;
-                        if (alpha <= destination[offset + 3])
-                            continue;
-                        destination[offset] = destination[offset + 1] =
-                            destination[offset + 2] = destination[offset + 3] = alpha;
-                    }
+                    UnionExplicitAlpha(source.Alpha, destination, width, height,
+                        rowBytes, cancellationToken);
                 }
+                else if (!TryTransform(source, segment!, frameIndex, out _,
+                             cancellationToken, destination, rowBytes))
+                {
+                    if (requireCompleteTargets)
+                        ThrowMissingSample(target, frameIndex);
+                    continue;
+                }
+                hasManual = true;
             }
         }
         if (automaticMask == null && !hasManual)
@@ -304,8 +316,32 @@ internal sealed class ManualOverlayTargetWorkspace
             composite = default;
             return false;
         }
-        composite = new ManualOverlayMask(output ?? new byte[checked(pixelCount * 4)], rowBytes);
+        composite = new ManualOverlayMask(output!, rowBytes);
         return true;
+    }
+
+    private static void ThrowMissingSample(TargetState target, int frameIndex)
+        => throw new InvalidDataException(
+            $"수동 얼굴 {target.Target.Id}의 {frameIndex} 프레임에 검증된 추적 샘플이 없습니다. " +
+            "같은 얼굴을 보정·재추적하거나 해당 프레임에서 영역을 모두 지워 종료를 지정하세요.");
+
+    private static void UnionExplicitAlpha(byte[] alpha, byte[] destination,
+        int width, int height, int rowBytes, CancellationToken cancellationToken)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int alphaRow = y * width;
+            int outputRow = y * rowBytes;
+            for (int x = 0; x < width; x++)
+            {
+                byte value = alpha[alphaRow + x];
+                int offset = outputRow + x * 4;
+                if (value <= destination[offset + 3]) continue;
+                destination[offset] = destination[offset + 1] =
+                    destination[offset + 2] = destination[offset + 3] = value;
+            }
+        }
     }
 
     internal IReadOnlyList<ManualOverlayStoredTarget> Snapshot()
@@ -392,19 +428,22 @@ internal sealed class ManualOverlayTargetWorkspace
 
     private static bool TryTransform(ManualOverlayStoredKeyframe source,
         ManualMaskTrackSegment segment, int frameIndex, out ManualOverlayStoredKeyframe mask,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, byte[]? compositionOutput = null,
+        int compositionRowBytes = 0)
     {
         mask = null!;
         int width = source.Width, height = source.Height;
         if (segment.Components.Count == 0) return false;
-        // Validate every component's ordinal before allocating a full-frame mask.
+        // All component samples must be present before touching either output.
         int sampleIndex = frameIndex - source.FrameIndex - 1;
         foreach (ManualMaskTrackComponent component in segment.Components)
             if ((uint)sampleIndex >= (uint)component.Samples.Count ||
                 component.Samples[sampleIndex].FrameIndex != frameIndex)
                 return false;
 
-        byte[] output = new byte[ManualOverlayStateStore.CheckedPixelCount(width, height)];
+        byte[]? output = compositionOutput == null
+            ? new byte[ManualOverlayStateStore.CheckedPixelCount(width, height)]
+            : null;
         foreach (ManualMaskTrackComponent component in segment.Components)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -436,12 +475,24 @@ internal sealed class ManualOverlayTargetWorkspace
                     if (localX < 0 || localY < 0 || localX >= w || localY >= h) continue;
                     int sx = Math.Clamp((int)Math.Round(sx0 + localX), sxMin, sxMax);
                     int sy = Math.Clamp((int)Math.Round(sy0 + localY), syMin, syMax);
-                    int position = y * width + x;
-                    output[position] = Math.Max(output[position], source.Alpha[sy * width + sx]);
+                    byte alpha = source.Alpha[sy * width + sx];
+                    if (compositionOutput == null)
+                    {
+                        int position = y * width + x;
+                        output![position] = Math.Max(output[position], alpha);
+                    }
+                    else
+                    {
+                        int position = y * compositionRowBytes + x * 4;
+                        if (alpha <= compositionOutput[position + 3]) continue;
+                        compositionOutput[position] = compositionOutput[position + 1] =
+                            compositionOutput[position + 2] = compositionOutput[position + 3] = alpha;
+                    }
                 }
             }
         }
-        mask = new ManualOverlayStoredKeyframe(frameIndex, width, height, output);
+        if (compositionOutput == null)
+            mask = new ManualOverlayStoredKeyframe(frameIndex, width, height, output!);
         return true;
     }
 }
