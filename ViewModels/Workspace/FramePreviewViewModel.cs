@@ -560,7 +560,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        byte[][] newestFirst = stack.ToArray();
+        MaskUndoEntry[] newestFirst = stack.ToArray();
         stack.Clear();
 
         long retainedBudget = maxUndoBytes - snapshotBytes;
