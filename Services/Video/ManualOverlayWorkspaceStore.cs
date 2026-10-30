@@ -90,6 +90,12 @@ internal static class ManualOverlayWorkspaceStore
         }
     }
 
+    // Reject Undo when that face has changed since its captured after-state.
+    internal static bool SameTargetState(
+        ManualOverlayStoredTarget left, ManualOverlayStoredTarget right)
+        => CanonicalState(new[] { left }).AsSpan()
+            .SequenceEqual(CanonicalState(new[] { right }));
+
     private static byte[] CanonicalState(
         IEnumerable<ManualOverlayStoredTarget> targets)
     {

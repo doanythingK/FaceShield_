@@ -219,6 +219,7 @@ public partial class FramePreviewViewModel
         ManualOverlayTargetEditCommitter.Commit(
             _manualTargetsVideoPath ?? throw new InvalidOperationException("Manual target video path is missing."),
             _manualTargets, _selectedManualTarget.Id, correction);
+        RecordCommittedManualTargetUndo();
         _maskDirty = false;
         _manualTrackingPendingSourceValidationFrame = -1;
         OnPropertyChanged(nameof(CanTrackSelectedManualTarget));

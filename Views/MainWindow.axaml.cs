@@ -16,21 +16,21 @@ namespace FaceShield.Views
 
         protected override void OnClosing(WindowClosingEventArgs e)
         {
-            if (!e.Cancel && DataContext is MainWindowViewModel vm &&
-                vm.CurrentPage is WorkspaceViewModel workspace)
+            if (!e.Cancel && DataContext is MainWindowViewModel vm)
             {
                 try
                 {
-                    // Save while the editable bitmap still belongs to the live
-                    // view. A failed write must not turn an ordinary window
-                    // close into silent loss of this face's pending pixels.
-                    workspace.FramePreview.PersistCurrentMask();
+                    // Save current and cached hidden workspaces while closing
+                    // can still be canceled. Never let Exit be their first save.
+                    vm.PersistBeforeWindowClose();
                 }
                 catch (Exception ex)
                 {
                     e.Cancel = true;
-                    workspace.FramePreview.ReportManualTargetFailure("창 닫기 전 마스크 저장", ex);
-                    _ = new ErrorDialog("마스크 저장 실패 — 창 닫기 취소", ex.Message)
+                    if (vm.CurrentPage is WorkspaceViewModel workspace)
+                        workspace.FramePreview.ReportManualTargetFailure(
+                            "창 닫기 전 워크스페이스 저장", ex);
+                    _ = new ErrorDialog("워크스페이스 저장 실패 — 창 닫기 취소", ex.Message)
                         .ShowDialog(this);
                 }
             }

@@ -35,6 +35,7 @@ public partial class FramePreviewViewModel
             _manualTargetsVideoPath
                 ?? throw new InvalidOperationException("Manual target video path is missing."),
             _manualTargets, _selectedManualTarget.Id, absent);
+        RecordCommittedManualTargetUndo();
 
         // Publish the empty editor only AFTER durable target publication. The
         // archive survives ReplaceEditorWithSelectedTarget's shared Undo clear.

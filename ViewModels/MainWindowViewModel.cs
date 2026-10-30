@@ -18,6 +18,7 @@ namespace FaceShield.ViewModels
         private readonly HomePageViewModel _home;
         private readonly WorkspaceMode? _startupOpenMode;
         private readonly int? _startupFrameIndex;
+        private bool _windowCloseStatePersisted;
 
         public MainWindowViewModel()
             : this(null)
@@ -86,18 +87,25 @@ namespace FaceShield.ViewModels
             }
         }
 
+        // Persist every cached workspace while Window.Closing may still cancel.
+        // The Exit event is too late to offer that recovery option.
+        public void PersistBeforeWindowClose()
+        {
+            _windowCloseStatePersisted = false;
+            _home.PersistAllWorkspacesForShutdown();
+            _windowCloseStatePersisted = true;
+        }
+
         public void PersistAppState()
         {
             _home.PrepareAllWorkspacesForShutdown();
-            CurrentPage = _home;
-            try
-            {
+            // Normal closing has already saved every workspace. Skip a second
+            // write that might fail after the window can no longer be reopened.
+            // Other shutdown paths still attempt saving before disposing.
+            if (!_windowCloseStatePersisted)
                 _home.PersistAllWorkspacesForShutdown();
-            }
-            finally
-            {
-                _home.DisposeAllWorkspaces();
-            }
+            CurrentPage = _home;
+            _home.DisposeAllWorkspaces();
         }
     }
 }

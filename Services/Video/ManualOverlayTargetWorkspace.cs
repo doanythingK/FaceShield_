@@ -369,6 +369,35 @@ internal sealed class ManualOverlayTargetWorkspace
         }
     }
 
+    // Reinstall all keyframes, absence markers, fingerprints and verified track
+    // segments after the complete before-state is atomically written to disk.
+    internal void RestorePersistedTarget(
+        ManualOverlayStoredTarget target, IReadOnlyList<ManualOverlayStoredTarget> persisted)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(persisted);
+        var restored = new TargetState(target.Id);
+        foreach (ManualOverlayStoredKeyframe keyframe in target.Keyframes)
+        {
+            restored.Target.SetExplicitKeyframe(keyframe.FrameIndex);
+            restored.Keyframes.Add(keyframe.FrameIndex, Copy(keyframe));
+            restored.SourceFingerprints.Add(keyframe.FrameIndex,
+                ManualOverlayTrackValidation.Fingerprint(keyframe));
+            if (Array.TrueForAll(keyframe.Alpha, static value => value == 0))
+                restored.AbsentKeyframes.Add(keyframe.FrameIndex);
+        }
+        foreach (ManualMaskTrackSegment segment in
+                 target.Segments ?? Array.Empty<ManualMaskTrackSegment>())
+            restored.Tracks.Add(segment.SourceKeyframe, segment.Clone());
+
+        lock (_gate)
+        {
+            RequireTarget(target.Id);
+            _targets[target.Id] = restored;
+        }
+        RecordPersistedSnapshot(persisted);
+    }
+
     // A disk-first committer calls this only after its live publication.
     // The baseline must follow successful commits or a later direct Save()
     // would reject the workspace's own previous correction as a conflict.

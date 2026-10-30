@@ -1,5 +1,7 @@
+using FaceShield.Services.Video;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace FaceShield.ViewModels.Workspace;
@@ -7,31 +9,92 @@ namespace FaceShield.ViewModels.Workspace;
 public partial class FramePreviewViewModel
 {
     private const long ManualTargetUndoBudgetBytes = 128L * 1024 * 1024;
-    private readonly Dictionary<(Guid TargetId, int Frame), byte[][]> _manualTargetUndoArchives = new();
+
+    // A correction changes both pixels and the validated tracking intervals.
+    // Legacy/global masks use an entry without target state.
+    private sealed class MaskUndoEntry
+    {
+        internal MaskUndoEntry(byte[] pixels, ManualOverlayStoredTarget? targetBefore,
+            Guid targetId, int frame)
+        {
+            Pixels = pixels;
+            TargetBefore = targetBefore;
+            TargetId = targetId;
+            Frame = frame;
+        }
+
+        internal byte[] Pixels { get; }
+        internal ManualOverlayStoredTarget? TargetBefore { get; }
+        internal ManualOverlayStoredTarget? TargetAfter { get; set; }
+        internal Guid TargetId { get; }
+        internal int Frame { get; }
+    }
+
+    private readonly Dictionary<(Guid TargetId, int Frame), MaskUndoEntry[]>
+        _manualTargetUndoArchives = new();
     private readonly LinkedList<(Guid TargetId, int Frame)> _manualTargetUndoOrder = new();
     private long _manualTargetUndoBytes;
 
-    // Called before switching faces. Snapshot arrays are owned by the undo
-    // stack; moving them between contexts preserves the original per-frame
-    // undo semantics without copying full-resolution masks yet again.
-    // Playback and frame-refresh can clear the shared stack AFTER its archive
-    // has been saved. An empty incidental snapshot must not erase that archive.
+    private ManualOverlayStoredTarget SnapshotSelectedManualTarget()
+    {
+        if (_manualTargets == null || _selectedManualTarget == null)
+            throw new InvalidOperationException("A manual face must be selected.");
+        return _manualTargets.Snapshot().First(target => target.Id == _selectedManualTarget.Id);
+    }
+
+    private MaskUndoEntry CreateMaskUndoEntry(byte[] pixels)
+    {
+        if (_manualTargets == null || _selectedManualTarget == null || _currentFrameIndex < 0)
+            return new MaskUndoEntry(pixels, null, Guid.Empty, -1);
+        return new MaskUndoEntry(pixels, SnapshotSelectedManualTarget(),
+            _selectedManualTarget.Id, _currentFrameIndex);
+    }
+
+    // Record the post-commit state only after disk publication succeeded.
+    private void RecordCommittedManualTargetUndo()
+    {
+        if (_maskUndo.Count == 0 || _selectedManualTarget == null)
+            return;
+        MaskUndoEntry latest = _maskUndo.Peek();
+        if (latest.TargetBefore == null || latest.TargetAfter != null ||
+            latest.TargetId != _selectedManualTarget.Id ||
+            latest.Frame != _currentFrameIndex)
+            return;
+        latest.TargetAfter = SnapshotSelectedManualTarget();
+    }
+
+    private void RestoreSelectedManualTargetForUndo(MaskUndoEntry entry)
+    {
+        if (entry.TargetBefore == null || _manualTargets == null ||
+            _selectedManualTarget == null || _selectedManualTarget.Id != entry.TargetId ||
+            _currentFrameIndex != entry.Frame)
+            throw new InvalidOperationException("The manual face Undo context has changed.");
+
+        // An unsaved correction leaves the persisted face state unchanged.
+        // A committed edit must restore keyframes and motion together, not
+        // repaint old pixels as a fresh correction.
+        ManualOverlayTargetEditCommitter.Restore(
+            _manualTargetsVideoPath
+                ?? throw new InvalidOperationException("Manual face video path is missing."),
+            _manualTargets, entry.TargetId, entry.TargetBefore,
+            entry.TargetAfter ?? entry.TargetBefore);
+    }
+
+    // Per-face and per-frame history survives preview refresh and switching.
     internal void PreserveManualTargetUndo(bool clearWhenEmpty = false)
     {
         if (_selectedManualTarget == null || _currentFrameIndex < 0)
             return;
         var key = (_selectedManualTarget.Id, _currentFrameIndex);
-        byte[][] snapshots = _maskUndo.ToArray(); // newest first
+        MaskUndoEntry[] snapshots = _maskUndo.ToArray(); // newest first
         if (snapshots.Length == 0)
         {
-            // A completed user Undo that exhausted the stack is different
-            // from a playback/refresh that cleared the shared stack.
             if (clearWhenEmpty)
                 RemoveArchivedUndo(key);
             return;
         }
         RemoveArchivedUndo(key);
-        long bytes = snapshots.Sum(static snapshot => (long)snapshot.Length);
+        long bytes = snapshots.Sum(static snapshot => (long)snapshot.Pixels.Length);
         if (bytes > ManualTargetUndoBudgetBytes) return;
         while (_manualTargetUndoBytes + bytes > ManualTargetUndoBudgetBytes &&
                _manualTargetUndoOrder.First != null)
@@ -41,15 +104,13 @@ public partial class FramePreviewViewModel
         _manualTargetUndoBytes += bytes;
     }
 
-    // Only a selected target has a target-owned Undo stack. Configuring an
-    // empty target workspace must not erase the existing legacy/global Undo.
     internal void RestoreManualTargetUndo()
     {
         if (_selectedManualTarget == null || _currentFrameIndex < 0)
             return;
         _maskUndo.Clear();
         var key = (_selectedManualTarget.Id, _currentFrameIndex);
-        if (!_manualTargetUndoArchives.TryGetValue(key, out byte[][]? newestFirst))
+        if (!_manualTargetUndoArchives.TryGetValue(key, out MaskUndoEntry[]? newestFirst))
             return;
         for (int i = newestFirst.Length - 1; i >= 0; i--)
             _maskUndo.Push(newestFirst[i]);
@@ -57,8 +118,8 @@ public partial class FramePreviewViewModel
 
     private void RemoveArchivedUndo((Guid TargetId, int Frame) key)
     {
-        if (_manualTargetUndoArchives.Remove(key, out byte[][]? snapshots))
-            _manualTargetUndoBytes -= snapshots.Sum(static snapshot => (long)snapshot.Length);
+        if (_manualTargetUndoArchives.Remove(key, out MaskUndoEntry[]? snapshots))
+            _manualTargetUndoBytes -= snapshots.Sum(static snapshot => (long)snapshot.Pixels.Length);
         _manualTargetUndoOrder.Remove(key);
     }
 }

@@ -44,6 +44,27 @@ The user must be able to find a face missed by Auto, draw a mask for that partic
 
 [`scripts/manual-overlay-export-index-regression.cs.txt`](../scripts/manual-overlay-export-index-regression.cs.txt) now includes explicit/track/Auto union, missing-sample fail-closed, absence-only export, caller-owned pooled destination, stale-alpha clearing and canceled composition cases. This is **source only**: it has not been compiled, run or observed to pass. [Added scenarios](https://github.com/doanythingK/FaceShield_/commit/481ed9d27c81da93616f1e45338ed5fc33f1afc4).
 
+## 2026-10-30: face-transaction Undo and shutdown saving
+
+- A face correction/absence used to truncate validated tracking segments while
+  its Undo stored only BGRA pixels. Restoring the pixels through a new correction
+  could not recover the verified samples. Undo entries now carry the selected
+  face's full pre-edit and committed post-edit state. The target Undo atomically
+  compare-and-commits the previous keyframes and track segments before restoring
+  editor pixels. Concurrent edits to the same face are rejected rather than
+  overwritten; failures retain the undo entry and edited pixels. Existing
+  legacy/global Undo remains pixel-based.
+- Window Closing preflights saves of *all* cached workspaces while cancellation
+  remains possible. Exit skips the redundant save after successful preflight;
+  programmatic shutdown saves before disposal and does not unconditionally
+  dispose following a failed save. Permanent disk failure and forced process/OS
+  termination cannot guarantee recovery of unsaved memory-only edits.
+- **Verification not performed:** this is a static code change. Run actual
+  dotnet builds and regressions before claiming success: tracked-frame absence
+  and Undo, empty-frame absence Undo, multi-face isolation, brush Undo, stale
+  history, disk conflict/write failure, closing from visible and cached hidden
+  workspace, and non-UI shutdown. CI already has unrelated failures.
+
 ## Still unverified or outside this change's scope
 
 1. Compile and test all new source (especially direct-dispose interleavings, cancellation during native decode, pooled buffer lifetimes and Auto→export/standalone export). **No compilation, tests, CI, application launch or video processing were performed.** Prior Quality Gate [#299](https://github.com/doanythingK/FaceShield_/actions/runs/35489593929) covers only older [`554081b`](https://github.com/doanythingK/FaceShield_/commit/554081b7c95c279dee22b5d51f3ad4d447c8d615), not this branch's face-specific changes.

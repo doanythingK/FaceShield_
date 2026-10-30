@@ -14,6 +14,33 @@ namespace FaceShield.Services.Video;
 /// </summary>
 internal static class ManualOverlayTargetEditCommitter
 {
+    // Undo the complete selected face transaction, including its truncated
+    // tracking segments. Repainting old pixels alone cannot restore motion.
+    internal static void Restore(
+        string videoPath, ManualOverlayTargetWorkspace workspace, Guid targetId,
+        ManualOverlayStoredTarget before, ManualOverlayStoredTarget expectedAfter)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(expectedAfter);
+        if (before.Id != targetId || expectedAfter.Id != targetId)
+            throw new InvalidDataException("Undo snapshot belongs to another manual face.");
+
+        lock (workspace)
+        {
+            IReadOnlyList<ManualOverlayStoredTarget> current = workspace.Snapshot();
+            ManualOverlayStoredTarget live = current.Single(target => target.Id == targetId);
+            if (!ManualOverlayWorkspaceStore.SameTargetState(live, expectedAfter))
+                throw new IOException(
+                    "Manual face changed since this Undo snapshot. Undo the newer edit first.");
+
+            ManualOverlayStoredTarget[] restored = current
+                .Select(target => target.Id == targetId ? before : target).ToArray();
+            ManualOverlayWorkspaceStore.CommitIfUnchangedForVideo(videoPath, current, restored);
+            workspace.RestorePersistedTarget(before, restored);
+        }
+    }
+
     internal static void Commit(
         string videoPath,
         ManualOverlayTargetWorkspace workspace,

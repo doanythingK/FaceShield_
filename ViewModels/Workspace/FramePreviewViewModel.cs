@@ -38,7 +38,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
     private string? _frameLoadingMessage;
 
     private bool _isDrawing;
-    private readonly Stack<byte[]> _maskUndo = new();
+    private readonly Stack<MaskUndoEntry> _maskUndo = new();
     private int _changeStamp;
     private bool _isPlaying;
     private CancellationTokenSource? _playbackCts;
@@ -265,11 +265,34 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         if (_maskBitmap == null) return;
         if (_maskUndo.Count == 0) return;
 
-        var bytes = _maskUndo.Pop();
-        RestoreMaskBytes(_maskBitmap, bytes);
-        _maskDirty = true;
+        MaskUndoEntry entry = _maskUndo.Peek();
+        bool isTargetUndo = entry.TargetBefore != null;
+        if (isTargetUndo)
+        {
+            try
+            {
+                // Roll back the committed face state before changing pixels.
+                // Failures or a newer edit must preserve this Undo entry.
+                RestoreSelectedManualTargetForUndo(entry);
+            }
+            catch (Exception ex)
+            {
+                ReportManualTargetFailure("수동 얼굴 Undo", ex);
+                return;
+            }
+        }
 
+        _maskUndo.Pop();
+        RestoreMaskBytes(_maskBitmap, entry.Pixels);
+        _maskDirty = !isTargetUndo;
+        if (isTargetUndo)
+        {
+            _manualTrackingPendingSourceValidationFrame = -1;
+            OnPropertyChanged(nameof(CanTrackSelectedManualTarget));
+        }
         RefreshPreview(force: true);
+        if (isTargetUndo)
+            ComposeTargetPreview();
     }
 
     public void OnPointerPressed(Point point)
@@ -522,7 +545,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         return dst;
     }
 
-    private static void PushUndoSnapshot(WriteableBitmap mask, Stack<byte[]> stack)
+    private void PushUndoSnapshot(WriteableBitmap mask, Stack<MaskUndoEntry> stack)
     {
         const int maxSnapshots = 16;
         const long maxUndoBytes = 128L * 1024 * 1024;
@@ -545,9 +568,9 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         int keepCount = 0;
         while (keepCount < newestFirst.Length &&
                keepCount < maxSnapshots - 1 &&
-               retainedBytes + newestFirst[keepCount].LongLength <= retainedBudget)
+               retainedBytes + newestFirst[keepCount].Pixels.LongLength <= retainedBudget)
         {
-            retainedBytes += newestFirst[keepCount].LongLength;
+            retainedBytes += newestFirst[keepCount].Pixels.LongLength;
             keepCount++;
         }
 
@@ -566,7 +589,7 @@ public partial class FramePreviewViewModel : ViewModelBase, IDisposable
         {
             var arr = new byte[(int)snapshotBytes];
             MarshalCopyToArray((byte*)fb.Address, arr);
-            stack.Push(arr);
+            stack.Push(CreateMaskUndoEntry(arr));
         }
     }
 
