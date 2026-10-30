@@ -70,14 +70,21 @@ public partial class FramePreviewViewModel
             _currentFrameIndex != entry.Frame)
             throw new InvalidOperationException("The manual face Undo context has changed.");
 
-        // An unsaved correction leaves the persisted face state unchanged.
-        // A committed edit must restore keyframes and motion together, not
-        // repaint old pixels as a fresh correction.
+        // If the attempted correction never saved, disk and the live face
+        // already contain the before-state. Allow local pixel Undo even when
+        // storage remains unavailable, provided another edit did not change it.
+        if (entry.TargetAfter == null)
+        {
+            if (!ManualOverlayWorkspaceStore.SameTargetState(
+                    SnapshotSelectedManualTarget(), entry.TargetBefore))
+                throw new IOException("Manual face changed since this unsaved Undo snapshot.");
+            return;
+        }
+
         ManualOverlayTargetEditCommitter.Restore(
             _manualTargetsVideoPath
                 ?? throw new InvalidOperationException("Manual face video path is missing."),
-            _manualTargets, entry.TargetId, entry.TargetBefore,
-            entry.TargetAfter ?? entry.TargetBefore);
+            _manualTargets, entry.TargetId, entry.TargetBefore, entry.TargetAfter);
     }
 
     // Per-face and per-frame history survives preview refresh and switching.

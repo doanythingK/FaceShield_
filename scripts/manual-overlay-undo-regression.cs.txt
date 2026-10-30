@@ -1,0 +1,124 @@
+// Compiled by verify-manual-overlay.sh against the production workspace committers.
+// No private footage, UI or native FFmpeg decoder is needed.
+using FaceShield.Services.Video;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+string directory = Path.Combine(Path.GetTempPath(), "faceshield-undo-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(directory);
+string video = Path.Combine(directory, "source.mp4");
+File.WriteAllBytes(video, new byte[] { 1, 2, 3, 4 });
+string statePath = ManualOverlayWorkspaceStore.GetPathForVideo(video);
+try
+{
+    Guid faceA = Guid.NewGuid();
+    Guid faceB = Guid.NewGuid();
+    var source = new ManualOverlayStoredKeyframe(10, 2, 2, new byte[] { 255, 0, 0, 0 });
+    var other = new ManualOverlayStoredKeyframe(10, 2, 2, new byte[] { 0, 0, 0, 220 });
+    var segment = new ManualMaskTrackSegment
+    {
+        SourceKeyframe = 10,
+        EndExclusive = 14,
+        SourceMaskFingerprint = ManualOverlayTrackValidation.Fingerprint(source),
+        Components = new List<ManualMaskTrackComponent>
+        {
+            new()
+            {
+                ComponentIndex = 0,
+                SourceBoundsX = 0, SourceBoundsY = 0,
+                SourceBoundsWidth = 1, SourceBoundsHeight = 1,
+                Samples = new List<ManualMaskTrackSample>
+                {
+                    new() { FrameIndex = 11 },
+                    new() { FrameIndex = 12 },
+                    new() { FrameIndex = 13 }
+                }
+            }
+        }
+    };
+    ManualOverlayWorkspaceStore.SaveForVideo(video, new[]
+    {
+        new ManualOverlayStoredTarget(faceA, new[] { source }, new[] { segment }),
+        new ManualOverlayStoredTarget(faceB, new[] { other })
+    });
+    ManualOverlayTargetWorkspace workspace = ManualOverlayTargetWorkspace.Open(video);
+    ManualOverlayStoredTarget Face(Guid id)
+        => workspace.Snapshot().Single(target => target.Id == id);
+    ManualOverlayStoredTarget before = Face(faceA);
+    ManualOverlayStoredTarget otherBefore = Face(faceB);
+    Check(workspace.TryResolveTargetMask(faceA, 13, out var original) &&
+          original.Alpha[0] == 255, "Original verified track is not available");
+
+    // Creating an absence keyframe truncates the verified interval.
+    var absence = new ManualOverlayStoredKeyframe(12, 2, 2, new byte[4]);
+    ManualOverlayTargetEditCommitter.Commit(video, workspace, faceA, absence);
+    ManualOverlayStoredTarget after = Face(faceA);
+    Check(after.Keyframes.Any(k => k.FrameIndex == 12) &&
+          after.Segments!.Single().EndExclusive == 12 &&
+          after.Segments.Single().Components.Single().Samples.Count == 1,
+          "Absence failed to truncate the preceding segment");
+
+    // Transactional Undo must delete that correction and recover samples 12/13.
+    ManualOverlayTargetEditCommitter.Restore(video, workspace, faceA, before, after);
+    Check(ManualOverlayWorkspaceStore.SameTargetState(Face(faceA), before),
+        "Undo did not restore the complete original face in memory");
+    Check(ManualOverlayWorkspaceStore.SameTargetState(
+        ManualOverlayWorkspaceStore.LoadForVideo(video).Single(t => t.Id == faceA), before),
+        "Undo did not restore the committed face on disk");
+    Check(workspace.TryResolveTargetMask(faceA, 13, out var recovered) &&
+          recovered.Alpha[0] == 255, "Undo did not restore the final track sample");
+    Check(ManualOverlayWorkspaceStore.SameTargetState(Face(faceB), otherBefore),
+        "Undo modified the independent face B");
+
+    // Reject stale Undo of an older frame after a newer same-face correction.
+    ManualOverlayTargetEditCommitter.Commit(video, workspace, faceA, absence);
+    ManualOverlayStoredTarget staleAfter = Face(faceA);
+    ManualOverlayTargetEditCommitter.Commit(video, workspace, faceA,
+        new ManualOverlayStoredKeyframe(11, 2, 2, new byte[] { 255, 1, 0, 0 }));
+    ManualOverlayStoredTarget newer = Face(faceA);
+    Expect<IOException>(() => ManualOverlayTargetEditCommitter.Restore(
+        video, workspace, faceA, before, staleAfter),
+        "Undo incorrectly overwrote a newer face correction");
+    Check(ManualOverlayWorkspaceStore.SameTargetState(Face(faceA), newer),
+        "Rejected stale Undo changed the live face");
+
+    // A failed disk write must not consume the live face state; retry succeeds.
+    ManualOverlayStoredTarget beforeFailure = Face(faceA);
+    ManualOverlayTargetEditCommitter.Commit(video, workspace, faceA,
+        new ManualOverlayStoredKeyframe(13, 2, 2, new byte[4]));
+    ManualOverlayStoredTarget afterFailure = Face(faceA);
+    using (var blocker = new FileStream(statePath + ".lock",
+               FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+    {
+        Expect<IOException>(() => ManualOverlayTargetEditCommitter.Restore(
+            video, workspace, faceA, beforeFailure, afterFailure),
+            "Locked state file unexpectedly allowed Undo");
+    }
+    Check(ManualOverlayWorkspaceStore.SameTargetState(Face(faceA), afterFailure),
+        "Failed persistence changed the in-memory face");
+    ManualOverlayTargetEditCommitter.Restore(
+        video, workspace, faceA, beforeFailure, afterFailure);
+    Check(ManualOverlayWorkspaceStore.SameTargetState(Face(faceA), beforeFailure),
+        "Undo retry after releasing the file lock failed");
+
+    Console.WriteLine("PASS: full tracking/absence Undo, independent faces, stale Undo, disk failure and retry");
+}
+finally
+{
+    if (File.Exists(statePath)) File.Delete(statePath);
+    if (File.Exists(statePath + ".lock")) File.Delete(statePath + ".lock");
+    Directory.Delete(directory, recursive: true);
+}
+
+static void Check(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+static void Expect<T>(Action action, string message) where T : Exception
+{
+    try { action(); }
+    catch (T) { return; }
+    throw new InvalidOperationException(message);
+}
