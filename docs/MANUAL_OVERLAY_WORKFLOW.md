@@ -59,11 +59,7 @@ The user must be able to find a face missed by Auto, draw a mask for that partic
   programmatic shutdown saves before disposal and does not unconditionally
   dispose following a failed save. Permanent disk failure and forced process/OS
   termination cannot guarantee recovery of unsaved memory-only edits.
-- **Verification not performed:** this is a static code change. Run actual
-  dotnet builds and regressions before claiming success: tracked-frame absence
-  and Undo, empty-frame absence Undo, multi-face isolation, brush Undo, stale
-  history, disk conflict/write failure, closing from visible and cached hidden
-  workspace, and non-UI shutdown. CI already has unrelated failures.
+- **Automated validation (2026-10-30):** [Hardening Quality Gate #41030155508](https://github.com/doanythingK/FaceShield_/actions/runs/41030155508) passed Windows and macOS Release builds, Windows runtime invariants, the manual overlay regression suite (including the new transactional Undo fixture), manual pyramid checks, and FFmpeg-backed continuous tracking/Auto-overlap integration. The isolated test project now compiles the full target workspace and committer. Existing source tests verify tracked-frame absence Undo, unchanged other-face state, stale Undo rejection, and a simulated locked-state-file write failure/retry. These results do **not** establish GUI Undo behavior, real multi-face footage quality, or actual close-cancellation UX. Those remain deferred, as do forced-termination and disk-exhaustion recovery tests.
 
 ## Still unverified or outside this change's scope
 
