@@ -57,7 +57,7 @@ try
     ManualOverlayStoredTarget after = Face(faceA);
     Check(after.Keyframes.Any(k => k.FrameIndex == 12) &&
           after.Segments!.Single().EndExclusive == 12 &&
-          after.Segments.Single().Components.Single().Samples.Count == 1,
+          after.Segments!.Single().Components.Single().Samples.Count == 1,
           "Absence failed to truncate the preceding segment");
 
     // Transactional Undo must delete that correction and recover samples 12/13.
