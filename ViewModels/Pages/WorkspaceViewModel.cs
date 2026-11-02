@@ -41,6 +41,8 @@ namespace FaceShield.ViewModels.Pages
 
         private readonly WorkspaceOperationLifetime _operationLifetime;
         private int _ownedEventHandlersDetached;
+        private bool _windowClosePreflightActive;
+        private bool _previousNavigationInProgress;
 
         // 🔹 현재 워크스페이스 모드 (Auto / Manual)
         public WorkspaceMode Mode { get; }
@@ -783,6 +785,14 @@ namespace FaceShield.ViewModels.Pages
         // final state BEFORE SaveNow captures the resume index and masks.
         public async Task PauseAndDrainForWindowCloseAsync()
         {
+            if (!_windowClosePreflightActive)
+            {
+                _previousNavigationInProgress = ToolPanel.IsNavigationInProgress;
+                _windowClosePreflightActive = true;
+                // While asynchronous native work drains, disallow fresh brush
+                // edits that could race the final save snapshot.
+                ToolPanel.IsNavigationInProgress = true;
+            }
             _operationLifetime.CloseAdmission();
             CancelOwnedOperations();
             await _operationLifetime.WaitForIdleAsync();
@@ -790,7 +800,14 @@ namespace FaceShield.ViewModels.Pages
         }
 
         public void ResumeAfterFailedWindowClose()
-            => _operationLifetime.ReopenAdmission();
+        {
+            _operationLifetime.ReopenAdmission();
+            if (_windowClosePreflightActive)
+            {
+                _windowClosePreflightActive = false;
+                ToolPanel.IsNavigationInProgress = _previousNavigationInProgress;
+            }
+        }
 
         // Eviction is allowed only for an idle workspace. Keep the cached
         // object and its editor alive if a write fails or work is still active.
