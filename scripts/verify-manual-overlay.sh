@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_dir="$(mktemp -d)"
-trap 'rm -rf "$test_dir"' EXIT
+persistence_dir="$(mktemp -d)"
+trap 'rm -rf "$test_dir" "$persistence_dir"' EXIT
 
 manual_tracking="$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualTracking.cs"
 if grep -q 'RemoveFaceMasksRange' "$manual_tracking"; then
@@ -69,9 +70,8 @@ dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
 
 # Build the real persistence/lifetime coordinators against lightweight
 # deterministic I/O fakes: save failure, retry and operation drain.
-mkdir -p "$test_dir/persistence"
-cp "$repo_root/scripts/workspace-persistence-retry-regression.cs.txt" "$test_dir/persistence/Program.cs"
-cat > "$test_dir/persistence/PersistenceRetryRegression.csproj" <<XML
+cp "$repo_root/scripts/workspace-persistence-retry-regression.cs.txt" "$persistence_dir/Program.cs"
+cat > "$persistence_dir/PersistenceRetryRegression.csproj" <<XML
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -86,7 +86,7 @@ cat > "$test_dir/persistence/PersistenceRetryRegression.csproj" <<XML
   </ItemGroup>
 </Project>
 XML
-dotnet run --project "$test_dir/persistence/PersistenceRetryRegression.csproj" -c Release
+dotnet run --project "$persistence_dir/PersistenceRetryRegression.csproj" -c Release
 
 # Prevent accidental removal of the save-before-evict and drain-before-save
 # wiring that the isolated coordinator tests cannot exercise with Avalonia.
