@@ -266,17 +266,28 @@ public partial class FramePreviewViewModel
         }
 
         bool lifetimeStarted = false;
+        var trackingCts = new CancellationTokenSource();
         try
         {
-            Func<bool>? tryBegin = _tryBeginManualTrackingLifetime;
-            if (tryBegin == null || !tryBegin())
+            if (!ManualTrackingCancellationGate.TryBegin(
+                    _manualTrackingCommitGate, ref _manualTrackingCts,
+                    trackingCts, _tryBeginManualTrackingLifetime))
                 return;
 
             lifetimeStarted = true;
-            await TrackForwardCoreAsync(maxNextFrames);
+            trackingCts.Token.ThrowIfCancellationRequested();
+            await TrackForwardCoreAsync(maxNextFrames, trackingCts);
+        }
+        catch (OperationCanceledException) when (trackingCts.IsCancellationRequested)
+        {
+            ManualTrackingStatusText = "수동 마스크 추적이 취소되었습니다.";
         }
         finally
         {
+            // Release the registered source before releasing the lifetime.
+            // CancelManualTrackingCore uses the very same commit gate.
+            ManualTrackingCancellationGate.Finish(
+                _manualTrackingCommitGate, ref _manualTrackingCts, trackingCts);
             try
             {
                 if (lifetimeStarted)
@@ -293,7 +304,8 @@ public partial class FramePreviewViewModel
         }
     }
 
-    private async Task TrackForwardCoreAsync(int? maxNextFrames)
+    private async Task TrackForwardCoreAsync(
+        int? maxNextFrames, CancellationTokenSource trackingCts)
     {
         if (!CanTrackForward ||
             _maskProvider is not FrameMaskProvider provider ||
@@ -342,18 +354,10 @@ public partial class FramePreviewViewModel
             return;
         }
 
-        CancellationTokenSource? previous = Interlocked.Exchange(
-            ref _manualTrackingCts,
-            new CancellationTokenSource());
-        if (previous != null)
-        {
-            try { previous.Cancel(); }
-            catch (ObjectDisposedException) { }
-            previous.Dispose();
-        }
-
-        CancellationTokenSource trackingCts = _manualTrackingCts!;
+        // The wrapper already registered the source atomically with workspace
+        // lifetime admission, before this source-mask preparation started.
         CancellationToken token = trackingCts.Token;
+        token.ThrowIfCancellationRequested();
 
         int endExclusive = ManualMaskKeyframeTimeline.GetNextExplicitKeyframe(
             provider,
@@ -545,9 +549,8 @@ public partial class FramePreviewViewModel
             if (exactOperationsSuspended && !_disposed)
                 ResumeExactFrameOperations();
 
-            if (ReferenceEquals(_manualTrackingCts, trackingCts))
-                _manualTrackingCts = null;
-            trackingCts.Dispose();
+            // The owner wrapper clears/disposes the cancellation source under
+            // _manualTrackingCommitGate after this entire operation finishes.
             IsManualTracking = false;
             _toolPanel.IsManualTracking = false;
             OnPropertyChanged(nameof(CanTrackForward));

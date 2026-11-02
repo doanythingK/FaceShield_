@@ -59,6 +59,80 @@ Check(!lifetime.TryBegin(), "Evicted workspace still accepted work");
 lifetime.ReopenAdmission();
 Check(lifetime.TryBegin(), "Failed eviction could not reopen admission");
 lifetime.End();
+// Exercise the same production registration helper used by BOTH manual track
+// commands. Hold the admission callback after the lifetime is acquired while
+// a concurrent shutdown closes admission and invokes its cancellation event.
+var trackingLifetime = new WorkspaceOperationLifetime(() => { });
+object trackingCommitGate = new();
+CancellationTokenSource? activeTracking = null;
+using var trackingSource = new CancellationTokenSource();
+using var registered = new System.Threading.ManualResetEventSlim(false);
+using var releaseRegistration = new System.Threading.ManualResetEventSlim(false);
+using var closeRequested = new System.Threading.ManualResetEventSlim(false);
+trackingLifetime.AdmissionClosed += () =>
+{
+    lock (trackingCommitGate)
+    {
+        activeTracking?.Cancel();
+    }
+};
+
+Task<bool> registration = Task.Run(() => ManualTrackingCancellationGate.TryBegin(
+    trackingCommitGate, ref activeTracking, trackingSource, () =>
+    {
+        bool acquired = trackingLifetime.TryBeginExclusiveProcessing();
+        Check(ReferenceEquals(activeTracking, trackingSource),
+            "Lifetime admission started before cancellation source was visible");
+        registered.Set();
+        if (!releaseRegistration.Wait(TimeSpan.FromSeconds(10)))
+            throw new TimeoutException("Admission registration callback stalled");
+        return acquired;
+    }));
+Check(registered.Wait(TimeSpan.FromSeconds(10)),
+    "Tracking registration did not reach the admission checkpoint");
+Task<bool> closing = Task.Run(() =>
+{
+    closeRequested.Set();
+    return trackingLifetime.CloseAdmission();
+});
+Check(closeRequested.Wait(TimeSpan.FromSeconds(10)), "Close callback did not start");
+releaseRegistration.Set();
+Check(await registration.WaitAsync(TimeSpan.FromSeconds(10)),
+    "Lifetime rejected a tracking operation already admitted");
+Check(await closing.WaitAsync(TimeSpan.FromSeconds(10)),
+    "Concurrent shutdown failed to close admission");
+Check(trackingSource.IsCancellationRequested,
+    "Shutdown missed cancellation during tracking source registration");
+Task trackingIdle = trackingLifetime.WaitForIdleAsync();
+Check(!trackingIdle.IsCompleted,
+    "Close did not wait for the canceled tracking lifetime to drain");
+ManualTrackingCancellationGate.Finish(
+    trackingCommitGate, ref activeTracking, trackingSource);
+trackingLifetime.EndExclusiveProcessing();
+await trackingIdle.WaitAsync(TimeSpan.FromSeconds(10));
+Check(activeTracking == null, "Tracking source remained registered after completion");
+
+// Opposite ordering: shutdown wins before the token can be registered.
+using var rejectedSource = new CancellationTokenSource();
+Check(!ManualTrackingCancellationGate.TryBegin(
+        trackingCommitGate, ref activeTracking, rejectedSource,
+        trackingLifetime.TryBeginExclusiveProcessing),
+    "Tracking was admitted after shutdown closed admission");
+Check(activeTracking == null, "Rejected tracking left a stale source");
+ManualTrackingCancellationGate.Finish(
+    trackingCommitGate, ref activeTracking, rejectedSource);
+
+// Failure in lifetime admission must clear the published source, too.
+using var failingSource = new CancellationTokenSource();
+Expect<InvalidOperationException>(() => ManualTrackingCancellationGate.TryBegin(
+    trackingCommitGate, ref activeTracking, failingSource,
+    () => throw new InvalidOperationException("simulated admission failure")),
+    "Lifetime callback failure was not propagated");
+Check(activeTracking == null, "Admission exception left a leaked tracking source");
+ManualTrackingCancellationGate.Finish(
+    trackingCommitGate, ref activeTracking, failingSource);
+
+Console.WriteLine("PASS: manual tracking token-before-lifetime admission, concurrent shutdown cancel, denied and failed admission");
 Console.WriteLine("PASS: retryable SaveNow/QueueSave, failed capture, closing drain, idle-only eviction");
 
 static void Check(bool value, string message)

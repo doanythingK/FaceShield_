@@ -83,6 +83,7 @@ cat > "$persistence_dir/PersistenceRetryRegression.csproj" <<XML
   <ItemGroup>
     <Compile Include="$repo_root/Services/Workspace/WorkspacePersistenceCoordinator.cs" Link="WorkspacePersistenceCoordinator.cs" />
     <Compile Include="$repo_root/ViewModels/Workspace/WorkspaceOperationLifetime.cs" Link="WorkspaceOperationLifetime.cs" />
+    <Compile Include="$repo_root/ViewModels/Workspace/ManualTrackingCancellationGate.cs" Link="ManualTrackingCancellationGate.cs" />
   </ItemGroup>
 </Project>
 XML
@@ -93,6 +94,12 @@ dotnet run --project "$persistence_dir/PersistenceRetryRegression.csproj" -c Rel
 grep -Fq 'workspace.TryPrepareForCacheEviction()' "$repo_root/ViewModels/Pages/HomePageViewModel.cs"
 grep -Fq 'workspace.PauseAndDrainForWindowCloseAsync()' "$repo_root/ViewModels/Pages/HomePageViewModel.Shutdown.cs"
 grep -Fq 'await vm.PersistBeforeWindowCloseAsync()' "$repo_root/Views/MainWindow.axaml.cs"
+# Both tracking entrypoints must use the real shared registration gate, not
+# independently publish their CTS after acquiring workspace lifetime.
+grep -Fq 'ManualTrackingCancellationGate.TryBegin(' "$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualTracking.cs"
+grep -Fq 'ManualTrackingCancellationGate.TryBegin(' "$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualTargets.cs"
+grep -Fq 'ManualTrackingCancellationGate.Finish(' "$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualTracking.cs"
+grep -Fq 'ManualTrackingCancellationGate.Finish(' "$repo_root/ViewModels/Workspace/FramePreviewViewModel.ManualTargets.cs"
 echo 'PASS: shutdown and cache-eviction save barriers remain connected'
 
 # Exercise the production FrameMaskProvider through the built application assembly.

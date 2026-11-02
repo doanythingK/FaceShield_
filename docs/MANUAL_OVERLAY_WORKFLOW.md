@@ -70,6 +70,31 @@ The user must be able to find a face missed by Auto, draw a mask for that partic
 - Recents trimming now treats the recent-file list as navigation history rather than permission to delete durable workspace/resume state. Deferred cache eviction likewise retains the saved workspace data.
 - **Automated validation (2026-11-02):** [Hardening Quality Gate #41370435186](https://github.com/doanythingK/FaceShield_/actions/runs/41370435186), code `5990139`, **passed** Windows runtime invariants and Release build, macOS Release build, manual overlay/Undo regression, isolated SaveNow failure/retry and lifecycle regression, manual pyramid checks, and continuous tracking plus Auto/manual overlap integration. The isolated persistence fixture verifies I/O failure, capture failure, retry, queued save after preflight, and idle-only eviction; wiring checks cover production call sites. **Not verified:** real GUI shutdown interaction, actual disk-full/OS termination, unusual native-disposal races, or video-output fidelity. Direct programmatic `Dispose()` without the window/cache preflight remains outside these guarantees.
 
+## 2026-11-02: manual-tracking cancellation admission race
+
+- Both legacy/global manual tracking and per-face manual tracking previously
+  acquired the workspace exclusive-operation lifetime before publishing
+  `_manualTrackingCts`. An independent shutdown thread could close admission
+  and dispatch `AdmissionClosed` in that interval, find a null source, and
+  then wait for uncanceled tracking to finish.
+- Both entrypoints now publish their cancellation source and acquire workspace
+  lifetime under the existing `_manualTrackingCommitGate` through the shared
+  `ManualTrackingCancellationGate.TryBegin` helper. The shutdown cancellation
+  subscriber uses the same gate, and the workspace lifetime implementation
+  releases its own lock before dispatching that subscriber. Therefore a
+  successful admission cannot be invisible to a concurrent close; if close
+  wins first, admission fails and the source is removed without starting work.
+- Source cleanup also runs under the shared gate before releasing lifetime,
+  preventing concurrent cancel-after-dispose. Early returns and failed
+  admission release the source; the established commit-in-progress protection
+  still prevents cancellation of a partially published track.
+- Regression: the isolated production-helper/lifetime fixture forces a close
+  to contend with a successful lifetime admission, then tests shutdown
+  cancellation, lifetime drain, already-closed admission, and admission
+  exceptions. Source wiring checks verify both tracking commands use the
+  shared helper. **The new CI result is recorded after execution**; this
+  fixture is not an actual GUI or native video workload.
+
 ## Still unverified or outside this change's scope
 
 1. **Still needed:** GUI/native interleaving tests for preview/session disposal, cancellation during native decode, pooled-buffer lifetime, Auto→export and standalone export. Windows/macOS Release builds and available regression suites **were run and passed** in [#41030155508](https://github.com/doanythingK/FaceShield_/actions/runs/41030155508), but do not cover all these runtime interleavings.

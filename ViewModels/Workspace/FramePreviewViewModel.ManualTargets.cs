@@ -371,10 +371,12 @@ public partial class FramePreviewViewModel
         var cts = new CancellationTokenSource();
         try
         {
-            if (_tryBeginManualTrackingLifetime == null || !_tryBeginManualTrackingLifetime())
+            if (!ManualTrackingCancellationGate.TryBegin(
+                    _manualTrackingCommitGate, ref _manualTrackingCts,
+                    cts, _tryBeginManualTrackingLifetime))
                 return;
             lifetimeStarted = true;
-            Interlocked.Exchange(ref _manualTrackingCts, cts)?.Dispose();
+            cts.Token.ThrowIfCancellationRequested();
             IsManualTracking = true;
             _toolPanel.IsManualTracking = true;
             ManualTrackingProgress = 0;
@@ -424,8 +426,8 @@ public partial class FramePreviewViewModel
         {
             if (exactSuspended && !_disposed)
                 ResumeExactFrameOperations();
-            Interlocked.CompareExchange(ref _manualTrackingCts, null, cts);
-            cts.Dispose();
+            ManualTrackingCancellationGate.Finish(
+                _manualTrackingCommitGate, ref _manualTrackingCts, cts);
             IsManualTracking = false;
             _toolPanel.IsManualTracking = false;
             if (lifetimeStarted)
