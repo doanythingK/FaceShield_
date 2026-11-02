@@ -1920,12 +1920,14 @@ namespace FaceShield.ViewModels.Pages
             }
             finally
             {
-                if (!IsShutdownRequested)
+                // A canceled window-close preflight may reopen the UI. Clear
+                // finished Auto indicators even while that preflight flag is set.
+                if (Volatile.Read(ref _shutdownRequested) == 0)
                 {
                     IsAutoRunning = false;
                     IsExportRunning = false;
                 }
-                StopAutoStatusTimer(clearUi: !IsShutdownRequested);
+                StopAutoStatusTimer(clearUi: Volatile.Read(ref _shutdownRequested) == 0);
                 _activeAutoWorkspace = null;
             }
 
@@ -2712,7 +2714,8 @@ namespace FaceShield.ViewModels.Pages
                 if (!RemoveCachedWorkspaces(oldest.Path, deferIfCurrent: true))
                     break;
                 Recents.RemoveAt(Recents.Count - 1);
-                _stateStore.RemoveWorkspacesForPath(oldest.Path);
+                // Recents is a bounded UI list, not user consent to erase
+                // durable workspace/resume state on disk.
             }
         }
 
@@ -2793,7 +2796,7 @@ namespace FaceShield.ViewModels.Pages
                 if (!RemoveCachedWorkspaces(entry.Value, deferIfCurrent: false))
                     continue;
 
-                _stateStore.RemoveWorkspacesForPath(entry.Value);
+                // Evict the cached object, not its already-saved state.
                 lock (_workspaceCacheGate)
                     _deferredWorkspaceEvictions.Remove(entry.Key);
             }
