@@ -67,6 +67,34 @@ dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
 cp "$repo_root/scripts/manual-track-continuity-regression.cs.txt" "$test_dir/Program.cs"
 dotnet run --project "$test_dir/ManualOverlayRegression.csproj" -c Release
 
+# Build the real persistence/lifetime coordinators against lightweight
+# deterministic I/O fakes: save failure, retry and operation drain.
+mkdir -p "$test_dir/persistence"
+cp "$repo_root/scripts/workspace-persistence-retry-regression.cs.txt" "$test_dir/persistence/Program.cs"
+cat > "$test_dir/persistence/PersistenceRetryRegression.csproj" <<XML
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$repo_root/Services/Workspace/WorkspacePersistenceCoordinator.cs" Link="WorkspacePersistenceCoordinator.cs" />
+    <Compile Include="$repo_root/ViewModels/Workspace/WorkspaceOperationLifetime.cs" Link="WorkspaceOperationLifetime.cs" />
+  </ItemGroup>
+</Project>
+XML
+dotnet run --project "$test_dir/persistence/PersistenceRetryRegression.csproj" -c Release
+
+# Prevent accidental removal of the save-before-evict and drain-before-save
+# wiring that the isolated coordinator tests cannot exercise with Avalonia.
+grep -Fq 'workspace.TryPrepareForCacheEviction()' "$repo_root/ViewModels/Pages/HomePageViewModel.cs"
+grep -Fq 'workspace.PauseAndDrainForWindowCloseAsync()' "$repo_root/ViewModels/Pages/HomePageViewModel.Shutdown.cs"
+grep -Fq 'await vm.PersistBeforeWindowCloseAsync()' "$repo_root/Views/MainWindow.axaml.cs"
+echo 'PASS: shutdown and cache-eviction save barriers remain connected'
+
 # Exercise the production FrameMaskProvider through the built application assembly.
 cp "$repo_root/scripts/frame-mask-layer-regression.cs.txt" "$test_dir/Program.cs"
 cat > "$test_dir/FrameMaskLayerRegression.csproj" <<XML

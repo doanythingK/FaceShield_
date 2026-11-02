@@ -87,12 +87,12 @@ namespace FaceShield.ViewModels
             }
         }
 
-        // Persist every cached workspace while Window.Closing may still cancel.
-        // The Exit event is too late to offer that recovery option.
-        public void PersistBeforeWindowClose()
+        // Drain all running workspace operations before the cancellable
+        // window-close save. Exit must not re-save a moving Auto snapshot.
+        public async Task PersistBeforeWindowCloseAsync()
         {
             _windowCloseStatePersisted = false;
-            _home.PersistAllWorkspacesForShutdown();
+            await _home.PersistAllWorkspacesForWindowCloseAsync();
             _windowCloseStatePersisted = true;
         }
 

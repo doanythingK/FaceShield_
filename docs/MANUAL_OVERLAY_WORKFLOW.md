@@ -1,6 +1,6 @@
 # Manual overlay and tracking — implementation status
 
-Branch: `refactor/manual-overlay-workflow`. Updated 2026-09-23. **The face-specific changes have NOT been built, tested, run, or checked by CI at the user's request.** Commits and source inspection do not establish compilation, native-resource safety, actual tracking quality, output-video fidelity or performance. This branch has not been merged into `main`.
+Branch: `refactor/manual-overlay-workflow`. Current review updated 2026-11-02. Windows/macOS Release builds and automated tracking/Undo regressions passed [Quality Gate #41030155508](https://github.com/doanythingK/FaceShield_/actions/runs/41030155508) for code commit `319991d` (2026-10-30). Actual GUI close/retry behavior, native resource lifetime under all races, real footage/output quality and performance remain unverified. Earlier sections retain historical notes. This branch remains separate from `main`.
 
 ## Required user workflow
 
@@ -40,9 +40,9 @@ The user must be able to find a face missed by Auto, draw a mask for that partic
 
 **Export exclusion:** A standalone `WorkspaceExportCoordinator.ExportAsync` obtains the same workspace exclusive gate as Auto/manual; Auto-owned chained export instead obtains an ordinary lifetime lease, avoiding recursive gate acquisition. Existing injected lifetime delegate consumers keep their injected behavior. [Standalone gate](https://github.com/doanythingK/FaceShield_/commit/2c672b003fec8517e1e72135755b8d5e4ee50b3e). This protects the workspace coordinator, not arbitrary external callers that directly instantiate `VideoExportService` without the target wrapper.
 
-### Regression source (not executed)
+### 2026-09-23 regression source (historical status)
 
-[`scripts/manual-overlay-export-index-regression.cs.txt`](../scripts/manual-overlay-export-index-regression.cs.txt) now includes explicit/track/Auto union, missing-sample fail-closed, absence-only export, caller-owned pooled destination, stale-alpha clearing and canceled composition cases. This is **source only**: it has not been compiled, run or observed to pass. [Added scenarios](https://github.com/doanythingK/FaceShield_/commit/481ed9d27c81da93616f1e45338ed5fc33f1afc4).
+[`scripts/manual-overlay-export-index-regression.cs.txt`](../scripts/manual-overlay-export-index-regression.cs.txt) now includes explicit/track/Auto union, missing-sample fail-closed, absence-only export, caller-owned pooled destination, stale-alpha clearing and canceled composition cases. At the time of writing (2026-09-23), this was **source only**, not executed. Later CI ran the tests included by its verification scripts; this statement is not the current branch-wide validation status. [Added scenarios](https://github.com/doanythingK/FaceShield_/commit/481ed9d27c81da93616f1e45338ed5fc33f1afc4).
 
 ## 2026-10-30: face-transaction Undo and shutdown saving
 
@@ -61,9 +61,16 @@ The user must be able to find a face missed by Auto, draw a mask for that partic
   termination cannot guarantee recovery of unsaved memory-only edits.
 - **Automated validation (2026-10-30):** [Hardening Quality Gate #41030155508](https://github.com/doanythingK/FaceShield_/actions/runs/41030155508) passed Windows and macOS Release builds, Windows runtime invariants, the manual overlay regression suite (including the new transactional Undo fixture), manual pyramid checks, and FFmpeg-backed continuous tracking/Auto-overlap integration. The isolated test project now compiles the full target workspace and committer. Existing source tests verify tracked-frame absence Undo, unchanged other-face state, stale Undo rejection, and a simulated locked-state-file write failure/retry. These results do **not** establish GUI Undo behavior, real multi-face footage quality, or actual close-cancellation UX. Those remain deferred, as do forced-termination and disk-exhaustion recovery tests.
 
+## 2026-11-02: retryable persistence, quiescent shutdown and safe cache eviction
+
+- The previous terminal `WorkspacePersistenceCoordinator.SaveNow` made `_finalizing` permanent even after failed I/O/capture, so canceled window close could not retry or queue saves. Terminal save is now a temporary ordered barrier: clear finalizing in a `finally` and replace a failed task tail with a completed tail **after** its failure has been observed. A later snapshot retries rather than rethrowing the prior failed request.
+- The window-close preflight is now asynchronous and cancellable: the Home shutdown coordinator prevents new starts, cancels Home/Auto operations and waits for each workspace lifetime to drain **before** capturing the final workspace/face state. A failed save reopens admission and leaves the live workspace available; successful close proceeds without a second late write in Exit.
+- Recents/cache pruning preflights an **idle** workspace's save before removing it from cache. A running operation, storage failure or already closing admission retains its in-memory state and defers eviction. No resource disposal is initiated on this failed preflight. This covers the previously reported user-facing cache eviction path, not arbitrary external calls to `Dispose()`.
+- **Verification status:** newly added isolated deterministic regression source exercises SaveNow failure/retry, snapshot-capture failure, post-success QueueSave, window-close lifetime drain and idle-only eviction gate. UI close and native decoder behavior still require interactive testing. The CI run for this change is recorded separately once completed.
+
 ## Still unverified or outside this change's scope
 
-1. Compile and test all new source (especially direct-dispose interleavings, cancellation during native decode, pooled buffer lifetimes and Auto→export/standalone export). **No compilation, tests, CI, application launch or video processing were performed.** Prior Quality Gate [#299](https://github.com/doanythingK/FaceShield_/actions/runs/35489593929) covers only older [`554081b`](https://github.com/doanythingK/FaceShield_/commit/554081b7c95c279dee22b5d51f3ad4d447c8d615), not this branch's face-specific changes.
+1. **Still needed:** GUI/native interleaving tests for preview/session disposal, cancellation during native decode, pooled-buffer lifetime, Auto→export and standalone export. Windows/macOS Release builds and available regression suites **were run and passed** in [#41030155508](https://github.com/doanythingK/FaceShield_/actions/runs/41030155508), but do not cover all these runtime interleavings.
 2. End-to-end manual missed-face workflow, moving multi-face GUI, saved-state recovery, preview-versus-encoded output, Windows/macOS packaging, actual VFR/large-file behavior and performance/GC measurements are unverified. No measured speedup or native-disposal safety claim is made.
 3. External/direct `VideoExportService` consumers do not automatically enforce workspace-only face-state persistence or adapter wrapping. The workspace's production coordinator uses the wrapper; universal third-party/direct export protection requires an explicit API contract and exhaustive call-site audit. The general `IFrameMaskProvider` interface remains tokenless; cancellation is scoped to the workspace-created target export wrapper.
 4. Forced process/OS termination, permanent disk write failure, uncooperative writers bypassing the sidecar lock and direct programmatic timeline setter/save rejection can still require manual recovery. Source evidence is file length/modification time rather than a video content hash; face-friendly names/thumbnails are not persisted.

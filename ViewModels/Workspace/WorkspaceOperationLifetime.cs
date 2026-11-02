@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace FaceShield.ViewModels.Workspace;
 
@@ -16,6 +17,7 @@ internal sealed class WorkspaceOperationLifetime
     private bool _disposeRequested;
     private bool _disposeClaimed;
     private bool _exclusiveProcessing;
+    private TaskCompletionSource<object?>? _idleCompletion;
 
     internal WorkspaceOperationLifetime(Action onOperationsDrained)
     {
@@ -72,6 +74,42 @@ internal sealed class WorkspaceOperationLifetime
     /// used by terminal shutdown so cancellation and final persistence can run
     /// while already-started operations drain.
     /// </summary>
+    // Used by cache eviction: never remove a workspace that still owns
+    // active processing. Keep it cached until the operations have completed.
+    internal bool TryCloseAdmissionWhenIdle()
+    {
+        lock (_sync)
+        {
+            if (_admissionClosed || _disposeRequested || _activeOperations != 0)
+                return false;
+            _admissionClosed = true;
+        }
+        AdmissionClosed?.Invoke();
+        return true;
+    }
+
+    // Cancellable window-close preflight may fail to save. Restore workspace
+    // admission without disposing the resources or detaching UI handlers.
+    internal void ReopenAdmission()
+    {
+        lock (_sync)
+        {
+            if (!_disposeRequested)
+                _admissionClosed = false;
+        }
+    }
+
+    internal Task WaitForIdleAsync()
+    {
+        lock (_sync)
+        {
+            if (_activeOperations == 0)
+                return Task.CompletedTask;
+            return (_idleCompletion ??= new TaskCompletionSource<object?>(
+                TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        }
+    }
+
     internal bool CloseAdmission()
     {
         bool notify = false;
@@ -92,10 +130,17 @@ internal sealed class WorkspaceOperationLifetime
     internal void End()
     {
         bool notifyDrained = false;
+        TaskCompletionSource<object?>? idleCompletion = null;
         lock (_sync)
         {
             if (_activeOperations > 0)
                 _activeOperations--;
+
+            if (_activeOperations == 0)
+            {
+                idleCompletion = _idleCompletion;
+                _idleCompletion = null;
+            }
 
             if (_disposeRequested &&
                 _activeOperations == 0 &&
@@ -106,6 +151,7 @@ internal sealed class WorkspaceOperationLifetime
             }
         }
 
+        idleCompletion?.TrySetResult(null);
         if (notifyDrained)
             _onOperationsDrained();
     }

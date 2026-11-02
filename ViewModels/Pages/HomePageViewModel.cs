@@ -55,6 +55,7 @@ namespace FaceShield.ViewModels.Pages
         private readonly Func<WorkspaceViewModel, bool> _isWorkspaceCurrent;
         private readonly Dictionary<string, string> _deferredWorkspaceEvictions = new(StringComparer.Ordinal);
         private int _shutdownRequested;
+        private int _closePreparationRequested;
         private CancellationTokenSource? _autoCts;
         private CancellationTokenSource? _workspaceLoadCts;
         private CancellationTokenSource? _yoloDownloadCts;
@@ -485,7 +486,9 @@ namespace FaceShield.ViewModels.Pages
             PersistAutoSettings();
         }
 
-        public bool IsShutdownRequested => Volatile.Read(ref _shutdownRequested) != 0;
+        public bool IsShutdownRequested =>
+            Volatile.Read(ref _shutdownRequested) != 0 ||
+            Volatile.Read(ref _closePreparationRequested) != 0;
         public bool CanOpenWorkspace => !string.IsNullOrWhiteSpace(SelectedVideoPath);
         public bool CanStartWorkspace =>
             CanOpenWorkspace &&
@@ -1967,7 +1970,7 @@ namespace FaceShield.ViewModels.Pages
             CancellationTokenSource? previous = null;
             lock (_workspaceCacheGate)
             {
-                if (_shutdownRequested != 0)
+                if (IsShutdownRequested)
                 {
                     cts.Cancel();
                     return cts;
@@ -2703,10 +2706,13 @@ namespace FaceShield.ViewModels.Pages
         {
             while (Recents.Count > MaxRecents)
             {
-                var removed = Recents[^1];
+                var oldest = Recents[^1];
+                // Keep the recent entry if a dirty cached workspace cannot
+                // safely be saved and evicted.
+                if (!RemoveCachedWorkspaces(oldest.Path, deferIfCurrent: true))
+                    break;
                 Recents.RemoveAt(Recents.Count - 1);
-                if (RemoveCachedWorkspaces(removed.Path, deferIfCurrent: true))
-                    _stateStore.RemoveWorkspacesForPath(removed.Path);
+                _stateStore.RemoveWorkspacesForPath(oldest.Path);
             }
         }
 
@@ -2719,24 +2725,40 @@ namespace FaceShield.ViewModels.Pages
 
             WorkspacePathIdentity.PathContext pathContext =
                 WorkspacePathIdentity.CreatePathContext(videoPath);
-            var removed = new List<WorkspaceViewModel>();
-            bool currentWorkspaceRetained = false;
-
+            KeyValuePair<string, WorkspaceViewModel>[] candidates;
+            bool currentWorkspaceRetained;
             lock (_workspaceCacheGate)
             {
-                foreach (var entry in _workspaceCache.ToArray())
+                var matching = _workspaceCache
+                    .Where(entry => pathContext.MatchesAccessPath(entry.Value.FrameList.VideoPath))
+                    .ToArray();
+                currentWorkspaceRetained = matching.Any(entry => _isWorkspaceCurrent(entry.Value));
+                candidates = matching.Where(entry => !_isWorkspaceCurrent(entry.Value)).ToArray();
+            }
+
+            var prepared = new List<WorkspaceViewModel>();
+            foreach (WorkspaceViewModel workspace in candidates.Select(entry => entry.Value).Distinct())
+            {
+                if (!workspace.TryPrepareForCacheEviction())
                 {
-                    WorkspaceViewModel workspace = entry.Value;
-                    if (!pathContext.MatchesAccessPath(workspace.FrameList.VideoPath))
-                        continue;
+                    // No cached state has been removed. Re-enable workspaces
+                    // prepared earlier in this attempt.
+                    foreach (WorkspaceViewModel earlier in prepared)
+                        earlier.ResumeAfterFailedWindowClose();
+                    return false;
+                }
+                prepared.Add(workspace);
+            }
 
-                    if (_isWorkspaceCurrent(workspace))
-                    {
-                        currentWorkspaceRetained = true;
-                        continue;
-                    }
-
-                    if (_workspaceCache.Remove(entry.Key, out var removedWorkspace))
+            var removed = new List<WorkspaceViewModel>();
+            lock (_workspaceCacheGate)
+            {
+                foreach (var entry in candidates)
+                {
+                    if (_workspaceCache.TryGetValue(entry.Key, out var candidate) &&
+                        ReferenceEquals(candidate, entry.Value) &&
+                        !_isWorkspaceCurrent(candidate) &&
+                        _workspaceCache.Remove(entry.Key, out var removedWorkspace))
                         removed.Add(removedWorkspace);
                 }
 
@@ -2746,9 +2768,13 @@ namespace FaceShield.ViewModels.Pages
                     _deferredWorkspaceEvictions.Remove(pathContext.IdentityKey);
             }
 
-            foreach (var workspace in removed.Distinct())
-                workspace.Dispose();
-
+            foreach (WorkspaceViewModel workspace in prepared)
+            {
+                if (removed.Contains(workspace))
+                    workspace.Dispose();
+                else
+                    workspace.ResumeAfterFailedWindowClose();
+            }
             return !currentWorkspaceRetained;
         }
 

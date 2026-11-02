@@ -4,6 +4,7 @@ using FaceShield.ViewModels;
 using FaceShield.ViewModels.Pages;
 using FaceShield.Views.Dialogs;
 using System;
+using System.Threading.Tasks;
 
 namespace FaceShield.Views
 {
@@ -14,28 +15,44 @@ namespace FaceShield.Views
             InitializeComponent();
         }
 
-        protected override void OnClosing(WindowClosingEventArgs e)
+        private bool _closePreflightRunning;
+        private bool _closePreflightComplete;
+
+        protected override async void OnClosing(WindowClosingEventArgs e)
         {
-            if (!e.Cancel && DataContext is MainWindowViewModel vm)
+            if (e.Cancel || _closePreflightComplete ||
+                DataContext is not MainWindowViewModel vm)
             {
-                try
-                {
-                    // Save current and cached hidden workspaces while closing
-                    // can still be canceled. Never let Exit be their first save.
-                    vm.PersistBeforeWindowClose();
-                }
-                catch (Exception ex)
-                {
-                    e.Cancel = true;
-                    if (vm.CurrentPage is WorkspaceViewModel workspace)
-                        workspace.FramePreview.ReportManualTargetFailure(
-                            "창 닫기 전 워크스페이스 저장", ex);
-                    _ = new ErrorDialog("워크스페이스 저장 실패 — 창 닫기 취소", ex.Message)
-                        .ShowDialog(this);
-                }
+                base.OnClosing(e);
+                return;
             }
 
+            // The UI dispatcher must remain free while Auto/native workers
+            // cancel and drain. A successful preflight re-enters Close once.
+            e.Cancel = true;
             base.OnClosing(e);
+            if (_closePreflightRunning)
+                return;
+
+            _closePreflightRunning = true;
+            try
+            {
+                await vm.PersistBeforeWindowCloseAsync();
+                _closePreflightComplete = true;
+                Close();
+            }
+            catch (Exception ex)
+            {
+                if (vm.CurrentPage is WorkspaceViewModel workspace)
+                    workspace.FramePreview.ReportManualTargetFailure(
+                        "창 닫기 전 워크스페이스 저장", ex);
+                _ = new ErrorDialog("워크스페이스 저장 실패 — 창 닫기 취소", ex.Message)
+                    .ShowDialog(this);
+            }
+            finally
+            {
+                _closePreflightRunning = false;
+            }
         }
 
         private void OnKeyDown(object? sender, KeyEventArgs e)

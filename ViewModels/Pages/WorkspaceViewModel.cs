@@ -633,10 +633,12 @@ namespace FaceShield.ViewModels.Pages
 
         public void PersistWorkspaceStateImmediate()
         {
+            // Face-owned edits must be committed even when legacy workspace
+            // persistence is not configured for this workspace instance.
+            FramePreview.PersistCurrentMask();
             if (_stateStore == null)
                 return;
 
-            FramePreview.PersistCurrentMask();
             if (_workspacePersistence != null)
                 _workspacePersistence.SaveNow(BuildSnapshot);
             else
@@ -774,6 +776,40 @@ namespace FaceShield.ViewModels.Pages
             FramePreview.Dispose();
             FrameList.Dispose();
             _maskProvider.Dispose();
+        }
+
+        // Used by cancellable window closing: block new operations, cancel
+        // existing work, and wait for all lifetime owners to publish their
+        // final state BEFORE SaveNow captures the resume index and masks.
+        public async Task PauseAndDrainForWindowCloseAsync()
+        {
+            _operationLifetime.CloseAdmission();
+            CancelOwnedOperations();
+            await _operationLifetime.WaitForIdleAsync();
+            await FramePreview.StopManualOperationsAndWaitAsync();
+        }
+
+        public void ResumeAfterFailedWindowClose()
+            => _operationLifetime.ReopenAdmission();
+
+        // Eviction is allowed only for an idle workspace. Keep the cached
+        // object and its editor alive if a write fails or work is still active.
+        public bool TryPrepareForCacheEviction()
+        {
+            if (!_operationLifetime.TryCloseAdmissionWhenIdle())
+                return false;
+            try
+            {
+                PersistWorkspaceStateImmediate();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[WorkspaceEviction] Save failed; retaining workspace: {ex}");
+                _operationLifetime.ReopenAdmission();
+                return false;
+            }
         }
 
         public void PrepareForAppShutdown()

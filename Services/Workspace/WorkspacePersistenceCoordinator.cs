@@ -192,9 +192,9 @@ namespace FaceShield.Services.Workspace
         }
 
         /// <summary>
-        /// Performs the terminal application-shutdown save. Once finalization starts,
-        /// new queued saves are rejected. The returned boundary drains all previously
-        /// published work and commits this final snapshot before returning.
+        /// Publishes a synchronous save barrier. New queued saves are rejected
+        /// while the barrier runs; both success and failure reopen admission so
+        /// a canceled close or a recovered I/O failure can save again.
         /// </summary>
         public void SaveNow(WorkspaceSnapshot snapshot)
         {
@@ -208,6 +208,7 @@ namespace FaceShield.Services.Workspace
                 throw new ArgumentNullException(nameof(snapshotFactory));
 
             Task finalTask;
+            bool ownsFinalRequest = false;
             // Capture both scalar and bitmap states under the same gate, including
             // the terminal request's publication. An earlier QueueSaveAsync cannot
             // slip its mask snapshot between those two captures.
@@ -228,6 +229,7 @@ namespace FaceShield.Services.Workspace
                     else
                     {
                         _finalizing = true;
+                        ownsFinalRequest = true;
                         predecessor = _latestTask;
                         finalRequestId = ++_latestRequestId;
                         finalCompletion = new TaskCompletionSource<object?>(
@@ -276,7 +278,27 @@ namespace FaceShield.Services.Workspace
                 }
             }
 
-            finalTask.GetAwaiter().GetResult();
+            try
+            {
+                finalTask.GetAwaiter().GetResult();
+            }
+            finally
+            {
+                // A failed preflight must be retryable after the I/O problem is
+                // corrected. A successful preflight also must not permanently
+                // freeze the workspace if another cached workspace later fails
+                // to save and window closing is canceled.
+                if (ownsFinalRequest)
+                {
+                    lock (_taskGate)
+                    {
+                        _finalizing = false;
+                        if (ReferenceEquals(_latestTask, finalTask) &&
+                            (finalTask.IsFaulted || finalTask.IsCanceled))
+                            _latestTask = Task.CompletedTask;
+                    }
+                }
+            }
         }
 
         public void Dispose()

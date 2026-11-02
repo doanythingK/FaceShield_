@@ -1,0 +1,118 @@
+// Standalone regression of production persistence and lifetime coordination.
+using FaceShield.Services.Workspace;
+using FaceShield.Services.Video;
+using FaceShield.ViewModels.Workspace;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+
+var store = new WorkspaceStateStore();
+var masks = new FrameMaskProvider();
+using (var coordinator = new WorkspacePersistenceCoordinator(store, masks))
+{
+    store.FailNextSave = true;
+    Expect<IOException>(() => coordinator.SaveNow(() => new WorkspaceSnapshot
+    {
+        VideoPath = "video.mp4", Sequence = 1
+    }), "Expected terminal save failure");
+
+    // A transient I/O failure must not poison later SaveNow or QueueSaveAsync.
+    coordinator.SaveNow(() => new WorkspaceSnapshot
+    {
+        VideoPath = "video.mp4", Sequence = 2
+    });
+    await coordinator.QueueSaveAsync(() => new WorkspaceSnapshot
+    {
+        VideoPath = "video.mp4", Sequence = 3
+    });
+    await coordinator.FlushAsync();
+    Check(store.Saved.SequenceEqual(new[] { 2, 3 }),
+        "Failed terminal save blocked retry or subsequent queued save");
+
+    Expect<InvalidOperationException>(() =>
+        coordinator.SaveNow(() => throw new InvalidOperationException("capture failed")),
+        "Expected snapshot-capture failure");
+    coordinator.SaveNow(() => new WorkspaceSnapshot
+    {
+        VideoPath = "video.mp4", Sequence = 4
+    });
+    Check(store.Saved.Last() == 4,
+        "Snapshot capture failure poisoned later final save");
+}
+
+var lifetime = new WorkspaceOperationLifetime(() => { });
+Check(lifetime.TryBeginExclusiveProcessing(), "Could not begin Auto operation");
+Task idle = lifetime.WaitForIdleAsync();
+Check(!idle.IsCompleted, "Idle waiter completed while Auto was active");
+Check(!lifetime.TryCloseAdmissionWhenIdle(), "Eviction admitted an active operation");
+Check(lifetime.CloseAdmission(), "Could not close admission");
+Check(!lifetime.TryBegin(), "Closing admission allowed another operation");
+lifetime.EndExclusiveProcessing();
+await idle;
+lifetime.ReopenAdmission();
+Check(lifetime.TryBegin(), "Failed close prevented new work after reopening");
+lifetime.End();
+Check(lifetime.TryCloseAdmissionWhenIdle(), "Idle cache eviction could not close admission");
+Check(!lifetime.TryBegin(), "Evicted workspace still accepted work");
+lifetime.ReopenAdmission();
+Check(lifetime.TryBegin(), "Failed eviction could not reopen admission");
+lifetime.End();
+Console.WriteLine("PASS: retryable SaveNow/QueueSave, failed capture, closing drain, idle-only eviction");
+
+static void Check(bool value, string message)
+{
+    if (!value) throw new InvalidOperationException(message);
+}
+static void Expect<T>(Action action, string message) where T : Exception
+{
+    try { action(); }
+    catch (T) { return; }
+    throw new InvalidOperationException(message);
+}
+
+namespace FaceShield.Services.Video
+{
+    public sealed class FrameMaskProvider
+    {
+        public sealed class PersistenceSnapshot : IDisposable
+        {
+            public void Dispose() { }
+        }
+
+        public PersistenceSnapshot CreatePersistenceSnapshot() => new();
+    }
+}
+
+namespace FaceShield.Services.Workspace
+{
+    public sealed class WorkspaceSnapshot
+    {
+        public string VideoPath { get; init; } = "";
+        public int Sequence { get; init; }
+    }
+
+    public sealed class WorkspaceStateStore
+    {
+        public sealed class SaveLease : IDisposable
+        {
+            public void Dispose() { }
+        }
+
+        public bool FailNextSave { get; set; }
+        public List<int> Saved { get; } = new();
+        public SaveLease AcquireWorkspaceSaveLease(string path) => new();
+        public void SaveWorkspaceSnapshot(WorkspaceSnapshot snapshot,
+            FaceShield.Services.Video.FrameMaskProvider.PersistenceSnapshot masks,
+            SaveLease lease)
+        {
+            if (FailNextSave)
+            {
+                FailNextSave = false;
+                throw new IOException("simulated transient disk failure");
+            }
+            Saved.Add(snapshot.Sequence);
+        }
+    }
+}
