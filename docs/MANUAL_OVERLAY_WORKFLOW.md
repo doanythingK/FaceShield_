@@ -88,12 +88,7 @@ The user must be able to find a face missed by Auto, draw a mask for that partic
   preventing concurrent cancel-after-dispose. Early returns and failed
   admission release the source; the established commit-in-progress protection
   still prevents cancellation of a partially published track.
-- Regression: the isolated production-helper/lifetime fixture forces a close
-  to contend with a successful lifetime admission, then tests shutdown
-  cancellation, lifetime drain, already-closed admission, and admission
-  exceptions. Source wiring checks verify both tracking commands use the
-  shared helper. **The new CI result is recorded after execution**; this
-  fixture is not an actual GUI or native video workload.
+- **Automated verification (2026-11-02):** [Hardening Quality Gate #41378696470](https://github.com/doanythingK/FaceShield_/actions/runs/41378696470) passed Windows/macOS builds, Windows runtime hardening checks, manual overlay and Undo regression, the isolated production-helper concurrency fixture, pyramid checks, and continuous tracking/Auto overlap integration for code commit `641e9a7`. The fixture forces a close to contend with a successful lifetime admission, then tests cancellation, lifetime drain, already-closed admission and callback exceptions; source wiring checks verify both tracking commands use the shared helper. This is **not** an actual GUI close/native video timing test.
 
 ## Still unverified or outside this change's scope
 
