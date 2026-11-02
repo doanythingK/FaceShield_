@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Threading;
 using Avalonia.Input;
 using FaceShield.ViewModels;
 using FaceShield.ViewModels.Pages;
@@ -39,7 +40,9 @@ namespace FaceShield.Views
             {
                 await vm.PersistBeforeWindowCloseAsync();
                 _closePreflightComplete = true;
-                Close();
+                // Do not recursively enter Window.Close while the original
+                // synchronous OnClosing callback is still on the stack.
+                Dispatcher.UIThread.Post(() => Close());
             }
             catch (Exception ex)
             {
