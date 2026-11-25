@@ -519,6 +519,47 @@ using (var canceled = new CancellationTokenSource())
 }
 Console.WriteLine("PASS: active track candidate parity, ties, expiry, inconsistent keys and cancellation");
 
+// Same geometry on opposite sides of a scene cut must not contribute
+// to the same identity/evidence; also test a cut in a missing-frame gap.
+var sceneFrames = new Dictionary<int, IReadOnlyList<FaceTrackDetection>>
+{
+    [0] = new[] { new FaceTrackDetection(0, autoFace, size, 0.9f) },
+    [1] = new[] { new FaceTrackDetection(1, autoFace, size, 0.9f) },
+    [4] = new[] { new FaceTrackDetection(4, autoFace, size, 0.9f) },
+    [5] = new[] { new FaceTrackDetection(5, autoFace, size, 0.9f) }
+};
+var cutOptions = new FaceTrackPostProcessOptions();
+var sceneTracks = new FaceTrackBuilder().Build(sceneFrames, cutOptions,
+    blockedSceneCutStarts: new HashSet<int> { 3 });
+Assert(sceneTracks.Count == 2 && sceneTracks[0].EndFrame == 1 &&
+    sceneTracks[1].StartFrame == 4, "Tracks were associated across a known scene cut");
+
+// Two boxes cross after three consistent velocity samples. Confidence
+// order is reversed at the crossing; last-box matching swaps identities.
+var crossingFrames = new Dictionary<int, IReadOnlyList<FaceTrackDetection>>();
+for (int i = 0; i < 4; i++)
+{
+    int leftToRight = 10 + 10 * i;
+    int rightToLeft = 64 - 10 * i;
+    crossingFrames[i] = new[]
+    {
+        new FaceTrackDetection(i, new Rect(leftToRight, 20, 36, 36), size, i == 3 ? 0.8f : 0.9f),
+        new FaceTrackDetection(i, new Rect(rightToLeft, 20, 36, 36), size, i == 3 ? 0.9f : 0.8f)
+    };
+}
+var crossingTracks = new FaceTrackBuilder().Build(crossingFrames, cutOptions,
+    preferMotionContinuity: true);
+Assert(crossingTracks.Count == 2 &&
+    crossingTracks[0].Detections.Select(d => d.Bounds.X).SequenceEqual(new double[] { 10, 20, 30, 40 }) &&
+    crossingTracks[1].Detections.Select(d => d.Bounds.X).SequenceEqual(new double[] { 64, 54, 44, 34 }),
+    "Consistent crossing motion swapped track identities");
+// A scene cut takes precedence even when geometric/motion evidence is strong.
+var crossingCut = new FaceTrackBuilder().Build(crossingFrames, cutOptions,
+    blockedSceneCutStarts: new HashSet<int> { 3 }, preferMotionContinuity: true);
+Assert(crossingCut.Count == 4 && crossingCut.All(track => track.EndFrame < 3 || track.StartFrame >= 3),
+    "Motion association bridged a scene cut");
+Console.WriteLine("PASS: known scene cuts split evidence, consistent crossing motion preserves synthetic identity");
+
 static void AssertTrackParity(
     IReadOnlyDictionary<int, IReadOnlyList<FaceTrackDetection>> frames,
     FaceTrackPostProcessOptions options)

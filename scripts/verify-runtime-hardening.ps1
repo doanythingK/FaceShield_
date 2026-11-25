@@ -74,6 +74,8 @@ $faceOnnxDetector = Read-RepoFile "Services/FaceDetection/FaceOnnxDetector.cs"
 $yoloOnnxDetector = Read-RepoFile "Services/FaceDetection/YoloFaceOnnxDetector.cs"
 
 # Native I/O and cancellation boundaries.
+Assert-Match "track association rejects known scene crossings" $trackBuilder 'last\.Value\.FrameIndex\s*<\s*sceneStart'
+Assert-Match "motion ranking requires existing eligible candidates" $trackBuilder 'score\s*>=\s*options\.MinTrackMatchScore\)\s*eligible\.Add'
 Assert-Match "export validates wrapped providers against decoded EOF" $exportService 'if\s*\(!useHybridCopyWindow\)\s*VideoExportFrameRangePolicy\.ValidateDecodedFrameCount\(_maskProvider,\s*frameIndex\);'
 Assert-Match "unrecoverable workspace state fails closed" $workspaceStore 'if\s*\(_hasPersistedState\s*\|\|\s*StatePathExists\(_stateFile\)[\s\S]{0,700}throw\s+new\s+InvalidDataException'
 Assert-Match "workspace save requires valid atomic backup" $workspaceStore 'TryLoadStateFile\(_stateFile\)\s*==\s*null\s*\|\|\s*!TrySyncBackupToCurrentState\(\)'
@@ -101,7 +103,7 @@ Assert-NotMatch "tracked stabilizer does not allocate total-frame arrays" $tempo
 Assert-Match "temporal smoothing is sparse and cancellable" $temporalPostProcessor 'ApplyTemporalSmoothing\([\s\S]{0,320}CancellationToken\s+cancellationToken\s*=\s*default[\s\S]{0,1800}Dictionary<int,\s*List<Rect>>[\s\S]{0,2400}ThrowIfCancellationRequested\(\)'
 Assert-NotMatch "temporal smoothing does not allocate total-frame arrays" $temporalPostProcessor 'ApplyTemporalSmoothing\([\s\S]{0,4500}new\s+(List<Rect>\?\[|List<float>\?\[|PixelSize\[|bool\[)totalFrames\]'
 Assert-NotMatch "temporal smoothing does not scan every declared frame" $temporalPostProcessor 'ApplyTemporalSmoothing\([\s\S]{0,6500}for\s*\(int\s+i\s*=\s*(0|1);\s*i\s*<\s*totalFrames'
-Assert-Match "face track interpolator accepts cancellation" ($trackInterpolator + $trackBuilder + $autoPostProcess) 'FaceTrackInterpolator[\s\S]*CancellationToken\s+cancellationToken\s*=\s*default[\s\S]*builder\.Build\(detectionsByFrame,\s*options,\s*cancellationToken\)'
+Assert-Match "face track interpolator accepts cancellation" ($trackInterpolator + $trackBuilder + $autoPostProcess) 'FaceTrackInterpolator[\s\S]*CancellationToken\s+cancellationToken\s*=\s*default[\s\S]*builder\.Build\(detectionsByFrame,\s*options,\s*cancellationToken,\s*blockedSceneCutStarts,\s*preferMotionContinuity:\s*true\)'
 Assert-Match "face track builder checks cancellation" $trackBuilder 'Build\([\s\S]{0,300}CancellationToken\s+cancellationToken[\s\S]{0,1800}cancellationToken\.ThrowIfCancellationRequested\(\)'
 Assert-Match "auto postprocess propagates cancellation to temporal smoothing" $autoPostProcess 'ApplyTemporalSmoothing\([\s\S]{0,500}Array\.Empty<string>\(\),\s*cancellationToken\)'
 Assert-Match "auto ROI pipeline propagates cancellation" $autoPostProcess 'AutoMaskRoiRefineStep\(\)\.Apply\([\s\S]{0,700}useFaceOnnxRoiDetector,\s*cancellationToken\)'

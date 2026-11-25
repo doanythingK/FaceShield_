@@ -80,6 +80,11 @@ internal static class AutoRunSignaturePolicy
             $"dump={autoOptions.DumpDetectionDiagnostics}"
         });
 
+        // A different association policy cannot safely reuse partial Auto
+        // results/signatures from the earlier cross-scene/last-box matcher.
+        if (autoOptions.UseTracking)
+            parts.Add("trackAssociation=scene-motion-v1");
+
         switch (detectorFactoryOptions.Backend)
         {
             case FaceDetectorBackend.YoloFaceOnnx:

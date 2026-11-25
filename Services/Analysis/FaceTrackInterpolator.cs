@@ -62,7 +62,8 @@ namespace FaceShield.Services.Analysis
             }
 
             var builder = new FaceTrackBuilder();
-            var tracks = builder.Build(detectionsByFrame, options, cancellationToken);
+            var tracks = builder.Build(detectionsByFrame, options, cancellationToken,
+                blockedSceneCutStarts, preferMotionContinuity: true);
             var removedTrackIds = new HashSet<int>();
             var gapFilledFaces = new List<FaceTrackFilledFace>();
             var lostFillFrameIndices = new List<int>();

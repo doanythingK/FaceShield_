@@ -11,8 +11,14 @@ namespace FaceShield.Services.Analysis
         public IReadOnlyList<FaceTrack> Build(
             IReadOnlyDictionary<int, IReadOnlyList<FaceTrackDetection>> detectionsByFrame,
             FaceTrackPostProcessOptions options,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IReadOnlySet<int>? blockedSceneCutStarts = null,
+            bool preferMotionContinuity = false)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            int[] sceneCuts = blockedSceneCutStarts == null
+                ? Array.Empty<int>()
+                : blockedSceneCutStarts.OrderBy(static index => index).ToArray();
             var tracks = new List<FaceTrack>();
             int nextTrackId = 1;
 
@@ -55,7 +61,8 @@ namespace FaceShield.Services.Analysis
                     activeTracks.RemoveAll(track =>
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        return frame.Key - track.EndFrame > options.MaxTrackGap;
+                        return frame.Key - track.EndFrame > options.MaxTrackGap ||
+                            track.EndFrame < LastSceneStart(frame.Key, sceneCuts);
                     });
                 }
 
@@ -65,6 +72,11 @@ namespace FaceShield.Services.Analysis
                     cancellationToken.ThrowIfCancellationRequested();
                     FaceTrack? bestTrack = null;
                     double bestScore = double.NegativeInfinity;
+                    int sceneStart = LastSceneStart(detection.FrameIndex, sceneCuts);
+                    // Motion is a ranking hint only among candidates already
+                    // admitted by the existing geometry/area/score gates.
+                    var eligible = preferMotionContinuity && canExpire
+                        ? new List<(FaceTrack Track, double Score)>() : null;
 
                     foreach (var track in candidates)
                     {
@@ -73,7 +85,9 @@ namespace FaceShield.Services.Analysis
                             continue;
 
                         var last = track.LastDetection;
-                        if (last == null)
+                        if (last == null || last.Value.FrameIndex < sceneStart)
+                            continue;
+                        if (preferMotionContinuity && last.Value.Size != detection.Size)
                             continue;
 
                         int gap = detection.FrameIndex - last.Value.FrameIndex;
@@ -81,11 +95,46 @@ namespace FaceShield.Services.Analysis
                             continue;
 
                         double score = ScoreTransition(last.Value.Bounds, detection.Bounds, gap, options);
+                        if (eligible != null && double.IsFinite(score) &&
+                            score >= options.MinTrackMatchScore)
+                            eligible.Add((track, score));
                         if (score > bestScore)
                         {
                             bestScore = score;
                             bestTrack = track;
                         }
+                    }
+
+                    // Re-rank only an actual ambiguous choice. Require all
+                    // candidates to have reliable motion history so a new
+                    // or stationary candidate is not unfairly disadvantaged.
+                    if (eligible is { Count: > 1 })
+                    {
+                        FaceTrack? motionWinner = null;
+                        double bestMotionScore = double.NegativeInfinity;
+                        bool allReliable = true;
+                        foreach (var candidate in eligible)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (!TryPredictBounds(candidate.Track, detection.FrameIndex, options,
+                                    out Rect predicted))
+                            {
+                                allReliable = false;
+                                break;
+                            }
+
+                            double residual = GetNormalizedCenterShift(predicted, detection.Bounds);
+                            double motionScore = 2.0 * IoU(predicted, detection.Bounds) +
+                                Math.Max(0.0, 1.0 - residual);
+                            double rank = 0.25 * candidate.Score + 0.75 * motionScore;
+                            if (rank > bestMotionScore)
+                            {
+                                bestMotionScore = rank;
+                                motionWinner = candidate.Track;
+                            }
+                        }
+                        if (allReliable && motionWinner != null)
+                            bestTrack = motionWinner;
                     }
 
                     if (bestTrack == null || bestScore < options.MinTrackMatchScore)
@@ -105,6 +154,53 @@ namespace FaceShield.Services.Analysis
             }
 
             return tracks;
+        }
+
+        private static int LastSceneStart(int frameIndex, int[] cuts)
+        {
+            int position = Array.BinarySearch(cuts, frameIndex);
+            if (position < 0)
+                position = ~position - 1;
+            return position >= 0 ? cuts[position] : int.MinValue;
+        }
+
+        private static bool TryPredictBounds(FaceTrack track, int nextFrame,
+            FaceTrackPostProcessOptions options, out Rect predicted)
+        {
+            predicted = default;
+            var history = track.Detections;
+            if (history.Count < 3)
+                return false;
+            var a = history[^3];
+            var b = history[^2];
+            var c = history[^1];
+            int ab = b.FrameIndex - a.FrameIndex;
+            int bc = c.FrameIndex - b.FrameIndex;
+            int gap = nextFrame - c.FrameIndex;
+            // Do not extrapolate farther than the recent sampling interval.
+            if (ab <= 0 || bc <= 0 || gap <= 0 || gap > Math.Min(ab, bc) ||
+                a.Size != b.Size || b.Size != c.Size)
+                return false;
+            double ax = a.Bounds.X + a.Bounds.Width * 0.5;
+            double ay = a.Bounds.Y + a.Bounds.Height * 0.5;
+            double bx = b.Bounds.X + b.Bounds.Width * 0.5;
+            double by = b.Bounds.Y + b.Bounds.Height * 0.5;
+            double cx = c.Bounds.X + c.Bounds.Width * 0.5;
+            double cy = c.Bounds.Y + c.Bounds.Height * 0.5;
+            double vx0 = (bx - ax) / ab, vy0 = (by - ay) / ab;
+            double vx1 = (cx - bx) / bc, vy1 = (cy - by) / bc;
+            double dim = Math.Max(1.0, Math.Max(c.Bounds.Width, c.Bounds.Height));
+            double speed = Math.Sqrt(vx1 * vx1 + vy1 * vy1);
+            double disagreement = Math.Sqrt(
+                (vx1 - vx0) * (vx1 - vx0) + (vy1 - vy0) * (vy1 - vy0));
+            double dx = vx1 * gap, dy = vy1 * gap;
+            if (!double.IsFinite(speed) || !double.IsFinite(disagreement) ||
+                disagreement > dim * 0.15 ||
+                Math.Sqrt(dx * dx + dy * dy) > dim * options.MaxCenterShiftRatio)
+                return false;
+            predicted = new Rect(c.Bounds.X + dx, c.Bounds.Y + dy,
+                c.Bounds.Width, c.Bounds.Height);
+            return true;
         }
 
         private static double ScoreTransition(Rect previous, Rect current, int gap, FaceTrackPostProcessOptions options)
