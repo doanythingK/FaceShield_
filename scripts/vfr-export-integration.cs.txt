@@ -1,0 +1,144 @@
+// Real production decode and encode on short, independently generated fixtures.
+using Avalonia;
+using Avalonia.Headless;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Skia;
+using FaceShield.Services.Video;
+using System;
+using System.IO;
+using System.Reflection;
+using System.Threading;
+
+if (args.Length != 3)
+    throw new ArgumentException("Expected VFR source, duplicate PTS source and output path.");
+AppBuilder.Configure<VfrExportTestApp>()
+    .UseSkia()
+    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+    .SetupWithoutStarting();
+FFmpegBootstrap.Initialize();
+
+const int width = 160, height = 120;
+var size = new PixelSize(width, height);
+double[] expectedPts = [0, 0.1, 1.0, 1.1];
+double[] duplicatePts = [0, 0, 0.1, 0.2];
+VerifyOrdinals(args[0], expectedPts);
+VerifyOrdinals(args[1], duplicatePts);
+VerifyMissingPtsGuard();
+
+using var masks = new FrameMaskProvider();
+masks.SetFaceRects(2, new[] { new Rect(24, 30, 32, 48) }, size);
+var manual = new WriteableBitmap(size, new Vector(96, 96),
+    PixelFormat.Bgra8888, AlphaFormat.Premul);
+using (var fb = manual.Lock())
+{
+    unsafe
+    {
+        for (int y = 0; y < height; y++)
+        {
+            byte* row = (byte*)fb.Address + y * fb.RowBytes;
+            for (int x = 0; x < width; x++)
+            {
+                byte alpha = x >= 104 && x < 136 && y >= 30 && y < 78
+                    ? (byte)255 : (byte)0;
+                row[x * 4] = row[x * 4 + 1] = row[x * 4 + 2] = row[x * 4 + 3] = alpha;
+            }
+        }
+    }
+}
+masks.SetMask(2, manual);
+using var snapshot = masks.CreateSnapshot();
+var exporter = new VideoExportService(snapshot);
+exporter.Export(args[0], args[2], 12, runId: "vfr-mixed-layer-pixels",
+    allowHybridCopy: false, allowOutputOverwrite: false);
+var summary = exporter.LastExportSummary ?? throw new InvalidOperationException("Missing export summary");
+Check(summary.OutputCommitted && summary.SubmittedVideoFrames == 4 &&
+    summary.ExpectedBlurFrames == 1 && summary.AppliedBlurFrames == 1 &&
+    summary.VideoFrameCoverageMismatch == 0, summary.ToLogLine());
+Console.WriteLine(summary.ToLogLine());
+
+// A face-only mask with wrong coordinate-space dimensions must be rejected,
+// even though the rectangles themselves fall inside the decoded frame.
+using var invalid = new FrameMaskProvider();
+invalid.SetFaceRects(2, new[] { new Rect(24, 30, 32, 48) }, new PixelSize(width * 2, height));
+ExpectRejected(invalid, "wrong-size");
+using var beyond = new FrameMaskProvider();
+beyond.SetFaceRects(4, new[] { new Rect(24, 30, 32, 48) }, size);
+ExpectRejected(beyond, "past-eof");
+Console.WriteLine("PASS: VFR mixed export, invalid size and out-of-range mask rejection");
+
+void ExpectRejected(FrameMaskProvider provider, string label)
+{
+    string output = Path.Combine(Path.GetDirectoryName(args[2])!, label + ".mkv");
+    bool rejected = false;
+    try
+    {
+        var service = new VideoExportService(provider);
+        service.Export(args[0], output, 12, runId: label,
+            allowHybridCopy: false, allowOutputOverwrite: false);
+    }
+    catch (InvalidOperationException ex)
+    {
+        rejected = ex.GetType().Name == "VideoExportIntegrityException";
+        Console.WriteLine(label + ": " + ex.Message);
+    }
+    Check(rejected && !File.Exists(output), label + " was not rejected before publication");
+}
+
+static void VerifyOrdinals(string path, double[] timestamps)
+{
+    using var decoder = new FfFrameExtractor(path, enableHardware: false);
+    foreach (int index in new[] { 2, 0, 3, 1 })
+    {
+        using var bitmap = decoder.GetFrameByIndex(index)
+            ?? throw new InvalidOperationException("Missing random ordinal " + index);
+        CheckMarker(bitmap, index);
+        Check(Math.Abs(decoder.LastDecodedTimestampSeconds - timestamps[index]) < 0.002,
+            "Random seek timestamp mismatch at " + index);
+    }
+    decoder.StartSequentialRead(1);
+    for (int i = 1; i < 4; i++)
+    {
+        bool ok = decoder.TryGetNextFrame(CancellationToken.None, out var bitmap, out int ordinal);
+        using (bitmap)
+        {
+            Check(ok && bitmap != null && ordinal == i, "Sequential ordinal mismatch at " + i);
+            CheckMarker(bitmap!, i);
+        }
+        Check(Math.Abs(decoder.LastDecodedTimestampSeconds - timestamps[i]) < 0.002,
+            "Sequential timestamp mismatch at " + i);
+    }
+    Check(!decoder.TryGetNextFrameRaw(CancellationToken.None, false, out _, out _) &&
+        decoder.SequentialReachedEndOfStream && !decoder.SequentialReadCancelled &&
+        decoder.SequentialDecodeError == null, "Expected genuine EOF");
+}
+
+static unsafe void CheckMarker(WriteableBitmap bitmap, int ordinal)
+{
+    using var fb = bitmap.Lock();
+    byte* pixel = (byte*)fb.Address + 8 * fb.RowBytes + 8 * 4;
+    int expected = new[] { 24, 80, 152, 224 }[ordinal];
+    for (int i = 0; i < 3; i++)
+        Check(Math.Abs(pixel[i] - expected) <= 5, "Decoded marker mismatch at " + ordinal);
+}
+
+static void VerifyMissingPtsGuard()
+{
+    Type owner = typeof(FfFrameExtractor);
+    Type timelineType = owner.GetNestedType("DecodedFrameTimeline", BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Missing timeline type");
+    var timeline = Activator.CreateInstance(timelineType, nonPublic: true)!;
+    var append = owner.GetMethod("TryAddOrValidateTimelineEntry", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Missing timeline append method");
+    long[] pts = [0, 10, long.MinValue, 30, 40];
+    for (int i = 0; i < pts.Length; i++)
+        Check((bool)append.Invoke(null, new object[] { timeline, i, pts[i] })!, "Synthetic PTS append failed");
+    Check((bool)timelineType.GetProperty("SupportsExactTimestampSeek")!.GetValue(timeline)! == false,
+        "Missing PTS was accepted as a sorted search key");
+}
+
+static void Check(bool condition, string message)
+{
+    if (!condition) throw new InvalidOperationException(message);
+}
+public sealed class VfrExportTestApp : Application { }

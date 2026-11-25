@@ -170,3 +170,26 @@ dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm6
 rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
 cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
 dotnet "$output_dir/ManualTrackingIntegration.dll" "$video"
+
+# Short RGB lossless VFR fixture with frame-specific markers and two
+# disjoint textured regions. Validate the actual encoded pixels independently
+# using ffmpeg/ffprobe, rather than relying on the app's blur counters.
+python3 "$repo_root/scripts/verify-vfr-export-pixels.py" generate "$test_dir"
+vfr_video="$test_dir/vfr-source.mkv"
+duplicate_video="$test_dir/duplicate-pts.mkv"
+vfr_output="$test_dir/vfr-export.mkv"
+"$ffmpeg_cmd" -hide_banner -loglevel error -y -framerate 10 \
+    -start_number 0 -i "$test_dir/vfr-%03d.ppm" \
+    -vf "setpts='if(lt(N,2),N,N+8)'" -fps_mode passthrough \
+    -frames:v 4 -c:v libx264rgb -crf 0 -preset ultrafast -bf 0 -pix_fmt bgr24 "$vfr_video"
+"$ffmpeg_cmd" -hide_banner -loglevel error -y -framerate 10 \
+    -start_number 0 -i "$test_dir/vfr-%03d.ppm" \
+    -vf "setpts='if(lt(N,2),0,N-1)'" -fps_mode passthrough \
+    -frames:v 4 -c:v ffv1 -pix_fmt yuv444p "$duplicate_video"
+
+cp "$repo_root/scripts/vfr-export-integration.cs.txt" "$test_dir/Program.cs"
+dotnet build "$test_dir/ManualTrackingIntegration.csproj" -c Release -r osx-arm64 --no-restore
+rm -f "$output_dir"/libav*.dylib "$output_dir"/libsw*.dylib
+cp -L "$ffmpeg_prefix/lib/"libav*.dylib "$ffmpeg_prefix/lib/"libsw*.dylib "$output_dir/"
+dotnet "$output_dir/ManualTrackingIntegration.dll" "$vfr_video" "$duplicate_video" "$vfr_output"
+python3 "$repo_root/scripts/verify-vfr-export-pixels.py" verify "$ffmpeg_cmd" "$ffprobe_cmd" "$vfr_video" "$vfr_output"
