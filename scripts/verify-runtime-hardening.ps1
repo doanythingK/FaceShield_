@@ -144,6 +144,10 @@ Assert-Match "export forwards cancellation to final output commit" $exportServic
 Assert-Match "final output commit checks cancellation before file replacement" $exportStaging 'cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Replace\('
 Assert-Match "final output commit checks cancellation before atomic moves" $exportStaging 'cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)[\s\S]*cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Move\(stagedOutputPath,\s*finalOutputPath\)'
 
+Assert-Match "persisted manual PNG restores independently of Auto" $workspaceStore 'foreach\s*\(var\s+entry\s+in\s+loadedMasks\)\s*maskProvider\.SetIndependentManualMask\(entry\.Key,\s*entry\.Value\)'
+Assert-NotMatch "workspace save does not omit Auto on manual frames" $workspaceStore 'Where\(entry\s*=>\s*!indexSet\.Contains\(entry\.Key\)\)'
+Assert-NotMatch "workspace restore does not allow partial payload success" $workspaceStore 'requireComplete\s*:\s*false|bool\s+requireComplete'
+
 # Manual player lifetime, session ownership, cancellation, and UI editability.
 Assert-Match "manual player blocks new operations while closing" $manualPlayer 'EnterOperation\(\)[\s\S]{0,500}_closing\s*\|\|[\s\S]{0,180}ObjectDisposedException'
 Assert-Match "manual player counts operations before decode gate wait" $manualPlayer 'using\s+OperationLease\s+operation\s*=\s*EnterOperation\(\);[\s\S]{0,180}_decodeGate\.Wait\(cancellationToken\)'

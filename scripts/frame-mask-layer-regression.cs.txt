@@ -4,6 +4,8 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Skia;
 using FaceShield.Services.Video;
+using FaceShield.Services.Workspace;
+using FaceShield.Enums.Workspace;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -238,6 +240,79 @@ Console.WriteLine("PASS: shorter/failed retracks preserve verified preview/expor
 Console.WriteLine("PASS: cached preview reuses dirty regions and invalidates on Auto/frame change");
 
 Console.WriteLine("PASS: legacy residual and manual-only editor retain Auto/manual alpha, including overlap and Auto relocation");
+
+// Exercise actual disk persistence, not only FrameMaskProvider's memory
+// snapshots. A manual PNG and Auto rectangles at the same ordinal must
+// round-trip independently, including intentionally overlapping pixels.
+string stateRoot = Path.Combine(Path.GetTempPath(), "faceshield-mask-state-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(stateRoot);
+try
+{
+    string video = Path.Combine(stateRoot, "source.mp4");
+    File.WriteAllText(video, "source identity fixture");
+    var diskStore = new WorkspaceStateStore(Path.Combine(stateRoot, "state"));
+    const int diskFrame = 5;
+    using var original = new FrameMaskProvider();
+    original.SetFaceRects(diskFrame, new[] { autoFace }, size, 0.9f, new[] { 0.9f });
+    using (var manual = ManualMaskEditorLayer.CreateEditableMask(original, diskFrame, size))
+    {
+        PaintRect(manual, 32, 36, 6, 6, 255);
+        PaintRect(manual, 112, 28, 24, 24, 255);
+        original.SetIndependentManualMask(diskFrame, Clone(manual));
+    }
+
+    var diskSnapshot = new WorkspaceSnapshot(video, WorkspaceMode.Auto, diskFrame,
+        0, 5, DateTimeOffset.UtcNow, 0, true, null, true, true, null,
+        false, false, null);
+    diskStore.SaveWorkspace(diskSnapshot, original);
+
+    using var restored = new FrameMaskProvider();
+    var reopenedStore = new WorkspaceStateStore(Path.Combine(stateRoot, "state"));
+    Assert(reopenedStore.TryLoadWorkspace(video, WorkspaceMode.Auto, restored, out var restoredSnapshot)
+        && restoredSnapshot?.AutoCompleted == true, "Persisted workspace was not restored");
+    Assert(restored.TryGetFaceMaskData(diskFrame, out var restoredAuto)
+        && restoredAuto.Faces.Count == 1, "Disk persistence lost Auto layer on manual frame");
+    using (var final = restored.GetFinalMask(diskFrame)
+           ?? throw new InvalidOperationException("Restored union missing"))
+        Assert(AlphaAt(final, 40, 38) > 0 && AlphaAt(final, 34, 38) == 255
+            && AlphaAt(final, 120, 36) == 255, "Restored output lost Auto or manual coverage");
+
+    restored.SetFaceRects(diskFrame, new[] { new Rect(54, 20, 26, 26) }, size);
+    using (var final = restored.GetFinalMask(diskFrame)
+           ?? throw new InvalidOperationException("Restored manual overlap missing"))
+        Assert(AlphaAt(final, 34, 38) == 255 && AlphaAt(final, 40, 38) == 0
+            && AlphaAt(final, 66, 32) > 0 && AlphaAt(final, 120, 36) == 255,
+            "Restoring a manual PNG subtracted overlapping Auto pixels");
+
+    // Both missing and unreadable PNGs must reject an incomplete generation.
+    // The live provider and persisted metadata must not be overwritten.
+    string png = Directory.GetFiles(Path.Combine(stateRoot, "state"),
+        $"mask_{diskFrame}.png", SearchOption.AllDirectories).Single();
+    string metadata = Path.Combine(stateRoot, "state", "state.json");
+    string before = File.ReadAllText(metadata);
+    File.Delete(png);
+    foreach (bool corrupt in new[] { false, true })
+    {
+        if (corrupt) File.WriteAllText(png, "invalid png");
+        bool rejected = false;
+        try
+        {
+            reopenedStore.TryLoadWorkspace(video, WorkspaceMode.Auto, restored, out _);
+        }
+        catch (InvalidDataException) { rejected = true; }
+        Assert(rejected, "Missing/corrupt persisted mask was accepted as complete");
+        Assert(File.ReadAllText(metadata) == before, "Rejected load rewrote saved metadata");
+        using var unchanged = restored.GetFinalMask(diskFrame)
+            ?? throw new InvalidOperationException("Rejected load cleared live masks");
+        Assert(AlphaAt(unchanged, 34, 38) == 255 && AlphaAt(unchanged, 66, 32) > 0,
+            "Rejected load altered live masks");
+    }
+}
+finally
+{
+    Directory.Delete(stateRoot, recursive: true);
+}
+Console.WriteLine("PASS: disk Auto/manual round-trip, overlap preservation, missing/corrupt mask rejection");
 
 static void PaintRect(WriteableBitmap mask, int x0, int y0, int w, int h, byte alpha)
 {

@@ -41,10 +41,16 @@ namespace FaceShield.Services.Workspace
         private AppState _state;
 
         public WorkspaceStateStore()
-        {
-            _rootDir = Path.Combine(
+            : this(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "FaceShield");
+                "FaceShield"))
+        {
+        }
+
+        // Allows isolated persistence regressions without touching app state.
+        internal WorkspaceStateStore(string rootDir)
+        {
+            _rootDir = Path.GetFullPath(rootDir);
             _stateFile = Path.Combine(_rootDir, "state.json");
             _stateBackupFile = Path.Combine(_rootDir, "state.json.bak");
             lock (GlobalStateGate)
@@ -318,8 +324,7 @@ namespace FaceShield.Services.Workspace
                 pathContext,
                 mode,
                 primaryState,
-                maskProvider,
-                requireComplete: true);
+                maskProvider);
 
             if (!loadedComplete)
             {
@@ -328,8 +333,7 @@ namespace FaceShield.Services.Workspace
                         pathContext,
                         mode,
                         backupState,
-                        maskProvider,
-                        requireComplete: true))
+                        maskProvider))
                 {
                     stateToUse = backupState;
                     System.Diagnostics.Debug.WriteLine(
@@ -338,12 +342,12 @@ namespace FaceShield.Services.Workspace
                 }
                 else
                 {
-                    TryLoadWorkspacePayload(
-                        pathContext,
-                        mode,
-                        primaryState,
-                        maskProvider,
-                        requireComplete: false);
+                    // Do not turn a missing/corrupt mask into a successful
+                    // workspace with silently reduced privacy coverage. Keep
+                    // the saved generations intact for recovery.
+                    throw new InvalidDataException(
+                        $"저장된 마스크를 복원할 수 없습니다: {pathContext.AccessPath} ({mode}). " +
+                        "현재본과 백업을 확인했으나 완전한 마스크 데이터가 없습니다. 저장 데이터 복구 후 다시 열어 주세요.");
                 }
             }
 
@@ -487,8 +491,7 @@ namespace FaceShield.Services.Workspace
             WorkspacePathIdentity.PathContext pathContext,
             WorkspaceMode mode,
             WorkspaceState state,
-            FrameMaskProvider maskProvider,
-            bool requireComplete)
+            FrameMaskProvider maskProvider)
         {
             string dir = ResolveWorkspaceDirForRead(
                 pathContext,
@@ -504,19 +507,11 @@ namespace FaceShield.Services.Workspace
                 {
                     string filePath = Path.Combine(dir, $"mask_{index}.png");
                     if (!File.Exists(filePath))
-                    {
-                        if (requireComplete)
-                            return false;
-                        continue;
-                    }
+                        return false;
 
                     WriteableBitmap? mask = LoadMask(filePath);
                     if (mask == null)
-                    {
-                        if (requireComplete)
-                            return false;
-                        continue;
-                    }
+                        return false;
 
                     loadedMasks.Add(new KeyValuePair<int, WriteableBitmap>(index, mask));
                 }
@@ -524,8 +519,11 @@ namespace FaceShield.Services.Workspace
                 maskProvider.Clear();
                 ApplyFaceMasks(state, maskProvider);
 
+                // Persisted PNGs are already the stored manual layer, not an
+                // editor composite. Restoring through SetMask would subtract
+                // any overlapping Auto pixels from the independent manual mask.
                 foreach (var entry in loadedMasks)
-                    maskProvider.SetMask(entry.Key, entry.Value);
+                    maskProvider.SetIndependentManualMask(entry.Key, entry.Value);
 
                 loadedMasks.Clear();
                 return true;
@@ -643,17 +641,16 @@ namespace FaceShield.Services.Workspace
                 // snapshot owns the lifetime of stored bitmaps until this returns.
                 Directory.CreateDirectory(dir);
                 var indices = new List<int>(persistenceSnapshot.StoredMasks.Count);
-                var indexSet = new HashSet<int>();
                 foreach (var entry in persistenceSnapshot.StoredMasks)
                 {
                     indices.Add(entry.FrameIndex);
-                    indexSet.Add(entry.FrameIndex);
                     string filePath = Path.Combine(dir, $"mask_{entry.FrameIndex}.png");
                     SaveMask(filePath, entry.Bitmap);
                 }
 
+                // Manual PNG and Auto rectangles are independent layers.
+                // Save both even when they cover the same frame.
                 var faceMasks = persistenceSnapshot.FaceMasks
-                    .Where(entry => !indexSet.Contains(entry.Key))
                     .OrderBy(entry => entry.Key)
                     .Select(entry => new FaceMaskState
                     {
