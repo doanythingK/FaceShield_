@@ -1793,6 +1793,12 @@ namespace FaceShield.ViewModels.Pages
                     }
                 }
 
+                // Auto's public execution gate requires a ready video session.
+                // A newly cached workspace deliberately defers session creation.
+                // Keep the same load owner through initialization and handoff.
+                if (!await EnsureWorkspaceReadyAsync(vm, loadCts))
+                    return;
+
                 if (IsAutoRunning || !CanApplyWorkspaceLoadProgress(loadCts))
                     return;
 
@@ -2452,7 +2458,13 @@ namespace FaceShield.ViewModels.Pages
                     loadProgress,
                     loadCts.Token);
                 loadCts.Token.ThrowIfCancellationRequested();
-                return CanApplyWorkspaceLoadProgress(loadCts);
+                if (!CanApplyWorkspaceLoadProgress(loadCts))
+                    return false;
+
+                if (!vm.ToolPanel.IsSessionReady)
+                    throw new InvalidOperationException("영상 세션 초기화가 완료되지 않았습니다.");
+
+                return true;
             }
             catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
             {

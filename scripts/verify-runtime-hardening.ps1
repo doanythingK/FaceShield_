@@ -156,6 +156,12 @@ Assert-Match "all Home load owners clear busy state during close preflight" $hom
 Assert-Match "download cleanup is not suppressed by reversible close" $homeViewModel 'wasCurrent\s*&&\s*Volatile\.Read\(ref\s+_shutdownRequested\)\s*==\s*0\)\s*IsYoloModelDownloading\s*=\s*false'
 Assert-Match "failed close refreshes Home admission bindings" $homeShutdown 'Volatile\.Write\(ref\s+_closePreparationRequested,\s*0\);[\s\S]{0,700}OnPropertyChanged\(nameof\(CanStartWorkspace\)\)'
 
+# Fresh Home Auto workspaces defer the video session; initialize before
+# transferring load ownership to Auto, whose public entry gate needs readiness.
+Assert-Match "Home Auto initializes session before handoff" $homeViewModel 'if\s*\(!await\s+EnsureWorkspaceReadyAsync\(vm,\s*loadCts\)\)\s*return;[\s\S]{0,900}IsAutoRunning\s*=\s*true;'
+Assert-Match "Home readiness helper verifies session readiness" $homeViewModel 'await\s+vm\.EnsureSessionInitializedAsync\([\s\S]{0,500}if\s*\(!vm\.ToolPanel\.IsSessionReady\)'
+Assert-Match "persisted mask metadata validated before live provider mutation" $workspaceStore 'if\s*\(!TryValidateMaskMetadata\(state,\s*out\s+var\s+faceSizes\)\)[\s\S]{0,2500}maskProvider\.Clear\(\);'
+
 # Manual player lifetime, session ownership, cancellation, and UI editability.
 Assert-Match "manual player blocks new operations while closing" $manualPlayer 'EnterOperation\(\)[\s\S]{0,500}_closing\s*\|\|[\s\S]{0,180}ObjectDisposedException'
 Assert-Match "manual player counts operations before decode gate wait" $manualPlayer 'using\s+OperationLease\s+operation\s*=\s*EnterOperation\(\);[\s\S]{0,180}_decodeGate\.Wait\(cancellationToken\)'

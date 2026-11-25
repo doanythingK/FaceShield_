@@ -452,28 +452,28 @@ namespace FaceShield.Services.Workspace
                 SecondsPerScreen = source.SecondsPerScreen,
                 TimelineExtentSeconds = source.TimelineExtentSeconds,
                 LastOpened = source.LastOpened,
-                MaskIndices = source.MaskIndices?.ToList() ?? new List<int>(),
+                MaskIndices = source.MaskIndices?.ToList() ?? null!,
+                // Preserve malformed entries for generation validation, rather
+                // than silently dropping them while taking the metadata snapshot.
                 FaceMasks = source.FaceMasks?
-                    .Where(face => face != null)
-                    .Select(face => new FaceMaskState
+                    .Select(face => face == null ? null! : new FaceMaskState
                     {
                         FrameIndex = face.FrameIndex,
                         Width = face.Width,
                         Height = face.Height,
                         MinConfidence = face.MinConfidence,
                         Faces = face.Faces?
-                            .Where(rect => rect != null)
-                            .Select(rect => new RectState
+                            .Select(rect => rect == null ? null! : new RectState
                             {
                                 X = rect.X,
                                 Y = rect.Y,
                                 Width = rect.Width,
                                 Height = rect.Height
                             })
-                            .ToList() ?? new List<RectState>(),
+                            .ToList() ?? null!,
                         Confidences = face.Confidences?.ToList() ?? new List<float>()
                     })
-                    .ToList() ?? new List<FaceMaskState>(),
+                    .ToList() ?? null!,
                 AutoResumeIndex = source.AutoResumeIndex,
                 AutoCompleted = source.AutoCompleted,
                 AutoRunSignature = source.AutoRunSignature,
@@ -493,6 +493,9 @@ namespace FaceShield.Services.Workspace
             WorkspaceState state,
             FrameMaskProvider maskProvider)
         {
+            if (!TryValidateMaskMetadata(state, out var faceSizes))
+                return false;
+
             string dir = ResolveWorkspaceDirForRead(
                 pathContext,
                 mode,
@@ -514,6 +517,9 @@ namespace FaceShield.Services.Workspace
                         return false;
 
                     loadedMasks.Add(new KeyValuePair<int, WriteableBitmap>(index, mask));
+                    if (faceSizes.TryGetValue(index, out PixelSize autoSize) &&
+                        mask.PixelSize != autoSize)
+                        return false;
                 }
 
                 maskProvider.Clear();
@@ -522,10 +528,14 @@ namespace FaceShield.Services.Workspace
                 // Persisted PNGs are already the stored manual layer, not an
                 // editor composite. Restoring through SetMask would subtract
                 // any overlapping Auto pixels from the independent manual mask.
-                foreach (var entry in loadedMasks)
+                // Remove each bitmap from the cleanup list after ownership
+                // transfers, including when a subsequent transfer throws.
+                for (int i = loadedMasks.Count - 1; i >= 0; i--)
+                {
+                    var entry = loadedMasks[i];
                     maskProvider.SetIndependentManualMask(entry.Key, entry.Value);
-
-                loadedMasks.Clear();
+                    loadedMasks.RemoveAt(i);
+                }
                 return true;
             }
             finally
@@ -536,27 +546,56 @@ namespace FaceShield.Services.Workspace
             }
         }
 
+        private static bool TryValidateMaskMetadata(
+            WorkspaceState state,
+            out Dictionary<int, PixelSize> faceSizes)
+        {
+            faceSizes = new Dictionary<int, PixelSize>();
+            if (state.MaskIndices == null || state.FaceMasks == null)
+                return false;
+
+            var indices = new HashSet<int>();
+            foreach (int index in state.MaskIndices)
+            {
+                if (index < 0 || !indices.Add(index))
+                    return false;
+            }
+
+            foreach (var face in state.FaceMasks)
+            {
+                if (face == null || face.FrameIndex < 0 ||
+                    face.Width <= 0 || face.Height <= 0 ||
+                    face.Faces == null || face.Faces.Count == 0 ||
+                    !faceSizes.TryAdd(face.FrameIndex, new PixelSize(face.Width, face.Height)))
+                    return false;
+
+                foreach (var rect in face.Faces)
+                {
+                    // Allow partially out-of-frame faces, as detectors can
+                    // legitimately return them. Reject unusable geometry.
+                    if (rect == null ||
+                        !double.IsFinite(rect.X) || !double.IsFinite(rect.Y) ||
+                        !double.IsFinite(rect.Width) || !double.IsFinite(rect.Height) ||
+                        rect.Width <= 0 || rect.Height <= 0 ||
+                        !double.IsFinite(rect.X + rect.Width) ||
+                        !double.IsFinite(rect.Y + rect.Height) ||
+                        rect.X >= face.Width || rect.Y >= face.Height ||
+                        rect.X + rect.Width <= 0 || rect.Y + rect.Height <= 0)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
         private static void ApplyFaceMasks(WorkspaceState state, FrameMaskProvider maskProvider)
         {
-            foreach (var faceState in state.FaceMasks ?? new List<FaceMaskState>())
+            // All entries have been validated before the live provider is cleared.
+            foreach (var faceState in state.FaceMasks)
             {
-                if (faceState == null ||
-                    faceState.FrameIndex < 0 ||
-                    faceState.Width <= 0 ||
-                    faceState.Height <= 0 ||
-                    faceState.Faces == null ||
-                    faceState.Faces.Count == 0)
-                {
-                    continue;
-                }
-
                 var faces = faceState.Faces
-                    .Select(r => new Rect(r.X, r.Y, Math.Max(0.0, r.Width), Math.Max(0.0, r.Height)))
-                    .Where(r => r.Width > 0 && r.Height > 0)
+                    .Select(r => new Rect(r.X, r.Y, r.Width, r.Height))
                     .ToArray();
-                if (faces.Length == 0)
-                    continue;
-
                 maskProvider.SetFaceRects(
                     faceState.FrameIndex,
                     faces,
@@ -968,6 +1007,7 @@ namespace FaceShield.Services.Workspace
 
         private static WriteableBitmap? LoadMask(string path)
         {
+            WriteableBitmap? wb = null;
             try
             {
                 var info = new FileInfo(path);
@@ -975,22 +1015,25 @@ namespace FaceShield.Services.Workspace
                     return null;
 
                 using var bitmap = new Bitmap(path);
-                var wb = new WriteableBitmap(
+                wb = new WriteableBitmap(
                     bitmap.PixelSize,
                     bitmap.Dpi,
                     Avalonia.Platform.PixelFormat.Bgra8888,
                     Avalonia.Platform.AlphaFormat.Premul);
 
-                using var fb = wb.Lock();
-                int stride = fb.RowBytes;
-                int size = stride * fb.Size.Height;
-                bitmap.CopyPixels(new PixelRect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height),
-                    fb.Address, size, stride);
+                using (var fb = wb.Lock())
+                {
+                    int stride = fb.RowBytes;
+                    int size = checked(stride * fb.Size.Height);
+                    bitmap.CopyPixels(new PixelRect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height),
+                        fb.Address, size, stride);
+                }
 
                 return wb;
             }
             catch (Exception ex)
             {
+                wb?.Dispose();
                 System.Diagnostics.Debug.WriteLine(
                     $"[WorkspaceStateStore] failed to load mask '{path}': {ex.Message}");
                 return null;

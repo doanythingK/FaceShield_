@@ -9,6 +9,7 @@ using FaceShield.Enums.Workspace;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json.Nodes;
 
 AppBuilder.Configure<MaskLayerRegressionApp>()
     .UseSkia()
@@ -290,6 +291,48 @@ try
         $"mask_{diskFrame}.png", SearchOption.AllDirectories).Single();
     string metadata = Path.Combine(stateRoot, "state", "state.json");
     string before = File.ReadAllText(metadata);
+    // Invalid declared Auto entries must not disappear during cloning or
+    // application. Exercise both rejection and complete backup recovery.
+    string backup = metadata + ".bak";
+    if (File.Exists(backup)) File.Delete(backup);
+    var mutations = new Action<JsonObject>[]
+    {
+        ws => ws["FaceMasks"]!.AsArray()[0] = null,
+        ws => ws["FaceMasks"]![0]!["Faces"]!.AsArray()[0] = null,
+        ws => ws["FaceMasks"]![0]!["Faces"]![0]!["Width"] = 0,
+        ws => ws["FaceMasks"]![0]!["FrameIndex"] = -1,
+        ws => ws["FaceMasks"]![0]!["Width"] = width + 1,
+        ws => ws["FaceMasks"]![0]!["Faces"]![0]!["X"] = width + 1,
+        ws => ws["FaceMasks"]!.AsArray().Add(ws["FaceMasks"]![0]!.DeepClone()),
+        ws => ws["MaskIndices"]!.AsArray().Add(diskFrame),
+        ws => ws["FaceMasks"] = null
+    };
+    foreach (var mutate in mutations)
+    {
+        var root = JsonNode.Parse(before)!;
+        mutate(root["Workspaces"]![0]!.AsObject());
+        string damaged = root.ToJsonString();
+        File.WriteAllText(metadata, damaged);
+        bool rejected = false;
+        try { reopenedStore.TryLoadWorkspace(video, WorkspaceMode.Auto, restored, out _); }
+        catch (InvalidDataException) { rejected = true; }
+        Assert(rejected, "Invalid Auto/PNG metadata was accepted as complete");
+        Assert(File.ReadAllText(metadata) == damaged, "Rejected metadata was rewritten");
+        using var unchanged = restored.GetFinalMask(diskFrame)
+            ?? throw new InvalidOperationException("Rejected metadata cleared live masks");
+        Assert(AlphaAt(unchanged, 66, 32) > 0 && AlphaAt(unchanged, 34, 38) == 255,
+            "Rejected metadata changed live coverage");
+    }
+    File.WriteAllText(backup, before);
+    using (var recovered = new FrameMaskProvider())
+    {
+        Assert(reopenedStore.TryLoadWorkspace(video, WorkspaceMode.Auto, recovered, out var recovery)
+            && recovery?.AutoCompleted == true, "Complete backup did not recover malformed primary");
+        Assert(recovered.TryGetFaceMaskData(diskFrame, out var recoveredAuto)
+            && recoveredAuto.Faces.Count == 1, "Backup recovery lost Auto coverage");
+    }
+    File.Delete(backup);
+    File.WriteAllText(metadata, before);
     File.Delete(png);
     foreach (bool corrupt in new[] { false, true })
     {
