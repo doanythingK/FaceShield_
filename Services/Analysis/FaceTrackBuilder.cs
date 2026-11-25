@@ -16,7 +16,32 @@ namespace FaceShield.Services.Analysis
             var tracks = new List<FaceTrack>();
             int nextTrackId = 1;
 
-            foreach (var frame in detectionsByFrame.OrderBy(static x => x.Key))
+            var orderedFrames = detectionsByFrame.OrderBy(static x => x.Key).ToArray();
+            // Only expire tracks when the dictionary keys really describe
+            // detection order. Preserve the historical search for callers
+            // supplying inconsistent or negative frame indices.
+            bool canExpire = true;
+            foreach (var frame in orderedFrames)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var detection in frame.Value)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (frame.Key < 0 || detection.FrameIndex != frame.Key)
+                    {
+                        canExpire = false;
+                        break;
+                    }
+                }
+                if (!canExpire)
+                    break;
+            }
+
+            // Keep the full list for downstream interpolation and stable IDs.
+            // Candidate order remains creation order, including score ties.
+            var activeTracks = new List<FaceTrack>();
+            List<FaceTrack> candidates = canExpire ? activeTracks : tracks;
+            foreach (var frame in orderedFrames)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var frameDetections = frame.Value
@@ -25,6 +50,15 @@ namespace FaceShield.Services.Analysis
                 if (frameDetections.Length == 0)
                     continue;
 
+                if (canExpire)
+                {
+                    activeTracks.RemoveAll(track =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return frame.Key - track.EndFrame > options.MaxTrackGap;
+                    });
+                }
+
                 var usedTracks = new HashSet<int>();
                 foreach (var detection in frameDetections)
                 {
@@ -32,7 +66,7 @@ namespace FaceShield.Services.Analysis
                     FaceTrack? bestTrack = null;
                     double bestScore = double.NegativeInfinity;
 
-                    foreach (var track in tracks)
+                    foreach (var track in candidates)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         if (usedTracks.Contains(track.Id))
@@ -58,6 +92,8 @@ namespace FaceShield.Services.Analysis
                     {
                         bestTrack = new FaceTrack(nextTrackId++);
                         tracks.Add(bestTrack);
+                        if (canExpire)
+                            activeTracks.Add(bestTrack);
                     }
                     else
                     {

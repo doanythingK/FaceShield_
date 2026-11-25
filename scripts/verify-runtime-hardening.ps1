@@ -145,7 +145,7 @@ Assert-Match "export forwards cancellation to final output commit" $exportServic
 Assert-Match "final output commit checks cancellation before file replacement" $exportStaging 'cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Replace\('
 Assert-Match "final output commit checks cancellation before atomic moves" $exportStaging 'cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)[\s\S]*cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Move\(stagedOutputPath,\s*finalOutputPath\)'
 
-Assert-Match "persisted manual PNG restores independently of Auto" $workspaceStore 'foreach\s*\(var\s+entry\s+in\s+loadedMasks\)\s*maskProvider\.SetIndependentManualMask\(entry\.Key,\s*entry\.Value\)'
+Assert-Match "persisted manual PNG restores independently of Auto" $workspaceStore 'var\s+entry\s*=\s*loadedMasks\[i\];\s*maskProvider\.SetIndependentManualMask\(entry\.Key,\s*entry\.Value\);\s*loadedMasks\.RemoveAt\(i\);'
 Assert-NotMatch "workspace save does not omit Auto on manual frames" $workspaceStore 'Where\(entry\s*=>\s*!indexSet\.Contains\(entry\.Key\)\)'
 Assert-NotMatch "workspace restore does not allow partial payload success" $workspaceStore 'requireComplete\s*:\s*false|bool\s+requireComplete'
 
