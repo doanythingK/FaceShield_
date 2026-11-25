@@ -17,10 +17,10 @@ internal static class VideoExportFrameRangePolicy
         foreach (int index in provider.GetStoredMaskFrameIndices())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (index < 0)
+            if (index < 0 || index == int.MaxValue)
             {
                 throw new VideoExportIntegrityException(
-                    $"음수 프레임 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
+                    $"유효하지 않은 프레임 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
             }
 
             // An all-transparent stored bitmap is a valid explicit manual override:
@@ -34,10 +34,10 @@ internal static class VideoExportFrameRangePolicy
         foreach (int index in provider.GetFaceMaskFrameIndices())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (index < 0)
+            if (index < 0 || index == int.MaxValue)
             {
                 throw new VideoExportIntegrityException(
-                    $"음수 얼굴 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
+                    $"유효하지 않은 얼굴 마스크 인덱스는 내보낼 수 없습니다 (frame={index}).");
             }
             result.Add(index);
         }

@@ -254,7 +254,8 @@ namespace FaceShield.Services.Video
         int frameIndex,
         out WriteableBitmap? mask,
         out bool ownsMask,
-        out IReadOnlyList<Rect>? faceRects)
+        out IReadOnlyList<Rect>? faceRects,
+        PixelSize? expectedSize = null)
     {
         lock (_stateGate)
         {
@@ -263,6 +264,12 @@ namespace FaceShield.Services.Video
             faceRects = null;
             bool hasManual = _masks.TryGetValue(frameIndex, out var manual);
             bool hasAuto = _faceMasks.TryGetValue(frameIndex, out var faces);
+            if (expectedSize.HasValue &&
+                ((hasAuto && faces.Size != expectedSize.Value) ||
+                 (hasManual && manual!.PixelSize != expectedSize.Value)))
+                throw new VideoExportIntegrityException(
+                    $"프레임 {frameIndex}의 마스크 크기가 디코딩 영상과 다릅니다.");
+
             if (hasManual)
             {
                 if (!hasAuto && _allowsBorrowedBitmapReads)

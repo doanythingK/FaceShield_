@@ -245,10 +245,11 @@ internal static class ManualMaskKeyframeTimeline
         }
     }
 
-    internal static ExportMaskLease CreateExportMaskLease(FrameMaskProvider source)
+    internal static ExportMaskLease CreateExportMaskLease(FrameMaskProvider source,
+        CancellationToken cancellationToken = default)
     {
         if (source == null) throw new ArgumentNullException(nameof(source));
-        FrameMaskProvider snapshot = source.CreateSnapshot();
+        FrameMaskProvider snapshot = source.CreateSnapshot(out _, cancellationToken);
         try
         {
             int[] stored = Sort(snapshot.GetStoredMaskFrameIndices());

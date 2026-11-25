@@ -199,7 +199,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
             {
                 exportToken.ThrowIfCancellationRequested();
                 using var exportMaskLease =
-                    ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider);
+                    ManualMaskKeyframeTimeline.CreateExportMaskLease(_maskProvider, exportToken);
                 // Preserve the existing Auto/legacy source; the target adapter
                 // adds ONLY each face's exact keyframe or verified track sample.
                 // Invalid target persistence or unresolved failure blocks export.

@@ -2447,6 +2447,14 @@ namespace FaceShield.Services.Video
                     timeline.LastValidPresentationTimestamp = timestamp;
                 }
 
+                else
+                {
+                    // A missing PTS is not a sorted search key. Binary search
+                    // can skip that entry or compare its sentinel as a real
+                    // neighbor; exact timestamp seek is unsafe for this timeline.
+                    timeline.SupportsExactTimestampSeek = false;
+                }
+
                 int occurrence = 0;
                 if (timestamp != ffmpeg.AV_NOPTS_VALUE)
                 {

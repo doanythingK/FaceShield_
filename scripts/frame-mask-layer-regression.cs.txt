@@ -110,7 +110,20 @@ using (var exportCases = new FrameMaskProvider())
         exportCases.SetIndependentManualMask(2, Clone(empty));
     exportCases.SetFaceRects(2, new[] { autoFace }, size);
     using var snapshot = exportCases.CreateSnapshot();
-    snapshot.ResolveExportFrameMask(0, out var autoRaster, out bool autoOwned, out var autoRects);
+    snapshot.ResolveExportFrameMask(0, out var autoRaster, out bool autoOwned, out var autoRects, size);
+    bool wrongSizeRejected = false;
+    try
+    {
+        snapshot.ResolveExportFrameMask(0, out _, out _, out _, new PixelSize(width + 1, height));
+    }
+    catch (InvalidOperationException) { wrongSizeRejected = true; }
+    Assert(wrongSizeRejected, "Wrong-sized Auto rectangles were accepted by export");
+    using var stoppedSnapshot = new CancellationTokenSource();
+    stoppedSnapshot.Cancel();
+    bool snapshotCanceled = false;
+    try { using var ignored = ManualMaskKeyframeTimeline.CreateExportMaskLease(exportCases, stoppedSnapshot.Token); }
+    catch (OperationCanceledException) { snapshotCanceled = true; }
+    Assert(snapshotCanceled, "Export snapshot ignored cancellation");
     Assert(autoRaster == null && !autoOwned && autoRects?.Count == 1, "Auto-only fast path changed");
     snapshot.ResolveExportFrameMask(1, out var borrowed, out bool borrowedOwned, out var manualRects);
     Assert(borrowed != null && !borrowedOwned && manualRects == null &&

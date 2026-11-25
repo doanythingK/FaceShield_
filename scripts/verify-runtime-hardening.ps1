@@ -74,6 +74,9 @@ $faceOnnxDetector = Read-RepoFile "Services/FaceDetection/FaceOnnxDetector.cs"
 $yoloOnnxDetector = Read-RepoFile "Services/FaceDetection/YoloFaceOnnxDetector.cs"
 
 # Native I/O and cancellation boundaries.
+Assert-Match "missing timeline PTS disables exact timestamp seek" $extractor 'else\s*\{\s*// A missing PTS[\s\S]{0,400}timeline\.SupportsExactTimestampSeek\s*=\s*false;'
+Assert-Match "export validates direct mask geometry" $frameMaskProvider 'if\s*\(expectedSize\.HasValue[\s\S]{0,350}VideoExportIntegrityException'
+Assert-Match "export mask snapshot receives cancellation" $exportCoordinator 'CreateExportMaskLease\(_maskProvider,\s*exportToken\)'
 Assert-Match "ordinal decoder cleanup resets cursor and EOF" $extractor 'private\s+void\s+DisposeOrdinalDecoder\(\)[\s\S]{0,1800}_ordinalNextFrameIndex\s*=\s*0;\s*_ordinalDrainSent\s*=\s*false;\s*_ordinalReachedEndOfStream\s*=\s*false;'
 Assert-Match "sequential canceled or failed read requires restart" $extractor 'private\s+bool\s+TryDecodeNextSequentialFrame\([\s\S]{0,850}if\s*\(_sequentialCancelled\s*\|\|\s*_sequentialReachedEndOfStream\s*\|\|\s*_sequentialDecodeError\s*!=\s*null\)\s*return\s+false;'
 Assert-Match "ordinal packet cancellation throws to reset boundary" $extractor 'av_packet_unref\(_ordinalPacket\);\s*cancellationToken\.ThrowIfCancellationRequested\(\);'

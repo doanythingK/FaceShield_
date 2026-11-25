@@ -133,6 +133,7 @@ internal static unsafe class VideoFrameProcessingPolicy
         bool mightHaveMask = blurRanges == null ||
             VideoExportFrameRangePolicy.IsFrameInBlurRanges(decodedFrameOrdinal, blurRanges, ref blurRangeCursor);
         bool frameWasBlurred = false;
+        var decodedSize = new PixelSize(frame->width, frame->height);
 
         if (mightHaveMask && maskProvider is IExportFrameMaskReadView exportMaskView)
         {
@@ -142,13 +143,16 @@ internal static unsafe class VideoFrameProcessingPolicy
             }
             else if (exportMaskView.TryGetFaceMaskData(decodedFrameOrdinal, out var faces))
             {
+                if (faces.Size != decodedSize)
+                    throw new VideoExportIntegrityException(
+                        $"프레임 {decodedFrameOrdinal}의 얼굴 마스크 크기가 디코딩 영상과 다릅니다.");
                 faceRects = faces.Faces;
             }
         }
         else if (mightHaveMask && maskProvider is FrameMaskProvider provider)
         {
             provider.ResolveExportFrameMask(decodedFrameOrdinal,
-                out mask, out bool ownsMask, out faceRects);
+                out mask, out bool ownsMask, out faceRects, decodedSize);
             if (ownsMask)
                 ownedMask = mask;
         }
@@ -159,6 +163,10 @@ internal static unsafe class VideoFrameProcessingPolicy
         }
 
         using var ownedMaskScope = ownedMask;
+        if (mask != null && mask.PixelSize != decodedSize)
+            throw new VideoExportIntegrityException(
+                $"프레임 {decodedFrameOrdinal}의 비트맵 마스크 크기가 디코딩 영상과 다릅니다.");
+
         bool nativeYuvApplied = false;
         AVFrame* nativeYuvFrame = null;
         if (mask != null || (faceRects != null && faceRects.Count > 0))
