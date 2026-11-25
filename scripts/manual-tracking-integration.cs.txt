@@ -224,7 +224,7 @@ using (var provider = new FrameMaskProvider())
         "Untracked preview incorrectly inherited a stationary source mask");
 
     object lease = timeline.GetMethod("CreateExportMaskLease", internalStatic)!
-        .Invoke(null, new object?[] { provider })!;
+        .Invoke(null, new object?[] { provider, CancellationToken.None })!;
     using ((IDisposable)lease)
     {
         object exportProvider = lease.GetType()

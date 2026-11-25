@@ -78,7 +78,7 @@ object?[] previewArgs = { provider, sourceFrame + 1, null, CancellationToken.Non
 Check((bool)preview.Invoke(null, previewArgs)!, "Initial inherited preview missing");
 using (var bitmap = (WriteableBitmap)previewArgs[2]!) AssertBoth(bitmap);
 
-using (var lease = (IDisposable)export.Invoke(null, new object[] { provider })!)
+using (var lease = (IDisposable)export.Invoke(null, new object[] { provider, CancellationToken.None })!)
 {
     object view = lease.GetType().GetProperty("Provider", BindingFlags.NonPublic | BindingFlags.Instance)!
         .GetValue(lease)!;
@@ -135,7 +135,7 @@ try
     object?[] nextArgs = { provider, sourceFrame + 2, null, CancellationToken.None };
     Check((bool)preview.Invoke(null, nextArgs)!, "Continued preview missing");
     using (var bitmap = (WriteableBitmap)nextArgs[2]!) AssertBoth(bitmap);
-    using var lease = (IDisposable)export.Invoke(null, new object[] { provider })!;
+    using var lease = (IDisposable)export.Invoke(null, new object[] { provider, CancellationToken.None })!;
     object view = lease.GetType().GetProperty("Provider", BindingFlags.NonPublic | BindingFlags.Instance)!
         .GetValue(lease)!;
     using var exported = (WriteableBitmap?)view.GetType().GetMethod("GetFinalMask")!

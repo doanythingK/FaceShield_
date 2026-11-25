@@ -390,7 +390,35 @@ try
         Assert(recovered.TryGetFaceMaskData(diskFrame, out var recoveredAuto)
             && recoveredAuto.Faces.Count == 1, "Backup recovery lost Auto coverage");
     }
+    // Unreadable whole-state files must never be treated as a fresh install.
+    foreach (string invalidState in new[] { "{", "null", "{}", "{\"Recents\":null,\"Workspaces\":[]}" })
+    {
+        File.WriteAllText(metadata, invalidState);
+        File.WriteAllText(backup, "invalid backup");
+        bool startupRejected = false;
+        try { _ = new WorkspaceStateStore(Path.Combine(stateRoot, "state")); }
+        catch (InvalidDataException) { startupRejected = true; }
+        Assert(startupRejected, "Corrupt whole-state metadata was treated as a new workspace");
+        bool writeRejected = false;
+        try { reopenedStore.SaveWorkspace(diskSnapshot, original); }
+        catch (InvalidDataException) { writeRejected = true; }
+        Assert(writeRejected && File.ReadAllText(metadata) == invalidState &&
+            File.ReadAllText(backup) == "invalid backup" && File.Exists(png),
+            "Failed save overwrote corrupt state or deleted existing payload");
+    }
+
+    // Valid backup recovers the damaged primary and remains valid on the
+    // next save. Missing both files with existing payload is also unsafe.
+    File.WriteAllText(backup, before);
+    File.WriteAllText(metadata, "{");
+    var backupStore = new WorkspaceStateStore(Path.Combine(stateRoot, "state"));
+    Assert(File.ReadAllText(metadata) == before, "Valid state backup was not restored");
+    File.Delete(metadata);
     File.Delete(backup);
+    bool orphanRejected = false;
+    try { _ = new WorkspaceStateStore(Path.Combine(stateRoot, "state")); }
+    catch (InvalidDataException) { orphanRejected = true; }
+    Assert(orphanRejected && File.Exists(png), "Missing state with orphan payload was treated as fresh");
     File.WriteAllText(metadata, before);
     File.Delete(png);
     foreach (bool corrupt in new[] { false, true })

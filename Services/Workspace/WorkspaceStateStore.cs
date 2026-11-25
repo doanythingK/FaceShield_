@@ -39,6 +39,7 @@ namespace FaceShield.Services.Workspace
         private readonly string _stateFile;
         private readonly string _stateBackupFile;
         private AppState _state;
+        private bool _hasPersistedState;
 
         public WorkspaceStateStore()
             : this(Path.Combine(
@@ -54,7 +55,7 @@ namespace FaceShield.Services.Workspace
             _stateFile = Path.Combine(_rootDir, "state.json");
             _stateBackupFile = Path.Combine(_rootDir, "state.json.bak");
             lock (GlobalStateGate)
-                _state = LoadState();
+                _state = LoadState(checkOrphanPayloads: true);
         }
 
         public IReadOnlyList<RecentItem> GetRecents()
@@ -1045,20 +1046,49 @@ namespace FaceShield.Services.Workspace
             _state = LoadState();
         }
 
-        private AppState LoadState()
+        private AppState LoadState(bool checkOrphanPayloads = false)
         {
             var primary = TryLoadStateFile(_stateFile);
             if (primary != null)
+            {
+                _hasPersistedState = true;
                 return primary;
+            }
 
             var backup = TryLoadStateFile(_stateBackupFile);
             if (backup != null)
             {
-                TryRestoreStateBackup();
+                // Never continue with an in-memory backup while a damaged
+                // primary could be copied over that only good backup on save.
+                RestoreStateBackup();
+                _hasPersistedState = true;
                 return backup;
             }
 
+            string payloadRoot = Path.Combine(_rootDir, "workspaces");
+            if (_hasPersistedState || StatePathExists(_stateFile) ||
+                StatePathExists(_stateBackupFile) ||
+                (checkOrphanPayloads && Directory.Exists(payloadRoot) &&
+                    Directory.EnumerateFileSystemEntries(payloadRoot).Any()))
+            {
+                throw new InvalidDataException(
+                    $"작업 메타데이터를 복구할 수 없습니다. 기존 마스크 보호를 위해 열기/저장을 중단합니다. " +
+                    $"state.json 및 state.json.bak의 정상 백업을 복원하세요: {_rootDir}");
+            }
+
             return new AppState();
+        }
+
+        private static bool StatePathExists(string path)
+        {
+            try
+            {
+                _ = File.GetAttributes(path);
+                return true;
+            }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            // Permission and other I/O errors are not proof of absence.
         }
 
         private static AppState? TryLoadStateFile(string path)
@@ -1069,7 +1099,26 @@ namespace FaceShield.Services.Workspace
                     return null;
 
                 string json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<AppState>(json);
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty(nameof(AppState.Recents), out var recents) ||
+                    recents.ValueKind != JsonValueKind.Array ||
+                    !document.RootElement.TryGetProperty(nameof(AppState.Workspaces), out var workspaces) ||
+                    workspaces.ValueKind != JsonValueKind.Array)
+                    return null;
+
+                var state = JsonSerializer.Deserialize<AppState>(json);
+                if (state?.Recents == null || state.Workspaces == null ||
+                    state.Recents.Any(r => r == null || string.IsNullOrWhiteSpace(r.Path)) ||
+                    state.Workspaces.Any(w => w == null ||
+                        string.IsNullOrWhiteSpace(w.VideoPath) ||
+                        !Enum.TryParse<WorkspaceMode>(w.Mode, ignoreCase: true, out var mode) ||
+                        !Enum.IsDefined(mode)))
+                    return null;
+
+                // Individual mask generations retain their existing separate
+                // validation and backup-eligibility rules.
+                return state;
             }
             catch
             {
@@ -1077,11 +1126,8 @@ namespace FaceShield.Services.Workspace
             }
         }
 
-        private void TryRestoreStateBackup()
+        private void RestoreStateBackup()
         {
-            if (!File.Exists(_stateBackupFile))
-                return;
-
             string tempPath = CreateUniqueTempPath(_stateFile, "restore");
             try
             {
@@ -1089,9 +1135,10 @@ namespace FaceShield.Services.Workspace
                 File.Copy(_stateBackupFile, tempPath, overwrite: true);
                 File.Move(tempPath, _stateFile, overwrite: true);
             }
-            catch
+            catch (Exception ex)
             {
-                // The in-memory backup state is still usable for this process.
+                throw new IOException(
+                    $"정상 작업 백업을 복원하지 못했습니다. 기존 백업을 보존합니다: {_stateBackupFile}", ex);
             }
             finally
             {
@@ -1132,10 +1179,16 @@ namespace FaceShield.Services.Workspace
                     stream.Flush(flushToDisk: true);
                 }
 
-                if (File.Exists(_stateFile))
-                    File.Copy(_stateFile, _stateBackupFile, overwrite: true);
+                if (StatePathExists(_stateFile))
+                {
+                    if (TryLoadStateFile(_stateFile) == null || !TrySyncBackupToCurrentState())
+                        throw new IOException("정상 작업 메타데이터 백업을 생성하지 못해 저장을 중단합니다.");
+                }
+                else if (_hasPersistedState || StatePathExists(_stateBackupFile))
+                    throw new IOException("저장 중 기존 작업 메타데이터가 사라져 저장을 중단합니다.");
 
                 File.Move(tempPath, _stateFile, overwrite: true);
+                _hasPersistedState = true;
             }
             finally
             {
