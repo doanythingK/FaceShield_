@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 
 namespace FaceShield.Services.Video;
 
@@ -24,8 +25,10 @@ internal static class VideoExportStagingPolicy
     internal static VideoExportOutputCommitResult CommitStagedOutput(
         string stagedOutputPath,
         string finalOutputPath,
-        bool allowOverwrite)
+        bool allowOverwrite,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!File.Exists(stagedOutputPath))
         {
             throw new InvalidOperationException(
@@ -38,6 +41,7 @@ internal static class VideoExportStagingPolicy
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 File.Move(stagedOutputPath, finalOutputPath, overwrite: false);
                 mode = "move-no-overwrite";
             }
@@ -50,6 +54,7 @@ internal static class VideoExportStagingPolicy
         }
         else if (File.Exists(finalOutputPath))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             File.Replace(
                 stagedOutputPath,
                 finalOutputPath,
@@ -59,6 +64,7 @@ internal static class VideoExportStagingPolicy
         }
         else
         {
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(stagedOutputPath, finalOutputPath);
             mode = "move";
         }

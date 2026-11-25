@@ -140,6 +140,10 @@ Assert-Match "workspace carries explicit overwrite policy" $exportCoordinator 'a
 Assert-Match "save-as unique path never falls back to original" $workspace 'Guid\.NewGuid\(\)[\s\S]*고유한 내보내기 파일명'
 Assert-Match "export non-overwrite commit uses atomic move" $exportStaging 'if\s*\(!allowOverwrite\)[\s\S]{0,500}File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)'
 
+Assert-Match "export forwards cancellation to final output commit" $exportService 'CommitStagedOutput\(\s*stagedOutputPath,\s*finalOutputPath,\s*allowOutputOverwrite,\s*cancellationToken\)'
+Assert-Match "final output commit checks cancellation before file replacement" $exportStaging 'cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Replace\('
+Assert-Match "final output commit checks cancellation before atomic moves" $exportStaging 'cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Move\(stagedOutputPath,\s*finalOutputPath,\s*overwrite:\s*false\)[\s\S]*cancellationToken\.ThrowIfCancellationRequested\(\);\s*File\.Move\(stagedOutputPath,\s*finalOutputPath\)'
+
 # Manual player lifetime, session ownership, cancellation, and UI editability.
 Assert-Match "manual player blocks new operations while closing" $manualPlayer 'EnterOperation\(\)[\s\S]{0,500}_closing\s*\|\|[\s\S]{0,180}ObjectDisposedException'
 Assert-Match "manual player counts operations before decode gate wait" $manualPlayer 'using\s+OperationLease\s+operation\s*=\s*EnterOperation\(\);[\s\S]{0,180}_decodeGate\.Wait\(cancellationToken\)'

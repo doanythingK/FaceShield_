@@ -37,6 +37,8 @@ public unsafe sealed class VideoExportService
         bool allowOutputOverwrite = true,
         VideoExportQualityPreset qualityPreset = VideoExportQualityPreset.SizePriority)
     {
+        LastExportSummary = null;
+        cancellationToken.ThrowIfCancellationRequested();
         var endToEndTimer = Stopwatch.StartNew();
         int attemptCount = 0;
         string finalOutputPath = Path.GetFullPath(outputPath);
@@ -80,7 +82,8 @@ public unsafe sealed class VideoExportService
                 VideoExportStagingPolicy.CommitStagedOutput(
                     stagedOutputPath,
                     finalOutputPath,
-                    allowOutputOverwrite);
+                    allowOutputOverwrite,
+                    cancellationToken);
 
             endToEndTimer.Stop();
             LastExportSummary = LastExportSummary with

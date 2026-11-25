@@ -135,6 +135,59 @@ ManualTrackingCancellationGate.Finish(
 Console.WriteLine("PASS: manual tracking token-before-lifetime admission, concurrent shutdown cancel, denied and failed admission");
 Console.WriteLine("PASS: retryable SaveNow/QueueSave, failed capture, closing drain, idle-only eviction");
 
+// Final output publication is the cancellation commit point. Use real
+// temporary files to verify both overwrite modes without FFmpeg or GUI.
+string outputDir = Path.Combine(Path.GetTempPath(), "faceshield-export-commit-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(outputDir);
+try
+{
+    string output = Path.Combine(outputDir, "output.mp4");
+    string staged = VideoExportStagingPolicy.BuildStagedOutputPath(output);
+    using var canceled = new CancellationTokenSource();
+    canceled.Cancel();
+
+    foreach (bool overwrite in new[] { false, true })
+    {
+        File.WriteAllText(staged, "new");
+        Expect<OperationCanceledException>(() =>
+            VideoExportStagingPolicy.CommitStagedOutput(staged, output, overwrite, canceled.Token),
+            "Canceled export published a new output");
+        Check(!File.Exists(output) && File.ReadAllText(staged) == "new",
+            "Canceled export changed absent destination or staged output");
+
+        File.WriteAllText(output, "original");
+        Expect<OperationCanceledException>(() =>
+            VideoExportStagingPolicy.CommitStagedOutput(staged, output, overwrite, canceled.Token),
+            "Canceled export reached an existing destination");
+        Check(File.ReadAllText(output) == "original" && File.ReadAllText(staged) == "new",
+            "Canceled export modified an existing destination or staged output");
+        File.Delete(output);
+    }
+
+    VideoExportStagingPolicy.TryDeleteStagedOutput(staged);
+    Check(!File.Exists(staged), "Canceled staging cleanup left a file");
+
+    File.WriteAllText(staged, "new");
+    VideoExportStagingPolicy.CommitStagedOutput(staged, output, false);
+    Check(File.ReadAllText(output) == "new" && !File.Exists(staged),
+        "Uncanceled no-overwrite publication failed");
+
+    File.WriteAllText(staged, "replacement");
+    Expect<IOException>(() =>
+        VideoExportStagingPolicy.CommitStagedOutput(staged, output, false),
+        "No-overwrite publication replaced an existing file");
+    Check(File.ReadAllText(output) == "new" && File.ReadAllText(staged) == "replacement",
+        "No-overwrite conflict altered output or staging");
+    VideoExportStagingPolicy.CommitStagedOutput(staged, output, true);
+    Check(File.ReadAllText(output) == "replacement" && !File.Exists(staged),
+        "Uncanceled overwrite publication failed");
+}
+finally
+{
+    Directory.Delete(outputDir, recursive: true);
+}
+Console.WriteLine("PASS: export commit cancellation, destination preservation, staging cleanup and normal publication");
+
 static void Check(bool value, string message)
 {
     if (!value) throw new InvalidOperationException(message);
