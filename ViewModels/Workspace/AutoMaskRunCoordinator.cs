@@ -39,7 +39,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
     private readonly Action _endLifetimeOperation;
     private readonly Action<bool> _persistWorkspaceState;
 
-    private CancellationTokenSource? _autoCts;
+    private readonly WorkspaceCancellationSlot _autoCancellation = new();
     private long _autoRunGeneration;
     private long _lastPreviewTick;
     private bool _previewNeedsExactRefresh;
@@ -174,7 +174,8 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         IProgress<ExportProgress>? exportProgress = null)
     {
         ThrowIfDisposed();
-        if (IsRunning || !_tryBeginLifetimeOperation())
+        if (IsRunning || !_autoCancellation.TryBegin(
+                _tryBeginLifetimeOperation, cancellationToken, out var registration))
             return Task.FromResult(false);
 
         long runGeneration = 0;
@@ -185,10 +186,6 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             ExecutionProviderError = null;
             IsRunning = true;
             runGeneration = Interlocked.Increment(ref _autoRunGeneration);
-            _autoCts = cancellationToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : new CancellationTokenSource();
-
             _toolPanel.IsAutoRunning = true;
             if (!exportAfter)
                 _toolPanel.AutoProgress = 0;
@@ -197,16 +194,22 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 exportAfter,
                 progress,
                 exportProgress,
-                runGeneration);
+                runGeneration,
+                registration);
         }
         catch
         {
-            InvalidateAutoRunGeneration(runGeneration);
-            _autoCts?.Dispose();
-            _autoCts = null;
-            IsRunning = false;
-            _toolPanel.IsAutoRunning = false;
-            _endLifetimeOperation();
+            try
+            {
+                InvalidateAutoRunGeneration(runGeneration);
+                IsRunning = false;
+                _toolPanel.IsAutoRunning = false;
+            }
+            finally
+            {
+                _autoCancellation.Finish(registration);
+                _endLifetimeOperation();
+            }
             throw;
         }
     }
@@ -215,7 +218,8 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         bool exportAfter,
         IProgress<int>? progress,
         IProgress<ExportProgress>? exportProgress,
-        long runGeneration)
+        long runGeneration,
+        WorkspaceCancellationSlot.Registration registration)
     {
         try
         {
@@ -223,7 +227,8 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 exportAfter,
                 progress,
                 exportProgress,
-                runGeneration);
+                runGeneration,
+                registration.Token);
         }
         catch (OperationCanceledException ex)
         {
@@ -231,6 +236,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         }
         finally
         {
+            _autoCancellation.Finish(registration);
             _endLifetimeOperation();
         }
     }
@@ -239,7 +245,8 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         bool exportAfter,
         IProgress<int>? progress,
         IProgress<ExportProgress>? exportProgress,
-        long runGeneration)
+        long runGeneration,
+        CancellationToken runToken)
     {
         bool persisted = false;
         bool postProcessCommitted = false;
@@ -248,10 +255,10 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         bool timelineOperationsSuspended = false;
         bool restorePlaybackEnabled = _frameList.IsPlaybackEnabled;
         string runId = $"auto-{Guid.NewGuid():N}";
-        _frameList.SetPlaybackEnabled(false);
-
         try
         {
+            runToken.ThrowIfCancellationRequested();
+            _frameList.SetPlaybackEnabled(false);
             await _framePreview.StopPlaybackAndWaitAsync();
             await _framePreview.SuspendExactFrameOperationsAndWaitAsync();
             exactFrameOperationsSuspended = true;
@@ -260,6 +267,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
 
             _framePreview.PersistCurrentMask();
             _previewNeedsExactRefresh = false;
+            runToken.ThrowIfCancellationRequested();
 
             FaceOnnxDetectorOptions detectorOptions = _getDetectorOptions();
             AutoMaskOptions effectiveAutoOptions = _getAutoOptions().ResolveProcessingMode();
@@ -277,7 +285,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             if (configuredFactoryOptions.Backend == FaceDetectorBackend.FaceOnnx &&
                 detectorOptions.AllowAutoTune != false)
             {
-                CancellationToken tuneToken = _autoCts?.Token ?? CancellationToken.None;
+                CancellationToken tuneToken = runToken;
                 var tuneResult = await Task.Run(() =>
                 {
                     bool tuned = DetectorAutoTuner.TryTune(
@@ -343,6 +351,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 _maskProvider,
                 runOptions,
                 detectorFactory);
+            runToken.ThrowIfCancellationRequested();
             ResetStaleResumeIfRunChanged(runSignature, executionSignature);
             RunSignature = runSignature;
             ExecutionSignature = executionSignature;
@@ -362,7 +371,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 WorkspaceExportGatePolicy.Begin(WorkspaceExportCoordinator.HybridCopyDisabledReason));
             ResetAutoFaceMasksForRun(lastProcessed);
 
-            CancellationToken token = _autoCts?.Token ?? CancellationToken.None;
+            CancellationToken token = runToken;
             var effectiveProgress = new Progress<int>(p =>
             {
                 if (!CanApplyAutoProgress(runGeneration, token))
@@ -445,7 +454,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                     _frameList.VideoPath,
                     _toolPanel.BlurRadius,
                     exportProgress,
-                    _autoCts?.Token ?? CancellationToken.None,
+                    runToken,
                     updateToolPanel: false,
                     runId: runId,
                     autoRunSummary: generator.LastRunSummary,
@@ -463,7 +472,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             persisted = true;
             return true;
         }
-        catch (OperationCanceledException) when (_autoCts?.IsCancellationRequested == true)
+        catch (OperationCanceledException) when (runToken.IsCancellationRequested)
         {
             Completed = autoAnalysisCompleted;
             if (postProcessCommitted)
@@ -475,8 +484,6 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         finally
         {
             InvalidateAutoRunGeneration(runGeneration);
-            _autoCts?.Dispose();
-            _autoCts = null;
             IsRunning = false;
             _toolPanel.IsAutoRunning = false;
             if (timelineOperationsSuspended)
@@ -510,16 +517,18 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
     {
         ThrowIfDisposed();
         int frameIndex = _frameList.SelectedFrameIndex;
-        if (frameIndex < 0 || !_tryBeginLifetimeOperation())
+        if (frameIndex < 0 || IsRunning || !_autoCancellation.TryBegin(
+                _tryBeginLifetimeOperation, CancellationToken.None, out var registration))
             return Task.FromResult(false);
-        return RunTrackedSingleFrameAsync(frameIndex);
+        return RunTrackedSingleFrameAsync(frameIndex, registration);
     }
 
-    private async Task<bool> RunTrackedSingleFrameAsync(int frameIndex)
+    private async Task<bool> RunTrackedSingleFrameAsync(int frameIndex,
+        WorkspaceCancellationSlot.Registration registration)
     {
         try
         {
-            return await RunSingleFrameCoreAsync(frameIndex);
+            return await RunSingleFrameCoreAsync(frameIndex, registration.Token);
         }
         catch (OperationCanceledException ex)
         {
@@ -527,37 +536,36 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         }
         finally
         {
+            _autoCancellation.Finish(registration);
             _endLifetimeOperation();
         }
     }
 
-    private async Task<bool> RunSingleFrameCoreAsync(int frameIndex)
+    private async Task<bool> RunSingleFrameCoreAsync(int frameIndex, CancellationToken runToken)
     {
-        if (IsRunning)
-            return false;
-
-        _framePreview.PersistCurrentMask();
-        ExecutionProviderLabel = null;
-        ExecutionProviderError = null;
-        IsRunning = true;
         long runGeneration = Interlocked.Increment(ref _autoRunGeneration);
-        _autoCts = new CancellationTokenSource();
         bool refreshPreviewAfterAuto = false;
         bool exactFrameOperationsSuspended = false;
         bool timelineOperationsSuspended = false;
         bool restorePlaybackEnabled = _frameList.IsPlaybackEnabled;
 
-        _toolPanel.IsAutoRunning = true;
-        _toolPanel.AutoProgress = 0;
-        _frameList.SetPlaybackEnabled(false);
         try
         {
+            runToken.ThrowIfCancellationRequested();
+            _framePreview.PersistCurrentMask();
+            ExecutionProviderLabel = null;
+            ExecutionProviderError = null;
+            IsRunning = true;
+            _toolPanel.IsAutoRunning = true;
+            _toolPanel.AutoProgress = 0;
+            _frameList.SetPlaybackEnabled(false);
             await _framePreview.StopPlaybackAndWaitAsync();
             await _framePreview.SuspendExactFrameOperationsAndWaitAsync();
             exactFrameOperationsSuspended = true;
             await _frameList.SuspendTimelineOperationsAndWaitAsync();
             timelineOperationsSuspended = true;
 
+            runToken.ThrowIfCancellationRequested();
             var detectorFactory = new FaceDetectorFactory(_getDetectorFactoryOptions());
             using IFaceDetector detector = detectorFactory.CreateDetector();
             var generator = new AutoMaskGenerator(
@@ -565,7 +573,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 _maskProvider,
                 _getAutoOptions(),
                 detectorFactory);
-            CancellationToken token = _autoCts?.Token ?? CancellationToken.None;
+            CancellationToken token = runToken;
             var effectiveProgress = new Progress<int>(p =>
             {
                 if (CanApplyAutoProgress(runGeneration, token))
@@ -588,7 +596,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
             _persistWorkspaceState(true);
             return true;
         }
-        catch (OperationCanceledException) when (_autoCts?.IsCancellationRequested == true)
+        catch (OperationCanceledException) when (runToken.IsCancellationRequested)
         {
             _persistWorkspaceState(true);
             return false;
@@ -596,8 +604,6 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         finally
         {
             InvalidateAutoRunGeneration(runGeneration);
-            _autoCts?.Dispose();
-            _autoCts = null;
             IsRunning = false;
             _toolPanel.IsAutoRunning = false;
             if (timelineOperationsSuspended)
@@ -611,11 +617,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         }
     }
 
-    internal void Cancel()
-    {
-        try { Volatile.Read(ref _autoCts)?.Cancel(); }
-        catch (ObjectDisposedException) { }
-    }
+    internal void Cancel() => _autoCancellation.Cancel();
 
     private bool CanApplyAutoProgress(
         long runGeneration,

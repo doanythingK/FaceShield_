@@ -239,12 +239,14 @@ namespace FaceShield.ViewModels.Pages
 
 
         private async Task<(string? Path, bool AllowOverwrite)> ResolveExportOutputPathAsync(
-            string outputPath)
+            string outputPath, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(outputPath))
                 return (outputPath, false);
 
-            var result = await ShowExportConflictDialogAsync(outputPath);
+            var result = await ShowExportConflictDialogAsync(outputPath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (result == ExportConflictResult.Overwrite)
                 return (outputPath, true);
 
@@ -438,15 +440,24 @@ namespace FaceShield.ViewModels.Pages
             }
         }
 
-        private async Task<ExportConflictResult> ShowExportConflictDialogAsync(string outputPath)
+        private async Task<ExportConflictResult> ShowExportConflictDialogAsync(
+            string outputPath, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var lifetime = Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
             var owner = lifetime?.MainWindow;
             if (owner == null)
                 return ExportConflictResult.Cancel;
 
             var dialog = new ExportConflictDialog(outputPath);
-            return await dialog.ShowDialog<ExportConflictResult>(owner);
+            Task<ExportConflictResult> dialogTask = dialog.ShowDialog<ExportConflictResult>(owner);
+            using var registration = cancellationToken.Register(() =>
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (dialog.IsVisible)
+                        dialog.Close(ExportConflictResult.Cancel);
+                }));
+            return await dialogTask;
         }
 
         private static string BuildAutoErrorMessage(Exception ex)

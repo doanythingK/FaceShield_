@@ -135,6 +135,81 @@ ManualTrackingCancellationGate.Finish(
 Console.WriteLine("PASS: manual tracking token-before-lifetime admission, concurrent shutdown cancel, denied and failed admission");
 Console.WriteLine("PASS: retryable SaveNow/QueueSave, failed capture, closing drain, idle-only eviction");
 
+// The three other production coordinators share this slot. Force admission
+// and shutdown to contend, and verify both admission orders and actual drain.
+var slotLifetime = new WorkspaceOperationLifetime(() => { });
+var slot = new WorkspaceCancellationSlot();
+using var slotEntered = new ManualResetEventSlim(false);
+using var slotRelease = new ManualResetEventSlim(false);
+using var slotClosing = new ManualResetEventSlim(false);
+WorkspaceCancellationSlot.Registration? admittedSlot = null;
+Task<bool> slotStart = Task.Run(() =>
+{
+    bool ok = slot.TryBegin(() =>
+    {
+        bool acquired = slotLifetime.TryBeginExclusiveProcessing();
+        slotEntered.Set();
+        if (!slotRelease.Wait(TimeSpan.FromSeconds(10)))
+            throw new TimeoutException("slot admission stalled");
+        return acquired;
+    }, CancellationToken.None, out var entry);
+    admittedSlot = entry;
+    return ok;
+});
+Check(slotEntered.Wait(TimeSpan.FromSeconds(10)), "Slot admission not reached");
+Task slotClose = Task.Run(() =>
+{
+    slotLifetime.CloseAdmission();
+    slotClosing.Set();
+    slot.Cancel();
+});
+Check(slotClosing.Wait(TimeSpan.FromSeconds(10)), "Close did not win admission boundary");
+slotRelease.Set();
+Check(await slotStart.WaitAsync(TimeSpan.FromSeconds(10)), "Admitted slot failed");
+await slotClose.WaitAsync(TimeSpan.FromSeconds(10));
+Check(admittedSlot!.Token.IsCancellationRequested, "Close missed registered cancellation");
+Task slotIdle = slotLifetime.WaitForIdleAsync();
+Check(!slotIdle.IsCompleted, "Canceled slot released lifetime early");
+slot.Finish(admittedSlot!);
+slotLifetime.EndExclusiveProcessing();
+await slotIdle.WaitAsync(TimeSpan.FromSeconds(10));
+Check(!slot.TryBegin(slotLifetime.TryBeginExclusiveProcessing, CancellationToken.None, out _),
+    "Closed lifetime accepted new slot");
+Check(slot.Current == null, "Denied admission left a slot registered");
+slotLifetime.ReopenAdmission();
+using var externalCancel = new CancellationTokenSource();
+Check(slot.TryBegin(slotLifetime.TryBegin, externalCancel.Token, out var first), "Slot reopen failed");
+Check(!slot.TryBegin(slotLifetime.TryBegin, CancellationToken.None, out _), "Duplicate operation admitted");
+Check(slot.TryBegin(slotLifetime.TryBegin, CancellationToken.None, out var replacement, replaceExisting: true),
+    "Session replacement failed");
+Check(first.Token.IsCancellationRequested, "Superseded session not canceled");
+slot.Finish(first);
+slotLifetime.End();
+Check(ReferenceEquals(slot.Current, replacement), "Old completion cleared replacement");
+slot.Cancel();
+Check(replacement.Token.IsCancellationRequested, "Replacement cancellation missed");
+slot.Finish(replacement);
+slotLifetime.End();
+Check(slotLifetime.WaitForIdleAsync().IsCompleted, "Session replacement leaked lifetime");
+Check(slot.TryBegin(slotLifetime.TryBegin, externalCancel.Token, out var linked), "Linked admission failed");
+externalCancel.Cancel();
+Check(linked.Token.IsCancellationRequested, "Caller token not forwarded");
+slot.Finish(linked);
+slotLifetime.End();
+
+// Cancellation callbacks may synchronously finish their own registration;
+// disposal must wait until Cancel returns rather than race the CTS.
+Check(slot.TryBegin(slotLifetime.TryBegin, CancellationToken.None, out var reentrant), "Reentrant slot failed");
+using (reentrant.Token.Register(() => { slot.Finish(reentrant); slotLifetime.End(); }))
+    slot.Cancel();
+Check(slot.Current == null && slotLifetime.WaitForIdleAsync().IsCompleted,
+    "Reentrant cancellation leaked operation");
+Expect<InvalidOperationException>(() => slot.TryBegin(
+    () => throw new InvalidOperationException("admission failed"), CancellationToken.None, out _),
+    "Slot admission exception suppressed");
+Check(slot.Current == null, "Failed admission leaked slot");
+Console.WriteLine("PASS: Auto/export/session cancellation admission, replacement, reentrant drain and caller token");
+
 // Final output publication is the cancellation commit point. Use real
 // temporary files to verify both overwrite modes without FFmpeg or GUI.
 string outputDir = Path.Combine(Path.GetTempPath(), "faceshield-export-commit-" + Guid.NewGuid().ToString("N"));

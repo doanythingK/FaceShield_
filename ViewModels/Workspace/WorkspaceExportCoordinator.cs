@@ -21,11 +21,10 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     private readonly Func<bool> _tryBeginLifetimeOperation;
     private readonly Action _endLifetimeOperation;
     private readonly WorkspaceOperationLifetime? _workspaceLifetime;
-    private readonly Func<string, Task<(string? Path, bool AllowOverwrite)>> _resolveOutputPathAsync;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly Func<string, CancellationToken, Task<(string? Path, bool AllowOverwrite)>> _resolveOutputPathAsync;
+    private readonly WorkspaceCancellationSlot _exportCancellation = new();
     private readonly Queue<(DateTime Timestamp, int FrameIndex)> _etaSamples = new();
     private (DateTime Timestamp, int FrameIndex) _lastEtaSample;
-    private CancellationTokenSource? _exportCts;
     private long _exportRunGeneration;
     private WorkspaceAutoExportGateState _gateState = new(
         Required: false, Passed: false, Failure: null, CompletedRunSummary: null,
@@ -36,7 +35,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     internal WorkspaceExportCoordinator(FrameMaskProvider maskProvider,
         ToolPanelViewModel toolPanel, Func<bool> isAutoRunning,
         Func<bool> tryBeginLifetimeOperation, Action endLifetimeOperation,
-        Func<string, Task<(string? Path, bool AllowOverwrite)>> resolveOutputPathAsync)
+        Func<string, CancellationToken, Task<(string? Path, bool AllowOverwrite)>> resolveOutputPathAsync)
     {
         _maskProvider = maskProvider ?? throw new ArgumentNullException(nameof(maskProvider));
         _toolPanel = toolPanel ?? throw new ArgumentNullException(nameof(toolPanel));
@@ -70,15 +69,15 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         // export instead owns it exclusively until the entire export drains.
         bool autoOwnedExport = autoRunOptions != null && _isAutoRunning();
         bool exclusive = !autoOwnedExport && _workspaceLifetime != null;
-        bool admitted = exclusive
-            ? _workspaceLifetime!.TryBeginExclusiveProcessing()
-            : _tryBeginLifetimeOperation();
-        if (!admitted) return false;
-        bool entered = false;
+        Func<bool> admit = exclusive
+            ? _workspaceLifetime!.TryBeginExclusiveProcessing
+            : _tryBeginLifetimeOperation;
+        if (!_exportCancellation.TryBegin(admit, cancellationToken, out var registration))
+            return false;
+        CancellationToken exportToken = registration.Token;
         try
         {
-            entered = await _gate.WaitAsync(0);
-            if (!entered) return false;
+            exportToken.ThrowIfCancellationRequested();
 
             // ExportAsync is also called without ToolPanel.Save (including the
             // Auto/export pipeline). Commit face-owned edits at the actual
@@ -94,12 +93,17 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                         "수동 얼굴 마스크를 저장하지 못해 내보내기를 중단했습니다. 편집 내용을 보존한 상태에서 저장 오류를 확인하세요.");
             }
 
-            return await ExportCoreAsync(input, blurRadius, exportProgress, cancellationToken,
+            exportToken.ThrowIfCancellationRequested();
+            return await ExportCoreAsync(input, blurRadius, exportProgress, exportToken,
                 updateToolPanel, runId, autoRunSummary, autoRunOptions, qualityPreset);
+        }
+        catch (OperationCanceledException) when (exportToken.IsCancellationRequested)
+        {
+            return false;
         }
         finally
         {
-            if (entered) _gate.Release();
+            _exportCancellation.Finish(registration);
             if (exclusive)
                 _workspaceLifetime!.EndExclusiveProcessing();
             else
@@ -108,7 +112,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
     }
 
     private async Task<bool> ExportCoreAsync(string input, int blurRadius,
-        IProgress<ExportProgress>? exportProgress, CancellationToken cancellationToken,
+        IProgress<ExportProgress>? exportProgress, CancellationToken exportToken,
         bool updateToolPanel, string? runId, AutoMaskRunSummary? autoRunSummary,
         AutoMaskOptions? autoRunOptions, VideoExportQualityPreset qualityPreset)
     {
@@ -149,39 +153,35 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 $"자동 분석 품질 검증이 완료되지 않아 내보내기를 중단했습니다. reason={cascadeFailure}");
         }
 
-        var exportCts = cancellationToken.CanBeCanceled
-            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-            : new CancellationTokenSource();
-        Interlocked.Exchange(ref _exportCts, exportCts);
-        CancellationToken exportToken = exportCts.Token;
         long runGeneration = Interlocked.Increment(ref _exportRunGeneration);
-        if (updateToolPanel)
-        {
-            _toolPanel.IsExportRunning = true;
-            _toolPanel.ExportProgress = 0;
-            _toolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
-            _toolPanel.ExportStatusText = "수동 추적 상태를 확인하는 중...";
-        }
-        _etaSamples.Clear();
-        var progress = new Progress<ExportProgress>(p =>
-        {
-            if (!IsCurrentExportRun(runGeneration, exportToken)) return;
-            exportProgress?.Report(p);
-            if (!updateToolPanel || !_toolPanel.IsExportRunning) return;
-            _toolPanel.ExportProgress = Math.Clamp(p.Percent, 0, 100);
-            UpdateEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
-            if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                _toolPanel.ExportStatusText = p.StatusMessage;
-        });
-
         try
         {
+            exportToken.ThrowIfCancellationRequested();
+            if (updateToolPanel)
+            {
+                _toolPanel.IsExportRunning = true;
+                _toolPanel.ExportProgress = 0;
+                _toolPanel.ExportEtaText = "예상 남은 시간 계산 중...";
+                _toolPanel.ExportStatusText = "수동 추적 상태를 확인하는 중...";
+            }
+            _etaSamples.Clear();
+            var progress = new Progress<ExportProgress>(p =>
+            {
+                if (!IsCurrentExportRun(runGeneration, exportToken)) return;
+                exportProgress?.Report(p);
+                if (!updateToolPanel || !_toolPanel.IsExportRunning) return;
+                _toolPanel.ExportProgress = Math.Clamp(p.Percent, 0, 100);
+                UpdateEta(DateTime.UtcNow, p.FrameIndex, p.TotalFrames);
+                if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    _toolPanel.ExportStatusText = p.StatusMessage;
+            });
+
             await Task.Run(() => ThrowIfUnresolvedManualTrackingFailure(
                 input, exportRunId, exportToken), exportToken);
             exportToken.ThrowIfCancellationRequested();
             string output = BuildDefaultExportPath(input);
             (string? resolvedOutput, bool allowOutputOverwrite) =
-                await _resolveOutputPathAsync(output);
+                await _resolveOutputPathAsync(output, exportToken);
             exportToken.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(resolvedOutput)) return false;
             output = resolvedOutput;
@@ -236,8 +236,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 _toolPanel.ExportEtaText = null;
                 _toolPanel.ExportStatusText = null;
             }
-            Interlocked.CompareExchange(ref _exportCts, null, exportCts);
-            exportCts.Dispose();
         }
     }
 
@@ -301,11 +299,7 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
                 unchecked(generation + 1), generation);
     }
 
-    internal void Cancel()
-    {
-        try { Volatile.Read(ref _exportCts)?.Cancel(); }
-        catch (ObjectDisposedException) { }
-    }
+    internal void Cancel() => _exportCancellation.Cancel();
 
     private void UpdateEta(DateTime timestamp, int frameIndex, int totalFrames)
     {
@@ -374,7 +368,6 @@ internal sealed class WorkspaceExportCoordinator : IDisposable
         if (_disposed) return;
         _disposed = true;
         Cancel();
-        _gate.Dispose();
     }
 
     private void ThrowIfDisposed()

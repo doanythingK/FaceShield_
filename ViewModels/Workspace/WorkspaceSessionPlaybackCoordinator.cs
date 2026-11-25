@@ -20,7 +20,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
     private readonly Func<string, Task> _showPlaybackErrorAsync;
     private readonly object _stateGate = new();
 
-    private CancellationTokenSource? _sessionInitCts;
+    private readonly WorkspaceCancellationSlot _sessionCancellation = new();
     private VideoSession? _adoptedSession;
     private bool _adoptionInProgress;
     private bool _initialized;
@@ -93,16 +93,12 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (IsInitialized || !_tryBeginLifetimeOperation())
+        if (IsInitialized || !_sessionCancellation.TryBegin(
+                _tryBeginLifetimeOperation, cancellationToken, out var registration,
+                replaceExisting: true))
             return;
 
-        var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        CancellationTokenSource? previous = Interlocked.Exchange(ref _sessionInitCts, sessionCts);
-        if (previous != null)
-        {
-            try { previous.Cancel(); }
-            catch (ObjectDisposedException) { }
-        }
+        CancellationToken sessionToken = registration.Token;
 
         var startupClock = Stopwatch.StartNew();
         try
@@ -114,13 +110,13 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 () => new VideoSession(
                     _frameList.VideoPath,
                     progress: loadProgress,
-                    cancellationToken: sessionCts.Token,
+                    cancellationToken: sessionToken,
                     enableManualPlayer: _mode == WorkspaceMode.Manual),
-                sessionCts.Token);
+                sessionToken);
 
             Debug.WriteLine($"[WorkspaceStartup] session opened in {startupClock.ElapsedMilliseconds} ms (mode={_mode}).");
-            if (sessionCts.IsCancellationRequested ||
-                !ReferenceEquals(Volatile.Read(ref _sessionInitCts), sessionCts))
+            if (sessionToken.IsCancellationRequested ||
+                !ReferenceEquals(_sessionCancellation.Current, registration))
             {
                 session.Dispose();
                 if (cancellationToken.IsCancellationRequested)
@@ -141,7 +137,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                     {
                         await _framePreview.LoadManualFrameAsync(
                             _frameList.SelectedFrameIndex,
-                            sessionCts.Token);
+                            sessionToken);
                     }
                     else
                     {
@@ -162,15 +158,14 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
                 }
             }
         }
-        catch (OperationCanceledException) when (sessionCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (sessionToken.IsCancellationRequested)
         {
             if (cancellationToken.IsCancellationRequested)
                 throw;
         }
         finally
         {
-            Interlocked.CompareExchange(ref _sessionInitCts, null, sessionCts);
-            sessionCts.Dispose();
+            _sessionCancellation.Finish(registration);
             _endLifetimeOperation();
         }
     }
@@ -188,15 +183,7 @@ internal sealed class WorkspaceSessionPlaybackCoordinator : IDisposable
         });
     }
 
-    internal void CancelInitialization()
-    {
-        CancellationTokenSource? cts = Volatile.Read(ref _sessionInitCts);
-        if (cts == null)
-            return;
-
-        try { cts.Cancel(); }
-        catch (ObjectDisposedException) { }
-    }
+    internal void CancelInitialization() => _sessionCancellation.Cancel();
 
     private void AdoptSession(VideoSession session, bool deferTimeline = false)
     {

@@ -30,6 +30,7 @@ $framePreviewView = Read-RepoFile "Views/Workspace/FramePreviewView.axaml.cs"
 $toolPanelView = Read-RepoFile "Views/Workspace/ToolPanelView.axaml"
 $workspace = Read-RepoFile "ViewModels/Pages/WorkspaceViewModel.cs"
 $workspaceLifetime = Read-RepoFile "ViewModels/Workspace/WorkspaceOperationLifetime.cs"
+$workspaceCancellation = Read-RepoFile "ViewModels/Workspace/WorkspaceCancellationSlot.cs"
 $autoCoordinator = Read-RepoFile "ViewModels/Workspace/AutoMaskRunCoordinator.cs"
 $exportCoordinator = Read-RepoFile "ViewModels/Workspace/WorkspaceExportCoordinator.cs"
 $sessionCoordinator = Read-RepoFile "ViewModels/Workspace/WorkspaceSessionPlaybackCoordinator.cs"
@@ -128,17 +129,20 @@ Assert-Match "mask provider staged commit preserves manual masks" $frameMaskProv
 Assert-Match "bitmap snapshot copy checks cancellation per row" $frameMaskProvider 'CloneBitmap\([\s\S]{0,140}CancellationToken\s+cancellationToken[\s\S]{0,900}for\s*\(int\s+y[\s\S]{0,140}ThrowIfCancellationRequested\(\)'
 Assert-Match "risk cascade separates cancellation from ordinary failure" $yoloRiskCascade 'catch\s*\(OperationCanceledException\)[\s\S]{0,80}throw;[\s\S]{0,120}catch\s*\(Exception\s+ex\)'
 Assert-Match "risk cascade checks cancellation before accepted face commit" $yoloRiskCascade 'if\s*\(acceptedOnFrame\s*<=\s*0\)[\s\S]{0,220}ThrowIfCancellationRequested\(\)[\s\S]{0,280}SetFaceRects\('
-Assert-Match "auto run enters workspace lifetime gate" $autoCoordinator 'RunAsync\([\s\S]{0,500}!_tryBeginLifetimeOperation\(\)'
+Assert-Match "auto run enters workspace lifetime gate" $autoCoordinator 'RunAsync\([\s\S]{0,500}_autoCancellation\.TryBegin\(\s*_tryBeginLifetimeOperation,\s*cancellationToken,\s*out\s+var\s+registration\)'
 Assert-Match "auto cancellation persists state and returns false" $autoCoordinator 'catch\s*\(OperationCanceledException\)[\s\S]{0,180}Completed\s*=\s*autoAnalysisCompleted[\s\S]{0,180}ResumeIndex\s*=\s*0[\s\S]{0,220}_persistWorkspaceState\(!exportAfter\)[\s\S]{0,120}return\s+false'
 Assert-Match "auto completion checks cancellation after anomaly review" $autoCoordinator 'await\s+BuildAnomaliesAsync\(token\);[\s\S]{0,180}token\.ThrowIfCancellationRequested\(\);[\s\S]{0,220}Completed\s*=\s*true[\s\S]{0,100}ResumeIndex\s*=\s*0'
 
 # Workspace operation ownership and export boundaries.
+Assert-Match "registered cancellation precedes admission" $workspaceCancellation '_active\.Add\(candidate\);\s*_current\s*=\s*candidate;\s*admitted\s*=\s*tryBeginLifetime\(\);'
+Assert-Match "single-frame Auto registers cancellation" $autoCoordinator 'RunSingleFrameAsync\([\s\S]{0,500}_autoCancellation\.TryBegin\('
+Assert-Match "output conflict cancellation closes dialog" $workspace 'cancellationToken\.Register\(\(\)\s*=>[\s\S]{0,300}dialog\.Close\(ExportConflictResult\.Cancel\)'
 Assert-Match "native export resolves independent mask layers together" $frameProcessing 'provider\.ResolveExportFrameMask\(decodedFrameOrdinal,[\s\S]{0,180}if\s*\(ownsMask\)\s*ownedMask\s*=\s*mask;'
 Assert-Match "mixed export uses a composed owned mask" $frameMaskProvider 'if\s*\(!hasAuto\s*&&\s*_allowsBorrowedBitmapReads\)[\s\S]{0,220}mask\s*=\s*GetFinalMask\(frameIndex\);\s*ownsMask\s*=\s*mask\s*!=\s*null;'
 Assert-Match "workspace lifetime closes admission before disposal" $workspaceLifetime 'RequestDispose\([\s\S]{0,700}_admissionClosed\s*=\s*true;[\s\S]{0,120}_disposeRequested\s*=\s*true'
 Assert-Match "workspace lifetime waits for active operations to drain" $workspaceLifetime 'End\(\)[\s\S]{0,800}_disposeRequested[\s\S]{0,120}_activeOperations\s*==\s*0[\s\S]{0,400}_onOperationsDrained\(\)'
 Assert-Match "workspace dispose cancels operations before owned resource disposal" $workspace 'RequestDispose\(out\s+bool\s+disposeNow\)[\s\S]{0,220}CancelOwnedOperations\(\)[\s\S]{0,180}ScheduleOwnedResourceDispose\(\)'
-Assert-Match "standalone export acquires exclusive workspace gate" $exportCoordinator 'ExportAsync\([\s\S]{0,1000}bool\s+exclusive\s*=\s*!autoOwnedExport\s*&&\s*_workspaceLifetime\s*!=\s*null;[\s\S]{0,180}TryBeginExclusiveProcessing\(\)[\s\S]{0,100}_tryBeginLifetimeOperation\(\)[\s\S]{0,100}if\s*\(!admitted\)\s*return\s+false'
+Assert-Match "standalone export acquires exclusive workspace gate" $exportCoordinator 'ExportAsync\([\s\S]{0,1000}bool\s+exclusive\s*=\s*!autoOwnedExport\s*&&\s*_workspaceLifetime\s*!=\s*null;[\s\S]{0,180}TryBeginExclusiveProcessing[\s\S]{0,120}_tryBeginLifetimeOperation;[\s\S]{0,160}_exportCancellation\.TryBegin\(admit,\s*cancellationToken,\s*out\s+var\s+registration\)'
 Assert-Match "export cancellation is normal false result" $exportCoordinator 'catch\s*\(OperationCanceledException\)[\s\S]{0,80}return\s+false'
 Assert-Match "workspace carries explicit overwrite policy" $exportCoordinator 'allowOutputOverwrite'
 Assert-Match "save-as unique path never falls back to original" $workspace 'Guid\.NewGuid\(\)[\s\S]*고유한 내보내기 파일명'
@@ -173,7 +177,7 @@ Assert-Match "manual player disposes extractor before decode gate" $manualPlayer
 Assert-Match "manual player can invalidate uncommitted sequential position" $manualPlayer 'InvalidateSequentialPosition\(\)[\s\S]{0,500}_decodeGate\.Wait\(\)[\s\S]{0,350}_hasSequentialPosition\s*=\s*false'
 Assert-Match "async session disposes manual player before shared resources" $videoSession 'public\s+async\s+ValueTask\s+DisposeAsync\(\)[\s\S]{0,1300}await\s+ManualPlayer\.DisposeAsync\(\)\.ConfigureAwait\(false\);[\s\S]{0,180}finally[\s\S]{0,80}DisposeSessionResources\(\)'
 Assert-Match "manual session enables dedicated player" $sessionCoordinator 'enableManualPlayer:\s*_mode\s*==\s*WorkspaceMode\.Manual'
-Assert-Match "async session initialization links caller cancellation" $sessionCoordinator 'EnsureInitializedAsync\([\s\S]{0,800}CreateLinkedTokenSource\(cancellationToken\)[\s\S]{0,1800}sessionCts\.Token'
+Assert-Match "async session initialization links caller cancellation" $sessionCoordinator 'EnsureInitializedAsync\([\s\S]{0,500}_sessionCancellation\.TryBegin\(\s*_tryBeginLifetimeOperation,\s*cancellationToken,\s*out\s+var\s+registration,\s*replaceExisting:\s*true\)[\s\S]{0,1500}sessionToken'
 Assert-Match "workspace attaches session-owned thumbnail provider" $sessionCoordinator '_frameList\.SetThumbnailProvider\(session\.ThumbnailProvider\)'
 Assert-Match "session readiness disables playback before adoption" $sessionCoordinator '_frameList\.SetPlaybackEnabled\(false\)[\s\S]*AdoptSession\('
 Assert-Match "session readiness keeps UI gated when adoption fails" $sessionCoordinator 'AdoptSession\([\s\S]*if\s*\(!adopted\)[\s\S]{0,260}_frameList\.SetPlaybackEnabled\(false\);[\s\S]{0,180}_framePreview\.SetSessionReady\(false\);[\s\S]{0,120}return;'

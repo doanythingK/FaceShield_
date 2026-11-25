@@ -84,6 +84,7 @@ cat > "$persistence_dir/PersistenceRetryRegression.csproj" <<XML
     <Compile Include="$repo_root/Services/Workspace/WorkspacePersistenceCoordinator.cs" Link="WorkspacePersistenceCoordinator.cs" />
     <Compile Include="$repo_root/ViewModels/Workspace/WorkspaceOperationLifetime.cs" Link="WorkspaceOperationLifetime.cs" />
     <Compile Include="$repo_root/ViewModels/Workspace/ManualTrackingCancellationGate.cs" Link="ManualTrackingCancellationGate.cs" />
+    <Compile Include="$repo_root/ViewModels/Workspace/WorkspaceCancellationSlot.cs" Link="WorkspaceCancellationSlot.cs" />
     <Compile Include="$repo_root/Services/Video/VideoExportStagingPolicy.cs" Link="VideoExportStagingPolicy.cs" />
   </ItemGroup>
 </Project>
