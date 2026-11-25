@@ -74,6 +74,7 @@ $faceOnnxDetector = Read-RepoFile "Services/FaceDetection/FaceOnnxDetector.cs"
 $yoloOnnxDetector = Read-RepoFile "Services/FaceDetection/YoloFaceOnnxDetector.cs"
 
 # Native I/O and cancellation boundaries.
+Assert-Match "export validates wrapped providers against decoded EOF" $exportService 'if\s*\(!useHybridCopyWindow\)\s*VideoExportFrameRangePolicy\.ValidateDecodedFrameCount\(_maskProvider,\s*frameIndex\);'
 Assert-Match "unrecoverable workspace state fails closed" $workspaceStore 'if\s*\(_hasPersistedState\s*\|\|\s*StatePathExists\(_stateFile\)[\s\S]{0,700}throw\s+new\s+InvalidDataException'
 Assert-Match "workspace save requires valid atomic backup" $workspaceStore 'TryLoadStateFile\(_stateFile\)\s*==\s*null\s*\|\|\s*!TrySyncBackupToCurrentState\(\)'
 Assert-Match "missing timeline PTS disables exact timestamp seek" $extractor 'else\s*\{\s*// A missing PTS[\s\S]{0,400}timeline\.SupportsExactTimestampSeek\s*=\s*false;'

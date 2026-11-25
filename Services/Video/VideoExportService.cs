@@ -1452,6 +1452,12 @@ public unsafe sealed class VideoExportService
                 emittedEncodedMuxPts,
                 encodedPacketFrameStep);
 
+            // Only full decode provides an authoritative ordinal count.
+            // Wrapped timeline/target providers never use hybrid packet copy.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!useHybridCopyWindow)
+                VideoExportFrameRangePolicy.ValidateDecodedFrameCount(_maskProvider, frameIndex);
+
             int[] missingBlurFrameIndices = VideoExportFrameRangePolicy.GetMissingExpectedFrameIndices(
                 blurFrameSet,
                 appliedBlurFrameIndices);

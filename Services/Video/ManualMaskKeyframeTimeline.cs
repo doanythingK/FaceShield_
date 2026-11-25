@@ -519,7 +519,7 @@ internal static class ManualMaskKeyframeTimeline
     }
 
     private sealed class ManualKeyframeExportMaskProvider :
-        IFrameMaskProvider, IExportFrameMaskReadView, IDisposable
+        IFrameMaskProvider, IExportFrameMaskReadView, IExportDecodedFrameCountValidator, IDisposable
     {
         private readonly FrameMaskProvider _snapshot;
         private readonly int[] _keyframes;
@@ -553,6 +553,13 @@ internal static class ManualMaskKeyframeTimeline
                     ? snapshot.StoredMaskHasCoverage(frameIndex)
                     : snapshot.TryGetFaceMaskData(frameIndex, out var faceData) && faceData.Faces.Count > 0;
             }
+        }
+
+        public void ValidateDecodedFrameCount(int decodedFrameCount)
+        {
+            VideoExportFrameRangePolicy.ValidateDecodedFrameCount(_snapshot, decodedFrameCount);
+            foreach (var segment in _segments)
+                VideoExportFrameRangePolicy.ValidateTrackInterval(segment, decodedFrameCount);
         }
 
         public WriteableBitmap? GetFinalMask(int frameIndex)

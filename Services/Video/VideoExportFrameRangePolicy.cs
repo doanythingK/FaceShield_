@@ -6,6 +6,36 @@ namespace FaceShield.Services.Video;
 
 internal static class VideoExportFrameRangePolicy
 {
+    internal static void ValidateDecodedFrameCount(
+        IFrameMaskProvider provider, int decodedFrameCount)
+    {
+        if (provider is IExportDecodedFrameCountValidator wrapped)
+            wrapped.ValidateDecodedFrameCount(decodedFrameCount);
+        else if (provider is FrameMaskProvider direct)
+        {
+            foreach (int index in direct.GetStoredMaskFrameIndices())
+                ValidateFrameIndex(index, decodedFrameCount);
+            foreach (int index in direct.GetFaceMaskFrameIndices())
+                ValidateFrameIndex(index, decodedFrameCount);
+        }
+    }
+
+    internal static void ValidateFrameIndex(int index, int decodedFrameCount)
+    {
+        if (index < 0 || index >= decodedFrameCount)
+            throw new VideoExportIntegrityException(
+                $"마스크 프레임 {index}가 실제 디코딩 범위(0..{decodedFrameCount - 1})를 벗어났습니다.");
+    }
+
+    internal static void ValidateTrackInterval(ManualMaskTrackSegment segment, int decodedFrameCount)
+    {
+        ValidateFrameIndex(segment.SourceKeyframe, decodedFrameCount);
+        if (segment.EndExclusive <= segment.SourceKeyframe ||
+            segment.EndExclusive > decodedFrameCount)
+            throw new VideoExportIntegrityException(
+                $"추적 구간 {segment.SourceKeyframe}..{segment.EndExclusive}이 실제 영상 범위를 벗어났습니다.");
+    }
+
     internal static HashSet<int> BuildBlurFrameSet(
         FrameMaskProvider provider,
         CancellationToken cancellationToken = default)

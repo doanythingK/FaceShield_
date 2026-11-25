@@ -2,6 +2,13 @@ using Avalonia.Media.Imaging;
 
 namespace FaceShield.Services.Video
 {
+    // Wrapped providers must validate declared keyframes and track intervals
+    // against actual decoded EOF, not estimated metadata frame counts.
+    internal interface IExportDecodedFrameCountValidator
+    {
+        void ValidateDecodedFrameCount(int decodedFrameCount);
+    }
+
     public interface IFrameMaskProvider
     {
         /// <summary>

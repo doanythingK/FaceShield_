@@ -17,22 +17,29 @@ namespace FaceShield.Services.Video;
 /// mask or silently emitted as an unblurred face. Empty explicit keyframes
 /// mean the user has marked that target absent from that frame onward.
 /// </summary>
-internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
+internal sealed class ManualOverlayTargetExportMaskProvider :
+    IFrameMaskProvider, IExportDecodedFrameCountValidator
 {
     private readonly IFrameMaskProvider _legacyAndAuto;
     private readonly ManualOverlayTargetWorkspace _workspace;
     private readonly PixelSize _size;
+    private readonly int _lastDeclaredFrame;
+    private readonly int _maxTrackEndExclusive;
     private readonly CancellationToken _cancellationToken;
 
     private ManualOverlayTargetExportMaskProvider(
         IFrameMaskProvider legacyAndAuto,
         ManualOverlayTargetWorkspace workspace,
         PixelSize size,
+        int lastDeclaredFrame,
+        int maxTrackEndExclusive,
         CancellationToken cancellationToken)
     {
         _legacyAndAuto = legacyAndAuto;
         _workspace = workspace;
         _size = size;
+        _lastDeclaredFrame = lastDeclaredFrame;
+        _maxTrackEndExclusive = maxTrackEndExclusive;
         _cancellationToken = cancellationToken;
     }
 
@@ -47,13 +54,21 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
         if (targets.Count == 0 || targets.All(target => target.Keyframes.Count == 0))
             return legacyAndAuto;
 
+        int lastDeclaredFrame = -1;
+        int maxTrackEndExclusive = 0;
         foreach (ManualOverlayStoredTarget target in targets)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            foreach (var keyframe in target.Keyframes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                lastDeclaredFrame = Math.Max(lastDeclaredFrame, keyframe.FrameIndex);
+            }
             foreach (ManualMaskTrackSegment segment in target.Segments ??
                          Array.Empty<ManualMaskTrackSegment>())
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                maxTrackEndExclusive = Math.Max(maxTrackEndExclusive, segment.EndExclusive);
                 if (!segment.StoppedByFailure) continue;
                 bool correctedAtFailure = segment.StopFrame.HasValue &&
                     target.Keyframes.Any(keyframe =>
@@ -74,7 +89,17 @@ internal sealed class ManualOverlayTargetExportMaskProvider : IFrameMaskProvider
             throw new InvalidDataException("수동 얼굴별 키프레임의 영상 크기가 서로 다릅니다.");
         cancellationToken.ThrowIfCancellationRequested();
         return new ManualOverlayTargetExportMaskProvider(
-            legacyAndAuto, workspace, size, cancellationToken);
+            legacyAndAuto, workspace, size, lastDeclaredFrame, maxTrackEndExclusive, cancellationToken);
+    }
+
+    public void ValidateDecodedFrameCount(int decodedFrameCount)
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+        VideoExportFrameRangePolicy.ValidateDecodedFrameCount(_legacyAndAuto, decodedFrameCount);
+        VideoExportFrameRangePolicy.ValidateFrameIndex(_lastDeclaredFrame, decodedFrameCount);
+        if (_maxTrackEndExclusive > decodedFrameCount)
+            throw new VideoExportIntegrityException(
+                $"얼굴별 추적 구간이 실제 영상 프레임 수 {decodedFrameCount}를 벗어났습니다.");
     }
 
     public WriteableBitmap? GetFinalMask(int frameIndex)

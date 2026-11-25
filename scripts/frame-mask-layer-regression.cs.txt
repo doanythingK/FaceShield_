@@ -274,6 +274,14 @@ try
            ?? throw new InvalidOperationException("Export lost verified tail"))
         Assert(AlphaAt(exported, 64, 34) == 255,
             "Export snapshot lost the previously verified tail");
+    using (var rangeLease = ManualMaskKeyframeTimeline.CreateExportMaskLease(retryProvider))
+    {
+        VideoExportFrameRangePolicy.ValidateDecodedFrameCount(rangeLease.Provider, 46);
+        bool tailRejected = false;
+        try { VideoExportFrameRangePolicy.ValidateDecodedFrameCount(rangeLease.Provider, 45); }
+        catch (InvalidOperationException) { tailRejected = true; }
+        Assert(tailRejected, "Legacy track beyond decoded EOF was accepted");
+    }
     Assert(ManualMaskTrackStore.LoadForExport(retryVideo).Single().EndExclusive == 46,
         "Short retry truncated persisted verified tail");
     Assert(ManualMaskKeyframeTimeline.SetTrackSegment(retryProvider,
@@ -296,6 +304,36 @@ finally
     File.Delete(retryVideo);
 }
 Console.WriteLine("PASS: shorter/failed retracks preserve verified preview/export/disk tail; full retry replaces it");
+
+string targetVideo = Path.GetTempFileName();
+string targetState = ManualOverlayWorkspaceStore.GetPathForVideo(targetVideo);
+try
+{
+    var targets = ManualOverlayTargetWorkspace.Open(targetVideo);
+    Guid id = targets.CreateTarget();
+    var alpha = new byte[width * height];
+    alpha[30 * width + 24] = 255;
+    targets.SetExplicitKeyframe(id, new ManualOverlayStoredKeyframe(5, width, height, alpha));
+    targets.Save();
+    using var direct = new FrameMaskProvider();
+    var wrapped = ManualOverlayTargetExportMaskProvider.WrapIfPresent(targetVideo, direct);
+    VideoExportFrameRangePolicy.ValidateDecodedFrameCount(wrapped, 6);
+    bool targetRejected = false;
+    try { VideoExportFrameRangePolicy.ValidateDecodedFrameCount(wrapped, 5); }
+    catch (InvalidOperationException) { targetRejected = true; }
+    Assert(targetRejected, "Face target keyframe at EOF was silently ignored");
+    direct.SetFaceRects(7, new[] { autoFace }, size);
+    bool nestedRejected = false;
+    try { VideoExportFrameRangePolicy.ValidateDecodedFrameCount(wrapped, 6); }
+    catch (InvalidOperationException) { nestedRejected = true; }
+    Assert(nestedRejected, "Nested Auto keyframe outside EOF was ignored");
+}
+finally
+{
+    File.Delete(targetState);
+    File.Delete(targetVideo);
+}
+Console.WriteLine("PASS: wrapped target/legacy and nested Auto EOF bounds");
 
 Console.WriteLine("PASS: cached preview reuses dirty regions and invalidates on Auto/frame change");
 
