@@ -28,6 +28,35 @@ using (var extractor = new FfFrameExtractor(args[0], enableHardware: false))
 {
     Assert(extractor.FrameSize.Width == width && extractor.FrameSize.Height == height,
         "Unexpected decoded frame dimensions");
+    Assert(extractor.TryResolveFrameTimestampSeconds(10, CancellationToken.None, out double earlyPts),
+        "Could not create initial ordinal PTS prefix");
+    Assert(Math.Abs(earlyPts - 10.0 / 30) < 0.002, "Initial ordinal timestamp mismatch");
+    // Deterministic simulation of the cancellation cleanup path, after a
+    // native decoder has advanced beyond zero. No timing-dependent CancelAfter.
+    MethodInfo resetOrdinal = typeof(FfFrameExtractor).GetMethod("DisposeOrdinalDecoder",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Ordinal cleanup method missing");
+    resetOrdinal.Invoke(extractor, null);
+    Assert(extractor.TryResolveFrameTimestampSeconds(40, CancellationToken.None, out double resumedPts),
+        "Ordinal indexing did not resume after decoder reset");
+    Assert(Math.Abs(resumedPts - 40.0 / 30) < 0.002, "Reopened ordinal decoder shifted frame timestamps");
+
+    extractor.StartSequentialRead(0, CancellationToken.None);
+    Assert(extractor.TryGetNextFrameRaw(CancellationToken.None, false, out _, out int firstOrdinal)
+        && firstOrdinal == 0, "Initial sequential ordinal mismatch");
+    using (var interrupted = new CancellationTokenSource())
+    {
+        interrupted.Cancel();
+        Assert(!extractor.TryGetNextFrameRaw(interrupted.Token, false, out _, out _)
+            && extractor.SequentialReadCancelled && !extractor.SequentialReachedEndOfStream,
+            "Canceled read reported success or EOF");
+    }
+    Assert(!extractor.TryGetNextFrameRaw(CancellationToken.None, false, out _, out _),
+        "Canceled sequential decoder resumed without an explicit restart");
+    extractor.StartSequentialRead(1, CancellationToken.None);
+    Assert(extractor.TryGetNextFrameRaw(CancellationToken.None, false, out _, out int restarted)
+        && restarted == 1, "Explicit restart did not preserve ordinal");
+    Console.WriteLine("PASS: native ordinal decoder reset, sequential cancellation and explicit restart");
     extractor.StartSequentialRead(sceneCutFrame - 1, CancellationToken.None);
     var bgra = new byte[width * height * 4];
     Assert(extractor.TryGetNextFrameRawToBuffer(CancellationToken.None, width, height,

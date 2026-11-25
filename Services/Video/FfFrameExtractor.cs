@@ -1389,6 +1389,13 @@ namespace FaceShield.Services.Video
             out int frameIndex)
         {
             frameIndex = -1;
+            // Cancellation or a failed conversion/read may already have
+            // consumed input. Require an explicit StartSequentialRead before
+            // trying again so a skipped packet cannot shift subsequent masks.
+            if (_sequentialCancelled || _sequentialReachedEndOfStream ||
+                _sequentialDecodeError != null)
+                return false;
+
             int tryAgain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
 
             if (_sequentialOrdinalMode == SequentialOrdinalMode.ResolveIndexedTimestamp &&
@@ -1463,10 +1470,12 @@ namespace FaceShield.Services.Video
                 if (receiveResult == ffmpeg.AVERROR_EOF)
                 {
                     if (_sequentialOrdinalMode == SequentialOrdinalMode.MatchIndexedTimestamp &&
-                        !_sequentialStarted &&
-                        TryRestartSequentialDecodeFromBeginning(packet, ct))
+                        !_sequentialStarted)
                     {
-                        continue;
+                        if (TryRestartSequentialDecodeFromBeginning(packet, ct))
+                            continue;
+                        // A failed/canceled fallback is not a clean decoder EOF.
+                        return false;
                     }
 
                     _sequentialReachedEndOfStream = true;
@@ -1527,10 +1536,12 @@ namespace FaceShield.Services.Video
                     if (drainResult == ffmpeg.AVERROR_EOF)
                     {
                         if (_sequentialOrdinalMode == SequentialOrdinalMode.MatchIndexedTimestamp &&
-                            !_sequentialStarted &&
-                            TryRestartSequentialDecodeFromBeginning(packet, ct))
+                            !_sequentialStarted)
                         {
-                            continue;
+                            if (TryRestartSequentialDecodeFromBeginning(packet, ct))
+                                continue;
+                            // A failed/canceled fallback is not a clean decoder EOF.
+                            return false;
                         }
 
                         _sequentialReachedEndOfStream = true;
@@ -1673,6 +1684,11 @@ namespace FaceShield.Services.Video
             {
                 PrepareSequentialDecodeFromBeginning(cancellationToken);
                 return true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _sequentialCancelled = true;
+                return false;
             }
             catch (Exception ex)
             {
@@ -1938,13 +1954,11 @@ namespace FaceShield.Services.Video
 
             try
             {
-                if (cancellationToken.IsCancellationRequested)
-                    return false;
+                cancellationToken.ThrowIfCancellationRequested();
                 EnsureOrdinalDecoderInitialized(cancellationToken);
                 while (!_ordinalReachedEndOfStream)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        return false;
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     lock (_decodedFrameTimeline.SyncRoot)
                     {
@@ -1991,8 +2005,7 @@ namespace FaceShield.Services.Video
                     _ordinalNextFrameIndex++;
                 }
 
-                if (cancellationToken.IsCancellationRequested)
-                    return false;
+                cancellationToken.ThrowIfCancellationRequested();
 
                 lock (_decodedFrameTimeline.SyncRoot)
                 {
@@ -2081,8 +2094,7 @@ namespace FaceShield.Services.Video
                 EnsureOrdinalDecoderInitialized(cancellationToken);
                 while (!_ordinalReachedEndOfStream)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        return false;
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     lock (_decodedFrameTimeline.SyncRoot)
                     {
@@ -2139,6 +2151,7 @@ namespace FaceShield.Services.Video
                     _ordinalNextFrameIndex++;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 lock (_decodedFrameTimeline.SyncRoot)
                 {
                     if (_ordinalReachedEndOfStream)
@@ -2253,8 +2266,7 @@ namespace FaceShield.Services.Video
 
             while (true)
             {
-                if (cancellationToken.IsCancellationRequested)
-                    return false;
+                cancellationToken.ThrowIfCancellationRequested();
 
                 ffmpeg.av_frame_unref(_ordinalFrame);
                 int receiveResult = ffmpeg.avcodec_receive_frame(_ordinalDecoder, _ordinalFrame);
@@ -2286,8 +2298,7 @@ namespace FaceShield.Services.Video
                 int readResult;
                 do
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        return false;
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     ffmpeg.av_packet_unref(_ordinalPacket);
                     readResult = ReadFrameInterruptibly(
@@ -2301,14 +2312,13 @@ namespace FaceShield.Services.Video
                 if (cancellationToken.IsCancellationRequested)
                 {
                     ffmpeg.av_packet_unref(_ordinalPacket);
-                    return false;
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
 
                 if (readResult == ffmpeg.AVERROR_EOF)
                 {
                     ffmpeg.av_packet_unref(_ordinalPacket);
-                    if (cancellationToken.IsCancellationRequested)
-                        return false;
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     int drainResult = ffmpeg.avcodec_send_packet(_ordinalDecoder, null);
                     _ordinalDrainSent = true;
@@ -2336,7 +2346,7 @@ namespace FaceShield.Services.Video
                 if (cancellationToken.IsCancellationRequested)
                 {
                     ffmpeg.av_packet_unref(_ordinalPacket);
-                    return false;
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
 
                 int sendResult = ffmpeg.avcodec_send_packet(_ordinalDecoder, _ordinalPacket);
@@ -2664,6 +2674,12 @@ namespace FaceShield.Services.Video
             }
 
             _ordinalVideoStreamIndex = -1;
+            // Reopening starts at ordinal zero. Retain the shared validated
+            // prefix, but never label a new decoder's first frame with an old
+            // decoder's cursor or drain/EOF state.
+            _ordinalNextFrameIndex = 0;
+            _ordinalDrainSent = false;
+            _ordinalReachedEndOfStream = false;
         }
 
         private void TryInitializeHardwareDevice()

@@ -120,26 +120,30 @@ internal sealed class WorkspaceCancellationSlot
             }
             finally
             {
+                bool dispose;
                 lock (_gate)
                 {
                     _cancelers--;
-                    if (_finished && _cancelers == 0)
-                        _source.Dispose();
+                    dispose = _finished && _cancelers == 0;
                 }
+                if (dispose)
+                    _source.Dispose();
             }
         }
 
         internal void Finish()
         {
+            bool dispose;
             lock (_gate)
             {
                 if (_finished) return;
                 _finished = true;
                 // Cancel callbacks may synchronously complete an operation.
                 // Defer disposal until those callbacks have returned.
-                if (_cancelers == 0)
-                    _source.Dispose();
+                dispose = _cancelers == 0;
             }
+            if (dispose)
+                _source.Dispose();
         }
     }
 }

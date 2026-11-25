@@ -74,6 +74,9 @@ $faceOnnxDetector = Read-RepoFile "Services/FaceDetection/FaceOnnxDetector.cs"
 $yoloOnnxDetector = Read-RepoFile "Services/FaceDetection/YoloFaceOnnxDetector.cs"
 
 # Native I/O and cancellation boundaries.
+Assert-Match "ordinal decoder cleanup resets cursor and EOF" $extractor 'private\s+void\s+DisposeOrdinalDecoder\(\)[\s\S]{0,1800}_ordinalNextFrameIndex\s*=\s*0;\s*_ordinalDrainSent\s*=\s*false;\s*_ordinalReachedEndOfStream\s*=\s*false;'
+Assert-Match "sequential canceled or failed read requires restart" $extractor 'private\s+bool\s+TryDecodeNextSequentialFrame\([\s\S]{0,850}if\s*\(_sequentialCancelled\s*\|\|\s*_sequentialReachedEndOfStream\s*\|\|\s*_sequentialDecodeError\s*!=\s*null\)\s*return\s+false;'
+Assert-Match "ordinal packet cancellation throws to reset boundary" $extractor 'av_packet_unref\(_ordinalPacket\);\s*cancellationToken\.ThrowIfCancellationRequested\(\);'
 Assert-Match "export input uses cancellable native io guard" ($exportService + $videoIoInterrupt) 'VideoIoInterruptGuard[\s\S]{0,1000}Begin\(cancellationToken\)[\s\S]{0,1800}avformat_open_input[\s\S]{0,1200}avformat_find_stream_info'
 Assert-Match "HDR probe accepts cancellation and uses native io guard" ($hdrProbe + $videoIoInterrupt) 'ProbeVideoHdrMetadata\([\s\S]{0,220}CancellationToken\s+cancellationToken[\s\S]{0,1400}VideoIoInterruptGuard[\s\S]{0,1800}avformat_open_input'
 Assert-Match "extractor wraps shared AVIO interrupt guard" $extractor 'private\s+void\s+ConfigureIoInterrupt\([\s\S]{0,500}ioInterrupt\.Configure\(format\)[\s\S]{0,500}private\s+VideoIoInterruptGuard\.InterruptScope\s+BeginIoInterrupt\([\s\S]{0,500}return\s+ioInterrupt\.Begin\(cancellationToken\)'
@@ -130,7 +133,7 @@ Assert-Match "bitmap snapshot copy checks cancellation per row" $frameMaskProvid
 Assert-Match "risk cascade separates cancellation from ordinary failure" $yoloRiskCascade 'catch\s*\(OperationCanceledException\)[\s\S]{0,80}throw;[\s\S]{0,120}catch\s*\(Exception\s+ex\)'
 Assert-Match "risk cascade checks cancellation before accepted face commit" $yoloRiskCascade 'if\s*\(acceptedOnFrame\s*<=\s*0\)[\s\S]{0,220}ThrowIfCancellationRequested\(\)[\s\S]{0,280}SetFaceRects\('
 Assert-Match "auto run enters workspace lifetime gate" $autoCoordinator 'RunAsync\([\s\S]{0,500}_autoCancellation\.TryBegin\(\s*_tryBeginLifetimeOperation,\s*cancellationToken,\s*out\s+var\s+registration\)'
-Assert-Match "auto cancellation persists state and returns false" $autoCoordinator 'catch\s*\(OperationCanceledException\)[\s\S]{0,180}Completed\s*=\s*autoAnalysisCompleted[\s\S]{0,180}ResumeIndex\s*=\s*0[\s\S]{0,220}_persistWorkspaceState\(!exportAfter\)[\s\S]{0,120}return\s+false'
+Assert-Match "auto cancellation persists state and returns false" $autoCoordinator 'catch\s*\(OperationCanceledException\)[\s\S]{0,180}if\s*\(runStateStarted\)[\s\S]{0,180}Completed\s*=\s*autoAnalysisCompleted[\s\S]{0,180}ResumeIndex\s*=\s*0[\s\S]{0,220}_persistWorkspaceState\(!exportAfter\)[\s\S]{0,120}return\s+false'
 Assert-Match "auto completion checks cancellation after anomaly review" $autoCoordinator 'await\s+BuildAnomaliesAsync\(token\);[\s\S]{0,180}token\.ThrowIfCancellationRequested\(\);[\s\S]{0,220}Completed\s*=\s*true[\s\S]{0,100}ResumeIndex\s*=\s*0'
 
 # Workspace operation ownership and export boundaries.

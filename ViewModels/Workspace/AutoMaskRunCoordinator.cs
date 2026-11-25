@@ -251,6 +251,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         bool persisted = false;
         bool postProcessCommitted = false;
         bool autoAnalysisCompleted = false;
+        bool runStateStarted = false;
         bool exactFrameOperationsSuspended = false;
         bool timelineOperationsSuspended = false;
         bool restorePlaybackEnabled = _frameList.IsPlaybackEnabled;
@@ -352,6 +353,7 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
                 runOptions,
                 detectorFactory);
             runToken.ThrowIfCancellationRequested();
+            runStateStarted = true;
             ResetStaleResumeIfRunChanged(runSignature, executionSignature);
             RunSignature = runSignature;
             ExecutionSignature = executionSignature;
@@ -474,9 +476,12 @@ internal sealed class AutoMaskRunCoordinator : IDisposable
         }
         catch (OperationCanceledException) when (runToken.IsCancellationRequested)
         {
-            Completed = autoAnalysisCompleted;
-            if (postProcessCommitted)
-                ResumeIndex = 0;
+            if (runStateStarted)
+            {
+                Completed = autoAnalysisCompleted;
+                if (postProcessCommitted)
+                    ResumeIndex = 0;
+            }
             _persistWorkspaceState(!exportAfter);
             persisted = true;
             return false;
