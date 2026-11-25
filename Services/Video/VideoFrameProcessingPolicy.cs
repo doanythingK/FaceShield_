@@ -147,14 +147,10 @@ internal static unsafe class VideoFrameProcessingPolicy
         }
         else if (mightHaveMask && maskProvider is FrameMaskProvider provider)
         {
-            if (provider.TryGetStoredMaskBorrowed(decodedFrameOrdinal, out var stored))
-            {
-                mask = stored;
-            }
-            else if (provider.TryGetFaceMaskData(decodedFrameOrdinal, out var faces))
-            {
-                faceRects = faces.Faces;
-            }
+            provider.ResolveExportFrameMask(decodedFrameOrdinal,
+                out mask, out bool ownsMask, out faceRects);
+            if (ownsMask)
+                ownedMask = mask;
         }
         else if (mightHaveMask)
         {

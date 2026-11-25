@@ -54,6 +54,7 @@ $homeViewModel = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
 $homeShutdown = Read-RepoFile "ViewModels/Pages/HomePageViewModel.Shutdown.cs"
 $homeView = Read-RepoFile "Views/Pages/HomePageView.axaml"
 $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
+$frameProcessing = Read-RepoFile "Services/Video/VideoFrameProcessingPolicy.cs"
 $exportStaging = Read-RepoFile "Services/Video/VideoExportStagingPolicy.cs"
 $exportFidelity = Read-RepoFile "Services/Video/VideoExportFidelityPolicy.cs"
 $exportQualityPreset = Read-RepoFile "Services/Video/VideoExportQualityPreset.cs"
@@ -132,6 +133,8 @@ Assert-Match "auto cancellation persists state and returns false" $autoCoordinat
 Assert-Match "auto completion checks cancellation after anomaly review" $autoCoordinator 'await\s+BuildAnomaliesAsync\(token\);[\s\S]{0,180}token\.ThrowIfCancellationRequested\(\);[\s\S]{0,220}Completed\s*=\s*true[\s\S]{0,100}ResumeIndex\s*=\s*0'
 
 # Workspace operation ownership and export boundaries.
+Assert-Match "native export resolves independent mask layers together" $frameProcessing 'provider\.ResolveExportFrameMask\(decodedFrameOrdinal,[\s\S]{0,180}if\s*\(ownsMask\)\s*ownedMask\s*=\s*mask;'
+Assert-Match "mixed export uses a composed owned mask" $frameMaskProvider 'if\s*\(!hasAuto\s*&&\s*_allowsBorrowedBitmapReads\)[\s\S]{0,220}mask\s*=\s*GetFinalMask\(frameIndex\);\s*ownsMask\s*=\s*mask\s*!=\s*null;'
 Assert-Match "workspace lifetime closes admission before disposal" $workspaceLifetime 'RequestDispose\([\s\S]{0,700}_admissionClosed\s*=\s*true;[\s\S]{0,120}_disposeRequested\s*=\s*true'
 Assert-Match "workspace lifetime waits for active operations to drain" $workspaceLifetime 'End\(\)[\s\S]{0,800}_disposeRequested[\s\S]{0,120}_activeOperations\s*==\s*0[\s\S]{0,400}_onOperationsDrained\(\)'
 Assert-Match "workspace dispose cancels operations before owned resource disposal" $workspace 'RequestDispose\(out\s+bool\s+disposeNow\)[\s\S]{0,220}CancelOwnedOperations\(\)[\s\S]{0,180}ScheduleOwnedResourceDispose\(\)'

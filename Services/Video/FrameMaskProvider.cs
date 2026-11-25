@@ -229,19 +229,52 @@ namespace FaceShield.Services.Video
             if (!hasAuto)
                 return result;
 
-            WriteableBitmap autoMask = CreateMaskFromFaceRects(faces.Size, faces.Faces);
-            if (result == null)
-                return autoMask;
-
             try
             {
+                if (result == null)
+                    return CreateMaskFromFaceRects(faces.Size, faces.Faces);
+
+                using var autoMask = CreateMaskFromFaceRects(faces.Size, faces.Faces);
                 UnionAlphaInto(result, autoMask);
                 return result;
             }
-            finally
+            catch
             {
-                autoMask.Dispose();
+                result?.Dispose();
+                throw;
             }
+        }
+    }
+
+    // Resolve both independent layers under one lock. Auto-only frames keep
+    // the direct rectangle fast path; manual-only detached snapshots may
+    // borrow their raster. Mixed frames must export the union, not either
+    // layer alone. A live provider never exposes a borrowed bitmap.
+    internal void ResolveExportFrameMask(
+        int frameIndex,
+        out WriteableBitmap? mask,
+        out bool ownsMask,
+        out IReadOnlyList<Rect>? faceRects)
+    {
+        lock (_stateGate)
+        {
+            mask = null;
+            ownsMask = false;
+            faceRects = null;
+            bool hasManual = _masks.TryGetValue(frameIndex, out var manual);
+            bool hasAuto = _faceMasks.TryGetValue(frameIndex, out var faces);
+            if (hasManual)
+            {
+                if (!hasAuto && _allowsBorrowedBitmapReads)
+                    mask = manual;
+                else
+                {
+                    mask = GetFinalMask(frameIndex);
+                    ownsMask = mask != null;
+                }
+            }
+            else if (hasAuto)
+                faceRects = faces.Faces;
         }
     }
 
@@ -853,8 +886,16 @@ namespace FaceShield.Services.Video
             Avalonia.Platform.PixelFormat.Bgra8888,
             Avalonia.Platform.AlphaFormat.Premul);
 
-        RenderMaskFromFaceRects(mask, size, faces);
-        return mask;
+        try
+        {
+            RenderMaskFromFaceRects(mask, size, faces);
+            return mask;
+        }
+        catch
+        {
+            mask.Dispose();
+            throw;
+        }
     }
 
     public static void RenderMaskFromFaceRects(WriteableBitmap mask, PixelSize size, IReadOnlyList<Rect> faces)

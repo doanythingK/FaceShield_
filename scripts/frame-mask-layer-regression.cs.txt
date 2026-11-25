@@ -84,6 +84,50 @@ using (var snapshot = provider.CreateSnapshot())
 // New manual-keyframe editor path: Auto is visible but NOT writable. Paint
 // inside an opaque Auto face, persist manual-only, then move Auto away: the
 // overlapping user stroke must remain. This was lost by alpha subtraction.
+// Exercise the exact fast-path selector used by the native frame encoder,
+// not just GetFinalMask (which already combined the independent layers).
+using (var exportLease = ManualMaskKeyframeTimeline.CreateExportMaskLease(provider))
+{
+    var exportSnapshot = (FrameMaskProvider)exportLease.Provider;
+    exportSnapshot.ResolveExportFrameMask(frame, out var raster, out bool owns, out var rects);
+    using (raster)
+    {
+        Assert(owns && raster != null && rects == null, "Mixed export did not select an owned union");
+        Assert(AlphaAt(raster!, 66, 32) > 0 && AlphaAt(raster!, 120, 36) == 255,
+            "Native export selection omitted Auto or manual coverage");
+    }
+}
+using (var exportCases = new FrameMaskProvider())
+{
+    exportCases.SetFaceRects(0, new[] { autoFace }, size);
+    using (var manual = ManualMaskEditorLayer.CreateEditableMask(exportCases, 1, size))
+    {
+        PaintRect(manual, 112, 28, 24, 24, 255);
+        exportCases.SetIndependentManualMask(1, Clone(manual));
+    }
+    // A transparent manual layer cannot erase independent Auto coverage.
+    using (var empty = ManualMaskEditorLayer.CreateEditableMask(exportCases, 2, size))
+        exportCases.SetIndependentManualMask(2, Clone(empty));
+    exportCases.SetFaceRects(2, new[] { autoFace }, size);
+    using var snapshot = exportCases.CreateSnapshot();
+    snapshot.ResolveExportFrameMask(0, out var autoRaster, out bool autoOwned, out var autoRects);
+    Assert(autoRaster == null && !autoOwned && autoRects?.Count == 1, "Auto-only fast path changed");
+    snapshot.ResolveExportFrameMask(1, out var borrowed, out bool borrowedOwned, out var manualRects);
+    Assert(borrowed != null && !borrowedOwned && manualRects == null &&
+        AlphaAt(borrowed!, 120, 36) == 255, "Manual-only snapshot borrow changed");
+    exportCases.ResolveExportFrameMask(1, out var live, out bool liveOwned, out _);
+    using (live)
+        Assert(liveOwned && live != null && AlphaAt(live!, 120, 36) == 255,
+            "Live provider returned an unsafe borrowed raster");
+    snapshot.ResolveExportFrameMask(2, out var merged, out bool mergedOwned, out _);
+    using (merged)
+        Assert(mergedOwned && merged != null && AlphaAt(merged!, 32, 38) > 0,
+            "Transparent manual raster suppressed Auto export");
+    snapshot.ResolveExportFrameMask(3, out var absent, out bool absentOwned, out var absentRects);
+    Assert(absent == null && !absentOwned && absentRects == null, "Empty frame returned mask data");
+}
+Console.WriteLine("PASS: production export selector unions Auto/manual and preserves safe fast paths");
+
 const int overlappingFrame = frame + 1;
 provider.SetFaceRects(overlappingFrame, new[] { autoFace }, size, 0.9f, new[] { 0.9f });
 using (var manualEditor = ManualMaskEditorLayer.CreateEditableMask(provider, overlappingFrame, size))
