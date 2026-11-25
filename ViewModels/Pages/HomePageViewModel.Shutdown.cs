@@ -23,16 +23,18 @@ namespace FaceShield.ViewModels.Pages
                 workspaces = _workspaceCache.Values.Distinct().ToArray();
             }
 
-            _autoRestartRequested = false;
-            try { Volatile.Read(ref _autoCts)?.Cancel(); }
-            catch (ObjectDisposedException) { }
-            try { Volatile.Read(ref _workspaceLoadCts)?.Cancel(); }
-            catch (ObjectDisposedException) { }
-            try { Volatile.Read(ref _yoloDownloadCts)?.Cancel(); }
-            catch (ObjectDisposedException) { }
-
             try
             {
+                OnPropertyChanged(nameof(IsShutdownRequested));
+                OnPropertyChanged(nameof(CanStartWorkspace));
+                _autoRestartRequested = false;
+                try { Volatile.Read(ref _autoCts)?.Cancel(); }
+                catch (ObjectDisposedException) { }
+                try { Volatile.Read(ref _workspaceLoadCts)?.Cancel(); }
+                catch (ObjectDisposedException) { }
+                try { Volatile.Read(ref _yoloDownloadCts)?.Cancel(); }
+                catch (ObjectDisposedException) { }
+
                 await Task.WhenAll(workspaces.Select(
                     workspace => workspace.PauseAndDrainForWindowCloseAsync()));
                 PersistAllWorkspacesForShutdown();
@@ -42,6 +44,11 @@ namespace FaceShield.ViewModels.Pages
                 foreach (WorkspaceViewModel workspace in workspaces)
                     workspace.ResumeAfterFailedWindowClose();
                 Volatile.Write(ref _closePreparationRequested, 0);
+                // A current load/download may have completed while close was
+                // pending. Its finally clears its own busy flag even during
+                // preflight; refresh computed admission bindings on reopening.
+                OnPropertyChanged(nameof(IsShutdownRequested));
+                OnPropertyChanged(nameof(CanStartWorkspace));
                 throw;
             }
         }

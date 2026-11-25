@@ -1612,7 +1612,7 @@ namespace FaceShield.ViewModels.Pages
             finally
             {
                 bool wasCurrent = EndYoloDownload(downloadCts);
-                if (wasCurrent && !IsShutdownRequested)
+                if (wasCurrent && Volatile.Read(ref _shutdownRequested) == 0)
                     IsYoloModelDownloading = false;
             }
         }
@@ -1701,7 +1701,7 @@ namespace FaceShield.ViewModels.Pages
             finally
             {
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
-                if (wasCurrentLoad && !IsShutdownRequested)
+                if (wasCurrentLoad && Volatile.Read(ref _shutdownRequested) == 0)
                     IsWorkspaceLoading = false;
             }
         }
@@ -1831,7 +1831,7 @@ namespace FaceShield.ViewModels.Pages
             finally
             {
                 bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
-                if (wasCurrentLoad && !IsShutdownRequested)
+                if (wasCurrentLoad && Volatile.Read(ref _shutdownRequested) == 0)
                     IsWorkspaceLoading = false;
             }
 
@@ -2463,7 +2463,7 @@ namespace FaceShield.ViewModels.Pages
                 if (ownsLoad)
                 {
                     bool wasCurrentLoad = EndWorkspaceLoad(loadCts);
-                    if (wasCurrentLoad && !IsShutdownRequested)
+                    if (wasCurrentLoad && Volatile.Read(ref _shutdownRequested) == 0)
                         IsWorkspaceLoading = false;
                 }
             }
@@ -2620,7 +2620,10 @@ namespace FaceShield.ViewModels.Pages
 
         private void ThrowIfWorkspaceCacheClosed(CancellationToken cancellationToken)
         {
-            if (_shutdownRequested != 0)
+            // The cache snapshot used by close preflight is taken under
+            // this same gate. A candidate must not enter after that snapshot,
+            // even before the Home cancellation sources have been canceled.
+            if (IsShutdownRequested)
                 throw new OperationCanceledException("Workspace cache is shutting down.", null, cancellationToken);
         }
 

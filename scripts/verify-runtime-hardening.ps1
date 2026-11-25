@@ -51,6 +51,7 @@ $timelineStrip = Read-RepoFile "Controls/TimelineFrameStrip.cs"
 $frameListView = Read-RepoFile "Views/Workspace/FrameListView.axaml"
 $app = Read-RepoFile "App.axaml.cs"
 $homeViewModel = Read-RepoFile "ViewModels/Pages/HomePageViewModel.cs"
+$homeShutdown = Read-RepoFile "ViewModels/Pages/HomePageViewModel.Shutdown.cs"
 $homeView = Read-RepoFile "Views/Pages/HomePageView.axaml"
 $exportService = Read-RepoFile "Services/Video/VideoExportService.cs"
 $exportStaging = Read-RepoFile "Services/Video/VideoExportStagingPolicy.cs"
@@ -147,6 +148,13 @@ Assert-Match "final output commit checks cancellation before atomic moves" $expo
 Assert-Match "persisted manual PNG restores independently of Auto" $workspaceStore 'foreach\s*\(var\s+entry\s+in\s+loadedMasks\)\s*maskProvider\.SetIndependentManualMask\(entry\.Key,\s*entry\.Value\)'
 Assert-NotMatch "workspace save does not omit Auto on manual frames" $workspaceStore 'Where\(entry\s*=>\s*!indexSet\.Contains\(entry\.Key\)\)'
 Assert-NotMatch "workspace restore does not allow partial payload success" $workspaceStore 'requireComplete\s*:\s*false|bool\s+requireComplete'
+
+# A failed close preflight must not leave Home busy or admit a new cache entry.
+Assert-Match "cache admission observes cancellable close" $homeViewModel 'private\s+void\s+ThrowIfWorkspaceCacheClosed\([\s\S]{0,500}if\s*\(IsShutdownRequested\)'
+Assert-NotMatch "load cleanup is not suppressed by reversible close" $homeViewModel 'wasCurrentLoad\s*&&\s*!IsShutdownRequested'
+Assert-Match "all Home load owners clear busy state during close preflight" $homeViewModel '(?s)wasCurrentLoad\s*&&\s*Volatile\.Read\(ref\s+_shutdownRequested\)\s*==\s*0\)\s*IsWorkspaceLoading\s*=\s*false;.*wasCurrentLoad\s*&&\s*Volatile\.Read\(ref\s+_shutdownRequested\)\s*==\s*0\)\s*IsWorkspaceLoading\s*=\s*false;.*wasCurrentLoad\s*&&\s*Volatile\.Read\(ref\s+_shutdownRequested\)\s*==\s*0\)\s*IsWorkspaceLoading\s*=\s*false;'
+Assert-Match "download cleanup is not suppressed by reversible close" $homeViewModel 'wasCurrent\s*&&\s*Volatile\.Read\(ref\s+_shutdownRequested\)\s*==\s*0\)\s*IsYoloModelDownloading\s*=\s*false'
+Assert-Match "failed close refreshes Home admission bindings" $homeShutdown 'Volatile\.Write\(ref\s+_closePreparationRequested,\s*0\);[\s\S]{0,700}OnPropertyChanged\(nameof\(CanStartWorkspace\)\)'
 
 # Manual player lifetime, session ownership, cancellation, and UI editability.
 Assert-Match "manual player blocks new operations while closing" $manualPlayer 'EnterOperation\(\)[\s\S]{0,500}_closing\s*\|\|[\s\S]{0,180}ObjectDisposedException'
